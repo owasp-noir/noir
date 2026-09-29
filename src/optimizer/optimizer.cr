@@ -1,5 +1,6 @@
 require "../models/endpoint"
 require "../models/logger"
+require "../utils/media_filter"
 require "../utils/*"
 require "./optimizer/graphql"
 require "./optimizer/path_params"
@@ -13,6 +14,11 @@ class EndpointOptimizer
   # endpoint-specific signal, so collection imports that surface them as params
   # are treated as noise during dedup.
   COLLECTION_NOISE_HEADERS = Set{"user-agent", "accept", "content-type", "host", "origin", "referer", "x-requested-with"}
+
+  # These endpoint types describe a surface from a document rather than an
+  # executable handler. They need the same source-context promotion as an
+  # imported collection when they sort before the implementation endpoint.
+  SPECIFICATION_TECHNOLOGIES = Set{"oas2", "oas3", "grpc", "graphql_sdl", "graphql_operation"}
 
   @logger : NoirLogger
   @options : Hash(String, YAML::Any)
@@ -274,6 +280,14 @@ class EndpointOptimizer
     {"insomnia", "postman"}.includes?(endpoint.details.technology || "")
   end
 
+  private def source_document_endpoint?(endpoint : Endpoint) : Bool
+    return true if collection_endpoint?(endpoint)
+    return true if SPECIFICATION_TECHNOLOGIES.includes?(endpoint.details.technology || "")
+
+    code_paths = endpoint.details.code_paths
+    !code_paths.empty? && code_paths.all? { |path_info| MediaFilter.spec_document?(path_info.path) }
+  end
+
   private def source_collection_pair?(target : Endpoint, source : Endpoint) : Bool
     collection_endpoint?(target) != collection_endpoint?(source)
   end
@@ -379,8 +393,12 @@ class EndpointOptimizer
   end
 
   private def promote_source_context(target : Endpoint, source : Endpoint) : Endpoint
-    return target unless collection_endpoint?(target)
-    return target if collection_endpoint?(source)
+    # Imported collections and specification documents are declarations of an
+    # endpoint, not its executable handler. If one sorts first, make the
+    # implementation the primary context while retaining every contributing
+    # path for reporting and later AI-context scans.
+    return target unless source_document_endpoint?(target)
+    return target if source_document_endpoint?(source)
 
     details = target.details
     details.technology = source.details.technology if source.details.technology
