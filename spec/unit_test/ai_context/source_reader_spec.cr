@@ -322,6 +322,46 @@ describe NoirAIContext::SourceReader do
         end
       end
 
+      it "captures annotations on the containing JVM class" do
+        source = <<-JAVA
+          @RestController
+          @PreAuthorize("hasRole('ADMIN')")
+          public class AdminController {
+            @DeleteMapping("/users/{id}")
+            public void deleteUser(Long id) {
+              service.delete(id);
+            }
+          }
+          JAVA
+
+        with_source_file(source, ".java") do |path|
+          snippet = NoirAIContext::SourceReader.new.route_scope_snippet_for(path, 5).not_nil!
+          snippet.should contain("1: @RestController")
+          snippet.should contain("2: @PreAuthorize")
+          snippet.should contain("4: @DeleteMapping")
+        end
+      end
+
+      it "does not borrow a class annotation from a sibling class" do
+        source = <<-JAVA
+          @PreAuthorize("hasRole('ADMIN')")
+          class GuardedController {
+          }
+
+          class OpenController {
+            @DeleteMapping("/users/{id}")
+            public void deleteUser(Long id) {
+              service.delete(id);
+            }
+          }
+          JAVA
+
+        with_source_file(source, ".java") do |path|
+          snippet = NoirAIContext::SourceReader.new.route_scope_snippet_for(path, 7).not_nil!
+          snippet.should_not contain("PreAuthorize")
+        end
+      end
+
       it "stops the lead-in scan at the first non-decorator line" do
         source = <<-PY
           CONSTANT = 1

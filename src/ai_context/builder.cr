@@ -1067,6 +1067,24 @@ module NoirAIContext
 
         if guard_tag?(tag)
           context.push_guard(entry)
+          # Spring's method-security annotations are authorization evidence,
+          # while the framework tag still represents the endpoint's broader
+          # authentication protection. Preserve that existing auth_guard and
+          # emit the more specific authz_guard as well; this is especially
+          # important for class-level annotations, which the route-scope scan
+          # cannot see without the class declaration lead-in.
+          if spring_authorization_annotation_tag?(tag)
+            context.push_guard(AIContextEntry.new(
+              "authz_guard",
+              signal_name,
+              source: tag.tagger,
+              description: tag.description,
+              path: anchor.try(&.path),
+              line: anchor.try(&.line),
+              confidence: tag.name == "auth" ? 86 : 74,
+              snippet: route_snippet
+            ))
+          end
         else
           context.push_signal(entry)
           if websocket_cors_config_tag?(tag)
@@ -1747,6 +1765,12 @@ module NoirAIContext
       description = tag.description
       return description.sub(/^Protected by\s+/, "") if description.starts_with?("Protected by ")
       tag.name
+    end
+
+    private def spring_authorization_annotation_tag?(tag : Tag) : Bool
+      tag.name == "auth" &&
+        tag.tagger == "spring_auth" &&
+        tag.description.matches?(/@(PreAuthorize|Secured|RolesAllowed)\b/)
     end
 
     # Resolved once from the catalog instead of re-scanning PARAM_PATTERNS

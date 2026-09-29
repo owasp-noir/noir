@@ -29,6 +29,12 @@ describe "--ai-context on Spring auth fixtures", tags: "functional" do
     delete_context.signals.map(&.kind).should contain("path_param")
     delete_context.signals.map(&.kind).should contain("state_change")
 
+    class_level_delete = endpoints.find! { |ep| ep.method == "DELETE" && ep.url == "/api/admin/users/{id}" }.ai_context
+    class_level_delete = class_level_delete.should_not be_nil
+    class_level_delete.guards.map(&.kind).should contain("auth_guard")
+    class_level_delete.guards.map(&.kind).should contain("authz_guard")
+    class_level_delete.signals.map(&.kind).should_not contain("authz_absence")
+
     public_context = endpoints.find! { |ep| ep.method == "GET" && ep.url == "/api/public/health" }.ai_context
     public_context = public_context.should_not be_nil
     public_context.guards.should be_empty
