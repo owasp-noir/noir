@@ -51,16 +51,13 @@ module NoirAIContext
     end
 
     # Specification documents can contain arbitrary examples and vendor
-    # extensions that happen to look like dangerous calls. When an endpoint
-    # also has implementation code, scan only that code so those strings do
-    # not become sinks. Pure specification endpoints still use their document
-    # as the fallback source.
+    # extensions that happen to look like dangerous calls. They can anchor
+    # route metadata when no implementation is available, but only
+    # implementation paths are meaningful evidence for handler sinks/guards.
     private def source_scan_paths(endpoint : Endpoint) : Array(PathInfo)
-      implementation_paths = endpoint.details.code_paths.reject do |path_info|
+      endpoint.details.code_paths.reject do |path_info|
         MediaFilter.spec_document?(path_info.path)
       end
-
-      implementation_paths.empty? ? endpoint.details.code_paths : implementation_paths
     end
 
     private def build_context(endpoint : Endpoint) : AIContext
