@@ -1,4 +1,4 @@
-import { Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Delete, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { Roles } from './decorators/roles.decorator';
@@ -22,6 +22,12 @@ export class PostsController {
   @Roles('admin')
   @Post()
   create() {
+    return {};
+  }
+
+  @Roles('admin')
+  @Delete(':id')
+  remove() {
     return {};
   }
 }

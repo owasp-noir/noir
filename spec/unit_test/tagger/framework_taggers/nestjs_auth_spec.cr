@@ -17,6 +17,9 @@ describe "NestjsAuthTagger" do
   # 23:   @Roles('admin')
   # 24:   @Post()
   # 25:   create() {
+  # 29:   @Roles('admin')
+  # 30:   @Delete(':id')
+  # 31:   remove() {
 
   before_each do
     CodeLocator.instance.clear_all
@@ -64,7 +67,22 @@ describe "NestjsAuthTagger" do
     tagger = NestjsAuthTagger.new(noir_options)
     tagger.perform([endpoint])
 
-    endpoint.tags.empty?.should be_false
-    endpoint.tags[0].name.should eq("auth")
+    endpoint.tags.any? { |t| t.name == "authz" && t.description.includes?("@Roles") }.should be_true
+  end
+
+  it "stacks class JwtAuthGuard authn with method @Roles authz" do
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(fixture_base)
+
+    details = Details.new(PathInfo.new(controller_path, 31))
+    details.technology = "ts_nestjs"
+    endpoint = Endpoint.new("/posts/:id", "DELETE", [] of Param, details)
+
+    tagger = NestjsAuthTagger.new(noir_options)
+    tagger.perform([endpoint])
+
+    endpoint.tags.map(&.name).sort!.should eq(["auth", "authz"])
+    endpoint.tags.find! { |t| t.name == "auth" }.description.should contain("JwtAuthGuard")
+    endpoint.tags.find! { |t| t.name == "authz" }.description.should contain("@Roles")
   end
 end

@@ -3,18 +3,25 @@ require "../../../models/endpoint"
 
 @[Noir::TaggerFor(key: "ruby_auth", name: "Ruby Auth Tagger", desc: "Identifies Ruby authentication patterns (Devise, Pundit, CanCanCan, Warden)", order: 120)]
 class RubyAuthTagger < FrameworkTagger
-  # Rails before_action patterns
-  BEFORE_ACTION_PATTERNS = [
+  # Rails before_action authentication patterns — verify who the caller is.
+  BEFORE_ACTION_AUTHN_PATTERNS = [
     {/before_action\s+:authenticate_user!/, "Devise authenticate_user!"},
     {/before_action\s+:authenticate_/, "Devise authentication"},
     {/before_action\s+:require_login/, "require_login"},
     {/before_action\s+:require_authentication/, "require_authentication"},
-    {/before_action\s+:authorize/, "authorize"},
     {/before_action\s+:check_auth/, "check_auth"},
     {/before_action\s+:verify_authenticity_token/, "CSRF verify_authenticity_token"},
     {/before_action\s+:doorkeeper_authorize!/, "Doorkeeper OAuth authorize"},
     {/before_action\s+:authenticate_with_token/, "token authentication"},
   ]
+
+  # Rails before_action authorization — verify what the caller may do.
+  BEFORE_ACTION_AUTHZ_PATTERNS = [
+    {/before_action\s+:authorize/, "authorize"},
+  ]
+
+  # Union kept for the CONTROLLER_AUTH_ANY gate and the shared walk.
+  BEFORE_ACTION_PATTERNS = BEFORE_ACTION_AUTHN_PATTERNS + BEFORE_ACTION_AUTHZ_PATTERNS
 
   # Pundit / CanCanCan authorization in action body
   ACTION_AUTH_PATTERNS = [
@@ -34,10 +41,13 @@ class RubyAuthTagger < FrameworkTagger
   ]
 
   # Hanami patterns
-  HANAMI_AUTH_PATTERNS = [
+  HANAMI_AUTHN_PATTERNS = [
     {/before\s+:authenticate/, "Hanami authenticate"},
+  ]
+  HANAMI_AUTHZ_PATTERNS = [
     {/before\s+:authorize/, "Hanami authorize"},
   ]
+  HANAMI_AUTH_PATTERNS = HANAMI_AUTHN_PATTERNS + HANAMI_AUTHZ_PATTERNS
 
   # Grape patterns (before blocks, http_basic, helpers)
   GRAPE_AUTH_PATTERNS = [
@@ -49,16 +59,19 @@ class RubyAuthTagger < FrameworkTagger
     {/\.error!\s*\(\s*['"]Unauthorized/, "Grape error! unauthorized"},
   ]
 
-  # Roda / Rodauth patterns
-  RODA_AUTH_PATTERNS = [
+  # Roda / Rodauth authentication patterns
+  RODA_AUTHN_PATTERNS = [
     {/rodauth\.require_authentication/, "Rodauth require_authentication"},
     {/rodauth\.require_auth/, "Rodauth require_auth"},
     {/rodauth\.logged_in\?/, "Rodauth logged_in?"},
     {/rodauth\.authenticated\?/, "Rodauth authenticated?"},
     {/r\.rodauth/, "Roda rodauth plugin"},
     {/r\.halt\s+401/, "Roda 401 halt"},
+  ]
+  RODA_AUTHZ_PATTERNS = [
     {/authorize!/, "Roda authorize!"},
   ]
+  RODA_AUTH_PATTERNS = RODA_AUTHN_PATTERNS + RODA_AUTHZ_PATTERNS
 
   # skip_before_action marks public overrides
   SKIP_PATTERNS = [
@@ -123,19 +136,33 @@ class RubyAuthTagger < FrameworkTagger
       next if line_num < 1 || line_num > lines.size
       line_idx = line_num - 1
 
-      # For Rails: find enclosing class, check before_action
-      description = check_controller_auth(lines, line_idx, controller_line_flags(path_info.path, lines))
-      if description
-        endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "ruby_auth"))
-        return
+      authn_desc : String? = nil
+      authz_desc : String? = nil
+
+      # Rails/Hanami: collect controller before_action authn *and* authz.
+      # Returning after the first match used to drop Devise when a closer
+      # `before_action :authorize` won the walk, and skipped body authorize.
+      controller = check_controller_auth(lines, line_idx, controller_line_flags(path_info.path, lines))
+      unless controller[:skipped]
+        authn_desc = controller[:authn]
+        authz_desc = controller[:authz]
       end
 
-      # Check action body for authorization calls
-      description = check_action_body_auth(lines, line_idx)
-      if description
-        endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "ruby_auth"))
-        return
+      # Action-body authorization (Pundit/CanCanCan) stacks with controller authn.
+      unless controller[:skipped]
+        if body_authz = check_action_body_auth(lines, line_idx)
+          authz_desc ||= body_authz
+        end
       end
+
+      # add_tag dedupes by (name, tagger), so authn/authz need distinct names.
+      if authn_desc
+        endpoint.add_tag(Tag.new("auth", "Protected by #{authn_desc}", "ruby_auth"))
+      end
+      if authz_desc
+        endpoint.add_tag(Tag.new("authz", "Protected by #{authz_desc}", "ruby_auth"))
+      end
+      return if authn_desc || authz_desc || controller[:skipped]
 
       # Check Sinatra/Rack patterns in context
       description = check_sinatra_auth(lines, line_idx)
@@ -151,19 +178,34 @@ class RubyAuthTagger < FrameworkTagger
         return
       end
 
-      # Check Roda/Rodauth patterns
-      description = check_roda_auth(lines, line_idx)
-      if description
-        endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "ruby_auth"))
-        return
+      # Check Roda/Rodauth patterns — may yield both authn and authz.
+      roda = check_roda_auth(lines, line_idx)
+      if roda[:authn]
+        endpoint.add_tag(Tag.new("auth", "Protected by #{roda[:authn]}", "ruby_auth"))
       end
+      if roda[:authz]
+        endpoint.add_tag(Tag.new("authz", "Protected by #{roda[:authz]}", "ruby_auth"))
+      end
+      return if roda[:authn] || roda[:authz]
     end
   end
 
-  private def check_controller_auth(lines : Array(String), action_line : Int32, flags : Array(UInt8)) : String?
+  private def applies_to_action?(current : String, action_name : String?) : Bool
+    if current.includes?("only:")
+      return !!(action_name && current.includes?(":#{action_name}"))
+    end
+    if current.includes?("except:")
+      return !(action_name && current.includes?(":#{action_name}"))
+    end
+    true
+  end
+
+  private def check_controller_auth(lines : Array(String), action_line : Int32, flags : Array(UInt8)) : NamedTuple(authn: String?, authz: String?, skipped: Bool)
     # Walk backwards to find the controller class and before_action declarations
     idx = action_line
     action_name = extract_action_name(lines, action_line)
+    authn_desc : String? = nil
+    authz_desc : String? = nil
 
     while idx >= 0
       unless flags[idx] == CONTROLLER_AUTH_LINE
@@ -180,38 +222,31 @@ class RubyAuthTagger < FrameworkTagger
           # Check if it applies to this specific action via only: []
           if current.includes?("only:")
             if action_name && current.includes?(":#{action_name}")
-              return # Explicitly skipped
+              return {authn: nil, authz: nil, skipped: true}
             end
           else
-            return # Broadly skipped
+            return {authn: nil, authz: nil, skipped: true}
           end
         end
       end
 
-      # Check for before_action with auth
-      BEFORE_ACTION_PATTERNS.each do |pattern, desc|
-        if current.matches?(pattern)
-          # Check if it has only: restriction
-          if current.includes?("only:")
-            if action_name && current.includes?(":#{action_name}")
-              return desc
-            end
-          elsif current.includes?("except:")
-            if action_name && current.includes?(":#{action_name}")
-              next # Excluded
-            end
-            return desc
-          else
-            return desc # Applies to all actions
-          end
+      BEFORE_ACTION_AUTHN_PATTERNS.each do |pattern, desc|
+        if current.matches?(pattern) && applies_to_action?(current, action_name)
+          authn_desc ||= desc
         end
       end
 
-      # Check Hanami patterns
-      HANAMI_AUTH_PATTERNS.each do |pattern, desc|
-        if current.matches?(pattern)
-          return desc
+      BEFORE_ACTION_AUTHZ_PATTERNS.each do |pattern, desc|
+        if current.matches?(pattern) && applies_to_action?(current, action_name)
+          authz_desc ||= desc
         end
+      end
+
+      HANAMI_AUTHN_PATTERNS.each do |pattern, desc|
+        authn_desc ||= desc if current.matches?(pattern)
+      end
+      HANAMI_AUTHZ_PATTERNS.each do |pattern, desc|
+        authz_desc ||= desc if current.matches?(pattern)
       end
 
       break if current.starts_with?("class ")
@@ -219,7 +254,7 @@ class RubyAuthTagger < FrameworkTagger
       idx -= 1
     end
 
-    nil
+    {authn: authn_desc, authz: authz_desc, skipped: false}
   end
 
   private def check_action_body_auth(lines : Array(String), action_line : Int32) : String?
@@ -285,21 +320,24 @@ class RubyAuthTagger < FrameworkTagger
     nil
   end
 
-  private def check_roda_auth(lines : Array(String), route_line : Int32) : String?
+  private def check_roda_auth(lines : Array(String), route_line : Int32) : NamedTuple(authn: String?, authz: String?)
     # Roda uses route blocks; rodauth calls are usually inside the handler or just above
     start_idx = [route_line - 12, 0].max
     end_idx = [route_line + 8, lines.size - 1].min
+    authn_desc : String? = nil
+    authz_desc : String? = nil
 
     (start_idx..end_idx).each do |idx|
       current = lines[idx].strip
 
-      RODA_AUTH_PATTERNS.each do |pattern, desc|
-        if current.matches?(pattern)
-          return desc
-        end
+      RODA_AUTHN_PATTERNS.each do |pattern, desc|
+        authn_desc ||= desc if current.matches?(pattern)
+      end
+      RODA_AUTHZ_PATTERNS.each do |pattern, desc|
+        authz_desc ||= desc if current.matches?(pattern)
       end
     end
 
-    nil
+    {authn: authn_desc, authz: authz_desc}
   end
 end

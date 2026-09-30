@@ -18,7 +18,7 @@ describe "RubyAuthTagger" do
     noir_options = create_test_options
     noir_options["base"] = YAML::Any.new(fixture_base)
 
-    details = Details.new(PathInfo.new(controller_path, 9))
+    details = Details.new(PathInfo.new(controller_path, 10))
     details.technology = "ruby_rails"
     endpoint = Endpoint.new("/posts/1", "GET", [] of Param, details)
 
@@ -35,7 +35,7 @@ describe "RubyAuthTagger" do
     noir_options = create_test_options
     noir_options["base"] = YAML::Any.new(fixture_base)
 
-    details = Details.new(PathInfo.new(controller_path, 13))
+    details = Details.new(PathInfo.new(controller_path, 14))
     details.technology = "ruby_rails"
     endpoint = Endpoint.new("/posts", "POST", [] of Param, details)
 
@@ -43,14 +43,30 @@ describe "RubyAuthTagger" do
     tagger.perform([endpoint])
 
     endpoint.tags.empty?.should be_false
-    endpoint.tags[0].name.should eq("auth")
+    endpoint.tags.any? { |t| t.name == "authz" && t.description.includes?("authorize") }.should be_true
+  end
+
+  it "stacks Devise authenticate_user! with Pundit authorize" do
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(fixture_base)
+
+    details = Details.new(PathInfo.new(controller_path, 14))
+    details.technology = "ruby_rails"
+    endpoint = Endpoint.new("/posts", "POST", [] of Param, details)
+
+    tagger = RubyAuthTagger.new(noir_options)
+    tagger.perform([endpoint])
+
+    endpoint.tags.map(&.name).sort!.should eq(["auth", "authz"])
+    endpoint.tags.find! { |t| t.name == "auth" }.description.should contain("authenticate_user")
+    endpoint.tags.find! { |t| t.name == "authz" }.description.should contain("authorize")
   end
 
   it "respects skip_before_action for :index" do
     noir_options = create_test_options
     noir_options["base"] = YAML::Any.new(fixture_base)
 
-    details = Details.new(PathInfo.new(controller_path, 5))
+    details = Details.new(PathInfo.new(controller_path, 6))
     details.technology = "ruby_rails"
     endpoint = Endpoint.new("/posts", "GET", [] of Param, details)
 
