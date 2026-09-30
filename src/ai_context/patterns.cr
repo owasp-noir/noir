@@ -457,7 +457,7 @@ module NoirAIContext
         /@Roles\b/,
         /@Permissions\b/,
         /@RequirePermissions\b/,
-        /Security\s*\(/,
+        /@Security\s*\(/,
         /\bPundit\b.*\bauthorize\b/i,
         /\bcan\?\s*\(/,
         /\b(can|cannot)\s+:[\w_!?]+/,
