@@ -142,8 +142,9 @@ describe "OutputBuilderCommon" do
 
     endpoint = Endpoint.new("/test", "GET")
     context = AIContext.new
-    context.push_guard(AIContextEntry.new("auth", "auth", source: "express_auth", description: "Protected by auth middleware"))
-    context.push_sink(AIContextEntry.new("sql", "User.find_by_sql", source: "callee", line: 12))
+    context.push_guard(AIContextEntry.new("auth", "auth", source: "express_auth", description: "Protected by auth middleware", confidence: 86))
+    context.push_sink(AIContextEntry.new("sql", "User.find_by_sql", source: "callee", line: 12, confidence: 92))
+    context.push_signal(AIContextEntry.new("priority_review", "high", source: "heuristic", confidence: 90))
     endpoint.ai_context = context
 
     builder.print([endpoint])
@@ -152,6 +153,10 @@ describe "OutputBuilderCommon" do
     output.should contain("ai_context:")
     output.should contain("guards:")
     output.should contain("sql: User.find_by_sql")
+    # Confidence must survive plain-text packaging (#2787).
+    output.should contain("(conf 86)")
+    output.should contain("(conf 92)")
+    output.should contain("priority_review: high [heuristic] (conf 90)")
   end
 
   it "renders multipart file params and other unhandled param types" do

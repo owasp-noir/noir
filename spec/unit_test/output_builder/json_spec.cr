@@ -89,4 +89,31 @@ describe "OutputBuilderJson" do
     passive_result["file_path"].as_s.should eq("test.cr")
     passive_result["line_number"].as_i.should eq(10)
   end
+  it "omits empty ai_context buckets from endpoint JSON" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderJson.new(options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/upload", "POST")
+    context = AIContext.new
+    context.push_signal(AIContextEntry.new("file_upload", "file_upload", source: "FileUpload", confidence: 74,
+      description: "Endpoint characteristics suggest file upload or file handling (tagger heuristic; not a confirmed vulnerability)."))
+    endpoint.ai_context = context
+
+    builder.print([endpoint])
+    json = JSON.parse(builder.io.to_s)
+    ai = json["endpoints"][0]["ai_context"]
+    ai.as_h.has_key?("signals").should be_true
+    ai["signals"].as_a.size.should eq(1)
+    ai["signals"][0]["confidence"].as_i.should eq(74)
+    ai.as_h.has_key?("guards").should be_false
+    ai.as_h.has_key?("sinks").should be_false
+    ai.as_h.has_key?("sources").should be_false
+  end
 end

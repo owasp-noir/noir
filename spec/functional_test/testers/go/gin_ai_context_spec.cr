@@ -46,10 +46,15 @@ describe "--ai-context on Gin auth fixtures", tags: "functional" do
     admin_context = admin_context.should_not be_nil
     admin_context.guards.size.should eq(1)
     admin_context.guards[0].source.should eq("go_auth")
+    admin_context.guards[0].confidence.should_not be_nil
     admin_context.signals.map(&.kind).should contain("state_change")
     admin_signal_kinds = admin_context.signals.map(&.kind)
     admin_signal_kinds.should contain("idor")
     admin_signal_kinds.should_not contain("sqli")
     admin_signal_kinds.should_not contain("ssti")
+    # Packaging honesty: auth-tagged guards carry conf; path idor is a
+    # named signal with conf, not an empty-looking bucket.
+    idor = admin_context.signals.find!(&.kind.==("idor"))
+    idor.confidence.should_not be_nil
   end
 end
