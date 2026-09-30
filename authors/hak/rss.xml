@@ -1,0 +1,147 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title>OWASP Noir - Authors: hak</title>
+    <link>https://owasp-noir.github.io/noir/authors/hak/</link>
+    <description>Hunt every endpoint in your code. Noir statically analyses source across 29 languages and 205 frameworks, exposing shadow APIs and mapping the attack surface.</description>
+    <atom:link href="https://owasp-noir.github.io/noir/authors/hak/rss.xml" rel="self" type="application/rss+xml" />
+    <item>
+      <title>Fill the blanks once: --pvalue across curl, collections, and probes</title>
+      <link>https://owasp-noir.github.io/noir/blog/pvalue-for-runnable-catalogs/</link>
+      <guid>https://owasp-noir.github.io/noir/blog/pvalue-for-runnable-catalogs/</guid>
+      <description>One set of parameter placeholders that flows into curl, Postman, OpenAPI, status-code probes, and Burp/ZAP replay.</description>
+      <content:encoded><![CDATA[<p>You run <code>noir scan ./app -f curl</code> and get a wall of <code>/users/{id}?limit=</code>. Useful as a map. Useless as a request.</p>
+<p><code>-f postman</code> is the same blank forms in a different envelope. <code>--probe</code> either 404s on the literal <code>{id}</code> or, for GET/HEAD/OPTIONS only, quietly stuffs in <code>1</code> / <code>noir</code>. Three sinks, three opinions about one parameter.</p>
+<p><code>--pvalue</code> is how you settle that once. Declare the placeholders; the optimizer writes them into every param <em>before</em> any formatter or deliverer runs. Same scan. Same values. Every sink.</p>
+<h2 id="the-flag">The flag</h2>
+<p>Repeatable. Each hit is <code>TYPE=VALUE</code>, or a bare <code>VALUE</code> that hits every type:</p>
+<pre><code class="language-bash hljs">noir scan ./app -f curl -u https://api.example.com \
+  --pvalue &quot;path=id=42&quot; \
+  --pvalue &quot;query=limit=10&quot; \
+  --pvalue &quot;header=Authorization=Bearer replace-me&quot;
+</code></pre>
+<table>
+<thead>
+<tr>
+<th><code>TYPE</code></th>
+<th>Scope</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>any</code> (or omit the type)</td>
+<td>Every parameter type</td>
+</tr>
+<tr>
+<td><code>query</code> / <code>form</code> / <code>json</code> / <code>header</code> / <code>cookie</code> / <code>path</code></td>
+<td>That bucket only</td>
+</tr>
+</tbody>
+</table>
+<p><code>VALUE</code> comes in two shapes:</p>
+<table>
+<thead>
+<tr>
+<th>Form</th>
+<th>Behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>42</code></td>
+<td>Every parameter of the targeted type</td>
+</tr>
+<tr>
+<td><code>id=42</code> or <code>id:42</code></td>
+<td>Only parameters named <code>id</code></td>
+</tr>
+</tbody>
+</table>
+<p>This runs when the endpoint list is cleaned — ahead of curl / HTTPie / PowerShell / OpenAPI / Postman / JSON / YAML and ahead of probe/export. One declaration, every consumer. Format side: <a href="https://owasp-noir.github.io/noir/usage/output_formats/curl/">cURL / HTTPie / PowerShell</a>. Probe side: <a href="https://owasp-noir.github.io/noir/usage/more_features/deliver/">Delivering Results</a>.</p>
+<h2 id="order-bites">Order bites</h2>
+<p>Matching is first-hit. Type-specific rules beat the global <code>any</code> list, so <code>--pvalue path=…</code> wins over a bare <code>--pvalue test</code> for path params.</p>
+<p>Inside one type, a catch-all matches <em>every</em> name. Named overrides go first:</p>
+<pre><code class="language-bash hljs"># limit → 10; everything else in query → 1
+noir scan ./app -f curl -u https://api.example.com \
+  --pvalue &quot;query=limit=10&quot; \
+  --pvalue &quot;query=1&quot;
+</code></pre>
+<p>Swap those two lines and <code>limit</code> is <code>1</code> too — the catch-all fired first. A few doc examples still show the catch-all first; that order is wrong for this matcher. Named rules, then the type-wide default.</p>
+<h2 id="same-declaration-three-places-it-pays-off">Same declaration, three places it pays off</h2>
+<h3 id="curl-you-can-actually-paste">Curl you can actually paste</h3>
+<pre><code class="language-bash hljs">noir scan ./api -f curl -u https://staging.example.com \
+  --pvalue &quot;path=id=42&quot; \
+  --pvalue &quot;path=slug=demo&quot; \
+  --pvalue &quot;query=1&quot; \
+  --pvalue &quot;header=Authorization=Bearer $STAGING_TOKEN&quot; \
+  -o /tmp/api.curl.sh
+</code></pre>
+<p><code>source</code> it. Path templates are already substituted in the URL the curl builder emits — no <code>sed</code> pass over <code>{id}</code>.</p>
+<h3 id="postman-openapi-for-everyone-else">Postman / OpenAPI for everyone else</h3>
+<pre><code class="language-bash hljs">noir scan ./api -f postman -u https://staging.example.com \
+  --pvalue &quot;path=id=42&quot; \
+  --pvalue &quot;query=limit=10&quot; \
+  --pvalue &quot;header=Authorization=Bearer replace-me&quot; \
+  -o /tmp/api.postman.json
+
+noir scan ./api -f oas3 -u https://staging.example.com \
+  --pvalue &quot;path=id=42&quot; \
+  --pvalue &quot;query=limit=10&quot; \
+  -o /tmp/api.openapi.json
+</code></pre>
+<p>Identical <code>--pvalue</code> block. Reviewers import one collection; CI diffs the OpenAPI against yesterday's. Placeholders do not drift between formats.</p>
+<h3 id="live-status-codes-optional-proxy-replay">Live status codes, optional proxy replay</h3>
+<pre><code class="language-bash hljs"># Attach observed codes; drop the obvious misses
+noir scan ./api -u https://staging.example.com \
+  --status-codes --exclude-codes 404,502 \
+  --pvalue &quot;path=id=42&quot; \
+  --pvalue &quot;query=1&quot; \
+  -f json -o /tmp/live.json
+
+# Read traffic through Burp/ZAP without doubling load on the target
+noir scan ./api -u https://staging.example.com \
+  --probe-via http://127.0.0.1:8080 \
+  --probe-match &quot;GET&quot; \
+  --pvalue &quot;path=id=42&quot; \
+  --pvalue &quot;header=Authorization=Bearer $STAGING_TOKEN&quot;
+</code></pre>
+<p><code>--status-codes</code>, <code>--probe</code>, and <code>--probe-via</code> all want <code>-u</code>.</p>
+<p>Path fill on probes has a safety rail you will notice the hard way: without <code>--pvalue path=…</code>, Noir auto-fills only read-only verbs (GET, HEAD, OPTIONS) with <code>1</code> / <code>noir</code>. POST / PUT / PATCH / DELETE keep the literal template, so a probe cannot become <code>DELETE /users/1</code> by accident. An explicit <code>--pvalue path=id=42</code> applies to <em>every</em> verb, writes included. Mean that, or park writes behind <code>--probe-skip &quot;POST&quot;</code> / <code>--probe-skip &quot;DELETE&quot;</code> until you do.</p>
+<h2 id="park-the-defaults-in-config">Park the defaults in config</h2>
+<p>Same keys, no flag soup on every CI job:</p>
+<pre><code class="language-yaml hljs">url: &quot;https://staging.example.com&quot;
+format: &quot;json&quot;
+status_codes: true
+exclude_codes: &quot;404,502&quot;
+set_pvalue_path:
+  - &quot;id=42&quot;
+  - &quot;slug=demo&quot;
+set_pvalue_query:
+  - &quot;limit=10&quot;
+  - &quot;1&quot;
+set_pvalue_header:
+  - &quot;X-Debug-Tenant=noir-ci&quot;
+</code></pre>
+<pre><code class="language-bash hljs">noir config init
+noir scan ./api --config-file ./ci/noir.yaml
+</code></pre>
+<p>CLI <code>--pvalue</code> still wins when a one-off needs a different id. <a href="https://owasp-noir.github.io/noir/usage/configurations/configuration_file/">Configuration file</a> · <a href="https://owasp-noir.github.io/noir/usage/cli_commands/#config"><code>noir config</code></a>.</p>
+<h2 id="what-bites-you">What bites you</h2>
+<ul>
+<li><strong>Nameless params get nothing.</strong> If an analyzer knows a hole exists but not its name, that hole is dropped before <code>--pvalue</code> runs. You will not see a stray <code>=42</code> in curl.</li>
+<li><strong><code>body</code> lands in <code>json</code>.</strong> Params recorded as <code>body</code> are normalized into the buckets the optimizer knows, so <code>--pvalue json=…</code> reaches them. Prefer v1 <code>--pvalue TYPE=VAL</code> over the old <code>--set-pvalue-*</code> aliases in new scripts.</li>
+<li><strong>Headers follow <code>-u</code>.</strong> <code>--probe-header</code> and <code>--pvalue header=…</code> on probe payloads target the <code>-u</code> host. Endpoints that already carry an absolute host from source keep it; probe headers aimed at <code>-u</code> are withheld from those. Export destinations you named yourself still get the header.</li>
+<li><strong>Secrets do not belong in committed yaml.</strong> Expand in CI (<code>--pvalue &quot;header=Authorization=Bearer $TOKEN&quot;</code>). Do not bake tokens into <code>ci/noir.yaml</code>.</li>
+</ul>
+<h2 id="wrap">Wrap</h2>
+<p>Discovery without values is a map with no street numbers. Number them once with <code>--pvalue</code>, reuse across curl, collections, OpenAPI, status-code filters, and proxy replay. Named overrides before catch-all rules. Write verbs on purpose. Defaults in the config file when the team agrees.</p>
+]]></content:encoded>
+      <pubDate>Sun, 27 Sep 2026 00:00:00 +0000</pubDate>
+      <category>tips</category>
+      <category>pvalue</category>
+      <category>curl</category>
+      <category>probe</category>
+      <category>workflow</category>
+    </item>
+  </channel>
+</rss>

@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://owasp-noir.github.io/noir/sitemap.xml

@@ -1,0 +1,147 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title>OWASP Noir - Authors: hak</title>
+    <link>https://owasp-noir.github.io/noir/ko/authors/hak/</link>
+    <description>Hunt every endpoint in your code. Noir statically analyses source across 29 languages and 205 frameworks, exposing shadow APIs and mapping the attack surface.</description>
+    <atom:link href="https://owasp-noir.github.io/noir/ko/authors/hak/rss.xml" rel="self" type="application/rss+xml" />
+    <item>
+      <title>한 번만 채우기: curl·컬렉션·probe에 같은 --pvalue</title>
+      <link>https://owasp-noir.github.io/noir/ko/blog/pvalue-for-runnable-catalogs/</link>
+      <guid>https://owasp-noir.github.io/noir/ko/blog/pvalue-for-runnable-catalogs/</guid>
+      <description>curl, Postman, OpenAPI, status-code probe, Burp/ZAP replay에 그대로 흘려보내는 파라미터 placeholder 한 세트.</description>
+      <content:encoded><![CDATA[<p><code>noir scan ./app -f curl</code>을 돌리면 <code>/users/{id}?limit=</code> 벽이 나온다. 지도로는 쓸 만하다. 요청으로는 못 쓴다.</p>
+<p><code>-f postman</code>은 같은 빈칸을 다른 봉투에 넣은 것이고, <code>--probe</code>는 리터럴 <code>{id}</code>에 404를 맞거나 GET/HEAD/OPTIONS에 한해 <code>1</code> / <code>noir</code>를 슬쩍 넣는다. sink 셋, 같은 파라미터에 대한 의견 셋.</p>
+<p><code>--pvalue</code>로 한 번에 정리한다. placeholder를 선언하면 optimizer가 포맷터·deliverer보다 <em>먼저</em> 모든 param에 값을 심는다. 스캔 한 번. 값 동일. sink 전부.</p>
+<h2 id="플래그">플래그</h2>
+<p>반복 가능. 각 인자는 <code>TYPE=VALUE</code>, 타입을 뺀 bare <code>VALUE</code>는 모든 타입에 먹힌다.</p>
+<pre><code class="language-bash hljs">noir scan ./app -f curl -u https://api.example.com \
+  --pvalue &quot;path=id=42&quot; \
+  --pvalue &quot;query=limit=10&quot; \
+  --pvalue &quot;header=Authorization=Bearer replace-me&quot;
+</code></pre>
+<table>
+<thead>
+<tr>
+<th><code>TYPE</code></th>
+<th>범위</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>any</code> (또는 타입 생략)</td>
+<td>모든 파라미터 타입</td>
+</tr>
+<tr>
+<td><code>query</code> / <code>form</code> / <code>json</code> / <code>header</code> / <code>cookie</code> / <code>path</code></td>
+<td>해당 버킷만</td>
+</tr>
+</tbody>
+</table>
+<p><code>VALUE</code>는 두 가지다.</p>
+<table>
+<thead>
+<tr>
+<th>형태</th>
+<th>동작</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>42</code></td>
+<td>대상 타입의 모든 파라미터</td>
+</tr>
+<tr>
+<td><code>id=42</code> 또는 <code>id:42</code></td>
+<td>이름이 <code>id</code>인 파라미터만</td>
+</tr>
+</tbody>
+</table>
+<p>엔드포인트 목록을 정리하는 시점에 돌아간다. curl / HTTPie / PowerShell / OpenAPI / Postman / JSON / YAML과 probe/export보다 앞이다. 선언 하나, consumer 전부. 포맷: <a href="https://owasp-noir.github.io/noir/ko/usage/output_formats/curl/">cURL / HTTPie / PowerShell</a>. probe: <a href="https://owasp-noir.github.io/noir/ko/usage/more_features/deliver/">결과 전달</a>.</p>
+<h2 id="순서가-발목을-잡는다">순서가 발목을 잡는다</h2>
+<p>매칭은 first-hit. 타입 전용 규칙이 전역 <code>any</code>보다 먼저라서, path에서는 <code>--pvalue path=…</code>가 bare <code>--pvalue test</code>를 이긴다.</p>
+<p>같은 타입 안에서는 catch-all이 <em>모든</em> 이름에 걸린다. 이름 지정 오버라이드를 앞에 둬라.</p>
+<pre><code class="language-bash hljs"># limit → 10, 나머지 query → 1
+noir scan ./app -f curl -u https://api.example.com \
+  --pvalue &quot;query=limit=10&quot; \
+  --pvalue &quot;query=1&quot;
+</code></pre>
+<p>두 줄을 뒤집으면 <code>limit</code>도 <code>1</code>이다. catch-all이 먼저 맞았기 때문. catch-all을 앞에 둔 문서 예시는 이 matcher 기준으로는 틀린 순서다. 이름 지정 → 타입 기본값.</p>
+<h2 id="같은-선언-세-곳에서-이득-보는-지점">같은 선언, 세 곳에서 이득 보는 지점</h2>
+<h3 id="바로-붙여-넣을-수-있는-curl">바로 붙여 넣을 수 있는 curl</h3>
+<pre><code class="language-bash hljs">noir scan ./api -f curl -u https://staging.example.com \
+  --pvalue &quot;path=id=42&quot; \
+  --pvalue &quot;path=slug=demo&quot; \
+  --pvalue &quot;query=1&quot; \
+  --pvalue &quot;header=Authorization=Bearer $STAGING_TOKEN&quot; \
+  -o /tmp/api.curl.sh
+</code></pre>
+<p><code>source</code>하면 끝. path 템플릿은 curl 빌더가 내보내는 URL에 이미 치환돼 있다. <code>{id}</code>를 줄마다 고칠 일 없다.</p>
+<h3 id="팀용-postman-openapi">팀용 Postman / OpenAPI</h3>
+<pre><code class="language-bash hljs">noir scan ./api -f postman -u https://staging.example.com \
+  --pvalue &quot;path=id=42&quot; \
+  --pvalue &quot;query=limit=10&quot; \
+  --pvalue &quot;header=Authorization=Bearer replace-me&quot; \
+  -o /tmp/api.postman.json
+
+noir scan ./api -f oas3 -u https://staging.example.com \
+  --pvalue &quot;path=id=42&quot; \
+  --pvalue &quot;query=limit=10&quot; \
+  -o /tmp/api.openapi.json
+</code></pre>
+<p>curl 때와 같은 <code>--pvalue</code> 블록. 리뷰어는 컬렉션 하나 import, CI는 어제 OpenAPI랑 diff. 포맷이 바뀌어도 placeholder는 안 흔들린다.</p>
+<h3 id="status-code로-라이브-검증-필요하면-proxy-replay">status code로 라이브 검증, 필요하면 proxy replay</h3>
+<pre><code class="language-bash hljs"># 관측된 코드 붙이고, 뻔한 miss는 버림
+noir scan ./api -u https://staging.example.com \
+  --status-codes --exclude-codes 404,502 \
+  --pvalue &quot;path=id=42&quot; \
+  --pvalue &quot;query=1&quot; \
+  -f json -o /tmp/live.json
+
+# 타깃 부하를 두 배로 안 늘리고 Burp/ZAP로 read 트래픽만
+noir scan ./api -u https://staging.example.com \
+  --probe-via http://127.0.0.1:8080 \
+  --probe-match &quot;GET&quot; \
+  --pvalue &quot;path=id=42&quot; \
+  --pvalue &quot;header=Authorization=Bearer $STAGING_TOKEN&quot;
+</code></pre>
+<p><code>--status-codes</code>, <code>--probe</code>, <code>--probe-via</code> 전부 <code>-u</code>가 필요하다.</p>
+<p>probe path 채움엔 나중에 뼈아픈 안전장치가 있다. <code>--pvalue path=…</code>가 없으면 read-only(GET, HEAD, OPTIONS)에만 <code>1</code> / <code>noir</code>를 자동으로 넣는다. POST / PUT / PATCH / DELETE는 리터럴 템플릿을 유지해서, 실수로 <code>DELETE /users/1</code>이 나가지 않는다. 명시적 <code>--pvalue path=id=42</code>는 write를 포함한 <em>모든</em> verb에 적용된다. 의도적으로 쓰거나, 준비될 때까지 <code>--probe-skip &quot;POST&quot;</code> / <code>--probe-skip &quot;DELETE&quot;</code>로 write를 막아 둬라.</p>
+<h2 id="기본값은-설정-파일에">기본값은 설정 파일에</h2>
+<p>같은 키, CI마다 플래그 붙여 넣기 없음:</p>
+<pre><code class="language-yaml hljs">url: &quot;https://staging.example.com&quot;
+format: &quot;json&quot;
+status_codes: true
+exclude_codes: &quot;404,502&quot;
+set_pvalue_path:
+  - &quot;id=42&quot;
+  - &quot;slug=demo&quot;
+set_pvalue_query:
+  - &quot;limit=10&quot;
+  - &quot;1&quot;
+set_pvalue_header:
+  - &quot;X-Debug-Tenant=noir-ci&quot;
+</code></pre>
+<pre><code class="language-bash hljs">noir config init
+noir scan ./api --config-file ./ci/noir.yaml
+</code></pre>
+<p>일회성으로 다른 id가 필요하면 CLI <code>--pvalue</code>가 이긴다. <a href="https://owasp-noir.github.io/noir/ko/usage/configurations/configuration_file/">설정 파일</a> · <a href="https://owasp-noir.github.io/noir/ko/usage/cli_commands/#config"><code>noir config</code></a>.</p>
+<h2 id="여기서-자주-밟는다">여기서 자주 밟는다</h2>
+<ul>
+<li><strong>이름 없는 param은 값을 못 받는다.</strong> 구멍은 알지만 이름을 모르는 analyzer 결과는 <code>--pvalue</code> 전에 빠진다. curl에 이상한 <code>=42</code>는 안 생긴다.</li>
+<li><strong><code>body</code>는 <code>json</code>으로 들어간다.</strong> <code>body</code>로 기록된 param은 optimizer가 아는 버킷으로 정규화되니 <code>--pvalue json=…</code>가 닿는다. 새 스크립트에선 옛 <code>--set-pvalue-*</code>보다 v1 <code>--pvalue TYPE=VAL</code>을 써라.</li>
+<li><strong>헤더는 <code>-u</code>를 따른다.</strong> <code>--probe-header</code>와 probe payload용 <code>--pvalue header=…</code>는 <code>-u</code> 타깃용이다. 소스에 absolute host가 이미 찍힌 엔드포인트는 그 host를 유지하고, <code>-u</code>용 probe 헤더는 빠진다. 직접 지정한 export 목적지는 헤더를 그대로 받는다.</li>
+<li><strong>시크릿은 커밋하지 마라.</strong> CI에서 env로 펼쳐라 (<code>--pvalue &quot;header=Authorization=Bearer $TOKEN&quot;</code>). <code>ci/noir.yaml</code>에 토큰 넣지 말고.</li>
+</ul>
+<h2 id="정리">정리</h2>
+<p>값 없는 discovery는 번지 없는 지도다. <code>--pvalue</code>로 한 번 매기고 curl, 컬렉션, OpenAPI, status-code 필터, proxy replay에 같은 번호를 써라. catch-all보다 이름 지정 오버라이드를 앞에. write verb는 의도적으로. 팀이 placeholder에 합의하면 설정 파일에 기본값을.</p>
+]]></content:encoded>
+      <pubDate>Sun, 27 Sep 2026 00:00:00 +0000</pubDate>
+      <category>tips</category>
+      <category>pvalue</category>
+      <category>curl</category>
+      <category>probe</category>
+      <category>workflow</category>
+    </item>
+  </channel>
+</rss>
