@@ -100,10 +100,25 @@ module NoirAIContext
     # like input (redirect_input param covers url/uri/redirect/
     # return/next/dest/callback — all the names that typically
     # carry attacker-controlled URLs into server-side fetches).
+    #
+    # Hunt may already have tagged the same URL-like param as `ssrf`
+    # (param-name heuristic, confidence ~58). That weak tag must not
+    # satisfy this combination check — otherwise the stronger
+    # outbound_http + URL-input roll-up never appears. Upgrade /
+    # replace any non-heuristic `ssrf` when the combination ingredients
+    # exist; only skip when a heuristic combination SSRF is already present.
     private def add_ssrf_signal(context : AIContext, anchor : PathInfo?, route_snippet : String?)
       return unless context.sinks.any? { |s| s.kind == "outbound_http" }
       return unless context.signals.any? { |s| s.kind == "redirect_input" }
-      return if context.signals.any? { |s| s.kind == "ssrf" }
+
+      existing_ssrf = context.signals.select { |s| s.kind == "ssrf" }
+      return if existing_ssrf.any? { |s| s.source == "heuristic" }
+
+      # Drop weaker Hunt / param-tagger SSRF so the combination signal
+      # is the one LLMs see (and so it does not waste a cap slot).
+      unless existing_ssrf.empty?
+        context.signals.reject! { |s| s.kind == "ssrf" }
+      end
 
       outbound = context.sinks.find! { |s| s.kind == "outbound_http" }
       context.push_signal(AIContextEntry.new(
