@@ -157,8 +157,15 @@ describe "NoirAIContext" do
       spec_only.details = spec_details
 
       spec_context = NoirAIContext.apply([spec_only])[0].ai_context.should_not be_nil
+      # Spec docs still anchor route metadata when no implementation exists.
+      route = spec_context.signals.find! { |signal| signal.kind == "route_definition" }
+      route.path.should eq(spec_path)
       spec_context.guards.should be_empty
       spec_context.sinks.should be_empty
+      # Decoy summary must not leak into any evidence bucket that LLMs treat as handler proof.
+      spec_context.signals.map(&.kind).should_not contain("csrf_exempt")
+      spec_context.signals.map(&.kind).should_not contain("jwt_unsafe")
+      spec_context.signals.map(&.kind).should_not contain("cors_open")
 
       with_temp_ai_context_source(handler, ".js") do |handler_path|
         implementation_first = Endpoint.new("/run", "POST")
@@ -168,6 +175,8 @@ describe "NoirAIContext" do
         implementation_first.details = details
 
         context = NoirAIContext.apply([implementation_first])[0].ai_context.should_not be_nil
+        route = context.signals.find! { |signal| signal.kind == "route_definition" }
+        route.path.should eq(handler_path)
         context.guards.should be_empty
         context.sinks.should be_empty
       end

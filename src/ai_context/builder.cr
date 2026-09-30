@@ -322,7 +322,7 @@ module NoirAIContext
       if route_snippet && route_snippet.matches?(METHOD_DISPATCH_PATTERN)
         return
       end
-      endpoint.details.code_paths.each do |path_info|
+      source_scan_paths(endpoint).each do |path_info|
         scope = @reader.route_scope_snippet_for(path_info.path, path_info.line)
         if scope && scope.matches?(METHOD_DISPATCH_PATTERN)
           return
@@ -352,9 +352,10 @@ module NoirAIContext
 
     private def add_log_injection_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
       return if context.signals.any? { |s| s.kind == "log_injection" }
-      return if endpoint.details.code_paths.empty?
+      paths = source_scan_paths(endpoint)
+      return if paths.empty?
 
-      endpoint.details.code_paths.each do |path_info|
+      paths.each do |path_info|
         scope = @reader.route_scope_snippet_for(path_info.path, path_info.line)
         next unless scope
         next unless scope.matches?(LOG_EMITTER_PATTERN)
@@ -512,9 +513,10 @@ module NoirAIContext
 
     private def add_sensitive_response_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
       return if context.signals.any? { |s| s.kind == "sensitive_response" }
-      return if endpoint.details.code_paths.empty?
+      paths = source_scan_paths(endpoint)
+      return if paths.empty?
 
-      endpoint.details.code_paths.each do |path_info|
+      paths.each do |path_info|
         # `scope` stays the default-width snippet so the emitted evidence
         # keeps the same size as every other entry; `body` is the wider
         # view used only for detection.
@@ -728,9 +730,10 @@ module NoirAIContext
 
     private def add_credential_from_source_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?)
       return if context.signals.any? { |s| s.kind == "credential_input" }
-      return if endpoint.details.code_paths.empty?
+      paths = source_scan_paths(endpoint)
+      return if paths.empty?
 
-      endpoint.details.code_paths.each do |path_info|
+      paths.each do |path_info|
         snippet = @reader.route_scope_snippet_for(path_info.path, path_info.line)
         next unless snippet
 
