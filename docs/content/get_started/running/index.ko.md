@@ -136,6 +136,12 @@ noir scan . --ai-context
 noir scan . --ai-context guards,sinks
 ```
 
+파생 시그널은 근거가 되는 feature 버킷과 연결된 채로 남습니다. 시그널을
+선택하면 그 근거 증거가 함께 유지되고, feature 버킷만 선택하면 그 증거에
+연결된 시그널만 남겨서, 필터된 내보내기에도 판독에 필요한 맥락은 남기고
+관련 없는 시그널은 넣지 않습니다. 버킷을 가로지르는 priority roll-up은
+signals를 명시적으로 선택했을 때만 포함됩니다.
+
 데이터 모양과 프레임워크별 지원은 [Callee 커버리지](@/usage/supported/callee_coverage/index.ko.md)와 [AI 컨텍스트](@/usage/supported/ai_context_coverage/index.ko.md)를 참고하세요.
 
 ## 주요 플래그 정리

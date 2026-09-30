@@ -17,13 +17,20 @@ noir scan . --ai-context
 Pass a comma-separated bucket list to narrow the output to just the categories you care about. The filter applies at the data layer, so JSON / SARIF / YAML / Postman / OAS all see the same selection, not just the plain-text renderer.
 
 ```bash
-noir scan . --ai-context=guards,sinks       # only auth + likely-dangerous sinks
+noir scan . --ai-context=guards,sinks       # auth + sinks, plus linked signals
 noir scan . --ai-context=callee             # only the 1-hop handler callees
 noir scan . --ai-context=all                # explicit form of "everything"
 noir scan . --ai-context                    # bare form: also "everything"
 ```
 
 Valid feature names: `guards`, `callee`, `sources`, `sinks`, `validators`, `signals` (plus `all`). Names are case-insensitive.
+
+Derived signals stay linked to their supporting buckets. Selecting `signals`
+keeps the evidence those signals need (for example `ssrf` keeps
+`outbound_http` sinks), and selecting an evidence bucket keeps only the
+signals linked to it (for example `guards,sinks` still surfaces
+`authz_absence`). The cross-bucket `priority_review` roll-up is included
+when `signals` is selected explicitly.
 
 In plain output, every endpoint with non-empty context grows an `ai_context:` block. Model-based formats expose the same structure under standard locations:
 
