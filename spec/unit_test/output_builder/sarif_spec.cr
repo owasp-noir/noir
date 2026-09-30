@@ -56,9 +56,12 @@ describe "OutputBuilderSarif" do
     callees[1]["name"].as_s.should eq("AuditLog.record")
     callees[1].as_h.has_key?("path").should be_false
     callees[1]["line"].as_i.should eq(13)
-    guards = results[0]["properties"]["noir"]["ai_context"]["guards"].as_a
+    ai_context = results[0]["properties"]["noir"]["ai_context"]
+    guards = ai_context["guards"].as_a
     guards.size.should eq(1)
     guards[0]["source"].as_s.should eq("express_auth")
+    ai_context.as_h.has_key?("sinks").should be_false
+    ai_context.as_h.has_key?("callees").should be_false
   end
 
   it "print with endpoints and passive results" do

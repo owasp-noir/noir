@@ -97,6 +97,9 @@ describe "OutputBuilderOas3" do
     callees[1]["line"].as_i.should eq(13)
     get_op["x-noir-ai-context"]["guards"].as_a.size.should eq(1)
     get_op["x-noir-ai-context"]["guards"][0]["source"].as_s.should eq("express_auth")
+    # Empty buckets must be omitted (#2787) — `"sinks":[]` looks confirmed-none.
+    get_op["x-noir-ai-context"].as_h.has_key?("sinks").should be_false
+    get_op["x-noir-ai-context"].as_h.has_key?("signals").should be_false
 
     # Check POST endpoint with JSON body
     post_json_op = paths["/pets"]["post"]
