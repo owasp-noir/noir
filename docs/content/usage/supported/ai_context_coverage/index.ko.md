@@ -17,13 +17,19 @@ noir scan . --ai-context
 쉼표 구분 bucket 목록을 넘기면 원하는 카테고리만 남깁니다. 필터는 데이터 단에서 동작하므로 JSON / SARIF / YAML / Postman / OAS 모두 동일한 선택을 봅니다 (plain-text 렌더러만이 아니라).
 
 ```bash
-noir scan . --ai-context=guards,sinks       # auth + 위험 sink 만
+noir scan . --ai-context=guards,sinks       # auth + sink, 연결된 시그널 포함
 noir scan . --ai-context=callee             # 1-hop handler callee 만
 noir scan . --ai-context=all                # "전부" 의 명시적 형태
 noir scan . --ai-context                    # bare 형태, 동일하게 "전부"
 ```
 
 유효한 feature 이름: `guards`, `callee`, `sources`, `sinks`, `validators`, `signals` (그리고 `all`). 대소문자 구분 없음.
+
+파생 시그널은 근거 버킷과 연결된 채로 남습니다. `signals`를 선택하면 그
+시그널에 필요한 증거(예: `ssrf` → `outbound_http` sink)가 함께 유지되고,
+증거 버킷만 선택하면 그에 연결된 시그널만 남습니다(예: `guards,sinks`에도
+`authz_absence`가 남음). 버킷을 가로지르는 `priority_review` roll-up은
+`signals`를 명시적으로 선택했을 때만 포함됩니다.
 
 plain 출력에서는 비어있지 않은 컨텍스트를 가진 엔드포인트마다 `ai_context:` 블록이 추가됩니다. 모델 기반 출력에서는 다음 위치에 동일한 구조가 노출됩니다.
 

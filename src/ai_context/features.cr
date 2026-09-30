@@ -28,6 +28,7 @@ module NoirAIContext
   SIGNAL_FEATURE_DEPENDENCIES = {
     "authz_absence"            => %w[guards sources],
     "guard_absence"            => %w[guards],
+    "csrf_exempt"              => %w[guards],
     "idor_review"              => %w[guards sources],
     "rate_limit_absence"       => %w[guards sources],
     "ssrf"                     => %w[sinks sources],

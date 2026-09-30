@@ -3816,6 +3816,22 @@ describe "AI context feature dependencies in plain output" do
     filtered_context.sources.map(&.kind).should eq(["request_input"])
   end
 
+  it "keeps csrf_exempt with guards the same way as guard_absence" do
+    endpoint = Endpoint.new("/login", "POST")
+    context = AIContext.new
+    context.push_guard(AIContextEntry.new("auth_guard", "login_required", source: "route_source"))
+    context.push_signal(AIContextEntry.new("csrf_exempt", "csrf_exempt", source: "route_source"))
+    context.push_signal(AIContextEntry.new("ssrf", "fetch", source: "heuristic"))
+    endpoint.ai_context = context
+
+    endpoints = [endpoint]
+    NoirAIContext.apply_feature_filter(endpoints, Set{"guards"})
+    filtered = endpoints[0].ai_context.should_not be_nil
+    filtered.guards.map(&.kind).should contain("auth_guard")
+    filtered.signals.map(&.kind).should eq(["csrf_exempt"])
+    filtered.sinks.should be_empty
+  end
+
   it "does not attach aggregate priority signals to one possible contributor bucket" do
     endpoint = Endpoint.new("/write/:id", "PUT")
     context = AIContext.new
