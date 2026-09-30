@@ -1,5 +1,6 @@
 require "../../spec_helper"
 require "../../../src/ai_context/augmentor"
+require "../../../src/output_builder/common"
 
 def with_temp_ai_context_source(content : String, ext : String = ".txt", & : String ->)
   path = "/tmp/noir-ai-context-#{Random.rand(1_000_000)}#{ext}"
@@ -9,6 +10,16 @@ def with_temp_ai_context_source(content : String, ext : String = ".txt", & : Str
   ensure
     File.delete(path) if File.exists?(path)
   end
+end
+
+private def render_ai_context_with_features(endpoint : Endpoint, features : String) : String
+  options = create_test_options
+  options["ai_context"] = YAML::Any.new(true)
+  options["ai_context_features"] = YAML::Any.new(features)
+  builder = OutputBuilderCommon.new(options)
+  builder.io = IO::Memory.new
+  builder.print([endpoint])
+  builder.io.to_s
 end
 
 describe "NoirAIContext" do
@@ -2242,10 +2253,17 @@ describe "NoirAIContext" do
       endpoint.details = details
       endpoint.push_param(Param.new("id", "1", "path"))
 
-      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      endpoints = NoirAIContext.apply([endpoint])
+      context = endpoints[0].ai_context.should_not be_nil
       context.guards.map(&.kind).should contain("auth_guard")
       context.guards.map(&.kind).should_not contain("authz_guard")
       context.signals.map(&.kind).should contain("authz_absence")
+
+      NoirAIContext.apply_feature_filter(endpoints, Set{"guards", "sinks"})
+      filtered_context = endpoints[0].ai_context.should_not be_nil
+      filtered_context.guards.map(&.kind).should contain("auth_guard")
+      filtered_context.sources.map(&.kind).should contain("request_input")
+      filtered_context.signals.map(&.kind).should contain("authz_absence")
     end
   end
 
@@ -2979,11 +2997,19 @@ describe "NoirAIContext" do
       endpoint.push_param(Param.new("url", "https://example.com", "query"))
       endpoint.push_callee(Callee.new("fetch", path, 2))
 
-      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      endpoints = NoirAIContext.apply([endpoint])
+      context = endpoints[0].ai_context.should_not be_nil
+      context.sinks.map(&.kind).should contain("outbound_http")
       context.signals.map(&.kind).should contain("ssrf")
       ssrf = context.signals.find!(&.kind.== "ssrf")
       ssrf.source.should eq("heuristic")
       ssrf.confidence.should eq(72)
+
+      NoirAIContext.apply_feature_filter(endpoints, Set{"signals"})
+      filtered_context = endpoints[0].ai_context.should_not be_nil
+      filtered_context.signals.map(&.kind).should contain("ssrf")
+      filtered_context.sources.map(&.kind).should contain("request_input")
+      filtered_context.sinks.map(&.kind).should contain("outbound_http")
     end
   end
 
@@ -3652,5 +3678,93 @@ describe "NoirAIContext.apply_feature_filter" do
     arr[0].ai_context.should be_nil
     NoirAIContext.apply_feature_filter(arr, Set{"guards"})
     arr[0].ai_context.should be_nil
+  end
+end
+
+describe "AI context feature dependencies in plain output" do
+  it "renders linked signals and evidence buckets together" do
+    endpoint = Endpoint.new("/fetch/:id", "PUT")
+    context = AIContext.new
+    context.push_guard(AIContextEntry.new("auth_guard", "authenticate_user!", source: "route_source"))
+    context.push_source(AIContextEntry.new("request_input", "path.id", source: "param"))
+    context.push_sink(AIContextEntry.new("outbound_http", "fetch", source: "route_source"))
+    context.push_signal(AIContextEntry.new("authz_absence", endpoint.url, source: "heuristic"))
+    context.push_signal(AIContextEntry.new("ssrf", "fetch", source: "heuristic"))
+    context.push_signal(AIContextEntry.new("log_injection", "log+input", source: "route_source"))
+    endpoint.ai_context = context
+
+    signals_only = render_ai_context_with_features(endpoint, "signals")
+    signals_only.should contain("guards:")
+    signals_only.should contain("sinks:")
+    signals_only.should contain("signals:")
+
+    evidence_only = render_ai_context_with_features(endpoint, "guards,sinks")
+    evidence_only.should contain("guards:")
+    evidence_only.should contain("sinks:")
+    evidence_only.should contain("signals:")
+  end
+
+  it "keeps unrelated signals out of narrow feature selections" do
+    endpoint = Endpoint.new("/fetch/:id", "PUT")
+    context = AIContext.new
+    context.push_guard(AIContextEntry.new("auth_guard", "authenticate_user!", source: "route_source"))
+    context.push_source(AIContextEntry.new("request_input", "path.id", source: "param"))
+    context.push_sink(AIContextEntry.new("outbound_http", "fetch", source: "route_source"))
+    context.push_signal(AIContextEntry.new("authz_absence", endpoint.url, source: "heuristic"))
+    context.push_signal(AIContextEntry.new("ssrf", "fetch", source: "heuristic"))
+    context.push_signal(AIContextEntry.new("log_injection", "log+input", source: "route_source"))
+    endpoint.ai_context = context
+
+    guards_only = render_ai_context_with_features(endpoint, "guards")
+    guards_only.should contain("authz_absence")
+    guards_only.should contain("sources:")
+    guards_only.should_not contain("ssrf")
+    guards_only.should_not contain("log_injection")
+    guards_only.should_not contain("outbound_http")
+
+    sources_only = render_ai_context_with_features(endpoint, "sources")
+    sources_only.should contain("log_injection")
+
+    endpoints = [endpoint]
+    NoirAIContext.apply_feature_filter(endpoints, Set{"guards"})
+    filtered_context = endpoints[0].ai_context.should_not be_nil
+    filtered_context.signals.map(&.kind).should eq(["authz_absence"])
+    filtered_context.sources.map(&.kind).should eq(["request_input"])
+  end
+
+  it "does not attach aggregate priority signals to one possible contributor bucket" do
+    endpoint = Endpoint.new("/write/:id", "PUT")
+    context = AIContext.new
+    context.push_guard(AIContextEntry.new("auth_guard", "authenticate_user!", source: "route_source"))
+    context.push_sink(AIContextEntry.new("sql", "query", source: "route_source"))
+    context.push_validator(AIContextEntry.new("schema_validation", "RequestSchema", source: "route_source"))
+    context.push_signal(AIContextEntry.new("priority_review", "high", source: "heuristic"))
+    context.push_signal(AIContextEntry.new("cors_open", "wildcard+credentials", source: "route_source"))
+    context.push_signal(AIContextEntry.new("jwt_unsafe", "verify disabled", source: "route_source"))
+    endpoint.ai_context = context
+
+    guard_selection = [endpoint]
+    NoirAIContext.apply_feature_filter(guard_selection, Set{"guards"})
+    guard_context = guard_selection[0].ai_context.should_not be_nil
+    guard_context.guards.map(&.kind).should contain("auth_guard")
+    guard_context.signals.map(&.kind).should be_empty
+
+    signal_endpoint = Endpoint.new("/write/:id", "PUT")
+    signal_context = AIContext.new
+    signal_context.push_guard(AIContextEntry.new("auth_guard", "authenticate_user!", source: "route_source"))
+    signal_context.push_sink(AIContextEntry.new("sql", "query", source: "route_source"))
+    signal_context.push_validator(AIContextEntry.new("schema_validation", "RequestSchema", source: "route_source"))
+    signal_context.push_signal(AIContextEntry.new("priority_review", "high", source: "heuristic"))
+    signal_context.push_signal(AIContextEntry.new("cors_open", "wildcard+credentials", source: "route_source"))
+    signal_context.push_signal(AIContextEntry.new("jwt_unsafe", "verify disabled", source: "route_source"))
+    signal_endpoint.ai_context = signal_context
+
+    signal_selection = [signal_endpoint]
+    NoirAIContext.apply_feature_filter(signal_selection, Set{"signals"})
+    signal_context = signal_selection[0].ai_context.should_not be_nil
+    signal_context.signals.map(&.kind).should contain("priority_review")
+    signal_context.guards.map(&.kind).should contain("auth_guard")
+    signal_context.sinks.map(&.kind).should contain("sql")
+    signal_context.validators.map(&.kind).should contain("schema_validation")
   end
 end

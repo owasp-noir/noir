@@ -132,6 +132,12 @@ noir scan . --ai-context
 noir scan . --ai-context guards,sinks
 ```
 
+Derived signals stay linked to their supporting feature buckets. Selecting a
+signal keeps its supporting evidence, and selecting a feature bucket keeps
+only the signals linked to that evidence, so filtered exports retain enough
+context to interpret the finding without adding unrelated signals. The
+cross-bucket priority roll-up is included when signals are selected explicitly.
+
 See [Callee Coverage](@/usage/supported/callee_coverage/index.md) and [AI Context](@/usage/supported/ai_context_coverage/index.md) for the data shape and per-framework support.
 
 ## Quick Reference

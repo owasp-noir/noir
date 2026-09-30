@@ -269,7 +269,11 @@ class OutputBuilderCommon < OutputBuilder
       context = endpoint.ai_context
       if any_to_bool(@options["ai_context"]?) && !context.nil?
         unless context.empty?
-          features = ai_context_feature_filter
+          selection = NoirAIContext.feature_selection_with_signal_evidence(
+            ai_context_feature_filter,
+            context.signals.map { |signal| {signal.kind, signal.source} }
+          )
+          features = selection[:features]
           # {feature name, printed label, entries}. The two names differ for
           # callees on purpose: the flag is `--ai-context callee` (singular),
           # the printed block is "callees".
@@ -279,7 +283,7 @@ class OutputBuilderCommon < OutputBuilder
             {"sources", "sources", context.sources},
             {"sinks", "sinks", context.sinks},
             {"validators", "validators", context.validators},
-            {"signals", "signals", context.signals},
+            {"signals", "signals", context.signals.select { |signal| selection[:signals].includes?(signal.kind) }},
           }
 
           if blocks.any? { |feature, _, entries| features.includes?(feature) && !entries.empty? }

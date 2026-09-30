@@ -26,12 +26,11 @@ module NoirAIContext
     Builder.new.apply(endpoints)
   end
 
-  # Clears AIContext buckets the user didn't request. Mirrors the
-  # plain-text builder's feature filter so JSON/YAML/SARIF/Postman/
-  # OAS — which serialize the struct directly — show the same
-  # subset the user asked for via `--ai-context=guards,sinks`.
-  # `features` holds bucket names from `NoirAIContext::FEATURES`. An empty
-  # set, or one naming every bucket, is a no-op.
+  # Filters AIContext buckets while preserving evidence relationships for
+  # derived signals. Mirrors the plain-text builder's feature filter so
+  # JSON/YAML/SARIF/Postman/OAS and plain output show the same linked subset.
+  # `features` holds bucket names from `NoirAIContext::FEATURES`. Selecting
+  # every bucket is a no-op.
   def apply_feature_filter(endpoints : Array(Endpoint), features : Set(String))
     return endpoints if FEATURES.all? { |feature| features.includes?(feature) }
 
@@ -43,12 +42,18 @@ module NoirAIContext
     # context only sticks via index writeback.
     endpoints.each_with_index do |endpoint, idx|
       next if (context = endpoint.ai_context).nil?
-      context.guards.clear unless features.includes?("guards")
-      context.callees.clear unless features.includes?("callee")
-      context.sources.clear unless features.includes?("sources")
-      context.sinks.clear unless features.includes?("sinks")
-      context.validators.clear unless features.includes?("validators")
-      context.signals.clear unless features.includes?("signals")
+      selection = feature_selection_with_signal_evidence(
+        features,
+        context.signals.map { |signal| {signal.kind, signal.source} }
+      )
+      visible_features = selection[:features]
+      context.signals.reject! { |signal| !selection[:signals].includes?(signal.kind) }
+      context.guards.clear unless visible_features.includes?("guards")
+      context.callees.clear unless visible_features.includes?("callee")
+      context.sources.clear unless visible_features.includes?("sources")
+      context.sinks.clear unless visible_features.includes?("sinks")
+      context.validators.clear unless visible_features.includes?("validators")
+      context.signals.clear unless visible_features.includes?("signals")
       endpoint.ai_context = context.empty? ? nil : context
       endpoints[idx] = endpoint
     end
