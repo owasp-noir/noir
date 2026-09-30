@@ -142,6 +142,47 @@ describe "NoirAIContext" do
     end
   end
 
+  it "does not source-scan OpenAPI JSON for handler sinks or guards" do
+    spec = %({"paths":{"/run":{"post":{"summary":"@PreAuthorize('hasRole(ADMIN)') Statement.executeQuery('SELECT 1 FROM users'); Runtime.getRuntime().exec('id'); eval(req.body.code)"}}}})
+    handler = <<-JS
+      app.post("/run", (req, res) => {
+        res.json({ ok: true })
+      })
+      JS
+
+    with_temp_ai_context_source(spec, ".json") do |spec_path|
+      spec_only = Endpoint.new("/run", "POST")
+      spec_details = spec_only.details
+      spec_details.add_path(PathInfo.new(spec_path, 1))
+      spec_only.details = spec_details
+
+      spec_context = NoirAIContext.apply([spec_only])[0].ai_context.should_not be_nil
+      # Spec docs still anchor route metadata when no implementation exists.
+      route = spec_context.signals.find! { |signal| signal.kind == "route_definition" }
+      route.path.should eq(spec_path)
+      spec_context.guards.should be_empty
+      spec_context.sinks.should be_empty
+      # Decoy summary must not leak into any evidence bucket that LLMs treat as handler proof.
+      spec_context.signals.map(&.kind).should_not contain("csrf_exempt")
+      spec_context.signals.map(&.kind).should_not contain("jwt_unsafe")
+      spec_context.signals.map(&.kind).should_not contain("cors_open")
+
+      with_temp_ai_context_source(handler, ".js") do |handler_path|
+        implementation_first = Endpoint.new("/run", "POST")
+        details = implementation_first.details
+        details.add_path(PathInfo.new(handler_path, 1))
+        details.add_path(PathInfo.new(spec_path, 1))
+        implementation_first.details = details
+
+        context = NoirAIContext.apply([implementation_first])[0].ai_context.should_not be_nil
+        route = context.signals.find! { |signal| signal.kind == "route_definition" }
+        route.path.should eq(handler_path)
+        context.guards.should be_empty
+        context.sinks.should be_empty
+      end
+    end
+  end
+
   it "expands a truncated source-scan match to the full call label" do
     source = <<-CODE
       @router.get(
