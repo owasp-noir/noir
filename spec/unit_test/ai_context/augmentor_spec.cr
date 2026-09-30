@@ -2871,6 +2871,43 @@ describe "NoirAIContext" do
 
       context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
       context.signals.map(&.kind).should contain("ssrf")
+      ssrf = context.signals.find!(&.kind.== "ssrf")
+      ssrf.source.should eq("heuristic")
+      ssrf.confidence.should eq(72)
+    end
+  end
+
+  it "upgrades Hunt param-tag ssrf to combination heuristic when outbound_http exists" do
+    # Regression for #2788: Hunt tags URL-like params as `ssrf` (conf ~58).
+    # That weak tag used to satisfy add_ssrf_signal's kind-collision guard
+    # and suppress the stronger outbound_http + redirect_input roll-up.
+    source = <<-CODE
+      app.get('/fetch', (req, res) => {
+        const data = await fetch(req.query.url)
+        res.send(data)
+      })
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/fetch", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      url_param = Param.new("url", "https://example.com", "query")
+      url_param.add_tag(Tag.new("ssrf", "This parameter may be vulnerable to Server Side Request Forgery (SSRF) attacks.", "Hunt"))
+      endpoint.push_param(url_param)
+      endpoint.push_callee(Callee.new("fetch", path, 2))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+      ssrf_signals = context.signals.select { |s| s.kind == "ssrf" }
+      ssrf_signals.size.should eq(1)
+      ssrf = ssrf_signals[0]
+      ssrf.source.should eq("heuristic")
+      ssrf.confidence.should eq(72)
+      ssrf.description.should_not be_nil
+      ssrf.description.not_nil!.should contain("outbound HTTP")
     end
   end
 
