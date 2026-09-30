@@ -7,6 +7,18 @@ expected_endpoints = [
     Param.new("userId", "", "json"),
     Param.new("includeProfile", "", "json"),
   ]),
+  Endpoint.new("/services/UserService/ListUsers", "POST", [
+    Param.new("SOAPAction", "http://example.com/userservice/ListUsers", "header"),
+    Param.new("Content-Type", "text/xml; charset=utf-8", "header"),
+    Param.new("userId", "", "json"),
+    Param.new("includeProfile", "", "json"),
+  ]),
+  Endpoint.new("/services/UserService/FindUser", "POST", [
+    Param.new("SOAPAction", "http://example.com/userservice/FindUser", "header"),
+    Param.new("Content-Type", "text/xml; charset=utf-8", "header"),
+    Param.new("userId", "", "json"),
+    Param.new("includeProfile", "", "json"),
+  ]),
   Endpoint.new("/services/UserService/CreateUser", "POST", [
     Param.new("SOAPAction", "http://example.com/userservice/CreateUser", "header"),
     Param.new("Content-Type", "text/xml; charset=utf-8", "header"),

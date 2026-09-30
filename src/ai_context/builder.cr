@@ -21,6 +21,10 @@ module NoirAIContext
     MOBILE_SOURCE_EXTS       = Set{".swift", ".m", ".mm", ".kt", ".java"}
     PRIVILEGED_REALTIME_TAGS = Set{"admin"}
 
+    # SOAP transports every operation over POST. Treat read-style operation
+    # names as reads so HTTP method heuristics do not label them as mutations.
+    SOAP_READ_OPERATION_PATTERN = /\A(?:[Gg][Ee][Tt]|[Ll][Ii][Ss][Tt]|[Ff][Ii][Nn][Dd])(?:[A-Z]|[_-]|\z)/
+
     @reader : SourceReader
 
     def initialize
@@ -840,11 +844,32 @@ module NoirAIContext
       # that does not make them HTTP state-changing endpoints. Gateway routes
       # keep protocol="http" and still receive the HTTP method signal.
       return false if endpoint.protocol == "grpc"
+      return false if soap_read_endpoint?(endpoint)
 
       method = endpoint.method.upcase
       return true if STATE_CHANGING_METHODS.includes?(method)
 
       privileged_realtime_endpoint?(endpoint)
+    end
+
+    private def soap_read_endpoint?(endpoint : Endpoint) : Bool
+      return false unless endpoint.method.upcase == "POST"
+
+      soap_action = endpoint.params.find do |param|
+        param.param_type == "header" && param.name.downcase.tr("-", "_") == "soapaction"
+      end
+      return false unless soap_action || endpoint.tags.any? { |tag| tag.name == "soap" }
+
+      operation = if soap_action && !soap_action.value.empty?
+                    action = soap_action.value.strip.gsub(/\A["']|["']\z/, "").rstrip('/')
+                    action.split(/[\/#:.]/).last?
+                  else
+                    endpoint.url.rstrip('/').split('/').last?
+                  end
+      return false unless operation
+      return false if operation.matches?(MUTATING_POST_CALLEE_PATTERN)
+
+      operation.matches?(SOAP_READ_OPERATION_PATTERN)
     end
 
     private def privileged_realtime_endpoint?(endpoint : Endpoint) : Bool
