@@ -501,14 +501,23 @@ class OutputBuilder
     return unless context
     return if context.empty?
 
-    JSON::Any.new({
-      "guards"     => JSON::Any.new(context.guards.map { |entry| noir_ai_context_entry_json(entry) }),
-      "callees"    => JSON::Any.new(context.callees.map { |entry| noir_ai_context_entry_json(entry) }),
-      "sources"    => JSON::Any.new(context.sources.map { |entry| noir_ai_context_entry_json(entry) }),
-      "sinks"      => JSON::Any.new(context.sinks.map { |entry| noir_ai_context_entry_json(entry) }),
-      "validators" => JSON::Any.new(context.validators.map { |entry| noir_ai_context_entry_json(entry) }),
-      "signals"    => JSON::Any.new(context.signals.map { |entry| noir_ai_context_entry_json(entry) }),
-    } of String => JSON::Any)
+    # Omit empty buckets — same semantics as plain/Postman and as
+    # AIContext's JSON::Serializable ignore_serialize rules. Emitting
+    # `"guards":[]` after a feature filter looks like confirmed absence.
+    data = {} of String => JSON::Any
+    append_ai_context_bucket_json(data, "guards", context.guards)
+    append_ai_context_bucket_json(data, "callees", context.callees)
+    append_ai_context_bucket_json(data, "sources", context.sources)
+    append_ai_context_bucket_json(data, "sinks", context.sinks)
+    append_ai_context_bucket_json(data, "validators", context.validators)
+    append_ai_context_bucket_json(data, "signals", context.signals)
+    JSON::Any.new(data)
+  end
+
+  private def append_ai_context_bucket_json(data : Hash(String, JSON::Any), key : String, entries : Array(AIContextEntry))
+    return if entries.empty?
+
+    data[key] = JSON::Any.new(entries.map { |entry| noir_ai_context_entry_json(entry) })
   end
 
   protected def add_noir_ai_context_extension(operation : Hash(String, JSON::Any), endpoint : Endpoint)
@@ -617,6 +626,11 @@ class OutputBuilder
       label << " [" << entry.source << ']' if entry.source
       if location = format_location(entry.path, entry.line)
         label << ' ' << location
+      end
+      # Confidence used to be JSON-only; plain/Postman then made a
+      # priority_review@90 and a Hunt heuristic@58 look identical.
+      if confidence = entry.confidence
+        label << " (conf " << confidence << ')'
       end
       label << " - " << entry.description if entry.description
       label << " :: " << entry.snippet if entry.snippet

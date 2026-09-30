@@ -391,11 +391,33 @@ struct AIContext
 
   MAX_PER_SECTION = 16
 
+  # Empty buckets are omitted from JSON/YAML. An explicit `"guards":[]`
+  # reads as "confirmed none", which is wrong after `--ai-context=`
+  # clears unrequested buckets — and disagrees with plain/Postman, which
+  # already skip empty labels. Absence of the key means "no entries
+  # (or not requested)", matching those formats.
+  @[JSON::Field(ignore_serialize: guards.empty?)]
+  @[YAML::Field(ignore_serialize: guards.empty?)]
   property guards : Array(AIContextEntry) = [] of AIContextEntry
+
+  @[JSON::Field(ignore_serialize: callees.empty?)]
+  @[YAML::Field(ignore_serialize: callees.empty?)]
   property callees : Array(AIContextEntry) = [] of AIContextEntry
+
+  @[JSON::Field(ignore_serialize: sources.empty?)]
+  @[YAML::Field(ignore_serialize: sources.empty?)]
   property sources : Array(AIContextEntry) = [] of AIContextEntry
+
+  @[JSON::Field(ignore_serialize: sinks.empty?)]
+  @[YAML::Field(ignore_serialize: sinks.empty?)]
   property sinks : Array(AIContextEntry) = [] of AIContextEntry
+
+  @[JSON::Field(ignore_serialize: validators.empty?)]
+  @[YAML::Field(ignore_serialize: validators.empty?)]
   property validators : Array(AIContextEntry) = [] of AIContextEntry
+
+  @[JSON::Field(ignore_serialize: signals.empty?)]
+  @[YAML::Field(ignore_serialize: signals.empty?)]
   property signals : Array(AIContextEntry) = [] of AIContextEntry
 
   def initialize

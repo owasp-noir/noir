@@ -51,16 +51,13 @@ module NoirAIContext
     end
 
     # Specification documents can contain arbitrary examples and vendor
-    # extensions that happen to look like dangerous calls. When an endpoint
-    # also has implementation code, scan only that code so those strings do
-    # not become sinks. Pure specification endpoints still use their document
-    # as the fallback source.
+    # extensions that happen to look like dangerous calls. They can anchor
+    # route metadata when no implementation is available, but only
+    # implementation paths are meaningful evidence for handler sinks/guards.
     private def source_scan_paths(endpoint : Endpoint) : Array(PathInfo)
-      implementation_paths = endpoint.details.code_paths.reject do |path_info|
+      endpoint.details.code_paths.reject do |path_info|
         MediaFilter.spec_document?(path_info.path)
       end
-
-      implementation_paths.empty? ? endpoint.details.code_paths : implementation_paths
     end
 
     private def build_context(endpoint : Endpoint) : AIContext
@@ -138,13 +135,10 @@ module NoirAIContext
     end
 
     # Path-traversal candidate: handler has a *code-derived* file_io
-    # sink AND a file-like input. The "code-derived" qualifier is
-    # what keeps this honest: the FileUpload tagger pushes a
-    # `file_io` sink to flag the endpoint as a file-handling route,
-    # but receiving a multipart upload doesn't itself imply that
-    # the file's PATH is attacker-controlled. The traversal pattern
-    # specifically wants `File.read(filename_from_user)` style sinks,
-    # not "endpoint accepts file content as bytes".
+    # sink AND a file-like input. FileUpload alone must not count —
+    # receiving a multipart upload does not imply the file's PATH is
+    # attacker-controlled. The filter also excludes any residual
+    # FileUpload-sourced sink if one still appears.
     private def add_path_traversal_signal(context : AIContext, anchor : PathInfo?, route_snippet : String?)
       code_derived_file_sink = context.sinks.find do |s|
         s.kind == "file_io" && s.source != "FileUpload"
@@ -328,7 +322,7 @@ module NoirAIContext
       if route_snippet && route_snippet.matches?(METHOD_DISPATCH_PATTERN)
         return
       end
-      endpoint.details.code_paths.each do |path_info|
+      source_scan_paths(endpoint).each do |path_info|
         scope = @reader.route_scope_snippet_for(path_info.path, path_info.line)
         if scope && scope.matches?(METHOD_DISPATCH_PATTERN)
           return
@@ -358,9 +352,10 @@ module NoirAIContext
 
     private def add_log_injection_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
       return if context.signals.any? { |s| s.kind == "log_injection" }
-      return if endpoint.details.code_paths.empty?
+      paths = source_scan_paths(endpoint)
+      return if paths.empty?
 
-      endpoint.details.code_paths.each do |path_info|
+      paths.each do |path_info|
         scope = @reader.route_scope_snippet_for(path_info.path, path_info.line)
         next unless scope
         next unless scope.matches?(LOG_EMITTER_PATTERN)
@@ -518,9 +513,10 @@ module NoirAIContext
 
     private def add_sensitive_response_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
       return if context.signals.any? { |s| s.kind == "sensitive_response" }
-      return if endpoint.details.code_paths.empty?
+      paths = source_scan_paths(endpoint)
+      return if paths.empty?
 
-      endpoint.details.code_paths.each do |path_info|
+      paths.each do |path_info|
         # `scope` stays the default-width snippet so the emitted evidence
         # keeps the same size as every other entry; `body` is the wider
         # view used only for detection.
@@ -734,9 +730,10 @@ module NoirAIContext
 
     private def add_credential_from_source_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?)
       return if context.signals.any? { |s| s.kind == "credential_input" }
-      return if endpoint.details.code_paths.empty?
+      paths = source_scan_paths(endpoint)
+      return if paths.empty?
 
-      endpoint.details.code_paths.each do |path_info|
+      paths.each do |path_info|
         snippet = @reader.route_scope_snippet_for(path_info.path, path_info.line)
         next unless snippet
 
@@ -1056,6 +1053,12 @@ module NoirAIContext
         "Query-string parameter supplied by the caller."
       when "header"
         "HTTP header supplied by the caller."
+      when "cookie"
+        "HTTP cookie supplied by the caller."
+      when "file"
+        "Uploaded file parameter supplied by the caller."
+      when "xml"
+        "XML body/field supplied by the caller."
       when "json", "form"
         "Request body field supplied by the caller."
       else
@@ -1069,9 +1072,9 @@ module NoirAIContext
       case param.param_type
       when "path"
         88
-      when "query", "header"
+      when "query", "header", "cookie"
         84
-      when "json", "form"
+      when "json", "form", "file", "xml"
         82
       else
         76
@@ -1088,6 +1091,7 @@ module NoirAIContext
 
     private def param_tag_description(tag : Tag) : String
       return tag.description if tag.tagger == "kotlin_spring_validation_analyzer"
+      return tag_ai_context_description(tag) if tag.tagger == "Hunt"
 
       "#{tag.description} Matched by parameter-name heuristic."
     end
@@ -1190,7 +1194,7 @@ module NoirAIContext
           signal_kind,
           signal_name,
           source: tag.tagger,
-          description: tag.description,
+          description: tag_ai_context_description(tag),
           path: anchor.try(&.path),
           line: anchor.try(&.line),
           confidence: confidence,
@@ -1231,18 +1235,9 @@ module NoirAIContext
               snippet: route_snippet
             ))
           end
-          if tag.name == "file_upload"
-            context.push_sink(AIContextEntry.new(
-              "file_io",
-              "file_upload",
-              source: tag.tagger,
-              description: "Endpoint characteristics suggest file upload or file handling behavior",
-              path: anchor.try(&.path),
-              line: anchor.try(&.line),
-              confidence: 80,
-              snippet: route_snippet
-            ))
-          end
+          # FileUpload alone must not become a file_io sink @80 — a
+          # multipart upload tag is a surface hint, not confirmed
+          # path-based file I/O. The file_upload signal above is enough.
         end
       end
     end
@@ -1268,6 +1263,28 @@ module NoirAIContext
       return tag.description if graphql_operation_tag?(tag)
 
       tag.name
+    end
+
+    # Soften tagger marketing copy before it becomes an AI-context
+    # signal. Endpoint tags stay strong for list/tag output; the
+    # LLM-facing blurb must not read as a confirmed vulnerability.
+    private def tag_ai_context_description(tag : Tag) : String
+      case tag.tagger
+      when "FileUpload"
+        "Endpoint characteristics suggest file upload or file handling (tagger heuristic; not a confirmed vulnerability)."
+      when "Hunt"
+        "#{tag.description} Name-heuristic only — not confirmed exploitability."
+      when "GraphQL"
+        return tag.description if graphql_operation_tag?(tag)
+
+        "GraphQL endpoint surface (introspection/nested access may apply; not a confirmed vulnerability)."
+      when "JWT"
+        "JWT-related endpoint surface — review signature, expiration, and claims validation."
+      when "SOAP"
+        "SOAP/XML web-service endpoint surface."
+      else
+        tag.description
+      end
     end
 
     private def graphql_operation_tag?(tag : Tag) : Bool

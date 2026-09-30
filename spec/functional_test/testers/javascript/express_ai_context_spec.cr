@@ -28,7 +28,9 @@ describe "--ai-context on Express auth fixtures", tags: "functional" do
     profile_context = profile_context.should_not be_nil
     profile_context.guards.size.should eq(1)
     profile_context.guards[0].source.should eq("express_auth")
+    profile_context.guards[0].confidence.should_not be_nil
     profile_context.callees.map(&.name).should contain("res.json")
+    profile_context.callees.find!(&.name.==("res.json")).confidence.should_not be_nil
 
     post_context = endpoints.find! { |ep| ep.method == "POST" && ep.url == "/api/data" }.ai_context
     post_context = post_context.should_not be_nil

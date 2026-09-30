@@ -153,6 +153,47 @@ describe "NoirAIContext" do
     end
   end
 
+  it "does not source-scan OpenAPI JSON for handler sinks or guards" do
+    spec = %({"paths":{"/run":{"post":{"summary":"@PreAuthorize('hasRole(ADMIN)') Statement.executeQuery('SELECT 1 FROM users'); Runtime.getRuntime().exec('id'); eval(req.body.code)"}}}})
+    handler = <<-JS
+      app.post("/run", (req, res) => {
+        res.json({ ok: true })
+      })
+      JS
+
+    with_temp_ai_context_source(spec, ".json") do |spec_path|
+      spec_only = Endpoint.new("/run", "POST")
+      spec_details = spec_only.details
+      spec_details.add_path(PathInfo.new(spec_path, 1))
+      spec_only.details = spec_details
+
+      spec_context = NoirAIContext.apply([spec_only])[0].ai_context.should_not be_nil
+      # Spec docs still anchor route metadata when no implementation exists.
+      route = spec_context.signals.find! { |signal| signal.kind == "route_definition" }
+      route.path.should eq(spec_path)
+      spec_context.guards.should be_empty
+      spec_context.sinks.should be_empty
+      # Decoy summary must not leak into any evidence bucket that LLMs treat as handler proof.
+      spec_context.signals.map(&.kind).should_not contain("csrf_exempt")
+      spec_context.signals.map(&.kind).should_not contain("jwt_unsafe")
+      spec_context.signals.map(&.kind).should_not contain("cors_open")
+
+      with_temp_ai_context_source(handler, ".js") do |handler_path|
+        implementation_first = Endpoint.new("/run", "POST")
+        details = implementation_first.details
+        details.add_path(PathInfo.new(handler_path, 1))
+        details.add_path(PathInfo.new(spec_path, 1))
+        implementation_first.details = details
+
+        context = NoirAIContext.apply([implementation_first])[0].ai_context.should_not be_nil
+        route = context.signals.find! { |signal| signal.kind == "route_definition" }
+        route.path.should eq(handler_path)
+        context.guards.should be_empty
+        context.sinks.should be_empty
+      end
+    end
+  end
+
   it "expands a truncated source-scan match to the full call label" do
     source = <<-CODE
       @router.get(
@@ -3388,24 +3429,23 @@ describe "NoirAIContext" do
     end
   end
 
-  it "does NOT emit path_traversal when file_io is tagger-derived (file upload, not path operation)" do
-    # FP sweep #1 regression: the FileUpload tagger pushes a `file_io`
-    # sink to mark the endpoint as a file-handling route, but
-    # receiving a multipart upload doesn't itself mean the file's
-    # PATH is attacker-controlled. path_traversal requires a
-    # code-derived file_io (File.read/write/send_file in source),
-    # not the tagger-derived "this is an upload endpoint" marker.
+  it "does NOT promote FileUpload alone to file_io or path_traversal" do
+    # Packaging regression (#2787): FileUpload is a surface heuristic.
+    # Promoting it to a file_io sink @80 made upload routes look like
+    # confirmed path I/O and previously needed a special-case filter
+    # to keep path_traversal quiet. Keep the file_upload signal; do
+    # not invent a file_io sink from the tag alone.
     endpoint = Endpoint.new("/upload", "POST")
     endpoint.push_param(Param.new("file", "blob", "form"))
-    endpoint.add_tag(Tag.new("file_upload", "Endpoint characteristics suggest file upload or file handling behavior", "FileUpload"))
+    endpoint.add_tag(Tag.new("file_upload", "File upload endpoint potentially vulnerable to unrestricted file upload, path traversal, or malicious file execution.", "FileUpload"))
 
     context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
-    # The sink should still be present (it's a useful hint that this
-    # is an upload route).
-    context.sinks.map(&.kind).should contain("file_io")
-    # But the path_traversal combination signal should NOT fire,
-    # because the file_io came from the upload tagger, not from a
-    # path-operation source pattern.
+    context.signals.map(&.kind).should contain("file_upload")
+    file_upload = context.signals.find!(&.kind.==("file_upload"))
+    desc = file_upload.description.should_not be_nil
+    desc.should contain("tagger heuristic")
+    desc.should_not contain("potentially vulnerable")
+    context.sinks.map(&.kind).should_not contain("file_io")
     context.signals.map(&.kind).should_not contain("path_traversal")
   end
 
@@ -3621,6 +3661,37 @@ describe "NoirAIContext.parse_feature_set" do
   end
 end
 
+describe "NoirAIContext packaging honesty (#2787)" do
+  it "special-cases cookie/file/xml request_input descriptions" do
+    endpoint = Endpoint.new("/x", "POST")
+    endpoint.push_param(Param.new("sid", "abc", "cookie"))
+    endpoint.push_param(Param.new("resume", "cv.pdf", "file"))
+    endpoint.push_param(Param.new("payload", "<a/>", "xml"))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    by_name = {} of String => AIContextEntry
+    context.sources.each { |s| by_name[s.name] = s if s.kind == "request_input" }
+
+    by_name["cookie.sid"].description.should eq("HTTP cookie supplied by the caller.")
+    by_name["file.resume"].description.should eq("Uploaded file parameter supplied by the caller.")
+    by_name["xml.payload"].description.should eq("XML body/field supplied by the caller.")
+  end
+
+  it "softens Hunt param-tag signal copy and keeps confidence below strong heuristics" do
+    endpoint = Endpoint.new("/fetch", "GET")
+    param = Param.new("url", "https://example.com", "query")
+    param.add_tag(Tag.new("ssrf", "This parameter may be vulnerable to Server Side Request Forgery (SSRF) attacks.", "Hunt"))
+    endpoint.push_param(param)
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    hunt = context.signals.find { |s| s.kind == "ssrf" && s.source.try(&.starts_with?("param_tagger:Hunt")) }
+    hunt = hunt.should_not be_nil
+    hunt_desc = hunt.description.should_not be_nil
+    hunt_desc.should contain("Name-heuristic only")
+    hunt.confidence.should eq(58)
+  end
+end
+
 describe "NoirAIContext.apply_feature_filter" do
   private_endpoint = ->(buckets : Hash(String, Int32)) do
     ep = Endpoint.new("/x", "GET")
@@ -3661,6 +3732,19 @@ describe "NoirAIContext.apply_feature_filter" do
     context.sources.empty?.should be_true
     context.validators.empty?.should be_true
     context.signals.empty?.should be_true
+  end
+
+  it "omits empty buckets from JSON so filtered categories do not look confirmed-none" do
+    arr = [private_endpoint.call({"guards" => 1, "callee" => 1, "sinks" => 1})]
+    NoirAIContext.apply_feature_filter(arr, Set{"guards", "sinks"})
+    context = arr[0].ai_context.should_not be_nil
+    json = JSON.parse(context.to_json)
+    json.as_h.has_key?("guards").should be_true
+    json.as_h.has_key?("sinks").should be_true
+    json.as_h.has_key?("callees").should be_false
+    json.as_h.has_key?("sources").should be_false
+    json.as_h.has_key?("validators").should be_false
+    json.as_h.has_key?("signals").should be_false
   end
 
   it "nils the ai_context entirely when the filter empties every bucket" do
