@@ -1816,6 +1816,61 @@ describe "NoirAIContext" do
     end
   end
 
+  it "stacks NestJS class JwtAuthGuard with method @Roles without authz_absence" do
+    source = <<-TS
+      @Controller('posts')
+      @UseGuards(JwtAuthGuard)
+      export class PostsController {
+        @Roles('admin')
+        @Delete(':id')
+        remove() {
+          return {};
+        }
+      }
+      TS
+
+    with_temp_ai_context_source(source, ".ts") do |path|
+      endpoint = Endpoint.new("/posts/:id", "DELETE")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 6))
+      endpoint.details = details
+      endpoint.push_param(Param.new("id", "1", "path"))
+      endpoint.add_tag(Tag.new("auth", "Protected by NestJS @UseGuards(JwtAuthGuard) (class-level)", "nestjs_auth"))
+      endpoint.add_tag(Tag.new("authz", "Protected by NestJS @Roles decorator", "nestjs_auth"))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.guards.map(&.kind).sort!.should eq(["auth_guard", "authz_guard"])
+      context.signals.map(&.kind).should_not contain("authz_absence")
+    end
+  end
+
+  it "stacks Rails Devise authenticate with Pundit authorize without authz_absence" do
+    source = <<-RUBY
+      class PostsController < ApplicationController
+        before_action :authenticate_user!
+        def destroy
+          post = Post.find(params[:id])
+          authorize post
+          post.destroy
+        end
+      end
+      RUBY
+
+    with_temp_ai_context_source(source, ".rb") do |path|
+      endpoint = Endpoint.new("/posts/:id", "DELETE")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 3))
+      endpoint.details = details
+      endpoint.push_param(Param.new("id", "1", "path"))
+      endpoint.add_tag(Tag.new("auth", "Protected by Devise authenticate_user!", "ruby_auth"))
+      endpoint.add_tag(Tag.new("authz", "Protected by Pundit authorize", "ruby_auth"))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.guards.map(&.kind).sort!.should eq(["auth_guard", "authz_guard"])
+      context.signals.map(&.kind).should_not contain("authz_absence")
+    end
+  end
+
   it "detects csrf_guard via protect_from_forgery" do
     source = <<-CODE
       class UsersController < ApplicationController

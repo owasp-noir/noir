@@ -21,7 +21,7 @@ describe "--ai-context on Rails auth fixtures", tags: "functional" do
     endpoints = app.endpoints
 
     index_endpoint = endpoints.find! { |ep| ep.method == "GET" && ep.url == "/posts" }
-    index_endpoint.details.code_paths.any? { |info| info.path.ends_with?(controller_suffix) && info.line == 5 }.should be_true
+    index_endpoint.details.code_paths.any? { |info| info.path.ends_with?(controller_suffix) && info.line == 6 }.should be_true
     index_context = index_endpoint.ai_context
     index_context = index_context.should_not be_nil
     index_context.guards.should be_empty
@@ -30,7 +30,7 @@ describe "--ai-context on Rails auth fixtures", tags: "functional" do
     index_context.signals.map(&.kind).should_not contain("idor")
 
     show_endpoint = endpoints.find! { |ep| ep.method == "GET" && ep.url == "/posts/1" }
-    show_endpoint.details.code_paths.any? { |info| info.path.ends_with?(controller_suffix) && info.line == 9 }.should be_true
+    show_endpoint.details.code_paths.any? { |info| info.path.ends_with?(controller_suffix) && info.line == 10 }.should be_true
     show_endpoint.params.map { |param| {param.name, param.param_type} }.should eq([{"id", "path"}])
     show_context = show_endpoint.ai_context
     show_context = show_context.should_not be_nil
@@ -41,7 +41,7 @@ describe "--ai-context on Rails auth fixtures", tags: "functional" do
     show_context.signals.map(&.kind).should contain("idor")
 
     create_endpoint = endpoints.find! { |ep| ep.method == "POST" && ep.url == "/posts" }
-    create_endpoint.details.code_paths.any? { |info| info.path.ends_with?(controller_suffix) && info.line == 13 }.should be_true
+    create_endpoint.details.code_paths.any? { |info| info.path.ends_with?(controller_suffix) && info.line == 14 }.should be_true
     create_context = create_endpoint.ai_context
     create_context = create_context.should_not be_nil
     # `create` carries two guards: the Devise `authenticate_user!`
@@ -57,11 +57,13 @@ describe "--ai-context on Rails auth fixtures", tags: "functional" do
     create_context.validators.map(&.kind).should contain("validation")
 
     destroy_endpoint = endpoints.find! { |ep| ep.method == "DELETE" && ep.url == "/posts/1" }
-    destroy_endpoint.details.code_paths.any? { |info| info.path.ends_with?(controller_suffix) && info.line == 19 }.should be_true
+    destroy_endpoint.details.code_paths.any? { |info| info.path.ends_with?(controller_suffix) && info.line == 20 }.should be_true
     destroy_context = destroy_endpoint.ai_context
     destroy_context = destroy_context.should_not be_nil
-    destroy_context.guards.size.should eq(1)
-    destroy_context.guards[0].source.should eq("ruby_auth")
+    # Devise authenticate + before_action :authorize → auth_guard + authz_guard
+    destroy_context.guards.map(&.kind).sort!.should eq(["auth_guard", "authz_guard"])
+    destroy_context.guards.any? { |g| g.source == "ruby_auth" }.should be_true
+    destroy_context.signals.map(&.kind).should_not contain("authz_absence")
     destroy_endpoint.params.map { |param| {param.name, param.param_type} }.should eq([{"id", "path"}])
     destroy_context.signals.map(&.kind).should contain("path_param")
     destroy_context.signals.map(&.kind).should_not contain("identifier_input")

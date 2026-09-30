@@ -1097,8 +1097,19 @@ module NoirAIContext
       endpoint.tags.each do |tag|
         next if skip_tag_signal?(context, endpoint, tag)
 
-        signal_kind = guard_tag?(tag) ? "auth_guard" : tag.name
-        signal_name = guard_tag?(tag) ? guard_name_from_tag(tag) : tag_signal_name(tag)
+        is_guard = guard_tag?(tag)
+        # `authz` tags (NestJS @Roles, Rails authorize*, …) must become
+        # authz_guard, not auth_guard — otherwise role checks look like
+        # authentication and trigger false authz_absence.
+        signal_kind = if tag.name == "authz"
+                        "authz_guard"
+                      elsif is_guard
+                        "auth_guard"
+                      else
+                        tag.name
+                      end
+        signal_name = is_guard ? guard_name_from_tag(tag) : tag_signal_name(tag)
+        confidence = (tag.name == "auth" || tag.name == "authz") ? 86 : 74
         entry = AIContextEntry.new(
           signal_kind,
           signal_name,
@@ -1106,11 +1117,11 @@ module NoirAIContext
           description: tag.description,
           path: anchor.try(&.path),
           line: anchor.try(&.line),
-          confidence: tag.name == "auth" ? 86 : 74,
+          confidence: confidence,
           snippet: route_snippet
         )
 
-        if guard_tag?(tag)
+        if is_guard
           context.push_guard(entry)
           # Spring's method-security annotations are authorization evidence,
           # while the framework tag still represents the endpoint's broader
@@ -1126,7 +1137,7 @@ module NoirAIContext
               description: tag.description,
               path: anchor.try(&.path),
               line: anchor.try(&.line),
-              confidence: tag.name == "auth" ? 86 : 74,
+              confidence: confidence,
               snippet: route_snippet
             ))
           end
@@ -1802,7 +1813,7 @@ module NoirAIContext
     end
 
     private def guard_tag?(tag : Tag) : Bool
-      return true if tag.name == "auth"
+      return true if tag.name == "auth" || tag.name == "authz"
       tag.tagger.downcase.ends_with?("_auth")
     end
 
