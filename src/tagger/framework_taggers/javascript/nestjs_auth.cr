@@ -17,7 +17,7 @@ class NestjsAuthTagger < FrameworkTagger
   # Distinct from authentication so JwtAuthGuard + @Roles stack as
   # auth_guard + authz_guard rather than collapsing into a single auth tag.
   ROLE_PATTERNS = [
-    {/\@UseGuards\s*\(\s*RolesGuard/, "NestJS @UseGuards(RolesGuard)"},
+    {/\@UseGuards\s*\([^)]*\bRolesGuard\b/, "NestJS @UseGuards(RolesGuard)"},
     {/\@Roles\s*\(/, "NestJS @Roles decorator"},
     {/\@Permissions\s*\(/, "NestJS @Permissions decorator"},
     {/\@RequirePermissions\s*\(/, "NestJS @RequirePermissions decorator"},

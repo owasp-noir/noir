@@ -1,3 +1,4 @@
+require "file_utils"
 require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
@@ -84,5 +85,36 @@ describe "NestjsAuthTagger" do
     endpoint.tags.map(&.name).sort!.should eq(["auth", "authz"])
     endpoint.tags.find! { |t| t.name == "auth" }.description.should contain("JwtAuthGuard")
     endpoint.tags.find! { |t| t.name == "authz" }.description.should contain("@Roles")
+  end
+
+  it "detects RolesGuard anywhere in combined @UseGuards(JwtAuthGuard, RolesGuard)" do
+    tmpdir = File.tempname("nestjs_combined_guards")
+    Dir.mkdir_p(tmpdir)
+    path = File.join(tmpdir, "posts.controller.ts")
+    File.write(path, [
+      "@Controller('posts')",
+      "export class PostsController {",
+      "  @UseGuards(JwtAuthGuard, RolesGuard)",
+      "  @Delete(':id')",
+      "  remove() {",
+      "    return {};",
+      "  }",
+      "}",
+    ].join("\n"))
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+
+    details = Details.new(PathInfo.new(path, 5))
+    details.technology = "ts_nestjs"
+    endpoint = Endpoint.new("/posts/:id", "DELETE", [] of Param, details)
+
+    NestjsAuthTagger.new(noir_options).perform([endpoint])
+
+    endpoint.tags.map(&.name).sort!.should eq(["auth", "authz"])
+    endpoint.tags.find! { |t| t.name == "auth" }.description.should contain("JwtAuthGuard")
+    endpoint.tags.find! { |t| t.name == "authz" }.description.should contain("RolesGuard")
+
+    FileUtils.rm_rf(tmpdir)
   end
 end

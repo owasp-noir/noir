@@ -137,22 +137,21 @@ class RubyAuthTagger < FrameworkTagger
       line_idx = line_num - 1
 
       authn_desc : String? = nil
-      authz_desc : String? = nil
 
       # Rails/Hanami: collect controller before_action authn *and* authz.
       # Returning after the first match used to drop Devise when a closer
       # `before_action :authorize` won the walk, and skipped body authorize.
       controller = check_controller_auth(lines, line_idx, controller_line_flags(path_info.path, lines))
+      # skip_before_action only suppresses authentication callbacks — not
+      # independent authorize / CanCanCan checks in the action body.
       unless controller[:skipped]
         authn_desc = controller[:authn]
-        authz_desc = controller[:authz]
       end
+      authz_desc = controller[:authz]
 
       # Action-body authorization (Pundit/CanCanCan) stacks with controller authn.
-      unless controller[:skipped]
-        if body_authz = check_action_body_auth(lines, line_idx)
-          authz_desc ||= body_authz
-        end
+      if body_authz = check_action_body_auth(lines, line_idx)
+        authz_desc ||= body_authz
       end
 
       # add_tag dedupes by (name, tagger), so authn/authz need distinct names.
@@ -206,6 +205,7 @@ class RubyAuthTagger < FrameworkTagger
     action_name = extract_action_name(lines, action_line)
     authn_desc : String? = nil
     authz_desc : String? = nil
+    skipped = false
 
     while idx >= 0
       unless flags[idx] == CONTROLLER_AUTH_LINE
@@ -216,23 +216,23 @@ class RubyAuthTagger < FrameworkTagger
 
       current = lines[idx].strip
 
-      # Check for skip_before_action that applies to this action
+      # Check for skip_before_action that applies to this action.
+      # Skip only clears authentication — keep walking for authorize callbacks.
       SKIP_PATTERNS.each do |pattern|
         if current.matches?(pattern)
-          # Check if it applies to this specific action via only: []
           if current.includes?("only:")
-            if action_name && current.includes?(":#{action_name}")
-              return {authn: nil, authz: nil, skipped: true}
-            end
+            skipped = true if action_name && current.includes?(":#{action_name}")
           else
-            return {authn: nil, authz: nil, skipped: true}
+            skipped = true
           end
         end
       end
 
-      BEFORE_ACTION_AUTHN_PATTERNS.each do |pattern, desc|
-        if current.matches?(pattern) && applies_to_action?(current, action_name)
-          authn_desc ||= desc
+      unless skipped
+        BEFORE_ACTION_AUTHN_PATTERNS.each do |pattern, desc|
+          if current.matches?(pattern) && applies_to_action?(current, action_name)
+            authn_desc ||= desc
+          end
         end
       end
 
@@ -242,8 +242,10 @@ class RubyAuthTagger < FrameworkTagger
         end
       end
 
-      HANAMI_AUTHN_PATTERNS.each do |pattern, desc|
-        authn_desc ||= desc if current.matches?(pattern)
+      unless skipped
+        HANAMI_AUTHN_PATTERNS.each do |pattern, desc|
+          authn_desc ||= desc if current.matches?(pattern)
+        end
       end
       HANAMI_AUTHZ_PATTERNS.each do |pattern, desc|
         authz_desc ||= desc if current.matches?(pattern)
@@ -254,7 +256,7 @@ class RubyAuthTagger < FrameworkTagger
       idx -= 1
     end
 
-    {authn: authn_desc, authz: authz_desc, skipped: false}
+    {authn: authn_desc, authz: authz_desc, skipped: skipped}
   end
 
   private def check_action_body_auth(lines : Array(String), action_line : Int32) : String?

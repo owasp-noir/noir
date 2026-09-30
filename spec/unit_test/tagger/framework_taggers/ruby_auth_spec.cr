@@ -1,3 +1,4 @@
+require "file_utils"
 require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
@@ -74,6 +75,38 @@ describe "RubyAuthTagger" do
     tagger.perform([endpoint])
 
     endpoint.tags.empty?.should be_true
+  end
+
+  it "keeps action-body authorize when authenticate is skipped" do
+    tmpdir = File.tempname("ruby_skip_authz")
+    Dir.mkdir_p(tmpdir)
+    path = File.join(tmpdir, "posts_controller.rb")
+    File.write(path, [
+      "class PostsController < ApplicationController",
+      "  before_action :authenticate_user!",
+      "  skip_before_action :authenticate_user!, only: [:index]",
+      "",
+      "  def index",
+      "    post = Post.find(params[:id])",
+      "    authorize post",
+      "    render json: post",
+      "  end",
+      "end",
+    ].join("\n"))
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+
+    details = Details.new(PathInfo.new(path, 5))
+    details.technology = "ruby_rails"
+    endpoint = Endpoint.new("/posts", "GET", [] of Param, details)
+
+    RubyAuthTagger.new(noir_options).perform([endpoint])
+
+    endpoint.tags.map(&.name).should eq(["authz"])
+    endpoint.tags[0].description.should contain("authorize")
+
+    FileUtils.rm_rf(tmpdir)
   end
 end
 
