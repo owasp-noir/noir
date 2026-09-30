@@ -140,6 +140,8 @@ jobs:
         crystal-version: [1.21.0]
     steps:
       - uses: actions/checkout@v7
+      - name: Refresh apt package indexes
+        run: sudo apt-get update
       - uses: crystal-lang/install-crystal@v1
         with:
           crystal: ${{ matrix.crystal-version }}
@@ -281,6 +283,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - name: Refresh apt package indexes
+        run: sudo apt-get update
       - uses: crystal-lang/install-crystal@v1
         with:
           crystal: 1.21.0
@@ -303,6 +307,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - name: Refresh apt package indexes
+        run: sudo apt-get update
       - uses: crystal-lang/install-crystal@v1
         with:
           crystal: 1.21.0
@@ -358,6 +364,8 @@ jobs:
         crystal-version: [1.21.0]
     steps:
       - uses: actions/checkout@v7
+      - name: Refresh apt package indexes
+        run: sudo apt-get update
       - uses: crystal-lang/install-crystal@v1
         with:
           crystal: ${{ matrix.crystal-version }}
@@ -515,6 +523,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - name: Refresh apt package indexes
+        run: sudo apt-get update
       - uses: crystal-lang/install-crystal@v1
         with:
           crystal: 1.21.0

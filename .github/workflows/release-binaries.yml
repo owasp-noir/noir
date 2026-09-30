@@ -23,6 +23,9 @@ jobs:
             platform: macos
     runs-on: ${{ matrix.os }}
     steps:
+      - name: Refresh apt package indexes
+        if: runner.os == 'Linux'
+        run: sudo apt-get update
       - name: Install Crystal
         uses: crystal-lang/install-crystal@v1
       - name: Checkout source code

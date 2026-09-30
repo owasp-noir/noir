@@ -28,6 +28,8 @@ describe "--ai-context on FastAPI auth fixtures", tags: "functional" do
     admin_context = endpoints.find! { |ep| ep.method == "GET" && ep.url == "/admin" }.ai_context
     admin_context = admin_context.should_not be_nil
     admin_context.guards.map(&.source).should contain("fastapi_auth")
+    admin_context.guards.map(&.kind).should_not contain("authz_guard")
+    admin_context.signals.map(&.kind).should_not contain("sensitive_response")
 
     public_context = endpoints.find! { |ep| ep.method == "GET" && ep.url == "/public" }.ai_context
     public_context = public_context.should_not be_nil

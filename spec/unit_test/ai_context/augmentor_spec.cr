@@ -1789,6 +1789,61 @@ describe "NoirAIContext" do
     end
   end
 
+  it "does NOT treat FastAPI Security dependencies as authorization guards" do
+    source = <<-PYTHON
+      @app.get("/admin")
+      async def admin(token: str = Security(oauth2_scheme)):
+          return {"admin": True}
+      PYTHON
+
+    with_temp_ai_context_source(source, ".py") do |path|
+      endpoint = Endpoint.new("/admin", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 2))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.guards.map(&.kind).should_not contain("authz_guard")
+    end
+  end
+
+  it "does NOT emit sensitive_response for a credential parameter type annotation" do
+    source = <<-PYTHON
+      @app.get("/admin")
+      async def admin(token: str = Security(oauth2_scheme)):
+          return {"admin": True}
+      PYTHON
+
+    with_temp_ai_context_source(source, ".py") do |path|
+      endpoint = Endpoint.new("/admin", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 2))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.signals.map(&.kind).should_not contain("sensitive_response")
+    end
+  end
+
+  it "keeps inline Python response fields after filtering a typed parameter" do
+    source = <<-PYTHON
+      @app.get("/tokens")
+      def issue_token(token: str): return {"secret": server_secret}
+      PYTHON
+
+    with_temp_ai_context_source(source, ".py") do |path|
+      endpoint = Endpoint.new("/tokens", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 2))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      signal = context.signals.find { |entry| entry.kind == "sensitive_response" }
+      signal = signal.should_not be_nil
+      signal.name.should eq("secret")
+    end
+  end
+
   it "keeps class-level Spring authorization from becoming authz_absence" do
     source = <<-JAVA
       @RestController
@@ -2544,7 +2599,7 @@ describe "NoirAIContext" do
           return {'token': token}
       CODE
 
-    with_temp_ai_context_source(source) do |path|
+    with_temp_ai_context_source(source, ".py") do |path|
       endpoint = Endpoint.new("/tokens", "POST")
       details = endpoint.details
       details.add_path(PathInfo.new(path, 1))

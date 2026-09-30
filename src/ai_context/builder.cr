@@ -462,6 +462,56 @@ module NoirAIContext
     SENSITIVE_RESPONSE_SCOPE_LINES =   40
     SENSITIVE_RESPONSE_SCOPE_CHARS = 1200
 
+    # FastAPI routes commonly declare credentials in the handler
+    # signature (`token: str = Security(...)`). The widened response
+    # scope includes that signature, but a typed parameter is not a
+    # response field. Drop Python function-signature lines before
+    # looking for credential keys while retaining the handler body.
+    private def response_body_without_python_signature(body : String, path : String?) : String
+      return body unless path && (path.ends_with?(".py") || path.ends_with?(".pyi"))
+
+      in_signature = false
+      paren_balance = 0
+      response_lines = [] of String
+
+      body.split(" | ").each do |segment|
+        code = segment.sub(/^\d+:\s*/, "")
+        if in_signature
+          paren_balance += python_signature_paren_balance(code)
+          in_signature = paren_balance > 0
+          if !in_signature && (inline_body = inline_python_response_body(code))
+            response_lines << inline_body
+          end
+          next
+        end
+
+        if code.matches?(/^(?:async\s+)?def\s+\w+\s*\(/)
+          paren_balance = python_signature_paren_balance(code)
+          in_signature = paren_balance > 0
+          if !in_signature && (inline_body = inline_python_response_body(code))
+            response_lines << inline_body
+          end
+          next
+        end
+
+        response_lines << segment
+      end
+
+      response_lines.join(" | ")
+    end
+
+    private def inline_python_response_body(line : String) : String?
+      if match = line.match(/\)\s*:\s*(.+)$/)
+        body = match[1].strip
+        body unless body.empty?
+      end
+    end
+
+    private def python_signature_paren_balance(line : String) : Int32
+      sanitized = line.gsub(/(['\"]).*?\1/, "\"\"").split('#').first
+      sanitized.count('(') - sanitized.count(')')
+    end
+
     private def add_sensitive_response_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
       return if context.signals.any? { |s| s.kind == "sensitive_response" }
       return if endpoint.details.code_paths.empty?
@@ -494,7 +544,8 @@ module NoirAIContext
         end
 
         next unless body.matches?(RESPONSE_EMITTER_PATTERN)
-        if match = body.match(CREDENTIAL_KEY_IN_RESPONSE)
+        response_body = response_body_without_python_signature(body, path_info.path)
+        if match = response_body.match(CREDENTIAL_KEY_IN_RESPONSE)
           field = match[1]? || match[3]? || "credential"
           context.push_signal(AIContextEntry.new(
             "sensitive_response",
