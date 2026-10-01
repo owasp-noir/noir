@@ -290,6 +290,29 @@ describe NoirPassiveScan do
       end
     end
 
+    it "skips empty documents and keeps loading after a bad one" do
+      temp_dir = File.tempname
+      Dir.mkdir(temp_dir)
+      begin
+        rule = ->(id : String) do
+          "id: #{id}\ninfo: {name: #{id}, author: [me], severity: low, description: ., reference: []}\n" \
+          "matchers:\n  - {type: word, patterns: [#{id.upcase}], condition: or}\ncategory: info\n"
+        end
+        # A doubled `---`, a non-mapping document in the middle, and a
+        # trailing `---`.
+        File.write(File.join(temp_dir, "multi.yaml"),
+          "---\n#{rule.call("doc-one")}---\n---\n- just\n- a list\n---\n#{rule.call("doc-two")}---\n")
+        File.write(File.join(temp_dir, "only-separators.yaml"), "---\n---\n")
+
+        logger = NoirLogger.new(false, false, false, true)
+        rules = NoirPassiveScan.load_rules(temp_dir, logger)
+
+        rules.map(&.id).sort!.should eq(["doc-one", "doc-two"])
+      ensure
+        FileUtils.rm_rf(temp_dir)
+      end
+    end
+
     it "keeps only the first rule for a duplicated id" do
       temp_dir = File.tempname
       Dir.mkdir(temp_dir)

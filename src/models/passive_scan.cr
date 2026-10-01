@@ -42,6 +42,27 @@ struct PassiveScan
     ALLOWED_TYPES      = {"word", "regex"}
     ALLOWED_CONDITIONS = {"and", "or"}
 
+    # Constructs `Regex.union` changes the meaning of. The union renumbers
+    # capture groups, so a `\1`, `\g{1}`, `(?1)` or `(?(1)…)` in any pattern
+    # but the first points at the wrong group; and under `(?x)` a `#`
+    # comment runs to the end of the joined source and swallows the union's
+    # closing parens, so the whole rule failed to compile. Over-matching
+    # here (an escaped `\\1`) only costs the union fast path.
+    UNION_UNSAFE = /\\[1-9gk]|\(\?P=|\(\?[+-]?\d|\(\?R|\(\?\(|\(\?[a-zA-Z^-]*x/
+
+    # Constructs that make a whole-file gate unsound: absolute anchors
+    # (`\A` `\z` `\Z` `\G`) hold only at the file's edges, not each line's,
+    # and a `(*VERB)` can change newline handling or matching outright. A
+    # pattern carrying one gets no gate and is left to the per-line loop.
+    #
+    # Lookarounds, atomic groups and possessive quantifiers keep the plain
+    # gate: at a line edge they see the `\n` where the per-line match sees
+    # the end of the string, which only differs for a construct that
+    # reaches across the newline — and treating them as gate-less made a
+    # gitleaks-style `(?<![A-Za-z0-9])…(?![A-Za-z0-9])` rule set walk every
+    # line of every file.
+    NO_FILE_GATE = /\\[AzZG]|\(\*/
+
     property type : String
     property patterns : Array(YAML::Any)
     # Pre-stringified patterns. detect.cr's hot path used to call
@@ -49,8 +70,19 @@ struct PassiveScan
     # same every call so we do it once at load time.
     property string_patterns : Array(String)
     property condition : String
+    # `or`: the single union every pattern is folded into, or nil when the
+    # patterns cannot share one (see UNION_UNSAFE) and are matched one by
+    # one through `compiled_regexes` instead.
     property compiled_regex : Regex?
+    # One compiled regex per pattern, under either condition.
     property compiled_regexes : Array(Regex)?
+    # Whole-file pre-check per pattern (see `file_gate_for`); a nil entry
+    # has no safe gate and always passes. Used under `and`.
+    @file_gates : Array(Regex?)?
+    # The same gates folded for `or` (see `or_file_gates`): any hit means
+    # the matcher may fire. nil when some pattern has no gate, so the
+    # matcher always passes.
+    @or_file_gates : Array(Regex)?
     # `word` patterns as escaped literal regexes: one union for `or`,
     # one regex per pattern for `and`. A literal regex matches exactly
     # where `String#includes?` does, and PCRE2 (with
@@ -80,20 +112,17 @@ struct PassiveScan
       @condition = raw_condition.downcase
 
       if @type == "regex" && ALLOWED_CONDITIONS.includes?(@condition)
-        if @condition == "or"
-          begin
-            @compiled_regex = Regex.union(@string_patterns.map { |p| Regex.new(p) })
-          rescue ex
-            @compiled_regex = nil
-            @regex_error = "#{ex.message} (#{ex.class}); patterns=#{@string_patterns.inspect}"
-          end
-        elsif @condition == "and"
-          begin
-            @compiled_regexes = @string_patterns.map { |p| Regex.new(p) }
-          rescue ex
-            @compiled_regexes = nil
-            @regex_error = "#{ex.message} (#{ex.class}); patterns=#{@string_patterns.inspect}"
-          end
+        begin
+          @compiled_regexes = @string_patterns.map { |p| Regex.new(p) }
+        rescue ex
+          @compiled_regexes = nil
+          @regex_error = "#{ex.message} (#{ex.class}); patterns=#{@string_patterns.inspect}"
+        end
+        if regexes = @compiled_regexes
+          @compiled_regex = union_of(regexes) if @condition == "or"
+          gates = @string_patterns.map_with_index { |pattern, idx| file_gate_for(pattern, regexes[idx]) }
+          @file_gates = gates
+          @or_file_gates = or_file_gates(regexes, gates) if @condition == "or"
         end
       elsif @type == "word" && !@string_patterns.empty?
         # Escaped literals cannot fail to compile, but a pathological
@@ -108,6 +137,130 @@ struct PassiveScan
           @word_regex = nil
           @word_regexes = nil
         end
+      end
+    end
+
+    # One regex for every pattern when that is faithful to matching them
+    # one by one; nil otherwise. Each pattern already compiled alone, so a
+    # union that fails to compile (duplicate group names across patterns)
+    # is a union problem, not a rule problem.
+    private def union_of(regexes : Array(Regex)) : Regex?
+      return regexes.first if regexes.size == 1
+      return if @string_patterns.any?(&.matches?(UNION_UNSAFE))
+      Regex.union(regexes)
+    rescue
+      nil
+    end
+
+    # The whole-file pre-check for one pattern, or nil when it has none
+    # that is safe. detect.cr runs it over the whole file to skip rules
+    # that cannot fire on any line, so it must accept every file in which
+    # some line matches. Without MULTILINE, `^` and `$` anchor to the file
+    # rather than the line, and an anchored rule only ever fired on the
+    # first or last line; `(*ANYCRLF)` keeps `$` true before the `\r\n`
+    # that `each_line` strips.
+    private def file_gate_for(pattern : String, line_regex : Regex) : Regex?
+      return if pattern.matches?(NO_FILE_GATE)
+      return line_regex unless self.class.line_anchored?(pattern)
+      Regex.new("(*ANYCRLF)#{pattern}", Regex::Options::MULTILINE_ONLY)
+    rescue
+      nil
+    end
+
+    # Folds an `or` matcher's per-pattern gates into as few whole-file scans
+    # as is sound: the patterns whose gate is the pattern itself share one
+    # union (the matcher's own union when that is all of them), and only
+    # the MULTILINE gates of anchored patterns run on their own. nil when a
+    # pattern has no gate — the matcher can then fire anywhere.
+    private def or_file_gates(regexes : Array(Regex), gates : Array(Regex?)) : Array(Regex)?
+      return if gates.any?(Nil)
+      plain = [] of Regex
+      multiline = [] of Regex
+      gates.each_with_index do |gate, idx|
+        next unless gate
+        gate.same?(regexes[idx]) ? plain << gate : multiline << gate
+      end
+
+      folded = [] of Regex
+      if (union = @compiled_regex) && plain.size == regexes.size
+        folded << union
+      elsif @compiled_regex && plain.size > 1
+        # The full union compiled, so none of these patterns is
+        # union-unsafe and their subset folds the same way.
+        begin
+          folded << Regex.union(plain)
+        rescue
+          folded.concat(plain)
+        end
+      else
+        folded.concat(plain)
+      end
+      folded.concat(multiline)
+    end
+
+    # True when `pattern` has an unescaped `^` or `$` outside a character
+    # class. A misread here only costs a MULTILINE gate, which still accepts
+    # every line the pattern can match.
+    def self.line_anchored?(pattern : String) : Bool
+      chars = pattern.chars
+      escaped = false
+      class_start = nil
+      chars.each_with_index do |char, idx|
+        if escaped
+          escaped = false
+        elsif char == '\\'
+          escaped = true
+        elsif start = class_start
+          # `]` straight after `[` or `[^` is a member, not the close.
+          first_member = chars[start + 1]? == '^' ? start + 2 : start + 1
+          class_start = nil if char == ']' && idx > first_member
+        elsif char == '['
+          class_start = idx
+        elsif char == '^' || char == '$'
+          return true
+        end
+      end
+      false
+    end
+
+    # Whole-file form of `regex_match?`: false only when no line of
+    # `content` can satisfy this matcher.
+    def regex_may_match_file?(content : String, options : Regex::MatchOptions = Regex::MatchOptions::None) : Bool
+      gates = @file_gates
+      return false if gates.nil? || gates.empty?
+
+      case @condition
+      when "or"
+        if or_gates = @or_file_gates
+          or_gates.any?(&.matches?(content, options: options))
+        else
+          true
+        end
+      when "and"
+        gates.all? { |gate| gate.nil? || gate.matches?(content, options: options) }
+      else
+        false
+      end
+    end
+
+    # Whether a `regex` matcher fires on `content` (a line, as detect.cr
+    # calls it). Shared with the false-positive gate so both agree on what
+    # fired.
+    def regex_match?(content : String, options : Regex::MatchOptions = Regex::MatchOptions::None) : Bool
+      regexes = @compiled_regexes
+      return false if regexes.nil? || regexes.empty?
+
+      case @condition
+      when "or"
+        if union = @compiled_regex
+          union.matches?(content, options: options)
+        else
+          regexes.any?(&.matches?(content, options: options))
+        end
+      when "and"
+        regexes.all?(&.matches?(content, options: options))
+      else
+        false
       end
     end
 

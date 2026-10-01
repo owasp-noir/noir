@@ -83,12 +83,16 @@ class Noir::ReadPool
     Outcome.new(error: e)
   end
 
-  # A rule that raises costs only this file's findings, never the file
-  # itself — the same as when the detect workers ran the rules.
+  # `detect` already contains a raising rule to that rule; this is the
+  # backstop for anything else, and it costs only this file's findings,
+  # never the file itself. Recorded rather than swallowed so the lost
+  # findings show up in `errors` instead of as a clean result.
   private def passive_results(path : String, content : String) : Array(PassiveScanResult)
     return [] of PassiveScanResult if @passive_rules.empty?
     NoirPassiveScan.detect(path, content, @passive_rules, nil)
-  rescue
+  rescue e
+    Noir::SkippedFiles.record(Noir::SkippedFiles::PASSIVE_SCAN_SCOPE, path,
+      e.message.presence || e.class.name, phase: Noir::SkippedFiles::Phase::Scan)
     [] of PassiveScanResult
   end
 end

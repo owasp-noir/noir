@@ -220,4 +220,146 @@ describe NoirPassiveScan do
       NoirPassiveScan.detect("f", "a.b x+y\nnone", [and_rule], logger).map(&.line_number).should eq([1])
     end
   end
+
+  describe "a rule that raises" do
+    rule_for = ->(id : String, pattern : String) do
+      PassiveScan.new(YAML.parse(
+        "id: #{id}\ncategory: sec\ntechs: []\n" \
+        "info: {name: #{id}, author: [], severity: high, description: d, reference: []}\n" \
+        "matchers-condition: or\nmatchers:\n  - {type: regex, condition: or, patterns: ['#{pattern}']}\n"))
+    end
+
+    before_each { Noir::SkippedFiles.clear }
+    after_each { Noir::SkippedFiles.clear }
+
+    it "costs only its own findings and is recorded as a gap" do
+      # Catastrophic backtracking: PCRE2 raises "match limit exceeded" on
+      # the run of `a`s that cannot end the line.
+      slow = rule_for.call("slow-rule", %q((\w+\s?)+$))
+      token = rule_for.call("token-rule", "tok_[a-z0-9]{12}")
+      content = %(api = "tok_abcdef123456"\n#{"a" * 60}!\n)
+
+      # The raising rule runs first, so a rescue around the whole file would
+      # also lose the token rule that runs after it.
+      results = NoirPassiveScan.detect("conf.txt", content, [slow, token], nil)
+      results.map { |r| {r.id, r.line_number} }.should contain({"token-rule", 1})
+
+      failures = Noir::SkippedFiles.failures(Noir::SkippedFiles::Phase::Scan)
+      failures.size.should eq(1)
+      failures[0].tech.should eq(Noir::SkippedFiles::PASSIVE_SCAN_SCOPE)
+      failures[0].message.should contain("conf.txt (rule slow-rule)")
+      failures[0].message.should contain("match limit")
+    end
+  end
+
+  describe "or-regex matchers" do
+    rule_with = ->(patterns : Array(String)) do
+      yaml = {
+        "id"                 => "union-test",
+        "category"           => "sec",
+        "techs"              => [] of String,
+        "info"               => {"name" => "u", "author" => [] of String, "severity" => "high", "description" => "d", "reference" => [] of String},
+        "matchers-condition" => "or",
+        "matchers"           => [{"type" => "regex", "condition" => "or", "patterns" => patterns}],
+      }.to_yaml
+      PassiveScan.new(YAML.parse(yaml))
+    end
+
+    it "keeps a backreference pointing at its own group" do
+      # Folded into one union, `\1` would refer to the first pattern's group.
+      rule = rule_with.call([%q((foo|bar)_key), %q((["'])tok_[a-z]{6}\1)])
+      rule.valid?.should be_true
+      NoirPassiveScan.detect("f", %(x = "tok_abcdef"\ny = "tok_abcdef'\n), [rule], nil).map(&.line_number).should eq([1])
+    end
+
+    it "loads and matches an extended-mode pattern with a comment" do
+      rule = rule_with.call(["(?x) secret_[a-z]{4}  # trailing comment", "other_marker"])
+      rule.valid?.should be_true
+      NoirPassiveScan.detect("f", "a\nsecret_abcd\nother_marker\n", [rule], nil).map(&.line_number).should eq([2, 3])
+    end
+
+    it "matches patterns that reuse a group name" do
+      rule = rule_with.call(["apikey=(?<v>[a-z0-9]{8})", "secret=(?<v>[a-z0-9]{8})"])
+      rule.valid?.should be_true
+      NoirPassiveScan.detect("f", "url?apikey=abcd1234\nsecret=abcd1234\n", [rule], nil).map(&.line_number).should eq([1, 2])
+    end
+
+    it "still folds plain patterns into one union" do
+      matcher = rule_with.call(["foo_[0-9]+", "bar_[a-z]+"]).matchers.first
+      matcher.compiled_regex.should_not be_nil
+      matcher.regex_match?("x bar_abc").should be_true
+      matcher.regex_match?("x baz").should be_false
+    end
+
+    it "agrees with the false-positive gate on what fired" do
+      rule = rule_with.call([%q((foo|bar)_key), %q((["'])tok_[a-z]{6}\1)])
+      NoirPassiveScan::FalsePositive.regex_value_hit?(rule, %(x = "tok_abcdef")).should be_true
+    end
+  end
+
+  describe "anchored regex rules" do
+    rule_with = ->(condition : String, patterns : Array(String)) do
+      yaml = {
+        "id"                 => "anchor-test",
+        "category"           => "sec",
+        "techs"              => [] of String,
+        "info"               => {"name" => "a", "author" => [] of String, "severity" => "high", "description" => "d", "reference" => [] of String},
+        "matchers-condition" => "or",
+        "matchers"           => [{"type" => "regex", "condition" => condition, "patterns" => patterns}],
+      }.to_yaml
+      PassiveScan.new(YAML.parse(yaml))
+    end
+
+    it "fires `^` on a line other than the first" do
+      rule = rule_with.call("or", [%q(^\s*db_password\s*=\s*\S+)])
+      NoirPassiveScan.detect("f", "x = 1\n  db_password = hunter2\nlast\n", [rule], nil).map(&.line_number).should eq([2])
+    end
+
+    it "fires `$` on a middle line, including CRLF files" do
+      rule = rule_with.call("or", [%q(db_password = \S+$)])
+      NoirPassiveScan.detect("f", "a\ndb_password = abc\nlast\n", [rule], nil).map(&.line_number).should eq([2])
+      NoirPassiveScan.detect("f", "a\r\ndb_password = abc\r\nlast\r\n", [rule], nil).map(&.line_number).should eq([2])
+    end
+
+    it "gates anchored patterns under condition: and" do
+      rule = rule_with.call("and", [%q(^token:), %q([a-f0-9]{8}$)])
+      NoirPassiveScan.detect("f", "x\ntoken: deadbeef\ny\n", [rule], nil).map(&.line_number).should eq([2])
+    end
+
+    it "keeps a gate for lookaround patterns, folded with plain ones" do
+      matcher = rule_with.call("or", [%q((?<![A-Za-z0-9])AKZn[0-9A-Z]{16}(?![A-Za-z0-9])), "plain_[a-z]{4}"]).matchers.first
+      # Pruned on a file with no candidate, kept on one with one.
+      matcher.regex_may_match_file?("nothing to see\nhere\n").should be_false
+      matcher.regex_may_match_file?("x\nplain_abcd\n").should be_true
+      matcher.regex_may_match_file?("x\nk = AKZnABCDEFGHIJKLMNOP\n").should be_true
+    end
+
+    it "gates a mixed or-matcher on both its plain and anchored patterns" do
+      matcher = rule_with.call("or", ["plain_[a-z]{4}", %q(^\s*key\s*=)]).matchers.first
+      matcher.regex_may_match_file?("nothing\n").should be_false
+      matcher.regex_may_match_file?("x\n  key = 1\n").should be_true
+      matcher.regex_may_match_file?("x\nplain_abcd\n").should be_true
+    end
+
+    it "does not gate absolute anchors" do
+      rule = rule_with.call("or", [%q(\Asecret_[a-z]+)])
+      NoirPassiveScan.detect("f", "x\nsecret_abc\n", [rule], nil).map(&.line_number).should eq([2])
+    end
+
+    it "falls back to the per-line loop when the gate hits the match limit" do
+      # Across the newlines the nested quantifier backtracks over every word
+      # in the file; on each short line it gives up at once.
+      rule = rule_with.call("or", [%q((\w+\s?)+!x)])
+      content = ("aaaa\n" * 40) + "ab!x\n"
+      Noir::SkippedFiles.clear
+      NoirPassiveScan.detect("f", content, [rule], nil).map(&.line_number).should eq([41])
+      Noir::SkippedFiles.failures.should be_empty
+    end
+
+    it "treats a negated class as no anchor" do
+      PassiveScan::Matcher.line_anchored?(%q(mongodb://[^:/\s]+:[^@/\s]+@)).should be_false
+      PassiveScan::Matcher.line_anchored?(%q(cost \$5 [$^]x)).should be_false
+      PassiveScan::Matcher.line_anchored?(%q([]^]x$)).should be_true
+    end
+  end
 end
