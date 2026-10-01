@@ -76,7 +76,7 @@ module NoirPassiveScan
       # Necessary-but-not-sufficient gate: every matcher must appear
       # somewhere in the file. The per-line `all?` below is the real
       # confirmation.
-      return unless matchers.all? { |matcher| match_content?(file_content, matcher) }
+      return unless matchers.all? { |matcher| match_file?(file_content, matcher) }
 
       index = 0
       file_content.each_line do |line|
@@ -98,7 +98,7 @@ module NoirPassiveScan
       # OR branch: prune matchers that cannot fire on any line
       # before the per-line loop, then walk the file once checking
       # every survivor.
-      active_matchers = matchers.select { |matcher| match_content?(file_content, matcher) }
+      active_matchers = matchers.select { |matcher| match_file?(file_content, matcher) }
       return if active_matchers.empty?
 
       index = 0
@@ -132,6 +132,16 @@ module NoirPassiveScan
   # the rule set by severity and dispatches to `detect`.
   def self.detect_with_severity(file_path : String, file_content : String, rules : Array(PassiveScan), logger : NoirLogger, min_severity : String) : Array(PassiveScanResult)
     detect(file_path, file_content, filter_rules_by_severity(rules, min_severity), logger)
+  end
+
+  # The whole-file pre-gate. Word patterns are literals, so the per-line
+  # test already answers "does any line match"; a line-oriented regex
+  # needs its own gate (see `PassiveScan::Matcher#regex_may_match_file?`)
+  # or an anchored one is pruned before the per-line loop sees it.
+  private def self.match_file?(content : String, matcher : PassiveScan::Matcher) : Bool
+    return match_content?(content, matcher) unless matcher.type == "regex"
+    return false if matcher.string_patterns.empty? || matcher.regex_compile_failed?
+    matcher.regex_may_match_file?(content, Noir::TextFile::MATCH_OPTIONS)
   end
 
   private def self.match_content?(content : String, matcher : PassiveScan::Matcher) : Bool

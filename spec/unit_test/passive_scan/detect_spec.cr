@@ -296,4 +296,47 @@ describe NoirPassiveScan do
       NoirPassiveScan::FalsePositive.regex_value_hit?(rule, %(x = "tok_abcdef")).should be_true
     end
   end
+
+  describe "anchored regex rules" do
+    rule_with = ->(condition : String, patterns : Array(String)) do
+      yaml = {
+        "id"                 => "anchor-test",
+        "category"           => "sec",
+        "techs"              => [] of String,
+        "info"               => {"name" => "a", "author" => [] of String, "severity" => "high", "description" => "d", "reference" => [] of String},
+        "matchers-condition" => "or",
+        "matchers"           => [{"type" => "regex", "condition" => condition, "patterns" => patterns}],
+      }.to_yaml
+      PassiveScan.new(YAML.parse(yaml))
+    end
+
+    it "fires `^` on a line other than the first" do
+      rule = rule_with.call("or", [%q(^\s*db_password\s*=\s*\S+)])
+      NoirPassiveScan.detect("f", "x = 1\n  db_password = hunter2\nlast\n", [rule], nil).map(&.line_number).should eq([2])
+    end
+
+    it "fires `$` on a middle line, including CRLF files" do
+      rule = rule_with.call("or", [%q(db_password = \S+$)])
+      NoirPassiveScan.detect("f", "a\ndb_password = abc\nlast\n", [rule], nil).map(&.line_number).should eq([2])
+      NoirPassiveScan.detect("f", "a\r\ndb_password = abc\r\nlast\r\n", [rule], nil).map(&.line_number).should eq([2])
+    end
+
+    it "gates anchored patterns under condition: and" do
+      rule = rule_with.call("and", [%q(^token:), %q([a-f0-9]{8}$)])
+      NoirPassiveScan.detect("f", "x\ntoken: deadbeef\ny\n", [rule], nil).map(&.line_number).should eq([2])
+    end
+
+    it "does not gate a lookaround that sees past the line end" do
+      # Per line `(?!\s*=)` holds at the end of line 1; over the whole file
+      # `\s*` reaches across the newline to the `=` and rejects it.
+      rule = rule_with.call("or", [%q(secret(?!\s*=))])
+      NoirPassiveScan.detect("f", "x secret\n= y\n", [rule], nil).map(&.line_number).should eq([1])
+    end
+
+    it "treats a negated class as no anchor" do
+      PassiveScan::Matcher.line_anchored?(%q(mongodb://[^:/\s]+:[^@/\s]+@)).should be_false
+      PassiveScan::Matcher.line_anchored?(%q(cost \$5 [$^]x)).should be_false
+      PassiveScan::Matcher.line_anchored?(%q([]^]x$)).should be_true
+    end
+  end
 end
