@@ -1,5 +1,6 @@
 require "uri"
 require "./text_file"
+require "./url_origin"
 require "../models/code_locator"
 
 module Noir
@@ -54,6 +55,45 @@ module Noir
     # Bracket pairs that may legitimately appear *inside* a URL
     # (`…/wiki/Foo_(bar)`), so only an unbalanced closer is trimmed.
     BRACKET_PAIRS = { {'(', ')'}, {'[', ']'}, {'{', '}'} }
+
+    # The `-u/--url` base a URL literal is matched against: its origin and
+    # its path without a trailing slash (`""` for a root base).
+    record BaseUrl, origin : String?, path : String do
+      def self.parse(url : String) : BaseUrl
+        raw = url.includes?("://") ? url : "http://#{url}"
+        path = begin
+          URI.parse(raw).path
+        rescue URI::Error
+          ""
+        end
+        new(UrlOrigin.of(url), path.rstrip('/'))
+      end
+    end
+
+    # The path of `candidate` relative to `base`, or nil when the literal
+    # does not address a URL under it.
+    #
+    # The hooks used to keep any literal whose text merely *contained* the
+    # `-u` value, and report its full path. That matched other hosts
+    # (`http://example.com.attacker.net/x`, `http://example.community/x`)
+    # and sibling paths (`http://h/apiv2/x` under `http://h/api`), and the
+    # full path then had the optimizer prefix `-u` a second time
+    # (`http://h/api/api/users`). Now the origins must be equal, the path
+    # must be the base path or sit below it on a segment boundary, and the
+    # result is relative to the base so the optimizer's prefixing lands on
+    # the literal's own URL. The base itself yields `""`, which the
+    # optimizer drops just as it drops a bare root-base literal.
+    def self.path_under_base(candidate : URI, base : BaseUrl) : String?
+      origin = base.origin
+      return if origin.nil? || UrlOrigin.of(candidate) != origin
+
+      path = candidate.path
+      return path if base.path.empty?
+      return unless path.starts_with?(base.path)
+      rest = path[base.path.size..]
+      return unless rest.empty? || rest.starts_with?('/')
+      rest
+    end
 
     # Yields each line of `path` with its 0-based index, reading through the
     # detector's content cache when the file is there. The hooks used to

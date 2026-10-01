@@ -30,8 +30,9 @@ module Noir::UrlOrigin
     parse_origin("http://#{raw}")
   end
 
-  private def self.parse_origin(raw : String) : String?
-    uri = URI.parse(raw)
+  # Origin of an already-parsed URL, for callers that hold a `URI` and
+  # should not pay for a second parse. Nil when it names no host.
+  def self.of(uri : URI) : String?
     host = uri.host
     return if host.nil? || host.empty?
 
@@ -40,6 +41,10 @@ module Noir::UrlOrigin
     port = nil if port && DEFAULT_PORTS[scheme]? == port
 
     port ? "#{scheme}://#{host.downcase}:#{port}" : "#{scheme}://#{host.downcase}"
+  end
+
+  private def self.parse_origin(raw : String) : String?
+    of(URI.parse(raw))
   rescue URI::Error
     nil
   end

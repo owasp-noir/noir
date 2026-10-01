@@ -1,0 +1,13 @@
+﻿openapi: 3.0.0
+info:
+  title: bom yaml
+  version: "1"
+paths:
+  /bom-yaml:
+    get:
+      parameters:
+        - name: q
+          in: query
+      responses:
+        "200":
+          description: ok

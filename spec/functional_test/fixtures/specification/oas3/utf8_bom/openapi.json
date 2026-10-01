@@ -1,0 +1,1 @@
+﻿{"openapi":"3.0.0","info":{"title":"bom json","version":"1"},"paths":{"/bom-json":{"post":{"parameters":[{"name":"X-Token","in":"header"}],"responses":{"200":{"description":"ok"}}}}}}

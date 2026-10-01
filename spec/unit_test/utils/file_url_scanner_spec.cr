@@ -95,4 +95,46 @@ describe Noir::FileUrlScanner do
       Noir::FileUrlScanner.binary_line?("\turl = https://a.example/x").should be_false
     end
   end
+
+  describe ".path_under_base" do
+    under = ->(candidate : String, base : String) {
+      Noir::FileUrlScanner.path_under_base(URI.parse(candidate), Noir::FileUrlScanner::BaseUrl.parse(base))
+    }
+
+    it "returns the path relative to a base that carries a path" do
+      # The optimizer prefixes `-u` again, so the full `/api/users` came out
+      # as `http://example.com/api/api/users`.
+      under.call("http://example.com/api/users", "http://example.com/api").should eq("/users")
+      under.call("http://example.com/api/users", "http://example.com/api/").should eq("/users")
+    end
+
+    it "returns the full path under a root base" do
+      under.call("http://example.com/api/users", "http://example.com").should eq("/api/users")
+      under.call("http://example.com/", "http://example.com").should eq("/")
+    end
+
+    it "returns an empty path for the base itself" do
+      under.call("http://example.com/api", "http://example.com/api").should eq("")
+    end
+
+    it "rejects hosts that merely start with the base host" do
+      under.call("http://example.com.attacker.net/steal", "http://example.com").should be_nil
+      under.call("http://example.community/other", "http://example.com").should be_nil
+    end
+
+    it "rejects a sibling path that only shares the base path as a prefix" do
+      under.call("http://h/apiv2/x", "http://h/api").should be_nil
+    end
+
+    it "compares scheme and port as origins" do
+      under.call("https://example.com/x", "http://example.com").should be_nil
+      under.call("http://example.com:8080/x", "http://example.com").should be_nil
+      under.call("http://example.com:80/x", "http://example.com").should eq("/x")
+      under.call("HTTP://EXAMPLE.com/x", "http://example.com").should eq("/x")
+    end
+
+    it "does not match a base that appears only in the query" do
+      under.call("http://other.test/proxy?next=http://example.com/x", "http://example.com").should be_nil
+    end
+  end
 end

@@ -35,4 +35,46 @@ describe Noir::TextFile do
       FileUtils.rm_rf(dir)
     end
   end
+
+  # A leading UTF-8 BOM decoded to U+FEFF, which broke `^openapi:`-style
+  # line-1 markers and made `JSON.parse` reject a BOM'd openapi.json.
+  it "drops a leading UTF-8 BOM without moving any line" do
+    dir = File.tempname("noir-text-file")
+    Dir.mkdir_p(dir)
+    begin
+      path = File.join(dir, "api.yaml")
+      File.write(path, "\uFEFFopenapi: 3.0.0\npaths: {}\n")
+
+      content = Noir::TextFile.read(path)
+      content.should eq("openapi: 3.0.0\npaths: {}\n")
+      content.lines.size.should eq(2)
+      /^openapi:/.matches?(content).should be_true
+    ensure
+      FileUtils.rm_rf(dir)
+    end
+  end
+
+  it "drops a UTF-8 BOM on the invalid-byte decode path too" do
+    dir = File.tempname("noir-text-file")
+    Dir.mkdir_p(dir)
+    begin
+      path = File.join(dir, "openapi.json")
+      File.write(path, Bytes[0xEF, 0xBB, 0xBF, 0x7B, 0xFF, 0x7D])
+      Noir::TextFile.read(path).should eq("{}")
+    ensure
+      FileUtils.rm_rf(dir)
+    end
+  end
+
+  it "keeps a BOM-like sequence that is not at the start" do
+    dir = File.tempname("noir-text-file")
+    Dir.mkdir_p(dir)
+    begin
+      path = File.join(dir, "mid.txt")
+      File.write(path, "a\uFEFFb")
+      Noir::TextFile.read(path).should eq("a\uFEFFb")
+    ensure
+      FileUtils.rm_rf(dir)
+    end
+  end
 end

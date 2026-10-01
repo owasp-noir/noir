@@ -113,7 +113,7 @@ describe "OutputBuilderCurl" do
     output.should contain("-H 'X-New\\nLine: value\\r\\nwith\\nbreaks'")
   end
 
-  it "emits -F multipart fields for file uploads" do
+  it "emits multipart fields for file uploads" do
     options = {
       "debug"   => YAML::Any.new(false),
       "verbose" => YAML::Any.new(false),
@@ -132,10 +132,42 @@ describe "OutputBuilderCurl" do
     builder.print([upload])
     line = builder.io.to_s.split("\n").reject(&.empty?).first
 
-    line.should contain("-F 'name='")
+    line.should contain("--form-string 'name='")
     line.should contain("-F 'avatar=@avatar'")
     line.should contain("-H 'AUTHORIZATION: '")
     line.should_not contain("--data-raw")
     line.should_not contain("Content-Type: application/x-www-form-urlencoded")
+  end
+
+  # `-F 'name=<script>…'` makes curl read a file named `script>…`, and
+  # `-F 'name=@/etc/passwd'` uploads that file. Text fields must be sent
+  # verbatim.
+  it "sends multipart text fields verbatim, never as file references" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderCurl.new(options)
+    builder.io = IO::Memory.new
+
+    upload = Endpoint.new("/upload.php", "POST")
+    upload.push_param(Param.new("name", "<script>alert(1)</script>", "form"))
+    upload.push_param(Param.new("path", "@/etc/passwd", "form"))
+    upload.push_param(Param.new("kind", "a;type=text/html", "form"))
+    upload.push_param(Param.new("avatar", "", "file"))
+
+    builder.print([upload])
+    line = builder.io.to_s.split("\n").reject(&.empty?).first
+
+    line.should contain("--form-string 'name=<script>alert(1)</script>'")
+    line.should contain("--form-string 'path=@/etc/passwd'")
+    line.should contain("--form-string 'kind=a;type=text/html'")
+    line.should_not contain("-F 'name=")
+    line.should_not contain("-F 'path=")
+    line.should_not contain("-F 'kind=")
+    line.should contain("-F 'avatar=@avatar'")
   end
 end

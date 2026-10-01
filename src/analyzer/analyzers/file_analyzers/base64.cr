@@ -3,8 +3,8 @@ require "../../../models/analyzer"
 require "../../../models/endpoint"
 require "../../../utils/file_url_scanner"
 
-# Reports URLs hidden in base64-encoded literals whose decoded form contains
-# the user-supplied `-u/--url`.
+# Reports URLs hidden in base64-encoded literals whose decoded form sits on
+# the `-u/--url` origin, under its path.
 #
 # Attributed to `file_base64` rather than to the language of the file it was
 # found in: an endpoint recovered from an encoded blob is a different kind of
@@ -12,6 +12,8 @@ require "../../../utils/file_url_scanner"
 # `FileAnalyzer::Hook` for why this name is not in the tech catalog.
 FileAnalyzer.add_hook(tech: "file_base64", func: ->(path : String, url : String) : Array(Endpoint) {
   results = [] of Endpoint
+  # Parsed on the first candidate only: most files carry no URL literal.
+  base = nil
 
   begin
     Noir::FileUrlScanner.each_line(path) do |line, index|
@@ -36,10 +38,12 @@ FileAnalyzer.add_hook(tech: "file_base64", func: ->(path : String, url : String)
             nil
           end
           next if parsed_url.nil?
-          next unless parsed_url.to_s.includes? url
+          base ||= Noir::FileUrlScanner::BaseUrl.parse(url)
+          endpoint_path = Noir::FileUrlScanner.path_under_base(parsed_url, base)
+          next if endpoint_path.nil?
 
           details = Details.new(PathInfo.new(path, index + 1))
-          results << Endpoint.new(parsed_url.path, "GET", details)
+          results << Endpoint.new(endpoint_path, "GET", details)
         end
       end
     end
