@@ -35,4 +35,12 @@ describe CurlCommand do
       cmd.should contain("--cookie 'session=abc123'")
     end
   end
+
+  describe ".build_multipart" do
+    it "sends text fields with --form-string and file parts with -F" do
+      cmd = CurlCommand.build_multipart("POST", "/upload", [{"name", "@/etc/passwd"}, {"bio", "<x"}],
+        [{"avatar", ""}], [] of String, [] of String)
+      cmd.should eq("curl -i -X 'POST' '/upload' --form-string 'name=@/etc/passwd' --form-string 'bio=<x' -F 'avatar=@avatar'")
+    end
+  end
 end

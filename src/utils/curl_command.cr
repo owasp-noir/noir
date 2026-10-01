@@ -28,6 +28,13 @@ module CurlCommand
   #
   # `file_fields` are `(name, path_hint)`; an empty hint uses the field name
   # as the `@filename` placeholder (same idea as Postman's empty `src`).
+  #
+  # Text fields go out as `--form-string`, which curl sends verbatim. Under
+  # `-F` a value opening with `<` or `@` is read from a local file, and a
+  # `;type=` / `;filename=` suffix is parsed as a part attribute — so a
+  # `--pvalue` payload such as `<script>…` failed with curl error 26, and
+  # `@/etc/passwd` would have uploaded that file. Only the file parts keep
+  # `-F`, because there the `@` is the point.
   def self.build_multipart(method : String, url : String,
                            text_fields : Array(Tuple(String, String)),
                            file_fields : Array(Tuple(String, String)),
@@ -35,7 +42,7 @@ module CurlCommand
     parts = ["curl", "-i", "-X", shell_quote(method), shell_quote(url)]
 
     text_fields.each do |name, value|
-      parts << "-F"
+      parts << "--form-string"
       parts << shell_quote("#{name}=#{value}")
     end
 
@@ -46,7 +53,7 @@ module CurlCommand
     end
 
     # curl sets the multipart Content-Type (with boundary) itself when `-F`
-    # is used; do not force urlencoded/json here.
+    # or `--form-string` is used; do not force urlencoded/json here.
     append_headers_and_cookies(parts, headers, cookies)
     parts.join(" ")
   end

@@ -559,6 +559,29 @@ describe "OutputBuilderHtml" do
     output.should contain("Content-Type: application/json")
   end
 
+  it "keeps multipart text fields out of curl's file syntax in copy-as-curl" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderHtml.new(options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/upload.php", "POST")
+    endpoint.push_param(Param.new("name", "@/etc/passwd", "form"))
+    endpoint.push_param(Param.new("avatar", "", "file"))
+
+    builder.print([endpoint])
+    output = builder.io.to_s
+
+    output.should contain("--form-string &#39;name=@/etc/passwd&#39;")
+    output.should contain("-F &#39;avatar=@avatar&#39;")
+    output.should_not contain("-F &#39;name=")
+  end
+
   it "expands synthetic ANY methods inside the curl attribute" do
     options = {
       "debug"   => YAML::Any.new(false),
