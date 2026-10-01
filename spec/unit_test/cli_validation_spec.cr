@@ -79,6 +79,15 @@ describe Noir::CliValidation do
     end
   end
 
+  it "rejects a --use-taggers value that names no tagger" do
+    options = create_test_options
+    options["use_taggers"] = YAML::Any.new(", ")
+
+    expect_raises(Noir::CliValidation::Error, /--use-taggers: ", " names no tagger/) do
+      Noir::CliValidation.validate_tagger_names!(options)
+    end
+  end
+
   describe "validate_config_file!" do
     it "passes when no config-file is set" do
       options = create_test_options
@@ -441,6 +450,16 @@ describe Noir::CliValidation do
       options["fail_on"] = YAML::Any.new("added")
 
       expect_raises(Noir::CliValidation::Error, /needs a diff/) do
+        Noir::CliValidation.validate_fail_on!(options)
+      end
+    end
+
+    it "rejects a value that names no category instead of leaving the scan ungated" do
+      options = create_test_options
+      options["fail_on"] = YAML::Any.new(" , ,")
+      options["diff_ref"] = YAML::Any.new("main")
+
+      expect_raises(Noir::CliValidation::Error, /--fail-on: " , ," names no category/) do
         Noir::CliValidation.validate_fail_on!(options)
       end
     end

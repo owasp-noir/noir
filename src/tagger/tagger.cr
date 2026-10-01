@@ -36,6 +36,17 @@ module NoirTaggers
   PLAIN_ENTRIES     = ENTRIES.reject(&.framework)
   FRAMEWORK_ENTRIES = ENTRIES.select(&.framework)
 
+  # The framework taggers that emit the `auth` tag. They share one naming
+  # convention, `{framework}_auth`, and a spec pins it.
+  AUTH_ENTRIES = FRAMEWORK_ENTRIES.select(&.key.ends_with?("_auth"))
+
+  # Whether a `--use-taggers` list runs at least one tagger that can emit
+  # the `auth` tag.
+  def self.auth_tagging?(use_taggers : String) : Bool
+    requested = use_taggers.split(",").map(&.strip.downcase)
+    requested.includes?("all") || AUTH_ENTRIES.any? { |entry| requested.includes?(entry.key) }
+  end
+
   # Instantiates the tagger `key` names, or nil when nothing claims it.
   def self.build(key : String, options : Hash(String, YAML::Any)) : Tagger?
     {% begin %}

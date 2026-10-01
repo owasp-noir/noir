@@ -21,6 +21,26 @@ describe "Tagger" do
     end
   end
 
+  # `--fail-on auth-removed` adds `AUTH_ENTRIES` when `--use-taggers` names
+  # none of them, and that list is read off the `_auth` key suffix. A tagger
+  # that emits the auth tag under another key would silently fall out of
+  # the gate, so pin the convention against the sources.
+  it "names every framework tagger that emits the auth tag with an _auth key" do
+    emitting = Dir.glob(File.join(File.expand_path("../../../src/tagger/framework_taggers", __DIR__), "**", "*.cr")).compact_map do |path|
+      source = File.read(path)
+      next unless source.matches?(/Tag\.new\("auth",/)
+      source.match(/key: "([a-z_]+)"/).try(&.[1])
+    end
+    emitting.should_not be_empty
+    emitting.sort.should eq(NoirTaggers::AUTH_ENTRIES.map(&.key).sort!)
+  end
+
+  it "knows whether a --use-taggers list emits the auth tag" do
+    NoirTaggers.auth_tagging?("hunt,cors").should be_false
+    NoirTaggers.auth_tagging?("hunt, Django_Auth").should be_true
+    NoirTaggers.auth_tagging?("all").should be_true
+  end
+
   # `--use-taggers Hunt` and `--use-taggers HUNT` used to error
   # because the canonical names in `available_tagger_names` are
   # lowercase. Users naturally try title-case or upper-case; force
