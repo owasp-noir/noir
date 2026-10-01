@@ -148,26 +148,32 @@ class FrameworkTagger < Tagger
   # markers sit on either side of it — `@GetMapping` then `@PreAuthorize` is
   # as common as the reverse — so a walk that only goes up misses half of
   # them. `marker` is what starts an annotation line (`"@"`, `"#["`); a line
-  # inside an annotation's still-open parentheses belongs to it, and blank
-  # lines and comments are skipped.
+  # inside an annotation's still-open brackets belongs to it, comment lines
+  # are skipped, and anything else — the declaration, a blank line — ends
+  # the stack.
   def annotation_lines_below(lines : Array(String), route_idx : Int32, marker : String, limit : Int32 = 15) : Array(String)
     below = [] of String
     return below unless 0 <= route_idx < lines.size
     # Below a method declaration is its body, not more annotations.
     return below unless lines[route_idx].strip.starts_with?(marker)
 
-    depth = paren_balance(lines[route_idx])
+    depth, declared = scan_annotations(lines[route_idx], marker)
+    # `@GetMapping("/x") fun x() = ...` declares the handler on the route
+    # line itself, so the annotations below it belong to the next handler.
+    return below if declared
+
     idx = route_idx + 1
     last = {route_idx + limit, lines.size - 1}.min
     while idx <= last
       current = lines[idx].strip
       if depth > 0
         below << current
-        depth += paren_balance(current)
+        depth += bracket_balance(current)
       elsif current.starts_with?(marker)
         below << current
-        depth = paren_balance(current)
-      elsif !(current.empty? || current.starts_with?("//") || (current.starts_with?('#') && !current.starts_with?("#[")))
+        depth, declared = scan_annotations(current, marker)
+        break if declared
+      elsif !annotation_comment?(current)
         break
       end
       idx += 1
@@ -175,8 +181,83 @@ class FrameworkTagger < Tagger
     below
   end
 
-  private def paren_balance(line : String) : Int32
-    line.count('(') - line.count(')')
+  # Reads the annotations a line opens with. Returns the bracket depth still
+  # open at the end of the line (a multi-line annotation), and whether code
+  # other than annotations and a comment follows them — a declaration
+  # sharing the line.
+  private def scan_annotations(line : String, marker : String) : {Int32, Bool}
+    chars = line.chars
+    i = 0
+    loop do
+      while i < chars.size && chars[i].whitespace?
+        i += 1
+      end
+      break unless marker_at?(chars, i, marker)
+      i += marker.size
+      depth = 0
+      if marker == "#["
+        depth = 1
+      else
+        while i < chars.size && (chars[i].alphanumeric? || chars[i].in?('_', '.', ':'))
+          i += 1
+        end
+        if i < chars.size && chars[i] == '('
+          depth = 1
+          i += 1
+        end
+      end
+      while depth > 0 && i < chars.size
+        char = chars[i]
+        if char.in?('"', '\'')
+          i = skip_quoted(chars, i)
+          next
+        end
+        depth += 1 if char.in?('(', '[')
+        depth -= 1 if char.in?(')', ']')
+        i += 1
+      end
+      return {depth, false} if depth > 0
+    end
+    rest = chars[i..].join.strip
+    {0, !(rest.empty? || annotation_comment?(rest))}
+  end
+
+  private def marker_at?(chars : Array(Char), i : Int32, marker : String) : Bool
+    return false if i + marker.size > chars.size
+    marker.chars.each_with_index.all? { |char, offset| chars[i + offset] == char }
+  end
+
+  # Index just past the string literal opening at `start`.
+  private def skip_quoted(chars : Array(Char), start : Int32) : Int32
+    quote = chars[start]
+    i = start + 1
+    while i < chars.size
+      return i + 1 if chars[i] == quote
+      i += chars[i] == '\\' ? 2 : 1
+    end
+    i
+  end
+
+  # Opening minus closing brackets outside string literals.
+  private def bracket_balance(line : String) : Int32
+    chars = line.chars
+    balance = 0
+    i = 0
+    while i < chars.size
+      char = chars[i]
+      if char.in?('"', '\'')
+        i = skip_quoted(chars, i)
+        next
+      end
+      balance += 1 if char.in?('(', '[')
+      balance -= 1 if char.in?(')', ']')
+      i += 1
+    end
+    balance
+  end
+
+  private def annotation_comment?(line : String) : Bool
+    line.starts_with?("//") || (line.starts_with?('#') && !line.starts_with?("#["))
   end
 
   # Find an annotation (`@PreAuthorize`, `@CrossOrigin`, `@Validated`, …) that

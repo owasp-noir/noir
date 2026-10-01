@@ -108,4 +108,64 @@ describe "auth markers below the route marker" do
       RS
     tag_route(RustAuthTagger, "main.rs", source, 1, "rust_actix_web").should contain("auth")
   end
+
+  # A route marker that shares its line with the declaration ends the stack:
+  # what follows belongs to the next handler.
+  it "Spring/Kotlin: a one-line handler does not take the next handler's @PreAuthorize" do
+    source = <<-KT
+      @RestController
+      class C {
+          @GetMapping("/open") fun open(): String = "x"
+
+          @PreAuthorize("hasRole('ADMIN')")
+          @GetMapping("/admin") fun admin(): String = "x"
+      }
+      KT
+    tag_route(SpringAuthTagger, "C.kt", source, 3, "kotlin_spring").should_not contain("auth")
+  end
+
+  it "Spring/Java: a one-line handler does not take the next handler's @PreAuthorize" do
+    source = <<-JAVA
+      @RestController
+      public class C {
+          @GetMapping("/open") public String open() { return "x"; }
+          @PreAuthorize("hasRole('ADMIN')")
+          @GetMapping("/admin") public String admin() { return "x"; }
+      }
+      JAVA
+    tag_route(SpringAuthTagger, "C.java", source, 3, "java_spring").should_not contain("auth")
+  end
+
+  it "Rust: a one-line handler does not take the next handler's guard" do
+    source = <<-RS
+      #[get("/open")] async fn open() -> HttpResponse { HttpResponse::Ok().finish() }
+
+      #[guard = "admin"]
+      #[get("/admin")]
+      async fn admin() -> HttpResponse { HttpResponse::Ok().finish() }
+      RS
+    tag_route(RustAuthTagger, "main.rs", source, 1, "rust_actix_web").should_not contain("auth")
+  end
+
+  it "NestJS: a one-line handler does not take the next handler's guard" do
+    source = <<-TS
+      @Controller('c')
+      export class C {
+        @Get('open') open() { return 1; }
+        @UseGuards(AuthGuard('jwt'))
+        @Get('admin') admin() { return 1; }
+      }
+      TS
+    tag_route(NestjsAuthTagger, "c.controller.ts", source, 3, "js_nestjs").should_not contain("auth")
+  end
+
+  it "ignores brackets inside strings and trailing comments on the route line" do
+    source = <<-PY
+      @app.route("/x(")  # see (docs
+      @protected()
+      async def x(request):
+          return text("x")
+      PY
+    tag_route(PythonMiscAuthTagger, "app.py", source, 1, "python_sanic").should contain("auth")
+  end
 end
