@@ -55,12 +55,20 @@ class PythonMiscAuthTagger < FrameworkTagger
   end
 
   private def check_decorators(lines : Array(String), func_line : Int32) : String?
+    all_patterns = SANIC_PATTERNS + TORNADO_PATTERNS
+    # A Sanic route's line is its `@app.route` decorator, and the auth
+    # decorators that wrap the handler (`@protected()`) sit below it.
+    annotation_lines_below(lines, func_line, "@").each do |current|
+      all_patterns.each do |pattern, desc|
+        return desc if current.matches?(pattern)
+      end
+    end
+
     idx = func_line - 1
     while idx >= 0 && idx >= func_line - 5
       current = lines[idx].strip
       break if current.empty? && idx < func_line - 1
 
-      all_patterns = SANIC_PATTERNS + TORNADO_PATTERNS
       all_patterns.each do |pattern, desc|
         return desc if current.matches?(pattern)
       end

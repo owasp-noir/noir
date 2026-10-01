@@ -38,22 +38,43 @@ class FlaskAuthTagger < FrameworkTagger
       # read would crash the lines[idx] walk below with IndexError.
       next if line_num < 1 || line_num > lines.size
 
-      # Walk backwards from function definition to find decorators
+      # The line is normally the `@app.route` decorator itself. Flask
+      # registers whatever function the route decorator receives, so only
+      # the decorators *below* it wrap the registered view: `@login_required`
+      # above `@app.route` leaves the route open (Flask's docs say the route
+      # decorator must be outermost). Read the stack below and nothing above.
+      route_idx = line_num - 1
+      if lines[route_idx].strip.starts_with?('@')
+        annotation_lines_below(lines, route_idx, "@").each do |current|
+          if desc = decorator_description(current)
+            endpoint.add_tag(Tag.new("auth", "Protected by #{desc}", "flask_auth"))
+            return
+          end
+        end
+        next
+      end
+
+      # Otherwise the line is the view itself: walk back over its decorators.
       # 8-line window: Flask decorators stack above def, typically 1-5 decorators
       idx = line_num - 2 # 0-indexed, one line before
       while idx >= 0 && idx >= line_num - 10
         current = lines[idx].strip
         break if current.empty? && idx < line_num - 2
 
-        DECORATOR_PATTERNS.each do |pattern, desc|
-          if current.matches?(pattern)
-            endpoint.add_tag(Tag.new("auth", "Protected by #{desc}", "flask_auth"))
-            return
-          end
+        if desc = decorator_description(current)
+          endpoint.add_tag(Tag.new("auth", "Protected by #{desc}", "flask_auth"))
+          return
         end
 
         idx -= 1
       end
     end
+  end
+
+  private def decorator_description(line : String) : String?
+    DECORATOR_PATTERNS.each do |pattern, desc|
+      return desc if line.matches?(pattern)
+    end
+    nil
   end
 end
