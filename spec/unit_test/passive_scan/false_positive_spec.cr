@@ -133,6 +133,10 @@ describe NoirPassiveScan::FalsePositive do
         %(url = os.environ.get("DATABASE_URL") or "anonymous"),
         %(url = ENV.fetch("DATABASE_URL", "dev")),
         %(require_env("DATABASE_URL", "REDIS_URL")),
+        # Format-string slots stand in for the password.
+        %(url = os.getenv("DATABASE_URL", "postgresql://{}:{}@{}/{}".format(u, p, h, d))),
+        %(url = os.getenv("DATABASE_URL", "postgresql://app:%s@db/app" % pw)),
+        %(url = os.getenv("DATABASE_URL", "postgresql://app:%(pw)s@db/app" % cfg)),
         # Comment-line suppression is unchanged.
         %(# os.environ["DATABASE_URL"] = "postgres://admin:pw@db:5432/app"),
       ].each do |line|
@@ -211,6 +215,14 @@ describe NoirPassiveScan::FalsePositive do
       NoirPassiveScan::FalsePositive.secret_reference?(%(key = os.environ["AWS_ACCESS_KEY_ID"])).should be_true
       NoirPassiveScan::FalsePositive.secret_reference?(%(token = ENV["GITHUB_TOKEN"])).should be_true
       NoirPassiveScan::FalsePositive.secret_reference?(%(secret := System.getenv("AWS_SECRET_ACCESS_KEY"))).should be_true
+    end
+
+    # A long word run after an env accessor used to backtrack exponentially
+    # against the optional bare key, hit PCRE2's match limit inside the
+    # filter, and drop the whole rule for the file.
+    it "does not raise on a long word run after an env accessor" do
+      line = "const t = process.env.GITHUB_TOKEN#{"A" * 6000}"
+      NoirPassiveScan::FalsePositive.secret_reference?(line).should be_true
     end
 
     it "does not treat an accessor that hands over a credentialed URL as a pure read" do

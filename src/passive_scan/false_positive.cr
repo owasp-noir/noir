@@ -53,22 +53,27 @@ module NoirPassiveScan
     # quote of a literal passed as a further argument or handed over by
     # HANDOFF_OPERATOR. Group 1 is that quote; see `quoted_literal`.
     #
-    # This and the other handoff patterns below are matched ANCHORED at a
-    # byte offset (`match_at`), so they carry no `\A`.
-    LITERAL_AFTER_ACCESSOR = /[\w.]*\s*[(\[]?\s*(?:(?:'[^']*'|"[^"]*"|`[^`]*`|[\w.]+)\s*)?[)\]]?\s*(?:,|#{HANDOFF_OPERATOR})\s*(['"`])/
+    # This and the other handoff patterns below are matched at a byte offset
+    # and pinned there with `\G`. The `ANCHORED` match option would do the
+    # same but turns off PCRE2's JIT, which made every env-heavy line several
+    # times slower. The member run is possessive (`*+`): backtracking it
+    # against the optional bare key that follows was exponential on a long
+    # word run, and the match limit it hit dropped the whole rule for the
+    # file.
+    LITERAL_AFTER_ACCESSOR = /\G[\w.]*+\s*[(\[]?\s*(?:(?:'[^']*'|"[^"]*"|`[^`]*`|[\w.]+)\s*)?[)\]]?\s*(?:,|#{HANDOFF_OPERATOR})\s*(['"`])/
 
     # `NAME=…`, `NAME: …`, `"NAME": …`, `NAME => …` with a non-empty value,
     # read from just after the name.
-    NAME_ASSIGNMENT = /['"]?\s*(?::|=>?)\s*\S/
+    NAME_ASSIGNMENT = /\G['"]?\s*(?::|=>?)\s*\S/
 
     # Text right after a variable name, past its closing quote and
     # bracket: `"K"] = "…"`, `K"] ||= "…"`, `K || "…"`.
-    LITERAL_AFTER_NAME = /['"`]?\s*[)\]]?\s*#{HANDOFF_OPERATOR}\s*(['"`])/
+    LITERAL_AFTER_NAME = /\G['"`]?\s*[)\]]?\s*#{HANDOFF_OPERATOR}\s*(['"`])/
 
     # A name passed as the first argument of a call whose second argument
     # is a quoted literal — `env('K', '…')`: the literal is the value used
     # when the variable is unset. Read from the name's closing quote.
-    LITERAL_SECOND_ARGUMENT = /['"`]\s*,\s*(['"`])/
+    LITERAL_SECOND_ARGUMENT = /\G['"`]\s*,\s*(['"`])/
 
     # A URL carrying a password in its userinfo — `postgres://admin:pw@db`,
     # `redis://:pw@cache`. Group 1 is the password. This is the one literal
@@ -79,6 +84,11 @@ module NoirPassiveScan
     # literal with a secret's own shape (`ghp_…`, `AKIA…`) never gets here:
     # `regex_value_hit?` keeps it first.
     CREDENTIAL_URL = /\A\s*[A-Za-z][A-Za-z0-9+.\-]*:\/\/[^\s\/:@]*:([^\s\/@]+)@[^\s\/@]/
+
+    # A format-string slot standing in for the password —
+    # `"postgresql://{}:{}@{}/{}".format(…)`, `"…:%s@host" % pw` — is a
+    # reference filled at runtime, not a literal secret.
+    FORMAT_SLOT = /\{[^}]*\}|%(?:\([^)]*\))?[sdr]/
 
     # Captures the value to the right of the first assignment separator
     # (`:`, `=`, or the PHP/Ruby hash arrow `=>`), trimming surrounding
@@ -264,7 +274,7 @@ module NoirPassiveScan
       offset = 0
       while idx = line.byte_index(name, offset)
         offset = idx + name.bytesize
-        return true if NAME_ASSIGNMENT.match_at_byte_index(line, offset, Regex::MatchOptions::ANCHORED)
+        return true if NAME_ASSIGNMENT.match_at_byte_index(line, offset)
         return true if credential_url_at?(line, LITERAL_AFTER_NAME, offset)
         return true if first_call_argument?(line, idx) && credential_url_at?(line, LITERAL_SECOND_ARGUMENT, offset)
       end
@@ -274,10 +284,10 @@ module NoirPassiveScan
     # True when `handoff` matches at `offset` and the literal whose opening
     # quote ends that match is a credentialed URL with a real password.
     private def self.credential_url_at?(line : String, handoff : Regex, offset : Int32) : Bool
-      return false unless match = handoff.match_at_byte_index(line, offset, Regex::MatchOptions::ANCHORED)
+      return false unless match = handoff.match_at_byte_index(line, offset)
       return false unless url = quoted_literal(line, match).match(CREDENTIAL_URL)
       password = url[1]
-      !(password.matches?(PURE_REFERENCE) || password.matches?(PLACEHOLDER_VALUE))
+      !(password.matches?(PURE_REFERENCE) || password.matches?(PLACEHOLDER_VALUE) || password.matches?(FORMAT_SLOT))
     end
 
     # True when the name at byte `idx` opens a call's argument list: it is
