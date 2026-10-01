@@ -20,11 +20,13 @@ module NoirPassiveScan
   # (`GITHUB_TOKEN`, `AWS_ACCESS_KEY_ID`, …) on lines that merely
   # reference the variable rather than assign it a literal value.
   module FalsePositive
-    # Runtime environment-variable accessors. A line that pulls its value
-    # from the environment at runtime has, by construction, no literal
-    # secret to leak. These are substring-matched anywhere on the line so
-    # `key = os.getenv("OPENAI_API_KEY")` is covered regardless of where
-    # the accessor sits.
+    # Runtime environment-variable accessors. A line that only pulls its
+    # value from the environment at runtime has no literal secret to leak.
+    # They are found anywhere on the line, so
+    # `key = os.getenv("OPENAI_API_KEY")` is covered wherever the accessor
+    # sits — but an accessor is not proof on its own: the same line can
+    # write a literal (`os.environ["K"] = "…"`) or hand one over as a
+    # default (`os.getenv("K", "…")`). See LITERAL_AFTER_ACCESSOR.
     ENV_ACCESSOR_MARKERS = [
       "process.env",
       "import.meta.env",
@@ -39,6 +41,40 @@ module NoirPassiveScan
       "Environment.GetEnvironmentVariable",
       "Sys.getenv",
     ]
+
+    # How a value is handed over right after an env accessor or a
+    # variable name: an assignment (`=`, `||=`, `??=`) or a fallback (`||`,
+    # `??`, `?:`, `or`). A `=` that is part of `==`, `=~` or `=>` is a
+    # comparison or hash key, not a write.
+    HANDOFF_OPERATOR = %q((?:\|\|=?|\?\?=?|\?:|\bor\b|=(?![=~>])))
+
+    # Text right after an env accessor: an optional member or method
+    # (`.setdefault`, `.DATABASE_URL`), an optional opening `(` / `[`, the
+    # key (quoted or bare), an optional closing `)` / `]`, then the opening
+    # quote of a literal passed as a further argument or handed over by
+    # HANDOFF_OPERATOR. Group 1 is that quote; see `quoted_literal`.
+    LITERAL_AFTER_ACCESSOR = /\A[\w.]*\s*[(\[]?\s*(?:(?:'[^']*'|"[^"]*"|`[^`]*`|[\w.]+)\s*)?[)\]]?\s*(?:,|#{HANDOFF_OPERATOR})\s*(['"`])/
+
+    # `NAME=…`, `NAME: …`, `"NAME": …`, `NAME => …` with a non-empty value,
+    # read from just after the name.
+    NAME_ASSIGNMENT = /\A['"]?\s*(?::|=>?)\s*\S/
+
+    # Text right after a variable name, past its closing quote and
+    # bracket: `"K"] = "…"`, `K"] ||= "…"`, `K || "…"`.
+    LITERAL_AFTER_NAME = /\A['"`]?\s*[)\]]?\s*#{HANDOFF_OPERATOR}\s*(['"`])/
+
+    # A name passed as the first argument of a call whose second argument
+    # is a quoted literal — `env('K', '…')`, `os.getenv("K", "…")`,
+    # `setdefault("K", "…")`: the literal is the value used when the
+    # variable is unset. CALL_FIRST_ARGUMENT is matched against the text
+    # before the name, LITERAL_SECOND_ARGUMENT against the text after it.
+    CALL_FIRST_ARGUMENT     = /\(\s*['"`]\z/
+    LITERAL_SECOND_ARGUMENT = /\A['"`]\s*,\s*(['"`])/
+
+    # Another variable name passed as a literal (`require_env("DB_URL",
+    # "REDIS_URL")`). Upper snake case with at least one underscore, so a
+    # real uppercase key (`AKIA…`) is not mistaken for a name.
+    ENV_NAME_LITERAL = /\A[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\z/
 
     # Captures the value to the right of the first assignment separator
     # (`:`, `=`, or the PHP/Ruby hash arrow `=>`), trimming surrounding
@@ -115,8 +151,8 @@ module NoirPassiveScan
       # `GH_TOKEN: ${{ github.token }}` or `${{ secrets.GITHUB_TOKEN }}`.
       return true if line.includes?("${{")
 
-      # Runtime environment-variable accessors.
-      return true if ENV_ACCESSOR_MARKERS.any? { |marker| line.includes?(marker) }
+      # Runtime environment-variable reads that hand over no literal.
+      return true if env_read_only?(line)
 
       # Empty assignment value — `.env.example` / config template stub.
       return true if line.matches?(EMPTY_ASSIGNMENT)
@@ -199,12 +235,61 @@ module NoirPassiveScan
       COMMENT_PREFIXES.any? { |prefix| stripped.starts_with?(prefix) }
     end
 
-    # True when `name` is assigned a (non-empty) value on the line —
-    # `NAME=…`, `NAME: …`, `"NAME": …`, `NAME => …`. A bare mention
-    # (`"DATABASE_URL"`, `env.delete("DATABASE_URL")`, prose) does not
-    # match, so it is treated as a non-secret reference.
+    # True when the line has an env accessor and none of its occurrences
+    # hands over a literal value (see LITERAL_AFTER_ACCESSOR).
+    def self.env_read_only?(line : String) : Bool
+      found = false
+      ENV_ACCESSOR_MARKERS.each do |marker|
+        offset = 0
+        while idx = line.byte_index(marker, offset)
+          found = true
+          tail = line.byte_slice(idx + marker.bytesize)
+          if (match = tail.match(LITERAL_AFTER_ACCESSOR)) && literal_value?(quoted_literal(tail, match))
+            return false
+          end
+          offset = idx + marker.bytesize
+        end
+      end
+      found
+    end
+
+    # True when `name` is given a (non-empty) value on the line —
+    # `NAME=…`, `NAME: …`, `"NAME": …`, `NAME => …`, or a quoted literal
+    # through `["NAME"] = "…"`, `||= "…"`, `|| "…"` or a call's default
+    # argument (`env('NAME', '…')`). A bare mention (`"DATABASE_URL"`,
+    # `env.delete("DATABASE_URL")`, prose) does not match, so it is treated
+    # as a non-secret reference.
     def self.assigns_literal?(line : String, name : String) : Bool
-      !!line.match(/#{Regex.escape(name)}['"]?\s*(?::|=>?)\s*\S/)
+      offset = 0
+      while idx = line.byte_index(name, offset)
+        tail = line.byte_slice(idx + name.bytesize)
+        return true if tail.matches?(NAME_ASSIGNMENT)
+        if (match = tail.match(LITERAL_AFTER_NAME)) && literal_value?(quoted_literal(tail, match))
+          return true
+        end
+        if line.byte_slice(0, idx).matches?(CALL_FIRST_ARGUMENT) &&
+           (match = tail.match(LITERAL_SECOND_ARGUMENT)) && literal_value?(quoted_literal(tail, match))
+          return true
+        end
+        offset = idx + name.bytesize
+      end
+      false
+    end
+
+    # The literal whose opening quote ends `match` (group 1), up to the
+    # matching closing quote — or to the end of the line when it does not
+    # close on it.
+    private def self.quoted_literal(text : String, match : Regex::MatchData) : String
+      start = match.byte_end(0)
+      close = text.byte_index(match[1], start)
+      close ? text.byte_slice(start, close - start) : text.byte_slice(start)
+    end
+
+    # A literal that could carry a secret: non-empty, and not a reference,
+    # a placeholder or another variable's name.
+    private def self.literal_value?(literal : String) : Bool
+      return false if literal.blank?
+      !(literal.matches?(PURE_REFERENCE) || literal.matches?(PLACEHOLDER_VALUE) || literal.matches?(ENV_NAME_LITERAL))
     end
 
     # Strip a single layer of matching wrapping quotes (and a trailing

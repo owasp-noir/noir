@@ -76,6 +76,42 @@ describe NoirPassiveScan::FalsePositive do
       NoirPassiveScan::FalsePositive.suppress?(database_rule, "DATABASE_URL: postgres://user:pass@db.example.com:5432/app").should be_false
     end
 
+    it "keeps a literal written to, or defaulted through, an env accessor" do
+      url = "postgres://admin:S3cretPassw0rd@prod-db.internal:5432/app"
+      [
+        %(os.environ["DATABASE_URL"] = "#{url}"),
+        %(os.environ.setdefault("DATABASE_URL", "#{url}")),
+        %(ENV["DATABASE_URL"] ||= "#{url}"),
+        %(process.env.DATABASE_URL = "#{url}";),
+        %(DB = os.getenv("DATABASE_URL", "#{url}")),
+        %('url' => env('DATABASE_URL', '#{url}'),),
+        %(const db = process.env.DATABASE_URL || "#{url}";),
+        # Control: the plain assignment was always reported.
+        %(DATABASE_URL = "#{url}"),
+      ].each do |line|
+        NoirPassiveScan::FalsePositive.suppress?(database_rule, line).should be_false, "expected kept: #{line}"
+      end
+    end
+
+    it "still suppresses env reads that hand over no literal" do
+      [
+        %(url = os.environ["DATABASE_URL"]),
+        %(url = os.environ.get("DATABASE_URL")),
+        %(url = ENV.fetch("DATABASE_URL")),
+        %(const url = process.env.DATABASE_URL;),
+        %(if (process.env.DATABASE_URL === "") {),
+        %(url = os.getenv("DATABASE_URL", "")),
+        %(url = os.getenv("DATABASE_URL", default_url)),
+        %(os.environ["DATABASE_URL"] = os.environ["TEST_DATABASE_URL"]),
+        %(url = os.getenv("DATABASE_URL", "<your-database-url>")),
+        %(require_env("DATABASE_URL", "REDIS_URL")),
+        # Comment-line suppression is unchanged.
+        %(# os.environ["DATABASE_URL"] = "postgres://admin:pw@db:5432/app"),
+      ].each do |line|
+        NoirPassiveScan::FalsePositive.suppress?(database_rule, line).should be_true, "expected suppressed: #{line}"
+      end
+    end
+
     it "keeps a PEM marker (literal secret, not a variable name)" do
       pem = PassiveScan.new(YAML.parse(<<-YAML))
         id: private-key
@@ -130,6 +166,12 @@ describe NoirPassiveScan::FalsePositive do
       NoirPassiveScan::FalsePositive.secret_reference?(%(key = os.environ["AWS_ACCESS_KEY_ID"])).should be_true
       NoirPassiveScan::FalsePositive.secret_reference?(%(token = ENV["GITHUB_TOKEN"])).should be_true
       NoirPassiveScan::FalsePositive.secret_reference?(%(secret := System.getenv("AWS_SECRET_ACCESS_KEY"))).should be_true
+    end
+
+    it "does not treat an accessor that hands over a literal as a pure read" do
+      NoirPassiveScan::FalsePositive.secret_reference?(%(os.getenv("OPENAI_API_KEY", "sk-proj-realfallbackvalue123"))).should be_false
+      NoirPassiveScan::FalsePositive.secret_reference?(%(ENV["GITHUB_TOKEN"] ||= "ghp_fallback")).should be_false
+      NoirPassiveScan::FalsePositive.secret_reference?(%(token = ENV["GITHUB_TOKEN"] == "x")).should be_true
     end
 
     it "suppresses shell / template variable references in value position" do
