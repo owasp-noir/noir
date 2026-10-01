@@ -203,17 +203,30 @@ class RustAuthTagger < FrameworkTagger
       end
       break unless current.starts_with?("#[") || current.starts_with?("//")
 
-      GUARD_ATTRIBUTE_PATTERNS.each do |pattern|
-        match = current.match(pattern)
-        if match
-          guard_name = match[1]? || "guard"
-          return "Protected by Rust #[guard] attribute (#{guard_name})"
-        end
+      if description = guard_attribute_description(current)
+        return description
       end
 
       idx -= 1
     end
 
+    # Attributes stacked below the route attribute guard it just the same.
+    annotation_lines_below(lines, route_line_idx, "#[").each do |below|
+      if description = guard_attribute_description(below)
+        return description
+      end
+    end
+
+    nil
+  end
+
+  private def guard_attribute_description(line : String) : String?
+    GUARD_ATTRIBUTE_PATTERNS.each do |pattern|
+      if match = line.match(pattern)
+        guard_name = match[1]? || "guard"
+        return "Protected by Rust #[guard] attribute (#{guard_name})"
+      end
+    end
     nil
   end
 

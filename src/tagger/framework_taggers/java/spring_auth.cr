@@ -221,6 +221,15 @@ class SpringAuthTagger < FrameworkTagger
       idx -= 1
     end
 
+    annotation_lines_below(lines, endpoint_idx, "@").each do |below|
+      ANNOTATION_PATTERNS.each do |pattern|
+        if below.matches?(pattern)
+          annotation_name = below.split("(").first.strip
+          return "Protected by Spring #{annotation_name}"
+        end
+      end
+    end
+
     # A controller-level `@PreAuthorize`/`@Secured`/`@RolesAllowed` applies to
     # every handler the class declares. The walk above cannot reach it — it
     # stops at the `public`/`class` boundary by design, so a handler under an

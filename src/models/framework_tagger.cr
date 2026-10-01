@@ -142,6 +142,43 @@ class FrameworkTagger < Tagger
     lines
   end
 
+  # The annotation lines stacked *below* the route marker at `route_idx`,
+  # down to the declaration they decorate. An endpoint's line is its route
+  # marker (`@GetMapping`, `@app.route`, `#[Route]`, `@Get()`), and auth
+  # markers sit on either side of it — `@GetMapping` then `@PreAuthorize` is
+  # as common as the reverse — so a walk that only goes up misses half of
+  # them. `marker` is what starts an annotation line (`"@"`, `"#["`); a line
+  # inside an annotation's still-open parentheses belongs to it, and blank
+  # lines and comments are skipped.
+  def annotation_lines_below(lines : Array(String), route_idx : Int32, marker : String, limit : Int32 = 15) : Array(String)
+    below = [] of String
+    return below unless 0 <= route_idx < lines.size
+    # Below a method declaration is its body, not more annotations.
+    return below unless lines[route_idx].strip.starts_with?(marker)
+
+    depth = paren_balance(lines[route_idx])
+    idx = route_idx + 1
+    last = {route_idx + limit, lines.size - 1}.min
+    while idx <= last
+      current = lines[idx].strip
+      if depth > 0
+        below << current
+        depth += paren_balance(current)
+      elsif current.starts_with?(marker)
+        below << current
+        depth = paren_balance(current)
+      elsif !(current.empty? || current.starts_with?("//") || (current.starts_with?('#') && !current.starts_with?("#[")))
+        break
+      end
+      idx += 1
+    end
+    below
+  end
+
+  private def paren_balance(line : String) : Int32
+    line.count('(') - line.count(')')
+  end
+
   # Find an annotation (`@PreAuthorize`, `@CrossOrigin`, `@Validated`, …) that
   # decorates the *class* declaration: it must be immediately followed —
   # skipping other annotations and blank lines — by a `class` line. Returns the

@@ -233,6 +233,13 @@ class PhpAuthTagger < FrameworkTagger
       idx -= 1
     end
 
+    # `#[Route]` then `#[IsGranted]` is as protected as the reverse order.
+    annotation_lines_below(lines, method_line, "#[").each do |below|
+      SYMFONY_PATTERNS.each do |pattern, desc|
+        return desc if below.matches?(pattern)
+      end
+    end
+
     nil
   end
 

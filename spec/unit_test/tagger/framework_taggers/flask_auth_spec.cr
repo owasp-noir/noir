@@ -15,7 +15,7 @@ private def flask_detect(decorator : String) : Endpoint
 
   noir_options = create_test_options
   noir_options["base"] = YAML::Any.new(tmpdir)
-  details = Details.new(PathInfo.new(app, 3))
+  details = Details.new(PathInfo.new(app, 1))
   details.technology = "python_flask"
   endpoint = Endpoint.new("/secret", "GET", [] of Param, details)
 
@@ -28,21 +28,18 @@ describe "FlaskAuthTagger" do
   fixture_base = "#{__DIR__}/../../../functional_test/fixtures/python/flask_auth"
   app_path = "#{fixture_base}/app.py"
 
-  # app.py line reference:
-  #  9: @app.route('/public')
-  # 10: def public_page():
-  # 14: @login_required
-  # 15: @app.route('/profile')
-  # 16: def profile():
-  # 20: @jwt_required()
-  # 21: @app.route('/api/data')
-  # 22: def api_data():
+  # app.py line reference — the route decorator, which is the line the
+  # Flask analyzer reports:
+  #  8: @app.route('/public')
+  # 13: @app.route('/profile')       (@login_required below it)
+  # 19: @app.route('/api/data', ...) (multi-line; @jwt_required() below it)
+  # 34: @app.route('/misordered')    (@login_required *above* it)
 
   it "detects @login_required decorator" do
     noir_options = create_test_options
     noir_options["base"] = YAML::Any.new(fixture_base)
 
-    details = Details.new(PathInfo.new(app_path, 16))
+    details = Details.new(PathInfo.new(app_path, 13))
     details.technology = "python_flask"
     endpoint = Endpoint.new("/profile", "GET", [] of Param, details)
 
@@ -59,7 +56,7 @@ describe "FlaskAuthTagger" do
     noir_options = create_test_options
     noir_options["base"] = YAML::Any.new(fixture_base)
 
-    details = Details.new(PathInfo.new(app_path, 22))
+    details = Details.new(PathInfo.new(app_path, 19))
     details.technology = "python_flask"
     endpoint = Endpoint.new("/api/data", "GET", [] of Param, details)
 
@@ -75,7 +72,7 @@ describe "FlaskAuthTagger" do
     noir_options = create_test_options
     noir_options["base"] = YAML::Any.new(fixture_base)
 
-    details = Details.new(PathInfo.new(app_path, 10))
+    details = Details.new(PathInfo.new(app_path, 8))
     details.technology = "python_flask"
     endpoint = Endpoint.new("/public", "GET", [] of Param, details)
 
@@ -83,6 +80,37 @@ describe "FlaskAuthTagger" do
     tagger.perform([endpoint])
 
     endpoint.tags.empty?.should be_true
+  end
+
+  it "does not tag a route whose auth decorator sits above the route decorator" do
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(fixture_base)
+
+    details = Details.new(PathInfo.new(app_path, 34))
+    details.technology = "python_flask"
+    endpoint = Endpoint.new("/misordered", "GET", [] of Param, details)
+
+    FlaskAuthTagger.new(noir_options).perform([endpoint])
+
+    endpoint.tags.empty?.should be_true
+  end
+
+  it "still reads the decorators above a line that is the view itself" do
+    tmpdir = File.tempname("flask_auth_def_line")
+    Dir.mkdir_p(tmpdir)
+    app = File.join(tmpdir, "app.py")
+    File.write(app, "@app.route('/x')\n@login_required\ndef x():\n    return 'ok'\n")
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    details = Details.new(PathInfo.new(app, 3))
+    details.technology = "python_flask"
+    endpoint = Endpoint.new("/x", "GET", [] of Param, details)
+
+    FlaskAuthTagger.new(noir_options).perform([endpoint])
+    FileUtils.rm_rf(tmpdir)
+
+    endpoint.tags.map(&.name).should eq(["auth"])
   end
 
   it "detects bare @jwt_required (no parentheses)" do

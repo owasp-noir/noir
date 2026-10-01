@@ -99,7 +99,11 @@ class NestjsAuthTagger < FrameworkTagger
       idx -= 1
     end
 
-    false
+    # Decorator order does not matter to Nest: `@Get()` then `@Public()` is
+    # as public as the reverse.
+    annotation_lines_below(lines, method_line, "@").any? do |below|
+      PUBLIC_PATTERNS.any? { |pattern| below.matches?(pattern) }
+    end
   end
 
   private def collect_method_decorators(lines : Array(String), method_line : Int32,
@@ -111,17 +115,27 @@ class NestjsAuthTagger < FrameworkTagger
       # Stop if we hit another method
       break if current.includes?("async ") && current.includes?("(") && idx < method_line - 1
 
-      ROLE_PATTERNS.each do |pattern, desc|
-        authz_descs << desc if current.matches?(pattern) && !authz_descs.includes?(desc)
-      end
-      GUARD_PATTERNS.each do |pattern, desc|
-        authn_descs << desc if current.matches?(pattern) && !authn_descs.includes?(desc)
-      end
-      AUTH_DECORATORS.each do |pattern, desc|
-        authn_descs << desc if current.matches?(pattern) && !authn_descs.includes?(desc)
-      end
+      collect_decorator_line(current, authn_descs, authz_descs)
 
       idx -= 1
+    end
+
+    # `@Get()` then `@UseGuards(...)` guards the handler exactly as the
+    # reverse order does, and the walk above only sees the latter.
+    annotation_lines_below(lines, method_line, "@").each do |below|
+      collect_decorator_line(below, authn_descs, authz_descs)
+    end
+  end
+
+  private def collect_decorator_line(current : String, authn_descs : Array(String), authz_descs : Array(String))
+    ROLE_PATTERNS.each do |pattern, desc|
+      authz_descs << desc if current.matches?(pattern) && !authz_descs.includes?(desc)
+    end
+    GUARD_PATTERNS.each do |pattern, desc|
+      authn_descs << desc if current.matches?(pattern) && !authn_descs.includes?(desc)
+    end
+    AUTH_DECORATORS.each do |pattern, desc|
+      authn_descs << desc if current.matches?(pattern) && !authn_descs.includes?(desc)
     end
   end
 
