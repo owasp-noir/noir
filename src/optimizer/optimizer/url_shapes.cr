@@ -58,9 +58,7 @@ class EndpointOptimizer
 
     # Spring `{name:regex}` path variables — strip the inline regex
     # constraint so downstream consumers see the canonical placeholder.
-    normalized = normalized.gsub(/\{([A-Za-z_][A-Za-z0-9_]*):[^{}]+\}/) do |_match|
-      "{#{$1}}"
-    end
+    normalized = strip_brace_constraints(normalized)
 
     # Postman-style full path segments: `/:id` → `/{id}`.
     # Keep embedded placeholders such as `/profiles/celeb_:USERNAME`
@@ -95,6 +93,68 @@ class EndpointOptimizer
     normalized = collapse_path_slashes(normalized) unless normalized.matches?(ABSOLUTE_URL_RE)
 
     normalized
+  end
+
+  BRACE_CONSTRAINT_RE = /\A([A-Za-z_][A-Za-z0-9_]*):./
+
+  # Rewrites `{name:regex}` to `{name}`. The constraint may itself contain
+  # braces — a quantifier (`{id:[0-9]{3}}`, `{code:\d{5}}`) — which a flat
+  # `\{name:[^{}]+\}` pattern could never match, so such a placeholder used
+  # to reach every report with its regex intact.
+  private def strip_brace_constraints(url : String) : String
+    return url unless url.includes?('{')
+
+    cursor = 0
+    result = String.build do |io|
+      each_brace_group(url) do |start, stop, inner|
+        next unless match = inner.match(BRACE_CONSTRAINT_RE)
+        io << url.byte_slice(cursor, start - cursor) << '{' << match[1] << '}'
+        cursor = stop
+      end
+      io << url.byte_slice(cursor, url.bytesize - cursor)
+    end
+    cursor == 0 ? url : result
+  end
+
+  # Yields the byte span (`start` inclusive, `stop` exclusive) and the inner
+  # text of every top-level `{...}` group in `url`. Braces are matched by
+  # depth and a backslash escapes the next byte, so a regex constraint's own
+  # quantifier (`{id:[0-9]{3}}`) closes inside the group rather than ending
+  # it at the first `}`. An unbalanced `{` is skipped. Shared by the
+  # constraint strip above and `add_path_parameters`, so both agree on where
+  # a placeholder ends.
+  private def each_brace_group(url : String, & : Int32, Int32, String ->) : Nil
+    return unless url.includes?('{')
+
+    bytes = url.to_slice
+    i = 0
+    while i < bytes.size
+      if '{' === bytes[i] && (close = matching_brace(bytes, i))
+        yield i, close + 1, url.byte_slice(i + 1, close - i - 1)
+        i = close + 1
+      else
+        i += 1
+      end
+    end
+  end
+
+  # Index of the `}` closing the `{` at `open`, or nil when it never closes.
+  private def matching_brace(bytes : Bytes, open : Int32) : Int32?
+    depth = 0
+    i = open
+    while i < bytes.size
+      byte = bytes[i]
+      if '\\' === byte
+        i += 2
+        next
+      elsif '{' === byte
+        depth += 1
+      elsif '}' === byte
+        depth -= 1
+        return i if depth == 0
+      end
+      i += 1
+    end
   end
 
   # Rewrites every named capture group in `url` to `{name}`, consuming the
