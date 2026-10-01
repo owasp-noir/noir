@@ -561,16 +561,24 @@ module Noir::CLI::ScanCommand
 
   private def self.run_scan(noir_options : Hash(String, YAML::Any))
     fail_on = Noir::DiffGate.parse(noir_options["fail_on"]?.to_s)
-    implied_taggers = Noir::DiffGate.needs_taggers?(fail_on) &&
-                      !any_to_bool(noir_options["all_taggers"]?) &&
-                      noir_options["use_taggers"]?.to_s.empty?
+    needs_auth_tags = Noir::DiffGate.needs_taggers?(fail_on) && !any_to_bool(noir_options["all_taggers"]?)
+    use_taggers = noir_options["use_taggers"]?.to_s
+    implied_taggers = needs_auth_tags && use_taggers.empty?
+    # `--use-taggers hunt --fail-on auth-removed` picked taggers, but none
+    # that emits the auth tag, so the gate could never fire — and in CI that
+    # reads exactly like a pull request that removed no auth.
+    implied_auth_taggers = needs_auth_tags && !use_taggers.empty? && !NoirTaggers.auth_tagging?(use_taggers)
     # Set before either runner is built: both read the tagger options at
     # construction, and the old side needs its auth tags as much as the new.
     noir_options["all_taggers"] = YAML::Any.new(true) if implied_taggers
+    if implied_auth_taggers
+      noir_options["use_taggers"] = YAML::Any.new(([use_taggers] + NoirTaggers::AUTH_ENTRIES.map(&.key)).join(","))
+    end
 
     app = NoirRunner.new noir_options
     start_time = Time.instant
     app.logger.info "Running all taggers because --fail-on auth-removed reads the auth tags." if implied_taggers
+    app.logger.info "Adding the auth taggers because --fail-on auth-removed reads the auth tags." if implied_auth_taggers
 
     app.logger.debug("Start Debug mode")
     app.logger.debug("Noir version: #{Noir::VERSION}")

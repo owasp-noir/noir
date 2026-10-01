@@ -355,6 +355,13 @@ module Noir::CliValidation
     use_taggers = options["use_taggers"].to_s
     return if use_taggers.empty?
 
+    # `--use-taggers ,` asked for taggers and named none, so the scan ran
+    # untagged with no word about it — and `--fail-on auth-removed`, which
+    # reads the auth tag, then could never fire.
+    if use_taggers.split(',').all?(&.strip.empty?)
+      raise Error.new("--use-taggers: #{use_taggers.inspect} names no tagger. Use `noir list taggers` to see available taggers.")
+    end
+
     unknown_taggers = NoirTaggers.unknown_tagger_names(use_taggers)
     return if unknown_taggers.empty?
 
@@ -364,8 +371,15 @@ module Noir::CliValidation
   # `--fail-on` gates on what a diff found, so it means nothing without one:
   # a plain scan would never fire it and a CI job would pass forever.
   def self.validate_fail_on!(options : Hash(String, YAML::Any))
-    categories = DiffGate.parse(options["fail_on"]?.to_s)
-    return if categories.empty?
+    raw = options["fail_on"]?.to_s
+    categories = DiffGate.parse(raw)
+    if categories.empty?
+      # `--fail-on ,` (or a templated value that expanded to separators only)
+      # asked for a gate and named no category; returning here left the scan
+      # ungated, and the CI job passed on every pull request.
+      return if raw.strip.empty?
+      raise Error.new("--fail-on: #{raw.inspect} names no category. Valid: #{DiffGate::CATEGORIES.join(", ")}")
+    end
 
     unknown = DiffGate.unknown(categories)
     unless unknown.empty?
