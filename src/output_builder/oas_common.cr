@@ -22,9 +22,9 @@ module OutputBuilderOasCommon
   OAS2_OPERATION_METHODS = VALID_OPERATION_METHODS - Set{"trace", "query"}
 
   # Converter names that can appear in a `<…>` path placeholder. Same list the
-  # optimizer's `angle_bracket_param` uses, so the two resolve a placeholder
+  # optimizer's `ANGLE_CONVERTER_TYPES` holds, so the two resolve a placeholder
   # the same way.
-  PATH_CONVERTER_TYPES = Set{"int", "str", "string", "slug", "uuid", "float", "bool", "path"}
+  PATH_CONVERTER_TYPES = Set{"int", "str", "string", "slug", "uuid", "float", "bool", "path", "any"}
 
   # Operation keys whose value is a list of alternatives rather than a single
   # answer. When two endpoints collapse onto one path+method, keeping the

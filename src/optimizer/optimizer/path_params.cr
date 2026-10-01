@@ -71,14 +71,17 @@ class EndpointOptimizer
       end
 
       new_endpoint = endpoint
+      url = endpoint.url
+      placeholders = [] of PathPlaceholder
 
       # `{param}` patterns. A placeholder may sit at a segment boundary
       # (`/{id}`) or share a segment with literal separators
       # (`/{slug}_{pk}`, `/{name}.json`, `/{x},{y}`). Scan all brace
       # placeholders in the URL instead of assuming the preceding
-      # character is `/` or `,`.
-      endpoint.url.scan(/\{([^}]+)\}/).each do |match|
-        raw = match[1]
+      # character is `/` or `,`. Braces are matched by depth, so a regex
+      # constraint's own quantifier (`{id:[0-9]{3}}`) stays inside the
+      # placeholder instead of closing it early.
+      each_brace_group(url) do |start, stop, raw|
         # Strip a leading `*` from catch-all path variables (Spring,
         # Armeria and ASP.NET all spell the rest-of-path capture as
         # `{*name}`, e.g. `/files/{*path}`) and any inline regex/type
@@ -86,43 +89,37 @@ class EndpointOptimizer
         # `*name` or `name:regex`.
         param = raw.split(":")[0].lstrip('*')
         next unless valid_path_param_name?(param)
-        new_endpoint.url = register_path_param(new_endpoint.url, new_endpoint.params, "{#{raw}}", param)
+        placeholders << PathPlaceholder.new(start, stop, param)
       end
 
       # `/:param` patterns.
-      endpoint.url.scan(/\/:([^\/{}]+)/).each do |match|
-        raw = match[1]
-        # The capture greedily includes any literal suffix that follows
-        # the param within the same segment (e.g. Play's `/:lang.json`
-        # or `/:id.gif`). Path param names are identifiers, so keep only
-        # the leading identifier and drop the extension/format suffix.
-        param = leading_path_param(raw)
-        next unless param
-        new_endpoint.url = register_path_param(new_endpoint.url, new_endpoint.params, ":#{raw}", param)
+      url.scan(COLON_SEGMENT_RE) do |match|
+        collect_colon_placeholders(url, match, placeholders)
       end
 
-      # `<param>` patterns (Django / Marten style).
-      endpoint.url.scan(/<([^>]+)>/).each do |match|
-        raw = match[1]
-        param = angle_bracket_param(raw)
+      # `<param>` patterns (Django / Flask / Marten / Bottle style).
+      url.scan(ANGLE_PLACEHOLDER_RE) do |match|
+        param = angle_bracket_param(match[1], endpoint)
         # Skip regex fragments. Play declares constrained path params as
         # `$name<regex>`, so the framework analyzer already recorded
         # `name`; the `<regex>` body (e.g. `\w{8}`, `[\w-]{2,6}`) is not
         # a param name.
         next unless valid_path_param_name?(param)
-        new_endpoint.url = register_path_param(new_endpoint.url, new_endpoint.params, "<#{raw}>", param)
+        placeholders << PathPlaceholder.new(match.byte_begin(0), match.byte_end(0), param)
       end
 
       # `/*param` patterns (wildcard / glob).
-      endpoint.url.scan(/\/\*([^\/]+)/).each do |match|
+      url.scan(SPLAT_SEGMENT_RE) do |match|
         raw = match[1]
         # Only named splats are parameters (`/files/*path` -> `path`).
         # A bare glob like Armeria's `glob:/glob/**` captures `*`, and
         # a gRPC resource template leaves a trailing `}` — neither is a
         # real parameter name.
         next unless valid_path_param_name?(raw)
-        new_endpoint.url = register_path_param(new_endpoint.url, new_endpoint.params, "*#{raw}", raw)
+        placeholders << PathPlaceholder.new(match.byte_begin(1) - 1, match.byte_end(0), raw)
       end
+
+      new_endpoint.url = register_path_params(url, new_endpoint.params, placeholders)
 
       reconcile_ruby_path_params(new_endpoint)
 
@@ -132,25 +129,153 @@ class EndpointOptimizer
     final
   end
 
-  # Substitute a configured path-param value into the URL when one is
-  # set, then record the param (deduped by name). Returns the updated
+  # One path-parameter placeholder found in a URL: the byte span it occupies
+  # (`:id`, `{id:\d+}`, `<int:id>`, `*path`) and the param name it declares.
+  private record PathPlaceholder, start : Int32, stop : Int32, name : String
+
+  COLON_SEGMENT_RE     = /\/:([^\/{}]+)/
+  ANGLE_PLACEHOLDER_RE = /<([^>]+)>/
+  SPLAT_SEGMENT_RE     = /\/\*([^\/]+)/
+
+  # A `:name` param name. Hyphens are part of the identifier — kebab-case
+  # path params are idiomatic in Clojure (`/:artifact-id`, `/:group-id`) and
+  # legal in several other route DSLs. Excluding `-` truncated `artifact-id`
+  # to `artifact`. A hyphen only joins the name when an identifier character
+  # follows it, though: Express's `/:from-:to` declares `from` and `to`
+  # around a literal `-`, not a param named `from-`.
+  PATH_PARAM_IDENT_RE = /\A[A-Za-z_][A-Za-z0-9_]*(?:-[A-Za-z0-9_]+)*/
+
+  # Record each placeholder's param (deduped by name) and substitute a
+  # configured path-param value for it when one is set. Returns the updated
   # URL; `params` is mutated in place — it is the endpoint's own array
   # reference, so the push persists on the caller's struct.
-  private def register_path_param(url : String, params : Array(Param), placeholder : String, name : String) : String
-    value = apply_pvalue("path", name, "")
-    url = url.gsub(placeholder, value) unless value.empty?
-    params << Param.new(name, "", "path") unless path_param_present?(params, name)
-    url
+  #
+  # Substitution rewrites the exact byte span each placeholder was found at.
+  # A textual `gsub(placeholder, value)` was substring-unsafe: replacing
+  # `:id` also rewrote the head of `:identifier` (`/users/7/files/7entifier`),
+  # and the greedy `:id-:idx` capture swallowed the second param whole.
+  private def register_path_params(url : String, params : Array(Param), placeholders : Array(PathPlaceholder)) : String
+    return url if placeholders.empty?
+
+    values = {} of String => String
+    placeholders.each do |placeholder|
+      name = placeholder.name
+      value = values[name] ||= apply_pvalue("path", name, "")
+      # Carry the configured value like every other param kind does, so the
+      # param agrees with what was substituted into the URL.
+      params << Param.new(name, value, "path") unless path_param_present?(params, name)
+    end
+    return url if values.each_value.all?(&.empty?)
+
+    String.build do |io|
+      cursor = 0
+      placeholders.sort_by(&.start).each do |placeholder|
+        # Spans from different passes only overlap on malformed input (a
+        # `<...>` inside a `{...}`); the earlier one wins.
+        next if placeholder.start < cursor
+        value = values[placeholder.name]
+        next if value.empty?
+        io << url.byte_slice(cursor, placeholder.start - cursor) << value
+        cursor = placeholder.stop
+      end
+      io << url.byte_slice(cursor, url.bytesize - cursor)
+    end
   end
 
-  # Resolve the param name from a `<...>` capture, handling both Django
-  # `<type:name>` and Marten `<name:type>` ordering. When the first
-  # `:`-segment is a known converter type it's Django ordering; otherwise
-  # the name comes first.
-  private def angle_bracket_param(raw : String) : String
+  # Collect the `:name` placeholders in one `/:...` segment match. Besides
+  # the leading name, a segment may carry an Express regex constraint
+  # (`/:id(\\d+)`) and an optional/repeat modifier (`/:ip?`, `/:path*`),
+  # which belong to the placeholder, and further params joined by `-` or `.`
+  # (`/:from-:to`, `/:genus.:species`). Anything else that follows — Play's
+  # `/:lang.json` format suffix — is literal text and stays in the URL.
+  #
+  # Positions are walked over the whole URL, not the segment capture: the
+  # capture stops at `{`, so a constraint with its own quantifier
+  # (`/:id(\\d{3})`) would otherwise be cut off mid-group.
+  private def collect_colon_placeholders(url : String, match : Regex::MatchData, placeholders : Array(PathPlaceholder)) : Nil
+    bytes = url.to_slice
+    pos = match.byte_begin(1)
+
+    while ident = url.byte_slice(pos, bytes.size - pos).match(PATH_PARAM_IDENT_RE)
+      name = ident[0]
+      stop = pos + name.bytesize
+      stop = skip_paren_group(bytes, stop) if stop < bytes.size && '(' === bytes[stop]
+      if stop < bytes.size && ('*' === bytes[stop] || '+' === bytes[stop] || ('?' === bytes[stop] && optional_marker_end?(bytes, stop + 1)))
+        stop += 1
+      end
+      placeholders << PathPlaceholder.new(pos - 1, stop, name)
+
+      break unless joined_param_at?(bytes, stop)
+      pos = stop + 2
+    end
+  end
+
+  # A `?` right after a param is the optional marker (`/:ip?`) only when the
+  # segment ends there; otherwise it opens the query string
+  # (`/u/:id?sort=asc`) and must stay in the URL.
+  private def optional_marker_end?(bytes : Bytes, index : Int32) : Bool
+    index >= bytes.size || '/' === bytes[index] || joined_param_at?(bytes, index)
+  end
+
+  # Whether another `:param` joined by `-` or `.` starts at `index`.
+  private def joined_param_at?(bytes : Bytes, index : Int32) : Bool
+    index + 1 < bytes.size && ('-' === bytes[index] || '.' === bytes[index]) && ':' === bytes[index + 1]
+  end
+
+  # Index just past the `)` closing the group that opens at `start`, or
+  # `start` itself when the group is unbalanced.
+  private def skip_paren_group(bytes : Bytes, start : Int32) : Int32
+    depth = 0
+    i = start
+    while i < bytes.size
+      byte = bytes[i]
+      if '\\' === byte
+        i += 2
+        next
+      elsif '(' === byte
+        depth += 1
+      elsif ')' === byte
+        depth -= 1
+        return i + 1 if depth == 0
+      end
+      i += 1
+    end
+    start
+  end
+
+  # Converter names that can lead a `<converter:name>` placeholder. Same list
+  # as `OutputBuilderOasCommon::PATH_CONVERTER_TYPES`, so the two resolve a
+  # placeholder the same way.
+  ANGLE_CONVERTER_TYPES = Set{"int", "str", "string", "slug", "uuid", "float", "bool", "path", "any"}
+
+  # Frameworks whose `<...>` placeholders are always converter first: Django
+  # `path()` (`<int:pk>`) and Werkzeug-routed Flask/Quart (`<int:id>`). Their
+  # converters are user-extensible (`register_converter(..., "yyyy")`,
+  # `app.url_map.converters`), so the builtin list alone can't recognize a
+  # custom one; `<yyyy:year>` declares `year`, not `yyyy`.
+  CONVERTER_FIRST_TECHS = Set{"python_django", "python_flask", "python_quart"}
+
+  # Werkzeug converter arguments: `int(signed=True)`, `any(about, help)`.
+  CONVERTER_ARGS_RE = /\([^()]*\)/
+
+  # Resolve the param name from a `<...>` capture, handling both converter-
+  # first `<type:name>` (Django, Flask) and name-first `<name:type>` (Marten,
+  # Sanic, Bottle, Mojolicious, Plumber) ordering. Converter arguments are
+  # not part of the converter name — `<int(signed=True):num>` used to fail
+  # the builtin check and resolve to the whole `int(signed=True)` — so they
+  # are dropped before splitting.
+  private def angle_bracket_param(raw : String, endpoint : Endpoint) : String
+    raw = raw.gsub(CONVERTER_ARGS_RE, "") if raw.includes?('(')
     parts = raw.split(":")
     return parts[0] if parts.size <= 1
-    parts[0] =~ /^(int|str|string|slug|uuid|float|bool|path)$/ ? parts[1] : parts[0]
+
+    head = parts[0]
+    tail = parts[1]
+    # A path param the analyzer already recorded settles the order.
+    return head if path_param_present?(endpoint.params, head)
+    return tail if path_param_present?(endpoint.params, tail)
+    return tail if CONVERTER_FIRST_TECHS.includes?(endpoint.details.technology)
+    ANGLE_CONVERTER_TYPES.includes?(head) ? tail : head
   end
 
   # Reconcile path params against same-named query/body params for Ruby
@@ -205,20 +330,5 @@ class EndpointOptimizer
   # param this pass derives from the URL, producing a duplicate.
   private def path_param_present?(params : Array(Param), name : String) : Bool
     params.any? { |param| param.param_type == "path" && param.name == name }
-  end
-
-  # Drop literal suffixes that share the segment with the param (e.g. Play's
-  # `/:lang.json` -> `lang`, Fiber/Express optional markers `/:id?` -> `id`,
-  # and Express regex constraints `/:id(\\d+)` -> `id`). Path param names are
-  # identifiers; anything after the leading identifier describes the segment,
-  # not the parameter name.
-  #
-  # Hyphens are part of the identifier — kebab-case path params are idiomatic
-  # in Clojure (`/:artifact-id`, `/:group-id`) and legal in several other
-  # route DSLs. Excluding `-` truncated `artifact-id` to `artifact`, adding a
-  # phantom param that disagreed with the name the analyzer already recorded.
-  private def leading_path_param(raw : String) : String?
-    match = raw.match(/\A([A-Za-z_][A-Za-z0-9_-]*)/)
-    match ? match[1] : nil
   end
 end

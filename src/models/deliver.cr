@@ -208,7 +208,7 @@ class Deliver
   # Verbs whose path templates get filled in before probing. Restricted to
   # the read-only ones (the shared safe set, QUERY included) on purpose.
   #
-  # `register_path_param` in the optimizer only substitutes a placeholder when
+  # `register_path_params` in the optimizer only substitutes a placeholder when
   # `--set-pvalue-path` supplied a value, so on a default scan `/users/{id}`
   # is probed literally and 404s. Filling it makes the probe actually reach
   # the route — but it also makes destructive verbs real: `DELETE

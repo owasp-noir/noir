@@ -1030,6 +1030,22 @@ describe "EndpointOptimizer" do
       result[2].url.should eq("/a/{x}/b/{y}")
     end
 
+    it "strips inline regex constraints that carry their own {n} quantifier" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      endpoints = [
+        Endpoint.new("/items/{id:[0-9]{3}}", "GET"),
+        Endpoint.new("/zip/{code:\\d{5}}/x", "GET"),
+        Endpoint.new("/d/{day:\\d{1,2}}-{month:[a-z]{3}}", "GET"),
+        Endpoint.new("/archive/\\d{4}/", "GET"), # bare quantifier, no name
+      ]
+
+      result = optimizer.normalize_url_shapes(endpoints)
+      result[0].url.should eq("/items/{id}")
+      result[1].url.should eq("/zip/{code}/x")
+      result[2].url.should eq("/d/{day}-{month}")
+      result[3].url.should eq("/archive/\\d{4}/")
+    end
+
     it "normalizes Django re_path named groups even when the body contains \\d / \\w classes" do
       optimizer = EndpointOptimizer.new(logger, options)
       endpoints = [
@@ -1308,6 +1324,162 @@ describe "EndpointOptimizer" do
 
       result[2].params.size.should eq(1)
       result[2].params[0].name.should eq("name")
+    end
+
+    it "splits colon params joined by a hyphen or a dot" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      endpoints = [
+        Endpoint.new("/flights/:from-:to", "GET"),       # Express docs
+        Endpoint.new("/plantae/:genus.:species", "GET"), # Express docs
+        Endpoint.new("/maven/:group-id/:artifact-id", "GET"),
+      ]
+
+      result = optimizer.add_path_parameters(endpoints)
+      result[0].params.map(&.name).should eq(["from", "to"])
+      result[1].params.map(&.name).should eq(["genus", "species"])
+      result[2].params.map(&.name).should eq(["group-id", "artifact-id"])
+    end
+
+    it "names a regex placeholder whose constraint has an {n} quantifier" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      endpoints = [Endpoint.new("/items/{id:[0-9]{3}}", "GET")]
+
+      result = optimizer.add_path_parameters(endpoints)
+      result[0].params.map(&.name).should eq(["id"])
+    end
+
+    it "takes the name after the converter for Django and Flask placeholders" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      django = Details.new
+      django.technology = "python_django"
+      flask = Details.new
+      flask.technology = "python_flask"
+      sanic = Details.new
+      sanic.technology = "python_sanic"
+      marten = Details.new
+      marten.technology = "crystal_marten"
+
+      endpoints = [
+        # Custom converter from `register_converter(..., "yyyy")`.
+        Endpoint.new("/articles/<yyyy:year>/", "GET", [] of Param, django),
+        # Werkzeug converters with arguments.
+        Endpoint.new("/n/<int(signed=True):num>", "GET", [] of Param, flask),
+        Endpoint.new("/k/<any(about, help):page>", "GET", [] of Param, flask),
+        # Name-first frameworks keep their order.
+        Endpoint.new("/users/<id:int>", "GET", [] of Param, sanic),
+        Endpoint.new("/posts/<pk:custom>", "GET", [] of Param, marten),
+        # No technology: converter arguments are still not part of the name.
+        Endpoint.new("/v/<float(signed=True):ratio>", "GET"),
+      ]
+
+      result = optimizer.add_path_parameters(endpoints)
+      result.map(&.params.map(&.name)).should eq([["year"], ["num"], ["page"], ["id"], ["pk"], ["ratio"]])
+    end
+
+    it "lets a path param the analyzer recorded settle the angle-bracket order" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      endpoints = [Endpoint.new("/r/<report_id:hexid>", "GET", [Param.new("report_id", "", "path")])]
+
+      result = optimizer.add_path_parameters(endpoints)
+      result[0].params.map(&.name).should eq(["report_id"])
+    end
+
+    describe "with a path value configured" do
+      it "does not rewrite a param whose name extends another's" do
+        options["set_pvalue"] = YAML::Any.new([YAML::Any.new("FUZZ")])
+        optimizer = EndpointOptimizer.new(logger, options)
+        endpoints = [
+          Endpoint.new("/users/:id/files/:identifier", "GET"),
+          Endpoint.new("/a/:id-:idx", "GET"),
+          Endpoint.new("/s/*path/t/*pathname", "GET"),
+          Endpoint.new("/flights/:from-:to", "GET"),
+        ]
+
+        result = optimizer.add_path_parameters(endpoints)
+        result[0].url.should eq("/users/FUZZ/files/FUZZ")
+        result[1].url.should eq("/a/FUZZ-FUZZ")
+        result[2].url.should eq("/s/FUZZ/t/FUZZ")
+        result[3].url.should eq("/flights/FUZZ-FUZZ")
+      end
+
+      it "substitutes only the named param and leaves its neighbours alone" do
+        options["set_pvalue_path"] = YAML::Any.new([YAML::Any.new("id=7")])
+        optimizer = EndpointOptimizer.new(logger, options)
+        endpoints = [
+          Endpoint.new("/users/:id/files/:identifier", "GET"),
+          Endpoint.new("/a/:id-:idx", "GET"),
+          Endpoint.new("/b/{id}/{identifier}", "GET"),
+        ]
+
+        result = optimizer.add_path_parameters(endpoints)
+        result[0].url.should eq("/users/7/files/:identifier")
+        result[1].url.should eq("/a/7-:idx")
+        result[2].url.should eq("/b/7/{identifier}")
+      end
+
+      it "replaces a colon param's constraint and modifier but keeps a format suffix" do
+        options["set_pvalue_path"] = YAML::Any.new([YAML::Any.new("id=7"), YAML::Any.new("lang=en")])
+        optimizer = EndpointOptimizer.new(logger, options)
+        endpoints = [
+          Endpoint.new("/users/:id(\\d+)", "GET"),
+          Endpoint.new("/geo/:id?", "GET"),
+          Endpoint.new("/docs/:lang.json", "GET"),
+        ]
+
+        result = optimizer.add_path_parameters(endpoints)
+        result[0].url.should eq("/users/7")
+        result[1].url.should eq("/geo/7")
+        result[2].url.should eq("/docs/en.json")
+      end
+
+      it "keeps a query string that follows a colon param" do
+        options["set_pvalue"] = YAML::Any.new([YAML::Any.new("FUZZ")])
+        optimizer = EndpointOptimizer.new(logger, options)
+        endpoints = [
+          Endpoint.new("/u/:id?sort=asc", "GET"),
+          Endpoint.new("/u/:id?/edit", "GET"),  # optional segment marker
+          Endpoint.new("/r/:from?-:to", "GET"), # optional before a joined param
+          Endpoint.new("/v/:id?", "GET"),       # optional at the end
+        ]
+
+        result = optimizer.add_path_parameters(endpoints)
+        result[0].url.should eq("/u/FUZZ?sort=asc")
+        result[1].url.should eq("/u/FUZZ/edit")
+        result[2].url.should eq("/r/FUZZ-FUZZ")
+        result[3].url.should eq("/v/FUZZ")
+      end
+
+      it "replaces an Express constraint that has its own {n} quantifier" do
+        options["set_pvalue"] = YAML::Any.new([YAML::Any.new("FUZZ")])
+        optimizer = EndpointOptimizer.new(logger, options)
+        endpoints = [
+          Endpoint.new("/u/:id(\\d{3})", "GET"),
+          Endpoint.new("/u/:id(\\d{3})/x/:name", "GET"),
+        ]
+
+        result = optimizer.add_path_parameters(endpoints)
+        result[0].url.should eq("/u/FUZZ")
+        result[1].url.should eq("/u/FUZZ/x/FUZZ")
+        result[1].params.map(&.name).should eq(["id", "name"])
+      end
+
+      it "replaces a whole regex placeholder whose constraint has an {n} quantifier" do
+        options["set_pvalue_path"] = YAML::Any.new([YAML::Any.new("id=7")])
+        optimizer = EndpointOptimizer.new(logger, options)
+        endpoints = [Endpoint.new("/items/{id:[0-9]{3}}", "GET")]
+
+        result = optimizer.add_path_parameters(endpoints)
+        result[0].url.should eq("/items/7")
+      end
+
+      it "records the substituted value on the path param" do
+        options["set_pvalue_path"] = YAML::Any.new([YAML::Any.new("id=7")])
+        optimizer = EndpointOptimizer.new(logger, options)
+        endpoints = [Endpoint.new("/users/{id}/{name}", "GET")]
+
+        result = optimizer.add_path_parameters(endpoints)
+        result[0].params.map { |param| {param.name, param.value} }.should eq([{"id", "7"}, {"name", ""}])
+      end
     end
   end
 
