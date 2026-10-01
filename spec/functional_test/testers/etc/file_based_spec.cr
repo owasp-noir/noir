@@ -78,3 +78,17 @@ tester.url = "https://www.hahwul.com"
 # runner above — so the assertions have to be kicked off after it, not by the
 # constructor.
 tester.perform_tests
+
+# A `-u` that carries a path. Literals under it come out once, not as
+# `/api/api/users` (the hooks used to report the full path, and the optimizer
+# prefixed `-u` on top). The base itself, a look-alike host and a sibling path
+# that only shares the `/api` prefix are not endpoints under the target.
+base_path_tester = FunctionalTester.new("fixtures/etc/file_based_base_path/", {
+  :techs     => 0,
+  :endpoints => 2,
+}, [
+  Endpoint.new("https://www.hahwul.com/api/users", "GET"),
+  Endpoint.new("https://www.hahwul.com/api/encoded", "GET"),
+])
+base_path_tester.url = "https://www.hahwul.com/api"
+base_path_tester.perform_tests

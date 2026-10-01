@@ -11,6 +11,8 @@ require "../../../utils/file_url_scanner"
 # in the tech catalog.
 FileAnalyzer.add_hook(tech: "file_url", func: ->(path : String, url : String) : Array(Endpoint) {
   results = [] of Endpoint
+  # Parsed on the first candidate only: most files carry no URL literal.
+  base = nil
   return results if Noir::FileUrlScanner::REQUEST_FILE_EXTENSIONS.includes?(File.extname(path))
 
   begin
@@ -26,10 +28,12 @@ FileAnalyzer.add_hook(tech: "file_url", func: ->(path : String, url : String) : 
           nil
         end
         next if parsed_url.nil?
-        next unless parsed_url.to_s.includes? url
+        base ||= Noir::FileUrlScanner::BaseUrl.parse(url)
+        endpoint_path = Noir::FileUrlScanner.path_under_base(parsed_url, base)
+        next if endpoint_path.nil?
 
         details = Details.new(PathInfo.new(path, index + 1))
-        results << Endpoint.new(parsed_url.path, "GET", details)
+        results << Endpoint.new(endpoint_path, "GET", details)
       end
     end
   rescue
