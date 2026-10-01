@@ -3,8 +3,8 @@ require "../../../models/analyzer"
 require "../../../models/endpoint"
 require "../../../utils/file_url_scanner"
 
-# Reports URLs hidden in base64-encoded literals whose decoded form contains
-# the user-supplied `-u/--url`.
+# Reports URLs hidden in base64-encoded literals whose decoded form sits on
+# the `-u/--url` origin, under its path.
 #
 # Attributed to `file_base64` rather than to the language of the file it was
 # found in: an endpoint recovered from an encoded blob is a different kind of

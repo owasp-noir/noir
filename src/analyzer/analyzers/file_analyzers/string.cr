@@ -2,8 +2,8 @@ require "../../../models/analyzer"
 require "../../../models/endpoint"
 require "../../../utils/file_url_scanner"
 
-# Reports plain `https?://…` literals found anywhere in the project whose
-# rendered form contains the user-supplied `-u/--url`. This hook sees every
+# Reports plain `https?://…` literals found anywhere in the project that sit
+# on the `-u/--url` origin, under its path. This hook sees every
 # file in the scan, so a candidate is only an endpoint once it survives the
 # shared sanitising in `Noir::FileUrlScanner`: binary payload lines are
 # dropped, and prose/markup delimiters are trimmed off the URL.
