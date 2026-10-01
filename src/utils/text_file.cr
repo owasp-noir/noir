@@ -13,11 +13,11 @@ module Noir::TextFile
   # the bytes straight and only pay for the transcode when they are not.
   #
   # The result is byte-identical either way. On valid input the decode is
-  # the identity — it strips no BOM and translates no newlines — and
-  # invalid input still goes through the same `invalid: :skip` decode that
-  # dropped the bad sequences before. The fallback decodes the bytes
-  # already in hand rather than re-reading the file, so a file that
-  # changes mid-scan cannot yield a half-and-half result.
+  # the identity — it translates no newlines — and invalid input still goes
+  # through the same `invalid: :skip` decode that dropped the bad sequences
+  # before. The fallback decodes the bytes already in hand rather than
+  # re-reading the file, so a file that changes mid-scan cannot yield a
+  # half-and-half result.
   # UTF-16 byte-order marks. Visual Studio and a good deal of Windows
   # tooling still write source as UTF-16 — `.cs`, `.vb`, `.resx`, `.config`,
   # PowerShell `.ps1` — and in UTF-16 every ASCII character carries a NUL
@@ -31,11 +31,28 @@ module Noir::TextFile
   UTF16_LE_BOM = Bytes[0xFF_u8, 0xFE_u8]
   UTF16_BE_BOM = Bytes[0xFE_u8, 0xFF_u8]
 
+  # UTF-8 byte-order mark. Windows editors (Notepad, Visual Studio, a good
+  # deal of export tooling) still prepend it. Left in place it decodes to a
+  # leading U+FEFF, which is invisible but not whitespace: a marker anchored
+  # to the start of line 1 (`^openapi:`) no longer matches and `JSON.parse`
+  # rejects the first character, so a BOM'd spec document vanished from the
+  # scan. It only ever sits before the first character, so dropping it moves
+  # no line number.
+  UTF8_BOM = Bytes[0xEF_u8, 0xBB_u8, 0xBF_u8]
+
   def self.read(path : String) : String
     content = File.read(path)
     return transcode_utf16(content) if utf16_bom?(content)
+    content = strip_utf8_bom(content)
     return content if content.valid_encoding?
     decode(content)
+  end
+
+  # `content` without a leading UTF-8 BOM. Copies only when there is one.
+  def self.strip_utf8_bom(content : String) : String
+    bytes = content.to_slice
+    return content unless bytes.size >= 3 && bytes[0, 3] == UTF8_BOM
+    String.new(bytes[3..])
   end
 
   # True when the bytes open with a UTF-16 BOM. A UTF-32LE file opens

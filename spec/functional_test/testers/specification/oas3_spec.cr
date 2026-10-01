@@ -167,6 +167,21 @@ FunctionalTester.new("fixtures/specification/oas3/tab_in_block_scalar/", {
   ]),
 ]).perform_tests
 
+# Both documents open with a UTF-8 BOM. It used to survive the read as a
+# leading U+FEFF: the YAML missed its line-1 `openapi:` marker and the JSON
+# failed to parse, so neither contributed an endpoint.
+FunctionalTester.new("fixtures/specification/oas3/utf8_bom/", {
+  :techs     => 1,
+  :endpoints => 2,
+}, [
+  Endpoint.new("/bom-yaml", "GET", [
+    Param.new("q", "", "query"),
+  ]),
+  Endpoint.new("/bom-json", "POST", [
+    Param.new("X-Token", "", "header"),
+  ]),
+]).perform_tests
+
 edge_case_endpoints = [
   Endpoint.new("/api/v2/orders", "GET", [
     Param.new("X-Tenant", "", "header"),
