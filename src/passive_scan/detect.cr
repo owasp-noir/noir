@@ -138,10 +138,17 @@ module NoirPassiveScan
   # test already answers "does any line match"; a line-oriented regex
   # needs its own gate (see `PassiveScan::Matcher#regex_may_match_file?`)
   # or an anchored one is pruned before the per-line loop sees it.
+  #
+  # The gate is only a shortcut, so a gate that hits PCRE2's match limit —
+  # a pattern that backtracks across the whole file but stays cheap on
+  # each line — passes and leaves the decision to the per-line loop
+  # instead of costing the rule the file.
   private def self.match_file?(content : String, matcher : PassiveScan::Matcher) : Bool
     return match_content?(content, matcher) unless matcher.type == "regex"
     return false if matcher.string_patterns.empty? || matcher.regex_compile_failed?
     matcher.regex_may_match_file?(content, Noir::TextFile::MATCH_OPTIONS)
+  rescue Regex::Error
+    true
   end
 
   private def self.match_content?(content : String, matcher : PassiveScan::Matcher) : Bool

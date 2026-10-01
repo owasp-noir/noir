@@ -326,11 +326,34 @@ describe NoirPassiveScan do
       NoirPassiveScan.detect("f", "x\ntoken: deadbeef\ny\n", [rule], nil).map(&.line_number).should eq([2])
     end
 
-    it "does not gate a lookaround that sees past the line end" do
-      # Per line `(?!\s*=)` holds at the end of line 1; over the whole file
-      # `\s*` reaches across the newline to the `=` and rejects it.
-      rule = rule_with.call("or", [%q(secret(?!\s*=))])
-      NoirPassiveScan.detect("f", "x secret\n= y\n", [rule], nil).map(&.line_number).should eq([1])
+    it "keeps a gate for lookaround patterns, folded with plain ones" do
+      matcher = rule_with.call("or", [%q((?<![A-Za-z0-9])AKZn[0-9A-Z]{16}(?![A-Za-z0-9])), "plain_[a-z]{4}"]).matchers.first
+      # Pruned on a file with no candidate, kept on one with one.
+      matcher.regex_may_match_file?("nothing to see\nhere\n").should be_false
+      matcher.regex_may_match_file?("x\nplain_abcd\n").should be_true
+      matcher.regex_may_match_file?("x\nk = AKZnABCDEFGHIJKLMNOP\n").should be_true
+    end
+
+    it "gates a mixed or-matcher on both its plain and anchored patterns" do
+      matcher = rule_with.call("or", ["plain_[a-z]{4}", %q(^\s*key\s*=)]).matchers.first
+      matcher.regex_may_match_file?("nothing\n").should be_false
+      matcher.regex_may_match_file?("x\n  key = 1\n").should be_true
+      matcher.regex_may_match_file?("x\nplain_abcd\n").should be_true
+    end
+
+    it "does not gate absolute anchors" do
+      rule = rule_with.call("or", [%q(\Asecret_[a-z]+)])
+      NoirPassiveScan.detect("f", "x\nsecret_abc\n", [rule], nil).map(&.line_number).should eq([2])
+    end
+
+    it "falls back to the per-line loop when the gate hits the match limit" do
+      # Across the newlines the nested quantifier backtracks over every word
+      # in the file; on each short line it gives up at once.
+      rule = rule_with.call("or", [%q((\w+\s?)+!x)])
+      content = ("aaaa\n" * 40) + "ab!x\n"
+      Noir::SkippedFiles.clear
+      NoirPassiveScan.detect("f", content, [rule], nil).map(&.line_number).should eq([41])
+      Noir::SkippedFiles.failures.should be_empty
     end
 
     it "treats a negated class as no anchor" do
