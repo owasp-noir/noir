@@ -1432,6 +1432,37 @@ describe "EndpointOptimizer" do
         result[2].url.should eq("/docs/en.json")
       end
 
+      it "keeps a query string that follows a colon param" do
+        options["set_pvalue"] = YAML::Any.new([YAML::Any.new("FUZZ")])
+        optimizer = EndpointOptimizer.new(logger, options)
+        endpoints = [
+          Endpoint.new("/u/:id?sort=asc", "GET"),
+          Endpoint.new("/u/:id?/edit", "GET"),  # optional segment marker
+          Endpoint.new("/r/:from?-:to", "GET"), # optional before a joined param
+          Endpoint.new("/v/:id?", "GET"),       # optional at the end
+        ]
+
+        result = optimizer.add_path_parameters(endpoints)
+        result[0].url.should eq("/u/FUZZ?sort=asc")
+        result[1].url.should eq("/u/FUZZ/edit")
+        result[2].url.should eq("/r/FUZZ-FUZZ")
+        result[3].url.should eq("/v/FUZZ")
+      end
+
+      it "replaces an Express constraint that has its own {n} quantifier" do
+        options["set_pvalue"] = YAML::Any.new([YAML::Any.new("FUZZ")])
+        optimizer = EndpointOptimizer.new(logger, options)
+        endpoints = [
+          Endpoint.new("/u/:id(\\d{3})", "GET"),
+          Endpoint.new("/u/:id(\\d{3})/x/:name", "GET"),
+        ]
+
+        result = optimizer.add_path_parameters(endpoints)
+        result[0].url.should eq("/u/FUZZ")
+        result[1].url.should eq("/u/FUZZ/x/FUZZ")
+        result[1].params.map(&.name).should eq(["id", "name"])
+      end
+
       it "replaces a whole regex placeholder whose constraint has an {n} quantifier" do
         options["set_pvalue_path"] = YAML::Any.new([YAML::Any.new("id=7")])
         optimizer = EndpointOptimizer.new(logger, options)

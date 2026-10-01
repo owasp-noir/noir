@@ -94,7 +94,7 @@ class EndpointOptimizer
 
       # `/:param` patterns.
       url.scan(COLON_SEGMENT_RE) do |match|
-        collect_colon_placeholders(match, placeholders)
+        collect_colon_placeholders(url, match, placeholders)
       end
 
       # `<param>` patterns (Django / Flask / Marten / Bottle style).
@@ -188,22 +188,38 @@ class EndpointOptimizer
   # which belong to the placeholder, and further params joined by `-` or `.`
   # (`/:from-:to`, `/:genus.:species`). Anything else that follows — Play's
   # `/:lang.json` format suffix — is literal text and stays in the URL.
-  private def collect_colon_placeholders(match : Regex::MatchData, placeholders : Array(PathPlaceholder)) : Nil
-    raw = match[1]
-    base = match.byte_begin(1)
-    bytes = raw.to_slice
-    pos = 0
+  #
+  # Positions are walked over the whole URL, not the segment capture: the
+  # capture stops at `{`, so a constraint with its own quantifier
+  # (`/:id(\\d{3})`) would otherwise be cut off mid-group.
+  private def collect_colon_placeholders(url : String, match : Regex::MatchData, placeholders : Array(PathPlaceholder)) : Nil
+    bytes = url.to_slice
+    pos = match.byte_begin(1)
 
-    while ident = raw.byte_slice(pos, bytes.size - pos).match(PATH_PARAM_IDENT_RE)
+    while ident = url.byte_slice(pos, bytes.size - pos).match(PATH_PARAM_IDENT_RE)
       name = ident[0]
       stop = pos + name.bytesize
       stop = skip_paren_group(bytes, stop) if stop < bytes.size && '(' === bytes[stop]
-      stop += 1 if stop < bytes.size && ('?' === bytes[stop] || '*' === bytes[stop] || '+' === bytes[stop])
-      placeholders << PathPlaceholder.new(base + pos - 1, base + stop, name)
+      if stop < bytes.size && ('*' === bytes[stop] || '+' === bytes[stop] || ('?' === bytes[stop] && optional_marker_end?(bytes, stop + 1)))
+        stop += 1
+      end
+      placeholders << PathPlaceholder.new(pos - 1, stop, name)
 
-      break unless stop + 1 < bytes.size && ('-' === bytes[stop] || '.' === bytes[stop]) && ':' === bytes[stop + 1]
+      break unless joined_param_at?(bytes, stop)
       pos = stop + 2
     end
+  end
+
+  # A `?` right after a param is the optional marker (`/:ip?`) only when the
+  # segment ends there; otherwise it opens the query string
+  # (`/u/:id?sort=asc`) and must stay in the URL.
+  private def optional_marker_end?(bytes : Bytes, index : Int32) : Bool
+    index >= bytes.size || '/' === bytes[index] || joined_param_at?(bytes, index)
+  end
+
+  # Whether another `:param` joined by `-` or `.` starts at `index`.
+  private def joined_param_at?(bytes : Bytes, index : Int32) : Bool
+    index + 1 < bytes.size && ('-' === bytes[index] || '.' === bytes[index]) && ':' === bytes[index + 1]
   end
 
   # Index just past the `)` closing the group that opens at `start`, or
