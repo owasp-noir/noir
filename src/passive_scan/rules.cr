@@ -17,16 +17,26 @@ module NoirPassiveScan
       # dropped without a word — a silent hole in the rule set that looks
       # exactly like a clean scan.
       documents = YAML.parse_all(File.read(file))
-      if documents.empty?
+      # A bare `---` (a trailing separator, or two in a row) parses as an
+      # empty document. It is not a rule; building one from it raised on
+      # nil and abandoned every document after it in the file.
+      if documents.all? { |doc| doc.raw.nil? }
         logger.warning "Skipped empty passive rule file: #{file}"
         next
       end
 
       documents.each_with_index do |yaml_rule, doc_index|
+        next if yaml_rule.raw.nil?
         label = documents.size > 1 ? "#{file} (document #{doc_index + 1})" : file
-        passive_rule = PassiveScan.new(yaml_rule)
-        errors = passive_rule.validation_errors
-        if errors.empty?
+        begin
+          passive_rule = PassiveScan.new(yaml_rule)
+          errors = passive_rule.validation_errors
+        rescue e
+          # Per document, so one that is not a rule mapping (a bare scalar
+          # or list) does not take the rest of the file down with it.
+          errors = [e.message.presence || e.class.name]
+        end
+        if passive_rule && errors.empty?
           # A rule that still fires but lost a matcher to a broken regex
           # keeps working with reduced coverage; say so rather than
           # quietly running a narrower rule than the file describes.
