@@ -220,4 +220,35 @@ describe NoirPassiveScan do
       NoirPassiveScan.detect("f", "a.b x+y\nnone", [and_rule], logger).map(&.line_number).should eq([1])
     end
   end
+
+  describe "a rule that raises" do
+    rule_for = ->(id : String, pattern : String) do
+      PassiveScan.new(YAML.parse(
+        "id: #{id}\ncategory: sec\ntechs: []\n" \
+        "info: {name: #{id}, author: [], severity: high, description: d, reference: []}\n" \
+        "matchers-condition: or\nmatchers:\n  - {type: regex, condition: or, patterns: ['#{pattern}']}\n"))
+    end
+
+    before_each { Noir::SkippedFiles.clear }
+    after_each { Noir::SkippedFiles.clear }
+
+    it "costs only its own findings and is recorded as a gap" do
+      # Catastrophic backtracking: PCRE2 raises "match limit exceeded" on
+      # the run of `a`s that cannot end the line.
+      slow = rule_for.call("slow-rule", %q((\w+\s?)+$))
+      token = rule_for.call("token-rule", "tok_[a-z0-9]{12}")
+      content = %(api = "tok_abcdef123456"\n#{"a" * 60}!\n)
+
+      # The raising rule runs first, so a rescue around the whole file would
+      # also lose the token rule that runs after it.
+      results = NoirPassiveScan.detect("conf.txt", content, [slow, token], nil)
+      results.map { |r| {r.id, r.line_number} }.should contain({"token-rule", 1})
+
+      failures = Noir::SkippedFiles.failures(Noir::SkippedFiles::Phase::Scan)
+      failures.size.should eq(1)
+      failures[0].tech.should eq(Noir::SkippedFiles::PASSIVE_SCAN_SCOPE)
+      failures[0].message.should contain("conf.txt (rule slow-rule)")
+      failures[0].message.should contain("match limit")
+    end
+  end
 end
