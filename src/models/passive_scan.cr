@@ -42,6 +42,14 @@ struct PassiveScan
     ALLOWED_TYPES      = {"word", "regex"}
     ALLOWED_CONDITIONS = {"and", "or"}
 
+    # Constructs `Regex.union` changes the meaning of. The union renumbers
+    # capture groups, so a `\1`, `\g{1}`, `(?1)` or `(?(1)…)` in any pattern
+    # but the first points at the wrong group; and under `(?x)` a `#`
+    # comment runs to the end of the joined source and swallows the union's
+    # closing parens, so the whole rule failed to compile. Over-matching
+    # here (an escaped `\\1`) only costs the union fast path.
+    UNION_UNSAFE = /\\[1-9gk]|\(\?P=|\(\?[+-]?\d|\(\?R|\(\?\(|\(\?[a-zA-Z^-]*x/
+
     property type : String
     property patterns : Array(YAML::Any)
     # Pre-stringified patterns. detect.cr's hot path used to call
@@ -49,7 +57,11 @@ struct PassiveScan
     # same every call so we do it once at load time.
     property string_patterns : Array(String)
     property condition : String
+    # `or`: the single union every pattern is folded into, or nil when the
+    # patterns cannot share one (see UNION_UNSAFE) and are matched one by
+    # one through `compiled_regexes` instead.
     property compiled_regex : Regex?
+    # One compiled regex per pattern, under either condition.
     property compiled_regexes : Array(Regex)?
     # `word` patterns as escaped literal regexes: one union for `or`,
     # one regex per pattern for `and`. A literal regex matches exactly
@@ -80,20 +92,14 @@ struct PassiveScan
       @condition = raw_condition.downcase
 
       if @type == "regex" && ALLOWED_CONDITIONS.includes?(@condition)
-        if @condition == "or"
-          begin
-            @compiled_regex = Regex.union(@string_patterns.map { |p| Regex.new(p) })
-          rescue ex
-            @compiled_regex = nil
-            @regex_error = "#{ex.message} (#{ex.class}); patterns=#{@string_patterns.inspect}"
-          end
-        elsif @condition == "and"
-          begin
-            @compiled_regexes = @string_patterns.map { |p| Regex.new(p) }
-          rescue ex
-            @compiled_regexes = nil
-            @regex_error = "#{ex.message} (#{ex.class}); patterns=#{@string_patterns.inspect}"
-          end
+        begin
+          @compiled_regexes = @string_patterns.map { |p| Regex.new(p) }
+        rescue ex
+          @compiled_regexes = nil
+          @regex_error = "#{ex.message} (#{ex.class}); patterns=#{@string_patterns.inspect}"
+        end
+        if @condition == "or" && (regexes = @compiled_regexes)
+          @compiled_regex = union_of(regexes)
         end
       elsif @type == "word" && !@string_patterns.empty?
         # Escaped literals cannot fail to compile, but a pathological
@@ -108,6 +114,39 @@ struct PassiveScan
           @word_regex = nil
           @word_regexes = nil
         end
+      end
+    end
+
+    # One regex for every pattern when that is faithful to matching them
+    # one by one; nil otherwise. Each pattern already compiled alone, so a
+    # union that fails to compile (duplicate group names across patterns)
+    # is a union problem, not a rule problem.
+    private def union_of(regexes : Array(Regex)) : Regex?
+      return regexes.first if regexes.size == 1
+      return if @string_patterns.any?(&.matches?(UNION_UNSAFE))
+      Regex.union(regexes)
+    rescue
+      nil
+    end
+
+    # Whether a `regex` matcher fires on `content` (a line, as detect.cr
+    # calls it). Shared with the false-positive gate so both agree on what
+    # fired.
+    def regex_match?(content : String, options : Regex::MatchOptions = Regex::MatchOptions::None) : Bool
+      regexes = @compiled_regexes
+      return false if regexes.nil? || regexes.empty?
+
+      case @condition
+      when "or"
+        if union = @compiled_regex
+          union.matches?(content, options: options)
+        else
+          regexes.any?(&.matches?(content, options: options))
+        end
+      when "and"
+        regexes.all?(&.matches?(content, options: options))
+      else
+        false
       end
     end
 

@@ -162,22 +162,7 @@ module NoirPassiveScan
       # exception on every line of every file.
       return false if matcher.regex_compile_failed?
 
-      case matcher.condition
-      when "and"
-        if regexes = matcher.compiled_regexes
-          regexes.all? { |regex| regex.matches?(content, options: Noir::TextFile::MATCH_OPTIONS) }
-        else
-          false
-        end
-      when "or"
-        if regex = matcher.compiled_regex
-          regex.matches?(content, options: Noir::TextFile::MATCH_OPTIONS)
-        else
-          false
-        end
-      else
-        false
-      end
+      matcher.regex_match?(content, Noir::TextFile::MATCH_OPTIONS)
     else
       false
     end

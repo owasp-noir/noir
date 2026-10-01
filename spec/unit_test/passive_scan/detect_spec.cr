@@ -251,4 +251,49 @@ describe NoirPassiveScan do
       failures[0].message.should contain("match limit")
     end
   end
+
+  describe "or-regex matchers" do
+    rule_with = ->(patterns : Array(String)) do
+      yaml = {
+        "id"                 => "union-test",
+        "category"           => "sec",
+        "techs"              => [] of String,
+        "info"               => {"name" => "u", "author" => [] of String, "severity" => "high", "description" => "d", "reference" => [] of String},
+        "matchers-condition" => "or",
+        "matchers"           => [{"type" => "regex", "condition" => "or", "patterns" => patterns}],
+      }.to_yaml
+      PassiveScan.new(YAML.parse(yaml))
+    end
+
+    it "keeps a backreference pointing at its own group" do
+      # Folded into one union, `\1` would refer to the first pattern's group.
+      rule = rule_with.call([%q((foo|bar)_key), %q((["'])tok_[a-z]{6}\1)])
+      rule.valid?.should be_true
+      NoirPassiveScan.detect("f", %(x = "tok_abcdef"\ny = "tok_abcdef'\n), [rule], nil).map(&.line_number).should eq([1])
+    end
+
+    it "loads and matches an extended-mode pattern with a comment" do
+      rule = rule_with.call(["(?x) secret_[a-z]{4}  # trailing comment", "other_marker"])
+      rule.valid?.should be_true
+      NoirPassiveScan.detect("f", "a\nsecret_abcd\nother_marker\n", [rule], nil).map(&.line_number).should eq([2, 3])
+    end
+
+    it "matches patterns that reuse a group name" do
+      rule = rule_with.call(["apikey=(?<v>[a-z0-9]{8})", "secret=(?<v>[a-z0-9]{8})"])
+      rule.valid?.should be_true
+      NoirPassiveScan.detect("f", "url?apikey=abcd1234\nsecret=abcd1234\n", [rule], nil).map(&.line_number).should eq([1, 2])
+    end
+
+    it "still folds plain patterns into one union" do
+      matcher = rule_with.call(["foo_[0-9]+", "bar_[a-z]+"]).matchers.first
+      matcher.compiled_regex.should_not be_nil
+      matcher.regex_match?("x bar_abc").should be_true
+      matcher.regex_match?("x baz").should be_false
+    end
+
+    it "agrees with the false-positive gate on what fired" do
+      rule = rule_with.call([%q((foo|bar)_key), %q((["'])tok_[a-z]{6}\1)])
+      NoirPassiveScan::FalsePositive.regex_value_hit?(rule, %(x = "tok_abcdef")).should be_true
+    end
+  end
 end

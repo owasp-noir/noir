@@ -174,22 +174,9 @@ module NoirPassiveScan
     # line — mirrors detect.cr's matching so the gate above agrees with
     # what actually fired.
     def self.regex_value_hit?(rule : PassiveScan, line : String) : Bool
-      rule.matchers.each do |matcher|
-        next unless matcher.type == "regex"
-        next if matcher.regex_compile_failed?
-
-        case matcher.condition
-        when "or"
-          if regex = matcher.compiled_regex
-            return true if line.matches?(regex)
-          end
-        when "and"
-          if regexes = matcher.compiled_regexes
-            return true if !regexes.empty? && regexes.all? { |regex| line.matches?(regex) }
-          end
-        end
+      rule.matchers.any? do |matcher|
+        matcher.type == "regex" && !matcher.regex_compile_failed? && matcher.regex_match?(line)
       end
-      false
     end
 
     # The first env-var-name-shaped `word` pattern of `rule` that occurs
