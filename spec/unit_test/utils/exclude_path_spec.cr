@@ -55,6 +55,27 @@ describe Noir::ExcludePath do
     matcher.excluded?("src/legacy/old.go").should be_true
   end
 
+  # The relative path never starts with `./`, so `--exclude-path ./tests`
+  # used to exclude nothing, silently.
+  it "drops a leading ./ from a path pattern" do
+    glob = Noir::ExcludePath.new("./tests/**")
+    glob.excluded?("tests/unit/deep.js").should be_true
+    glob.excluded?("src/main.js").should be_false
+
+    dir = Noir::ExcludePath.new("./tests")
+    dir.excluded?("tests/top.js").should be_true
+    dir.excluded?("tests/unit/deep.js").should be_true
+    dir.excluded?("src/tests/top.js").should be_false
+
+    Noir::ExcludePath.new("././legacy").excluded?("legacy/old.js").should be_true
+  end
+
+  it "keeps a ./-prefixed file pattern anchored at the scan base" do
+    matcher = Noir::ExcludePath.new("./app.js")
+    matcher.excluded?("app.js").should be_true
+    matcher.excluded?("src/app.js").should be_false
+  end
+
   it "raises on a malformed glob rather than excluding nothing" do
     # The detector turns this into `Noir::InvalidExcludePathError`: an
     # unusable pattern must stop the scan, not silently match nothing.

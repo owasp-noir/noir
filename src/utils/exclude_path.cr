@@ -21,6 +21,11 @@ module Noir
   #     directory (`src/legacy`), or as a directory prefix (everything
   #     under `src/legacy/`);
   #   * a pattern without `/` matches the basename as a glob (`*.test.js`);
+  #   * a leading `./` on a path pattern is dropped, since the path it is
+  #     compared against never carries one: `./tests/**` means `tests/**`.
+  #     It is dropped *after* the classification above, so `./app.js` stays
+  #     a path pattern for the file at the base rather than becoming a
+  #     basename pattern for every `app.js`;
   #   * on macOS/Windows the comparison folds case, because their default
   #     filesystems do. Folding on Linux would wrongly drop case-distinct
   #     files that legitimately coexist.
@@ -43,9 +48,20 @@ module Noir
     def initialize(raw : String)
       patterns = raw.split(",").map(&.strip.gsub('\\', '/')).reject(&.empty?)
       path_patterns, basename_patterns = patterns.partition(&.includes?('/'))
+      path_patterns = path_patterns.map { |pat| ExcludePath.strip_dot_slash(pat) }
       @path_patterns = CASE_INSENSITIVE ? path_patterns.map(&.downcase) : path_patterns
       @basename_patterns = CASE_INSENSITIVE ? basename_patterns.map(&.downcase) : basename_patterns
       @active = !patterns.empty?
+    end
+
+    # `./tests` → `tests`, `././tests` → `tests`. A pattern that is nothing
+    # but `./` is left alone: stripping it would leave an empty pattern.
+    def self.strip_dot_slash(pattern : String) : String
+      stripped = pattern
+      while stripped.starts_with?("./")
+        stripped = stripped[2..]
+      end
+      stripped.empty? ? pattern : stripped
     end
 
     # `relative_path` is the file's location relative to the scan base that
