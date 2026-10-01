@@ -21,10 +21,6 @@ describe "Tagger" do
     end
   end
 
-  # `--use-taggers Hunt` and `--use-taggers HUNT` used to error
-  # because the canonical names in `available_tagger_names` are
-  # lowercase. Users naturally try title-case or upper-case; force
-  # a case-insensitive match instead.
   # `--fail-on auth-removed` adds `AUTH_ENTRIES` when `--use-taggers` names
   # none of them, and that list is read off the `_auth` key suffix. A tagger
   # that emits the auth tag under another key would silently fall out of
@@ -45,6 +41,10 @@ describe "Tagger" do
     NoirTaggers.auth_tagging?("all").should be_true
   end
 
+  # `--use-taggers Hunt` and `--use-taggers HUNT` used to error
+  # because the canonical names in `available_tagger_names` are
+  # lowercase. Users naturally try title-case or upper-case; force
+  # a case-insensitive match instead.
   it "accepts tagger names regardless of case" do
     NoirTaggers.unknown_tagger_names("HUNT,Cors,oAuth").should be_empty
     NoirTaggers.unknown_tagger_names("Hunt,Bogus").should eq(["Bogus"])
