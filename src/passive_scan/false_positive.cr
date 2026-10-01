@@ -20,13 +20,12 @@ module NoirPassiveScan
   # (`GITHUB_TOKEN`, `AWS_ACCESS_KEY_ID`, …) on lines that merely
   # reference the variable rather than assign it a literal value.
   module FalsePositive
-    # Runtime environment-variable accessors. A line that only pulls its
-    # value from the environment at runtime has no literal secret to leak.
-    # They are found anywhere on the line, so
-    # `key = os.getenv("OPENAI_API_KEY")` is covered wherever the accessor
-    # sits — but an accessor is not proof on its own: the same line can
-    # write a literal (`os.environ["K"] = "…"`) or hand one over as a
-    # default (`os.getenv("K", "…")`). See LITERAL_AFTER_ACCESSOR.
+    # Runtime environment-variable accessors. A line that pulls its value
+    # from the environment at runtime has no literal secret to leak. They
+    # are found anywhere on the line, so `key = os.getenv("OPENAI_API_KEY")`
+    # is covered wherever the accessor sits. The one exception is a
+    # credentialed URL handed over through the accessor — see
+    # `env_read_only?`.
     ENV_ACCESSOR_MARKERS = [
       "process.env",
       "import.meta.env",
@@ -53,28 +52,33 @@ module NoirPassiveScan
     # key (quoted or bare), an optional closing `)` / `]`, then the opening
     # quote of a literal passed as a further argument or handed over by
     # HANDOFF_OPERATOR. Group 1 is that quote; see `quoted_literal`.
-    LITERAL_AFTER_ACCESSOR = /\A[\w.]*\s*[(\[]?\s*(?:(?:'[^']*'|"[^"]*"|`[^`]*`|[\w.]+)\s*)?[)\]]?\s*(?:,|#{HANDOFF_OPERATOR})\s*(['"`])/
+    #
+    # This and the other handoff patterns below are matched ANCHORED at a
+    # byte offset (`match_at`), so they carry no `\A`.
+    LITERAL_AFTER_ACCESSOR = /[\w.]*\s*[(\[]?\s*(?:(?:'[^']*'|"[^"]*"|`[^`]*`|[\w.]+)\s*)?[)\]]?\s*(?:,|#{HANDOFF_OPERATOR})\s*(['"`])/
 
     # `NAME=…`, `NAME: …`, `"NAME": …`, `NAME => …` with a non-empty value,
     # read from just after the name.
-    NAME_ASSIGNMENT = /\A['"]?\s*(?::|=>?)\s*\S/
+    NAME_ASSIGNMENT = /['"]?\s*(?::|=>?)\s*\S/
 
     # Text right after a variable name, past its closing quote and
     # bracket: `"K"] = "…"`, `K"] ||= "…"`, `K || "…"`.
-    LITERAL_AFTER_NAME = /\A['"`]?\s*[)\]]?\s*#{HANDOFF_OPERATOR}\s*(['"`])/
+    LITERAL_AFTER_NAME = /['"`]?\s*[)\]]?\s*#{HANDOFF_OPERATOR}\s*(['"`])/
 
     # A name passed as the first argument of a call whose second argument
-    # is a quoted literal — `env('K', '…')`, `os.getenv("K", "…")`,
-    # `setdefault("K", "…")`: the literal is the value used when the
-    # variable is unset. CALL_FIRST_ARGUMENT is matched against the text
-    # before the name, LITERAL_SECOND_ARGUMENT against the text after it.
-    CALL_FIRST_ARGUMENT     = /\(\s*['"`]\z/
-    LITERAL_SECOND_ARGUMENT = /\A['"`]\s*,\s*(['"`])/
+    # is a quoted literal — `env('K', '…')`: the literal is the value used
+    # when the variable is unset. Read from the name's closing quote.
+    LITERAL_SECOND_ARGUMENT = /['"`]\s*,\s*(['"`])/
 
-    # Another variable name passed as a literal (`require_env("DB_URL",
-    # "REDIS_URL")`). Upper snake case with at least one underscore, so a
-    # real uppercase key (`AKIA…`) is not mistaken for a name.
-    ENV_NAME_LITERAL = /\A[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\z/
+    # A URL carrying a password in its userinfo — `postgres://admin:pw@db`,
+    # `redis://:pw@cache`. Group 1 is the password. This is the one literal
+    # an env handoff is not suppressed for: the values handed to env
+    # accessors and env-shaped names are overwhelmingly test and dev
+    # fixtures (`"test"`, `"sqlite:///db.sqlite3"`, `"localhost"`), while a
+    # credentialed URL is a real secret whatever the rule's matcher. A
+    # literal with a secret's own shape (`ghp_…`, `AKIA…`) never gets here:
+    # `regex_value_hit?` keeps it first.
+    CREDENTIAL_URL = /\A\s*[A-Za-z][A-Za-z0-9+.\-]*:\/\/[^\s\/:@]*:([^\s\/@]+)@[^\s\/@]/
 
     # Captures the value to the right of the first assignment separator
     # (`:`, `=`, or the PHP/Ruby hash arrow `=>`), trimming surrounding
@@ -236,45 +240,59 @@ module NoirPassiveScan
     end
 
     # True when the line has an env accessor and none of its occurrences
-    # hands over a literal value (see LITERAL_AFTER_ACCESSOR).
+    # hands over a credentialed URL (see CREDENTIAL_URL).
     def self.env_read_only?(line : String) : Bool
       found = false
       ENV_ACCESSOR_MARKERS.each do |marker|
         offset = 0
         while idx = line.byte_index(marker, offset)
           found = true
-          tail = line.byte_slice(idx + marker.bytesize)
-          if (match = tail.match(LITERAL_AFTER_ACCESSOR)) && literal_value?(quoted_literal(tail, match))
-            return false
-          end
           offset = idx + marker.bytesize
+          return false if credential_url_at?(line, LITERAL_AFTER_ACCESSOR, offset)
         end
       end
       found
     end
 
-    # True when `name` is given a (non-empty) value on the line —
-    # `NAME=…`, `NAME: …`, `"NAME": …`, `NAME => …`, or a quoted literal
-    # through `["NAME"] = "…"`, `||= "…"`, `|| "…"` or a call's default
-    # argument (`env('NAME', '…')`). A bare mention (`"DATABASE_URL"`,
+    # True when `name` is assigned a (non-empty) value on the line —
+    # `NAME=…`, `NAME: …`, `"NAME": …`, `NAME => …` — or a credentialed URL
+    # is handed to it (`ENV["NAME"] ||= "postgres://u:pw@…"`,
+    # `env('NAME', 'postgres://u:pw@…')`). A bare mention (`"DATABASE_URL"`,
     # `env.delete("DATABASE_URL")`, prose) does not match, so it is treated
     # as a non-secret reference.
     def self.assigns_literal?(line : String, name : String) : Bool
       offset = 0
       while idx = line.byte_index(name, offset)
-        tail = line.byte_slice(idx + name.bytesize)
-        return true if tail.matches?(NAME_ASSIGNMENT)
-        if (match = tail.match(LITERAL_AFTER_NAME)) && literal_value?(quoted_literal(tail, match))
-          return true
-        end
-        if line.byte_slice(0, idx).matches?(CALL_FIRST_ARGUMENT) &&
-           (match = tail.match(LITERAL_SECOND_ARGUMENT)) && literal_value?(quoted_literal(tail, match))
-          return true
-        end
         offset = idx + name.bytesize
+        return true if NAME_ASSIGNMENT.match_at_byte_index(line, offset, Regex::MatchOptions::ANCHORED)
+        return true if credential_url_at?(line, LITERAL_AFTER_NAME, offset)
+        return true if first_call_argument?(line, idx) && credential_url_at?(line, LITERAL_SECOND_ARGUMENT, offset)
       end
       false
     end
+
+    # True when `handoff` matches at `offset` and the literal whose opening
+    # quote ends that match is a credentialed URL with a real password.
+    private def self.credential_url_at?(line : String, handoff : Regex, offset : Int32) : Bool
+      return false unless match = handoff.match_at_byte_index(line, offset, Regex::MatchOptions::ANCHORED)
+      return false unless url = quoted_literal(line, match).match(CREDENTIAL_URL)
+      password = url[1]
+      !(password.matches?(PURE_REFERENCE) || password.matches?(PLACEHOLDER_VALUE))
+    end
+
+    # True when the name at byte `idx` opens a call's argument list: it is
+    # quoted and preceded by `(` (`env('NAME'`).
+    private def self.first_call_argument?(line : String, idx : Int32) : Bool
+      i = idx - 1
+      return false unless i >= 0 && QUOTE_BYTES.includes?(line.byte_at(i))
+      i -= 1
+      while i >= 0 && line.byte_at(i).unsafe_chr.ascii_whitespace?
+        i -= 1
+      end
+      i >= 0 && line.byte_at(i) == '('.ord
+    end
+
+    QUOTE_BYTES = {'"'.ord.to_u8, '\''.ord.to_u8, '`'.ord.to_u8}
 
     # The literal whose opening quote ends `match` (group 1), up to the
     # matching closing quote — or to the end of the line when it does not
@@ -283,13 +301,6 @@ module NoirPassiveScan
       start = match.byte_end(0)
       close = text.byte_index(match[1], start)
       close ? text.byte_slice(start, close - start) : text.byte_slice(start)
-    end
-
-    # A literal that could carry a secret: non-empty, and not a reference,
-    # a placeholder or another variable's name.
-    private def self.literal_value?(literal : String) : Bool
-      return false if literal.blank?
-      !(literal.matches?(PURE_REFERENCE) || literal.matches?(PLACEHOLDER_VALUE) || literal.matches?(ENV_NAME_LITERAL))
     end
 
     # Strip a single layer of matching wrapping quotes (and a trailing

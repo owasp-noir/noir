@@ -50,6 +50,22 @@ private def database_rule
     YAML
 end
 
+# Word-only secret rule over the env names the real-world false positives
+# were reported against.
+private def env_names_rule
+  PassiveScan.new(YAML.parse(<<-YAML))
+    id: env-names
+    info: {name: env names, author: [test], severity: high, description: ., reference: []}
+    matchers-condition: or
+    matchers:
+      - type: word
+        patterns: [OPENAI_API_KEY, AWS_ACCESS_KEY_ID, GH_TOKEN, GEMINI_API_KEY, ANTHROPIC_API_KEY, GITHUB_TOKEN, STRIPE_API_KEY, MONGO_URL]
+        condition: or
+    category: secret
+    techs: ['*']
+    YAML
+end
+
 describe NoirPassiveScan::FalsePositive do
   describe ".suppress?(rule, line)" do
     it "keeps a line whose value-shape regex matches (real literal)" do
@@ -76,7 +92,7 @@ describe NoirPassiveScan::FalsePositive do
       NoirPassiveScan::FalsePositive.suppress?(database_rule, "DATABASE_URL: postgres://user:pass@db.example.com:5432/app").should be_false
     end
 
-    it "keeps a literal written to, or defaulted through, an env accessor" do
+    it "keeps a credentialed URL written to, or defaulted through, an env accessor" do
       url = "postgres://admin:S3cretPassw0rd@prod-db.internal:5432/app"
       [
         %(os.environ["DATABASE_URL"] = "#{url}"),
@@ -86,6 +102,7 @@ describe NoirPassiveScan::FalsePositive do
         %(DB = os.getenv("DATABASE_URL", "#{url}")),
         %('url' => env('DATABASE_URL', '#{url}'),),
         %(const db = process.env.DATABASE_URL || "#{url}";),
+        %(ENV["DATABASE_URL"] = "redis://:Sup3rS3cret@cache.internal:6379/0"),
         # Control: the plain assignment was always reported.
         %(DATABASE_URL = "#{url}"),
       ].each do |line|
@@ -93,8 +110,9 @@ describe NoirPassiveScan::FalsePositive do
       end
     end
 
-    it "still suppresses env reads that hand over no literal" do
+    it "still suppresses env reads and test/dev values handed through env names" do
       [
+        # Plain reads.
         %(url = os.environ["DATABASE_URL"]),
         %(url = os.environ.get("DATABASE_URL")),
         %(url = ENV.fetch("DATABASE_URL")),
@@ -103,12 +121,39 @@ describe NoirPassiveScan::FalsePositive do
         %(url = os.getenv("DATABASE_URL", "")),
         %(url = os.getenv("DATABASE_URL", default_url)),
         %(os.environ["DATABASE_URL"] = os.environ["TEST_DATABASE_URL"]),
+        # Test/dev values written through an accessor.
+        %(ENV["DATABASE_URL"] = "db.sqlite"),
+        %(ENV["DATABASE_URL"] = "postgres://postgres@localhost/my_database"),
+        %(ENV["DATABASE_URL"] = "postgres://user:${DB_PASSWORD}@db/app"),
+        # Non-secret defaults and fallbacks.
+        %(url = os.getenv("DATABASE_URL", "sqlite:///db.sqlite3")),
         %(url = os.getenv("DATABASE_URL", "<your-database-url>")),
+        %(const url = process.env.DATABASE_URL ?? "localhost";),
+        %(const url = process.env.DATABASE_URL || 'dev';),
+        %(url = os.environ.get("DATABASE_URL") or "anonymous"),
+        %(url = ENV.fetch("DATABASE_URL", "dev")),
         %(require_env("DATABASE_URL", "REDIS_URL")),
         # Comment-line suppression is unchanged.
         %(# os.environ["DATABASE_URL"] = "postgres://admin:pw@db:5432/app"),
       ].each do |line|
         NoirPassiveScan::FalsePositive.suppress?(database_rule, line).should be_true, "expected suppressed: #{line}"
+      end
+
+      [
+        %(ENV["OPENAI_API_KEY"] = "test"),
+        %(ENV["OPENAI_API_KEY"] = "x"),
+        %(ENV["OPENAI_API_KEY"] = "brew"),
+        %(ENV["OPENAI_API_KEY"] = "sk-XXXXXXXX"),
+        %(ENV["AWS_ACCESS_KEY_ID"] = "eu-west-1"),
+        %(t.Setenv("GH_TOKEN", "test-token")),
+        %(monkeypatch.setenv("GEMINI_API_KEY", "gemini_env_api_key")),
+        %(process.env["ANTHROPIC_API_KEY"] = "pre-existing-key";),
+        %(logger.warning("GITHUB_TOKEN", "is not set")),
+        %(check_env("STRIPE_API_KEY", "Stripe key required")),
+        %(env('GITHUB_TOKEN','forge')),
+        %(mongo = os.environ.get("MONGO_URL", "mongodb://localhost:27017")),
+      ].each do |line|
+        NoirPassiveScan::FalsePositive.suppress?(env_names_rule, line).should be_true, "expected suppressed: #{line}"
       end
     end
 
@@ -168,9 +213,10 @@ describe NoirPassiveScan::FalsePositive do
       NoirPassiveScan::FalsePositive.secret_reference?(%(secret := System.getenv("AWS_SECRET_ACCESS_KEY"))).should be_true
     end
 
-    it "does not treat an accessor that hands over a literal as a pure read" do
-      NoirPassiveScan::FalsePositive.secret_reference?(%(os.getenv("OPENAI_API_KEY", "sk-proj-realfallbackvalue123"))).should be_false
-      NoirPassiveScan::FalsePositive.secret_reference?(%(ENV["GITHUB_TOKEN"] ||= "ghp_fallback")).should be_false
+    it "does not treat an accessor that hands over a credentialed URL as a pure read" do
+      NoirPassiveScan::FalsePositive.secret_reference?(%(url = os.getenv("DATABASE_URL", "postgres://app:S3cret@db/app"))).should be_false
+      NoirPassiveScan::FalsePositive.secret_reference?(%(ENV["DATABASE_URL"] ||= "mysql://root:hunter22@db/app")).should be_false
+      NoirPassiveScan::FalsePositive.secret_reference?(%(token = ENV["GITHUB_TOKEN"] || "ghp_fallback")).should be_true
       NoirPassiveScan::FalsePositive.secret_reference?(%(token = ENV["GITHUB_TOKEN"] == "x")).should be_true
     end
 
