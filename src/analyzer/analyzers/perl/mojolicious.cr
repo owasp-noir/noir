@@ -125,7 +125,7 @@ module Analyzer::Perl
         line_endpoints = line_to_endpoints(line, var_prefix, path_vars, route_vars)
         line_endpoints.each do |endpoint|
           endpoint.details = Details.new(PathInfo.new(file_path, index + 1))
-          extract_path_params(endpoint).each { |p| push_unique_param(endpoint, p) }
+          extract_path_params(endpoint).each { |p| endpoint.push_param(p) unless p.name.empty? }
           attach_route_callees(endpoint, content, raw_lines[index], offsets[index], controller_callees, configured_base_for(file_path)) if include_callee
           endpoints << endpoint
         end
@@ -142,7 +142,7 @@ module Analyzer::Perl
 
         targets.each do |target|
           extract_params_from_line(line, target.method).each do |param|
-            push_unique_param(target, param)
+            target.push_param(param) unless param.name.empty?
           end
         end
 
@@ -574,14 +574,6 @@ module Analyzer::Perl
       end
 
       params
-    end
-
-    private def push_unique_param(endpoint : Endpoint, param : Param)
-      return if param.name.empty?
-      endpoint.params.each do |existing|
-        return if existing.name == param.name && existing.param_type == param.param_type
-      end
-      endpoint.push_param(param)
     end
 
     private def attach_route_callees(endpoint : Endpoint,

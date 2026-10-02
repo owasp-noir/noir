@@ -20,7 +20,6 @@ module Analyzer::Rust
       ["rocket"]
     end
 
-    HTTP_VERBS = Set{"get", "post", "put", "delete", "patch", "head", "options"}
     alias ScopedRouteKey = Tuple(String, String, String)
     alias AliasKey = Tuple(String, String)
     alias RouteLeaf = Tuple(String, String?)

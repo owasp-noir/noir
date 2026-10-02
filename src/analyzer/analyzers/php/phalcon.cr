@@ -15,8 +15,6 @@ module Analyzer::Php
   class Phalcon < PhpEngine
     analyzer_for "php_phalcon"
 
-    HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]
-
     # ASCII byte values for the paren matcher below. Both are < 0x80, so
     # they can never collide with a UTF-8 multi-byte continuation/lead byte
     # (>= 0x80) — same invariant `PhpEngine#find_matching_php_close_brace`

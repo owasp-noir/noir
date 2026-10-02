@@ -1,3 +1,6 @@
+# The verbs a framework's own `any`/`all`/`*` route helper registers.
+ANY_ROUTE_HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]
+
 # The concrete verbs a wildcard route (`ANY`/`ALL`/`*`) fans out to.
 #
 # `QUERY` (RFC 10008) is deliberately absent: fanning every wildcard route
@@ -5,7 +8,7 @@
 # every framework — reported, probed, and exported — for a verb almost no
 # deployed app intends to serve. A `QUERY` endpoint is emitted only where
 # a route declares the verb explicitly.
-WILDCARD_HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD", "TRACE"]
+WILDCARD_HTTP_METHODS = ANY_ROUTE_HTTP_METHODS + ["TRACE"]
 SYNTHETIC_ANY_METHODS = ["ANY", "ALL", "*"]
 
 def get_symbol(method : String)

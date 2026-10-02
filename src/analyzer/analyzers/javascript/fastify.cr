@@ -82,14 +82,9 @@ module Analyzer::Javascript
       end
 
       # Process static directories to create endpoints for static files
-      process_static_dirs(static_dirs, result)
+      process_js_static_dirs(static_dirs, result)
 
       result
-    end
-
-    # Process static directories and add endpoints for each file
-    private def process_static_dirs(static_dirs : Array(Hash(String, String)), result : Array(Endpoint))
-      process_js_static_dirs(static_dirs, result)
     end
 
     # Markers that a file configures `@fastify/autoload`. Both the scoped
@@ -279,7 +274,7 @@ module Analyzer::Javascript
 
         next if route_recorded_for_file?(result, path, url, "QUERY")
 
-        line_no = content[0...call_start].count('\n') + 1
+        line_no = line_number_for_index(content, call_start)
 
         endpoint = Endpoint.new(url, "QUERY")
         endpoint.details = Details.new(PathInfo.new(path, line_no))
@@ -361,7 +356,7 @@ module Analyzer::Javascript
         url = Noir::URLPath.join(autoload_prefix, url) unless autoload_prefix.empty?
 
         # Compute line number from the call site offset.
-        line_no = content[0...call_start].count('\n') + 1
+        line_no = line_number_for_index(content, call_start)
 
         # Pre-scan the config body for handler params (request.body.x,
         # request.query.x, ...). The shorthand `.get(url, handler)`
@@ -455,14 +450,6 @@ module Analyzer::Javascript
                           config.char_index_to_byte_index(open_brace) || config.bytesize
                         end
       {body, start_line + config.to_slice[0, open_brace_byte].count('\n'.ord.to_u8)}
-    end
-
-    private def skip_whitespace(content : String, pos : Int32) : Int32
-      i = pos
-      while i < content.size && content[i].whitespace?
-        i += 1
-      end
-      i
     end
 
     private def route_config_value_end(config : String, start : Int32) : Int32
@@ -612,12 +599,6 @@ module Analyzer::Javascript
           last_endpoint.push_param(param)
         end
       end
-    end
-
-    def extract_path_from_route_handler(line : String) : String
-      # Path extraction pattern
-      match = line.match(/\(\s*['"]([^'"]+)['"]/)
-      match ? match[1] : ""
     end
 
     def line_to_param(line : String) : Param

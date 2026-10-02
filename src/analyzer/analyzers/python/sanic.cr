@@ -623,14 +623,6 @@ module Analyzer::Python
       nil
     end
 
-    # Delegates to the shared splitter; `Rules::PYTHON` reproduces this
-    # file's previous hand-rolled loop exactly (both quote styles, backslash
-    # escapes inside quotes, per-kind clamped depth, no strip, and every
-    # empty part kept so positional indexing of the result stays valid).
-    private def split_python_arguments(args : ::String) : Array(::String)
-      Noir::TopLevelSplit.split(args, ',', Noir::TopLevelSplit::Rules::PYTHON)
-    end
-
     private def find_function_def(lines : Array(::String), function_name : ::String) : Int32?
       # Compile the name-specific matcher once per call instead of on
       # every line, and gate it behind cheap substring necessary checks.

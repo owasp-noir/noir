@@ -5,8 +5,6 @@ module Analyzer::Php
   class Laminas < PhpEngine
     analyzer_for "php_laminas"
 
-    HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]
-
     # ASCII byte values for the structural characters the byte-level
     # helpers below scan for. All are < 0x80, so they can never collide
     # with a UTF-8 multi-byte continuation/lead byte (>= 0x80) — the same
@@ -212,7 +210,7 @@ module Analyzer::Php
         break unless match_start
 
         route_path = normalize_laminas_route_path(match[4])
-        methods = match[2].downcase == "any" ? HTTP_METHODS : [match[2].upcase]
+        methods = match[2].downcase == "any" ? ANY_ROUTE_HTTP_METHODS : [match[2].upcase]
         after_args = match_start + match_text.size
         handler_body, next_pos, body_start_line = extract_handler_body_with_end(working_content, after_args)
 
@@ -394,7 +392,7 @@ module Analyzer::Php
     end
 
     private def extract_http_methods(content : String) : Array(String)
-      return HTTP_METHODS if content.match(/HTTP_METHOD_ANY|METHOD_ANY/i)
+      return ANY_ROUTE_HTTP_METHODS if content.match(/HTTP_METHOD_ANY|METHOD_ANY/i)
 
       methods = [] of String
       content.scan(/['"]?(GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)['"]?/i) do |match|
@@ -406,13 +404,13 @@ module Analyzer::Php
     private def extract_methods_from_route_call(call_content : String) : Array(String)
       args = split_top_level_args(call_content)
       method_arg = args[2]?
-      return HTTP_METHODS unless method_arg
+      return ANY_ROUTE_HTTP_METHODS unless method_arg
 
       stripped = method_arg.strip
-      return HTTP_METHODS if stripped.empty? || stripped.downcase == "null"
+      return ANY_ROUTE_HTTP_METHODS if stripped.empty? || stripped.downcase == "null"
 
       methods = extract_http_methods(stripped)
-      methods.empty? ? HTTP_METHODS : methods
+      methods.empty? ? ANY_ROUTE_HTTP_METHODS : methods
     end
 
     # `Rules::SHARED_DEPTH_RAW` with a trailing empty dropped, then a

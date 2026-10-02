@@ -153,6 +153,50 @@ module Analyzer::Javascript
       end
     end
 
+    protected def handler_callees(handler_source : String, handler_start : Int32, content : String, path : String) : Array(Noir::JSCalleeExtractor::Entry)
+      if arrow_idx = handler_source.index("=>")
+        body_start = skip_whitespace(content, handler_start + arrow_idx + 2)
+        return [] of Noir::JSCalleeExtractor::Entry if body_start >= content.size
+
+        if content[body_start]? == '{'
+          return block_handler_callees(content, path, body_start)
+        end
+
+        body = content[body_start...(handler_start + handler_source.size)].strip
+        return [] of Noir::JSCalleeExtractor::Entry if body.empty?
+
+        return Noir::JSCalleeExtractor.callees_for_function_body(body, path, line_number_for_index(content, body_start), language: javascript_source_language(path))
+      end
+
+      function_idx = handler_source.index(/\bfunction\b/)
+      return [] of Noir::JSCalleeExtractor::Entry unless function_idx
+
+      open_brace = content.index("{", handler_start + function_idx)
+      return [] of Noir::JSCalleeExtractor::Entry unless open_brace
+
+      block_handler_callees(content, path, open_brace)
+    end
+
+    protected def block_handler_callees(content : String, path : String, open_brace : Int32) : Array(Noir::JSCalleeExtractor::Entry)
+      close_brace = Noir::JSRouteExtractor.find_matching_brace(content, open_brace)
+      return [] of Noir::JSCalleeExtractor::Entry unless close_brace
+
+      body = content[(open_brace + 1)...close_brace]
+      Noir::JSCalleeExtractor.callees_for_function_body(body, path, line_number_for_index(content, open_brace), language: javascript_source_language(path))
+    end
+
+    protected def split_top_level_args(content : String, start_pos : Int32, end_pos : Int32) : Array(Tuple(String, Int32))
+      Noir::TopLevelSplit.split_spans(content, ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS, start_pos, end_pos)
+    end
+
+    protected def skip_whitespace(content : String, pos : Int32) : Int32
+      i = pos
+      while i < content.size && content[i].whitespace?
+        i += 1
+      end
+      i
+    end
+
     private def resolve_static_file_path(source_path : String, raw_path : String) : String
       normalized = raw_path.strip.gsub("\\", "/")
       return Noir::PathScope.expand(normalized) if normalized.starts_with?("/")

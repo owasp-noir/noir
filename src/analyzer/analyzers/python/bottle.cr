@@ -343,14 +343,6 @@ module Analyzer::Python
       nil
     end
 
-    # Delegates to the shared splitter; `Rules::PYTHON` reproduces this
-    # file's previous hand-rolled loop exactly (both quote styles, backslash
-    # escapes inside quotes, per-kind clamped depth, no strip, and every
-    # empty part kept so positional indexing of the result stays valid).
-    private def split_python_arguments(args : String) : Array(String)
-      Noir::TopLevelSplit.split(args, ',', Noir::TopLevelSplit::Rules::PYTHON)
-    end
-
     # Memoized per keyword — the keyword set is tiny (`path`, `rule`,
     # `uri`) but this runs per argument of every programmatic route.
     private def keyword_string_regex(keyword : String) : Regex

@@ -125,7 +125,7 @@ module Analyzer::Javascript
         methods, url = parse_sails_address(m[1].strip)
         next if methods.empty? || url.empty?
 
-        line = content[0...match_start].count('\n') + 1
+        line = line_number_for_index(content, match_start)
         value_start = skip_ws(content, match_end)
 
         methods.each do |method|

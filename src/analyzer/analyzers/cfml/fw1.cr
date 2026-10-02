@@ -36,9 +36,6 @@ module Analyzer::Cfml
 
     RESOURCES_KEY = "$RESOURCES"
 
-    # A key with no `$` prefix, or an explicit `$*`, answers every method.
-    ALL_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
-
     # `framework/one.cfc` defines these as `resourceRouteTemplates`.
     # Note there is no `edit` route — FW/1 differs from Rails here.
     RESOURCE_TEMPLATES = [
@@ -100,7 +97,7 @@ module Analyzer::Cfml
     end
 
     private def emit_route(key : String, details : Details)
-      methods = ALL_METHODS
+      methods = ANY_ROUTE_HTTP_METHODS
       pattern = key
 
       if match = key.match(METHOD_PREFIX_RE)

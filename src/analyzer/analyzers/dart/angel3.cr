@@ -43,8 +43,6 @@ module Analyzer::Dart
       "options" => "OPTIONS",
     }
 
-    ALL_VERBS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
-
     # A `group('/prefix', (router) { ... })` block: its composed prefix,
     # the child-router parameter name, and the char range of its closure
     # body (where calls on `param` are scoped to this group).
@@ -269,7 +267,7 @@ module Analyzer::Dart
         callees = Helper.handler_callees(args[1], content, comma + 1, path, line) if comma
       end
 
-      verbs = method == "all" ? ALL_VERBS : [HTTP_METHOD_MAP[method]]
+      verbs = method == "all" ? ANY_ROUTE_HTTP_METHODS : [HTTP_METHOD_MAP[method]]
       verbs.each do |verb|
         next unless seen.add?({verb, url})
         endpoints << Helper.build_endpoint(url, verb, path, line, callees)

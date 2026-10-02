@@ -47,13 +47,9 @@ module Analyzer::Javascript
         analyze_with_regex(path, result)
       end
 
-      process_static_dirs(static_dirs, result)
+      process_js_static_dirs(static_dirs, result)
 
       result
-    end
-
-    private def process_static_dirs(static_dirs : Array(Hash(String, String)), result : Array(Endpoint))
-      process_js_static_dirs(static_dirs, result)
     end
 
     private def on_route_candidate?(content : String) : Bool
@@ -145,62 +141,6 @@ module Analyzer::Javascript
 
       handler_source, handler_start = args[2]
       handler_callees(handler_source, handler_start, content, path)
-    end
-
-    private def handler_callees(handler_source : String, handler_start : Int32, content : String, path : String) : Array(Noir::JSCalleeExtractor::Entry)
-      if arrow_idx = handler_source.index("=>")
-        body_start = skip_whitespace(content, handler_start + arrow_idx + 2)
-        return [] of Noir::JSCalleeExtractor::Entry if body_start >= content.size
-
-        if content[body_start]? == '{'
-          return block_handler_callees(content, path, body_start)
-        end
-
-        body = content[body_start...(handler_start + handler_source.size)].strip
-        return [] of Noir::JSCalleeExtractor::Entry if body.empty?
-
-        return Noir::JSCalleeExtractor.callees_for_function_body(body, path, line_for_pos(content, body_start), language: javascript_source_language(path))
-      end
-
-      function_idx = handler_source.index(/\bfunction\b/)
-      return [] of Noir::JSCalleeExtractor::Entry unless function_idx
-
-      open_brace = content.index("{", handler_start + function_idx)
-      return [] of Noir::JSCalleeExtractor::Entry unless open_brace
-
-      block_handler_callees(content, path, open_brace)
-    end
-
-    private def block_handler_callees(content : String, path : String, open_brace : Int32) : Array(Noir::JSCalleeExtractor::Entry)
-      close_brace = Noir::JSRouteExtractor.find_matching_brace(content, open_brace)
-      return [] of Noir::JSCalleeExtractor::Entry unless close_brace
-
-      body = content[(open_brace + 1)...close_brace]
-      Noir::JSCalleeExtractor.callees_for_function_body(body, path, line_for_pos(content, open_brace), language: javascript_source_language(path))
-    end
-
-    private def split_top_level_args(content : String, start_pos : Int32, end_pos : Int32) : Array(Tuple(String, Int32))
-      Noir::TopLevelSplit.split_spans(content, ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS, start_pos, end_pos)
-    end
-
-    private def skip_whitespace(content : String, pos : Int32) : Int32
-      i = pos
-      while i < content.size && content[i].whitespace?
-        i += 1
-      end
-      i
-    end
-
-    # `pos` is a CHAR index; convert to a byte offset so the newline count
-    # stays correct on non-ASCII content while dropping the prefix-substring
-    # allocation the old char-slice made per call.
-    private def line_for_pos(content : String, pos : Int32) : Int32
-      byte_pos = if content.bytesize == content.size
-                   pos
-                 else
-                   content.char_index_to_byte_index(pos) || content.bytesize
-                 end
-      content.to_slice[0, byte_pos].count('\n'.ord.to_u8) + 1
     end
 
     private def analyze_with_regex(path : String, result : Array(Endpoint))

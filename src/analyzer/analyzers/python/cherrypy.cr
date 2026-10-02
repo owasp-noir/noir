@@ -625,13 +625,5 @@ module Analyzer::Python
       end
       body.join("\n")
     end
-
-    # Delegates to the shared splitter; `Rules::PYTHON` reproduces this
-    # file's previous hand-rolled loop exactly (both quote styles, backslash
-    # escapes inside quotes, per-kind clamped depth, no strip, and every
-    # empty part kept so positional indexing of the result stays valid).
-    private def split_python_arguments(args : ::String) : Array(::String)
-      Noir::TopLevelSplit.split(args, ',', Noir::TopLevelSplit::Rules::PYTHON)
-    end
   end
 end

@@ -179,7 +179,7 @@ module Analyzer::Javascript
           end
         end
 
-        line = content[0...call_start].count('\n') + 1
+        line = line_number_for_index(content, call_start)
         emit_service_endpoints(result, path, service_path, methods, region, line, include_callee)
       end
     end
@@ -590,7 +590,7 @@ module Analyzer::Javascript
           method_body = bc[(mr[0] + 1)...mr[1]]
           extract_method_params(endpoint, method_body)
           if include_callee
-            method_line = bc[0...mr[0]].count('\n') + 1
+            method_line = line_number_for_index(bc, mr[0])
             attach_method_callees(endpoint, method_body, region.path, method_line)
           end
         end
@@ -641,24 +641,19 @@ module Analyzer::Javascript
     private def extract_method_params(endpoint : Endpoint, body : String)
       body.scan(QUERY_PARAM_RE) do |m|
         name = (m[1]? || m[2]?).to_s
-        push_unique_param(endpoint, Param.new(name, "", "query")) unless name.empty?
+        endpoint.push_param(Param.new(name, "", "query")) unless name.empty?
       end
       body.scan(QUERY_DESTRUCTURE_RE) do |m|
         next unless m.size > 0
         (m[1]? || "").split(",").each do |raw|
           name = raw.split("=").first.strip.split(":").first.strip
-          push_unique_param(endpoint, Param.new(name, "", "query")) unless name.empty?
+          endpoint.push_param(Param.new(name, "", "query")) unless name.empty?
         end
       end
       body.scan(HEADER_PARAM_RE) do |m|
         name = (m[1]? || m[2]?).to_s
-        push_unique_param(endpoint, Param.new(name, "", "header")) unless name.empty?
+        endpoint.push_param(Param.new(name, "", "header")) unless name.empty?
       end
-    end
-
-    private def push_unique_param(endpoint : Endpoint, param : Param)
-      return if endpoint.params.any? { |p| p.name == param.name && p.param_type == param.param_type }
-      endpoint.push_param(param)
     end
 
     private def attach_method_callees(endpoint : Endpoint, body : String, path : String, line : Int32)
@@ -666,14 +661,6 @@ module Analyzer::Javascript
       callees.each do |name, callee_path, callee_line|
         endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
       end
-    end
-
-    # ---------------------------------------------------------------
-    # Top-level call-argument splitting (quote/paren/brace/bracket
-    # depth aware), local to this analyzer.
-    # ---------------------------------------------------------------
-    private def split_top_level_args(content : String, start_pos : Int32, end_pos : Int32) : Array(Tuple(String, Int32))
-      Noir::TopLevelSplit.split_spans(content, ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS, start_pos, end_pos)
     end
 
     private def quoted_literal(text : String) : String?

@@ -371,7 +371,7 @@ module Analyzer::Typescript
       return if config_close > second_call_close
 
       block = content[(config_open + 1)...config_close]
-      attach_route_block_callees(block, path, line_for_pos(content, config_open), endpoint)
+      attach_route_block_callees(block, path, line_number_for_index(content, config_open), endpoint)
     end
 
     # Integer `String#[](Int)` re-seeks from byte 0 on non-ASCII content, so
@@ -416,19 +416,6 @@ module Analyzer::Typescript
           endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
         end
       end
-    end
-
-    # `pos` is a CHAR index (from char-based navigation such as
-    # `String#index`); converted to a byte offset so the newline count is
-    # both correct on non-ASCII content and free of the prefix-substring
-    # allocation the old char-slice made per call.
-    private def line_for_pos(content : String, pos : Int32) : Int32
-      byte_pos = if content.bytesize == content.size
-                   pos
-                 else
-                   content.char_index_to_byte_index(pos) || content.bytesize
-                 end
-      line_for_byte_pos(content, byte_pos)
     end
 
     private def line_for_byte_pos(content : String, byte_pos : Int32) : Int32

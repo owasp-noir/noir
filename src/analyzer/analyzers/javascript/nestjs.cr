@@ -86,7 +86,7 @@ module Analyzer::Javascript
       end
 
       # Process static directories to create endpoints for static files
-      process_static_dirs(static_dirs, result)
+      process_js_static_dirs(static_dirs, result)
 
       # Apply discovered global prefixes (`app.setGlobalPrefix('api')`)
       # — the bootstrap call mounts every controller under that prefix.
@@ -231,11 +231,6 @@ module Analyzer::Javascript
       normalized = normalized.gsub_repeatedly("//", "/")
       normalized = normalized.chomp("/") unless normalized == "/"
       normalized
-    end
-
-    # Process static directories and add endpoints for each file
-    private def process_static_dirs(static_dirs : Array(Hash(String, String)), result : Array(Endpoint))
-      process_js_static_dirs(static_dirs, result)
     end
 
     private def analyze_nestjs_file(path : String, result : Array(Endpoint), static_dirs : Array(Hash(String, String)), include_callee : Bool, global_prefix_holder : Array(Tuple(String, GlobalPrefixConfig)), global_prefix_mutex : Mutex)
@@ -884,75 +879,75 @@ module Analyzer::Javascript
       method_params.scan(/@Query\s*\(\s*['"`]([^'"`]+)['"`][\s\S]*?\)/) do |param_match|
         if param_match.size > 0
           param_name = param_match[1]
-          push_unique_param(endpoint, Param.new(param_name, "", "query"))
+          endpoint.push_param(Param.new(param_name, "", "query"))
         end
       end
       if method_params =~ /@Query\s*\(\s*(?:\)|[^'"`][\s\S]*?\))/
-        push_unique_param(endpoint, Param.new("query", "", "query"))
+        endpoint.push_param(Param.new("query", "", "query"))
       end
 
       # Extract @Param parameters (path parameters)
       method_params.scan(/@Param\s*\(\s*['"`]([^'"`]+)['"`][\s\S]*?\)/) do |param_match|
         if param_match.size > 0
           param_name = param_match[1]
-          push_unique_param(endpoint, Param.new(param_name, "", "path"))
+          endpoint.push_param(Param.new(param_name, "", "path"))
         end
       end
 
       # Extract @Body('field') and @Body() / @Body(pipe)
       method_params.scan(/@Body\s*\(\s*['"`]([^'"`]+)['"`][\s\S]*?\)/) do |body_match|
         if body_match.size > 0
-          push_unique_param(endpoint, Param.new(body_match[1], "", "body"))
+          endpoint.push_param(Param.new(body_match[1], "", "body"))
         end
       end
 
       if method_params =~ /@Body\s*\(\s*(?:\)|[^'"`][\s\S]*?\))/
-        push_unique_param(endpoint, Param.new("body", "", "body"))
+        endpoint.push_param(Param.new("body", "", "body"))
       end
 
       # Extract @Headers parameters
       method_params.scan(/@Headers\s*\(\s*['"`]([^'"`]+)['"`][\s\S]*?\)/) do |param_match|
         if param_match.size > 0
           param_name = param_match[1]
-          push_unique_param(endpoint, Param.new(param_name, "", "header"))
+          endpoint.push_param(Param.new(param_name, "", "header"))
         end
       end
       if method_params =~ /@Headers\s*\(\s*(?:\)|[^'"`][\s\S]*?\))/
-        push_unique_param(endpoint, Param.new("headers", "", "header"))
+        endpoint.push_param(Param.new("headers", "", "header"))
       end
 
       # `@HostParam('account')` — subdomain capture when the controller
       # uses `@Controller({ host: ':account.example.com' })`.
       method_params.scan(/@HostParam\s*\(\s*['"`]([^'"`]+)['"`][\s\S]*?\)/) do |param_match|
-        push_unique_param(endpoint, Param.new(param_match[1], "", "path")) if param_match.size > 0
+        endpoint.push_param(Param.new(param_match[1], "", "path")) if param_match.size > 0
       end
 
       # `@UploadedFile('field')` / `@UploadedFiles('field')` — multer
       # integration. Unnamed forms get a generic 'file' / 'files' body
       # param so consumers still see the upload surface.
       method_params.scan(/@UploadedFile\s*\(\s*['"`]([^'"`]+)['"`][\s\S]*?\)/) do |param_match|
-        push_unique_param(endpoint, Param.new(param_match[1], "", "body")) if param_match.size > 0
+        endpoint.push_param(Param.new(param_match[1], "", "body")) if param_match.size > 0
       end
       if method_params =~ /@UploadedFile\s*\(\s*\)/
-        push_unique_param(endpoint, Param.new("file", "", "body"))
+        endpoint.push_param(Param.new("file", "", "body"))
       end
 
       method_params.scan(/@UploadedFiles\s*\(\s*['"`]([^'"`]+)['"`][\s\S]*?\)/) do |param_match|
-        push_unique_param(endpoint, Param.new(param_match[1], "", "body")) if param_match.size > 0
+        endpoint.push_param(Param.new(param_match[1], "", "body")) if param_match.size > 0
       end
       if method_params =~ /@UploadedFiles\s*\(\s*\)/
-        push_unique_param(endpoint, Param.new("files", "", "body"))
+        endpoint.push_param(Param.new("files", "", "body"))
       end
     end
 
     private def extract_interceptor_parameters(decorator_block : String, endpoint : Endpoint)
       decorator_block.scan(/(?:FileInterceptor|FilesInterceptor)\s*\(\s*['"`]([^'"`]+)['"`]/) do |match|
-        push_unique_param(endpoint, Param.new(match[1], "", "body")) if match.size > 0
+        endpoint.push_param(Param.new(match[1], "", "body")) if match.size > 0
       end
 
       decorator_block.scan(/FileFieldsInterceptor\s*\(\s*\[([\s\S]*?)\]/m) do |match|
         match[1].scan(/\bname\s*:\s*['"`]([^'"`]+)['"`]/) do |field|
-          push_unique_param(endpoint, Param.new(field[1], "", "body")) if field.size > 0
+          endpoint.push_param(Param.new(field[1], "", "body")) if field.size > 0
         end
       end
     end
@@ -975,8 +970,8 @@ module Analyzer::Javascript
         REQUEST_OBJECT_FIELDS.each do |field, param_type|
           dot_re = cached_regex("nestjs:req_dot:#{name}:#{field}") { /\b#{Regex.escape(name)}\.#{field}\.(\w+)/ }
           bracket_re = cached_regex("nestjs:req_bracket:#{name}:#{field}") { /\b#{Regex.escape(name)}\.#{field}\s*\[\s*['"`]([^'"`]+)['"`]\s*\]/ }
-          body.scan(dot_re) { |m| push_unique_param(endpoint, Param.new(m[1], "", param_type)) }
-          body.scan(bracket_re) { |m| push_unique_param(endpoint, Param.new(m[1], "", param_type)) }
+          body.scan(dot_re) { |m| endpoint.push_param(Param.new(m[1], "", param_type)) }
+          body.scan(bracket_re) { |m| endpoint.push_param(Param.new(m[1], "", param_type)) }
         end
       end
     end
@@ -1002,11 +997,6 @@ module Analyzer::Javascript
           end
         end
       end
-    end
-
-    private def push_unique_param(endpoint : Endpoint, param : Param)
-      return if endpoint.params.any? { |existing| existing.name == param.name && existing.param_type == param.param_type }
-      endpoint.push_param(param)
     end
   end
 end

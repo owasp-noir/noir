@@ -107,12 +107,12 @@ module Analyzer::Perl
         route.methods.each do |method|
           endpoint = Endpoint.new(route.url, method)
           endpoint.details = Details.new(PathInfo.new(file_path, route.line_index + 1))
-          path_params.each { |param| push_unique_param(endpoint, param) }
+          path_params.each { |param| endpoint.push_param(param) unless param.name.empty? }
           # Legacy `param`/`params` accessors bucket by HTTP method (query
           # vs form), so an `any` route's params must be resolved per
           # generated method rather than once for the first method.
           if body
-            extract_params_from_body(body[0], method).each { |param| push_unique_param(endpoint, param) }
+            extract_params_from_body(body[0], method).each { |param| endpoint.push_param(param) unless param.name.empty? }
           end
 
           if include_callee && body
@@ -321,14 +321,6 @@ module Analyzer::Perl
       end
 
       params
-    end
-
-    private def push_unique_param(endpoint : Endpoint, param : Param)
-      return if param.name.empty?
-      endpoint.params.each do |existing|
-        return if existing.name == param.name && existing.param_type == param.param_type
-      end
-      endpoint.push_param(param)
     end
 
     private def normalize_prefix(prefix : String) : String

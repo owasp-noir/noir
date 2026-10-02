@@ -1227,14 +1227,6 @@ module Analyzer::Python
       ""
     end
 
-    # Delegates to the shared splitter; `Rules::PYTHON` reproduces this
-    # file's previous hand-rolled loop exactly (both quote styles, backslash
-    # escapes inside quotes, per-kind clamped depth, no strip, and every
-    # empty part kept so positional indexing of the result stays valid).
-    private def split_python_arguments(args : ::String) : Array(::String)
-      Noir::TopLevelSplit.split(args, ',', Noir::TopLevelSplit::Rules::PYTHON)
-    end
-
     # Extract endpoints from a given file
     def extract_endpoints_from_file(url : ::String, filepath : ::String, function_or_class_name : ::String)
       @logger.debug "Extracting endpoints from #{filepath}"

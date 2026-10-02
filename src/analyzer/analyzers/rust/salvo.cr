@@ -35,7 +35,6 @@ module Analyzer::Rust
       ["salvo"]
     end
 
-    HTTP_VERBS = Set{"get", "post", "put", "delete", "patch", "head", "options"}
     alias ScopedNameKey = Tuple(String, String)
     alias PrefixEdge = Tuple(ScopedNameKey, String)
 
