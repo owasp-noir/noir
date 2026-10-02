@@ -585,6 +585,37 @@ module OutputBuilderOasCommon
     end
   end
 
+  # The `paths` key an endpoint lands on, plus the spelling it was folded
+  # from when a same-shaped route with different placeholder names claimed
+  # the key first. The endpoint's own path parameters are renamed to match.
+  private def resolve_oas_path(endpoint : Endpoint, route : String, parameters : Array(Hash(String, JSON::Any)),
+                               canonical_paths : Hash(String, String)) : {String, String?}
+    declared_path_params = endpoint.params.compact_map { |p| p.name if p.request_type == "path" }
+    oas_path = normalize_oas_path(route_path(route), declared_path_params)
+    canonical_path = canonical_oas_path(oas_path, canonical_paths)
+    return {oas_path, nil} if canonical_path == oas_path
+
+    rename_path_parameters(parameters, path_template_renames(oas_path, canonical_path))
+    {canonical_path, oas_path}
+  end
+
+  # Adds `operation` to the path item under every verb `method` expands to,
+  # and returns those verbs.
+  private def register_operation(paths : Hash(String, Hash(String, JSON::Any)), oas_path : String, path_variant : String?,
+                                 method : String, operation : Hash(String, JSON::Any)) : Array(String)
+    path_item = paths[oas_path] ||= {} of String => JSON::Any
+    add_path_variant_extension(path_item, path_variant) if path_variant
+
+    methods = operation_methods(method)
+    if methods.empty?
+      add_unsupported_method_extension(path_item, method)
+      add_unsupported_operation(path_item, method, operation)
+    else
+      methods.each { |verb| add_operation(path_item, verb, operation) }
+    end
+    methods
+  end
+
   private def schema_string : JSON::Any
     JSON::Any.new({
       "type" => JSON::Any.new("string"),

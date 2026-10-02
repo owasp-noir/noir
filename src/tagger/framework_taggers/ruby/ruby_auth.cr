@@ -71,7 +71,6 @@ class RubyAuthTagger < FrameworkTagger
   RODA_AUTHZ_PATTERNS = [
     {/authorize!/, "Roda authorize!"},
   ]
-  RODA_AUTH_PATTERNS = RODA_AUTHN_PATTERNS + RODA_AUTHZ_PATTERNS
 
   # skip_before_action marks public overrides
   SKIP_PATTERNS = [

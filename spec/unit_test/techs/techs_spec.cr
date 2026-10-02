@@ -74,7 +74,7 @@ describe "Context support metadata" do
   end
 
   it "marks every framework auth tagger target as guard-supported" do
-    target_techs = NoirTaggers.framework_taggers.flat_map do |entry|
+    target_techs = NoirTaggers::FRAMEWORK_ENTRIES.flat_map do |entry|
       NoirTaggers.target_techs(entry.key)
     end.uniq!
 

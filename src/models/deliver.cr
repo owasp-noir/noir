@@ -1,13 +1,16 @@
 require "colorize"
+require "crest"
 require "openssl"
+require "wait_group"
 require "./logger"
+require "./skipped_files"
 require "../utils/utils"
 require "../utils/http_symbols"
 require "../utils/url_origin"
 
-# Max concurrent in-flight probe requests, shared by every class that fires
-# requests at discovered endpoints. Bounds the fiber/socket fan-out so a large
-# endpoint set can't exhaust file descriptors. Backed by the validated
+# Max concurrent in-flight probe requests and the outbound TLS context, shared
+# by every class that fires requests at discovered endpoints. Bounds the
+# fiber/socket fan-out so a large endpoint set can't exhaust file descriptors. Backed by the validated
 # --concurrency value (already clamped to a sane ceiling).
 #
 # A module rather than a `Deliver` method because `StatusCodeProbe` is
@@ -22,6 +25,19 @@ module ProbeConcurrency
     n = @options["concurrency"]?.try(&.to_s.to_i?) || 0
     n > 0 ? n : DEFAULT_PROBE_CONCURRENCY
   end
+
+  # TLS context for outbound delivery. Verifying (secure) by default; the
+  # old behaviour skipped verification unconditionally, silently exposing
+  # the endpoint catalog to MITM on the way to a webhook / Elasticsearch.
+  # `--tls-skip-verify` restores the insecure context for self-signed
+  # internal endpoints.
+  protected def tls_context : OpenSSL::SSL::Context::Client
+    if any_to_bool(@options["tls_skip_verify"]?)
+      OpenSSL::SSL::Context::Client.insecure
+    else
+      OpenSSL::SSL::Context::Client.new
+    end
+  end
 end
 
 class Deliver
@@ -33,10 +49,10 @@ class Deliver
   @is_verbose : Bool
   @is_color : Bool
   @is_log : Bool
-  @proxy : String
-  @headers : Hash(String, String) = {} of String => String
-  @matchers : Array(String) = [] of String
-  @filters : Array(String) = [] of String
+  getter proxy : String
+  getter headers : Hash(String, String) = {} of String => String
+  getter matchers : Array(String) = [] of String
+  getter filters : Array(String) = [] of String
   # Origin of `--url`, resolved lazily (see `target_origin`) and the set of
   # off-target origins already warned about, so the warning fires once per
   # host instead of once per endpoint.
@@ -158,28 +174,100 @@ class Deliver
   # assertable, since the count is otherwise only visible as a log line.
   getter undeliverable_count : Int32 = 0
 
-  protected def undeliverable_count=(count : Int32)
-    @undeliverable_count = count
+  # Fires one request per requestable verb of every probeable endpoint,
+  # bounded by --concurrency, and returns how many never completed. Every
+  # request goes out with `handle_errors: false, max_redirects: 0` — see the
+  # comment on SendReq#run for why the two are inseparable.
+  protected def probe_all(endpoints : Array(Endpoint), tls : OpenSSL::SSL::Context::Client, label : String,
+                          p_addr : String? = nil, p_port : Int32? = nil) : Int32
+    wg = WaitGroup.new
+    failures = Atomic(Int32).new(0)
+    # Bound in-flight requests to --concurrency so a large endpoint set can't
+    # spawn thousands of sockets at once and hit "Too many open files".
+    sem = Channel(Nil).new(concurrency_limit)
+
+    apply_all(endpoints).each do |endpoint|
+      next if endpoint.non_http? # can't HTTP-probe an app deep link or CLI command
+      next if skip_probe_target?(endpoint)
+      # Built once per endpoint, outside the spawn: every fiber for this
+      # endpoint sends the same headers and body.
+      request_headers = probe_headers(endpoint)
+      endpoint_hash = endpoint.params_to_hash
+      is_json = !endpoint_hash["json"].empty?
+      body = is_json ? endpoint_hash["json"] : endpoint_hash["form"]
+      requestable_http_methods(endpoint.method).each do |request_method|
+        wg.add(1)
+        sem.send(nil) # acquire a slot (blocks once `concurrency_limit` are in flight)
+        spawn do
+          Crest::Request.execute(
+            method: get_symbol(request_method),
+            url: probe_url(endpoint, request_method),
+            p_addr: p_addr,
+            p_port: p_port,
+            tls: tls,
+            user_agent: "Noir/#{Noir::VERSION}",
+            params: endpoint_hash["query"],
+            form: body,
+            headers: request_headers,
+            json: is_json,
+            handle_errors: false,
+            max_redirects: 0,
+            connect_timeout: probe_connect_timeout,
+            read_timeout: probe_read_timeout
+          )
+        rescue e
+          failures.add(1)
+          @logger.debug "Exception during #{label}"
+          @logger.debug_sub e
+        ensure
+          sem.receive # release the slot
+          wg.done
+        end
+      end
+    end
+
+    wg.wait
+    @undeliverable_count = failures.get
   end
 
-  def proxy
-    @proxy
-  end
+  # POSTs the JSON document the block builds (`{url, body}`) to an export
+  # receiver. A failure anywhere — building the body, parsing the URL, the
+  # request itself — is warned and recorded rather than raised: a swallowed
+  # debug line let the user believe the catalog was delivered, and a warning
+  # alone let a pipeline whose whole purpose is shipping the catalog go green
+  # under `--strict` while shipping nothing.
+  #
+  # Crest's `Request.execute` only recognizes `form:` as the body source —
+  # `body:` is silently swallowed into `**options` and the request goes out
+  # with Content-Length: 0. Combined with `json: true`, `form:` ships the raw
+  # String through as the JSON payload (verified against Crest 1.4.x in spec).
+  protected def post_export(target : String, warn_label : String, gap_label : String, &)
+    url, body = yield
 
-  def headers
-    @headers
-  end
+    # Dup the user-supplied headers so the JSON headers don't bleed into
+    # @headers.
+    export_headers = @headers.dup
+    export_headers["Content-Type"] = "application/json"
+    export_headers["Accept"] = "application/json"
 
-  def matchers
-    @matchers
-  end
-
-  def filters
-    @filters
-  end
-
-  def run
-    # After inheriting the class, write an action code here.
+    Crest::Request.execute(
+      method: :post,
+      url: url,
+      tls: tls_context,
+      user_agent: "Noir/#{Noir::VERSION}",
+      form: body,
+      headers: export_headers,
+      json: true,
+      connect_timeout: export_connect_timeout,
+      read_timeout: export_read_timeout
+    )
+  rescue e
+    @logger.warning "#{warn_label} delivery to #{target} failed: #{e.message}"
+    @logger.debug_sub e
+    Noir::SkippedFiles.record_gap(
+      Noir::SkippedFiles::DELIVER_SCOPE,
+      "#{gap_label} delivery to #{target} failed: #{e.message.presence || e.class.name}"
+    )
   end
 
   # Crest defaults both `connect_timeout` and `read_timeout` to nil, i.e.
@@ -457,19 +545,6 @@ class Deliver
 
   protected def export_read_timeout : Time::Span
     EXPORT_READ_TIMEOUT
-  end
-
-  # TLS context for outbound delivery. Verifying (secure) by default; the
-  # old behaviour skipped verification unconditionally, silently exposing
-  # the endpoint catalog to MITM on the way to a webhook / Elasticsearch.
-  # `--tls-skip-verify` restores the insecure context for self-signed
-  # internal endpoints.
-  protected def tls_context : OpenSSL::SSL::Context::Client
-    if any_to_bool(@options["tls_skip_verify"]?)
-      OpenSSL::SSL::Context::Client.insecure
-    else
-      OpenSSL::SSL::Context::Client.new
-    end
   end
 
   # A `METHOD:url` pattern is only method-scoped when the token before the

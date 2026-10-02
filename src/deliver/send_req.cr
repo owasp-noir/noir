@@ -1,6 +1,3 @@
-require "crest"
-require "wait_group"
-require "../utils/http_symbols"
 require "../models/deliver"
 require "../models/skipped_files"
 
@@ -27,81 +24,13 @@ class SendReq < Deliver
   # following them generates traffic to URLs noir never discovered, which
   # is not what "replay my endpoints" means.
   def run(endpoints : Array(Endpoint))
-    applied_endpoints = apply_all(endpoints)
-    wg = WaitGroup.new
-    tls = tls_context
-    failures = Atomic(Int32).new(0)
-    # Bound in-flight requests to --concurrency so a large endpoint set can't
-    # spawn thousands of sockets at once and hit "Too many open files".
-    sem = Channel(Nil).new(concurrency_limit)
-
-    applied_endpoints.each do |endpoint|
-      next if endpoint.non_http? # can't HTTP-probe an app deep link or CLI command
-      next if skip_probe_target?(endpoint)
-      # Built once per endpoint, outside the spawn: `probe_headers` reads
-      # endpoint state, and every fiber for this endpoint sends the same set.
-      request_headers = probe_headers(endpoint)
-      requestable_http_methods(endpoint.method).each do |request_method|
-        wg.add(1)
-        sem.send(nil) # acquire a slot (blocks once `concurrency_limit` are in flight)
-        spawn do
-          if !endpoint.params.empty?
-            endpoint_hash = endpoint.params_to_hash
-            is_json = false
-            body = if !endpoint_hash["json"].empty?
-                     is_json = true
-                     endpoint_hash["json"]
-                   else
-                     endpoint_hash["form"]
-                   end
-
-            Crest::Request.execute(
-              method: get_symbol(request_method),
-              url: probe_url(endpoint, request_method),
-              tls: tls,
-              user_agent: "Noir/#{Noir::VERSION}",
-              params: endpoint_hash["query"],
-              form: body,
-              headers: request_headers,
-              json: is_json,
-              handle_errors: false,
-              max_redirects: 0,
-              connect_timeout: probe_connect_timeout,
-              read_timeout: probe_read_timeout
-            )
-          else
-            Crest::Request.execute(
-              method: get_symbol(request_method),
-              url: probe_url(endpoint, request_method),
-              headers: request_headers,
-              tls: tls,
-              user_agent: "Noir/#{Noir::VERSION}",
-              handle_errors: false,
-              max_redirects: 0,
-              connect_timeout: probe_connect_timeout,
-              read_timeout: probe_read_timeout
-            )
-          end
-        rescue e
-          failures.add(1)
-          @logger.debug "Exception during request delivery"
-          @logger.debug_sub e
-        ensure
-          sem.receive # release the slot
-          wg.done
-        end
-      end
-    end
-
-    wg.wait
+    failed = probe_all(endpoints, tls_context, "request delivery")
 
     # Individual failures stay at debug, but a total count surfaces once so
     # a fully-broken target (bad -u, TLS rejection, network down) isn't
     # mistaken for a clean run. With `handle_errors: false` above this now
     # counts only requests that never completed — a 404/500 response is a
     # delivered probe and no longer lands here.
-    failed = failures.get
-    self.undeliverable_count = failed
     return if failed == 0
 
     @logger.warning "Probe delivery: #{failed} request(s) could not be sent (run with --debug for details)."

@@ -14,19 +14,7 @@ module OutputBuilderTomlSerializer
   private def generate_table_content(data : Hash(String, JSON::Any)) : String
     String.build do |io|
       data.each do |key, value|
-        case value.raw
-        when String, Int64, Float64, Bool
-          io << "#{toml_key(key)} = #{toml_value(value)}\n"
-        when Array
-          io << "#{toml_key(key)} = ["
-          io << value.as_a.map { |item| toml_value(item) }.join(", ")
-          io << "]\n"
-        when Hash
-          # Nested inline table
-          io << "#{toml_key(key)} = { "
-          io << value.as_h.map { |k, v| "#{toml_key(k)} = #{toml_value(v)}" }.join(", ")
-          io << " }\n"
-        end
+        io << toml_key(key) << " = " << toml_value(value) << '\n' unless value.raw.nil?
       end
     end
   end

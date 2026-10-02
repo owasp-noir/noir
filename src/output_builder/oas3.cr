@@ -38,14 +38,10 @@ class OutputBuilderOas3 < OutputBuilder
         case param.request_type
         when "json"
           # JSON body parameters go into requestBody
-          json_properties[param.name] = JSON::Any.new({
-            "type" => JSON::Any.new("string"),
-          } of String => JSON::Any)
+          json_properties[param.name] = schema_string
         when "form"
           # Form data parameters go into requestBody
-          form_properties[param.name] = JSON::Any.new({
-            "type" => JSON::Any.new("string"),
-          } of String => JSON::Any)
+          form_properties[param.name] = schema_string
         when "file"
           # Upload fields used to fall through to `in: query` (same class of
           # bug `body` → `json` already fixed). Postman already emits them as
@@ -59,9 +55,7 @@ class OutputBuilderOas3 < OutputBuilder
           # `param_type: xml` (name typically `body`). The default branch
           # used to emit `in: query`. Mirror the JSON requestBody shape
           # under `application/xml`.
-          xml_properties[param.name] = JSON::Any.new({
-            "type" => JSON::Any.new("string"),
-          } of String => JSON::Any)
+          xml_properties[param.name] = schema_string
         when "header"
           # Header parameters
           append_unique_parameter(parameters, openapi_parameter(param.name, "header", false))
@@ -77,15 +71,7 @@ class OutputBuilderOas3 < OutputBuilder
         end
       end
 
-      declared_path_params = endpoint.params.compact_map { |p| p.name if p.request_type == "path" }
-      oas_path = normalize_oas_path(route_path(url_parts[:route]), declared_path_params)
-      canonical_path = canonical_oas_path(oas_path, canonical_paths)
-      path_variant = nil
-      if canonical_path != oas_path
-        rename_path_parameters(parameters, path_template_renames(oas_path, canonical_path))
-        path_variant = oas_path
-        oas_path = canonical_path
-      end
+      oas_path, path_variant = resolve_oas_path(endpoint, url_parts[:route], parameters, canonical_paths)
       template_names = path_template_names(oas_path)
       template_names.each do |name|
         # A path template variable must win over a same-named query/header/
@@ -118,22 +104,12 @@ class OutputBuilderOas3 < OutputBuilder
 
       # Add requestBody for JSON content
       unless json_properties.empty?
-        request_content["application/json"] = JSON::Any.new({
-          "schema" => JSON::Any.new({
-            "type"       => JSON::Any.new("object"),
-            "properties" => JSON::Any.new(json_properties),
-          } of String => JSON::Any),
-        } of String => JSON::Any)
+        request_content["application/json"] = object_body(json_properties)
       end
 
       # Add requestBody for XML content (Play asXml / Tapir xmlBody)
       unless xml_properties.empty?
-        request_content["application/xml"] = JSON::Any.new({
-          "schema" => JSON::Any.new({
-            "type"       => JSON::Any.new("object"),
-            "properties" => JSON::Any.new(xml_properties),
-          } of String => JSON::Any),
-        } of String => JSON::Any)
+        request_content["application/xml"] = object_body(xml_properties)
       end
 
       # Add requestBody for form / file uploads. A file field forces
@@ -141,20 +117,9 @@ class OutputBuilderOas3 < OutputBuilder
       # urlencoded cannot carry a binary part. File-only uploads still get
       # multipart rather than a misleading query parameter.
       if !file_properties.empty?
-        multipart_properties = form_properties.merge(file_properties)
-        request_content["multipart/form-data"] = JSON::Any.new({
-          "schema" => JSON::Any.new({
-            "type"       => JSON::Any.new("object"),
-            "properties" => JSON::Any.new(multipart_properties),
-          } of String => JSON::Any),
-        } of String => JSON::Any)
+        request_content["multipart/form-data"] = object_body(form_properties.merge(file_properties))
       elsif !form_properties.empty?
-        request_content["application/x-www-form-urlencoded"] = JSON::Any.new({
-          "schema" => JSON::Any.new({
-            "type"       => JSON::Any.new("object"),
-            "properties" => JSON::Any.new(form_properties),
-          } of String => JSON::Any),
-        } of String => JSON::Any)
+        request_content["application/x-www-form-urlencoded"] = object_body(form_properties)
       end
 
       unless request_content.empty?
@@ -182,23 +147,8 @@ class OutputBuilderOas3 < OutputBuilder
       add_noir_callees_extension(operation, endpoint)
       add_noir_ai_context_extension(operation, endpoint)
 
-      # Initialize path if not exists
-      unless paths.has_key?(oas_path)
-        paths[oas_path] = {} of String => JSON::Any
-      end
-      add_path_variant_extension(paths[oas_path], path_variant) if path_variant
-
-      # Add method to path
-      methods = operation_methods(endpoint.method)
-      if methods.empty?
-        add_unsupported_method_extension(paths[oas_path], endpoint.method)
-        add_unsupported_operation(paths[oas_path], endpoint.method, operation)
-      else
-        methods.each do |method|
-          add_operation(paths[oas_path], method, operation)
-          query_operation_emitted = true if method == "query"
-        end
-      end
+      methods = register_operation(paths, oas_path, path_variant, endpoint.method, operation)
+      query_operation_emitted = true if methods.includes?("query")
     end
 
     oas3_hash = {
@@ -216,6 +166,15 @@ class OutputBuilderOas3 < OutputBuilder
     } of String => JSON::Any
 
     ob_puts JSON::Any.new(oas3_hash).to_pretty_json
+  end
+
+  private def object_body(properties : Hash(String, JSON::Any)) : JSON::Any
+    JSON::Any.new({
+      "schema" => JSON::Any.new({
+        "type"       => JSON::Any.new("object"),
+        "properties" => JSON::Any.new(properties),
+      } of String => JSON::Any),
+    } of String => JSON::Any)
   end
 
   # `[]?`, not `[]`: `config_initializer` seeds every key for CLI runs, but a

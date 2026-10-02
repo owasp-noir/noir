@@ -206,6 +206,20 @@ class OutputBuilder
     # After inheriting the class, write an action code here.
   end
 
+  # The `-f only-*` lists: each distinct name once, in first-seen order. An
+  # empty list is noted on STDERR — empty stdout is silent-success ambiguity
+  # for interactive users, and the note must never pollute a piped list.
+  protected def print_unique(names : Array(String), empty_msg : String)
+    unique = names.uniq
+    if unique.empty?
+      @logger.info empty_msg
+      return
+    end
+    unique.each do |name|
+      ob_puts name.colorize(:light_green).toggle(@is_color)
+    end
+  end
+
   # Two-argument entry point every `-f` format answers to, so
   # `Noir::OutputFormats.render` can hand each builder the same pair.
   # Formats with nothing to say about passive findings inherit this and

@@ -20,15 +20,6 @@ class OutputBuilderOnlyHeader < OutputBuilder
       headers << "Cookie"
     end
 
-    unique = headers.uniq
-    if unique.empty?
-      # Empty stdout is silent-success ambiguity for interactive users;
-      # the note goes to STDERR so it never pollutes a piped header list.
-      @logger.info "No headers found."
-      return
-    end
-    unique.each do |header|
-      ob_puts header.colorize(:light_green).toggle(@is_color)
-    end
+    print_unique(headers, "No headers found.")
   end
 end

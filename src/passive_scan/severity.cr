@@ -22,13 +22,6 @@ module PassiveScanSeverity
     actual_level >= min_level
   end
 
-  # Get the numeric level for a severity string
-  # @param severity [String] The severity level
-  # @return [Int32] The numeric level, or 0 if unknown
-  def self.get_level(severity : String) : Int32
-    SEVERITY_LEVELS[severity.downcase]? || 0
-  end
-
   # Check if a severity string is valid
   # @param severity [String] The severity level to validate
   # @return [Bool] True if the severity is valid

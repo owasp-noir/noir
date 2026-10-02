@@ -204,7 +204,7 @@ describe "OutputBuilderDiff" do
       diff_app = NoirRunner.new(create_test_options)
       diff_app.endpoints.concat(endpoints)
 
-      builder.print(endpoints, diff_app)
+      builder.print(builder.diff(endpoints, diff_app.endpoints))
 
       builder.io.to_s.should eq("No endpoint was added, removed or changed.\n")
     end
@@ -215,7 +215,7 @@ describe "OutputBuilderDiff" do
 
       diff_app = NoirRunner.new(create_test_options)
       diff_app.endpoints << Endpoint.new("/gone", "GET")
-      builder.print([] of Endpoint, diff_app)
+      builder.print(builder.diff([] of Endpoint, diff_app.endpoints))
 
       builder.io.to_s.should start_with("─")
       builder.io.to_s.should contain("Removed (1)")
@@ -229,7 +229,7 @@ describe "OutputBuilderDiff" do
       diff_app.endpoints << Endpoint.new("/test", "GET")
 
       # POST /api/users is new, GET /test is gone, nothing changed in place.
-      builder.print_toml([Endpoint.new("/api/users", "POST")], diff_app)
+      builder.print_toml(builder.diff([Endpoint.new("/api/users", "POST")], diff_app.endpoints))
 
       output = builder.io.to_s
       output.should contain("[added]")
@@ -249,7 +249,7 @@ describe "OutputBuilderDiff" do
       endpoint.protocol = "android-provider"
       endpoint.metadata = {"path.permissions" => "read"}
 
-      builder.print_toml([endpoint], NoirRunner.new(create_test_options))
+      builder.print_toml(builder.diff([endpoint], [] of Endpoint))
       output = builder.io.to_s
 
       output.should contain(%("path.permissions" = "read"))
@@ -265,7 +265,7 @@ describe "OutputBuilderDiff" do
       endpoints = [Endpoint.new("/test", "GET")]
       diff_app = NoirRunner.new(create_test_options)
 
-      builder.print_json(endpoints, diff_app)
+      builder.print_json(builder.diff(endpoints, diff_app.endpoints))
       output = builder.io.to_s
 
       output[0].should eq('{')
@@ -279,7 +279,7 @@ describe "OutputBuilderDiff" do
       endpoints = [Endpoint.new("/test", "GET")]
       diff_app = NoirRunner.new(create_test_options)
 
-      builder.print_yaml(endpoints, diff_app)
+      builder.print_yaml(builder.diff(endpoints, diff_app.endpoints))
       output = builder.io.to_s
 
       output.should_not start_with("\n")
@@ -293,7 +293,7 @@ describe "OutputBuilderDiff" do
       endpoints = [Endpoint.new("/test", "GET")]
       diff_app = NoirRunner.new(create_test_options)
 
-      builder.print_toml(endpoints, diff_app)
+      builder.print_toml(builder.diff(endpoints, diff_app.endpoints))
       output = builder.io.to_s
 
       output[0].should eq('[')
@@ -314,7 +314,7 @@ describe "OutputBuilderDiff" do
 
       new_endpoint = Endpoint.new("/admin", "GET")
       new_endpoint.push_param(Param.new("q", "", "query"))
-      builder.print([new_endpoint], diff_app)
+      builder.print(builder.diff([new_endpoint], diff_app.endpoints))
       output = builder.io.to_s
 
       output.should contain("Changed (1)")
@@ -334,7 +334,7 @@ describe "OutputBuilderDiff" do
       new_endpoint = Endpoint.new("/a", "GET")
       new_endpoint.push_param(Param.new("id", "", "path"))
 
-      builder.print_json([new_endpoint], diff_app)
+      builder.print_json(builder.diff([new_endpoint], diff_app.endpoints))
       json = JSON.parse(builder.io.to_s)
 
       json["changed"].as_a.size.should eq(1)
@@ -353,7 +353,7 @@ describe "OutputBuilderDiff" do
       new_endpoint = Endpoint.new("/a", "GET")
       new_endpoint.push_param(Param.new("id", "", "query"))
 
-      builder.print_toml([new_endpoint], diff_app)
+      builder.print_toml(builder.diff([new_endpoint], diff_app.endpoints))
       output = builder.io.to_s
 
       output.should contain("[[changed.endpoint]]")

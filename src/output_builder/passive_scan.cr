@@ -35,20 +35,15 @@ class OutputBuilderPassiveScan < OutputBuilder
     end
   end
 
+  SEVERITY_COLORS = {
+    "critical" => :red,
+    "high"     => :light_red,
+    "medium"   => :yellow,
+    "low"      => :light_yellow,
+    "info"     => :light_blue,
+  }
+
   def severity_color(severity : String) : String
-    case severity
-    when "critical"
-      severity.colorize(:red).toggle(@is_color).to_s
-    when "high"
-      severity.colorize(:light_red).toggle(@is_color).to_s
-    when "medium"
-      severity.colorize(:yellow).toggle(@is_color).to_s
-    when "low"
-      severity.colorize(:light_yellow).toggle(@is_color).to_s
-    when "info"
-      severity.colorize(:light_blue).toggle(@is_color).to_s
-    else
-      severity.colorize(:white).toggle(@is_color).to_s
-    end
+    severity.colorize(SEVERITY_COLORS.fetch(severity, :white)).toggle(@is_color).to_s
   end
 end

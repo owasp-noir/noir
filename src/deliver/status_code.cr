@@ -84,19 +84,11 @@ class StatusCodeProbe
   end
 
   private def request_for(endpoint : Endpoint, request_method : String)
-    return perform_request(get_symbol(request_method), endpoint.url) if endpoint.params.empty?
-
     endpoint_hash = endpoint.params_to_hash
     is_json = !endpoint_hash["json"].empty?
     body = is_json ? endpoint_hash["json"] : endpoint_hash["form"]
 
-    perform_request(
-      get_symbol(request_method),
-      endpoint.url,
-      endpoint_hash["query"],
-      body,
-      is_json
-    )
+    perform_request(get_symbol(request_method), endpoint.url, endpoint_hash["query"], body, is_json)
   end
 
   # A Set dedupes repeated codes (--exclude-codes 404,404,500) for free and
@@ -117,14 +109,6 @@ class StatusCodeProbe
   # The single point where a request leaves the process, so specs can drive
   # `apply` against canned responses by overriding this one method.
   def perform_request(method, url, params = {} of String => String, form = {} of String => String, json = false)
-    # Verify TLS by default; --tls-skip-verify opts into the insecure
-    # context for self-signed internal hosts (see Deliver#tls_context).
-    tls = if any_to_bool(@options["tls_skip_verify"]?)
-            OpenSSL::SSL::Context::Client.insecure
-          else
-            OpenSSL::SSL::Context::Client.new
-          end
-
     # `handle_errors: false, max_redirects: 0` — the same pair SendReq and
     # SendWithProxy send, and for the same reasons.
     #
@@ -148,7 +132,7 @@ class StatusCodeProbe
     Crest::Request.execute(
       method: method,
       url: url,
-      tls: tls,
+      tls: tls_context,
       user_agent: "Noir/#{Noir::VERSION}",
       params: params,
       form: form,

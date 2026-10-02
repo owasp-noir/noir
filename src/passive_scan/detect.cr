@@ -128,12 +128,6 @@ module NoirPassiveScan
     end
   end
 
-  # Backwards-compatible entry point used by existing specs. Pre-filters
-  # the rule set by severity and dispatches to `detect`.
-  def self.detect_with_severity(file_path : String, file_content : String, rules : Array(PassiveScan), logger : NoirLogger, min_severity : String) : Array(PassiveScanResult)
-    detect(file_path, file_content, filter_rules_by_severity(rules, min_severity), logger)
-  end
-
   # The whole-file pre-gate. Word patterns are literals, so the per-line
   # test already answers "does any line match"; a line-oriented regex
   # needs its own gate (see `PassiveScan::Matcher#regex_may_match_file?`)

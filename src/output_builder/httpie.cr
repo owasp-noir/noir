@@ -1,6 +1,7 @@
 require "../models/output_builder"
 require "../models/endpoint"
 require "../utils/http_symbols"
+require "../utils/curl_command"
 require "json"
 
 @[Noir::OutputFormat(name: "httpie", description: "HTTPie commands", order: 100)]
@@ -22,10 +23,10 @@ class OutputBuilderHttpie < OutputBuilder
         endpoint.params.each do |param|
           case param.request_type
           when "form"
-            request_items << shell_quote("#{param.name}=#{param.value}")
+            request_items << CurlCommand.shell_quote("#{param.name}=#{param.value}")
           when "file"
             filename = param.value.empty? ? param.name : param.value
-            request_items << shell_quote("#{param.name}@#{filename}")
+            request_items << CurlCommand.shell_quote("#{param.name}@#{filename}")
           end
         end
       elsif !baked[:body].empty?
@@ -35,20 +36,20 @@ class OutputBuilderHttpie < OutputBuilder
             if json_data.as_h?
               json_data.as_h.each do |key, value|
                 if value.raw.is_a?(String)
-                  request_items << shell_quote("#{key}=#{value.as_s}")
+                  request_items << CurlCommand.shell_quote("#{key}=#{value.as_s}")
                 else
-                  request_items << shell_quote("#{key}:=#{value.to_json}")
+                  request_items << CurlCommand.shell_quote("#{key}:=#{value.to_json}")
                 end
               end
             else
               option_parts << "--raw"
-              option_parts << shell_quote(baked[:body])
-              request_items << shell_quote("Content-Type:application/json")
+              option_parts << CurlCommand.shell_quote(baked[:body])
+              request_items << CurlCommand.shell_quote("Content-Type:application/json")
             end
           rescue
             option_parts << "--raw"
-            option_parts << shell_quote(baked[:body])
-            request_items << shell_quote("Content-Type:application/json")
+            option_parts << CurlCommand.shell_quote(baked[:body])
+            request_items << CurlCommand.shell_quote("Content-Type:application/json")
           end
         else
           option_parts << "--form"
@@ -61,7 +62,7 @@ class OutputBuilderHttpie < OutputBuilder
           # shell-quoted item per param is exact.
           endpoint.params.each do |param|
             next unless param.request_type == "form"
-            request_items << shell_quote("#{param.name}=#{param.value}")
+            request_items << CurlCommand.shell_quote("#{param.name}=#{param.value}")
           end
         end
       end
@@ -69,25 +70,21 @@ class OutputBuilderHttpie < OutputBuilder
       expand_synthetic_http_methods(endpoint.method).each do |method|
         parts = ["http"]
         parts.concat(option_parts)
-        parts << shell_quote(method)
-        parts << shell_quote(baked[:url])
+        parts << CurlCommand.shell_quote(method)
+        parts << CurlCommand.shell_quote(baked[:url])
         parts.concat(request_items)
 
         baked[:header].each do |header|
-          parts << shell_quote(header)
+          parts << CurlCommand.shell_quote(header)
         end
 
         unless baked[:cookie].empty?
           cookie_value = baked[:cookie].join("; ")
-          parts << shell_quote("Cookie:#{cookie_value}")
+          parts << CurlCommand.shell_quote("Cookie:#{cookie_value}")
         end
 
         ob_puts parts.join(" ")
       end
     end
-  end
-
-  private def shell_quote(str : String) : String
-    "'#{str.gsub("'", "'\\''").gsub("\r", "\\r").gsub("\n", "\\n")}'"
   end
 end

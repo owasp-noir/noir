@@ -21,39 +21,28 @@ class OutputBuilderToml < OutputBuilder
     ob_puts toml_output
   end
 
-  private def generate_toml(data : Hash(String, JSON::Any), prefix : String = "") : String
-    result = String.build do |io|
+  private def generate_toml(data : Hash(String, JSON::Any)) : String
+    String.build do |io|
       # First, output simple values
       data.each do |key, value|
         case value.raw
         when String, Int64, Float64, Bool
-          full_key = prefix.empty? ? toml_key(key) : "#{prefix}.#{toml_key(key)}"
-          io << "#{full_key} = #{toml_value(value)}\n"
+          io << "#{toml_key(key)} = #{toml_value(value)}\n"
         end
       end
 
       # Then, output arrays of tables
       data.each do |key, value|
-        if value.raw.is_a?(Array)
-          full_key = prefix.empty? ? toml_key(key) : "#{prefix}.#{toml_key(key)}"
-          value.as_a.each do |item|
-            if item.raw.is_a?(Hash)
-              io << "\n[[#{full_key}]]\n"
-              io << generate_table_content(item.as_h)
-            end
-          end
+        next unless items = value.as_a?
+        items.each do |item|
+          io << "\n[[#{toml_key(key)}]]\n" << generate_table_content(item.as_h) if item.raw.is_a?(Hash)
         end
       end
 
       # Finally, output nested tables (hashes that aren't in arrays)
       data.each do |key, value|
-        if value.raw.is_a?(Hash)
-          full_key = prefix.empty? ? toml_key(key) : "#{prefix}.#{toml_key(key)}"
-          io << "\n[#{full_key}]\n"
-          io << generate_table_content(value.as_h)
-        end
+        io << "\n[#{toml_key(key)}]\n" << generate_table_content(value.as_h) if value.raw.is_a?(Hash)
       end
     end
-    result
   end
 end

@@ -80,24 +80,6 @@ describe PassiveScanSeverity do
     end
   end
 
-  describe ".get_level" do
-    it "returns correct numeric levels" do
-      PassiveScanSeverity.get_level("critical").should eq(4)
-      PassiveScanSeverity.get_level("high").should eq(3)
-      PassiveScanSeverity.get_level("medium").should eq(2)
-      PassiveScanSeverity.get_level("low").should eq(1)
-    end
-
-    it "returns 0 for unknown severity" do
-      PassiveScanSeverity.get_level("unknown").should eq(0)
-    end
-
-    it "handles case-insensitive input" do
-      PassiveScanSeverity.get_level("CRITICAL").should eq(4)
-      PassiveScanSeverity.get_level("High").should eq(3)
-    end
-  end
-
   describe ".valid?" do
     it "returns true for valid severity levels" do
       PassiveScanSeverity.valid?("critical").should be_true

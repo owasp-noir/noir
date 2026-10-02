@@ -228,7 +228,7 @@ class NoirRunner
       @logger.success "Running all taggers."
       NoirTaggers.run_tagger @endpoints, @options, "all"
       if @is_debug
-        NoirTaggers.taggers.each do |tagger|
+        NoirTaggers::PLAIN_ENTRIES.each do |tagger|
           @logger.debug "Tagger: #{tagger.key} (#{tagger.name})"
         end
       end
