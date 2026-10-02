@@ -414,23 +414,8 @@ class OutputBuilderHtml < OutputBuilder
   private def curl_attribute_for(endpoint : Endpoint, baked) : String?
     return if endpoint.non_http?
 
-    file_fields = [] of Tuple(String, String)
-    text_fields = [] of Tuple(String, String)
-    endpoint.params.each do |param|
-      case param.request_type
-      when "file"
-        file_fields << {param.name, param.value}
-      when "form"
-        text_fields << {param.name, param.value}
-      end
-    end
-
     expand_synthetic_http_methods(endpoint.method).join("\n") do |method|
-      if file_fields.empty?
-        CurlCommand.build(method, baked[:url], baked[:body], baked[:body_type], baked[:header], baked[:cookie])
-      else
-        CurlCommand.build_multipart(method, baked[:url], text_fields, file_fields, baked[:header], baked[:cookie])
-      end
+      CurlCommand.for_endpoint(method, baked, endpoint.params)
     end
   end
 
@@ -456,21 +441,10 @@ class OutputBuilderHtml < OutputBuilder
   # Ordered grouping that preserves within-group input order. Roots and
   # relative paths sort alphabetically first; absolute URLs sort last.
   private def group_endpoints(endpoints : Array(Endpoint)) : Array(Tuple(String, Array(Endpoint)))
-    order = [] of String
-    buckets = Hash(String, Array(Endpoint)).new
-    endpoints.each do |endpoint|
-      key = endpoint_group_key(endpoint)
-      unless buckets.has_key?(key)
-        order << key
-        buckets[key] = [] of Endpoint
-      end
-      buckets[key] << endpoint
-    end
-    order.sort_by! do |key|
+    endpoints.group_by { |endpoint| endpoint_group_key(endpoint) }.to_a.sort_by! do |key, _|
       remote = key.includes?("://") || key.starts_with?("//") ? 1 : 0
       {remote, key == "/" ? "" : key.downcase}
     end
-    order.map { |key| {key, buckets[key]} }
   end
 
   # Distinct HTTP methods present, ordered by a canonical verb priority.
@@ -498,38 +472,22 @@ class OutputBuilderHtml < OutputBuilder
     end
   end
 
+  METHOD_CLASSES   = Set{"GET", "POST", "PUT", "PATCH", "DELETE", "QUERY"}
+  PARAM_CLASSES    = Set{"query", "json", "form", "header", "cookie", "path"}
+  SEVERITY_CLASSES = Set{"critical", "high", "medium", "low"}
+
   private def get_method_class(method : String) : String
-    case method.upcase
-    when "GET"    then "method-get"
-    when "POST"   then "method-post"
-    when "PUT"    then "method-put"
-    when "PATCH"  then "method-patch"
-    when "DELETE" then "method-delete"
-    when "QUERY"  then "method-query"
-    else               "method-default"
-    end
+    method = method.upcase
+    METHOD_CLASSES.includes?(method) ? "method-#{method.downcase}" : "method-default"
   end
 
   private def get_param_class(param_type : String) : String
-    case param_type
-    when "query"  then "param-query"
-    when "json"   then "param-json"
-    when "form"   then "param-form"
-    when "header" then "param-header"
-    when "cookie" then "param-cookie"
-    when "path"   then "param-path"
-    else               ""
-    end
+    PARAM_CLASSES.includes?(param_type) ? "param-#{param_type}" : ""
   end
 
   private def get_severity_class(severity : String) : String
-    case severity.downcase
-    when "critical" then "severity-critical"
-    when "high"     then "severity-high"
-    when "medium"   then "severity-medium"
-    when "low"      then "severity-low"
-    else                 "severity-info"
-    end
+    severity = severity.downcase
+    SEVERITY_CLASSES.includes?(severity) ? "severity-#{severity}" : "severity-info"
   end
 
   private def get_status_class(status_code : Int32?) : String

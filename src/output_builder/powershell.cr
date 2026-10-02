@@ -1,6 +1,7 @@
 require "../models/output_builder"
 require "../models/endpoint"
 require "../utils/http_symbols"
+require "../utils/curl_command"
 
 @[Noir::OutputFormat(name: "powershell", description: "PowerShell Invoke-WebRequest commands", order: 110)]
 class OutputBuilderPowershell < OutputBuilder
@@ -48,16 +49,7 @@ class OutputBuilderPowershell < OutputBuilder
         # bake_endpoint drops every file field — the same gap curl/httpie
         # had before they grew `-F` / `--form`. Sibling form fields ride
         # along; PowerShell sets the multipart Content-Type itself.
-        file_fields = [] of Tuple(String, String)
-        form_fields = [] of Tuple(String, String)
-        endpoint.params.each do |param|
-          case param.request_type
-          when "file"
-            file_fields << {param.name, param.value}
-          when "form"
-            form_fields << {param.name, param.value}
-          end
-        end
+        form_fields, file_fields = CurlCommand.form_fields(endpoint.params)
 
         if !file_fields.empty?
           form_parts = [] of String

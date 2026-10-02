@@ -13,13 +13,6 @@ class OutputBuilderOnlyCookie < OutputBuilder
       end
     end
 
-    unique = cookies.uniq
-    if unique.empty?
-      @logger.info "No cookies found."
-      return
-    end
-    unique.each do |cookie|
-      ob_puts cookie.colorize(:light_green).toggle(@is_color)
-    end
+    print_unique(cookies, "No cookies found.")
   end
 end

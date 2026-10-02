@@ -136,10 +136,6 @@ class OutputBuilderDiff < OutputBuilder
     }
   end
 
-  def print(endpoints : Array(Endpoint), diff_app : NoirRunner)
-    print(diff(endpoints, diff_app.endpoints))
-  end
-
   def print(result : Result)
     common = OutputBuilderCommon.new(@options)
     common.io = io
@@ -188,37 +184,15 @@ class OutputBuilderDiff < OutputBuilder
   end
 
   private def format_section_header(icon : String, text : String, count : Int32, color : Symbol) : String
-    title = "#{icon} #{text} (#{count})"
-    line_length = 40
-    padding = line_length - title.size - 2
-    left_pad = (padding / 2).to_i
-    right_pad = padding - left_pad
-
-    separator = "─" * left_pad
-    separator_right = "─" * right_pad
-
-    header_line = "#{separator} #{title} #{separator_right}".colorize(color).toggle(@is_color)
-    header_line.to_s
-  end
-
-  def print_json(endpoints : Array(Endpoint), diff_app : NoirRunner)
-    print_json(diff(endpoints, diff_app.endpoints))
+    " #{icon} #{text} (#{count}) ".center(40, '─').colorize(color).toggle(@is_color).to_s
   end
 
   def print_json(result : Result)
     ob_puts result.to_json
   end
 
-  def print_yaml(endpoints : Array(Endpoint), diff_app : NoirRunner)
-    print_yaml(diff(endpoints, diff_app.endpoints))
-  end
-
   def print_yaml(result : Result)
     ob_puts result.to_yaml
-  end
-
-  def print_toml(endpoints : Array(Endpoint), diff_app : NoirRunner)
-    print_toml(diff(endpoints, diff_app.endpoints))
   end
 
   def print_toml(result : Result)

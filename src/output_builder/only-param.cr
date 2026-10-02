@@ -32,13 +32,6 @@ class OutputBuilderOnlyParam < OutputBuilder
       end
     end
 
-    unique = common_params.uniq
-    if unique.empty?
-      @logger.info "No parameters found."
-      return
-    end
-    unique.each do |common_param|
-      ob_puts common_param.colorize(:light_green).toggle(@is_color)
-    end
+    print_unique(common_params, "No parameters found.")
   end
 end

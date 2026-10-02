@@ -5,6 +5,33 @@ module CurlCommand
     "'#{str.gsub("'", "'\\''").gsub("\r", "\\r").gsub("\n", "\\n")}'"
   end
 
+  # An endpoint's multipart `(name, value)` text and file fields. No file
+  # fields means the request is not an upload.
+  def self.form_fields(params) : {Array(Tuple(String, String)), Array(Tuple(String, String))}
+    text_fields = [] of Tuple(String, String)
+    file_fields = [] of Tuple(String, String)
+    params.each do |param|
+      case param.request_type
+      when "file"
+        file_fields << {param.name, param.value}
+      when "form"
+        text_fields << {param.name, param.value}
+      end
+    end
+    {text_fields, file_fields}
+  end
+
+  # The curl command for one verb of a baked endpoint: multipart when it has
+  # a file field, `--data-raw` otherwise.
+  def self.for_endpoint(method : String, baked, params) : String
+    text_fields, file_fields = form_fields(params)
+    if file_fields.empty?
+      build(method, baked[:url], baked[:body], baked[:body_type], baked[:header], baked[:cookie])
+    else
+      build_multipart(method, baked[:url], text_fields, file_fields, baked[:header], baked[:cookie])
+    end
+  end
+
   def self.build(method : String, url : String, body : String, body_type : String,
                  headers : Array(String), cookies : Array(String)) : String
     parts = ["curl", "-i", "-X", shell_quote(method), shell_quote(url)]

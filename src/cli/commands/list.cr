@@ -163,9 +163,9 @@ module Noir::CLI::ListCommand
 
   private def self.print_taggers_text(io : IO)
     io.puts "Available taggers:"
-    print_tagger_entries(NoirTaggers.taggers, io)
+    print_tagger_entries(NoirTaggers::PLAIN_ENTRIES, io)
     io.puts "\nFramework-specific taggers:"
-    print_tagger_entries(NoirTaggers.framework_taggers, io)
+    print_tagger_entries(NoirTaggers::FRAMEWORK_ENTRIES, io)
   end
 
   private def self.print_tagger_entries(entries : Array(NoirTaggers::Entry), io : IO)
@@ -209,8 +209,8 @@ module Noir::CLI::ListCommand
   # carries only what both views print.
   private def self.taggers_document
     {
-      "taggers"           => serialize_taggers(NoirTaggers.taggers),
-      "framework_taggers" => serialize_taggers(NoirTaggers.framework_taggers),
+      "taggers"           => serialize_taggers(NoirTaggers::PLAIN_ENTRIES),
+      "framework_taggers" => serialize_taggers(NoirTaggers::FRAMEWORK_ENTRIES),
     }
   end
 

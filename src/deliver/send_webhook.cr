@@ -1,6 +1,4 @@
-require "crest"
 require "../models/deliver"
-require "../models/skipped_files"
 
 # POSTs the discovered endpoint catalog as a single JSON document to a
 # user-supplied webhook URL. The body shape is the same one `-f json`
@@ -19,48 +17,18 @@ require "../models/skipped_files"
 # blocks, for example), users are expected to route through a
 # transformer rather than have noir grow per-platform formatters.
 #
-# Network errors are swallowed at debug level so a misconfigured
-# webhook URL doesn't crash the scan — same posture as the other
-# Deliver subclasses.
+# Network errors are warned and recorded (see Deliver#post_export) so a
+# misconfigured webhook URL doesn't crash the scan.
 class SendWebhook < Deliver
   def run(endpoints : Array(Endpoint), webhook_url : String)
-    applied_endpoints = apply_all(endpoints)
-
-    body = {
-      "endpoints"      => applied_endpoints,
-      "endpoint_count" => applied_endpoints.size,
-      "noir_version"   => Noir::VERSION,
-    }.to_json
-
-    webhook_headers = @headers.dup
-    webhook_headers["Content-Type"] = "application/json"
-    webhook_headers["Accept"] = "application/json"
-
-    # `form:` is the Crest knob that actually ships the body — see the
-    # comment in send_elasticsearch.cr for the rationale.
-    Crest::Request.execute(
-      method: :post,
-      url: webhook_url,
-      tls: tls_context,
-      user_agent: "Noir/#{Noir::VERSION}",
-      form: body,
-      headers: webhook_headers,
-      json: true,
-      connect_timeout: export_connect_timeout,
-      read_timeout: export_read_timeout
-    )
-  rescue e
-    # Surface the failure at warning level: a swallowed debug line let the
-    # user believe the catalog was delivered when the POST never landed.
-    #
-    # And record it, because a warning is still only a warning: a pipeline
-    # whose entire purpose is shipping the catalog to a receiver went green
-    # under `--strict` while shipping nothing.
-    @logger.warning "Webhook delivery to #{webhook_url} failed: #{e.message}"
-    @logger.debug_sub e
-    Noir::SkippedFiles.record_gap(
-      Noir::SkippedFiles::DELIVER_SCOPE,
-      "webhook delivery to #{webhook_url} failed: #{e.message.presence || e.class.name}"
-    )
+    post_export(webhook_url, "Webhook", "webhook") do
+      applied_endpoints = apply_all(endpoints)
+      body = {
+        "endpoints"      => applied_endpoints,
+        "endpoint_count" => applied_endpoints.size,
+        "noir_version"   => Noir::VERSION,
+      }.to_json
+      {webhook_url, body}
+    end
   end
 end

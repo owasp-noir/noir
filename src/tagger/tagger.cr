@@ -77,14 +77,6 @@ module NoirTaggers
     {% end %}
   end
 
-  def self.taggers : Array(Entry)
-    PLAIN_ENTRIES
-  end
-
-  def self.framework_taggers : Array(Entry)
-    FRAMEWORK_ENTRIES
-  end
-
   def self.available_tagger_names : Array(String)
     names = ENTRIES.map(&.key)
     names << "all"
@@ -152,15 +144,8 @@ module NoirTaggers
 
   private def self.run_framework_taggers(endpoints : Array(Endpoint), options : Hash(String, YAML::Any), use_taggers_arr : Array(String), logger : NoirLogger)
     # Group endpoints by technology for efficient dispatch
-    endpoints_by_tech = Hash(String, Array(Endpoint)).new
-
-    endpoints.each do |endpoint|
-      tech = endpoint.details.technology
-      next if tech.nil?
-      endpoints_by_tech[tech] ||= [] of Endpoint
-      endpoints_by_tech[tech] << endpoint
-    end
-
+    endpoints_by_tech = endpoints.group_by(&.details.technology)
+    endpoints_by_tech.delete(nil)
     return if endpoints_by_tech.empty?
 
     is_all = use_taggers_arr.includes?("all")

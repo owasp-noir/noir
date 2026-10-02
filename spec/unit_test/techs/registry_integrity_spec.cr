@@ -159,7 +159,7 @@ describe "tagger registry integrity" do
   end
 
   it "points every framework tagger at real catalog techs" do
-    unknown = NoirTaggers.framework_taggers.flat_map do |entry|
+    unknown = NoirTaggers::FRAMEWORK_ENTRIES.flat_map do |entry|
       NoirTaggers.target_techs(entry.key).reject { |tech| catalog.includes?(tech) }
     end.uniq!
     fail "framework taggers target techs with no catalog entry: #{sorted(unknown)}" unless unknown.empty?

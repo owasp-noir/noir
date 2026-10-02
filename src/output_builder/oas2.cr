@@ -43,9 +43,7 @@ class OutputBuilderOas2 < OutputBuilder
         case param.request_type
         when "json"
           # JSON body parameters should be represented as a body parameter in OAS2
-          json_properties[param.name] = JSON::Any.new({
-            "type" => JSON::Any.new("string"),
-          } of String => JSON::Any)
+          json_properties[param.name] = schema_string
           consumes << "application/json" unless consumes.includes?("application/json")
         when "form"
           # Form data parameters
@@ -74,9 +72,7 @@ class OutputBuilderOas2 < OutputBuilder
           # used to emit `in: query`, so `/xml` looked like `?body=` while
           # `-f json` kept `param_type: xml`. Mirror the JSON body shape
           # under `application/xml`.
-          xml_properties[param.name] = JSON::Any.new({
-            "type" => JSON::Any.new("string"),
-          } of String => JSON::Any)
+          xml_properties[param.name] = schema_string
           consumes << "application/xml" unless consumes.includes?("application/xml")
         when "header"
           # Header parameters
@@ -93,15 +89,7 @@ class OutputBuilderOas2 < OutputBuilder
         end
       end
 
-      declared_path_params = endpoint.params.compact_map { |p| p.name if p.request_type == "path" }
-      oas_path = normalize_oas_path(route_path(url_parts[:route]), declared_path_params)
-      canonical_path = canonical_oas_path(oas_path, canonical_paths)
-      path_variant = nil
-      if canonical_path != oas_path
-        rename_path_parameters(parameters, path_template_renames(oas_path, canonical_path))
-        path_variant = oas_path
-        oas_path = canonical_path
-      end
+      oas_path, path_variant = resolve_oas_path(endpoint, url_parts[:route], parameters, canonical_paths)
       template_names = path_template_names(oas_path)
       template_names.each do |name|
         # A path template variable wins over a same-named query/header
@@ -193,22 +181,7 @@ class OutputBuilderOas2 < OutputBuilder
       add_noir_callees_extension(operation, endpoint)
       add_noir_ai_context_extension(operation, endpoint)
 
-      # Initialize path if not exists
-      unless paths.has_key?(oas_path)
-        paths[oas_path] = {} of String => JSON::Any
-      end
-      add_path_variant_extension(paths[oas_path], path_variant) if path_variant
-
-      # Add method to path
-      methods = operation_methods(endpoint.method)
-      if methods.empty?
-        add_unsupported_method_extension(paths[oas_path], endpoint.method)
-        add_unsupported_operation(paths[oas_path], endpoint.method, operation)
-      else
-        methods.each do |method|
-          add_operation(paths[oas_path], method, operation)
-        end
-      end
+      register_operation(paths, oas_path, path_variant, endpoint.method, operation)
     end
 
     url_parts = swagger_url_parts(@options["url"]?.try(&.to_s) || "")

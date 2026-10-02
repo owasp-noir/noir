@@ -221,15 +221,8 @@ class OutputBuilderCommon < OutputBuilder
       # `file` fields, `xml` bodies, websocket parameters, etc.) that would
       # otherwise be silently dropped. Render remaining buckets by type name.
       remaining_params = endpoint.params.reject { |p| HANDLED_PARAM_TYPES.includes?(p.request_type) }
-      remaining_by_type = Hash(String, Array(String)).new
-      remaining_params.each do |param|
-        type = param.request_type
-        remaining_by_type[type] ||= [] of String
-        remaining_by_type[type] << param.name
-      end
-
-      remaining_by_type.each do |type, names|
-        append_field r_buffer, type, names.join(", "), :cyan unless names.empty?
+      remaining_params.group_by(&.request_type).each do |type, params|
+        append_field r_buffer, type, params.join(", ", &.name), :cyan
       end
 
       tags = baked[:tags].reject { |t| t == "unresolved" } # will handle unresolved directly in the logs

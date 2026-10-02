@@ -1,6 +1,3 @@
-require "crest"
-require "wait_group"
-require "../utils/http_symbols"
 require "../models/deliver"
 
 class SendWithProxy < Deliver
@@ -39,89 +36,18 @@ class SendWithProxy < Deliver
     end
     proxy_host, proxy_port = resolved
 
-    applied_endpoints = apply_all(endpoints)
-    wg = WaitGroup.new
-    failures = Atomic(Int32).new(0)
-    # Bound in-flight requests to --concurrency (see send_req.cr).
-    sem = Channel(Nil).new(concurrency_limit)
-    # `handle_errors: false, max_redirects: 0` on every call below — see the
-    # comment on SendReq#run for why the two are inseparable. Redirects
-    # matter even more here: the point of proxy delivery is that the proxy
-    # sees exactly the endpoints noir discovered, and following a Location
-    # pollutes the history with requests noir never found.
+    # Redirects matter even more here than for SendReq: the point of proxy
+    # delivery is that the proxy sees exactly the endpoints noir discovered,
+    # and following a Location pollutes the history with requests noir never
+    # found.
     #
     # Proxy delivery targets an intercepting proxy (Burp/ZAP) that presents
     # its own certificate, so verification is intentionally off here
     # regardless of --tls-skip-verify — otherwise every replayed request
     # would fail the handshake against the proxy's cert.
-    proxy_tls = OpenSSL::SSL::Context::Client.insecure
-
-    applied_endpoints.each do |endpoint|
-      next if endpoint.non_http? # can't replay an app deep link or CLI command through an HTTP proxy
-      next if skip_probe_target?(endpoint)
-      # See send_req.cr — built once per endpoint, outside the spawn.
-      request_headers = probe_headers(endpoint)
-      requestable_http_methods(endpoint.method).each do |request_method|
-        wg.add(1)
-        sem.send(nil) # acquire a slot (blocks once concurrency_limit are in flight)
-        spawn do
-          if !endpoint.params.empty?
-            endpoint_hash = endpoint.params_to_hash
-            is_json = false
-            body = if !endpoint_hash["json"].empty?
-                     is_json = true
-                     endpoint_hash["json"]
-                   else
-                     endpoint_hash["form"]
-                   end
-
-            Crest::Request.execute(
-              method: get_symbol(request_method),
-              url: probe_url(endpoint, request_method),
-              p_addr: proxy_host,
-              p_port: proxy_port,
-              tls: proxy_tls,
-              user_agent: "Noir/#{Noir::VERSION}",
-              params: endpoint_hash["query"],
-              headers: request_headers,
-              form: body,
-              json: is_json,
-              handle_errors: false,
-              max_redirects: 0,
-              connect_timeout: probe_connect_timeout,
-              read_timeout: probe_read_timeout
-            )
-          else
-            Crest::Request.execute(
-              method: get_symbol(request_method),
-              url: probe_url(endpoint, request_method),
-              p_addr: proxy_host,
-              p_port: proxy_port,
-              headers: request_headers,
-              tls: proxy_tls,
-              user_agent: "Noir/#{Noir::VERSION}",
-              handle_errors: false,
-              max_redirects: 0,
-              connect_timeout: probe_connect_timeout,
-              read_timeout: probe_read_timeout
-            )
-          end
-        rescue e
-          failures.add(1)
-          @logger.debug "Exception during proxy delivery"
-          @logger.debug_sub e
-        ensure
-          sem.receive # release the slot
-          wg.done
-        end
-      end
-    end
-
-    wg.wait
+    failed = probe_all(endpoints, OpenSSL::SSL::Context::Client.insecure, "proxy delivery", proxy_host, proxy_port)
 
     # Counts only requests that never reached the proxy — see SendReq#run.
-    failed = failures.get
-    self.undeliverable_count = failed
     @logger.warning "Proxy delivery: #{failed} request(s) could not be sent (run with --debug for details)." if failed > 0
   end
 end

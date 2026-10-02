@@ -4,34 +4,16 @@ require "../models/endpoint"
 @[Noir::OutputFormat(name: "only-tag", description: "Only tags", order: 210)]
 class OutputBuilderOnlyTag < OutputBuilder
   def print(endpoints : Array(Endpoint))
-    tags = [] of Tag
+    # Dedup by tag name, not `Tag.==` (field-wise): the line only shows the
+    # name. Tags only exist when a tagger ran (-T/--use-taggers or AI context).
+    tag_names = [] of String
     endpoints.each do |endpoint|
-      # `tags` is a non-nilable Array(Tag), so the old `unless endpoint.tags.nil?`
-      # guard could never be false (same class of dead check markdown-table
-      # already fixed for `params`).
-      endpoint.tags.each do |tag|
-        tags << tag
-      end
-
+      endpoint.tags.each { |tag| tag_names << tag.name }
       endpoint.params.each do |param|
-        param.tags.each do |tag|
-          tags << tag
-        end
+        param.tags.each { |tag| tag_names << tag.name }
       end
     end
 
-    # Dedup by tag name. `Tag.==` is field-wise (name + description +
-    # tagger), so two tags with the same `name` but different `tagger`
-    # or `description` would otherwise both be printed even though the
-    # output line only shows the name.
-    unique = tags.uniq(&.name)
-    if unique.empty?
-      # Tags only exist when a tagger ran (-T/--use-taggers or AI context).
-      @logger.info "No tags found. Run with -T/--use-taggers to populate tags."
-      return
-    end
-    unique.each do |tag|
-      ob_puts tag.name.colorize(:light_green).toggle(@is_color)
-    end
+    print_unique(tag_names, "No tags found. Run with -T/--use-taggers to populate tags.")
   end
 end
