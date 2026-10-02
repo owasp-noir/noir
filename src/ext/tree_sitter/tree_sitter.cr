@@ -277,12 +277,6 @@ module Noir::TreeSitter
       language.address &* 0xd6e8feb86659fd93_u64
   end
 
-  # Number of remembered parse failures. Exposed for specs; not part of the
-  # public API contract.
-  def self.parse_failure_count : Int32
-    @@parse_failure_mutex.synchronize { @@parse_failures.size }
-  end
-
   # Parses `source` with the given `language` and yields the root
   # `LibTreeSitter::TSNode`. The parser is checked out from a per-language
   # pool and returned when the block exits; the tree is freed in the
@@ -412,12 +406,6 @@ module Noir::TreeSitter
   @[ThreadLocal]
   @@walk_depth = 0
 
-  # Descent depth of the AST walk currently running on this thread.
-  # Exposed for specs; not part of the public API contract.
-  def self.walk_depth : Int32
-    @@walk_depth
-  end
-
   # Iterates named children without allocating an array.
   #
   # Yields nothing once the walk has descended `MAX_AST_DEPTH` levels.
@@ -500,7 +488,8 @@ module Noir::TreeSitter
   #   SCM
   # )
   # Noir::TreeSitter.parse_python(source) do |root|
-  #   query.each_match(root) do |match|
+  #   query.each_match_raw(root, source) do |_, caps|
+  #     match = caps.to_h
   #     puts "#{Noir::TreeSitter.node_text(match["router"], source)} -> " \
   #          "#{Noir::TreeSitter.node_text(match["path"], source)}"
   #   end
@@ -522,15 +511,12 @@ module Noir::TreeSitter
     # construction time.
     @capture_names : Array(String)
 
-    # Parsed predicate constraint (`#eq?`, `#match?`, …). Each predicate
-    # scopes a pattern: a match is only surfaced when every predicate
-    # for its pattern evaluates true.
-    private record Predicate, name : String, pattern_index : Int32, args : Array(PredicateArg)
-    # `regex` is a pre-compiled `Regex` when the argument is a literal
-    # pattern on a `#match?` / `#not-match?` predicate. Evaluating many
-    # matches against the same query would otherwise reparse the regex
-    # on every hit.
-    private record PredicateArg, is_capture : Bool, value : String, regex : Regex? = nil
+    # Parsed `#eq?` constraint. Each predicate scopes a pattern: a match
+    # is only surfaced when every predicate for its pattern evaluates true.
+    # `#eq?` is the only predicate evaluated; any other raises
+    # `CompileError` rather than silently letting every match through.
+    private record Predicate, args : Array(PredicateArg)
+    private record PredicateArg, is_capture : Bool, value : String
 
     @predicates_by_pattern : Hash(Int32, Array(Predicate))
 
@@ -588,27 +574,16 @@ module Noir::TreeSitter
             ptr = LibTreeSitter.ts_query_string_value_for_id(@handle, step.value_id, pointerof(length))
             text = ptr.null? ? "" : String.new(ptr.to_slice(length.to_i))
             if current_name.empty?
+              raise CompileError.new("unsupported tree-sitter query predicate ##{text} (only #eq? is evaluated)") unless text == "eq?"
               current_name = text
             else
-              # Eagerly compile the regex when this is the pattern arg
-              # of a `#match?` / `#not-match?` predicate. Capture-valued
-              # patterns (dynamic) can't be pre-compiled and fall back
-              # at evaluation time.
-              regex =
-                if (current_name == "match?" || current_name == "not-match?") && current_args.size == 1
-                  begin
-                    Regex.new(text)
-                  rescue ArgumentError
-                    nil
-                  end
-                end
-              current_args << PredicateArg.new(false, text, regex)
+              current_args << PredicateArg.new(false, text)
             end
           when LibTreeSitter::TS_PREDICATE_STEP_CAPTURE
             current_args << PredicateArg.new(true, @capture_names[step.value_id.to_i]? || "")
           when LibTreeSitter::TS_PREDICATE_STEP_DONE
             unless current_name.empty?
-              predicates << Predicate.new(current_name, pattern_index.to_i, current_args)
+              predicates << Predicate.new(current_args)
             end
             current_name = ""
             current_args = [] of PredicateArg
@@ -633,57 +608,16 @@ module Noir::TreeSitter
       end
     end
 
-    # Evaluate every predicate on the given pattern against `match_captures`.
-    # Returns false if any predicate fails; unsupported predicate names
-    # are treated as passing (consistent with tree-sitter grep behaviour
-    # for unknown directives).
+    # Evaluate every `#eq?` predicate on the given pattern against
+    # `match_captures`. Returns false if any predicate fails.
     private def match_passes_predicates?(pattern_index : Int32,
                                          match_captures : Hash(String, LibTreeSitter::TSNode),
                                          source_text : String) : Bool
       preds = @predicates_by_pattern[pattern_index]?
       return true unless preds
       preds.all? do |pred|
-        case pred.name
-        when "eq?", "not-eq?"
-          next true if pred.args.size < 2
-          lhs = resolve_arg(pred.args[0], match_captures, source_text)
-          rhs = resolve_arg(pred.args[1], match_captures, source_text)
-          equal = lhs == rhs
-          pred.name == "eq?" ? equal : !equal
-        when "match?", "not-match?"
-          next true if pred.args.size < 2
-          text = resolve_arg(pred.args[0], match_captures, source_text)
-          next true if text.nil?
-          pattern_arg = pred.args[1]
-          # Prefer the eagerly-compiled regex cached on the predicate
-          # arg. Falls back to runtime compilation only when the pattern
-          # itself is a capture reference.
-          re = pattern_arg.regex
-          if re.nil?
-            pattern = resolve_arg(pattern_arg, match_captures, source_text)
-            next true if pattern.nil?
-            re =
-              begin
-                Regex.new(pattern)
-              rescue ArgumentError
-                nil
-              end
-            next true if re.nil?
-          end
-          matched = !!(text =~ re)
-          pred.name == "match?" ? matched : !matched
-        when "any-of?", "not-any-of?"
-          text = resolve_arg(pred.args[0], match_captures, source_text)
-          next true if text.nil?
-          # Index-range iteration avoids allocating a slice on every
-          # match the way `pred.args[1..].any?` would.
-          found = (1...pred.args.size).any? do |i|
-            resolve_arg(pred.args[i], match_captures, source_text) == text
-          end
-          pred.name == "any-of?" ? found : !found
-        else
-          true # unknown predicate — let the match through
-        end
+        next true if pred.args.size < 2
+        resolve_arg(pred.args[0], match_captures, source_text) == resolve_arg(pred.args[1], match_captures, source_text)
       end
     end
 
@@ -699,38 +633,12 @@ module Noir::TreeSitter
       close
     end
 
-    # Runs the query against `node` and yields one `Hash(String, TSNode)`
-    # per match. `source_text` is the string that was parsed to produce
-    # the tree, needed to resolve captured node text when evaluating
-    # predicates like `#eq?` / `#match?`. When a pattern captures the
-    # same name multiple times, the last match wins; use `each_match_raw`
-    # for the full capture list.
-    def each_match(node : LibTreeSitter::TSNode,
-                   source_text : String,
-                   & : Hash(String, LibTreeSitter::TSNode) ->)
-      cursor = LibTreeSitter.ts_query_cursor_new
-      begin
-        LibTreeSitter.ts_query_cursor_exec(cursor, @handle, node)
-        match = uninitialized LibTreeSitter::TSQueryMatch
-        while LibTreeSitter.ts_query_cursor_next_match(cursor, pointerof(match))
-          count = match.capture_count.to_i
-          captures = Hash(String, LibTreeSitter::TSNode).new(initial_capacity: count)
-          count.times do |i|
-            cap = match.captures[i]
-            name = @capture_names[cap.index.to_i]? || ""
-            captures[name] = cap.node
-          end
-          next unless match_passes_predicates?(match.pattern_index.to_i, captures, source_text)
-          yield captures
-        end
-      ensure
-        LibTreeSitter.ts_query_cursor_delete(cursor)
-      end
-    end
-
-    # Lower-level variant: yields `(pattern_index, Array({capture_name, TSNode}))`
-    # so callers can disambiguate multiple captures sharing a name, and
-    # know which pattern in a multi-pattern query matched.
+    # Runs the query against `node` and yields `(pattern_index,
+    # Array({capture_name, TSNode}))` per match, so callers can
+    # disambiguate multiple captures sharing a name and know which
+    # pattern in a multi-pattern query matched. `source_text` is the
+    # string that was parsed to produce the tree, needed to evaluate
+    # `#eq?` predicates.
     def each_match_raw(node : LibTreeSitter::TSNode,
                        source_text : String,
                        & : Int32, Array(Tuple(String, LibTreeSitter::TSNode)) ->)

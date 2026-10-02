@@ -35,7 +35,8 @@ describe Noir::TreeSitter::Query do
     begin
       hits = [] of Tuple(String, String, String)
       Noir::TreeSitter.parse_python(source) do |root|
-        query.each_match(root, source) do |capture|
+        query.each_match_raw(root, source) do |_, caps|
+          capture = caps.to_h
           hits << {
             Noir::TreeSitter.node_text(capture["router"], source),
             Noir::TreeSitter.node_text(capture["attr"], source),
@@ -77,87 +78,11 @@ describe Noir::TreeSitter::Query do
     begin
       paths = [] of String
       Noir::TreeSitter.parse_python(source) do |root|
-        query.each_match(root, source) do |capture|
-          paths << Noir::TreeSitter.node_text(capture["path"], source)
+        query.each_match_raw(root, source) do |_, caps|
+          paths << Noir::TreeSitter.node_text(caps.to_h["path"], source)
         end
       end
       paths.should eq(["/a"])
-    ensure
-      query.close
-    end
-  end
-
-  it "supports alternation in the pattern to cover multiple verbs at once" do
-    source = <<-GO
-      package main
-      func main() {
-          r := gin.Default()
-          r.GET("/x", h)
-          r.POST("/y", h)
-          r.Something("/z", h)
-      }
-      GO
-
-    # Gin/Echo-style verb calls with the verb name as an identifier.
-    # We constrain the `@verb` field to a fixed set via `#match?`.
-    query = Noir::TreeSitter::Query.new(
-      LibTreeSitter.tree_sitter_go,
-      <<-SCM
-        (call_expression
-          function: (selector_expression
-            operand: (identifier) @router
-            field: (field_identifier) @verb)
-          arguments: (argument_list
-            (interpreted_string_literal
-              (interpreted_string_literal_content) @path))
-          (#match? @verb "^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)$"))
-        SCM
-    )
-    begin
-      hits = [] of Tuple(String, String)
-      Noir::TreeSitter.parse_go(source) do |root|
-        query.each_match(root, source) do |capture|
-          hits << {
-            Noir::TreeSitter.node_text(capture["verb"], source),
-            Noir::TreeSitter.node_text(capture["path"], source),
-          }
-        end
-      end
-      hits.sort.should eq([{"GET", "/x"}, {"POST", "/y"}].sort)
-    ensure
-      query.close
-    end
-  end
-
-  it "reuses the pre-compiled regex across many matches" do
-    # Large fixture so the match loop evaluates `#match?` many times.
-    # The query should compile its regex exactly once at construction
-    # and reuse it; this spec mostly guards against a future refactor
-    # accidentally routing back through `Regex.new` in the hot path.
-    builder = String.build do |io|
-      io << "package main\nfunc main() {\n  r := gin.Default()\n"
-      100.times { |i| io << "  r.GET(\"/p#{i}\", h)\n" }
-      io << "}\n"
-    end
-
-    query = Noir::TreeSitter::Query.new(
-      LibTreeSitter.tree_sitter_go,
-      <<-SCM
-        (call_expression
-          function: (selector_expression
-            field: (field_identifier) @verb)
-          arguments: (argument_list
-            (interpreted_string_literal
-              (interpreted_string_literal_content) @path))
-          (#match? @verb "^GET$"))
-        SCM
-    )
-    begin
-      count = 0
-      Noir::TreeSitter.parse_go(builder) do |root|
-        query.each_match(root, builder) { count += 1 }
-      end
-      count.should eq(100)
     ensure
       query.close
     end
@@ -168,6 +93,15 @@ describe Noir::TreeSitter::Query do
       Noir::TreeSitter::Query.new(
         LibTreeSitter.tree_sitter_python,
         "(this_is_not_a_valid_query",
+      )
+    end
+  end
+
+  it "raises CompileError on a predicate other than `#eq?`" do
+    expect_raises(Noir::TreeSitter::Query::CompileError, /unsupported .*#match\?/) do
+      Noir::TreeSitter::Query.new(
+        LibTreeSitter.tree_sitter_python,
+        %((identifier) @id (#match? @id "^a")),
       )
     end
   end

@@ -29,10 +29,6 @@ describe LLM::Adapter do
     it "reports no native tool calling by default" do
       RecordingAdapter.new.supports_native_tool_calling?.should be_false
     end
-
-    it "reports no server-side context by default" do
-      RecordingAdapter.new.supports_context?.should be_false
-    end
   end
 
   describe "default close" do
@@ -127,9 +123,9 @@ end
 
 describe LLM::AdapterFactory do
   describe ".for" do
-    it "returns an ACPAdapter for acp:* providers" do
+    it "returns an ACPClient for acp:* providers" do
       adapter = LLM::AdapterFactory.for("acp:codex", "")
-      adapter.should be_a(LLM::ACPAdapter)
+      adapter.should be_a(LLM::ACPClient)
     end
 
     it "returns an OllamaAdapter for the ollama alias" do
@@ -229,15 +225,6 @@ describe LLM::GeneralAdapter do
       client = LLM::General.new("https://example.test", "gpt-4o", "sk-fake")
       LLM::GeneralAdapter.new(client, native_tool_calling_enabled: true).supports_native_tool_calling?.should be_true
       LLM::GeneralAdapter.new(client, native_tool_calling_enabled: false).supports_native_tool_calling?.should be_false
-    end
-  end
-end
-
-describe LLM::OllamaAdapter do
-  describe "#supports_context?" do
-    it "reports true (Ollama exposes KV context reuse)" do
-      client = LLM::Ollama.new("http://localhost:11434", "llama3")
-      LLM::OllamaAdapter.new(client).supports_context?.should be_true
     end
   end
 end

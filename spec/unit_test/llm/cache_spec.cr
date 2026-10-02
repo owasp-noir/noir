@@ -10,7 +10,6 @@ private def with_isolated_cache_dir(&)
   ENV["NOIR_HOME"] = tmp
   ENV.delete("NOIR_CACHE_DISABLE")
   begin
-    LLM::Cache.enable
     yield tmp
   ensure
     if prev_home

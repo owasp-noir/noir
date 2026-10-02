@@ -64,7 +64,7 @@ module LLM
         end
       end
 
-      clean_content(message["content"]?.try(&.to_s) || "")
+      LLM.strip_json_fences(message["content"]?.try(&.to_s) || "")
     rescue Exception
       ""
     end
@@ -166,10 +166,6 @@ module LLM
       JSON.parse(text)
     rescue Exception
       JSON.parse(%({"raw":#{raw.to_json}}))
-    end
-
-    private def self.clean_content(text : String) : String
-      LLM.strip_json_fences(text)
     end
 
     private def ensure_chat_completions_path(url : String) : String

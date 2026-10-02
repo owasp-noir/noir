@@ -27,11 +27,6 @@ module LLM
     GEMINI_ARGS = ["--experimental-acp"]
     CLAUDE_ARGS = ["@zed-industries/claude-agent-acp"]
 
-    # See `LLM::ACPTargets` for the list and why it is shared rather than
-    # duplicated. Kept as an alias so existing references still read naturally
-    # at the exec sink.
-    KNOWN_TARGETS = ACPTargets::KNOWN
-
     class UnsupportedACPTargetError < Exception; end
 
     # Escape hatch for power users running their own ACP agent binary. Off by
@@ -138,7 +133,7 @@ module LLM
       else
         unless custom_command_allowed?
           raise UnsupportedACPTargetError.new(
-            "Unsupported ACP provider target #{target.inspect}. Allowed acp: targets are #{KNOWN_TARGETS.join(", ")}. " \
+            "Unsupported ACP provider target #{target.inspect}. Allowed acp: targets are #{ACPTargets::KNOWN.join(", ")}. " \
             "Running an arbitrary command as an ACP agent is disabled; set NOIR_ACP_ALLOW_CUSTOM_COMMAND=1 to override (only with trusted config)."
           )
         end
@@ -167,7 +162,7 @@ module LLM
         clear_response_buffer
         final_prompt = append_format_instruction(prompt, format)
         session.prompt(final_prompt)
-        clean_response(read_response_buffer)
+        LLM.strip_json_fences(read_response_buffer)
       end
     rescue e : Exception
       report_request_failure(e)
@@ -308,10 +303,6 @@ module LLM
       @response_lock.synchronize do
         @response_buffer.dup
       end
-    end
-
-    private def clean_response(raw : String) : String
-      LLM.strip_json_fences(raw)
     end
   end
 end

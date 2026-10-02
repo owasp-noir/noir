@@ -179,7 +179,7 @@ module NoirAIContext
       label = compact_function_signature_label(text) || text.split(/\s+\|\s+\d+:/, 2)[0]
       label = label.gsub(/\s+/, " ").strip
       label = compact_annotation_label(label) if label.size > MAX_LABEL_CHARS
-      label[0, Math.min(label.size, MAX_LABEL_CHARS)]
+      label[0, MAX_LABEL_CHARS]
     end
 
     private def compact_function_signature_label(label : String) : String?

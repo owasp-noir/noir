@@ -169,11 +169,6 @@ test-unit:
 test-func:
     crystal spec spec/functional_test
 
-# Run uncovered tests only (not included in CI).
-[group('development')]
-test-uncovered:
-    crystal spec spec/uncovered_test
-
 # The fastest feedback loop while working on a single analyzer: ~8.5s, against
 # ~21s for a full `just test` (a ~12s build plus a ~10s parallel run). Almost
 # all of the 8.5s is compiling src/, not running the test (the run itself is

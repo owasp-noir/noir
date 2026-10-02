@@ -102,10 +102,10 @@ module Noir::CliValidation
   # byte-identical literal here, kept in sync by a comment.
   def self.validate_acp_target!(provider : String)
     target = (provider.split(":", 2)[1]?.try(&.strip.downcase)) || ""
-    return if LLM::ACPTargets.known?(target)
+    return if LLM::ACPTargets::KNOWN.includes?(target)
     return if ENV["NOIR_ACP_ALLOW_CUSTOM_COMMAND"]? == "1"
 
-    raise Error.new("--ai-provider '#{provider}': unsupported ACP target. Allowed acp: targets are #{LLM::ACPTargets.join}. Running an arbitrary command as an ACP agent is disabled; set NOIR_ACP_ALLOW_CUSTOM_COMMAND=1 to override (only with trusted config).")
+    raise Error.new("--ai-provider '#{provider}': unsupported ACP target. Allowed acp: targets are #{LLM::ACPTargets::KNOWN.join(", ")}. Running an arbitrary command as an ACP agent is disabled; set NOIR_ACP_ALLOW_CUSTOM_COMMAND=1 to override (only with trusted config).")
   end
 
   # `--passive-scan-path PATH` accepts multiple entries (repeatable),

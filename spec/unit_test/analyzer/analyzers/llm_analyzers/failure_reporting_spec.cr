@@ -68,13 +68,18 @@ private def ai_analyzer : Analyzer::AI::Unified
 end
 
 private def without_llm_cache(&)
-  LLM::Cache.disable
+  prev_disable = ENV["NOIR_CACHE_DISABLE"]?
+  ENV["NOIR_CACHE_DISABLE"] = "1"
   Noir::SkippedFiles.clear
   begin
     yield
   ensure
     Noir::SkippedFiles.clear
-    LLM::Cache.enable
+    if prev_disable
+      ENV["NOIR_CACHE_DISABLE"] = prev_disable
+    else
+      ENV.delete("NOIR_CACHE_DISABLE")
+    end
   end
 end
 

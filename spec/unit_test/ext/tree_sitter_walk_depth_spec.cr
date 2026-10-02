@@ -8,21 +8,26 @@ require "../../../src/ext/tree_sitter/tree_sitter"
 # recursed until the fiber stack ran out. A stack overflow is a hard
 # abort: it takes down the whole scan, and none of the `rescue`s in
 # `parallel_analyze` or `scan_files` can catch it.
+# Deepest level a walk over a file nested well past MAX_AST_DEPTH reaches.
+# A depth counter left standing by an earlier walk would cut this one short.
+private def deepest_reach : Int32
+  nest = Noir::TreeSitter::MAX_AST_DEPTH + 500
+  source = "x = #{"(" * nest}1#{")" * nest}\n"
+
+  deepest = 0
+  visit = uninitialized Proc(LibTreeSitter::TSNode, Int32, Nil)
+  visit = ->(node : LibTreeSitter::TSNode, depth : Int32) do
+    deepest = depth if depth > deepest
+    Noir::TreeSitter.each_named_child(node) { |child| visit.call(child, depth + 1) }
+  end
+
+  Noir::TreeSitter.parse_python(source) { |root| visit.call(root, 0) }
+  deepest
+end
+
 describe "Noir::TreeSitter.each_named_child depth bound" do
-  it "stops descending past MAX_AST_DEPTH" do
-    nest = Noir::TreeSitter::MAX_AST_DEPTH + 500
-    source = "x = #{"(" * nest}1#{")" * nest}\n"
-
-    deepest = 0
-    visit = uninitialized Proc(LibTreeSitter::TSNode, Int32, Nil)
-    visit = ->(node : LibTreeSitter::TSNode, depth : Int32) do
-      deepest = depth if depth > deepest
-      Noir::TreeSitter.each_named_child(node) { |child| visit.call(child, depth + 1) }
-    end
-
-    Noir::TreeSitter.parse_python(source) { |root| visit.call(root, 0) }
-
-    deepest.should be <= Noir::TreeSitter::MAX_AST_DEPTH
+  it "stops descending at MAX_AST_DEPTH" do
+    deepest_reach.should eq(Noir::TreeSitter::MAX_AST_DEPTH)
   end
 
   it "leaves the counter at rest after a walk completes" do
@@ -31,7 +36,7 @@ describe "Noir::TreeSitter.each_named_child depth bound" do
       Noir::TreeSitter.each_named_child(root) { |child| child }
     end
 
-    Noir::TreeSitter.walk_depth.should eq(0)
+    deepest_reach.should eq(Noir::TreeSitter::MAX_AST_DEPTH)
   end
 
   it "restores the counter when a walker raises mid-descent" do
@@ -45,7 +50,7 @@ describe "Noir::TreeSitter.each_named_child depth bound" do
       end
     end
 
-    Noir::TreeSitter.walk_depth.should eq(0)
+    deepest_reach.should eq(Noir::TreeSitter::MAX_AST_DEPTH)
   end
 
   it "still yields every named child of a shallow node" do
