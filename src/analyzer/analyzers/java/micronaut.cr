@@ -79,7 +79,7 @@ module Analyzer::Java
 
         dto_index = dto_builder.build_for(path, content)
         imports = java_imports(content)
-        base_path = (path_configs[project_root_for(path)]? || MicronautPathConfig.new).context_path
+        base_path = (path_configs[JavaEngine.project_root_for(path)]? || MicronautPathConfig.new).context_path
 
         Noir::TreeSitterMicronautExtractor.extract_routes(content, dto_index, include_callees: include_callee).each do |route|
           line = route.line + 1
@@ -134,7 +134,7 @@ module Analyzer::Java
         dto_index = dto_builder.build_for(path, content)
         Noir::TreeSitterMicronautExtractor.extract_interface_routes(content, dto_index, include_callees: include_callee).each do |interface_name, routes|
           routes.each do |route|
-            index.add(project_root_for(path), package_name, interface_name, MicronautInterfaceRouteEntry.new(route, path, content, package_name))
+            index.add(JavaEngine.project_root_for(path), package_name, interface_name, MicronautInterfaceRouteEntry.new(route, path, content, package_name))
           end
         end
       end
@@ -149,7 +149,7 @@ module Analyzer::Java
                                          interface_name : String) : Array(MicronautInterfaceRouteEntry)
       routes = [] of MicronautInterfaceRouteEntry
       seen = Set(String).new
-      project_root = project_root_for(path)
+      project_root = JavaEngine.project_root_for(path)
 
       add_interface_routes(routes, seen, index.by_package[{project_root, package_name}]?.try(&.[interface_name]?))
 
@@ -194,7 +194,7 @@ module Analyzer::Java
         next unless path.ends_with?(".#{JAVA_EXTENSION}")
         next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
-        project_roots << project_root_for(path)
+        project_roots << JavaEngine.project_root_for(path)
       end
 
       project_roots.each do |root|
@@ -290,15 +290,6 @@ module Analyzer::Java
       return "" if normalized.empty?
 
       normalized.starts_with?("/") ? normalized : "/#{normalized}"
-    end
-
-    private def project_root_for(path : String) : String
-      marker = "/src/main/java/"
-      if index = path.index(marker)
-        path[...index]
-      else
-        File.dirname(path)
-      end
     end
 
     private def normalize_optional_path(path : String?) : String

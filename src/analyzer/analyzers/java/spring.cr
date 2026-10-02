@@ -392,7 +392,7 @@ module Analyzer::Java
                 end
               end
               composed = nest_prefix.empty? ? endpoint : Noir::URLPath.join_rooted(nest_prefix, endpoint)
-              details = Details.new(PathInfo.new(path, line_at_offset(content, block_offset + verb_pos)))
+              details = Details.new(PathInfo.new(path, line_number_for_index(content, block_offset + verb_pos)))
               reactive_endpoint = Endpoint.new(
                 resolve_endpoint_path(Noir::URLPath.join_rooted(configured_base_path, composed), spring_properties),
                 method, details
@@ -605,7 +605,7 @@ module Analyzer::Java
         next unless close_idx
 
         args = content[(open_idx + 1)...close_idx]
-        line = content[0...marker].count('\n') + 1
+        line = line_number_for_index(content, marker)
         top_level_arguments(args).each do |arg|
           if endpoint_path = resolve_router_path(arg, constants)
             endpoints << {endpoint_path, line}
@@ -631,7 +631,7 @@ module Analyzer::Java
         next unless close_idx
 
         args = content[(open_idx + 1)...close_idx]
-        line = content[0...marker].count('\n') + 1
+        line = line_number_for_index(content, marker)
         top_level_arguments(args).each do |arg|
           if endpoint_path = resolve_router_path(arg, constants)
             endpoints << {endpoint_path, line}

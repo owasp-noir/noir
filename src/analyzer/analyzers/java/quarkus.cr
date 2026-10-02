@@ -350,7 +350,7 @@ module Analyzer::Java
 
         base_path = route_bases.find { |base| offset >= base.start_offset && offset <= base.end_offset }.try(&.path) || ""
         endpoint_path = Noir::URLPath.join_trimmed(http_root_path, Noir::URLPath.join_trimmed(base_path, route_path))
-        line = content[0...offset].count('\n') + 1
+        line = line_number_for_index(content, offset)
         details = Details.new(PathInfo.new(path, line))
         params = reactive_route_params(content, end_offset, endpoint_path)
 

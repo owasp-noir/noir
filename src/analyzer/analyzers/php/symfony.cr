@@ -77,7 +77,7 @@ module Analyzer::Php
           # Extract additional parameters from method body
           params.concat(extract_method_params(method_body[0])) if method_body
 
-          route_line = line_at_offset(content, route_start)
+          route_line = line_number_for_index(content, route_start)
 
           methods.each do |method|
             details = Details.new(PathInfo.new(path, route_line))
@@ -114,7 +114,7 @@ module Analyzer::Php
           # Extract additional parameters from method body
           params.concat(extract_method_params(method_body[0])) if method_body
 
-          route_line = line_at_offset(content, route_start)
+          route_line = line_number_for_index(content, route_start)
 
           methods.each do |method|
             details = Details.new(PathInfo.new(path, route_line))

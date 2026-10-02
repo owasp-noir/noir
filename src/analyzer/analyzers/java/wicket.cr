@@ -97,7 +97,7 @@ module Analyzer::Java
         # regex mount scanners never treat commented-out mountPage /
         # @MountPath / etc. as live. String literals stay intact so
         # values like "http://" are not misread as comment openers.
-        content = strip_comments(content)
+        content = JavaEngine.strip_comments(content)
 
         files << {
           path:      path,
@@ -141,7 +141,7 @@ module Analyzer::Java
 
         scan_from = skip_whitespace(content, scan_from)
         if scan_from < content.size && content[scan_from] == '('
-          if close_idx = find_matching_paren(content, scan_from)
+          if close_idx = JavaEngine.find_matching_delimiter(content, scan_from, '(', ')')
             args = content[(scan_from + 1)...close_idx]
             scan_from = close_idx + 1
           end
@@ -154,7 +154,7 @@ module Analyzer::Java
           normalized = normalize_mount_path(mount_path)
           key = scoped_class_key(file, class_name)
           page_mounts[key] << normalized unless page_mounts[key].includes?(normalized)
-          add_endpoint(normalized, file[:path], line_for_offset(content, marker), seen)
+          add_endpoint(normalized, file[:path], line_number_for_index(content, marker), seen)
         end
       end
     end
@@ -186,7 +186,7 @@ module Analyzer::Java
           end
 
           endpoint_path = method_name == "mountPackage" ? package_mount_path(normalized) : normalized
-          add_endpoint(endpoint_path, file[:path], line_for_offset(file[:content], offset), seen)
+          add_endpoint(endpoint_path, file[:path], line_number_for_index(file[:content], offset), seen)
 
           if method_name == "mountPage"
             if page_class = class_literal_name(arguments[1]?)
@@ -206,7 +206,7 @@ module Analyzer::Java
         next unless MAPPER_CLASSES.includes?(mapper_class)
 
         open_idx = (match.end(0) || 1) - 1
-        close_idx = find_matching_paren(file[:content], open_idx)
+        close_idx = JavaEngine.find_matching_delimiter(file[:content], open_idx, '(', ')')
         next unless close_idx
 
         args = file[:content][(open_idx + 1)...close_idx]
@@ -218,7 +218,7 @@ module Analyzer::Java
 
         normalized = normalize_mount_path(mount_path)
         endpoint_path = PACKAGE_MAPPER_CLASSES.includes?(mapper_class) ? package_mount_path(normalized) : normalized
-        add_endpoint(endpoint_path, file[:path], line_for_offset(file[:content], match.begin(0) || open_idx), seen)
+        add_endpoint(endpoint_path, file[:path], line_number_for_index(file[:content], match.begin(0) || open_idx), seen)
 
         next if RESOURCE_MAPPER_CLASSES.includes?(mapper_class) || PACKAGE_MAPPER_CLASSES.includes?(mapper_class)
         if page_class = class_literal_name(arguments[1]?)
@@ -243,7 +243,7 @@ module Analyzer::Java
           next unless mount_path
 
           normalized = normalize_mount_path(mount_path)
-          add_endpoint(normalized, file[:path], line_for_offset(file[:content], offset), seen)
+          add_endpoint(normalized, file[:path], line_number_for_index(file[:content], offset), seen)
 
           if page_class = class_literal_name(arguments[indexes[1]]?)
             key = scoped_class_key(file, page_class)
@@ -274,7 +274,7 @@ module Analyzer::Java
         scan_from = skip_whitespace(file[:content], after)
 
         if scan_from < file[:content].size && file[:content][scan_from] == '('
-          if close_idx = find_matching_paren(file[:content], scan_from)
+          if close_idx = JavaEngine.find_matching_delimiter(file[:content], scan_from, '(', ')')
             args = file[:content][(scan_from + 1)...close_idx]
             scan_from = close_idx + 1
           end
@@ -285,7 +285,7 @@ module Analyzer::Java
         pending << {
           path:        normalize_mount_path(path),
           method:      method,
-          line:        line_for_offset(file[:content], marker),
+          line:        line_number_for_index(file[:content], marker),
           method_name: method_name,
           params:      rest_method_params(param_list),
         }
@@ -348,7 +348,7 @@ module Analyzer::Java
 
       name = match[1]
       open_abs = offset + (match.end(0) || 1) - 1
-      close_abs = find_matching_paren(content, open_abs)
+      close_abs = JavaEngine.find_matching_delimiter(content, open_abs, '(', ')')
       return {name, ""} unless close_abs
 
       {name, content[(open_abs + 1)...close_abs]}
@@ -414,7 +414,7 @@ module Analyzer::Java
         scan_from = skip_whitespace(file[:content], after)
 
         if scan_from < file[:content].size && file[:content][scan_from] == '('
-          if close_idx = find_matching_paren(file[:content], scan_from)
+          if close_idx = JavaEngine.find_matching_delimiter(file[:content], scan_from, '(', ')')
             args = file[:content][(scan_from + 1)...close_idx]
             scan_from = close_idx + 1
           end
@@ -427,7 +427,7 @@ module Analyzer::Java
           rest_mounts[scoped_class_key(file, class_name)] = {
             path:      normalize_mount_path(mount_path),
             file_path: file[:path],
-            line:      line_for_offset(file[:content], marker),
+            line:      line_number_for_index(file[:content], marker),
           }
         end
       end
@@ -457,7 +457,7 @@ module Analyzer::Java
         path = resolve_string_expression(arguments[1], file[:constants])
         next unless method && path
 
-        add_endpoint(normalize_mount_path(path), file[:path], line_for_offset(file[:content], offset), seen, method)
+        add_endpoint(normalize_mount_path(path), file[:path], line_number_for_index(file[:content], offset), seen, method)
       end
 
       lambda_mounters = lambda_rest_mounter_variables(file[:content])
@@ -470,7 +470,7 @@ module Analyzer::Java
             next if arguments.empty?
 
             if path = resolve_string_expression(arguments[0], file[:constants])
-              add_endpoint(normalize_mount_path(path), file[:path], line_for_offset(file[:content], offset), seen, method_name.upcase)
+              add_endpoint(normalize_mount_path(path), file[:path], line_number_for_index(file[:content], offset), seen, method_name.upcase)
             end
           end
         end
@@ -499,7 +499,7 @@ module Analyzer::Java
                                             seen : Set(String),
                                             open_idx : Int32,
                                             offset : Int32)
-      close_idx = find_matching_paren(file[:content], open_idx)
+      close_idx = JavaEngine.find_matching_delimiter(file[:content], open_idx, '(', ')')
       return unless close_idx
 
       args = file[:content][(open_idx + 1)...close_idx]
@@ -513,7 +513,7 @@ module Analyzer::Java
                                           offset : Int32)
       page_classes.uniq.each do |page_class|
         page_mounts[scoped_class_key(file, page_class)]?.try &.each do |mount_path|
-          add_endpoint(mount_path, file[:path], line_for_offset(file[:content], offset), seen)
+          add_endpoint(mount_path, file[:path], line_number_for_index(file[:content], offset), seen)
         end
       end
     end
@@ -658,7 +658,7 @@ module Analyzer::Java
         open_idx = skip_whitespace(content, marker + method_name.size)
         next unless open_idx < content.size && content[open_idx] == '('
 
-        close_idx = find_matching_paren(content, open_idx)
+        close_idx = JavaEngine.find_matching_delimiter(content, open_idx, '(', ')')
         next unless close_idx
 
         block.call(content[(open_idx + 1)...close_idx], marker)
@@ -684,7 +684,7 @@ module Analyzer::Java
         open_idx = skip_whitespace(content, marker + pattern.size)
         next unless open_idx < content.size && content[open_idx] == '('
 
-        close_idx = find_matching_paren(content, open_idx)
+        close_idx = JavaEngine.find_matching_delimiter(content, open_idx, '(', ')')
         next unless close_idx
 
         block.call(content[(open_idx + 1)...close_idx], marker)
@@ -843,7 +843,7 @@ module Analyzer::Java
       content.scan(/\b(?:public|protected|private)\s+(?:static\s+)?[A-Za-z0-9_<>\[\]\s?,.&]+\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)\s*\{/) do |match|
         method_name = match[1]
         open_idx = (match.end(0) || 1) - 1
-        close_idx = find_matching_brace(content, open_idx)
+        close_idx = JavaEngine.find_matching_delimiter(content, open_idx, '{', '}')
         next unless close_idx
 
         param_names = method_parameter_names(match[2])
@@ -875,7 +875,7 @@ module Analyzer::Java
     private def mounted_mapper_param_indexes(body : String, param_names : Array(String)) : Tuple(Int32, Int32)?
       body.scan(/\bnew\s+(?:[A-Za-z_][A-Za-z0-9_]*\.)*MountedMapper\s*\(/) do |match|
         open_idx = (match.end(0) || 1) - 1
-        close_idx = find_matching_paren(body, open_idx)
+        close_idx = JavaEngine.find_matching_delimiter(body, open_idx, '(', ')')
         next unless close_idx
 
         arguments = split_arguments(body[(open_idx + 1)...close_idx])
@@ -891,7 +891,7 @@ module Analyzer::Java
     private def mount_page_param_indexes(body : String, param_names : Array(String)) : Tuple(Int32, Int32)?
       body.scan(/\bmountPage\s*\(/) do |match|
         open_idx = (match.end(0) || 1) - 1
-        close_idx = find_matching_paren(body, open_idx)
+        close_idx = JavaEngine.find_matching_delimiter(body, open_idx, '(', ')')
         next unless close_idx
 
         arguments = split_arguments(body[(open_idx + 1)...close_idx])
@@ -994,143 +994,6 @@ module Analyzer::Java
         index += 1
       end
       index
-    end
-
-    private def find_matching_paren(code : String, open_idx : Int32) : Int32?
-      # Scan by CHARACTER (not index-into-String-per-step): `code[index]` in a
-      # manual `while` loop is O(n) per access on non-ASCII content (Crystal
-      # can't fast-path multi-byte indexing), making the whole scan O(n^2) on
-      # a large non-ASCII file. `each_char_with_index` walks the string once.
-      depth = 1
-      in_string = false
-      escape = false
-
-      code.each_char_with_index do |char, index|
-        next if index <= open_idx
-        if in_string
-          if escape
-            escape = false
-          elsif char == '\\'
-            escape = true
-          elsif char == '"'
-            in_string = false
-          end
-          next
-        end
-
-        case char
-        when '"'
-          in_string = true
-        when '('
-          depth += 1
-        when ')'
-          depth -= 1
-          return index if depth.zero?
-        end
-      end
-      nil
-    end
-
-    private def find_matching_brace(code : String, open_idx : Int32) : Int32?
-      # See `find_matching_paren` above: single forward pass instead of
-      # per-index `code[i]` lookups, which are O(n^2) on non-ASCII content.
-      depth = 1
-      in_string = false
-      escape = false
-
-      code.each_char_with_index do |char, index|
-        next if index <= open_idx
-        if in_string
-          if escape
-            escape = false
-          elsif char == '\\'
-            escape = true
-          elsif char == '"'
-            in_string = false
-          end
-          next
-        end
-
-        case char
-        when '"'
-          in_string = true
-        when '{'
-          depth += 1
-        when '}'
-          depth -= 1
-          return index if depth.zero?
-        end
-      end
-      nil
-    end
-
-    private def line_for_offset(content : String, offset : Int32) : Int32
-      content[0...offset].count('\n') + 1
-    end
-
-    # Blank `//` line comments and `/* */` block comments while preserving
-    # every newline so `line_for_offset` stays correct. String and char
-    # literals are tracked so `//` or `/*` inside a literal (e.g.
-    # `"http://x//y"`) is never treated as a comment opener. Mirrors
-    # `Analyzer::Java::Cli#strip_comments`.
-    private def strip_comments(text : String) : String
-      result = String::Builder.new
-      chars = text.chars
-      i = 0
-      in_string = false
-      string_quote = '\0'
-
-      while i < chars.size
-        c = chars[i]
-
-        if in_string
-          if c == '\\' && i + 1 < chars.size
-            result << c
-            result << chars[i + 1]
-            i += 2
-            next
-          end
-          in_string = false if c == string_quote
-          result << c
-          i += 1
-          next
-        end
-
-        if c == '"' || c == '\''
-          in_string = true
-          string_quote = c
-          result << c
-          i += 1
-          next
-        end
-
-        if c == '/' && i + 1 < chars.size && chars[i + 1] == '/'
-          while i < chars.size && chars[i] != '\n'
-            result << ' '
-            i += 1
-          end
-          next
-        end
-
-        if c == '/' && i + 1 < chars.size && chars[i + 1] == '*'
-          result << "  "
-          i += 2
-          while i + 1 < chars.size && !(chars[i] == '*' && chars[i + 1] == '/')
-            result << (chars[i] == '\n' ? '\n' : ' ')
-            i += 1
-          end
-          if i + 1 < chars.size
-            result << "  "
-            i += 2
-          end
-          next
-        end
-
-        result << c
-        i += 1
-      end
-
-      result.to_s
     end
   end
 end

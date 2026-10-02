@@ -214,7 +214,7 @@ module Analyzer::Java
         next if endpoint.nil? || endpoint.empty?
 
         open_idx = (match.end || 1) - 1
-        close_idx = find_matching_paren(content, open_idx)
+        close_idx = JavaEngine.find_matching_delimiter(content, open_idx, '(', ')')
         next unless close_idx
 
         handler_arg = content[(open_idx + 1)...close_idx].strip
@@ -393,7 +393,7 @@ module Analyzer::Java
         next if endpoint.nil? || endpoint.empty? || !vertx_route_path?(endpoint)
 
         open_idx = (match.end || 1) - 1
-        close_idx = find_matching_paren(content, open_idx)
+        close_idx = JavaEngine.find_matching_delimiter(content, open_idx, '(', ')')
         next unless close_idx
 
         handler_arg = content[(open_idx + 1)...close_idx]
@@ -448,7 +448,7 @@ module Analyzer::Java
         next if endpoint.nil? || endpoint.empty? || !vertx_route_path?(endpoint)
 
         open_idx = (match.end || 1) - 1
-        close_idx = find_matching_paren(content, open_idx)
+        close_idx = JavaEngine.find_matching_delimiter(content, open_idx, '(', ')')
         next unless close_idx
 
         handler_arg = content[(open_idx + 1)...close_idx]
@@ -485,7 +485,7 @@ module Analyzer::Java
 
         if handler_match = chain_info.chain.match(/\.\s*handler\s*\(/i)
           open_idx = (handler_match.end || 1) - 1
-          close_idx = find_matching_paren(chain_info.chain, open_idx)
+          close_idx = JavaEngine.find_matching_delimiter(chain_info.chain, open_idx, '(', ')')
           if close_idx
             handler_arg = chain_info.chain[(open_idx + 1)...close_idx]
             if body = resolve_handler_arg(handler_arg, method_bodies)
@@ -514,7 +514,7 @@ module Analyzer::Java
       return unless m = rest.match(/\A\.\s*handler\s*\(/i)
 
       open_idx = i + (m.end || 1) - 1
-      close_idx = find_matching_paren(content, open_idx)
+      close_idx = JavaEngine.find_matching_delimiter(content, open_idx, '(', ')')
       return unless close_idx
 
       resolve_handler_arg(content[(open_idx + 1)...close_idx], method_bodies)
@@ -562,39 +562,6 @@ module Analyzer::Java
           endpoint.push_param(Param.new(name, "", "query"))
         end
       end
-    end
-
-    private def find_matching_paren(code : String, open_idx : Int32) : Int32?
-      depth = 1
-      in_string = false
-      quote = '\0'
-      escape = false
-
-      code.each_char_with_index do |char, idx|
-        next if idx <= open_idx
-
-        if in_string
-          if escape
-            escape = false
-          elsif char == '\\'
-            escape = true
-          elsif char == quote
-            in_string = false
-          end
-        else
-          case char
-          when '"', '\''
-            in_string = true
-            quote = char
-          when '('
-            depth += 1
-          when ')'
-            depth -= 1
-            return idx if depth.zero?
-          end
-        end
-      end
-      nil
     end
 
     # Vert.x Web requires path-string routes to begin with `/` (regex

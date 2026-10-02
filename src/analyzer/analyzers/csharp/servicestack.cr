@@ -261,7 +261,7 @@ module Analyzer::CSharp
       while start = code.index(/\bRoutes\b/, pos)
         stop = code.index(';', start) || code.size
         statement = code[start...stop]
-        line_no = code[0...start].count('\n') + 1
+        line_no = line_number_for_index(code, start)
 
         statement.scan(FLUENT_CALL_RE) do |m|
           type_name = m[1]?

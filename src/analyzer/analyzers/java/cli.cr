@@ -86,7 +86,7 @@ module Analyzer::Java
         begin
           raw = read_file_content(path)
           next unless content_matches?(raw, RAW_CLI_MARKERS_RE)
-          content = strip_comments(raw)
+          content = JavaEngine.strip_comments(raw)
           next unless content_matches?(content, LIB_MARKERS_RE) || content_matches?(content, CLI_GATE_RE)
 
           binary = java_binary_name(content, path)
@@ -240,72 +240,6 @@ module Analyzer::Java
       return if tokens.empty?
       long = tokens.find(&.starts_with?("--"))
       (long || tokens.first).lstrip('-')
-    end
-
-    # Replaces `//` line comments and `/* */` block comments with spaces
-    # (newlines preserved) so a commented-out @Option/@Parameter/addOption/
-    # etc. call is never mistaken for a live one, while keeping every real
-    # line number stable for PathInfo reporting. String and char literals
-    # are tracked so `//` or `/*` inside a literal (e.g. a URL default value
-    # `"http://x//y"`) is never treated as a comment opener.
-    private def strip_comments(text : String) : String
-      result = String::Builder.new
-      chars = text.chars
-      i = 0
-      in_string = false
-      string_quote = '\0'
-
-      while i < chars.size
-        c = chars[i]
-
-        if in_string
-          if c == '\\' && i + 1 < chars.size
-            result << c
-            result << chars[i + 1]
-            i += 2
-            next
-          end
-          in_string = false if c == string_quote
-          result << c
-          i += 1
-          next
-        end
-
-        if c == '"' || c == '\''
-          in_string = true
-          string_quote = c
-          result << c
-          i += 1
-          next
-        end
-
-        if c == '/' && i + 1 < chars.size && chars[i + 1] == '/'
-          while i < chars.size && chars[i] != '\n'
-            result << ' '
-            i += 1
-          end
-          next
-        end
-
-        if c == '/' && i + 1 < chars.size && chars[i + 1] == '*'
-          result << "  "
-          i += 2
-          while i + 1 < chars.size && !(chars[i] == '*' && chars[i + 1] == '/')
-            result << (chars[i] == '\n' ? '\n' : ' ')
-            i += 1
-          end
-          if i + 1 < chars.size
-            result << "  "
-            i += 2
-          end
-          next
-        end
-
-        result << c
-        i += 1
-      end
-
-      result.to_s
     end
   end
 end
