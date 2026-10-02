@@ -118,7 +118,7 @@ module Analyzer::Java
         next unless close_idx
 
         args = content[(open_idx + 1)...close_idx]
-        line = content[0...marker].count('\n') + 1
+        line = line_number_for_index(content, marker)
         if hosted_path = hosted_path_from_static_file_config(args, constants)
           endpoints << {static_mount_path(hosted_path), line}
         elsif directory_add_call?(args)
@@ -133,7 +133,7 @@ module Analyzer::Java
       while marker = content.index("enableWeb", offset)
         offset = marker + 9
         next unless enable_webjars_call?(content, marker)
-        endpoints << {"/webjars/**", content[0...marker].count('\n') + 1}
+        endpoints << {"/webjars/**", line_number_for_index(content, marker)}
       end
     end
 

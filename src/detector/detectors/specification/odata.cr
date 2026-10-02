@@ -10,7 +10,8 @@ module Detector::Specification
     # Registers OData spec paths for the analyzer pass. Must keep
     # firing past the first match so multi-service repos land every
     # `$metadata` document in the locator.
-    detector_for "odata", idempotent: false
+    detector_for "odata", idempotent: false,
+      extensions: %w[.xml .edmx .csdl], basenames: %w[$metadata]
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
@@ -21,12 +22,6 @@ module Detector::Specification
       locator = CodeLocator.instance
       locator.push(Noir::LocatorKeys::ODATA_SPEC, filename)
       true
-    end
-
-    def applicable?(filename : String) : Bool
-      base = File.basename(filename)
-      return true if base == "$metadata" || base == "$metadata.xml" || base == "metadata.xml"
-      filename.ends_with?(".xml") || filename.ends_with?(".edmx") || filename.ends_with?(".csdl")
     end
   end
 end

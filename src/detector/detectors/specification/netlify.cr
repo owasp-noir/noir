@@ -4,7 +4,7 @@ require "../../../models/code_locator"
 module Detector::Specification
   class Netlify < Detector
     # Registers file paths for analyzer pass.
-    detector_for "netlify", idempotent: false
+    detector_for "netlify", idempotent: false, basenames: %w[_redirects netlify.toml]
 
     REDIRECTS_FILE = "_redirects"
     TOML_FILE      = "netlify.toml"
@@ -23,11 +23,6 @@ module Detector::Specification
       else
         false
       end
-    end
-
-    def applicable?(filename : String) : Bool
-      base = File.basename(filename)
-      base == REDIRECTS_FILE || base == TOML_FILE
     end
   end
 end

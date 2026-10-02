@@ -111,7 +111,7 @@ module Analyzer::Java
         offset = marker + method_name.size
         next unless static_file_call_name?(content, marker, method_name)
 
-        endpoints << {"/**", content[0...marker].count('\n') + 1}
+        endpoints << {"/**", line_number_for_index(content, marker)}
       end
     end
 

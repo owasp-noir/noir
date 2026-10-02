@@ -171,8 +171,8 @@ module Analyzer::Groovy
 
         actions.each do |action|
           methods = allowed_methods[action[:name]]? || DEFAULT_METHODS
-          line = line_for_offset(content, body_start + action[:offset])
-          line = line_for_offset(content, match_start) if line <= 0
+          line = line_number_for_index(content, body_start + action[:offset])
+          line = line_number_for_index(content, match_start) if line <= 0
           callees = include_callee ? callees_for_action(path, content, body_start, action) : [] of Noir::GroovyCalleeExtractor::Entry
           methods.each do |verb|
             url = "/#{controller_name}/#{action[:name]}"
@@ -189,7 +189,7 @@ module Analyzer::Groovy
                                    content : String,
                                    class_body_start : Int32,
                                    action : Action) : Array(Noir::GroovyCalleeExtractor::Entry)
-      start_line = line_for_offset(content, class_body_start + action[:body_start])
+      start_line = line_number_for_index(content, class_body_start + action[:body_start])
       Noir::GroovyCalleeExtractor.callees_for_body(action[:body], path, start_line)
     end
 
@@ -207,7 +207,7 @@ module Analyzer::Groovy
                                       allowed_methods : Hash(String, Array(String)),
                                       class_offset : Int32)
       methods = allowed_methods[action_name]? || [default_method]
-      line = line_for_offset(content, class_offset)
+      line = line_number_for_index(content, class_offset)
       methods.each do |verb|
         url = "/#{controller}/#{action_name}"
         @result << Endpoint.new(url, verb, [] of Param,
@@ -456,7 +456,7 @@ module Analyzer::Groovy
         # own line. `match.begin(0)` does not: the optional `name <id>:` prefix
         # is separated by `\s*`, so `name reports:` on the line above pulls the
         # reported line up with it.
-        line = line_for_offset(content, base_offset + (match.begin(2) || 0))
+        line = line_number_for_index(content, base_offset + (match.begin(2) || 0))
         @result << Endpoint.new(translate_pattern(url_pattern), verb,
           extract_path_params(url_pattern),
           Details.new(PathInfo.new(path, line)))
@@ -479,7 +479,7 @@ module Analyzer::Groovy
 
         url_pattern = prefix + match[2]
         body_args = match[3]
-        line = line_for_offset(content, base_offset + (match.begin(1) || 0))
+        line = line_number_for_index(content, base_offset + (match.begin(1) || 0))
 
         if body_args.match(/\bresources:\s*['"]/)
           RESOURCES_ENDPOINTS.each do |ep|
@@ -530,7 +530,7 @@ module Analyzer::Groovy
         url_pattern = prefix + match[2]
         body_block = match[3]
         next unless body_block.match(/\b(controller|action|method|view)\s*=/)
-        line = line_for_offset(content, base_offset + (match.begin(1) || 0))
+        line = line_number_for_index(content, base_offset + (match.begin(1) || 0))
         verb = extract_method_assignment(body_block) || "GET"
         @result << Endpoint.new(translate_pattern(url_pattern), verb,
           extract_path_params(url_pattern),
@@ -773,23 +773,6 @@ module Analyzer::Groovy
         result << chars[index]
         index += 1
       end
-    end
-
-    private def line_for_offset(content : String, offset : Int32) : Int32
-      return 1 if offset <= 0
-      limit = offset > content.size ? content.size : offset
-      # `content[i]` walks from byte 0 on every call once `content` holds any
-      # multi-byte UTF-8 char, so the sequential scan below was O(n) per
-      # access -- O(n^2) overall -- and this runs once per emitted endpoint.
-      # `each_char_with_index` walks the string's `Char::Reader` once and
-      # breaks out as soon as `limit` is reached, avoiding both the repeated
-      # re-indexing and materializing chars past what's needed.
-      count = 1
-      content.each_char_with_index do |ch, i|
-        break if i >= limit
-        count += 1 if ch == '\n'
-      end
-      count
     end
   end
 end

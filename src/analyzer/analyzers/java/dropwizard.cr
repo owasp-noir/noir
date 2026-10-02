@@ -58,7 +58,7 @@ module Analyzer::Java
         next unless path.ends_with?(".#{JAVA_EXTENSION}")
         next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
-        project_root = project_root_for(path)
+        project_root = JavaEngine.project_root_for(path)
         next unless dropwizard_roots.includes?(project_root)
 
         content = read_file_content(path)
@@ -128,7 +128,7 @@ module Analyzer::Java
         next unless File.exists?(path)
 
         content = read_file_content(path)
-        roots << project_root_for(path) if content.matches?(DROPWIZARD_BOOTSTRAP_MARKER_RE)
+        roots << JavaEngine.project_root_for(path) if content.matches?(DROPWIZARD_BOOTSTRAP_MARKER_RE)
       end
 
       roots
@@ -215,15 +215,6 @@ module Analyzer::Java
       normalized = normalized.chomp('*').rstrip('/')
       return "" if normalized.empty? || normalized == "/"
       normalized
-    end
-
-    private def project_root_for(path : String) : String
-      marker = "/src/main/java/"
-      if index = path.index(marker)
-        path[...index]
-      else
-        File.dirname(path)
-      end
     end
 
     private def bean_index_for(path : String,
@@ -326,7 +317,7 @@ module Analyzer::Java
         uri_path = asset_bundle_uri_path(args)
         next if uri_path.empty?
 
-        line = line_for_offset(content, match.begin(0) || 0)
+        line = line_number_for_index(content, match.begin(0) || 0)
         endpoint_path = asset_bundle_endpoint_path(application_context_path, uri_path)
         details = Details.new(PathInfo.new(path, line))
         next if endpoints.any? { |endpoint| endpoint.url == endpoint_path && endpoint.method == "GET" }
@@ -369,10 +360,6 @@ module Analyzer::Java
       if match = expression.strip.match(/\A["']([^"']*)["']\z/)
         match[1]
       end
-    end
-
-    private def line_for_offset(content : String, offset : Int32) : Int32
-      content[0...offset].count('\n') + 1
     end
   end
 end

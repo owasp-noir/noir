@@ -316,7 +316,7 @@ module Analyzer::Lua
                               callees : Array(Noir::LuaCalleeExtractor::Entry))
       url = normalize_url(url)
       params = extract_path_params(url)
-      line = line_for_offset(content, offset)
+      line = line_number_for_index(content, offset)
       details = Details.new(PathInfo.new(path, line))
       methods.each do |verb|
         endpoint_params = params.map { |p| Param.new(p.name, p.value, p.param_type) }
@@ -356,17 +356,6 @@ module Analyzer::Lua
         params << Param.new(match[1], "", "path")
       end
       params
-    end
-
-    private def line_for_offset(content : String, offset : Int32) : Int32
-      return 1 if offset <= 0
-      limit = offset > content.size ? content.size : offset
-      count = 1
-      content.each_char_with_index do |ch, i|
-        break if i >= limit
-        count += 1 if ch == '\n'
-      end
-      count
     end
   end
 end

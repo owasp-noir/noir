@@ -7,7 +7,7 @@ module Detector::Javascript
   # paired with a Socket.IO-only API call. Gates the Socket.IO analyzer,
   # which emits inbound `socket.on` events as `ws://` realtime endpoints.
   class SocketIO < Detector
-    detector_for "js_socketio"
+    detector_for "js_socketio", extensions: %w[.js .mjs .cjs .jsx .ts .tsx], basenames: %w[package.json]
 
     SIGNAL = Regex.union(
       /from\s+['"]socket\.io['"]/,
@@ -52,10 +52,6 @@ module Detector::Javascript
       return false unless file_contents.includes?("socket.io") || file_contents.includes?("new Server(")
       return true if content_matches?(file_contents, SIGNAL)
       content_matches?(file_contents, NEW_SERVER) && content_matches?(file_contents, SOCKET_IO_API)
-    end
-
-    def applicable?(filename : String) : Bool
-      source_file?(filename) || File.basename(filename) == "package.json"
     end
 
     private def source_file?(filename : String) : Bool

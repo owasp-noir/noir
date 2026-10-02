@@ -4,9 +4,8 @@ require "../../../models/code_locator"
 module Detector::Specification
   class CloudflareWrangler < Detector
     # Registers each wrangler config path in `CodeLocator`.
-    detector_for "cloudflare_wrangler", idempotent: false
-
-    WRANGLER_FILES = {"wrangler.toml", "wrangler.jsonc", "wrangler.json"}
+    detector_for "cloudflare_wrangler", idempotent: false,
+      basenames: %w[wrangler.toml wrangler.jsonc wrangler.json]
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
@@ -26,10 +25,6 @@ module Detector::Specification
 
       CodeLocator.instance.push(Noir::LocatorKeys::CLOUDFLARE_WRANGLER_SPEC, filename) if detected
       detected
-    end
-
-    def applicable?(filename : String) : Bool
-      WRANGLER_FILES.includes?(File.basename(filename))
     end
   end
 end

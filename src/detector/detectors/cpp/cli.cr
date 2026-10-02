@@ -7,7 +7,7 @@ module Detector::Cpp
   # `main(int argc, char** argv)`, which every C++ program (servers
   # included) has.
   class Cli < Detector
-    detector_for "cpp_cli"
+    detector_for "cpp_cli", extensions: %w[.cpp .cc .cxx .c++ .hpp .hh .hxx]
 
     EXTS      = [".cpp", ".cc", ".cxx", ".c++", ".hpp", ".hh", ".hxx"]
     CLI11     = /\bCLI::App\b|include\s*[<"]CLI\/CLI\.hpp/
@@ -24,10 +24,6 @@ module Detector::Cpp
         content_matches?(file_contents, CXXOPTS) || content_matches?(file_contents, BOOST_PO) ||
         content_matches?(file_contents, GFLAGS) || content_matches?(file_contents, ABSL_FLAG) ||
         content_matches?(file_contents, ARGPARSE)
-    end
-
-    def applicable?(filename : String) : Bool
-      EXTS.any? { |ext| filename.ends_with?(ext) }
     end
   end
 end
