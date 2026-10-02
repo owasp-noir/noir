@@ -38,9 +38,6 @@ dependencies:
   har:
     github: NeuraLegion/har
     version: ~> 1.2
-  http_proxy:
-    github: mamantoha/http_proxy
-    version: ~> 0.15.0
   sarif:
     github: hahwul/sarif.cr
     version: ~> 0.2.0

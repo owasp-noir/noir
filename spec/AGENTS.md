@@ -13,10 +13,6 @@ spec/
 │   ├── func_spec.cr            # FunctionalTester class
 │   ├── fixtures/               # Sample source code for each language/framework
 │   └── testers/                # Test specs that validate endpoint detection
-└── uncovered_test/             # Uncovered test cases (NOT included in CI)
-    ├── func_spec.cr            # UncoveredFunctionalTester class
-    ├── fixtures/               # Sample source code for uncovered cases
-    └── testers/                # Test specs for uncovered cases
 ```
 
 ## Directory Roles
@@ -36,14 +32,6 @@ Contains functional (integration) tests that verify end-to-end endpoint detectio
   - Fixtures: `spec/functional_test/fixtures/{language}/{framework}/`
   - Testers: `spec/functional_test/testers/{language}/{framework}_spec.cr`
 
-### `uncovered_test/`
-A staging area for test cases that are **not yet fully covered** or are **expected to fail**. This directory is separated from CI to avoid blocking builds while still tracking known gaps.
-
-- **Included in CI**: No (run manually with `just test-uncovered`)
-- **Structure**:
-  - Fixtures: `spec/uncovered_test/fixtures/{language}/{framework}/`
-  - Testers: `spec/uncovered_test/testers/{language}/{framework}_spec.cr`
-
 ## How to Run Tests
 
 ```bash
@@ -53,15 +41,11 @@ just test-random       # Re-run the built binary in randomized example order
 just test-seed 12345   # Re-run it in one specific order
 just test-unit         # Run unit tests only (compiles just that directory)
 just test-func         # Run functional tests only (compiles just that directory)
-just test-uncovered    # Run uncovered tests only (not in CI)
 ```
 
 `spec/suite.cr` requires `unit_test/**` plus `functional_test/testers/**` and
 nothing else, so `bin/noir_spec` holds exactly the 20,807 examples CI runs
-(5,698 unit and 15,109 functional). `uncovered_test/` is deliberately outside
-it, which is also why `crystal spec` with no arguments is the wrong command
-here: its default glob sweeps up `uncovered_test/` too, and those examples are
-expected to fail.
+(5,698 unit and 15,109 functional).
 
 Two constraints come with the binary:
 
@@ -220,47 +204,3 @@ FunctionalTester.new("fixtures/{language}/{framework}/", {
 ```bash
 crystal spec spec/functional_test/testers/{language}/{framework}_spec.cr
 ```
-
-## How to Add an Uncovered Test
-
-Use the same process as functional tests, but place files under `uncovered_test/` instead. Use `UncoveredFunctionalTester` instead of `FunctionalTester`.
-
-### 1. Add Fixture Code
-
-```
-spec/uncovered_test/fixtures/{language}/{framework}/
-```
-
-### 2. Add a Test Spec
-
-```
-spec/uncovered_test/testers/{language}/{framework}_spec.cr
-```
-
-Example test spec:
-```crystal
-require "../../func_spec.cr"
-
-expected_endpoints = [
-  Endpoint.new("/items", "GET"),
-]
-
-UncoveredFunctionalTester.new("fixtures/{language}/{framework}/", {
-  :techs     => 1,
-  :endpoints => expected_endpoints.size,
-}, expected_endpoints).perform_tests
-```
-
-### 3. Run and Verify
-
-```bash
-crystal spec spec/uncovered_test/testers/{language}/{framework}_spec.cr
-```
-
-## When to Use `uncovered_test/`
-
-- You have identified endpoints that Noir **should** detect but **currently does not**.
-- You want to document a known gap without breaking CI.
-- You are working on a new analyzer and want to write tests before the implementation is complete.
-
-Once the corresponding analyzer or detector is implemented and the tests pass, move the fixture and test spec from `uncovered_test/` to `functional_test/` (updating the require path and class name from `UncoveredFunctionalTester` to `FunctionalTester`).

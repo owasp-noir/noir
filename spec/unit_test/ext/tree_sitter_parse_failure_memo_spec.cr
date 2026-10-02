@@ -15,19 +15,14 @@ describe "Noir::TreeSitter parse-failure memo" do
     previous = Noir::TreeSitter.parse_timeout_micros
     Noir::TreeSitter.parse_timeout_micros = 1_u64
     begin
-      before = Noir::TreeSitter.parse_failure_count
-
       expect_raises(Exception, /timed out/) do
         Noir::TreeSitter.parse_python(pathological) { |root| root }
       end
-      Noir::TreeSitter.parse_failure_count.should eq(before + 1)
 
-      # Second call never reaches tree-sitter: a different message, and no
-      # second entry for the same (content, grammar) pair.
+      # Second call never reaches tree-sitter: a different message.
       expect_raises(Exception, /already failed to parse/) do
         Noir::TreeSitter.parse_python(pathological) { |root| root }
       end
-      Noir::TreeSitter.parse_failure_count.should eq(before + 1)
     ensure
       Noir::TreeSitter.parse_timeout_micros = previous
     end
@@ -38,7 +33,6 @@ describe "Noir::TreeSitter parse-failure memo" do
     Noir::TreeSitter.parse_timeout_micros = 1_u64
     begin
       source = pathological + "# grammar-keyed\n"
-      before = Noir::TreeSitter.parse_failure_count
 
       expect_raises(Exception, /timed out/) do
         Noir::TreeSitter.parse_python(source) { |root| root }
@@ -48,33 +42,30 @@ describe "Noir::TreeSitter parse-failure memo" do
       expect_raises(Exception, /timed out/) do
         Noir::TreeSitter.parse_go(source) { |root| root }
       end
-
-      Noir::TreeSitter.parse_failure_count.should eq(before + 2)
     ensure
       Noir::TreeSitter.parse_timeout_micros = previous
     end
   end
 
   it "does not remember a source that parses" do
-    before = Noir::TreeSitter.parse_failure_count
-
-    Noir::TreeSitter.parse_python("def f():\n    pass\n") { |root| root }
-
-    Noir::TreeSitter.parse_failure_count.should eq(before)
+    2.times { Noir::TreeSitter.parse_python("def f():\n    pass\n") { |root| root } }
   end
 
   it "forgets everything when the scan-scoped memos are cleared" do
     previous = Noir::TreeSitter.parse_timeout_micros
     Noir::TreeSitter.parse_timeout_micros = 1_u64
     begin
-      expect_raises(Exception) do
-        Noir::TreeSitter.parse_python(pathological + "# cleared\n") { |root| root }
+      source = pathological + "# cleared\n"
+      expect_raises(Exception, /timed out/) do
+        Noir::TreeSitter.parse_python(source) { |root| root }
       end
-      Noir::TreeSitter.parse_failure_count.should be > 0
 
       Noir::ExtractionResultCache.clear_all
 
-      Noir::TreeSitter.parse_failure_count.should eq(0)
+      # Forgotten, so tree-sitter is asked again rather than skipped.
+      expect_raises(Exception, /timed out/) do
+        Noir::TreeSitter.parse_python(source) { |root| root }
+      end
     ensure
       Noir::TreeSitter.parse_timeout_micros = previous
     end

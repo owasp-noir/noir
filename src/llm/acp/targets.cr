@@ -26,14 +26,5 @@ module LLM
   # array. Hence this file, which requires nothing.
   module ACPTargets
     KNOWN = %w[codex gemini claude claude-code]
-
-    # `codex` / `gemini` / `claude` / `claude-code`
-    def self.known?(target : String) : Bool
-      KNOWN.includes?(target)
-    end
-
-    def self.join : String
-      KNOWN.join(", ")
-    end
   end
 end

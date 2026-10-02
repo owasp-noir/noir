@@ -161,7 +161,7 @@ end
 describe LLM::AdapterFactory do
   it "returns ACP adapter for acp providers" do
     adapter = LLM::AdapterFactory.for("acp:codex", "", nil)
-    adapter.should be_a(LLM::ACPAdapter)
+    adapter.should be_a(LLM::ACPClient)
     adapter.close
   end
 

@@ -1,72 +1,24 @@
 require "./prompt"
 
 module LLM::PromptOverrides
-  # Class variables to store prompt overrides
-  @@filter_prompt_override : String?
-  @@analyze_prompt_override : String?
-  @@bundle_analyze_prompt_override : String?
-  @@llm_optimize_prompt_override : String?
+  class_property filter_prompt : String = LLM::FILTER_PROMPT
+  class_property analyze_prompt : String = LLM::ANALYZE_PROMPT
+  class_property bundle_analyze_prompt : String = LLM::BUNDLE_ANALYZE_PROMPT
+  class_property llm_optimize_prompt : String = <<-PROMPT
+    Analyze the provided endpoint and optimize it for better structure, naming conventions, and parameter handling.
 
-  # Reset all prompt overrides to nil
-  def self.reset
-    @@filter_prompt_override = nil
-    @@analyze_prompt_override = nil
-    @@bundle_analyze_prompt_override = nil
-    @@llm_optimize_prompt_override = nil
-  end
+    Focus on:
+    - Normalizing unusual URL patterns
+    - Improving parameter naming conventions
+    - Standardizing path structures
+    - Removing redundant or confusing elements
 
-  # Setters for prompt overrides
-  def self.filter_prompt=(value : String)
-    @@filter_prompt_override = value
-  end
-
-  def self.analyze_prompt=(value : String)
-    @@analyze_prompt_override = value
-  end
-
-  def self.bundle_analyze_prompt=(value : String)
-    @@bundle_analyze_prompt_override = value
-  end
-
-  def self.llm_optimize_prompt=(value : String)
-    @@llm_optimize_prompt_override = value
-  end
-
-  # Getters that return override or default
-  def self.filter_prompt
-    @@filter_prompt_override || LLM::FILTER_PROMPT
-  end
-
-  def self.analyze_prompt
-    @@analyze_prompt_override || LLM::ANALYZE_PROMPT
-  end
-
-  def self.bundle_analyze_prompt
-    @@bundle_analyze_prompt_override || LLM::BUNDLE_ANALYZE_PROMPT
-  end
-
-  def self.llm_optimize_prompt
-    @@llm_optimize_prompt_override || default_llm_optimize_prompt
-  end
-
-  # Default LLM_OPTIMIZE_PROMPT value from the optimizer module
-  private def self.default_llm_optimize_prompt
-    <<-PROMPT
-      Analyze the provided endpoint and optimize it for better structure, naming conventions, and parameter handling.
-
-      Focus on:
-      - Normalizing unusual URL patterns
-      - Improving parameter naming conventions
-      - Standardizing path structures
-      - Removing redundant or confusing elements
-
-      Guidelines:
-      - Keep the core functionality and meaning intact
-      - Use RESTful conventions where appropriate
-      - Ensure parameter types are accurate
-      - Maintain endpoint uniqueness
-      - Do not include explanations or comments
-      - Output only the JSON result according to the schema
-      PROMPT
-  end
+    Guidelines:
+    - Keep the core functionality and meaning intact
+    - Use RESTful conventions where appropriate
+    - Ensure parameter types are accurate
+    - Maintain endpoint uniqueness
+    - Do not include explanations or comments
+    - Output only the JSON result according to the schema
+    PROMPT
 end

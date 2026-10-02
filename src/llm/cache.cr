@@ -35,10 +35,6 @@ module LLM
       @@logger = logger
     end
 
-    def self.logger : NoirLogger?
-      @@logger
-    end
-
     private def self.debug(message : String) : Nil
       @@logger.try &.debug(message)
     end
@@ -68,10 +64,6 @@ module LLM
 
     def self.enabled? : Bool
       @@enabled && !disabled_by_env?
-    end
-
-    def self.enable : Nil
-      @@enabled = true
     end
 
     def self.disable : Nil
@@ -159,27 +151,13 @@ module LLM
       false
     end
 
-    def self.delete(key : String) : Bool
-      path = path_for(key)
-      return false unless File.exists?(path)
-      File.delete(path)
-      true
-    rescue e
-      debug("Cache delete failed for #{key}: #{e.message}")
-      false
-    end
-
     # Returned by bulk mutations so callers can surface both successful
     # deletes and per-file failures (the prior shape returned just an
     # Int32, hiding partial failures behind a single number that the
     # caller would print as if everything succeeded). `orphans` counts
     # reclaimed temp files separately so "removed N entries" keeps meaning
     # N real cached responses.
-    record DeleteOutcome, deleted : Int32, failed : Int32, orphans : Int32 = 0 do
-      def total
-        deleted + failed
-      end
-    end
+    record DeleteOutcome, deleted : Int32, failed : Int32, orphans : Int32 = 0
 
     def self.clear : DeleteOutcome
       delete_matching { |_| true }

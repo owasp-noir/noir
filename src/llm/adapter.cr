@@ -3,6 +3,7 @@
 # Supports:
 # - LLM::General (OpenAI-compatible chat APIs)
 # - LLM::Ollama (Ollama local API with optional KV context reuse)
+# - LLM::ACPClient (ACP agents; includes Adapter directly)
 
 require "uri"
 require "./general/client"
@@ -32,11 +33,6 @@ module LLM
     # Implementations that do not support this can fallback to regular JSON-mode requests.
     def request_messages_with_tools(messages : Messages, _tools : String) : String
       request_messages(messages, "json")
-    end
-
-    # Whether this adapter supports server-side KV context reuse across calls.
-    def supports_context? : Bool
-      false
     end
 
     # Context-aware request. Adapters that support provider-side context can reuse it using a cache_key.
@@ -90,12 +86,8 @@ module LLM
     def initialize(@client : LLM::Ollama)
     end
 
-    def supports_context? : Bool
-      true
-    end
-
     def request_messages(messages : Messages, format : String = "json") : String
-      system_msg, user_payload = flatten_messages(messages)
+      system_msg, user_payload = self.class.flatten_messages(messages)
       client.request_with_context(system_msg, user_payload, format, nil)
     end
 
@@ -127,32 +119,10 @@ module LLM
       usr = users.join("\n\n")
       {sys, usr}
     end
-
-    private def flatten_messages(messages : Messages) : {String?, String}
-      self.class.flatten_messages(messages)
-    end
   end
 
-  # Adapter for ACP-based agents (codex, gemini, claude, etc.).
-  class ACPAdapter
+  class ACPClient
     include Adapter
-
-    getter client : LLM::ACPClient
-
-    def initialize(@client : LLM::ACPClient)
-    end
-
-    def request_messages(messages : Messages, format : String = "json") : String
-      client.request_messages(messages, format)
-    end
-
-    def request(prompt : String, format : String = "json") : String
-      client.request(prompt, format)
-    end
-
-    def close : Nil
-      client.close
-    end
   end
 
   # Factory for creating LLM adapters based on provider configuration.
@@ -211,7 +181,7 @@ module LLM
       prov = provider.downcase
       if LLM::ACPClient.acp_provider?(prov)
         acp_model = LLM::ACPClient.default_model(provider, model)
-        ACPAdapter.new(LLM::ACPClient.new(provider, acp_model, event_sink))
+        LLM::ACPClient.new(provider, acp_model, event_sink)
       elsif ollama_native?(prov)
         OllamaAdapter.new(LLM::Ollama.new(ollama_base_url(provider), model))
       else

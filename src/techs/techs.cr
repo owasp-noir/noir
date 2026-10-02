@@ -11,21 +11,13 @@ module NoirTechs
   # two contributors could claim the same tech key in different language files
   # and the chain would silently keep the last one.
   #
-  # ## Two accepted shapes
+  # ## Shape
   #
-  # A constant under `Catalog` may be either:
-  #
-  #   * a **language module** holding one constant per technology —
-  #     `module NoirTechs::Catalog::Kotlin; SPRING = {:kotlin_spring => {...}}`
-  #     in `catalog/kotlin/spring.cr`. This is the target shape: adding a
-  #     technology is a new file and never an edit to a shared list.
-  #   * a **flat bundle** of many entries — `Catalog::KOTLIN = {...}` in
-  #     `catalog/kotlin.cr`, the pre-split shape.
-  #
-  # Both are accepted so the tree can sit half-migrated indefinitely: the
-  # per-language split lands as independent PRs in any order, and a framework
-  # PR opened against the old layout still applies. The bundle branch is
-  # transitional and goes away with the last `catalog/{lang}.cr`.
+  # Every constant under `Catalog` is a **language module** holding one
+  # constant per technology —
+  # `module NoirTechs::Catalog::Kotlin; SPRING = {:kotlin_spring => {...}}`
+  # in `catalog/kotlin/spring.cr`. Adding a technology is a new file and never
+  # an edit to a shared list.
   #
   # ## Why the entries are spliced rather than merged
   #
@@ -50,18 +42,13 @@ module NoirTechs
 
     {% for const_name in Catalog.constants.sort %}
       {% node = Catalog.constant(const_name) %}
-      {% if node.is_a?(HashLiteral) %}
-        # Transitional: a pre-split per-language bundle.
-        {% bundles = [{"NoirTechs::Catalog::#{const_name}", node}] %}
-      {% elsif node.is_a?(TypeNode) %}
-        {% bundles = [] of Object %}
-        {% for tech_const in node.constants.sort %}
-          {% bundles << {"NoirTechs::Catalog::#{const_name}::#{tech_const}", node.constant(tech_const)} %}
-        {% end %}
-      {% else %}
-        {% raise "NoirTechs::Catalog::#{const_name} must be a language module or a Hash literal of catalog " \
-                 "entries. Put a technology's metadata in `module NoirTechs::Catalog::<Language>` inside " \
-                 "src/techs/catalog/<language>/<framework>.cr." %}
+      {% unless node.is_a?(TypeNode) %}
+        {% raise "NoirTechs::Catalog::#{const_name} must be a language module. Put a technology's metadata " \
+                 "in `module NoirTechs::Catalog::<Language>` inside src/techs/catalog/<language>/<framework>.cr." %}
+      {% end %}
+      {% bundles = [] of Object %}
+      {% for tech_const in node.constants.sort %}
+        {% bundles << {"NoirTechs::Catalog::#{const_name}::#{tech_const}", node.constant(tech_const)} %}
       {% end %}
 
       {% for bundle in bundles %}
