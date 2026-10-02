@@ -1,7 +1,6 @@
 module Noir
   # Low-level Clojure reader primitives, shared by the callee extractor in this
-  # directory and by the Clojure framework analyzers — `Analyzer::Clojure::Helper`
-  # is a thin delegation layer over this module, so the two never drift again.
+  # directory and by the Clojure framework analyzers, so the two never drift again.
   #
   # Every offset here is a *byte* offset into the raw source (`byte_at`), never a
   # character index, so the values stay usable with `String#byte_slice` on sources
@@ -68,6 +67,23 @@ module Noir
       end
 
       last
+    end
+
+    # Advance past whitespace and `;` comments. Clojure reads commas as
+    # whitespace; pass `commas: false` to stop on them.
+    def skip_ws_and_comments(source : String, index : Int32, limit : Int32, commas : Bool = true) : Int32
+      i = index
+      while i < limit
+        char = source.byte_at(i).unsafe_chr
+        if char.whitespace? || (commas && char == ',')
+          i += 1
+        elsif char == ';'
+          i = skip_comment(source, i, limit)
+        else
+          break
+        end
+      end
+      i
     end
 
     # Find the offset of the delimiter closing the one at `index`, skipping over

@@ -41,8 +41,6 @@ module Analyzer::Dart
       "head"    => "HEAD",
     }
 
-    ALL_VERBS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
-
     alias RawPage = NamedTuple(
       name_arg: String,
       method_arg: String?,
@@ -211,18 +209,18 @@ module Analyzer::Dart
     end
 
     private def resolve_verbs(method_arg : String?) : Array(String)
-      return ALL_VERBS unless method_arg
+      return ANY_ROUTE_HTTP_METHODS unless method_arg
       m = method_arg.match(/Method\s*\.\s*([a-zA-Z]+)/)
-      return ALL_VERBS unless m
+      return ANY_ROUTE_HTTP_METHODS unless m
       verb = m[1].downcase
       case verb
       when "dynamic"
-        ALL_VERBS
+        ANY_ROUTE_HTTP_METHODS
       when "ws"
         ["GET"] # WebSocket upgrade handshake is a GET.
       else
         mapped = METHOD_MAP[verb]?
-        mapped ? [mapped] : ALL_VERBS
+        mapped ? [mapped] : ANY_ROUTE_HTTP_METHODS
       end
     end
 

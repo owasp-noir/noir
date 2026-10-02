@@ -43,7 +43,6 @@ module Analyzer::Dart
       "options" => "OPTIONS",
     }
 
-    ALL_VERBS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
     alias RouterKey = Tuple(String, String)
 
     alias Route = NamedTuple(
@@ -267,7 +266,7 @@ module Analyzer::Dart
     private def annotation_verbs_and_path(dotted : String?, args : Array(String)) : Tuple(Array(String), String?)
       if dotted
         verb = dotted.downcase
-        return {ALL_VERBS.dup, args[0]} if verb == "all"
+        return {ANY_ROUTE_HTTP_METHODS.dup, args[0]} if verb == "all"
         mapped = HTTP_METHOD_MAP[verb]?
         return {[mapped], args[0]} if mapped
         return {[] of String, nil}
@@ -278,7 +277,7 @@ module Analyzer::Dart
       verb_lit = Helper.extract_string_literal(args[0])
       return {[] of String, nil} unless verb_lit
       verb = verb_lit.downcase
-      return {ALL_VERBS.dup, args[1]} if verb == "all"
+      return {ANY_ROUTE_HTTP_METHODS.dup, args[1]} if verb == "all"
       mapped = HTTP_METHOD_MAP[verb]?
       return {[mapped], args[1]} if mapped
       {[] of String, nil}
@@ -431,7 +430,7 @@ module Analyzer::Dart
         mounts << {prefix: normalize_path(literal), child: child}
       when "all"
         callees = include_callee && args.size >= 2 ? handler_callees(args[1], file_content, close_paren, path, line) : [] of Noir::DartCalleeExtractor::Entry
-        ALL_VERBS.each do |verb|
+        ANY_ROUTE_HTTP_METHODS.each do |verb|
           routes << {verb: verb, path: normalize_path(literal), line: line, file: path, callees: callees}
         end
       else

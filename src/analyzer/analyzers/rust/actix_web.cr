@@ -20,7 +20,6 @@ module Analyzer::Rust
       ["actix-web"]
     end
 
-    HTTP_VERBS = Set{"get", "post", "put", "delete", "patch", "head", "options"}
     alias GlobalFunctionEntry = NamedTuple(name: String, path: String, hints: Array(String), params_text: String?, callees: Array(Noir::RustCalleeExtractor::Entry))
 
     # Precompiled union for analyze_file's builder-pass evidence gate, so it

@@ -41,7 +41,7 @@ module Analyzer::Javascript
       end
 
       # Process static directories to create endpoints for static files
-      process_static_dirs(static_dirs, result)
+      process_js_static_dirs(static_dirs, result)
 
       result
     end
@@ -56,11 +56,6 @@ module Analyzer::Javascript
 
     private def client_library_file?(content : String) : Bool
       content.matches?(CLIENT_LIBRARY_RE)
-    end
-
-    # Process static directories and add endpoints for each file
-    private def process_static_dirs(static_dirs : Array(Hash(String, String)), result : Array(Endpoint))
-      process_js_static_dirs(static_dirs, result)
     end
 
     private def analyze_with_regex(path : String, result : Array(Endpoint), static_dirs : Array(Hash(String, String)) = [] of Hash(String, String))

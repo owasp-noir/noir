@@ -6,11 +6,8 @@ require "../../ext/tree_sitter/tree_sitter"
 
 module Analyzer::Rust
   abstract class RustEngine < FileScanEngine
-    # Standard set of HTTP methods that `axum::routing::any(...)` /
-    # actix `web::route()` / similar method-agnostic registrations
-    # accept. Mirrors the Go `fan_out_verbs` set so output formats
-    # see real HTTP methods instead of a non-HTTP "ANY" string.
-    ANY_FAN_OUT_VERBS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
+    # Lower-case verb names the route macros and builders are spelled with.
+    HTTP_VERBS = Set{"get", "post", "put", "delete", "patch", "head", "options"}
 
     # Expand `any` / `all` (case-insensitive) into the seven
     # canonical HTTP methods. Anything else passes through as a
@@ -18,7 +15,7 @@ module Analyzer::Rust
     def self.fan_out_verbs(verb : String) : Array(String)
       case verb.upcase
       when "ANY", "ALL"
-        ANY_FAN_OUT_VERBS
+        ANY_ROUTE_HTTP_METHODS
       else
         [verb]
       end

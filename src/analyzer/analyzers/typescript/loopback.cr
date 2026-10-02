@@ -165,30 +165,30 @@ module Analyzer::Typescript
     private def extract_path_parameters(url : String, endpoint : Endpoint)
       url.scan(/\{(\w+)\}/) do |match|
         param_name = match[1]
-        push_unique_param(endpoint, Param.new(param_name, "", "path"))
+        endpoint.push_param(Param.new(param_name, "", "path"))
       end
     end
 
     private def extract_decorator_parameters(method_params : String, endpoint : Endpoint)
       # `@param.path.string('id')`, `@param.path.number('id')`, ...
       method_params.scan(/@param\.path\.\w+\s*\(\s*['"`]([^'"`]+)['"`]/) do |m|
-        push_unique_param(endpoint, Param.new(m[1], "", "path"))
+        endpoint.push_param(Param.new(m[1], "", "path"))
       end
 
       # `@param.query.string('name')`, `@param.query.object('filter', ...)`, ...
       method_params.scan(/@param\.query\.\w+\s*\(\s*['"`]([^'"`]+)['"`]/) do |m|
-        push_unique_param(endpoint, Param.new(m[1], "", "query"))
+        endpoint.push_param(Param.new(m[1], "", "query"))
       end
 
       # `@param.header.string('x-token')`, ...
       method_params.scan(/@param\.header\.\w+\s*\(\s*['"`]([^'"`]+)['"`]/) do |m|
-        push_unique_param(endpoint, Param.new(m[1], "", "header"))
+        endpoint.push_param(Param.new(m[1], "", "header"))
       end
 
       # `@param.array('names', 'query', {type: 'string'})` — explicit location as 2nd arg.
       method_params.scan(/@param\.array\s*\(\s*['"`]([^'"`]+)['"`]\s*,\s*['"`](\w+)['"`]/) do |m|
         location = m[2]
-        push_unique_param(endpoint, Param.new(m[1], "", location)) if ARRAY_PARAM_LOCATIONS.includes?(location)
+        endpoint.push_param(Param.new(m[1], "", location)) if ARRAY_PARAM_LOCATIONS.includes?(location)
       end
 
       # `@requestBody()`, `@requestBody({...})`, `@requestBody.array()`,
@@ -197,7 +197,7 @@ module Analyzer::Typescript
       # to one generic `body` param, matching the NestJS `@Body()` (no
       # field name) convention.
       if method_params =~ /@requestBody\b/
-        push_unique_param(endpoint, Param.new("body", "", "body"))
+        endpoint.push_param(Param.new("body", "", "body"))
       end
     end
 
@@ -322,11 +322,6 @@ module Analyzer::Typescript
 
     private def split_top_level(text : String, delimiter : Char) : Array(String)
       Noir::TopLevelSplit.split(text, delimiter, Noir::TopLevelSplit::Rules::JS)
-    end
-
-    private def push_unique_param(endpoint : Endpoint, param : Param)
-      return if endpoint.params.any? { |existing| existing.name == param.name && existing.param_type == param.param_type }
-      endpoint.push_param(param)
     end
   end
 end

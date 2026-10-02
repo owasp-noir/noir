@@ -1,5 +1,5 @@
 require "../../../models/analyzer"
-require "./clojure_helper"
+require "../../../miniparsers/clojure_scanner"
 require "../../engines/cli_endpoint_support"
 
 module Analyzer::Clojure
@@ -135,16 +135,16 @@ module Analyzer::Clojure
       # A dispatch entry surfaces its `cli://root/cmd` endpoint even if its
       # `:spec` map is empty/absent (e.g. a bare `help` subcommand).
       entries.each do |(o, _, segments)|
-        fetch_endpoint(endpoints, "#{root_url}/#{segments}", path, Helper.line_number_for(content, o))
+        fetch_endpoint(endpoints, "#{root_url}/#{segments}", path, Noir::ClojureScanner.line_number_for(content, o))
       end
 
       content.scan(/:spec\s*(\{)/) do |m|
         spec_open = m.byte_begin(1)
-        spec_close = Helper.find_matching_delimiter(content, spec_open, '{', '}', content.bytesize)
+        spec_close = Noir::ClojureScanner.find_matching_delimiter(content, spec_open, '{', '}', content.bytesize)
         owner = entries.find { |(o, c, _)| o <= spec_open && spec_close <= c }
         target_url = owner ? "#{root_url}/#{owner[2]}" : root_url
         spec_options(content, spec_open, spec_close).each do |(opt_name, key_pos)|
-          fetch_endpoint(endpoints, target_url, path, Helper.line_number_for(content, key_pos)).push_param(Param.new(opt_name, "", "flag"))
+          fetch_endpoint(endpoints, target_url, path, Noir::ClojureScanner.line_number_for(content, key_pos)).push_param(Param.new(opt_name, "", "flag"))
         end
       end
     end
@@ -162,9 +162,9 @@ module Analyzer::Clojure
         char = content.byte_at(i).unsafe_chr
         case char
         when ';'
-          i = Helper.skip_comment(content, i, spec_close)
+          i = Noir::ClojureScanner.skip_comment(content, i, spec_close)
         when '"'
-          i = Helper.skip_string(content, i, spec_close)
+          i = Noir::ClojureScanner.skip_string(content, i, spec_close)
         when '{'
           depth += 1
         when '}'
@@ -192,9 +192,9 @@ module Analyzer::Clojure
         char = content.byte_at(i).unsafe_chr
         case char
         when ';'
-          i = Helper.skip_comment(content, i, limit)
+          i = Noir::ClojureScanner.skip_comment(content, i, limit)
         when '"'
-          i = Helper.skip_string(content, i, limit)
+          i = Noir::ClojureScanner.skip_string(content, i, limit)
         when '{'
           stack.push(i)
         when '}'

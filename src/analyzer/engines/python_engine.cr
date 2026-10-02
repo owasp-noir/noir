@@ -122,6 +122,12 @@ module Analyzer::Python
       end
     end
 
+    # Splits call arguments on top-level commas, keeping every empty part so
+    # positional indexing of the result stays valid.
+    protected def split_python_arguments(args : ::String) : Array(::String)
+      Noir::TopLevelSplit.split(args, ',', Noir::TopLevelSplit::Rules::PYTHON)
+    end
+
     # Parses the definition of a function from the source lines starting at a given index
     def parse_function_def(source_lines : Array(::String), start_index : Int32) : FunctionDefinition?
       parameters = [] of FunctionParameter

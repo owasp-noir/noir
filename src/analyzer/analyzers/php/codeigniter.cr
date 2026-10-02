@@ -16,8 +16,7 @@ module Analyzer::Php
       "hash"     => "hash",
     }
 
-    ALL_HTTP_VERBS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]
-    CI3_VERBS      = %w[get post put patch delete options head cli]
+    CI3_VERBS = %w[get post put patch delete options head cli]
 
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
@@ -133,7 +132,7 @@ module Analyzer::Php
         handler = extract_ci4_handler(match[2]?)
         full_path = build_full_path(prefix, normalize_route(route_path))
         params = extract_ci_path_params(full_path)
-        ALL_HTTP_VERBS.each do |http_method|
+        ANY_ROUTE_HTTP_METHODS.each do |http_method|
           endpoint = Endpoint.new(full_path, http_method, params, details.dup)
           attach_route_target_callees(endpoint, handler, file_path, controller_namespace) if include_callee
           endpoints << endpoint
@@ -273,7 +272,7 @@ module Analyzer::Php
                     [method_qualifier.upcase]
                   else
                     # Bare $route['x'] = '...' matches any HTTP verb.
-                    ALL_HTTP_VERBS
+                    ANY_ROUTE_HTTP_METHODS
                   end
 
         normalized = normalize_route(route_path)

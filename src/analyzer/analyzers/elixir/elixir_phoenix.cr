@@ -1245,7 +1245,7 @@ module Analyzer::Elixir
     end
 
     private def match_route_methods(method : String) : Array(String)
-      return ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"] if method == "*"
+      return ANY_ROUTE_HTTP_METHODS if method == "*"
       [method.upcase]
     end
   end

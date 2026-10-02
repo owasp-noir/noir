@@ -634,14 +634,6 @@ module Analyzer::Python
       reference.matches?(/^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$/) ? reference : ""
     end
 
-    # Delegates to the shared splitter; `Rules::PYTHON` reproduces this
-    # file's previous hand-rolled loop exactly (both quote styles, backslash
-    # escapes inside quotes, per-kind clamped depth, no strip, and every
-    # empty part kept so positional indexing of the result stays valid).
-    private def split_python_arguments(args : ::String) : Array(::String)
-      Noir::TopLevelSplit.split(args, ',', Noir::TopLevelSplit::Rules::PYTHON)
-    end
-
     private def normalize_receiver(receiver : ::String) : ::String
       receiver.strip.split(".").last
     end

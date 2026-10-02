@@ -22,8 +22,6 @@ module Analyzer::Rust
       ["poem"]
     end
 
-    HTTP_VERBS = Set{"get", "post", "put", "delete", "patch", "head", "options"}
-
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       source = read_file_content(path)

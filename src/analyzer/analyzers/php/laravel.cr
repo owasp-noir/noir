@@ -175,9 +175,6 @@ module Analyzer::Php
     # above are what actually decide which registrations become endpoints.
     ROUTE_REGISTRATION_RE = /Route::(?:\w+\s*\([^;]*?\)\s*->\s*)*\w+\s*\(\s*(?:(?:\[[^\]]*\]|['"][^'"]*['"])\s*,\s*)?['"][^'"]*['"]\s*,/mi
 
-    # Methods a single `Route::any` registration stands for.
-    ANY_ROUTE_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]
-
     private def analyze_routes_content(content : String,
                                        prefix : String,
                                        file_path : String,
@@ -238,7 +235,7 @@ module Analyzer::Php
       # Route::any(...) — one registration standing for every verb.
       each_laravel_route(ctx, ANY_REGEX) do |route_match|
         route_path = route_match[1]
-        emit_handler_route(endpoints, ctx, route_match, ANY_ROUTE_METHODS, build_full_path(prefix, route_path))
+        emit_handler_route(endpoints, ctx, route_match, ANY_ROUTE_HTTP_METHODS, build_full_path(prefix, route_path))
       end
 
       # Static routes: no handler to walk into, GET only.
