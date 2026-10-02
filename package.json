@@ -1,0 +1,18 @@
+{
+    "name": "@owasp-noir/noir",
+    "version": "1.1.0",
+    "description": "OWASP Noir CLI",
+    "license": "MIT",
+    "bin": {
+        "noir": "./bin/noir"
+    },
+    "scripts": {
+        "postinstall": "node install.js"
+    },
+    "files": [
+        "install.js"
+    ],
+    "engines": {
+        "node": ">=18"
+    }
+}
