@@ -186,14 +186,6 @@ module Noir
       fields
     end
 
-    def extract_class_supertypes(source : String) : Hash(String, String)
-      results = Hash(String, String).new
-      Noir::TreeSitter.parse_java(source) do |root|
-        results = extract_class_supertypes_from(root, source)
-      end
-      results
-    end
-
     # Map each `class` to the simple name of its superclass
     # (`{"Owner" => "Person"}` for `class Owner extends Person`). Drives
     # cross-file DTO inheritance: a command object that extends a base
@@ -236,20 +228,6 @@ module Noir
     # `class_fields` is the pre-built DTO index — a parameter whose
     # type matches a key is expanded into one `Param` per public /
     # setter-backed field on that class.
-    def extract_method_parameters(source : String,
-                                  class_name : String,
-                                  method_name : String,
-                                  verb : String,
-                                  parameter_format : String?,
-                                  class_fields : Hash(String, Array(FieldInfo)),
-                                  target_line : Int32? = nil) : Array(Param)
-      params = [] of Param
-      Noir::TreeSitter.parse_java(source) do |root|
-        params = extract_method_parameters_from(root, source, class_name, method_name, verb, parameter_format, class_fields, target_line)
-      end
-      params
-    end
-
     def extract_method_parameters_from(root : LibTreeSitter::TSNode,
                                        source : String,
                                        class_name : String,
@@ -274,14 +252,6 @@ module Noir
     # read its `consumes = ...` attribute. Returns "form" / "json" /
     # nil — matches `spring.cr`'s legacy helper semantics so the
     # analyzer can swap this in without behaviour drift.
-    def extract_consumes(source : String, class_name : String, method_name : String) : String?
-      result : String? = nil
-      Noir::TreeSitter.parse_java(source) do |root|
-        result = extract_consumes_from(root, source, class_name, method_name)
-      end
-      result
-    end
-
     def extract_consumes_from(root : LibTreeSitter::TSNode, source : String, class_name : String, method_name : String) : String?
       method = find_method(root, source, class_name, method_name)
       return unless method
@@ -366,14 +336,6 @@ module Noir
     # Return the set of class/interface simple names annotated with
     # `@FeignClient` in `source`. Spring Cloud Feign interfaces are
     # treated as remote clients in the analyzer's output.
-    def extract_feign_client_classes(source : String) : Set(String)
-      result = Set(String).new
-      Noir::TreeSitter.parse_java(source) do |root|
-        result = extract_feign_client_classes_from(root, source)
-      end
-      result
-    end
-
     def extract_feign_client_classes_from(root : LibTreeSitter::TSNode, source : String) : Set(String)
       result = Set(String).new
       walk_class_containers(root) do |decl|

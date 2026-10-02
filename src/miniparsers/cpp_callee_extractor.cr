@@ -42,7 +42,7 @@ module Noir::CppCalleeExtractor
       scan_line(stripped, file_path, start_line + index, entries)
     end
 
-    dedup_entries(entries)
+    entries.uniq
   end
 
   def extract_block_after(source : String, start_index : Int32, limit : Int32 = source.bytesize) : Tuple(String, Int32)?

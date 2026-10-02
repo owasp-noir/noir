@@ -545,7 +545,7 @@ module Noir
       return unless left && right
 
       name_node = identifier_or_first_child(left)
-      rhs_node = first_named_child(right)
+      rhs_node = Noir::TreeSitter.first_named_child(right)
       return unless name_node && rhs_node
       return unless Noir::TreeSitter.node_type(name_node) == "identifier"
       return unless Noir::TreeSitter.node_type(rhs_node) == "call_expression"
@@ -659,8 +659,8 @@ module Noir
       left = Noir::TreeSitter.field(decl, "left")
       right = Noir::TreeSitter.field(decl, "right")
       return unless left && right
-      var_name_node = first_named_child(left)
-      rhs_node = first_named_child(right)
+      var_name_node = Noir::TreeSitter.first_named_child(left)
+      rhs_node = Noir::TreeSitter.first_named_child(right)
       return unless var_name_node && rhs_node
       return unless Noir::TreeSitter.node_type(var_name_node) == "identifier"
       return unless Noir::TreeSitter.node_type(rhs_node) == "call_expression"
@@ -786,7 +786,7 @@ module Noir
         value = Noir::TreeSitter.field(node, "value")
         return unless name && value
         return unless Noir::TreeSitter.node_type(name) == "identifier"
-        expr = first_named_child(value)
+        expr = Noir::TreeSitter.first_named_child(value)
         return unless expr
         text = string_expr_text(expr, source, values)
         return unless text
@@ -796,8 +796,8 @@ module Noir
         left = Noir::TreeSitter.field(node, "left")
         right = Noir::TreeSitter.field(node, "right")
         return unless left && right
-        name = first_named_child(left)
-        expr = first_named_child(right)
+        name = Noir::TreeSitter.first_named_child(left)
+        expr = Noir::TreeSitter.first_named_child(right)
         return unless name && expr
         return unless Noir::TreeSitter.node_type(name) == "identifier"
         text = string_expr_text(expr, source, values)
@@ -827,7 +827,7 @@ module Noir
       # `expression_list` wraps both sides; the single-variable case has
       # one named child on each side.
       var_name_node = identifier_or_first_child(left)
-      rhs_node = first_named_child(right)
+      rhs_node = Noir::TreeSitter.first_named_child(right)
       return unless var_name_node && rhs_node
       return unless Noir::TreeSitter.node_type(var_name_node) == "identifier"
       return unless Noir::TreeSitter.node_type(rhs_node) == "call_expression"
@@ -1485,15 +1485,9 @@ module Noir
     end
 
     # Return the first named child of `node`, or nil if there isn't one.
-    private def first_named_child(node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
-      count = LibTreeSitter.ts_node_named_child_count(node)
-      return if count == 0
-      LibTreeSitter.ts_node_named_child(node, 0_u32)
-    end
-
     private def identifier_or_first_child(node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
       return node if Noir::TreeSitter.node_type(node) == "identifier"
-      first_named_child(node)
+      Noir::TreeSitter.first_named_child(node)
     end
 
     # `depth` bounds the descent: this walks operand-by-operand through
@@ -1523,7 +1517,7 @@ module Noir
         return unless left_text && right_text
         "#{left_text}#{right_text}"
       when "parenthesized_expression"
-        child = first_named_child(node)
+        child = Noir::TreeSitter.first_named_child(node)
         child ? string_expr_text(child, source, values, depth + 1) : nil
       end
     end
@@ -1559,7 +1553,7 @@ module Noir
     private def decode_method_token(node : LibTreeSitter::TSNode, source : String) : String
       target = node
       if Noir::TreeSitter.node_type(target) == "literal_element"
-        if child = first_named_child(target)
+        if child = Noir::TreeSitter.first_named_child(target)
           target = child
         end
       end

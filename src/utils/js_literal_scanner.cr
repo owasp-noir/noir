@@ -47,29 +47,6 @@ module Noir
       end
     end
 
-    # Try to skip a literal at the current position
-    # Returns updated content string and position if a literal was skipped, nil otherwise
-    def self.try_skip_literal(content : String, pos : Int32, accumulated : String) : NamedTuple(content: String, pos: Int32)?
-      # Rebuild the rolling tail window the scan core keys regex detection
-      # off from the caller-provided accumulated prefix.
-      stripped = accumulated.rstrip
-      window = (stripped.size > KEYWORD_WINDOW ? stripped[(stripped.size - KEYWORD_WINDOW)..] : stripped).chars
-      pending_ws = [] of Char
-
-      new_pos = nil.as(Int32?)
-      appended = String.build do |io|
-        new_pos = if single_byte?(content)
-                    scan_literal(content.to_slice, content.size, pos, io, window, pending_ws)
-                  else
-                    scan_literal(content.chars, content.size, pos, io, window, pending_ws)
-                  end
-      end
-      end_pos = new_pos
-      return unless end_pos
-
-      {content: appended.empty? ? accumulated : accumulated + appended, pos: end_pos}
-    end
-
     # Find matching closing brace, skipping literals
     def self.find_matching_brace(content : String, open_brace_idx : Int32) : Int32?
       if single_byte?(content)

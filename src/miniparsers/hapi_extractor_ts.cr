@@ -94,7 +94,7 @@ module Noir
     end
 
     private def route_call?(call : LibTreeSitter::TSNode, source : String) : Bool
-      callee = first_named_child(call)
+      callee = Noir::TreeSitter.first_named_child(call)
       return false unless callee
       return false unless Noir::TreeSitter.node_type(callee) == "member_expression"
 
@@ -237,7 +237,7 @@ module Noir
           block.call(:body, "")
         end
       when "subscript_expression"
-        target = first_named_child(node)
+        target = Noir::TreeSitter.first_named_child(node)
         if target
           base_chain = navigation_chain(target, source)
           if base_chain.size >= 2 && base_chain[0] == "request"
@@ -306,12 +306,6 @@ module Noir
     end
 
     # ---- shape helpers ----------------------------------------------
-
-    private def first_named_child(node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
-      count = LibTreeSitter.ts_node_named_child_count(node)
-      return if count == 0
-      LibTreeSitter.ts_node_named_child(node, 0_u32)
-    end
 
     private def arguments_node(call : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
       Noir::TreeSitter.each_named_child(call) do |child|

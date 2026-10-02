@@ -12,7 +12,6 @@
   - changed-files:
       - any-glob-to-any-file:
           - src/minilexers/**
-          - src/models/minilexer/**
           - src/miniparsers/**
 📦 output-builder:
   - changed-files:

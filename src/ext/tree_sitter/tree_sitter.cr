@@ -378,6 +378,24 @@ module Noir::TreeSitter
     LibTreeSitter.ts_node_is_null(child) ? nil : child
   end
 
+  def self.first_named_child(node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
+    return if LibTreeSitter.ts_node_named_child_count(node) == 0
+    LibTreeSitter.ts_node_named_child(node, 0_u32)
+  end
+
+  # A string literal's `string_fragment` text, or its raw text minus the
+  # surrounding double quotes when the grammar exposes no fragments.
+  def self.decode_string_literal(node : LibTreeSitter::TSNode, source : String) : String
+    buf = String.build do |io|
+      each_named_child(node) do |child|
+        io << node_text(child, source) if node_type(child) == "string_fragment"
+      end
+    end
+    return buf unless buf.empty?
+    raw = node_text(node, source)
+    raw.size >= 2 && raw.starts_with?('"') && raw.ends_with?('"') ? raw[1..-2] : raw
+  end
+
   # Above this many named children, switch from indexed access to a
   # tree cursor. `ts_node_named_child(node, i)` is O(i) (it re-walks the
   # sibling list each call), so the indexed loop is O(n^2) in the child

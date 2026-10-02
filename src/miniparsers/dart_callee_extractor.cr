@@ -39,7 +39,7 @@ module Noir::DartCalleeExtractor
       scan_line(stripped, file_path, start_line + index, entries)
     end
 
-    dedup_entries(entries)
+    entries.uniq
   end
 
   def extract_body_after(source : String, start_index : Int32, limit : Int32 = source.bytesize) : BodyInfo?

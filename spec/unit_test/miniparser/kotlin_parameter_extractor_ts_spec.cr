@@ -10,9 +10,11 @@ private def extract(source : String,
                     fields : Hash(String, Array(Noir::TreeSitterKotlinParameterExtractor::FieldInfo)) = {} of String => Array(Noir::TreeSitterKotlinParameterExtractor::FieldInfo),
                     string_constants : Hash(String, String) = Hash(String, String).new,
                     local_string_constants : Hash(String, String) = Hash(String, String).new)
-  Noir::TreeSitterKotlinParameterExtractor.extract_method_parameters(
-    source, class_name, method_name, verb, parameter_format, fields, string_constants, local_string_constants
-  )
+  Noir::TreeSitter.parse_kotlin(source) do |root|
+    Noir::TreeSitterKotlinParameterExtractor.extract_method_parameters_from(
+      root, source, class_name, method_name, verb, parameter_format, fields, string_constants, local_string_constants
+    )
+  end
 end
 
 private def extract_server_request(source : String,
@@ -32,7 +34,7 @@ private def extract_server_request(source : String,
 end
 
 describe Noir::TreeSitterKotlinParameterExtractor do
-  describe "#extract_method_parameters" do
+  describe "#extract_method_parameters_from" do
     it "treats @RequestParam as query and respects defaultValue" do
       source = <<-KT
         @RestController
@@ -694,7 +696,7 @@ describe Noir::TreeSitterKotlinParameterExtractor do
     end
   end
 
-  describe "#extract_consumes" do
+  describe "#extract_consumes_from" do
     it "detects form via the urlencoded literal" do
       source = <<-KT
         class C {
@@ -702,7 +704,7 @@ describe Noir::TreeSitterKotlinParameterExtractor do
             fun create(): String = ""
         }
         KT
-      Noir::TreeSitterKotlinParameterExtractor.extract_consumes(source, "C", "create").should eq("form")
+      Noir::TreeSitter.parse_kotlin(source) { |root| Noir::TreeSitterKotlinParameterExtractor.extract_consumes_from(root, source, "C", "create") }.should eq("form")
     end
 
     it "detects json via APPLICATION_JSON_VALUE constant in arrayOf" do
@@ -712,7 +714,7 @@ describe Noir::TreeSitterKotlinParameterExtractor do
             fun create(): String = ""
         }
         KT
-      Noir::TreeSitterKotlinParameterExtractor.extract_consumes(source, "C", "create").should eq("json")
+      Noir::TreeSitter.parse_kotlin(source) { |root| Noir::TreeSitterKotlinParameterExtractor.extract_consumes_from(root, source, "C", "create") }.should eq("json")
     end
 
     it "returns nil when consumes is absent" do
@@ -722,7 +724,7 @@ describe Noir::TreeSitterKotlinParameterExtractor do
             fun create(): String = ""
         }
         KT
-      Noir::TreeSitterKotlinParameterExtractor.extract_consumes(source, "C", "create").should be_nil
+      Noir::TreeSitter.parse_kotlin(source) { |root| Noir::TreeSitterKotlinParameterExtractor.extract_consumes_from(root, source, "C", "create") }.should be_nil
     end
   end
 
@@ -814,7 +816,7 @@ describe Noir::TreeSitterKotlinParameterExtractor do
     end
   end
 
-  describe "#extract_class_supertypes" do
+  describe "#extract_class_supertypes_from" do
     it "maps a class to its superCLASS (constructor-invoked supertype)" do
       source = <<-KT
         open class Person : BaseEntity() {
@@ -824,7 +826,7 @@ describe Noir::TreeSitterKotlinParameterExtractor do
             var address = ""
         }
         KT
-      supers = Noir::TreeSitterKotlinParameterExtractor.extract_class_supertypes(source)
+      supers = Noir::TreeSitter.parse_kotlin(source) { |root| Noir::TreeSitterKotlinParameterExtractor.extract_class_supertypes_from(root, source) }
       supers["Owner"].should eq("Person")
       supers["Person"].should eq("BaseEntity")
     end
@@ -835,7 +837,7 @@ describe Noir::TreeSitterKotlinParameterExtractor do
             var x = ""
         }
         KT
-      Noir::TreeSitterKotlinParameterExtractor.extract_class_supertypes(source).has_key?("Handler").should be_false
+      Noir::TreeSitter.parse_kotlin(source) { |root| Noir::TreeSitterKotlinParameterExtractor.extract_class_supertypes_from(root, source) }.has_key?("Handler").should be_false
     end
   end
 

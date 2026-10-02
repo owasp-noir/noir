@@ -115,7 +115,7 @@ module Noir
       results
     end
 
-    # Parses `source` and returns every `Blueprint(...)` assignment that
+    # Returns every `Blueprint(...)` assignment under `root` that
     # matches one of `module_names` or a bare `Blueprint`.
     #
     # `module_names` is the list of module prefixes allowed before
@@ -127,19 +127,6 @@ module Noir
     # still extracted procedurally because a Blueprint may be declared
     # without one and the query language can't express "this keyword,
     # if present" cleanly.
-    def extract_blueprints(source : String, module_names : Array(String)) : Array(BlueprintDecl)
-      ensure_clearer_registered
-      tag = module_names.join(",")
-      key = ExtractionResultCache.key(source, "blueprints", tag)
-      ExtractionResultCache.fetch(@@blueprint_memo, @@blueprint_order, key, mutex: @@memo_mutex) do
-        results = [] of BlueprintDecl
-        Noir::TreeSitter.parse_python(source) do |root|
-          extract_blueprints_from(root, source, module_names, results)
-        end
-        results
-      end
-    end
-
     def extract_blueprints_from(root : LibTreeSitter::TSNode,
                                 source : String,
                                 module_names : Array(String),

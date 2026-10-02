@@ -433,7 +433,7 @@ module Noir
 
       case Noir::TreeSitter.node_type(node)
       when "string_literal"
-        decode_string_literal(node, source)
+        Noir::TreeSitter.decode_string_literal(node, source)
       when "identifier", "field_access", "scoped_identifier"
         resolve_constant_reference(Noir::TreeSitter.node_text(node, source), constants)
       when "binary_expression"
@@ -464,19 +464,6 @@ module Noir
         key.ends_with?(suffix) ? value : nil
       end.uniq!
       matches.size == 1 ? matches.first : nil
-    end
-
-    private def decode_string_literal(node : LibTreeSitter::TSNode, source : String) : String
-      buf = String.build do |io|
-        Noir::TreeSitter.each_named_child(node) do |child|
-          if Noir::TreeSitter.node_type(child) == "string_fragment"
-            io << Noir::TreeSitter.node_text(child, source)
-          end
-        end
-      end
-      return buf unless buf.empty?
-      raw = Noir::TreeSitter.node_text(node, source)
-      raw.size >= 2 && raw.starts_with?('"') && raw.ends_with?('"') ? raw[1..-2] : raw
     end
 
     # Pull the lambda's body (`block` or expression) out of the call's

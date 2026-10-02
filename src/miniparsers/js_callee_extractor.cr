@@ -104,7 +104,7 @@ module Noir::JSCalleeExtractor
                                file_path : String) : Array(Entry)
     sink = [] of Entry
     walk_callees(handler_body(handler), source, file_path, sink, 0)
-    dedup_entries(sink)
+    sink.uniq
   rescue
     [] of Entry
   end
@@ -121,7 +121,7 @@ module Noir::JSCalleeExtractor
       end
     end
 
-    dedup_entries(sink)
+    sink.uniq
   rescue
     [] of Entry
   end
@@ -155,7 +155,7 @@ module Noir::JSCalleeExtractor
       end
     end
 
-    dedup_entries(sink)
+    sink.uniq
   rescue
     [] of Entry
   end
@@ -648,7 +648,7 @@ module Noir::JSCalleeExtractor
       end
     end
 
-    dedup_entries(entries)
+    entries.uniq
   end
 
   private def walk_callees(node : LibTreeSitter::TSNode,
@@ -661,7 +661,7 @@ module Noir::JSCalleeExtractor
 
     skip_function_child : LibTreeSitter::TSNode? = nil
     if Noir::TreeSitter.node_type(node) == "call_expression"
-      function = Noir::TreeSitter.field(node, "function") || first_named_child(node)
+      function = Noir::TreeSitter.field(node, "function") || Noir::TreeSitter.first_named_child(node)
       name = callee_text(node, source)
       unless name.empty?
         line = Noir::TreeSitter.node_start_row(node) + 1
@@ -683,7 +683,7 @@ module Noir::JSCalleeExtractor
   end
 
   private def callee_text(call : LibTreeSitter::TSNode, source : String) : String
-    function = Noir::TreeSitter.field(call, "function") || first_named_child(call)
+    function = Noir::TreeSitter.field(call, "function") || Noir::TreeSitter.first_named_child(call)
     return "" unless function
 
     expression_text(function, source)
@@ -704,7 +704,7 @@ module Noir::JSCalleeExtractor
       property_name = expression_text(property, source)
       property_name.empty? ? "" : "#{receiver}.#{property_name}"
     when "parenthesized_expression"
-      inner = first_named_child(node)
+      inner = Noir::TreeSitter.first_named_child(node)
       inner ? expression_text(inner, source) : ""
     when "sequence_expression"
       last = last_named_child(node)
@@ -724,7 +724,7 @@ module Noir::JSCalleeExtractor
       name = callee_text(node, source)
       name.empty? ? "" : "#{name}()"
     when "parenthesized_expression"
-      inner = first_named_child(node)
+      inner = Noir::TreeSitter.first_named_child(node)
       inner ? receiver_text(inner, source) : ""
     else
       ""
@@ -732,7 +732,7 @@ module Noir::JSCalleeExtractor
   end
 
   private def call_method_name(call : LibTreeSitter::TSNode, source : String) : String
-    function = Noir::TreeSitter.field(call, "function") || first_named_child(call)
+    function = Noir::TreeSitter.field(call, "function") || Noir::TreeSitter.first_named_child(call)
     return "" unless function
     return "" unless Noir::TreeSitter.node_type(function) == "member_expression"
 
@@ -742,7 +742,7 @@ module Noir::JSCalleeExtractor
 
   private def route_call_lines(call : LibTreeSitter::TSNode) : Array(Int32)
     lines = [Noir::TreeSitter.node_start_row(call) + 1]
-    function = Noir::TreeSitter.field(call, "function") || first_named_child(call)
+    function = Noir::TreeSitter.field(call, "function") || Noir::TreeSitter.first_named_child(call)
     if function && Noir::TreeSitter.node_type(function) == "member_expression"
       property = Noir::TreeSitter.field(function, "property")
       if property
@@ -761,13 +761,6 @@ module Noir::JSCalleeExtractor
       end
       nil
     end
-  end
-
-  private def first_named_child(node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
-    child_count = LibTreeSitter.ts_node_named_child_count(node)
-    return if child_count == 0
-
-    LibTreeSitter.ts_node_named_child(node, 0)
   end
 
   private def last_named_child(node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?

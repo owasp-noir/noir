@@ -90,7 +90,7 @@ module Analyzer::Javascript
                 else
                   "#{static_path}/#{relative_path}"
                 end
-          url = url.gsub_repeatedly("//", "/")
+          url = url.squeeze('/')
 
           details = Details.new(PathInfo.new(file_path))
           endpoint = Endpoint.new(url, "GET", details)

@@ -102,7 +102,7 @@ describe "HTTP method validation" do
   end
 
   it "preserves all valid HTTP methods" do
-    valid_methods = get_allowed_methods
+    valid_methods = ALLOWED_HTTP_METHODS
     endpoints = optimizer.optimize_endpoints(
       valid_methods.map_with_index { |method, index| Endpoint.new("/endpoint#{index}", method) }
     )

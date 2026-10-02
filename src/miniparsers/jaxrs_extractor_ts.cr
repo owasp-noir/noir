@@ -185,14 +185,6 @@ module Noir
       collect_classes(root, source).keys
     end
 
-    def extract_application_path(source : String) : String?
-      result : String? = nil
-      Noir::TreeSitter.parse_java(source) do |root|
-        result = extract_application_path_from(root, source)
-      end
-      result
-    end
-
     def extract_application_path_from(root : LibTreeSitter::TSNode, source : String) : String?
       constants = TreeSitterJavaRouteExtractor.extract_string_constants_from(root, source)
       collect_classes(root, source).each_value do |decl|
@@ -773,7 +765,7 @@ module Noir
 
       case Noir::TreeSitter.node_type(node)
       when "string_literal"
-        decode_string_literal(node, source)
+        Noir::TreeSitter.decode_string_literal(node, source)
       when "identifier"
         text = Noir::TreeSitter.node_text(node, source)
         constants["#{current_class}.#{text}"]? || constants[text]?
@@ -814,19 +806,6 @@ module Noir
         end
       end
       result
-    end
-
-    private def decode_string_literal(node : LibTreeSitter::TSNode, source : String) : String
-      buf = String.build do |io|
-        Noir::TreeSitter.each_named_child(node) do |child|
-          if Noir::TreeSitter.node_type(child) == "string_fragment"
-            io << Noir::TreeSitter.node_text(child, source)
-          end
-        end
-      end
-      return buf unless buf.empty?
-      raw = Noir::TreeSitter.node_text(node, source)
-      raw.size >= 2 && raw.starts_with?('"') && raw.ends_with?('"') ? raw[1..-2] : raw
     end
 
     # JAX-RS path composition: trailing-slash on the class path is
@@ -1056,7 +1035,7 @@ module Noir
       Noir::TreeSitter.each_named_child(args) do |child|
         case Noir::TreeSitter.node_type(child)
         when "string_literal"
-          return decode_string_literal(child, source)
+          return Noir::TreeSitter.decode_string_literal(child, source)
         when "identifier", "field_access", "scoped_identifier", "binary_expression", "parenthesized_expression"
           if value = resolve_path_value(child, source, constants, current_class)
             return value

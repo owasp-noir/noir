@@ -1,6 +1,5 @@
 require "file_utils"
 require "../../spec_helper"
-require "../../../src/utils/string_extension"
 require "../../../src/analyzer/analyzers/go/gin"
 require "../../../src/models/code_locator"
 require "../../../src/models/logger"

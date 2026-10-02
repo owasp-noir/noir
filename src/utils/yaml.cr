@@ -1,15 +1,6 @@
 require "yaml"
 
-def valid_yaml?(content : String) : Bool
-  YAML.parse(content)
-  true
-rescue
-  false
-end
-
-# Strict `YAML.parse`-or-nil. Replaces the `valid_yaml?(content)` +
-# `YAML.parse(content)` idiom in detectors, which paid for two full
-# libyaml passes over the same content per file.
+# Strict `YAML.parse`-or-nil.
 def yaml_any?(content : String) : YAML::Any?
   YAML.parse(content)
 rescue

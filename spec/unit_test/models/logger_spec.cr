@@ -77,16 +77,6 @@ describe "NoirLogger" do
   end
 
   describe "output methods" do
-    it "supports puts" do
-      logger = NoirLogger.new(debug: false, verbose: false, colorize: false, no_log: false)
-      logger.puts("test message")
-    end
-
-    it "supports puts_sub" do
-      logger = NoirLogger.new(debug: false, verbose: false, colorize: false, no_log: false)
-      logger.puts_sub("sub message")
-    end
-
     it "supports sub" do
       logger = NoirLogger.new(debug: false, verbose: false, colorize: false, no_log: false)
       logger.sub("sub message")
@@ -172,7 +162,6 @@ describe "NoirLogger" do
       NoirLogger::LogLevel::SUCCESS.should_not be_nil
       NoirLogger::LogLevel::WARNING.should_not be_nil
       NoirLogger::LogLevel::ERROR.should_not be_nil
-      NoirLogger::LogLevel::FATAL.should_not be_nil
       NoirLogger::LogLevel::HEADING.should_not be_nil
     end
   end

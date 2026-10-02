@@ -56,10 +56,6 @@ CLI_ENDPOINT_METHOD = "CLI"
 # (the probe matchers) read this instead of keeping their own list.
 ENDPOINT_METHODS = ALLOWED_HTTP_METHODS + SYNTHETIC_ENDPOINT_METHODS + [CLI_ENDPOINT_METHOD]
 
-def get_allowed_methods
-  ALLOWED_HTTP_METHODS
-end
-
 def endpoint_method_token?(token : String) : Bool
   ENDPOINT_METHODS.includes?(token.upcase)
 end

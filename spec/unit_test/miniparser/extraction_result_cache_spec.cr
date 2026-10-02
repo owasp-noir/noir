@@ -58,8 +58,7 @@ describe Noir::TreeSitterPythonRouteExtractor do
     bps.map(&.name).should eq(["api"])
     bps[0].prefix.should eq("/api")
 
-    # Solo calls must hit the same memo entries.
+    # A solo call must hit the same memo entry.
     Noir::TreeSitterPythonRouteExtractor.extract_decorations(source).map(&.path).sort!.should eq(["/", "/items"])
-    Noir::TreeSitterPythonRouteExtractor.extract_blueprints(source, ["flask"]).map(&.name).should eq(["api"])
   end
 end

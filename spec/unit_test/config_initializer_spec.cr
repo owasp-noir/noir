@@ -163,7 +163,7 @@ describe ConfigInitializer do
   # the run exited 0 with AI analysis silently skipped. The generated
   # template models the quoted spelling itself (`concurrency: "…"`), so it is
   # the shape users copy.
-  describe "INTEGER_CONFIG_KEYS coercion" do
+  describe "integer key coercion" do
     it "coerces a quoted ai_max_token into an Int" do
       with_noir_home("ai_max_token: \"4000\"\n") do |options|
         options["ai_max_token"].as_i.should eq(4000)

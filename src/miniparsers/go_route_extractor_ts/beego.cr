@@ -135,7 +135,7 @@ module Noir
         end
         next unless left && right
         name_node = identifier_or_first_child(left)
-        rhs = first_named_child(right)
+        rhs = Noir::TreeSitter.first_named_child(right)
         next unless name_node && rhs
         next unless Noir::TreeSitter.node_type(name_node) == "identifier"
         type_name = composite_literal_type_name(rhs, source)
@@ -168,7 +168,7 @@ module Noir
                                             source : String) : String?
       comp = find_composite_literal(node)
       return unless comp
-      type_node = Noir::TreeSitter.field(comp, "type") || first_named_child(comp)
+      type_node = Noir::TreeSitter.field(comp, "type") || Noir::TreeSitter.first_named_child(comp)
       return unless type_node
       text = Noir::TreeSitter.node_text(type_node, source).lchop('*')
       return if text.includes?('.')

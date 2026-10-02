@@ -228,7 +228,7 @@ module Analyzer::Javascript
     private def normalize_path_for_prefix_exclude(path : String) : String
       normalized = path.strip
       normalized = "/#{normalized}" unless normalized.starts_with?("/")
-      normalized = normalized.gsub_repeatedly("//", "/")
+      normalized = normalized.squeeze('/')
       normalized = normalized.chomp("/") unless normalized == "/"
       normalized
     end

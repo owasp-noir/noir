@@ -19,7 +19,6 @@ class NoirLogger
     SUCCESS
     WARNING
     ERROR
-    FATAL
     HEADING
   end
 
@@ -65,15 +64,7 @@ class NoirLogger
   end
 
   def log(level : LogLevel, message : String)
-    # `--no-log` suppresses the *message*, never the termination. The early
-    # return used to cover the whole method, so `fatal` under `--no-log`
-    # printed nothing AND skipped the `exit(1)` below — the one log level
-    # whose entire contract is that the process stops. The caller then ran
-    # on past an unrecoverable state with no trace of it.
-    if @no_log
-      exit(1) if level == LogLevel::FATAL
-      return
-    end
+    return if @no_log
 
     prefix = case level
              when LogLevel::DEBUG
@@ -88,15 +79,11 @@ class NoirLogger
                "▲".colorize(:yellow).toggle(@color_mode)
              when LogLevel::ERROR
                "✖︎".colorize(:red).toggle(@color_mode)
-             when LogLevel::FATAL
-               "☠".colorize(:red).toggle(@color_mode)
              when LogLevel::HEADING
                "★".colorize(:yellow).toggle(@color_mode)
              end
 
     write_stderr_line "#{prefix} #{message}"
-
-    exit(1) if level == LogLevel::FATAL
   end
 
   def loading(message : String, &)
@@ -180,27 +167,6 @@ class NoirLogger
     end
   end
 
-  def puts(message)
-    STDOUT.puts message
-  rescue ex : IO::Error
-    # Downstream reader closed its end of the pipe (`noir ... | head`, `|
-    # jq -e`, etc.) — nothing left to write for, exit quietly instead of a
-    # broken-pipe stack trace. `puts`/`puts_sub` also carry real report
-    # content (e.g. OutputBuilderPassiveScan's plain-text findings), so
-    # anything other than a broken pipe (disk full, a bad fd, ...) is a
-    # real failure and must still surface, not be swallowed into a lying
-    # exit(0).
-    raise ex unless NoirLogger.broken_pipe?(ex)
-    exit(0)
-  end
-
-  def puts_sub(message)
-    STDOUT.puts "  " + message
-  rescue ex : IO::Error
-    raise ex unless NoirLogger.broken_pipe?(ex)
-    exit(0)
-  end
-
   def heading(message)
     log(LogLevel::HEADING, message)
   end
@@ -255,10 +221,6 @@ class NoirLogger
     write_stderr_line "  " + message
   end
 
-  def fatal(message)
-    log(LogLevel::FATAL, message)
-  end
-
   private def spinner_enabled? : Bool
     @color_mode && !@no_spinner && STDERR.tty?
   end
@@ -289,16 +251,13 @@ class NoirLogger
     nil
   rescue IO::Error
     # STDERR here is pure progress/debug logging, never primary report
-    # content (see NoirLogger#puts for the stream that does carry content
-    # and needs the stricter broken-pipe-vs-real-failure distinction) — on
-    # any write failure there's nothing useful to do but give up on this
+    # content — on any write failure there's nothing useful to do but give up on this
     # line. Swallowing unconditionally (rather than exiting or re-raising)
     # means this can never strand @stdout_busy at "held" (an unhandled
     # exception inside a spawned fiber doesn't stop the whole process —
     # Crystal just prints "Unhandled exception in spawn" and the fiber
     # dies — so every other logging fiber would otherwise spin on the
-    # acquire loop above at 100% CPU for good) or skip `log`'s
-    # `exit(1) if level == LogLevel::FATAL`.
+    # acquire loop above at 100% CPU for good).
     nil
   ensure
     @stdout_busy.set(0_i8)

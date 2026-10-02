@@ -446,7 +446,7 @@ module Noir
     private def call_type_argument_name(call : LibTreeSitter::TSNode, source : String) : String?
       ta = direct_type_arguments(call)
       unless ta
-        first = first_named_child(call)
+        first = Noir::TreeSitter.first_named_child(call)
         ta = direct_type_arguments(first) if first && Noir::TreeSitter.node_type(first) == "call_expression"
       end
       return unless ta
@@ -726,14 +726,14 @@ module Noir
     #
     # Anything else (member calls like `call.respond(...)`) returns "".
     private def call_name(call : LibTreeSitter::TSNode, source : String) : String
-      first = first_named_child(call)
+      first = Noir::TreeSitter.first_named_child(call)
       return "" unless first
 
       case Noir::TreeSitter.node_type(first)
       when "simple_identifier"
         Noir::TreeSitter.node_text(first, source)
       when "call_expression"
-        inner = first_named_child(first)
+        inner = Noir::TreeSitter.first_named_child(first)
         return "" unless inner
         if Noir::TreeSitter.node_type(inner) == "simple_identifier"
           Noir::TreeSitter.node_text(inner, source)
@@ -753,7 +753,7 @@ module Noir
                                      source : String,
                                      string_constants : Hash(String, String),
                                      local_string_constants : Hash(String, String)) : String?
-      first = first_named_child(call)
+      first = Noir::TreeSitter.first_named_child(call)
       return unless first
       return unless Noir::TreeSitter.node_type(first) == "call_expression"
 
@@ -778,7 +778,7 @@ module Noir
     end
 
     private def call_http_method_argument(call : LibTreeSitter::TSNode, source : String) : String?
-      first = first_named_child(call)
+      first = Noir::TreeSitter.first_named_child(call)
       return unless first
       return unless Noir::TreeSitter.node_type(first) == "call_expression"
 
@@ -821,7 +821,7 @@ module Noir
     private def routing_install_call?(call : LibTreeSitter::TSNode, source : String) : Bool
       return false unless call_name(call, source) == "install"
 
-      first = first_named_child(call)
+      first = Noir::TreeSitter.first_named_child(call)
       return false unless first
       return false unless Noir::TreeSitter.node_type(first) == "call_expression"
 
@@ -888,7 +888,7 @@ module Noir
         return true
       end
 
-      first = first_named_child(call)
+      first = Noir::TreeSitter.first_named_child(call)
       if first && Noir::TreeSitter.node_type(first) == "call_expression"
         return true if call_node_has_value_arguments?(first)
       end
@@ -955,12 +955,6 @@ module Noir
         return child if Noir::TreeSitter.node_type(child) == "statements"
       end
       nil
-    end
-
-    private def first_named_child(node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
-      count = LibTreeSitter.ts_node_named_child_count(node)
-      return if count == 0
-      LibTreeSitter.ts_node_named_child(node, 0_u32)
     end
 
     private def decode_string_literal(node : LibTreeSitter::TSNode, source : String) : String
@@ -1064,7 +1058,7 @@ module Noir
           block.call("")
           return
         elsif name = call_string_parameter(node, source)
-          first = first_named_child(node)
+          first = Noir::TreeSitter.first_named_child(node)
           if first
             chain = navigation_chain(first, source)
             if chain == ["call", "parameters", "get"] || chain == ["call", "request", "queryParameters", "get"]
@@ -1077,7 +1071,7 @@ module Noir
           end
         end
       when "indexing_expression"
-        target = first_named_child(node)
+        target = Noir::TreeSitter.first_named_child(node)
         if target
           chain = navigation_chain(target, source)
           if chain == ["call", "parameters"]
@@ -1106,7 +1100,7 @@ module Noir
     end
 
     private def call_is_call_receive?(call : LibTreeSitter::TSNode, source : String) : Bool
-      first = first_named_child(call)
+      first = Noir::TreeSitter.first_named_child(call)
       return false unless first
       return false unless Noir::TreeSitter.node_type(first) == "navigation_expression"
       chain = navigation_chain(first, source)
@@ -1114,7 +1108,7 @@ module Noir
     end
 
     private def call_reads_request_body?(call : LibTreeSitter::TSNode, source : String) : Bool
-      first = first_named_child(call)
+      first = Noir::TreeSitter.first_named_child(call)
       return false unless first
       return false unless Noir::TreeSitter.node_type(first) == "navigation_expression"
       chain = navigation_chain(first, source)
@@ -1141,7 +1135,7 @@ module Noir
     private def receive_parameters_assignment?(node : LibTreeSitter::TSNode, source : String) : Bool
       Noir::TreeSitter.each_named_child(node) do |child|
         next unless Noir::TreeSitter.node_type(child) == "call_expression"
-        first = first_named_child(child)
+        first = Noir::TreeSitter.first_named_child(child)
         next unless first
         next unless Noir::TreeSitter.node_type(first) == "navigation_expression"
         return true if navigation_chain(first, source) == ["call", "receiveParameters"]
@@ -1160,7 +1154,7 @@ module Noir
     end
 
     private def call_string_parameter(call : LibTreeSitter::TSNode, source : String) : String?
-      first = first_named_child(call)
+      first = Noir::TreeSitter.first_named_child(call)
       return unless first
       return unless Noir::TreeSitter.node_type(first) == "navigation_expression"
       first_string_argument(call, source)
@@ -1290,7 +1284,7 @@ module Noir
       if value = first_string_argument(call, source)
         return value
       end
-      first = first_named_child(call)
+      first = Noir::TreeSitter.first_named_child(call)
       if first && Noir::TreeSitter.node_type(first) == "call_expression"
         return first_string_argument(first, source)
       end

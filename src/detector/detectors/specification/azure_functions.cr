@@ -12,7 +12,7 @@ module Detector::Specification
       # Substring guard before the full JSON parse — both must pass, so the
       # cheaper check goes first.
       return false unless file_contents.includes?("httpTrigger")
-      return false unless valid_json?(file_contents)
+      return false unless json_any?(file_contents)
 
       CodeLocator.instance.push(Noir::LocatorKeys::AZURE_FUNCTIONS_SPEC, filename)
       true

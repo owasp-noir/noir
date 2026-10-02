@@ -49,105 +49,6 @@ describe Noir::JSLiteralScanner do
     end
   end
 
-  describe "try_skip_literal" do
-    it "skips single-line comments" do
-      content = "// comment\nnext"
-      res = Noir::JSLiteralScanner.try_skip_literal(content, 0, "")
-      res = res.should_not be_nil
-      res[:content].should eq("")
-      res[:pos].should eq(10) # Position of newline
-      content[res[:pos]..].should start_with("\nnext")
-    end
-
-    it "skips multi-line comments" do
-      content = "/* comment */next"
-      res = Noir::JSLiteralScanner.try_skip_literal(content, 0, "")
-      res = res.should_not be_nil
-      res[:content].should eq("")
-      res[:pos].should eq(13)
-      content[res[:pos]..].should eq("next")
-    end
-
-    it "skips double-quoted strings" do
-      content = "\"string\"next"
-      res = Noir::JSLiteralScanner.try_skip_literal(content, 0, "")
-      res = res.should_not be_nil
-      res[:content].should eq("\"string\"")
-      res[:pos].should eq(8)
-      content[res[:pos]..].should eq("next")
-    end
-
-    it "skips single-quoted strings" do
-      content = "'string'next"
-      res = Noir::JSLiteralScanner.try_skip_literal(content, 0, "")
-      res = res.should_not be_nil
-      res[:content].should eq("'string'")
-      res[:pos].should eq(8)
-      content[res[:pos]..].should eq("next")
-    end
-
-    it "skips escaped quotes in strings" do
-      content = "\"str\\\"ing\"next"
-      res = Noir::JSLiteralScanner.try_skip_literal(content, 0, "")
-      res = res.should_not be_nil
-      res[:content].should eq("\"str\\\"ing\"")
-      res[:pos].should eq(10)
-      content[res[:pos]..].should eq("next")
-    end
-
-    it "skips template literals" do
-      content = "`template`next"
-      res = Noir::JSLiteralScanner.try_skip_literal(content, 0, "")
-      res = res.should_not be_nil
-      res[:content].should eq("`template`")
-      res[:pos].should eq(10)
-      content[res[:pos]..].should eq("next")
-    end
-
-    it "skips regex literals" do
-      # Context matters for regex vs division
-      content = "return /regex/;"
-      # "return " is 7 chars. '/' is at 7.
-      res = Noir::JSLiteralScanner.try_skip_literal(content, 7, "return ")
-      res = res.should_not be_nil
-      res[:content].should eq("return /regex/")
-      res[:pos].should eq(14)
-      content[res[:pos]..].should eq(";")
-    end
-
-    it "skips regex literals with flags" do
-      content = "return /regex/gi;"
-      res = Noir::JSLiteralScanner.try_skip_literal(content, 7, "return ")
-      res = res.should_not be_nil
-      res[:content].should eq("return /regex/gi")
-      res[:pos].should eq(16)
-      content[res[:pos]..].should eq(";")
-    end
-
-    it "identifies division operator (not regex)" do
-      content = "var a = 10 / 2;"
-      # "var a = 10 " ends with a number, so / should be division
-      res = Noir::JSLiteralScanner.try_skip_literal(content, 11, "var a = 10 ")
-      res.should be_nil
-    end
-
-    it "handles regex with character classes" do
-      content = "return /[a-z]/;"
-      res = Noir::JSLiteralScanner.try_skip_literal(content, 7, "return ")
-      res = res.should_not be_nil
-      res[:content].should eq("return /[a-z]/")
-      res[:pos].should eq(14)
-    end
-
-    it "handles regex with escaped slashes" do
-      content = "return /\\//;"
-      res = Noir::JSLiteralScanner.try_skip_literal(content, 7, "return ")
-      res = res.should_not be_nil
-      res[:content].should eq("return /\\//")
-      res[:pos].should eq(11)
-    end
-  end
-
   describe "find_matching_brace" do
     it "finds matching brace" do
       content = "{ code }"
@@ -239,13 +140,6 @@ describe Noir::JSLiteralScanner do
       result = result.should_not be_nil
       result.content.should eq("한글 'x(y)' z")
       result.end_pos.should eq(12)
-    end
-
-    it "strips comments containing multi-byte chars" do
-      res = Noir::JSLiteralScanner.try_skip_literal("// 한글\nx", 0, "")
-      res = res.should_not be_nil
-      res[:content].should eq("")
-      res[:pos].should eq(5)
     end
 
     it "finds matching brace past a multi-byte comment" do

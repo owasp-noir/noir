@@ -118,7 +118,7 @@ module Noir::KotlinCalleeExtractor
   # non-identifier shape (mirrors the Python/Go/Java chained-call
   # noise filter).
   private def callee_text(call : LibTreeSitter::TSNode, source : String) : String
-    callable = first_named_child(call)
+    callable = Noir::TreeSitter.first_named_child(call)
     return "" unless callable
 
     case Noir::TreeSitter.node_type(callable)
@@ -192,7 +192,7 @@ module Noir::KotlinCalleeExtractor
   # calls qualify — `obj.get("x")` returns "" so a method named
   # `get` on a real object isn't misclassified as nested routing.
   private def call_root_name(call : LibTreeSitter::TSNode, source : String) : String
-    callable = first_named_child(call)
+    callable = Noir::TreeSitter.first_named_child(call)
     return "" unless callable
     case Noir::TreeSitter.node_type(callable)
     when "simple_identifier"
@@ -203,12 +203,6 @@ module Noir::KotlinCalleeExtractor
     else
       ""
     end
-  end
-
-  private def first_named_child(node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
-    count = LibTreeSitter.ts_node_named_child_count(node)
-    return if count == 0
-    LibTreeSitter.ts_node_named_child(node, 0_u32)
   end
 
   # Find the (class_name, method_name) `function_declaration` node.

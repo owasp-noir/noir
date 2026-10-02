@@ -275,23 +275,6 @@ module Noir
         per_kind: false,
         clamp: true,
       )
-
-      # Type lists: angle brackets only, no quote handling.
-      # Serves the three byte-identical `split_top_level_commas` clones in
-      # miniparsers/{java_route,jaxrs,micronaut}_extractor_ts.cr. All three run
-      # on the tail of an `implements` clause with the class body already
-      # truncated at `{`, so only generic arguments can nest and a stray `"`
-      # would swallow the rest of the type list. They keep empties and do not
-      # strip; every caller strips each part itself and skips the empties.
-      GENERICS_ONLY = new(
-        nest: Nest::Angle,
-        quotes: "",
-        escape: Escape::None,
-        strip: false,
-        empties: Empties::Keep,
-        per_kind: false,
-        clamp: true,
-      )
     end
 
     # Splits `text` on every occurrence of `delimiter` that sits at depth 0 and
