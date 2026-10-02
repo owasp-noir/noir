@@ -5,7 +5,7 @@ require "../../../models/code_locator"
 module Detector::Specification
   class Caddy < Detector
     # Registers each Caddy config path in `CodeLocator`.
-    detector_for "caddy", idempotent: false
+    detector_for "caddy", idempotent: false, extensions: %w[.json], basenames: %w[Caddyfile caddyfile]
 
     CADDYFILE_NAMES = {"Caddyfile", "caddyfile"}
 
@@ -31,11 +31,6 @@ module Detector::Specification
       end
     rescue
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      base = File.basename(filename)
-      CADDYFILE_NAMES.includes?(base) || filename.ends_with?(".json")
     end
 
     private def caddy_json?(content : String) : Bool

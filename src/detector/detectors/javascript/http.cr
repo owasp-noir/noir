@@ -2,7 +2,7 @@ require "../../../models/detector"
 
 module Detector::Javascript
   class Http < Detector
-    detector_for "js_http"
+    detector_for "js_http", extensions: %w[.js .mjs .cjs .jsx .ts .mts .tsx], basenames: %w[package.json]
 
     CORE_HTTP_IMPORT = Regex.union(
       /require\s*\(\s*['"](?:node:)?https?['"]\s*\)/,
@@ -30,10 +30,6 @@ module Detector::Javascript
       content_matches?(file_contents, METHOD_REF) &&
         content_matches?(file_contents, URL_REF) &&
         content_matches?(file_contents, PATH_LITERAL)
-    end
-
-    def applicable?(filename : String) : Bool
-      source_file?(filename) || File.basename(filename) == "package.json"
     end
 
     private def source_file?(filename : String) : Bool

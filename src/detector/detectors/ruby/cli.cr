@@ -8,7 +8,7 @@ module Detector::Ruby
   # bare `ENV[...]` or a plain `ARGV` reference (without an index) is too
   # common in web apps to qualify.
   class Cli < Detector
-    detector_for "ruby_cli"
+    detector_for "ruby_cli", extensions: %w[.rb .gemspec], basenames: %w[Gemfile]
 
     CLI_GEMS = ["thor", "gli", "slop", "tty-option", "commander", "optimist", "clamp", "dry-cli"]
 
@@ -43,11 +43,6 @@ module Detector::Ruby
 
       return false unless filename.ends_with?(".rb")
       content_matches?(file_contents, CLI_MARKER)
-    end
-
-    def applicable?(filename : String) : Bool
-      base = File.basename(filename)
-      filename.ends_with?(".rb") || filename.ends_with?(".gemspec") || base == "Gemfile"
     end
   end
 end

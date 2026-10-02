@@ -2,7 +2,7 @@ require "../../../models/detector"
 
 module Detector::Cpp
   class Oatpp < Detector
-    detector_for "cpp_oatpp"
+    detector_for "cpp_oatpp", extensions: %w[.cpp .cc .cxx .h .hpp .hxx]
 
     CPP_EXTENSIONS = [".cpp", ".cc", ".cxx", ".h", ".hpp", ".hxx"]
 
@@ -15,10 +15,6 @@ module Detector::Cpp
       return true if file_contents.includes?("#include <oatpp/")
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      CPP_EXTENSIONS.any? { |ext| filename.ends_with?(ext) } || filename.ends_with?(".c")
     end
   end
 end

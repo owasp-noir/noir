@@ -4,12 +4,12 @@ require "../../../models/code_locator"
 module Detector::Specification
   class Nginx < Detector
     # Registers each Nginx config path in `CodeLocator`.
-    detector_for "nginx", idempotent: false
-
+    #
     # `.conf` is by far the most common extension for Nginx fragments;
     # `.tmpl`/`.template` files are common in docker-gen and deployment
     # repositories that render Nginx configs from templates.
-    EXTENSIONS  = {".conf", ".tmpl", ".template"}
+    detector_for "nginx", idempotent: false, extensions: %w[.conf .tmpl .template]
+
     LOCATION_RE = /^\s*location\s+(?:(?:=|~\*|~|\^~)\s+)?\S+/
     # Whole-content necessary-condition guard for `nginx_shape?`: a line can
     # only match LOCATION_RE if "location" appears in the raw content — or
@@ -26,11 +26,6 @@ module Detector::Specification
 
       CodeLocator.instance.push(Noir::LocatorKeys::NGINX_SPEC, filename)
       true
-    end
-
-    def applicable?(filename : String) : Bool
-      return true if File.basename(filename) == "nginx.conf"
-      EXTENSIONS.any? { |ext| filename.ends_with?(ext) }
     end
 
     private def nginx_shape?(content : String) : Bool

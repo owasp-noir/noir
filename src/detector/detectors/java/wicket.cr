@@ -2,7 +2,7 @@ require "../../../models/detector"
 
 module Detector::Java
   class Wicket < Detector
-    detector_for "java_wicket"
+    detector_for "java_wicket", extensions: %w[.java .gradle .gradle.kts .xml .properties .yml .yaml]
 
     SOURCE_MARKERS = Regex.union("org.apache.wicket", "extends WebApplication", "@MountPath")
     BUILD_MARKERS  = Regex.union("org.apache.wicket", "wicket-core", "wicket-auth-roles", "wicketstuff")
@@ -13,10 +13,6 @@ module Detector::Java
       return content_matches?(file_contents, SOURCE_MARKERS) if filename.ends_with?(".java")
 
       build_file?(filename) && content_matches?(file_contents, BUILD_MARKERS)
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".java") || build_file?(filename)
     end
 
     private def build_file?(filename : String) : Bool

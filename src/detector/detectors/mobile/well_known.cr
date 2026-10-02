@@ -16,7 +16,8 @@ module Detector::Mobile
   class WellKnown < Detector
     # Registers assetlinks.json / apple-app-site-association paths in
     # `CodeLocator`, so it must run on every candidate file.
-    detector_for "well_known_applinks", idempotent: false
+    detector_for "well_known_applinks", idempotent: false,
+      basenames: %w[assetlinks.json apple-app-site-association apple-app-site-association.json]
 
     def detect(filename : String, file_contents : String) : Bool
       basename = File.basename(filename)
@@ -33,11 +34,6 @@ module Detector::Mobile
       end
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      basename = File.basename(filename)
-      basename == "assetlinks.json" || aasa_basename?(basename)
     end
 
     private def aasa_basename?(basename : String) : Bool

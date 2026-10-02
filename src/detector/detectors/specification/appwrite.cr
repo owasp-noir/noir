@@ -8,10 +8,11 @@ module Detector::Specification
   # `appwrite.config.json` from v6). The server generates the whole
   # REST surface from that file, so it is the only thing to read.
   class Appwrite < Detector
-    # Registers each config path in `CodeLocator`.
-    detector_for "appwrite", idempotent: false
-
-    CONFIG_FILENAMES = {"appwrite.json", "appwrite.config.json"}
+    # Registers each config path in `CodeLocator`. Pinned to the two
+    # CLI-generated filenames: nothing else in a project tree is named
+    # this, so the detector never reads an unrelated `.json`.
+    detector_for "appwrite", idempotent: false,
+      basenames: %w[appwrite.json appwrite.config.json]
 
     # `projectId` is mandatory in every Appwrite config and is the
     # cheap gate before paying for a JSON parse.
@@ -36,13 +37,6 @@ module Detector::Specification
 
       CodeLocator.instance.push(Noir::LocatorKeys::APPWRITE_CONFIG, filename)
       true
-    end
-
-    # Pinned to the two CLI-generated filenames. Nothing else in a
-    # project tree is named this, so the detector never reads an
-    # unrelated `.json`.
-    def applicable?(filename : String) : Bool
-      CONFIG_FILENAMES.includes?(File.basename(filename))
     end
   end
 end

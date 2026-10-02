@@ -2,7 +2,9 @@ require "../../../models/detector"
 
 module Detector::Perl
   class Dancer2 < Detector
-    detector_for "perl_dancer2"
+    detector_for "perl_dancer2",
+      extensions: %w[.pl .pm .psgi .t],
+      basenames: %w[cpanfile cpanfile.snapshot Makefile.PL dist.ini META.json META.yml]
 
     def detect(filename : String, file_contents : String) : Bool
       if dependency_manifest?(filename)
@@ -23,10 +25,6 @@ module Detector::Perl
       end
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      perl_source?(filename) || dependency_manifest?(filename)
     end
 
     private def perl_source?(filename : String) : Bool

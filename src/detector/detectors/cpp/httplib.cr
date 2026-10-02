@@ -2,7 +2,7 @@ require "../../../models/detector"
 
 module Detector::Cpp
   class Httplib < Detector
-    detector_for "cpp_httplib"
+    detector_for "cpp_httplib", extensions: %w[.cpp .cc .cxx .h .hpp .hxx]
 
     CPP_EXTENSIONS = [".cpp", ".cc", ".cxx", ".h", ".hpp", ".hxx"]
 
@@ -18,10 +18,6 @@ module Detector::Cpp
       return true if file_contents.includes?("using namespace httplib")
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      CPP_EXTENSIONS.any? { |ext| filename.ends_with?(ext) } || filename.ends_with?(".c")
     end
   end
 end
