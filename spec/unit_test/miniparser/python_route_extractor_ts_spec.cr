@@ -42,7 +42,7 @@ describe Noir::TreeSitterPythonRouteExtractor do
 
     # `my_pkg.flask` is accepted because the full dotted text is in
     # the allowlist, preserving the legacy procedural behaviour.
-    bps = Noir::TreeSitterPythonRouteExtractor.extract_blueprints(source, ["flask", "my_pkg.flask"])
+    bps = Noir::TreeSitter.parse_python(source) { |root| Noir::TreeSitterPythonRouteExtractor.extract_blueprints_from(root, source, ["flask", "my_pkg.flask"]) }
     bps.map { |b| {b.name, b.prefix} }.should eq([
       {"bare_bp", "/bare"},
       {"prefixed", "/api/v1"},

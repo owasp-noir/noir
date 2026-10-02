@@ -87,7 +87,7 @@ module Noir::LuaCalleeExtractor
       scan_line(line, file_path, start_line + offset, entries)
     end
 
-    dedup_entries(entries)
+    entries.uniq
   end
 
   def extract_function_after(source : String,

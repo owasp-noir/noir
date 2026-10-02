@@ -11,7 +11,7 @@ module Detector::Specification
     # `_format_version` key, `kic_shape?` an apiVersion containing
     # `configuration.konghq.com/`), so any YAML file without them can skip
     # the full parse. This detector is non-idempotent and previously parsed
-    # every YAML file of the scan twice (`valid_yaml?` + `YAML.parse`).
+    # every YAML file of the scan twice.
     KONG_MARKER = /_format_version|configuration\.konghq\.com\//
 
     def detect(filename : String, file_contents : String) : Bool

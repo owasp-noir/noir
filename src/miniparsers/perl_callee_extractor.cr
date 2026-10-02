@@ -45,7 +45,7 @@ module Noir::PerlCalleeExtractor
       scan_line(line, file_path, start_line + offset, entries)
     end
 
-    dedup_entries(entries)
+    entries.uniq
   end
 
   def controller_action_callees(source : String, file_path : String) : Hash(String, Array(Entry))

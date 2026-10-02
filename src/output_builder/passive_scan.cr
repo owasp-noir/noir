@@ -26,7 +26,7 @@ class OutputBuilderPassiveScan < OutputBuilder
       name = result.info.name.colorize(:light_green).toggle(@is_color)
 
       ob_puts "[#{severity}][#{id}][#{category}] #{name}"
-      # Indented to match `NoirLogger#puts_sub`. These two lines are part of
+      # Indented to match `NoirLogger#sub`. These two lines are part of
       # the finding — the extract, and the file:line that says where the
       # secret is — not progress logging, so they share the report stream.
       ob_puts "  ├── extract: #{result.extract}"

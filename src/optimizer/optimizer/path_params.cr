@@ -313,8 +313,8 @@ class EndpointOptimizer
             query || fragment
           end
 
-    return url.gsub_repeatedly("//", "/") unless cut
-    url[0...cut].gsub_repeatedly("//", "/") + url[cut..]
+    return url.squeeze('/') unless cut
+    url[0...cut].squeeze('/') + url[cut..]
   end
 
   # A path param name is a plain identifier; anything else (a regex fragment,

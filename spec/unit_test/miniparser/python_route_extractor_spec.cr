@@ -46,44 +46,6 @@ describe Noir::PythonRouteExtractor do
     end
   end
 
-  describe "scan_blueprint" do
-    it "detects a module-qualified Blueprint assignment with url_prefix" do
-      result = Noir::PythonRouteExtractor.scan_blueprint(
-        %(admin=flask.Blueprint("admin", __name__, url_prefix="/admin")),
-        ["flask"]
-      )
-      result.should_not be_nil
-      name, prefix = result.not_nil!
-      name.should eq("admin")
-      prefix.should eq("/admin")
-    end
-
-    it "detects a bare Blueprint assignment without a prefix" do
-      result = Noir::PythonRouteExtractor.scan_blueprint(
-        %(api=Blueprint("api", __name__)),
-        ["flask"]
-      )
-      result.should_not be_nil
-      name, prefix = result.not_nil!
-      name.should eq("api")
-      prefix.should eq("")
-    end
-
-    it "tolerates a type annotation on the assignment target" do
-      result = Noir::PythonRouteExtractor.scan_blueprint(
-        %(bp:Blueprint=sanic.Blueprint("bp", url_prefix="/v1")),
-        ["sanic"]
-      )
-      result.should_not be_nil
-      result.not_nil![0].should eq("bp")
-      result.not_nil![1].should eq("/v1")
-    end
-
-    it "returns nil when the line is not a Blueprint assignment" do
-      Noir::PythonRouteExtractor.scan_blueprint("x = SomethingElse()", ["flask"]).should be_nil
-    end
-  end
-
   describe "find_def_line" do
     it "finds the def immediately below a decorator" do
       lines = ["@app.route('/x')", "def handler():"]

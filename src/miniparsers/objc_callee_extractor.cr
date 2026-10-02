@@ -50,7 +50,7 @@ module Noir::ObjcCalleeExtractor
       scan_line(stripped, file_path, start_line + index, entries)
     end
 
-    dedup_entries(entries)
+    entries.uniq
   end
 
   private def scan_line(line : String, file_path : String, line_number : Int32, entries : Array(Entry))

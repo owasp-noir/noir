@@ -84,8 +84,8 @@ module Noir
           left = Noir::TreeSitter.field(node, "left")
           right = Noir::TreeSitter.field(node, "right")
           next unless left && right
-          name_node = first_named_child(left)
-          closure = first_named_child(right)
+          name_node = Noir::TreeSitter.first_named_child(left)
+          closure = Noir::TreeSitter.first_named_child(right)
           next unless name_node && closure
           next unless Noir::TreeSitter.node_type(name_node) == "identifier"
           next unless Noir::TreeSitter.node_type(closure) == "func_literal"
@@ -193,7 +193,7 @@ module Noir
             end
           end
         when "short_var_declaration"
-          if (left = Noir::TreeSitter.field(node, "left")) && (name_node = first_named_child(left))
+          if (left = Noir::TreeSitter.field(node, "left")) && (name_node = Noir::TreeSitter.first_named_child(left))
             if (helper = helpers[Noir::TreeSitter.node_text(name_node, source)]) && helper.calls > 0
               return
             end

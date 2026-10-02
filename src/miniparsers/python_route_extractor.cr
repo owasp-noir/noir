@@ -4,12 +4,11 @@ module Noir
   # Framework adapters (Flask, Sanic, …) iterate source files and call
   # these helpers per line. The extractor has no file I/O, no `Analyzer`
   # dependency, and no framework-specific state — it just recognizes
-  # the three most common Python route-related idioms so adapters stop
+  # the two most common Python route decorator idioms so adapters stop
   # duplicating the regexes:
   #
   #   1. `@<var>.route("/path", methods=[...])`
   #   2. `@<var>.<method>("/path")`     # method in {get, post, …}
-  #   3. `<var> = Blueprint(url_prefix="…")`
   #
   # Plus a helper to locate the `def`/`class` that a decorator applies to.
   #
@@ -81,32 +80,6 @@ module Noir
       end
 
       results
-    end
-
-    # Detect a `<name> = (module.)?Blueprint(url_prefix="...")` assignment.
-    # Returns `{name, prefix}` if matched, `nil` otherwise.
-    #
-    # `module_names` is the list of optional module prefixes a framework
-    # allows — Flask accepts `flask.Blueprint`, Sanic accepts `sanic.Blueprint`,
-    # or a bare `Blueprint` after an `import`.
-    #
-    # `original_line` is used to read `url_prefix`, so if the caller
-    # space-stripped `line`, spaces inside the prefix value still survive.
-    def scan_blueprint(line : String, module_names : Array(String), original_line : String? = nil) : Tuple(String, String)?
-      mod_alt = module_names.map { |m| Regex.escape(m) }.join("|")
-      re = Regex.new("(#{PYTHON_VAR_NAME.source})(?::#{PYTHON_VAR_NAME.source})?=(?:(?:#{mod_alt})\\.)?Blueprint\\(")
-      match = line.match(re)
-      return unless match
-
-      name = match[1]
-      prefix = ""
-      source = original_line || line
-      if param_codes = source.split("Blueprint", 2)[1]?
-        if prefix_match = param_codes.match(/url_prefix\s*=\s*[rf]?['"]([^'"]*)['"]/)
-          prefix = prefix_match[1]
-        end
-      end
-      {name, prefix}
     end
 
     # Locate the `def`/`async def`/`class` that a decorator applies to.

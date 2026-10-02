@@ -75,12 +75,9 @@ class OutputBuilderCommon < OutputBuilder
     print(endpoints)
     return if passive_results.empty?
 
-    # Separator through a builder, not `logger.puts`: the logger `exit(0)`s
-    # the process on a broken pipe, so `noir scan . -P -o report.txt | head`
-    # died on this one blank line and the `-o` file kept the endpoint list
-    # but lost every finding. `ob_puts` marks stdout broken and keeps
-    # filling the file. It also puts the blank line in `-o`, so the saved
-    # report matches what stdout showed.
+    # Separator through a builder: `ob_puts` marks a broken stdout pipe and
+    # keeps filling the `-o` file, and puts the blank line there too, so the
+    # saved report matches what stdout showed.
     ob_puts ""
     logger.heading "Passive Results:"
     OutputBuilderPassiveScan.new(@options).print(passive_results)

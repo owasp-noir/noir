@@ -420,7 +420,7 @@ module Noir
       ty = Noir::TreeSitter.node_type(node)
 
       if ty == "call_expression"
-        method = navigation_method_name(first_named_child(node), source)
+        method = navigation_method_name(Noir::TreeSitter.first_named_child(node), source)
         case method
         when "query"
           if value = first_string_argument(node, source)
@@ -515,13 +515,13 @@ module Noir
       # "location", ...)` — is a RESPONSE builder, and matching it would
       # mint a phantom request body/header param (notably a spurious
       # `body:json` on bodyless GET routes).
-      receiver = first_named_child(callee)
+      receiver = Noir::TreeSitter.first_named_child(callee)
       return "" unless receiver && Noir::TreeSitter.node_type(receiver) == "simple_identifier"
       last_navigation_segment(callee, source)
     end
 
     private def call_function_name(call : LibTreeSitter::TSNode, source : String) : String
-      first = first_named_child(call)
+      first = Noir::TreeSitter.first_named_child(call)
       return "" unless first
       Noir::TreeSitter.node_type(first) == "simple_identifier" ? Noir::TreeSitter.node_text(first, source) : ""
     end
@@ -548,12 +548,6 @@ module Noir
         end
       end
       nil
-    end
-
-    private def first_named_child(node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
-      count = LibTreeSitter.ts_node_named_child_count(node)
-      return if count == 0
-      LibTreeSitter.ts_node_named_child(node, 0_u32)
     end
 
     private def decode_string_literal(node : LibTreeSitter::TSNode, source : String) : String

@@ -172,7 +172,7 @@ module Noir
 
       actual_rhs = right
       if Noir::TreeSitter.node_type(right) == "expression_list"
-        actual_rhs = first_named_child(right) || right
+        actual_rhs = Noir::TreeSitter.first_named_child(right) || right
       end
       if serve_mux_rhs?(actual_rhs, source, http_aliases)
         name_nodes.each do |n|
@@ -186,7 +186,7 @@ module Noir
                                http_aliases : Set(String)) : Bool
       actual = node
       if Noir::TreeSitter.node_type(node) == "expression_list"
-        actual = first_named_child(node) || node
+        actual = Noir::TreeSitter.first_named_child(node) || node
       end
 
       # http.NewServeMux() or alias.NewServeMux()

@@ -34,7 +34,7 @@ module Noir::ClojureCalleeExtractor
   def callees_for_body(body : String, file_path : String, start_line : Int32) : Array(Entry)
     entries = [] of Entry
     scan_forms(body, 0, body.bytesize, file_path, start_line, entries)
-    dedup_entries(entries)
+    entries.uniq
   end
 
   def function_callees(source : String, file_path : String) : Hash(String, Array(Entry))

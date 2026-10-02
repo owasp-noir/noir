@@ -303,7 +303,7 @@ module Analyzer::Typescript
     end
 
     private def normalize_url_path(path : String) : String
-      normalized = path.gsub_repeatedly("//", "/")
+      normalized = path.squeeze('/')
       normalized = "/#{normalized}" unless normalized.starts_with?("/")
       normalized = normalized.chomp("/") unless normalized == "/"
       normalized

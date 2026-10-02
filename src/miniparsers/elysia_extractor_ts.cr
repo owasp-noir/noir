@@ -136,7 +136,7 @@ module Noir
     # shape matches; an empty string otherwise (e.g., `new Foo()`,
     # `Foo()` — bare identifier callees).
     private def chain_method_name(call : LibTreeSitter::TSNode, source : String) : String
-      callee = first_named_child(call)
+      callee = Noir::TreeSitter.first_named_child(call)
       return "" unless callee
       return "" unless Noir::TreeSitter.node_type(callee) == "member_expression"
       Noir::TreeSitter.each_named_child(callee) do |child|
@@ -149,10 +149,10 @@ module Noir
     # — `a.get(...).post(...)` outer has the inner `a.get(...)` as
     # the member_expression's first child.
     private def walk_chain_predecessor(call : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route), depth : Int32, include_callees : Bool)
-      callee = first_named_child(call)
+      callee = Noir::TreeSitter.first_named_child(call)
       return unless callee
       return unless Noir::TreeSitter.node_type(callee) == "member_expression"
-      inner = first_named_child(callee)
+      inner = Noir::TreeSitter.first_named_child(callee)
       return unless inner
       walk(inner, source, prefix, routes, depth + 1, include_callees) if Noir::TreeSitter.node_type(inner) == "call_expression"
     end
@@ -303,7 +303,7 @@ module Noir
           block.call(:body, "")
         end
       when "subscript_expression"
-        target = first_named_child(node)
+        target = Noir::TreeSitter.first_named_child(node)
         if target
           base = navigation_chain(target, source)
           idx = base.index { |seg| seg == "query" || seg == "headers" || seg == "cookie" }
@@ -369,12 +369,6 @@ module Noir
         end
       end
       nil
-    end
-
-    private def first_named_child(node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
-      count = LibTreeSitter.ts_node_named_child_count(node)
-      return if count == 0
-      LibTreeSitter.ts_node_named_child(node, 0_u32)
     end
 
     private def arguments_node(call : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?

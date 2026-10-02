@@ -85,24 +85,6 @@ describe "any_to_bool" do
   end
 end
 
-describe "valid_json?" do
-  it "valid json" do
-    valid_json?("{\"test\":\"test\"}").should be_true
-  end
-  it "invalid json" do
-    valid_json?("{\"test\":\"test\"").should be_false
-  end
-end
-
-describe "valid_yaml?" do
-  it "valid yaml" do
-    valid_yaml?("test: test").should be_true
-  end
-  it "invalid yaml" do
-    valid_yaml?(":").should be_false
-  end
-end
-
 describe "escape_glob_path" do
   it "no special chars" do
     escape_glob_path("/tmp/test-noir/app").should eq("/tmp/test-noir/app")

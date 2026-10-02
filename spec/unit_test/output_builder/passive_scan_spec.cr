@@ -254,8 +254,7 @@ describe "OutputBuilderPassiveScan" do
     # `noir scan . -P -o report.txt | head` must still save a complete
     # report. This pins the builder half — `ob_puts` giving up on stdout
     # and carrying on with the file. The other half, `NoirRunner#print_
-    # passive_results` emitting its separator through `ob_puts` rather than
-    # `NoirLogger#puts` (which `exit(0)`s the whole process on EPIPE), can
+    # passive_results` emitting its separator through `ob_puts`, can
     # only be reached with a genuinely broken STDOUT and is covered by
     # running the built binary under a closed pipe, not from here.
     it "keeps filling the output file after stdout's reader closes the pipe" do

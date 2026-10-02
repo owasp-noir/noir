@@ -121,7 +121,7 @@ class PythonParser
         type ||= "str"
         value = decode_string(child, source)
       when "call"
-        callee = first_named_child(child)
+        callee = Noir::TreeSitter.first_named_child(child)
         type ||= callee_name(callee, source) if callee
         value = Noir::TreeSitter.node_text(child, source)
       else
@@ -164,12 +164,6 @@ class PythonParser
       end
     end
     buf
-  end
-
-  private def first_named_child(node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
-    count = LibTreeSitter.ts_node_named_child_count(node)
-    return if count == 0
-    LibTreeSitter.ts_node_named_child(node, 0_u32)
   end
 
   # ---- imports + recursive merge ----------------------------------

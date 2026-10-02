@@ -2,9 +2,7 @@ require "../../spec_helper"
 require "../../../src/utils/parser_limit"
 
 describe "ParserLimit" do
-  # Reset state before each test so ENV changes take effect.
-  before_each { ParserLimit.reset }
-  after_all { ENV.delete("NOIR_PARSER_MAX_DEPTH"); ParserLimit.reset }
+  after_all { ENV.delete("NOIR_PARSER_MAX_DEPTH") }
 
   describe ".max_depth" do
     it "returns nil when NOIR_PARSER_MAX_DEPTH is not set" do
@@ -64,17 +62,6 @@ describe "ParserLimit" do
       ENV["NOIR_PARSER_MAX_DEPTH"] = "-5"
       ParserLimit.allow_depth?(0).should be_true
       ParserLimit.allow_depth?(999).should be_true
-    end
-  end
-
-  describe ".reset" do
-    it "allows re-reading the environment variable" do
-      ENV["NOIR_PARSER_MAX_DEPTH"] = "2"
-      ParserLimit.max_depth.should eq(2)
-
-      ENV["NOIR_PARSER_MAX_DEPTH"] = "5"
-      ParserLimit.reset
-      ParserLimit.max_depth.should eq(5)
     end
   end
 end

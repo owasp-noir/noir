@@ -43,7 +43,7 @@ module Noir::ScalaCalleeExtractor
     end
 
     scan_code(code.to_s, file_path, start_line, line_offsets, entries)
-    dedup_entries(entries.sort_by(&.[0]).map(&.[1]))
+    entries.sort_by(&.[0]).map(&.[1]).uniq!
   end
 
   def strip_comment(line : String, block_comment_depth : Int32 = 0, in_multiline_string : Bool = false) : String

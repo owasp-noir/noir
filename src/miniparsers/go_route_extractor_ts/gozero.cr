@@ -133,8 +133,8 @@ module Noir
           left = Noir::TreeSitter.field(node, "left")
           right = Noir::TreeSitter.field(node, "right")
           next if left.nil? || right.nil?
-          var = first_named_child(left)
-          rhs = first_named_child(right)
+          var = Noir::TreeSitter.first_named_child(left)
+          rhs = Noir::TreeSitter.first_named_child(right)
           next if var.nil? || rhs.nil?
           next unless Noir::TreeSitter.node_type(var) == "identifier"
           next unless Noir::TreeSitter.node_type(rhs) == "call_expression"
@@ -174,7 +174,7 @@ module Noir
     private def gozero_inner_value(node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
       n = node
       if Noir::TreeSitter.node_type(n) == "literal_element"
-        fc = first_named_child(n)
+        fc = Noir::TreeSitter.first_named_child(n)
         return if fc.nil?
         n = fc
       end
@@ -191,7 +191,7 @@ module Noir
     private def gozero_unwrap(node : LibTreeSitter::TSNode?) : LibTreeSitter::TSNode?
       return if node.nil?
       if Noir::TreeSitter.node_type(node) == "literal_element"
-        return first_named_child(node)
+        return Noir::TreeSitter.first_named_child(node)
       end
       node
     end

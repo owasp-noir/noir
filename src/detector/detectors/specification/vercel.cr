@@ -12,7 +12,7 @@ module Detector::Specification
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
-      return false unless valid_json?(file_contents)
+      return false unless json_any?(file_contents)
 
       CodeLocator.instance.push(Noir::LocatorKeys::VERCEL_SPEC, filename)
       true

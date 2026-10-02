@@ -631,7 +631,7 @@ module Analyzer::Go
       root = base_path
       if source_path = p_dir["source_path"]?
         source_dir = File.dirname(source_path)
-        source_relative = Path[(source_dir + "/" + normalized_file_path).gsub_repeatedly("//", "/")].normalize.to_s
+        source_relative = Path[(source_dir + "/" + normalized_file_path).squeeze('/')].normalize.to_s
         if static_target_exists?(source_relative)
           return preserve_relative_prefix(source_relative, source_path)
         end
@@ -639,7 +639,7 @@ module Analyzer::Go
         root = base_path_for_path(source_path)
       end
 
-      raw_full_path = (root + "/" + normalized_file_path).gsub_repeatedly("//", "/")
+      raw_full_path = (root + "/" + normalized_file_path).squeeze('/')
       normalized_full_path = Path[raw_full_path].normalize.to_s
 
       if root.starts_with?("./") && !normalized_full_path.starts_with?("./") && !normalized_full_path.starts_with?("/")

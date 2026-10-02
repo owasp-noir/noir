@@ -3,6 +3,12 @@ require "file_utils"
 require "../../../src/models/logger"
 require "../../../src/miniparsers/java_parameter_extractor_ts"
 
+private def method_params(source : String, *args)
+  Noir::TreeSitter.parse_java(source) do |root|
+    Noir::TreeSitterJavaParameterExtractor.extract_method_parameters_from(root, source, *args)
+  end
+end
+
 describe Noir::TreeSitterJavaParameterExtractor do
   describe ".extract_package_name" do
     it "returns the dotted package name from a declaration" do
@@ -164,7 +170,7 @@ describe Noir::TreeSitterJavaParameterExtractor do
     end
   end
 
-  describe ".extract_consumes" do
+  describe ".extract_consumes_from" do
     it "returns \"json\" for APPLICATION_JSON_VALUE" do
       source = <<-JAVA
         class C {
@@ -172,7 +178,7 @@ describe Noir::TreeSitterJavaParameterExtractor do
             public void m() {}
         }
         JAVA
-      Noir::TreeSitterJavaParameterExtractor.extract_consumes(source, "C", "m").should eq("json")
+      Noir::TreeSitter.parse_java(source) { |root| Noir::TreeSitterJavaParameterExtractor.extract_consumes_from(root, source, "C", "m") }.should eq("json")
     end
 
     it "returns \"form\" for APPLICATION_FORM_URLENCODED_VALUE" do
@@ -182,7 +188,7 @@ describe Noir::TreeSitterJavaParameterExtractor do
             public void m() {}
         }
         JAVA
-      Noir::TreeSitterJavaParameterExtractor.extract_consumes(source, "C", "m").should eq("form")
+      Noir::TreeSitter.parse_java(source) { |root| Noir::TreeSitterJavaParameterExtractor.extract_consumes_from(root, source, "C", "m") }.should eq("form")
     end
 
     it "returns nil when no consumes attribute is set" do
@@ -192,16 +198,16 @@ describe Noir::TreeSitterJavaParameterExtractor do
             public void m() {}
         }
         JAVA
-      Noir::TreeSitterJavaParameterExtractor.extract_consumes(source, "C", "m").should be_nil
+      Noir::TreeSitter.parse_java(source) { |root| Noir::TreeSitterJavaParameterExtractor.extract_consumes_from(root, source, "C", "m") }.should be_nil
     end
 
     it "returns nil when the method isn't found" do
       source = "class C { public void m() {} }"
-      Noir::TreeSitterJavaParameterExtractor.extract_consumes(source, "C", "missing").should be_nil
+      Noir::TreeSitter.parse_java(source) { |root| Noir::TreeSitterJavaParameterExtractor.extract_consumes_from(root, source, "C", "missing") }.should be_nil
     end
   end
 
-  describe ".extract_feign_client_classes" do
+  describe ".extract_feign_client_classes_from" do
     it "captures every @FeignClient-annotated class/interface" do
       source = <<-JAVA
         @FeignClient(name = "users")
@@ -213,20 +219,19 @@ describe Noir::TreeSitterJavaParameterExtractor do
         class Plain {}
         JAVA
 
-      result = Noir::TreeSitterJavaParameterExtractor.extract_feign_client_classes(source)
+      result = Noir::TreeSitter.parse_java(source) { |root| Noir::TreeSitterJavaParameterExtractor.extract_feign_client_classes_from(root, source) }
       result.includes?("UsersClient").should be_true
       result.includes?("OrdersClient").should be_true
       result.includes?("Plain").should be_false
     end
 
     it "returns an empty set when no @FeignClient is present" do
-      Noir::TreeSitterJavaParameterExtractor.extract_feign_client_classes(
-        "class A {}"
-      ).should be_empty
+      source = "class A {}"
+      Noir::TreeSitter.parse_java(source) { |root| Noir::TreeSitterJavaParameterExtractor.extract_feign_client_classes_from(root, source) }.should be_empty
     end
   end
 
-  describe ".extract_method_parameters" do
+  describe ".extract_method_parameters_from" do
     it "picks up @RequestParam-annotated args as query params" do
       source = <<-JAVA
         class Controller {
@@ -237,7 +242,7 @@ describe Noir::TreeSitterJavaParameterExtractor do
         }
         JAVA
 
-      params = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters(
+      params = method_params(
         source, "Controller", "search", "GET", nil,
         Hash(String, Array(Noir::TreeSitterJavaParameterExtractor::FieldInfo)).new
       )
@@ -259,7 +264,7 @@ describe Noir::TreeSitterJavaParameterExtractor do
         }
         JAVA
 
-      params = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters(
+      params = method_params(
         source, "Controller", "show", "GET", nil,
         Hash(String, Array(Noir::TreeSitterJavaParameterExtractor::FieldInfo)).new
       )
@@ -276,7 +281,7 @@ describe Noir::TreeSitterJavaParameterExtractor do
         }
         JAVA
 
-      params = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters(
+      params = method_params(
         source, "Controller", "show", "GET", nil,
         Hash(String, Array(Noir::TreeSitterJavaParameterExtractor::FieldInfo)).new
       )
@@ -287,7 +292,7 @@ describe Noir::TreeSitterJavaParameterExtractor do
 
     it "returns an empty list when method not found" do
       source = "class C { public void m() {} }"
-      params = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters(
+      params = method_params(
         source, "C", "missing", "GET", nil,
         Hash(String, Array(Noir::TreeSitterJavaParameterExtractor::FieldInfo)).new
       )
@@ -316,7 +321,7 @@ describe Noir::TreeSitterJavaParameterExtractor do
         }
         JAVA
 
-      params = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters(
+      params = method_params(
         controller, "PostController", "add", "POST", "json", class_fields
       )
       params.map(&.name).should eq(["title", "body", "categoryId"])
@@ -334,7 +339,7 @@ describe Noir::TreeSitterJavaParameterExtractor do
             public List<Hr> getAllHrs(String keywords) { return null; }
         }
         JAVA
-      params = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters(
+      params = method_params(
         source, "C", "getAllHrs", "GET", nil, empty_fields
       )
       params.map { |p| {p.name, p.param_type} }.should eq([{"keywords", "query"}])
@@ -347,7 +352,7 @@ describe Noir::TreeSitterJavaParameterExtractor do
             public RespBean deleteByIds(Integer[] ids) { return null; }
         }
         JAVA
-      params = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters(
+      params = method_params(
         source, "C", "deleteByIds", "DELETE", nil, empty_fields
       )
       params.map { |p| {p.name, p.param_type} }.should eq([{"ids", "query"}])
@@ -360,7 +365,7 @@ describe Noir::TreeSitterJavaParameterExtractor do
             public String login(String username, String password) { return ""; }
         }
         JAVA
-      params = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters(
+      params = method_params(
         source, "C", "login", "POST", nil, empty_fields
       )
       params.map { |p| {p.name, p.param_type} }.should eq([{"username", "form"}, {"password", "form"}])
@@ -373,7 +378,7 @@ describe Noir::TreeSitterJavaParameterExtractor do
             public String x(@RequestParam Integer[] ids) { return ""; }
         }
         JAVA
-      params = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters(
+      params = method_params(
         source, "C", "x", "GET", nil, empty_fields
       )
       params.map { |p| {p.name, p.param_type} }.should eq([{"ids", "query"}])
@@ -390,7 +395,7 @@ describe Noir::TreeSitterJavaParameterExtractor do
         "NewArticle" => [Noir::TreeSitterJavaParameterExtractor::FieldInfo.new("title", "private", true, "")],
         "User"       => [Noir::TreeSitterJavaParameterExtractor::FieldInfo.new("password", "private", true, "")],
       }
-      params = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters(
+      params = method_params(
         source, "C", "create", "POST", nil, class_fields
       )
       params.map(&.name).should eq(["title"])
@@ -421,12 +426,12 @@ describe Noir::TreeSitterJavaParameterExtractor do
         ],
       }
 
-      get_params = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters(
+      get_params = method_params(
         source, "PetController", "init", "GET", nil, class_fields
       )
       get_params.should be_empty
 
-      post_params = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters(
+      post_params = method_params(
         source, "PetController", "create", "POST", nil, class_fields
       )
       post_params.map { |p| {p.name, p.param_type} }.should eq([
@@ -451,7 +456,7 @@ describe Noir::TreeSitterJavaParameterExtractor do
           Noir::TreeSitterJavaParameterExtractor::FieldInfo.new("lastName", "private", true, ""),
         ],
       }
-      params = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters(
+      params = method_params(
         source, "OwnerController", "search", "GET", nil, class_fields
       )
       params.map { |p| {p.name, p.param_type} }.should eq([
@@ -484,7 +489,7 @@ describe Noir::TreeSitterJavaParameterExtractor do
           Noir::TreeSitterJavaParameterExtractor::FieldInfo.new("description", "private", true, ""),
         ],
       }
-      params = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters(
+      params = method_params(
         source, "VisitController", "create", "POST", nil, class_fields
       )
       params.map { |p| {p.name, p.param_type} }.should eq([
@@ -500,7 +505,7 @@ describe Noir::TreeSitterJavaParameterExtractor do
             public String list(Pageable pageable, Model model, String q) { return ""; }
         }
         JAVA
-      params = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters(
+      params = method_params(
         source, "C", "list", "GET", nil, empty_fields
       )
       params.map(&.name).should eq(["q"])
@@ -524,7 +529,7 @@ describe Noir::TreeSitterJavaParameterExtractor do
             public String login(@RequestBody Body body) { return ""; }
         }
         JAVA
-      params = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters(
+      params = method_params(
         source, "C", "login", "POST", nil, class_fields
       )
       params.map { |p| {p.name, p.param_type} }.sort!.should eq([{"email", "json"}, {"password", "json"}])
@@ -538,7 +543,7 @@ describe Noir::TreeSitterJavaParameterExtractor do
             public String login(Body body) { return ""; }
         }
         JAVA
-      params = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters(
+      params = method_params(
         source, "C", "login", "POST", nil, class_fields
       )
       params.should be_empty
@@ -565,7 +570,7 @@ describe Noir::TreeSitterJavaParameterExtractor do
             public String login(@RequestBody Body body) { return ""; }
         }
         JAVA
-      params = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters(
+      params = method_params(
         source, "C", "login", "POST", nil, class_fields
       )
       params.map(&.name).sort!.should eq(["email", "password"])
@@ -587,14 +592,14 @@ describe Noir::TreeSitterJavaParameterExtractor do
 
     it "selects the overload whose body contains the route annotation line" do
       # The second `read` overload's @GetMapping is on line 5 (0-based 4).
-      params = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters(
+      params = method_params(
         overloaded, "VisitResource", "read", "GET", nil, empty_fields, 4
       )
       params.map(&.name).should eq(["petIds"])
     end
 
     it "falls back to the first overload without a line hint" do
-      params = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters(
+      params = method_params(
         overloaded, "VisitResource", "read", "GET", nil, empty_fields
       )
       # First `read` takes a @PathVariable, which is not emitted as a param.
@@ -602,7 +607,7 @@ describe Noir::TreeSitterJavaParameterExtractor do
     end
   end
 
-  describe ".extract_class_supertypes" do
+  describe ".extract_class_supertypes_from" do
     it "maps each class to its superclass simple name" do
       source = <<-JAVA
         class Owner extends Person {}
@@ -610,7 +615,7 @@ describe Noir::TreeSitterJavaParameterExtractor do
         class BaseEntity {}
         class Standalone {}
         JAVA
-      supers = Noir::TreeSitterJavaParameterExtractor.extract_class_supertypes(source)
+      supers = Noir::TreeSitter.parse_java(source) { |root| Noir::TreeSitterJavaParameterExtractor.extract_class_supertypes_from(root, source) }
       supers["Owner"].should eq("Person")
       supers["Person"].should eq("BaseEntity")
       supers.has_key?("BaseEntity").should be_false
@@ -621,7 +626,7 @@ describe Noir::TreeSitterJavaParameterExtractor do
       source = <<-JAVA
         class Page extends org.example.base.AbstractPage<Item> {}
         JAVA
-      Noir::TreeSitterJavaParameterExtractor.extract_class_supertypes(source)["Page"].should eq("AbstractPage")
+      Noir::TreeSitter.parse_java(source) { |root| Noir::TreeSitterJavaParameterExtractor.extract_class_supertypes_from(root, source) }["Page"].should eq("AbstractPage")
     end
   end
 

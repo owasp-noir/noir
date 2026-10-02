@@ -74,15 +74,6 @@ describe Noir::TopLevelSplit do
       angle = tls_rules(nest: ALL_BRACKETS | TLSNest::Angle)
       TLS.split("Map<String, String> m, x", ',', angle).should eq ["Map<String, String> m", "x"]
     end
-
-    it "splits generic arguments with GENERICS_ONLY" do
-      TLS.split("String, List<Map<String, Integer>>, int", ',', TLSRules::GENERICS_ONLY)
-        .should eq ["String", " List<Map<String, Integer>>", " int"]
-    end
-
-    it "ignores parens under GENERICS_ONLY because they are not enabled" do
-      TLS.split("f(a, b)", ',', TLSRules::GENERICS_ONLY).should eq ["f(a", " b)"]
-    end
   end
 
   describe "per_kind" do

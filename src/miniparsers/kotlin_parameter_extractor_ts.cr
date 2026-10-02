@@ -166,14 +166,6 @@ module Noir
     # bindable fields and are skipped. Drives the DTO index's cross-file
     # inheritance merge so a command object that extends a base class
     # inherits its bindable fields.
-    def extract_class_supertypes(source : String) : Hash(String, String)
-      results = Hash(String, String).new
-      Noir::TreeSitter.parse_kotlin(source) do |root|
-        results = extract_class_supertypes_from(root, source)
-      end
-      results
-    end
-
     def extract_class_supertypes_from(root : LibTreeSitter::TSNode, source : String) : Hash(String, String)
       results = Hash(String, String).new
       walk_class_containers(root) do |decl|
@@ -221,24 +213,6 @@ module Noir
     # combined parameter list in the order the legacy analyzer
     # emitted them: formal-parameter sweep first, constraint sweep
     # appended.
-    def extract_method_parameters(source : String,
-                                  class_name : String,
-                                  method_name : String,
-                                  verb : String,
-                                  parameter_format : String?,
-                                  class_fields : Hash(String, Array(FieldInfo)),
-                                  string_constants = Hash(String, String).new,
-                                  local_string_constants = Hash(String, String).new) : Array(Param)
-      params = [] of Param
-      Noir::TreeSitter.parse_kotlin(source) do |root|
-        params = extract_method_parameters_from(
-          root, source, class_name, method_name, verb, parameter_format, class_fields,
-          string_constants, local_string_constants
-        )
-      end
-      params
-    end
-
     def extract_method_parameters_from(root : LibTreeSitter::TSNode,
                                        source : String,
                                        class_name : String,
@@ -304,14 +278,6 @@ module Noir
 
     # Read `consumes = ["..."]` / `consumes = arrayOf("...")` off the
     # method's mapping annotation. Returns "form" / "json" / nil.
-    def extract_consumes(source : String, class_name : String, method_name : String) : String?
-      result : String? = nil
-      Noir::TreeSitter.parse_kotlin(source) do |root|
-        result = extract_consumes_from(root, source, class_name, method_name)
-      end
-      result
-    end
-
     def extract_consumes_from(root : LibTreeSitter::TSNode, source : String, class_name : String, method_name : String) : String?
       method = find_function(root, source, class_name, method_name)
       return unless method

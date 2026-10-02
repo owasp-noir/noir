@@ -271,7 +271,7 @@ module Noir
     # empty string when the callee is a bare identifier
     # (`foo(...)` — not in our shape).
     private def chain_method_name(call : LibTreeSitter::TSNode, source : String) : String
-      callee = first_named_child(call)
+      callee = Noir::TreeSitter.first_named_child(call)
       return "" unless callee
       return "" unless Noir::TreeSitter.node_type(callee) == "member_expression"
       Noir::TreeSitter.each_named_child(callee) do |child|
@@ -283,10 +283,10 @@ module Noir
     # The receiver in a chain (the previous `call_expression` link)
     # is the first child of the callee `member_expression`.
     private def chain_receiver(call : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
-      callee = first_named_child(call)
+      callee = Noir::TreeSitter.first_named_child(call)
       return unless callee
       return unless Noir::TreeSitter.node_type(callee) == "member_expression"
-      first_named_child(callee)
+      Noir::TreeSitter.first_named_child(callee)
     end
 
     # True for a trailing method name the walker knows how to handle.
@@ -321,7 +321,7 @@ module Noir
         when "identifier"
           return current
         when "call_expression", "member_expression"
-          child = first_named_child(current)
+          child = Noir::TreeSitter.first_named_child(current)
           return unless child
           current = child
         else
@@ -412,12 +412,6 @@ module Noir
         return child if seen_params
       end
       nil
-    end
-
-    private def first_named_child(node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
-      count = LibTreeSitter.ts_node_named_child_count(node)
-      return if count == 0
-      LibTreeSitter.ts_node_named_child(node, 0_u32)
     end
 
     private def decode_string(node : LibTreeSitter::TSNode, source : String) : String

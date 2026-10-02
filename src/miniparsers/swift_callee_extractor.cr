@@ -34,7 +34,7 @@ module Noir::SwiftCalleeExtractor
       scan_line(stripped, file_path, start_line + index, entries)
     end
 
-    dedup_entries(entries)
+    entries.uniq
   end
 
   def strip_comment(line : String, in_block_comment : Bool = false) : String

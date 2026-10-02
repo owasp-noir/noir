@@ -172,20 +172,6 @@ module MediaFilter
     SPEC_DOCUMENT_EXTENSION_SET.includes?(extension) ? MAX_SPEC_FILE_SIZE : MAX_FILE_SIZE
   end
 
-  # Check if a file is too large to process. `max_size` defaults to the
-  # budget for the file's own kind — pass one only to override it.
-  def self.file_too_large?(file_path : String, max_size : Int32? = nil) : Bool
-    # Gracefully handle missing or unreadable files
-    return false unless File.exists?(file_path)
-    begin
-      size = File.size(file_path)
-      return false unless size
-      size > (max_size || max_size_for(file_path))
-    rescue
-      false
-    end
-  end
-
   # Decide whether a file should be skipped and, if so, return the human
   # readable reason in a single pass — avoids re-stat'ing the file just
   # to compose the log message. Returns `nil` when the file should be
@@ -265,18 +251,5 @@ module MediaFilter
     # on the binary path rather than decode it at the wrong width.
     return false if sample.size >= 4 && sample[0] == 0xFF_u8 && sample[1] == 0xFE_u8 && sample[2] == 0_u8 && sample[3] == 0_u8
     (sample[0] == 0xFF_u8 && sample[1] == 0xFE_u8) || (sample[0] == 0xFE_u8 && sample[1] == 0xFF_u8)
-  end
-
-  # Combined check - returns true if file should be skipped. Prefer
-  # {skip_check} on hot paths: it returns the reason in the same call
-  # so the caller does not re-stat to log.
-  def self.should_skip_file?(file_path : String, max_size : Int32? = nil, info : File::Info? = nil, sniff_binary : Bool = true) : Bool
-    !skip_check(file_path, max_size, info, sniff_binary).nil?
-  end
-
-  # Get a human-readable reason why a file was skipped. Kept for
-  # backwards compatibility; new callers should use {skip_check}.
-  def self.skip_reason(file_path : String, max_size : Int32? = nil, info : File::Info? = nil, sniff_binary : Bool = true) : String?
-    skip_check(file_path, max_size, info, sniff_binary)
   end
 end

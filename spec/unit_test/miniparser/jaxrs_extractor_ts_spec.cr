@@ -55,7 +55,7 @@ describe Noir::TreeSitterJaxRsExtractor do
       }
       JAVA
 
-    Noir::TreeSitterJaxRsExtractor.extract_application_path(source).should eq("/rest")
+    Noir::TreeSitter.parse_java(source) { |root| Noir::TreeSitterJaxRsExtractor.extract_application_path_from(root, source) }.should eq("/rest")
   end
 
   it "composes same-file sub-resource locator paths" do

@@ -6,47 +6,6 @@ require "./utils/home.cr"
 require "./llm/native_tool_calling"
 
 class ConfigInitializer
-  # Keys that should be coerced from a legacy "yes" / "no" string into
-  # a real Bool when parsed from config.yaml. Every boolean field in
-  # default_options must be listed here; otherwise direct comparisons
-  # like `options["cache_disable"] == true` in scan.cr would miss a
-  # legacy `cache_disable: yes` entry and silently leave the flag off.
-  BOOLEAN_CONFIG_KEYS = %w[
-    color
-    debug
-    verbose
-    include_path
-    include_techs
-    include_callee
-    ai_context
-    nolog
-    no_spinner
-    strict
-    probe # legacy `send_req` is migrated to `probe` before this coercion runs
-    tls_skip_verify
-    all_taggers
-    status_codes
-    passive_scan
-    passive_scan_auto_update
-    passive_scan_no_update_check
-    ai_agent
-    cache_disable
-    cache_clear
-  ]
-
-  # Keys whose value must end up an Int, because every consumer reads
-  # them through `YAML::Any#as_i`. A quoted number (`ai_max_token:
-  # "4000"`) parses as a String and blew up at the cast — and the
-  # generated template itself models the quoted spelling with
-  # `concurrency: "…"`, so that is the shape users copy. The equivalent
-  # CLI flags run through `positive_int_or_die!`; these had neither
-  # coercion nor validation. Bounds are checked afterwards in
-  # `Noir::CliValidation`, the shared CLI+config gate.
-  INTEGER_CONFIG_KEYS = %w[
-    ai_max_token
-    ai_agent_max_steps
-  ]
-
   # Keys stored as one comma-separated String, because the CLI flags
   # that feed them accumulate into that shape. A YAML sequence is the
   # natural spelling for a list of globs or tech names — and `base:` /
@@ -62,23 +21,6 @@ class ConfigInitializer
     only_techs
     exclude_techs
     use_taggers
-  ]
-
-  # Keys whose value should always end up as an Array(YAML::Any) so
-  # callers can iterate without per-call type checks.
-  ARRAY_CONFIG_KEYS = %w[
-    base
-    probe_header
-    probe_skip
-    probe_match
-    set_pvalue
-    set_pvalue_header
-    set_pvalue_cookie
-    set_pvalue_query
-    set_pvalue_form
-    set_pvalue_json
-    set_pvalue_path
-    passive_scan_path
   ]
 
   # v0 config-key → v1 config-key map. Applied during `read_config`
@@ -231,7 +173,11 @@ class ConfigInitializer
       # would otherwise raise KeyError on the next iteration, get
       # swallowed by the outer rescue, and silently revert every
       # setting to defaults.
-      BOOLEAN_CONFIG_KEYS.each do |key|
+      # Which keys get which coercion is read off the type of their
+      # default, so a new boolean/integer/array option needs no list.
+      defaults = default_options
+      defaults.each do |key, default|
+        next unless default.raw.is_a?(Bool)
         value = symbolized_hash[key]?
         next if value.nil?
         next if value.raw.is_a?(Bool) # already a real YAML bool
@@ -256,7 +202,8 @@ class ConfigInitializer
       # the same "warn, then fall back" shape as the boolean pass above.
       # (Range checks live in CliValidation, which both the CLI flag and
       # this path go through.)
-      INTEGER_CONFIG_KEYS.each do |key|
+      defaults.each do |key, default|
+        next unless default.raw.is_a?(Int)
         value = symbolized_hash[key]?
         next if value.nil?
         next if value.raw.is_a?(Int) # already a real YAML int
@@ -285,7 +232,8 @@ class ConfigInitializer
 
       # Normalize array-style keys: empty string → empty array,
       # bare string → single-element array, real array → unchanged.
-      ARRAY_CONFIG_KEYS.each do |key|
+      defaults.each do |key, default|
+        next unless default.raw.is_a?(Array)
         value = symbolized_hash[key]?
         next if value.nil?
 
@@ -300,7 +248,7 @@ class ConfigInitializer
         end
       end
 
-      final_options = default_options.merge(symbolized_hash) { |_, _, new_val| new_val }
+      final_options = defaults.merge(symbolized_hash) { |_, _, new_val| new_val }
       final_options
     rescue e
       # A malformed config used to revert every setting to defaults with
