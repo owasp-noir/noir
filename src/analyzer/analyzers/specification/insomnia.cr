@@ -95,7 +95,7 @@ module Analyzer::Specification
       end
 
       if auth = request["authentication"]?
-        process_json_auth(auth, env, params)
+        process_auth(auth, env, params)
       end
 
       # Body
@@ -244,7 +244,7 @@ module Analyzer::Specification
       end
 
       if auth = item["authentication"]?
-        process_yaml_auth(auth, env, params)
+        process_auth(auth, env, params)
       end
 
       if body_node = item["body"]?
@@ -425,21 +425,7 @@ module Analyzer::Specification
     # `environments.data.token` — so they go through `resolve_vars` too.
     # Only the URL did, which is why a bearer header came out as the literal
     # `Bearer {{ token }}` instead of the credential the collection defines.
-    private def process_json_auth(auth : JSON::Any, env : Hash(String, String), params : Array(Param))
-      return if auth["disabled"]?.try(&.as_bool?) == true
-      type = auth["type"]?.try(&.as_s?) || ""
-      process_auth_fields(
-        type,
-        resolve_vars(auth["key"]?.try(&.as_s?) || "", env),
-        resolve_vars(auth["value"]?.try(&.as_s?) || "", env),
-        auth["addTo"]?.try(&.as_s?) || "",
-        resolve_vars(auth["token"]?.try(&.as_s?) || "", env),
-        auth["prefix"]?.try(&.as_s?) || "",
-        params
-      )
-    end
-
-    private def process_yaml_auth(auth : YAML::Any, env : Hash(String, String), params : Array(Param))
+    private def process_auth(auth, env : Hash(String, String), params : Array(Param))
       return if auth["disabled"]?.try(&.as_bool?) == true
       type = auth["type"]?.try(&.as_s?) || ""
       process_auth_fields(

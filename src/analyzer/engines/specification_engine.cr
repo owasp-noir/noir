@@ -485,6 +485,53 @@ module Analyzer::Specification
       Noir::SkippedFiles.record(tech, from_path, message, noun: "referenced file")
     end
 
+    # OAS2/OAS3: adds params for the effective security requirement. Per the
+    # OAS spec an operation-level `security` (including an empty `[]` that
+    # opts out) wins over the global default; otherwise the global default
+    # applies. `effective` is a `JSON::Any?` or a `YAML::Any?`.
+    protected def apply_security(effective, schemes : Hash(String, Param), params : Array(Param))
+      return if schemes.empty?
+      return unless effective
+      return unless requirements = effective.as_a?
+      requirements.each do |requirement|
+        next unless requirement_h = requirement.as_h?
+        requirement_h.each_key do |scheme_name|
+          if param = schemes[scheme_name.to_s]?
+            params << param unless params.includes?(param)
+          end
+        end
+      end
+    end
+
+    # OAS2/OAS3: resolves the `$ref` a Path Item may stand in for, and
+    # reports which document the result came from: with the operations in
+    # `./paths/activity/activities.yaml`, every ref inside them resolves from
+    # that file, not from the entry document that named it.
+    protected def resolve_path_item_json(doc : SpecDoc(JSON::Any), path_obj : JSON::Any, seen : Set(String) = Set(String).new) : Tuple(JSON::Any, SpecDoc(JSON::Any))
+      return {path_obj, doc} unless path_obj_h = path_obj.as_h?
+      return {path_obj, doc} unless ref = path_obj_h["$ref"]?.try(&.as_s?)
+      return {path_obj, doc} unless seen.add?(ref_key(doc, ref))
+      if resolved = resolve_ref_json(doc, ref)
+        node, ref_doc = resolved
+        resolve_path_item_json(ref_doc, node, seen)
+      else
+        {path_obj, doc}
+      end
+    end
+
+    protected def resolve_path_item_yaml(doc : SpecDoc(YAML::Any), path_obj : YAML::Any, seen : Set(String) = Set(String).new) : Tuple(YAML::Any, SpecDoc(YAML::Any))
+      return {path_obj, doc} unless path_obj_h = path_obj.as_h?
+      return {path_obj, doc} unless ref_node = path_obj_h[YAML::Any.new("$ref")]?
+      return {path_obj, doc} unless ref = ref_node.as_s?
+      return {path_obj, doc} unless seen.add?(ref_key(doc, ref))
+      if resolved = resolve_ref_yaml(doc, ref)
+        node, ref_doc = resolved
+        resolve_path_item_yaml(ref_doc, node, seen)
+      else
+        {path_obj, doc}
+      end
+    end
+
     # Appends a valueless `Param` unless an equal one is already present.
     #
     # Schema walks reach the same property twice whenever a document
