@@ -85,10 +85,10 @@ module Analyzer::CSharp
     end
 
     private def analyze_file(file : String, content : String, include_callee : Bool)
-      # Lex once: `tokens` locates comment spans (to strip comments while keeping
-      # string literals for text extraction) and `masked_lines` blanks
-      # strings/comments/chars for structural brace counting. Both views come
-      # from the same scan, so we avoid lexing the source twice.
+      # Lex once: `code_lines` strips comments while keeping string literals
+      # for text extraction, and `masked_lines` blanks strings/comments/chars
+      # for structural brace counting. Both views come from the same scan, so
+      # we avoid lexing the source twice.
       lexer = Noir::CSharpLexer.new(content)
       clean_lines = lexer.code_lines
       masked_lines = lexer.masked_lines
