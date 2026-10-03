@@ -179,10 +179,10 @@ describe "Noir::CLI::Legacy.translate_flag_aliases" do
   end
 end
 
-describe "Noir::CLI::KNOWN_COMMANDS" do
+describe "Noir::CLI::Catalog::NAMES" do
   it "includes every v1 verb so the router can dispatch them" do
     %w[scan list cache config rules completion version help].each do |verb|
-      Noir::CLI::KNOWN_COMMANDS.includes?(verb).should be_true
+      Noir::CLI::Catalog::NAMES.includes?(verb).should be_true
     end
   end
 end

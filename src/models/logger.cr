@@ -1,8 +1,5 @@
 require "colorize"
-
-lib LibC
-  fun usleep(useconds : UInt32) : Int32
-end
+require "../utils/utils"
 
 class NoirLogger
   SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
@@ -61,6 +58,13 @@ class NoirLogger
     @no_spinner = no_spinner
     @spinner_active = false
     @stdout_busy = Atomic(Int8).new(0_i8)
+  end
+
+  # The logger a pipeline stage builds from the scan's option hash.
+  # `colorize` is overridable for `OutputBuilder`, which also gates color
+  # on STDOUT being a terminal.
+  def self.from_options(options, colorize : Bool = any_to_bool(options["color"]), no_spinner : Bool = false) : NoirLogger
+    new(any_to_bool(options["debug"]), any_to_bool(options["verbose"]), colorize, any_to_bool(options["nolog"]), no_spinner)
   end
 
   def log(level : LogLevel, message : String)

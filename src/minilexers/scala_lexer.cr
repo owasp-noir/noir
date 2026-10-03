@@ -1,24 +1,6 @@
 require "./masked_lexer"
 
 module Noir
-  # A single token produced by `ScalaLexer#tokens`. `start`/`end` are
-  # character indices into the original source (`end` exclusive); `line` is
-  # the 1-based line of `start`.
-  struct ScalaToken
-    getter kind : Symbol
-    getter value : String
-    getter start : Int32
-    getter end : Int32
-    getter line : Int32
-
-    def initialize(@kind : Symbol, @value : String, @start : Int32, @end : Int32, @line : Int32)
-    end
-
-    def to_s(io : IO) : Nil
-      io << @kind << '(' << @value << ')'
-    end
-  end
-
   # ScalaLexer is a hand-rolled structural lexer for Scala source, modelled on
   # `Noir::PhpLexer` / `Noir::CSharpLexer`. The Scala analyzers used to strip
   # each line in isolation (`strip_non_code_with_state(line, 0, false)`),
@@ -47,7 +29,6 @@ module Noir
     getter code : Array(Char)
 
     @chars : Array(Char)
-    @tokens : Array(ScalaToken)?
     @masked_lines : Array(String)?
     @code_lines : Array(String)?
 
@@ -57,7 +38,6 @@ module Noir
       @masked = @chars.dup
       @code = @chars.dup
       @spans = [] of Tuple(Symbol, Int32, Int32)
-      @tokens = nil
       @skip_ranges = nil
       @masked_lines = nil
       @code_lines = nil
@@ -326,94 +306,13 @@ module Noir
 
     # Structural masked source split into lines (1:1 with `String#lines`).
     def masked_lines : Array(String)
-      @masked_lines ||= begin
-        masked_str = String.build(@size) do |io|
-          @masked.each { |c| io << c }
-        end
-        masked_str.lines
-      end
+      @masked_lines ||= @masked.join.lines
     end
 
     # Code masked source split into lines (1:1 with `String#lines`). Comments,
     # triple-quote bodies and char literals are blanked; regular strings kept.
     def code_lines : Array(String)
-      @code_lines ||= begin
-        code_str = String.build(@size) do |io|
-          @code.each { |c| io << c }
-        end
-        code_str.lines
-      end
-    end
-
-    # ---- token stream ------------------------------------------------------
-
-    def tokens : Array(ScalaToken)
-      @tokens ||= build_tokens
-    end
-
-    private def build_tokens : Array(ScalaToken)
-      result = [] of ScalaToken
-      span_idx = 0
-      spans = @spans
-      i = 0
-      line = 1
-      line_cursor = 0
-      line_for = ->(pos : Int32) do
-        while line_cursor < pos
-          line += 1 if @chars[line_cursor] == '\n'
-          line_cursor += 1
-        end
-        line
-      end
-
-      while i < @size
-        if span_idx < spans.size && spans[span_idx][1] == i
-          kind, s, e = spans[span_idx]
-          result << ScalaToken.new(kind, @chars[s...e].join, s, e, line_for.call(s))
-          span_idx += 1
-          i = e
-          next
-        end
-
-        c = @masked[i]
-        if c.ascii_whitespace?
-          i += 1
-        elsif ident_start?(c)
-          start = i
-          while i < @size && ident_char?(@masked[i])
-            i += 1
-          end
-          result << ScalaToken.new(:ident, @chars[start...i].join, start, i, line_for.call(start))
-        else
-          kind, len = punct_at(i)
-          if kind
-            result << ScalaToken.new(kind, @chars[i...i + len].join, i, i + len, line_for.call(i))
-            i += len
-          else
-            i += 1
-          end
-        end
-      end
-      result
-    end
-
-    private def punct_at(i : Int32) : Tuple(Symbol?, Int32)
-      c = @masked[i]
-      n = i + 1 < @size ? @masked[i + 1] : '\0'
-      case
-      when c == '=' && n == '>' then {:arrow, 2}
-      when c == '('             then {:lparen, 1}
-      when c == ')'             then {:rparen, 1}
-      when c == '['             then {:lbracket, 1}
-      when c == ']'             then {:rbracket, 1}
-      when c == '{'             then {:lbrace, 1}
-      when c == '}'             then {:rbrace, 1}
-      when c == ';'             then {:semicolon, 1}
-      when c == ','             then {:comma, 1}
-      when c == '.'             then {:dot, 1}
-      when c == '/'             then {:slash, 1}
-      else                           {nil, 1}
-      end
+      @code_lines ||= @code.join.lines
     end
   end
 end

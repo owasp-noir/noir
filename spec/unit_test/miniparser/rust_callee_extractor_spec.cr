@@ -1,7 +1,7 @@
 require "../../spec_helper"
-require "../../../src/miniparsers/rust_callee_extractor"
+require "../../../src/miniparsers/rust_callee_extractor_ts"
 
-describe Noir::RustCalleeExtractor do
+describe Noir::RustCalleeExtractorTS do
   it "extracts path, receiver, and bare calls from Rust handler bodies" do
     body = <<-RUST
       let user = UserService::create(payload).await;
@@ -9,7 +9,7 @@ describe Noir::RustCalleeExtractor do
       Json(user)
       RUST
 
-    callees = Noir::RustCalleeExtractor.callees_for_body(body, "main.rs", 10)
+    callees = Noir::RustCalleeExtractorTS.callees_for_body_text(body, "main.rs", 10)
     callees.map { |name, _, line| {name, line} }.should eq([
       {"UserService::create", 10},
       {"state.users.find", 11},
@@ -26,7 +26,7 @@ describe Noir::RustCalleeExtractor do
       AuditLog::write("created");
       RUST
 
-    callees = Noir::RustCalleeExtractor.callees_for_body(body, "main.rs", 20)
+    callees = Noir::RustCalleeExtractorTS.callees_for_body_text(body, "main.rs", 20)
     callees.map { |name, _, line| {name, line} }.should eq([
       {"AuditLog::write", 24},
     ])
@@ -40,7 +40,7 @@ describe Noir::RustCalleeExtractor do
       HttpResponse::Created().finish()
       RUST
 
-    callees = Noir::RustCalleeExtractor.callees_for_body(body, "main.rs", 40)
+    callees = Noir::RustCalleeExtractorTS.callees_for_body_text(body, "main.rs", 40)
     callees.map { |name, _, line| {name, line} }.should eq([
       {"HttpResponse::Ok", 42},
       {"HttpResponse::Created", 43},
@@ -55,7 +55,7 @@ describe Noir::RustCalleeExtractor do
       SafeService::run();
       RUST
 
-    callees = Noir::RustCalleeExtractor.callees_for_body(body, "main.rs", 30)
+    callees = Noir::RustCalleeExtractorTS.callees_for_body_text(body, "main.rs", 30)
     callees.map { |name, _, line| {name, line} }.should eq([
       {"SafeService::run", 33},
     ])

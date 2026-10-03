@@ -46,11 +46,6 @@ module Noir::ScalaCalleeExtractor
     entries.sort_by(&.[0]).map(&.[1]).uniq!
   end
 
-  def strip_comment(line : String, block_comment_depth : Int32 = 0, in_multiline_string : Bool = false) : String
-    stripped, _, _ = strip_non_code_with_state(line, block_comment_depth, in_multiline_string)
-    stripped
-  end
-
   def strip_comment_preserving_strings(line : String) : String
     stripped, _, _ = strip_non_code_with_state(line, 0, false, preserve_strings: true)
     stripped

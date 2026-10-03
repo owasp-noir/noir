@@ -25,8 +25,6 @@ module Noir::RustCalleeExtractorTS
 
   # Rust keywords + commonly-aliased control-flow constructors that
   # surface as `call_expression`s but carry no useful callee signal.
-  # Kept in sync with the legacy regex extractor's `RESERVED` set so
-  # callers see no behaviour change when swapping the implementation.
   RESERVED = Set{
     "as", "async", "await", "break", "const", "continue", "crate",
     "dyn", "else", "enum", "extern", "false", "fn", "for", "if",
@@ -47,7 +45,7 @@ module Noir::RustCalleeExtractorTS
                       source : String,
                       file_path : String) : Array(Entry)
     sink = [] of Entry
-    walk(body) do |node|
+    Noir::TreeSitter.walk(body) do |node|
       case Noir::TreeSitter.node_type(node)
       when "call_expression"
         name = call_callee_text(node, source)
@@ -60,8 +58,7 @@ module Noir::RustCalleeExtractorTS
     dedup(sink)
   end
 
-  # Drop-in replacement for `Noir::RustCalleeExtractor.callees_for_body`.
-  # Wraps `body_text` in a synthetic `fn _() { ... }` so the grammar
+  # Callees of a function body extracted as raw text. Wraps `body_text` in a synthetic `fn _() { ... }` so the grammar
   # has a complete top-level item to parse, then translates wrapper-
   # relative rows back to file-relative ones (`start_line` is the
   # 1-based file line of the body's first line).
@@ -187,12 +184,5 @@ module Noir::RustCalleeExtractorTS
       found = child if Noir::TreeSitter.node_type(child) == "function_item"
     end
     found
-  end
-
-  private def walk(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
-    block.call(node)
-    Noir::TreeSitter.each_named_child(node) do |child|
-      walk(child, &block)
-    end
   end
 end

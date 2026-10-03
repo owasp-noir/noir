@@ -152,9 +152,7 @@ module Analyzer::Scala
         # Check if this is already a path parameter
         is_path_param = endpoint.params.any? { |p| p.name == param_name && p.param_type == "path" }
         unless is_path_param
-          unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
-            endpoint.push_param(Param.new(param_name, "", "query"))
-          end
+          endpoint.push_param(Param.new(param_name, "", "query"))
         end
       end
 
@@ -164,9 +162,7 @@ module Analyzer::Scala
         param_name = match[1]
         # Skip "splat" as it's a path parameter
         next if param_name == "splat"
-        unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
-          endpoint.push_param(Param.new(param_name, "", "query"))
-        end
+        endpoint.push_param(Param.new(param_name, "", "query"))
       end
 
       # Extract request body: parsedBody.extract[User]
@@ -182,17 +178,13 @@ module Analyzer::Scala
       # Extract headers: request.getHeader("Authorization")
       block.scan(/request\.getHeader\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
         param_name = match[1]
-        unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "header" }
-          endpoint.push_param(Param.new(param_name, "", "header"))
-        end
+        endpoint.push_param(Param.new(param_name, "", "header"))
       end
 
       # Extract cookies: cookies.get("session")
       block.scan(/cookies\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
         param_name = match[1]
-        unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "cookie" }
-          endpoint.push_param(Param.new(param_name, "", "cookie"))
-        end
+        endpoint.push_param(Param.new(param_name, "", "cookie"))
       end
     end
 

@@ -16,6 +16,14 @@ describe Noir::ExtractionResultCache do
       Noir::ExtractionResultCache.source_fingerprint("b")
     )
   end
+
+  it "evicts the oldest half of a full store and keeps the first value for a key" do
+    store = Hash(UInt64, String).new
+    (1_u64..4_u64).each { |k| Noir::ExtractionResultCache.store_capped(store, k, k.to_s, 4) }
+    Noir::ExtractionResultCache.store_capped(store, 3_u64, "again", 4).should eq("3")
+    Noir::ExtractionResultCache.store_capped(store, 5_u64, "5", 4).should eq("5")
+    store.keys.should eq([3_u64, 4_u64, 5_u64])
+  end
 end
 
 describe Noir::TreeSitterPythonRouteExtractor do

@@ -53,8 +53,6 @@ module Analyzer::Python
       end
     end
 
-    @keyword_regex_cache = Hash(String, Regex).new
-
     alias RouteNameKey = Tuple(String, String)
     alias RouteMap = Hash(RouteNameKey, Tuple(String, String))
 
@@ -310,24 +308,6 @@ module Analyzer::Python
       nil
     end
 
-    # Memoized per keyword — the keyword set is tiny (`name`) but this
-    # runs per argument of every static-view declaration.
-    private def keyword_string_regex(keyword : String) : Regex
-      @keyword_regex_cache[keyword] ||= /^\s*#{Regex.escape(keyword)}\s*=\s*(.+)$/m
-    end
-
-    private def extract_python_keyword_string(args : Array(String), keyword : String) : String?
-      keyword_re = keyword_string_regex(keyword)
-      args.each do |arg|
-        keyword_match = arg.match(keyword_re)
-        next unless keyword_match
-
-        return Helper.extract_python_string(keyword_match[1])
-      end
-
-      nil
-    end
-
     private def static_view_route_path(name : String) : String
       normalized = name.gsub(/\/+/, "/")
       normalized = "/#{normalized}" unless normalized.starts_with?("/")
@@ -364,29 +344,6 @@ module Analyzer::Python
         end
       end
       nil
-    end
-
-    # Collect indented lines following a `def` as the function body.
-    private def extract_function_body(lines : Array(String), def_index : Int32) : String
-      return "" if def_index >= lines.size
-      def_line = lines[def_index]
-      base_indent = def_line.size - def_line.lstrip.size
-
-      body = [] of String
-      i = def_index + 1
-      while i < lines.size
-        line = lines[i]
-        if line.strip.empty?
-          body << line
-          i += 1
-          next
-        end
-        current_indent = line.size - line.lstrip.size
-        break if current_indent <= base_indent
-        body << line
-        i += 1
-      end
-      body.join("\n")
     end
 
     # Build endpoint(s) for a route+methods combo. `def_index` is the
@@ -432,8 +389,7 @@ module Analyzer::Python
       # Pyramid path params: `{name}`, `{name:regex}`, or `*remainder` glob.
       route_path.scan(/\{([A-Za-z_][A-Za-z0-9_]*)(?::[^}]+)?\}|\*([A-Za-z_][A-Za-z0-9_]*)/) do |m|
         name = m[1]? || m[2]?
-        next if name.nil? || seen.includes?(name)
-        seen << name
+        next if name.nil? || !seen.add?(name)
         params << Param.new(name, "", "path")
       end
       params
@@ -445,10 +401,7 @@ module Analyzer::Python
 
       record = ->(name : String, type : String) do
         key = "#{type}:#{name}"
-        unless seen.includes?(key)
-          params << Param.new(name, "", type)
-          seen << key
-        end
+        params << Param.new(name, "", type) if seen.add?(key)
       end
 
       ACCESSOR_PATTERNS.each do |param_type, bracket_re, get_re|

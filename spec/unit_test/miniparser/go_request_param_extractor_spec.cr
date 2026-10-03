@@ -2,32 +2,6 @@ require "../../spec_helper"
 require "../../../src/miniparsers/go_request_param_extractor"
 
 describe Noir::GoRequestParamExtractor do
-  describe "#package_function_bodies_for_dirs" do
-    it "packages function bodies by directory" do
-      contents = {
-        "/app/main.go" => "package main\n\nfunc hello() {}\n",
-      }
-      dirs = Set{"/app"}
-
-      result = Noir::GoRequestParamExtractor.package_function_bodies_for_dirs(contents, dirs)
-      result.has_key?("/app").should be_true
-      result["/app"].has_key?("hello").should be_true
-    end
-  end
-
-  describe "#package_method_bodies_for_dirs" do
-    it "packages method bodies by directory" do
-      contents = {
-        "/app/handler.go" => "package main\n\ntype H struct{}\nfunc (h *H) Serve() {}\n",
-      }
-      dirs = Set{"/app"}
-
-      result = Noir::GoRequestParamExtractor.package_method_bodies_for_dirs(contents, dirs)
-      result.has_key?("/app").should be_true
-      result["/app"].has_key?("Serve").should be_true
-    end
-  end
-
   describe "#params_for_routes" do
     it "extracts query and header parameters from go handler" do
       source = <<-GO
@@ -62,7 +36,7 @@ describe Noir::GoRequestParamExtractor do
   end
 
   describe "#lazy_package_bodies_for_dirs" do
-    it "holds exactly what the eager builders store, directory by directory" do
+    it "builds tables only for the requested directories" do
       contents = {
         "/app/a.go"     => "package app\n\nfunc Shared() int { return 1 }\nfunc (s *S) Get() {}\n",
         "/app/b.go"     => "package app\n\nfunc Shared() int { return 2 }\nfunc Only() {}\nfunc (t *T) Get() {}\n",
@@ -72,15 +46,16 @@ describe Noir::GoRequestParamExtractor do
       }
       dirs = Set{"/app", "/app/sub"}
 
-      functions = Noir::GoRequestParamExtractor.package_function_bodies_for_dirs(contents, dirs)
-      methods = Noir::GoRequestParamExtractor.package_method_bodies_for_dirs(contents, dirs)
       lazy = Noir::GoRequestParamExtractor.lazy_package_bodies_for_dirs(contents, dirs)
 
-      ["/app", "/app/sub", "/other", "/missing"].each do |dir|
-        Noir::GoRequestParamExtractor.function_bodies_for_directory(lazy, dir)
-          .should eq(Noir::GoRequestParamExtractor.function_bodies_for_directory(functions, dir))
-        Noir::GoRequestParamExtractor.method_bodies_for_directory(lazy, dir)
-          .should eq(Noir::GoRequestParamExtractor.method_bodies_for_directory(methods, dir))
+      # `func ` gate: the tab-separated declaration is skipped.
+      Noir::GoRequestParamExtractor.function_bodies_for_directory(lazy, "/app").keys.sort!.should eq(["Only", "Shared"])
+      Noir::GoRequestParamExtractor.method_bodies_for_directory(lazy, "/app").keys.should eq(["Get"])
+      Noir::GoRequestParamExtractor.function_bodies_for_directory(lazy, "/app/sub").keys.should eq(["Sub"])
+      # Directories outside `dirs` answer empty without parsing.
+      ["/other", "/missing"].each do |dir|
+        Noir::GoRequestParamExtractor.function_bodies_for_directory(lazy, dir).should be_empty
+        Noir::GoRequestParamExtractor.method_bodies_for_directory(lazy, dir).should be_empty
       end
       # First definition wins, methods on different receivers accumulate.
       lazy.functions_for("/app")["Shared"].file_path.should eq("/app/a.go")

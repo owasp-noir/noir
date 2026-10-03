@@ -5,11 +5,7 @@ require "../models/endpoint"
 class OutputBuilderYaml < OutputBuilder
   def print(endpoints : Array(Endpoint), passive_results : Array(PassiveScanResult) = [] of PassiveScanResult)
     # Always emitted, empty included — see the note in `json.cr`.
-    message = {
-      "endpoints"       => endpoints,
-      "passive_results" => passive_results,
-      "errors"          => analyzer_failures,
-    }.to_yaml
+    message = report_document(endpoints, passive_results).to_yaml
     ob_puts message
   end
 end

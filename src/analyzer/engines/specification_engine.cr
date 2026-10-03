@@ -4,6 +4,7 @@ require "../../models/skipped_files"
 require "uri"
 require "json"
 require "yaml"
+require "xml"
 require "../../models/locator_keys"
 require "../../utils/media_filter"
 require "../../utils/spec_line_index"
@@ -169,6 +170,57 @@ module Analyzer::Specification
       uri
     rescue
       nil
+    end
+
+    # The path of a request URL as written in a `.http` or Insomnia file —
+    # absolute, host-prefixed (`localhost:3000/users`) or path-only — with
+    # each `template_var` placeholder left unresolved turned into a `:name`
+    # path parameter. Returns "" for a non-HTTP scheme.
+    protected def template_url_path(url_string : String, template_var : Regex) : String
+      stripped = url_string.strip
+      return "" if stripped.empty?
+
+      if stripped =~ /^https?:\/\//i
+        uri = parse_absolute_url(stripped)
+        return "" unless uri
+        path = uri.path
+        return template_path(path.empty? ? "/" : path, template_var)
+      elsif stripped =~ /^[A-Za-z][A-Za-z0-9+.-]*:\/\//
+        return ""
+      end
+
+      # No scheme — treat as path-only or host-prefixed.
+      without_query = stripped.split("?", 2)[0].split("#", 2)[0]
+      path = without_query
+      unless path.starts_with?("/")
+        if looks_host_prefixed?(path)
+          parts = path.split("/", 2)
+          return "/" if parts.size == 1
+          path = "/" + parts[1]
+        else
+          path = "/" + path
+        end
+      end
+      template_path(path, template_var)
+    end
+
+    private def looks_host_prefixed?(value : String) : Bool
+      first = value.split("/", 2).first
+      first.includes?(".") || first.includes?(":") || first.downcase == "localhost" || first.includes?("{{")
+    end
+
+    private def template_path(path : String, template_var : Regex) : String
+      normalized = path.empty? ? "/" : path
+      normalized = "/" + normalized unless normalized.starts_with?("/")
+      normalized.gsub(template_var) do
+        ":#{template_var_name($1)}"
+      end
+    end
+
+    private def template_var_name(name : String) : String
+      normalized = name.gsub(/[^A-Za-z0-9_]/, "_")
+      normalized = normalized.lstrip('_').rstrip('_')
+      normalized.empty? ? "param" : normalized
     end
 
     # Turns an OpenAPI-style `servers[].url` list into the base path every
@@ -483,6 +535,80 @@ module Analyzer::Specification
       return unless @reported_refs.add?("#{from_path}\u0000#{message}")
       logger.debug "#{from_path}: #{message}"
       Noir::SkippedFiles.record(tech, from_path, message, noun: "referenced file")
+    end
+
+    # OAS2/OAS3: adds params for the effective security requirement. Per the
+    # OAS spec an operation-level `security` (including an empty `[]` that
+    # opts out) wins over the global default; otherwise the global default
+    # applies. `effective` is a `JSON::Any?` or a `YAML::Any?`.
+    protected def apply_security(effective, schemes : Hash(String, Param), params : Array(Param))
+      return if schemes.empty?
+      return unless effective
+      return unless requirements = effective.as_a?
+      requirements.each do |requirement|
+        next unless requirement_h = requirement.as_h?
+        requirement_h.each_key do |scheme_name|
+          if param = schemes[scheme_name.to_s]?
+            params << param unless params.includes?(param)
+          end
+        end
+      end
+    end
+
+    # OAS2/OAS3: resolves the `$ref` a Path Item may stand in for, and
+    # reports which document the result came from: with the operations in
+    # `./paths/activity/activities.yaml`, every ref inside them resolves from
+    # that file, not from the entry document that named it.
+    protected def resolve_path_item_json(doc : SpecDoc(JSON::Any), path_obj : JSON::Any, seen : Set(String) = Set(String).new) : Tuple(JSON::Any, SpecDoc(JSON::Any))
+      return {path_obj, doc} unless path_obj_h = path_obj.as_h?
+      return {path_obj, doc} unless ref = path_obj_h["$ref"]?.try(&.as_s?)
+      return {path_obj, doc} unless seen.add?(ref_key(doc, ref))
+      if resolved = resolve_ref_json(doc, ref)
+        node, ref_doc = resolved
+        resolve_path_item_json(ref_doc, node, seen)
+      else
+        {path_obj, doc}
+      end
+    end
+
+    protected def resolve_path_item_yaml(doc : SpecDoc(YAML::Any), path_obj : YAML::Any, seen : Set(String) = Set(String).new) : Tuple(YAML::Any, SpecDoc(YAML::Any))
+      return {path_obj, doc} unless path_obj_h = path_obj.as_h?
+      return {path_obj, doc} unless ref_node = path_obj_h[YAML::Any.new("$ref")]?
+      return {path_obj, doc} unless ref = ref_node.as_s?
+      return {path_obj, doc} unless seen.add?(ref_key(doc, ref))
+      if resolved = resolve_ref_yaml(doc, ref)
+        node, ref_doc = resolved
+        resolve_path_item_yaml(ref_doc, node, seen)
+      else
+        {path_obj, doc}
+      end
+    end
+
+    # The non-empty strings of a YAML sequence (k8s `hosts` / `hostnames`).
+    protected def string_list(node : YAML::Any?) : Array(String)
+      return [] of String unless arr = node.try(&.as_a?)
+      arr.compact_map(&.as_s?).reject(&.empty?)
+    end
+
+    # First element child of `node` named `name` (XML formats: Burp, OData
+    # EDMX, WSDL).
+    protected def find_child(node : XML::Node, name : String) : XML::Node?
+      node.children.find { |c| c.element? && c.name == name }
+    end
+
+    protected def each_child(node : XML::Node, name : String, &)
+      node.children.each do |c|
+        yield c if c.element? && c.name == name
+      end
+    end
+
+    # Dedups on (name, param_type), mirroring `Endpoint#push_param`.
+    # Used while a param array is still being assembled, before the
+    # `Endpoint` exists.
+    protected def push_param_once(params : Array(Param), param : Param) : Nil
+      return if param.name.empty?
+      return if params.any? { |existing| existing.name == param.name && existing.param_type == param.param_type }
+      params << param
     end
 
     # Appends a valueless `Param` unless an equal one is already present.

@@ -441,7 +441,7 @@ module Analyzer::Ruby
         end
 
         if params_depth > 0
-          if closes_ruby_block?(stripped)
+          if ruby_closes_block?(stripped)
             params_depth -= 1
             next if params_depth == 0
           else
@@ -569,7 +569,7 @@ module Analyzer::Ruby
               raw_body_line = lines[index]
               body_line = Noir::RubyCalleeExtractor.strip_comment(raw_body_line).strip
 
-              if closes_ruby_block?(body_line)
+              if ruby_closes_block?(body_line)
                 depth -= 1
                 break if depth == 0
                 body_lines << raw_body_line
@@ -621,10 +621,6 @@ module Analyzer::Ruby
       end
 
       {tail.empty? ? nil : tail, false}
-    end
-
-    private def closes_ruby_block?(line : String) : Bool
-      !!line.match(/^end\b/)
     end
   end
 end

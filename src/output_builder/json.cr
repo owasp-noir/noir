@@ -7,11 +7,7 @@ class OutputBuilderJson < OutputBuilder
     # `errors` is emitted even when empty. `"errors": []` is the assertion a
     # CI consumer needs — "every analyzer ran" — and an absent key can't make
     # it, since it reads the same as an older Noir that never reported one.
-    message = {
-      "endpoints"       => endpoints,
-      "passive_results" => passive_results,
-      "errors"          => analyzer_failures,
-    }.to_json
+    message = report_document(endpoints, passive_results).to_json
     ob_puts message
   end
 end

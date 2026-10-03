@@ -1091,7 +1091,7 @@ module Noir
                                   sink : Array(Param))
       body = Noir::TreeSitter.field(method, "body")
       return unless body
-      walk_node(body) do |node|
+      Noir::TreeSitter.walk(body) do |node|
         next unless Noir::TreeSitter.node_type(node) == "method_invocation"
         obj = Noir::TreeSitter.field(node, "object")
         name = Noir::TreeSitter.field(node, "name")
@@ -1112,13 +1112,6 @@ module Noir
           next if sink.any? { |p| p.name == param_name && p.param_type == format }
           sink << Param.new(param_name, "", format)
         end
-      end
-    end
-
-    private def walk_node(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
-      block.call(node)
-      Noir::TreeSitter.each_named_child(node) do |child|
-        walk_node(child, &block)
       end
     end
 

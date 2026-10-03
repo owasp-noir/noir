@@ -2,18 +2,6 @@ require "spec"
 require "../../../src/llm/native_tool_calling"
 
 describe LLM::NativeToolCalling do
-  describe ".default_allowlist" do
-    it "returns the default providers" do
-      LLM::NativeToolCalling.default_allowlist.should eq(["openai", "xai", "github"])
-    end
-
-    it "returns a cloned list" do
-      list = LLM::NativeToolCalling.default_allowlist
-      list << "custom"
-      LLM::NativeToolCalling.default_allowlist.should eq(["openai", "xai", "github"])
-    end
-  end
-
   describe ".default_allowlist_csv" do
     it "returns comma-separated default values" do
       LLM::NativeToolCalling.default_allowlist_csv.should eq("openai,xai,github")

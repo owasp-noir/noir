@@ -42,13 +42,9 @@ module Noir::ExtractionResultCache
     h
   end
 
-  # Insert-or-fetch with a typed Hash store. `store` and `order` are
-  # owned by the caller so each extractor keeps its own type-safe map.
-  def fetch(store : Hash(UInt64, T), order : Array(UInt64), key : UInt64, mutex : Mutex, & : -> T) : T forall T
-    fetch(store, order, key, mutex, DEFAULT_MAX_ENTRIES) { yield }
-  end
-
-  def fetch(store : Hash(UInt64, T), order : Array(UInt64), key : UInt64, mutex : Mutex, max_entries : Int32, & : -> T) : T forall T
+  # Insert-or-fetch with a typed Hash store owned by the caller, so each
+  # extractor keeps its own type-safe map.
+  def fetch(store : Hash(UInt64, T), key : UInt64, mutex : Mutex, & : -> T) : T forall T
     mutex.synchronize do
       if hit = store[key]?
         return hit
@@ -58,7 +54,7 @@ module Noir::ExtractionResultCache
     value = yield
 
     mutex.synchronize do
-      store_capped(store, order, key, value, max_entries)
+      store_capped(store, key, value)
     end
   end
 
@@ -67,32 +63,22 @@ module Noir::ExtractionResultCache
   # through `fetch` (that would parse twice), so they call this directly
   # instead of writing to the Hash — writing raw skips eviction and lets
   # the store grow one entry per file for the whole scan.
-  def store_capped(store : Hash(UInt64, T), order : Array(UInt64), key : UInt64, value : T,
-                   max_entries : Int32 = DEFAULT_MAX_ENTRIES) : T forall T
+  #
+  # Eviction drops the oldest half of the entries, oldest first: `Hash`
+  # iterates in insertion order, so `shift` removes the oldest key.
+  def store_capped(store : Hash(K, V), key : K, value : V,
+                   max_entries : Int32 = DEFAULT_MAX_ENTRIES) : V forall K, V
     unless store.has_key?(key)
       if store.size >= max_entries
-        # Drop oldest half.
         drop = store.size // 2
         drop = 1 if drop < 1
-        drop.times do
-          old = order.shift?
-          break unless old
-          store.delete(old)
-        end
+        drop.times { store.shift }
       end
       store[key] = value
-      order << key
     end
     # Another fiber may have filled the same key first; prefer the
     # stored entry so all callers share one array.
     store[key]
-  end
-
-  def clear(store : Hash(UInt64, T), order : Array(UInt64), mutex : Mutex) : Nil forall T
-    mutex.synchronize do
-      store.clear
-      order.clear
-    end
   end
 
   # Registered clear callbacks for typed extractor stores. Invoked at

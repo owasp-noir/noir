@@ -271,12 +271,6 @@ struct PassiveScan
       !@regex_error.nil?
     end
 
-    # True when this matcher can never produce a hit: its regexes did
-    # not compile, so `match_content?` returns false for every input.
-    def dead? : Bool
-      regex_compile_failed?
-    end
-
     def validation_errors : Array(String)
       errors = [] of String
       errors << "invalid type #{@type.inspect} (expected 'word' or 'regex')" unless ALLOWED_TYPES.includes?(@type)
@@ -374,9 +368,9 @@ struct PassiveScan
   private def never_matches? : Bool
     return false if @matchers.empty?
     if @matchers_condition == "and"
-      @matchers.any?(&.dead?)
+      @matchers.any?(&.regex_compile_failed?)
     else
-      @matchers.all?(&.dead?)
+      @matchers.all?(&.regex_compile_failed?)
     end
   end
 

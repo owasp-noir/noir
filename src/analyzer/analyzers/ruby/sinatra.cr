@@ -45,7 +45,7 @@ module Analyzer::Ruby
               endpoint.url = sinatra_prefixed_path(prefix_stack, endpoint.url)
               details = Details.new(PathInfo.new(path, index + 1))
               endpoint.details = details
-              attach_route_callees(endpoint, lines, index, path) if include_callee
+              attach_do_block_callees(endpoint, lines, index, path) if include_callee
               @result << endpoint
             end
 
@@ -128,18 +128,6 @@ module Analyzer::Ruby
       end
 
       verbs.uniq.map { |verb| Endpoint.new(route_path, verb) }
-    end
-
-    private def attach_route_callees(endpoint : Endpoint, lines : Array(String), index : Int32, path : String)
-      if block = extract_ruby_do_block(lines, index)
-        body, body_start_line = block
-        callees = Noir::RubyCalleeExtractor.callees_for_body(body, path, body_start_line)
-        attach_ruby_callees(endpoint, callees)
-      end
-    end
-
-    def line_to_param(content : String) : Param
-      line_to_params(content).first? || Param.new("", "", "")
     end
 
     # `params[:splat]` (the `*` wildcard matches) and `params[:captures]`

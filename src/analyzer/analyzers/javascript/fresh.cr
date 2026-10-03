@@ -138,7 +138,7 @@ module Analyzer::Javascript
 
         mutex.synchronize do
           verbs.each do |verb|
-            endpoint = build_endpoint(url, verb, path)
+            endpoint = file_route_endpoint(url, verb, path)
             attach_handler_callees(endpoint, content, path, verb) if callees_needed?
             result << endpoint
           end
@@ -146,15 +146,6 @@ module Analyzer::Javascript
       end
 
       result
-    end
-
-    private def build_endpoint(url : String, verb : String, path : String) : Endpoint
-      endpoint = Endpoint.new(url, verb)
-      endpoint.details = Details.new(PathInfo.new(path, 1))
-      url.scan(/\{(\w+)\}/) do |match|
-        endpoint.push_param(Param.new(match[1], "", "path"))
-      end
-      endpoint
     end
 
     private def attach_handler_callees(endpoint : Endpoint, content : String, path : String, verb : String)

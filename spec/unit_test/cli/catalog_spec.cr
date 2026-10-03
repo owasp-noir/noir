@@ -22,16 +22,6 @@ describe Noir::CLI::Catalog do
     end
   end
 
-  it "routes every catalog command to a help page" do
-    Noir::CLI::Catalog::NAMES.each do |name|
-      Noir::CLI::HelpCommand.route_for([name]).should_not eq(Noir::CLI::HelpCommand::Route::Unknown)
-    end
-  end
-
-  it "is what the router dispatches on" do
-    Noir::CLI::KNOWN_COMMANDS.should eq(Noir::CLI::Catalog::NAMES)
-  end
-
   it "offers every command in every shell completion" do
     scripts = [
       Noir::Completions::Zsh.script,

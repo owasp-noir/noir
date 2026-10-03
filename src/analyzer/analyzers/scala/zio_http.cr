@@ -163,16 +163,12 @@ module Analyzer::Scala
     private def extract_declarative_params(endpoint : Endpoint, chain : String)
       chain.scan(/\bquery\s*\[[^\]]*\]\s*\(\s*"([^"]+)"\s*\)/) do |m|
         name = m[1]
-        unless endpoint.params.any? { |p| p.name == name && p.param_type == "query" }
-          endpoint.push_param(Param.new(name, "", "query"))
-        end
+        endpoint.push_param(Param.new(name, "", "query"))
       end
 
       chain.scan(/\bheader\s*\[[^\]]*\]\s*\(\s*"([^"]+)"\s*\)/) do |m|
         name = m[1]
-        unless endpoint.params.any? { |p| p.name == name && p.param_type == "header" }
-          endpoint.push_param(Param.new(name, "", "header"))
-        end
+        endpoint.push_param(Param.new(name, "", "header"))
       end
     end
 
@@ -207,17 +203,13 @@ module Analyzer::Scala
       # Query parameters: req.url.queryParam("name"), req.queryParam("name"), queryParams("name")
       block.scan(/queryParam(?:s|ToList|OrElse)?\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
         name = match[1]
-        unless endpoint.params.any? { |p| p.name == name && p.param_type == "query" }
-          endpoint.push_param(Param.new(name, "", "query"))
-        end
+        endpoint.push_param(Param.new(name, "", "query"))
       end
 
       # Headers: req.headers.get("X-Foo"), req.headers.header("X-Foo")
       block.scan(/headers\.(?:get|header|rawHeader)\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
         name = match[1]
-        unless endpoint.params.any? { |p| p.name == name && p.param_type == "header" }
-          endpoint.push_param(Param.new(name, "", "header"))
-        end
+        endpoint.push_param(Param.new(name, "", "header"))
       end
 
       # Header objects read off the request: a bare reference like
@@ -226,9 +218,7 @@ module Analyzer::Scala
       # — which set RESPONSE headers, not request params (the `(?![\w(.])` guard).
       block.scan(/Header\.([A-Z][A-Za-z0-9]+)(?![\w(.])/) do |match|
         typed_name = humanize_header(match[1])
-        unless endpoint.params.any? { |p| p.name == typed_name && p.param_type == "header" }
-          endpoint.push_param(Param.new(typed_name, "", "header"))
-        end
+        endpoint.push_param(Param.new(typed_name, "", "header"))
       end
     end
 

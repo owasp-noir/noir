@@ -60,6 +60,71 @@ module Analyzer::Javascript
       path.ends_with?(".ts") || path.ends_with?(".mts") || path.ends_with?(".tsx") ? :typescript : :javascript
     end
 
+    # Endpoint for a file-routed framework (Astro, Fresh, Remix, SvelteKit):
+    # every `{name}` placeholder in the URL becomes a path param.
+    protected def file_route_endpoint(url : String, verb : String, path : String, line : Int32 = 1) : Endpoint
+      endpoint = Endpoint.new(url, verb)
+      endpoint.details = Details.new(PathInfo.new(path, line))
+      url.scan(/\{(\w+)\}/) do |match|
+        endpoint.push_param(Param.new(match[1], "", "path"))
+      end
+      endpoint
+    end
+
+    # `MatchData#begin` is a CHAR index; the inherited helper is the one
+    # that converts it to a byte offset before counting newlines. This used
+    # to slice `content.to_slice[0, start]` with the char index directly,
+    # which undercounts on any source with non-ASCII before the match.
+    protected def line_for_match(content : String, match : Regex::MatchData) : Int32
+      line_number_for_index(content, match.begin(0) || 0)
+    end
+
+    # Verb-named exports of a file-routed API module (Astro, SvelteKit).
+    FILE_ROUTE_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
+
+    # Lowest-cost defaults for endpoints whose handler doesn't
+    # advertise its verbs explicitly. Mirrors the Next.js fallback.
+    FALLBACK_API_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH"]
+
+    # Compiled once per verb — interpolated regex literals would otherwise
+    # be rebuilt (full PCRE2 compile) for every method on every file.
+    EXPORT_FUNCTION_RES = FILE_ROUTE_METHODS.map { |m| {m, /export\s+(?:async\s+)?function\s+#{m}\b/} }.to_h
+    EXPORT_CONST_RES    = FILE_ROUTE_METHODS.map { |m| {m, /export\s+(?:const|let|var)\s+#{m}\b\s*(?::[^=]+)?=/} }.to_h
+    EXPORT_BRACE_RES    = FILE_ROUTE_METHODS.map { |m| {m, /export\s+\{\s*[^}]*\b#{m}\b[^}]*\}/} }.to_h
+
+    # Look for explicit verb exports first
+    # (`export const GET = ...` / `export async function POST() {}`),
+    # then fall back to the cross-method catch-all set.
+    protected def detect_api_methods(content : String) : Array(String)
+      explicit = [] of String
+      FILE_ROUTE_METHODS.each do |m|
+        # `export async function GET(...)`, `export function GET(...)`,
+        # `export const GET = ...`, `export const GET: APIRoute = ...`
+        # (the trailing TypeScript type annotation is optional), and
+        # the `export { GET }` re-export form.
+        if content.match(EXPORT_FUNCTION_RES[m]) ||
+           content.match(EXPORT_CONST_RES[m]) ||
+           content.match(EXPORT_BRACE_RES[m])
+          explicit << m
+        end
+      end
+      explicit.empty? ? FALLBACK_API_METHODS : explicit
+    end
+
+    protected def api_method_line(content : String, verb : String) : Int32?
+      if match = content.match(EXPORT_FUNCTION_RES[verb])
+        return line_for_match(content, match)
+      end
+
+      if match = content.match(EXPORT_CONST_RES[verb])
+        return line_for_match(content, match)
+      end
+
+      if content.includes?("export {") && content.includes?(verb)
+        Noir::JSCalleeExtractor.exported_function_line(content, verb)
+      end
+    end
+
     protected def collect_static_paths(source_path : String, content : String, static_dirs : Array(Hash(String, String)), framework : Symbol? = nil) : Nil
       Noir::JSRouteExtractor.extract_static_paths(content, framework).each do |static_path|
         normalized = static_path.dup
@@ -195,6 +260,166 @@ module Analyzer::Javascript
         i += 1
       end
       i
+    end
+
+    # Resolve every router variable's mount prefix(es) from the edge list.
+    # A variable that is never mounted into another (a root aggregator like
+    # the exported `router`) carries the empty prefix; children inherit the
+    # parent's prefix joined with the edge's own prefix. Iterated to a
+    # fixpoint so a two-level chain (root -> api -> child) fully resolves.
+    protected def resolve_mount_edge_prefixes(edges : Array(Tuple(String, String, String))) : Hash(String, Array(String))
+      children = edges.map { |_, _, child| child }.to_set
+      prefixes = Hash(String, Array(String)).new { |h, k| h[k] = [] of String }
+
+      # Seed roots (never a mount target) with the empty prefix.
+      edges.each do |parent, _, _|
+        prefixes[parent] << "" if !children.includes?(parent) && prefixes[parent].empty?
+      end
+
+      max_iterations = 16
+      iterations = 0
+      changed = true
+      while changed && iterations < max_iterations
+        changed = false
+        iterations += 1
+        edges.each do |parent, prefix, child|
+          # Propagate only from a resolved parent (a seeded root or an
+          # already-resolved child). Defaulting an unresolved parent to ""
+          # would leak a wrong prefix (`/sub` instead of `/api/sub`).
+          parent_prefixes = prefixes[parent]?
+          next if parent_prefixes.nil? || parent_prefixes.empty?
+          parent_prefixes.each do |pp|
+            combined = if pp.empty?
+                         prefix
+                       elsif prefix.empty?
+                         pp
+                       else
+                         Noir::URLPath.join(pp, prefix)
+                       end
+            unless prefixes[child].includes?(combined)
+              prefixes[child] << combined
+              changed = true
+            end
+          end
+        end
+      end
+
+      prefixes
+    end
+
+    # Byte-indexed mask of every position inside a '...' / "..." / `...`
+    # literal, so regex hits inside strings can be skipped.
+    protected def string_literal_mask(content : String) : Array(Bool)
+      mask = Array(Bool).new(content.bytesize, false)
+      i = 0
+
+      while i < content.bytesize
+        byte = content.byte_at(i)
+        if byte == '\''.ord || byte == '"'.ord || byte == '`'.ord
+          quote = byte
+          mask[i] = true
+          i += 1
+
+          while i < content.bytesize
+            current = content.byte_at(i)
+            mask[i] = true
+
+            if current == '\\'.ord && i + 1 < content.bytesize
+              i += 1
+              mask[i] = true
+            elsif current == quote
+              i += 1
+              break
+            end
+
+            i += 1
+          end
+        else
+          i += 1
+        end
+      end
+
+      mask
+    end
+
+    protected def literal_position?(literal_mask : Array(Bool), pos : Int32?) : Bool
+      return false unless pos
+      pos < literal_mask.size && literal_mask[pos]
+    end
+
+    # Signature of the class method that follows a run of decorators.
+    # `dotted_decorator_names` lets a decorator name contain `.`
+    # (LoopBack's `@requestBody.file()`); NestJS names stop at `.`.
+    protected def method_signature_after_decorators(content : String, start_pos : Int32, dotted_decorator_names : Bool = false)
+      idx = skip_decorators_and_whitespace(content, start_pos, dotted_decorator_names)
+      section = content[idx..-1]
+      match = section.match(/\A\s*(?:(?:public|private|protected|static|async|readonly|override)\s+)*([A-Za-z_$][\w$]*)\s*\(/)
+      return unless match
+
+      open_paren = idx + match.end(0) - 1
+      close_paren = Noir::JSRouteExtractor.find_matching_paren(content, open_paren)
+      return unless close_paren
+
+      open_brace = content.index("{", close_paren)
+      return unless open_brace
+      close_brace = Noir::JSRouteExtractor.find_matching_brace(content, open_brace)
+
+      {
+        name:        match[1],
+        params:      content[(open_paren + 1)...close_paren],
+        start_pos:   idx,
+        open_paren:  open_paren,
+        close_paren: close_paren,
+        open_brace:  open_brace,
+        close_brace: close_brace,
+      }
+    end
+
+    protected def body_from_signature(content : String, signature) : Tuple(String, Int32)?
+      close_brace = signature[:close_brace]
+      return unless close_brace
+      open_brace = signature[:open_brace]
+      return unless close_brace > open_brace
+      {content[(open_brace + 1)...close_brace], open_brace}
+    end
+
+    # A route decorator is often followed by more decorators before the
+    # method itself — guards, interceptors, `@authenticate('jwt')`, custom
+    # ones — so walk forward over any `@word(...)` / `@word` sequence.
+    private def skip_decorators_and_whitespace(content : String, start_pos : Int32, dotted_names : Bool) : Int32
+      idx = start_pos
+      # `content[i]` re-decodes UTF-8 from byte 0 on every call once the
+      # string isn't single_byte_optimizable? (any non-ASCII char), making
+      # this O(n^2) when walked once per route decorator in a large
+      # non-ASCII controller class. Index a pre-materialized Char array
+      # instead — same semantics, O(1) lookup.
+      chars = content.chars
+      loop do
+        while idx < chars.size && chars[idx].whitespace?
+          idx += 1
+        end
+        break if idx >= chars.size || chars[idx] != '@'
+
+        name_end = idx + 1
+        while name_end < chars.size && (chars[name_end].alphanumeric? || chars[name_end] == '_' || chars[name_end] == '$' || (dotted_names && chars[name_end] == '.'))
+          name_end += 1
+        end
+
+        scan = name_end
+        while scan < chars.size && chars[scan].whitespace?
+          scan += 1
+        end
+
+        if scan < chars.size && chars[scan] == '('
+          close = Noir::JSRouteExtractor.find_matching_paren(content, scan)
+          break unless close
+          idx = close + 1
+        else
+          newline = content.index('\n', scan)
+          idx = newline ? newline + 1 : chars.size
+        end
+      end
+      idx
     end
 
     private def resolve_static_file_path(source_path : String, raw_path : String) : String

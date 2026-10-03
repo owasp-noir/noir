@@ -93,7 +93,7 @@ module Noir
             next if seen.includes?(key)
             seen << key
 
-            line = line_for_pos(stripped, handler.body_start_pos + hit.offset)
+            line = JSRouteExtractor.line_for_char_pos(stripped, handler.body_start_pos + hit.offset)
             endpoint = Endpoint.new(hit.path, hit.method, Details.new(PathInfo.new(file_path, line)))
             push_path_params(endpoint)
             extract_params(handler, hit, endpoint)
@@ -329,7 +329,7 @@ module Noir
     end
 
     private def self.split_param_list(params : String) : Array(String)
-      split_top_level(params, 0, params.size, ',').map(&.[0])
+      split_top_level_args(params, 0, params.size).map(&.[0])
     end
 
     private def self.extract_route_hits(handler : Handler) : Array(RouteHit)
@@ -765,15 +765,7 @@ module Noir
     end
 
     private def self.split_top_level_args(content : String, start_pos : Int32, end_pos : Int32) : Array(Tuple(String, Int32))
-      split_top_level(content, start_pos, end_pos, ',')
-    end
-
-    # `delimiter` must not be a quote character or a bracket: the body this
-    # replaced tested it in a `case` arm AFTER the quote and bracket arms, so
-    # those shadowed it, while `split_spans` tests the delimiter first. Both
-    # call sites pass `,`, where the two agree.
-    private def self.split_top_level(content : String, start_pos : Int32, end_pos : Int32, delimiter : Char) : Array(Tuple(String, Int32))
-      Noir::TopLevelSplit.split_spans(content, delimiter, Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS, start_pos, end_pos)
+      Noir::TopLevelSplit.split_spans(content, ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS, start_pos, end_pos)
     end
 
     private def self.skip_whitespace(content : String, pos : Int32) : Int32
@@ -786,18 +778,6 @@ module Noir
 
     private def self.identifier_char?(char : Char) : Bool
       char.ascii_letter? || char.ascii_number? || char == '_' || char == '$'
-    end
-
-    # `pos` is a CHAR index; convert to a byte offset so the newline count
-    # stays correct on non-ASCII content while dropping the prefix-substring
-    # allocation the old char-slice made per call.
-    private def self.line_for_pos(content : String, pos : Int32) : Int32
-      byte_pos = if content.bytesize == content.size
-                   pos
-                 else
-                   content.char_index_to_byte_index(pos) || content.bytesize
-                 end
-      content.to_slice[0, byte_pos].count('\n'.ord.to_u8) + 1
     end
   end
 end

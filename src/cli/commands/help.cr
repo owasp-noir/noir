@@ -9,57 +9,20 @@ require "../../banner"
 # what `noir` with no arguments and `noir -h` resolve to.
 # `noir help scan` (etc.) defers to the matching command's help.
 module Noir::CLI::HelpCommand
-  # Commands recognised by `noir help <cmd>`. The same verbs the router
-  # dispatches — `route_for` below maps each to its help printer, and a
-  # catalog entry with no branch there is a compile error rather than a
-  # verb that quietly has no help page.
-  KNOWN_HELP_TARGETS = Noir::CLI::Catalog::NAMES
-
-  # Returns a routing symbol so the spec layer can verify dispatch
-  # without invoking the downstream command's help printer (which in
-  # `scan`'s case re-runs the whole OptionParser).
-  enum Route
-    TopLevel
-    Scan
-    List
-    Cache
-    Config
-    Rules
-    Completion
-    Version
-    Help
-    Unknown
-  end
-
-  def self.route_for(argv : Array(String)) : Route
-    return Route::TopLevel if argv.empty?
-
-    case argv.first
-    when "scan"       then Route::Scan
-    when "list"       then Route::List
-    when "cache"      then Route::Cache
-    when "config"     then Route::Config
-    when "rules"      then Route::Rules
-    when "completion" then Route::Completion
-    when "version"    then Route::Version
-    when "help"       then Route::Help
-    else
-      Route::Unknown
-    end
-  end
-
+  # Every verb in `Catalog::NAMES` needs a branch here; the catalog spec
+  # runs `noir help <verb>` for each one, so a missing branch fails there
+  # instead of becoming a verb that quietly has no help page.
   def self.run(argv : Array(String))
-    case route_for(argv)
-    in Route::TopLevel   then print_top_level
-    in Route::Scan       then ScanCommand.run(["--help"])
-    in Route::List       then ListCommand.print_help
-    in Route::Cache      then CacheCommand.print_help
-    in Route::Config     then ConfigCommand.print_help
-    in Route::Rules      then RulesCommand.print_help
-    in Route::Completion then CompletionCommand.print_help
-    in Route::Version    then VersionCommand.print_help
-    in Route::Help       then print_top_level
-    in Route::Unknown
+    case argv.first?
+    when nil, "help"  then print_top_level
+    when "scan"       then ScanCommand.run(["--help"])
+    when "list"       then ListCommand.print_help
+    when "cache"      then CacheCommand.print_help
+    when "config"     then ConfigCommand.print_help
+    when "rules"      then RulesCommand.print_help
+    when "completion" then CompletionCommand.print_help
+    when "version"    then VersionCommand.print_help
+    else
       Noir::CLI.die("Unknown command: #{argv.first}\nRun `noir help` to see available commands.")
     end
   end

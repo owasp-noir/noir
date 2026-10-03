@@ -46,7 +46,7 @@ module Noir::CLI::Legacy
 
   # True when ARGV opens with a v1 verb, i.e. exactly the shape the
   # router dispatches to a subcommand (`head` must be in
-  # `KNOWN_COMMANDS`). Everything after that verb is that subcommand's
+  # `Catalog::NAMES`). Everything after that verb is that subcommand's
   # own argv and must reach its own parser untouched.
   #
   # Leading global flags are skipped for the same reason the router skips
@@ -57,7 +57,7 @@ module Noir::CLI::Legacy
   def self.subcommand_invocation?(argv : Array(String)) : Bool
     head = argv[Noir::CLI.verb_index(argv)]?
     return false if head.nil?
-    Noir::CLI::KNOWN_COMMANDS.includes?(head)
+    Noir::CLI::Catalog::NAMES.includes?(head)
   end
 
   # Returns a possibly-rewritten ARGV. If a terminal v0 flag is found,

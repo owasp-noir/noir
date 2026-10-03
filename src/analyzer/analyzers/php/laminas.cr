@@ -33,12 +33,7 @@ module Analyzer::Php
         byte == 0x0B_u8 || byte == 0x0C_u8 || byte == 0x0D_u8
     end
 
-    private struct PhpArrayEntry
-      getter key, value, array_body
-
-      def initialize(@key : String, @value : String?, @array_body : String?)
-      end
-    end
+    private record PhpArrayEntry, key : String, value : String?, array_body : String?
 
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
@@ -52,7 +47,7 @@ module Analyzer::Php
         endpoints.concat(analyze_programmatic_routes(path, content, include_callee))
       end
 
-      dedup_endpoints(endpoints)
+      endpoints.uniq { |endpoint| {endpoint.method, endpoint.url} }
     end
 
     # Precompiled once at load: the three namespace markers used to be
@@ -771,19 +766,6 @@ module Analyzer::Php
 
     private def array_entry(entries : Array(PhpArrayEntry), key : String) : String?
       entries.find { |entry| entry.key == key }.try(&.array_body)
-    end
-
-    private def dedup_endpoints(endpoints : Array(Endpoint)) : Array(Endpoint)
-      seen = Set(String).new
-      endpoints.select do |endpoint|
-        key = "#{endpoint.method}\0#{endpoint.url}"
-        if seen.includes?(key)
-          false
-        else
-          seen.add(key)
-          true
-        end
-      end
     end
   end
 end

@@ -554,19 +554,7 @@ module Analyzer::Python
                                              line : ::String,
                                              instance_name : ::String) : ::String
       return line unless line.matches?(instance_regexes(instance_name).include_router_guard)
-      return line if python_call_balanced?(line)
-
-      pieces = [line]
-      depth = python_paren_delta(line)
-      i = index + 1
-      while i < codelines.size && depth > 0
-        nxt = codelines[i]
-        pieces << nxt
-        depth += python_paren_delta(nxt)
-        break if depth <= 0
-        i += 1
-      end
-      pieces.join(' ')
+      join_until_python_call_closes(codelines, index, line)
     end
 
     # Translate a locally-used router name back to the symbol it is
@@ -1332,19 +1320,7 @@ module Analyzer::Python
                                            line : ::String,
                                            instance_name : ::String) : ::String
       return line unless line.matches?(instance_regexes(instance_name).programmatic_guard)
-      return line if python_call_balanced?(line)
-
-      pieces = [line]
-      depth = python_paren_delta(line)
-      i = index + 1
-      while i < codelines.size && depth > 0
-        nxt = codelines[i]
-        pieces << nxt
-        depth += python_paren_delta(nxt)
-        break if depth <= 0
-        i += 1
-      end
-      pieces.join(' ')
+      join_until_python_call_closes(codelines, index, line)
     end
 
     private def coalesce_mount_call(codelines : Array(::String),
@@ -1352,19 +1328,7 @@ module Analyzer::Python
                                     line : ::String,
                                     instance_name : ::String) : ::String
       return line unless line.matches?(instance_regexes(instance_name).mount_guard)
-      return line if python_call_balanced?(line)
-
-      pieces = [line]
-      depth = python_paren_delta(line)
-      i = index + 1
-      while i < codelines.size && depth > 0
-        nxt = codelines[i]
-        pieces << nxt
-        depth += python_paren_delta(nxt)
-        break if depth <= 0
-        i += 1
-      end
-      pieces.join(' ')
+      join_until_python_call_closes(codelines, index, line)
     end
 
     private def coalesce_constructor_call(codelines : Array(::String),
@@ -1372,19 +1336,7 @@ module Analyzer::Python
                                           line : ::String,
                                           constructor_name : ::String) : ::String
       return line unless line.includes?(constructor_name) && line.matches?(/\b#{Regex.escape(constructor_name)}\s*\(/)
-      return line if python_call_balanced?(line)
-
-      pieces = [line]
-      depth = python_paren_delta(line)
-      i = index + 1
-      while i < codelines.size && depth > 0
-        nxt = codelines[i]
-        pieces << nxt
-        depth += python_paren_delta(nxt)
-        break if depth <= 0
-        i += 1
-      end
-      pieces.join(' ')
+      join_until_python_call_closes(codelines, index, line)
     end
 
     # Extract `methods=[...]` / `methods=("...")` from a FastAPI
@@ -1415,40 +1367,15 @@ module Analyzer::Python
                                         line : ::String,
                                         instance_name : ::String) : ::String
       return line unless line.matches?(instance_regexes(instance_name).decorator_guard)
-      return line if python_call_balanced?(line)
-
-      pieces = [line]
-      depth = python_paren_delta(line)
-      i = index + 1
-      while i < codelines.size && depth > 0
-        nxt = codelines[i]
-        pieces << nxt
-        depth += python_paren_delta(nxt)
-        break if depth <= 0
-        i += 1
-      end
-
-      pieces.join(' ')
-    end
-
-    # Whether `line`'s paren count is balanced (delta == 0). Used to
-    # short-circuit the multi-line join when the call already closes
-    # on the same line.
-    private def python_call_balanced?(line : ::String) : Bool
-      python_paren_delta(line) == 0
+      join_until_python_call_closes(codelines, index, line)
     end
   end
 
   # Router class for handling URL prefix joining
   class Router
-    @prefix : ::String
+    property prefix : ::String
 
-    def initialize(prefix : ::String)
-      @prefix = prefix
-    end
-
-    def prefix
-      @prefix
+    def initialize(@prefix : ::String)
     end
 
     def join(url : ::String) : ::String
@@ -1464,17 +1391,6 @@ module Analyzer::Python
       url = "/#{url}" unless prefix.ends_with?("/") || url.starts_with?("/")
 
       @prefix + url
-    end
-
-    def prefix=(new_prefix : ::String)
-      @prefix = new_prefix
-    end
-  end
-
-  # Extend ::String class to check if a string is numeric
-  class ::String
-    def numeric?
-      to_f != nil rescue false
     end
   end
 end

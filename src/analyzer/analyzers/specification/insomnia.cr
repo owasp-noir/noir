@@ -8,6 +8,9 @@ module Analyzer::Specification
 
     HTTP_METHODS = ALLOWED_HTTP_METHODS
 
+    # A `{{ var }}` / `{{ _.var }}` placeholder.
+    TEMPLATE_VAR = /\{\{\s*(?:_\.)?([A-Za-z0-9_.-]+)\s*\}\}/
+
     def analyze
       each_spec_file(Noir::LocatorKeys::INSOMNIA_JSON) do |path|
         content = read_file_content(path)
@@ -53,7 +56,7 @@ module Analyzer::Specification
       method = (request["method"]?.try(&.as_s?) || "GET").upcase
       return unless HTTP_METHODS.includes?(method)
       url_raw = resolve_vars(request["url"]?.try(&.as_s?) || "", env)
-      url_path = extract_path_from_url(url_raw)
+      url_path = template_url_path(url_raw, TEMPLATE_VAR)
       params = [] of Param
 
       extract_query_param_names(url_raw).each do |name|
@@ -95,7 +98,7 @@ module Analyzer::Specification
       end
 
       if auth = request["authentication"]?
-        process_json_auth(auth, env, params)
+        process_auth(auth, env, params)
       end
 
       # Body
@@ -199,7 +202,7 @@ module Analyzer::Specification
       method = (item["method"]?.try(&.as_s?) || "").upcase
       return unless HTTP_METHODS.includes?(method)
       url_raw = resolve_vars(item["url"]?.try(&.as_s?) || "", env)
-      url_path = extract_path_from_url(url_raw)
+      url_path = template_url_path(url_raw, TEMPLATE_VAR)
       params = [] of Param
 
       extract_query_param_names(url_raw).each do |name|
@@ -244,7 +247,7 @@ module Analyzer::Specification
       end
 
       if auth = item["authentication"]?
-        process_yaml_auth(auth, env, params)
+        process_auth(auth, env, params)
       end
 
       if body_node = item["body"]?
@@ -297,41 +300,13 @@ module Analyzer::Specification
       resolved = input
       3.times do
         previous = resolved
-        resolved = resolved.gsub(/\{\{\s*(?:_\.)?([A-Za-z0-9_.-]+)\s*\}\}/) do |match|
+        resolved = resolved.gsub(TEMPLATE_VAR) do |match|
           name = $1
           env.fetch(name, match)
         end
         break if resolved == previous
       end
       resolved
-    end
-
-    private def extract_path_from_url(url_string : String) : String
-      stripped = url_string.strip
-      return "" if stripped.empty?
-
-      if stripped =~ /^https?:\/\//i
-        uri = parse_absolute_url(stripped)
-        return "" unless uri
-        path = uri.path
-        return normalize_path(path.empty? ? "/" : path)
-      elsif stripped =~ /^[A-Za-z][A-Za-z0-9+.-]*:\/\//
-        return ""
-      end
-
-      # No scheme — treat as path-only or host-prefixed.
-      without_query = stripped.split("?", 2)[0].split("#", 2)[0]
-      path = without_query
-      unless path.starts_with?("/")
-        if looks_host_prefixed?(path)
-          parts = path.split("/", 2)
-          return "/" if parts.size == 1
-          path = "/" + parts[1]
-        else
-          path = "/" + path
-        end
-      end
-      normalize_path(path)
     end
 
     private def extract_query_param_names(url_string : String) : Array(String)
@@ -370,26 +345,6 @@ module Analyzer::Specification
       vars
     end
 
-    private def looks_host_prefixed?(value : String) : Bool
-      first = value.split("/", 2).first
-      first.includes?(".") || first.includes?(":") || first.downcase == "localhost" || first.includes?("{{")
-    end
-
-    private def normalize_path(path : String) : String
-      normalized = path.empty? ? "/" : path
-      normalized = "/" + normalized unless normalized.starts_with?("/")
-      normalized.gsub(/\{\{\s*(?:_\.)?([A-Za-z0-9_.-]+)\s*\}\}/) do
-        ":#{normalize_var_name($1)}"
-      end
-    end
-
-    private def normalize_var_name(name : String) : String
-      normalized = name.gsub(/[^A-Za-z0-9_]/, "_")
-      normalized = normalized.lstrip('_')
-      normalized = normalized.rstrip('_')
-      normalized.empty? ? "param" : normalized
-    end
-
     # First-wins, except that a later declaration carrying a value upgrades a
     # placeholder. The URL scan runs first and registers `{userId}` (and any
     # `?include=`) with no value at all; the concrete value lives in the
@@ -425,21 +380,7 @@ module Analyzer::Specification
     # `environments.data.token` — so they go through `resolve_vars` too.
     # Only the URL did, which is why a bearer header came out as the literal
     # `Bearer {{ token }}` instead of the credential the collection defines.
-    private def process_json_auth(auth : JSON::Any, env : Hash(String, String), params : Array(Param))
-      return if auth["disabled"]?.try(&.as_bool?) == true
-      type = auth["type"]?.try(&.as_s?) || ""
-      process_auth_fields(
-        type,
-        resolve_vars(auth["key"]?.try(&.as_s?) || "", env),
-        resolve_vars(auth["value"]?.try(&.as_s?) || "", env),
-        auth["addTo"]?.try(&.as_s?) || "",
-        resolve_vars(auth["token"]?.try(&.as_s?) || "", env),
-        auth["prefix"]?.try(&.as_s?) || "",
-        params
-      )
-    end
-
-    private def process_yaml_auth(auth : YAML::Any, env : Hash(String, String), params : Array(Param))
+    private def process_auth(auth, env : Hash(String, String), params : Array(Param))
       return if auth["disabled"]?.try(&.as_bool?) == true
       type = auth["type"]?.try(&.as_s?) || ""
       process_auth_fields(

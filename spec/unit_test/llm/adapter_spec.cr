@@ -207,8 +207,8 @@ describe LLM::AdapterFactory do
     end
 
     it "follows the default allowlist when no allowlist is supplied" do
-      # Default allowlist is whatever NativeToolCalling.default_allowlist
-      # produces — just sanity-check it consistently agrees with the
+      # Default allowlist is whatever NativeToolCalling::DEFAULT_ALLOWLIST
+      # holds — just sanity-check it consistently agrees with the
       # normalize path on a known provider.
       default_decision = LLM::AdapterFactory.native_tool_calling_enabled_for_provider?("openai")
       normalized_decision = LLM::NativeToolCalling.normalize_allowlist(nil).includes?(

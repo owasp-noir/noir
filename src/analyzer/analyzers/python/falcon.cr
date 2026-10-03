@@ -30,7 +30,6 @@ module Analyzer::Python
       "on_options" => "OPTIONS",
     }
 
-    @keyword_regex_cache = Hash(::String, Regex).new
     @media_var_regex_cache = Hash(::String, Tuple(Regex, Regex)).new
 
     def analyze
@@ -288,7 +287,7 @@ module Analyzer::Python
       return unless call_match
 
       args = split_python_arguments(call_match[1])
-      extract_keyword_string(args, "prefix") || args[0]?.try { |arg| Helper.extract_python_string(arg) }
+      extract_python_keyword_string(args, "prefix") || args[0]?.try { |arg| Helper.extract_python_string(arg) }
     end
 
     # Delegates to the shared splitter. `Rules::SHARED_DEPTH_RAW`, not
@@ -298,25 +297,6 @@ module Analyzer::Python
     # under per-kind counters.
     private def split_python_arguments(args : ::String) : Array(::String)
       Noir::TopLevelSplit.split(args, ',', Noir::TopLevelSplit::Rules::SHARED_DEPTH_RAW)
-    end
-
-    # Memoized per keyword — the keyword set is tiny (`prefix`) but this
-    # runs per argument of every static-route declaration (an interpolated
-    # regex literal recompiles PCRE2 on every evaluation).
-    private def keyword_string_regex(keyword : ::String) : Regex
-      @keyword_regex_cache[keyword] ||= /^\s*#{Regex.escape(keyword)}\s*=\s*(.+)$/m
-    end
-
-    private def extract_keyword_string(args : Array(::String), keyword : ::String) : ::String?
-      keyword_re = keyword_string_regex(keyword)
-      args.each do |arg|
-        keyword_match = arg.match(keyword_re)
-        next unless keyword_match
-
-        return Helper.extract_python_string(keyword_match[1])
-      end
-
-      nil
     end
 
     private def static_route_path(route_path : ::String) : ::String
@@ -357,10 +337,7 @@ module Analyzer::Python
 
       record = ->(name : ::String, type : ::String) do
         key = "#{type}:#{name}"
-        unless seen.includes?(key)
-          params << Param.new(name, "", type)
-          seen << key
-        end
+        params << Param.new(name, "", type) if seen.add?(key)
       end
 
       body_lines.each do |line|

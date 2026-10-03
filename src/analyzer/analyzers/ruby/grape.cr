@@ -157,8 +157,7 @@ module Analyzer::Ruby
       queue = roots.map { |r| {r, ""} }
       until queue.empty?
         cls, prefix = queue.shift
-        next if visited.includes?(cls)
-        visited << cls
+        next unless visited.add?(cls)
         inherited[cls] = prefix
         child_prefix = grape_join_segments(prefix, own_base[cls]? || "")
         (mounts[cls]? || [] of String).each do |child|
@@ -306,7 +305,7 @@ module Analyzer::Ruby
             end
             pending_params.clear
 
-            attach_route_callees(endpoint, lines, index, path) if include_callee
+            attach_do_block_callees(endpoint, lines, index, path) if include_callee
             @result << endpoint
             last_endpoint = endpoint
             block_kinds << :other unless stripped.match(/\bend\b/)
@@ -328,7 +327,7 @@ module Analyzer::Ruby
             end
             pending_params.clear
 
-            attach_route_callees(endpoint, lines, index, path) if include_callee
+            attach_do_block_callees(endpoint, lines, index, path) if include_callee
             @result << endpoint
             last_endpoint = endpoint
             block_kinds << :other unless stripped.match(/\bend\b/)
@@ -391,7 +390,6 @@ module Analyzer::Ruby
       # body param; a later `params[:x]` read in the handler body must not
       # re-add it as a separate `query` param. The declared type wins.
       return if param.param_type == "query" && endpoint.params.any? { |existing| existing.name == param.name && existing.param_type == "json" }
-      return if endpoint.params.any? { |existing| existing.name == param.name && existing.param_type == param.param_type }
       endpoint.push_param(param)
     end
 
@@ -403,14 +401,6 @@ module Analyzer::Ruby
         return m[1]
       end
       ""
-    end
-
-    private def attach_route_callees(endpoint : Endpoint, lines : Array(String), index : Int32, path : String)
-      if block = extract_ruby_do_block(lines, index)
-        body, body_start_line = block
-        callees = Noir::RubyCalleeExtractor.callees_for_body(body, path, body_start_line)
-        attach_ruby_callees(endpoint, callees)
-      end
     end
 
     private def build_path(mount_prefix : String, class_prefix : String, version_prefix : String, prefix_segments : Array(String), raw : String) : String

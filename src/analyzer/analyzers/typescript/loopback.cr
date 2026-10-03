@@ -111,7 +111,7 @@ module Analyzer::Typescript
         route_paths = literal_paths_from_expression(path_expr, literal_values)
         next unless route_paths
 
-        signature = method_signature_after_decorators(content, close_paren + 1)
+        signature = method_signature_after_decorators(content, close_paren + 1, dotted_decorator_names: true)
         next unless signature
 
         decorator_line = 1 + content[0...decorator_start].count('\n')
@@ -199,80 +199,6 @@ module Analyzer::Typescript
       if method_params =~ /@requestBody\b/
         endpoint.push_param(Param.new("body", "", "body"))
       end
-    end
-
-    private def method_signature_after_decorators(content : String, start_pos : Int32)
-      idx = skip_decorators_and_whitespace(content, start_pos)
-      section = content[idx..-1]
-      match = section.match(/\A\s*(?:(?:public|private|protected|static|async|readonly|override)\s+)*([A-Za-z_$][\w$]*)\s*\(/)
-      return unless match
-
-      open_paren = idx + match.end(0) - 1
-      close_paren = Noir::JSRouteExtractor.find_matching_paren(content, open_paren)
-      return unless close_paren
-
-      open_brace = content.index("{", close_paren)
-      return unless open_brace
-      close_brace = Noir::JSRouteExtractor.find_matching_brace(content, open_brace)
-
-      {
-        name:        match[1],
-        params:      content[(open_paren + 1)...close_paren],
-        start_pos:   idx,
-        open_paren:  open_paren,
-        close_paren: close_paren,
-        open_brace:  open_brace,
-        close_brace: close_brace,
-      }
-    end
-
-    # A LoopBack route decorator is often followed by more decorators
-    # before the method itself — `@authenticate('jwt')`,
-    # `@authorize({...})`, custom ones — so walk forward over any
-    # `@word(...)` / `@word` sequence, same as NestJS's guard/interceptor
-    # stacking.
-    private def skip_decorators_and_whitespace(content : String, start_pos : Int32) : Int32
-      idx = start_pos
-      # `content[i]` re-decodes UTF-8 from byte 0 on every call once the
-      # string isn't single_byte_optimizable? (any non-ASCII char), making
-      # this O(n^2) when walked once per route decorator in a large
-      # non-ASCII controller class. Index a pre-materialized Char array
-      # instead — same semantics, O(1) lookup.
-      chars = content.chars
-      loop do
-        while idx < chars.size && chars[idx].whitespace?
-          idx += 1
-        end
-        break if idx >= chars.size || chars[idx] != '@'
-
-        name_end = idx + 1
-        while name_end < chars.size && (chars[name_end].alphanumeric? || chars[name_end] == '_' || chars[name_end] == '$' || chars[name_end] == '.')
-          name_end += 1
-        end
-
-        scan = name_end
-        while scan < chars.size && chars[scan].whitespace?
-          scan += 1
-        end
-
-        if scan < chars.size && chars[scan] == '('
-          close = Noir::JSRouteExtractor.find_matching_paren(content, scan)
-          break unless close
-          idx = close + 1
-        else
-          newline = content.index('\n', scan)
-          idx = newline ? newline + 1 : chars.size
-        end
-      end
-      idx
-    end
-
-    private def body_from_signature(content : String, signature) : Tuple(String, Int32)?
-      close_brace = signature[:close_brace]
-      return unless close_brace
-      open_brace = signature[:open_brace]
-      return unless close_brace > open_brace
-      {content[(open_brace + 1)...close_brace], open_brace}
     end
 
     private def attach_method_callees_from_signature(content : String, signature, file_path : String, endpoint : Endpoint)

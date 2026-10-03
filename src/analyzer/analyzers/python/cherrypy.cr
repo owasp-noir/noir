@@ -368,8 +368,7 @@ module Analyzer::Python
       return if depth > MAX_DEPTH
 
       key = "#{file_path}::#{class_start_line}::#{url_path}"
-      return if visited.includes?(key)
-      visited << key
+      return unless visited.add?(key)
 
       source = reg.source_cache[file_path] ||= read_file_content(file_path)
       lines = sanitize_python_lines(source.lines)
@@ -577,10 +576,7 @@ module Analyzer::Python
       seen = Set(::String).new
       record = ->(name : ::String, type : ::String) do
         key = "#{type}:#{name}"
-        unless seen.includes?(key)
-          params << Param.new(name, "", type)
-          seen << key
-        end
+        params << Param.new(name, "", type) if seen.add?(key)
       end
 
       body.scan(/cherrypy\.request\.headers\s*\[\s*['"]([^'"]+)['"]\s*\]/) { |m| record.call(m[1], "header") }
@@ -601,29 +597,6 @@ module Analyzer::Python
 
     private def indent_level(line : ::String) : Int32
       line.size - line.lstrip.size
-    end
-
-    # Collect indented lines following a `def` as the function body.
-    private def extract_function_body(lines : Array(::String), def_index : Int32) : ::String
-      return "" if def_index >= lines.size
-      def_line = lines[def_index]
-      base_indent = def_line.size - def_line.lstrip.size
-
-      body = [] of ::String
-      i = def_index + 1
-      while i < lines.size
-        line = lines[i]
-        if line.strip.empty?
-          body << line
-          i += 1
-          next
-        end
-        current_indent = line.size - line.lstrip.size
-        break if current_indent <= base_indent
-        body << line
-        i += 1
-      end
-      body.join("\n")
     end
   end
 end

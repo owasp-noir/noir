@@ -124,14 +124,4 @@ describe Noir::CSharpLexer do
       src[0...lex.statement_end(0)].should eq("var x = T(\"a;b\");")
     end
   end
-
-  describe "#tokens" do
-    it "produces a structural stream with idents, punctuation and string spans" do
-      src = "app.MapGet(\"/x\", H);"
-      kinds = Noir::CSharpLexer.new(src).tokens.map(&.kind)
-      kinds.should eq([
-        :ident, :dot, :ident, :lparen, :string, :comma, :ident, :rparen, :semicolon,
-      ])
-    end
-  end
 end

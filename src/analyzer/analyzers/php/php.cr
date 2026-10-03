@@ -4,12 +4,10 @@ module Analyzer::Php
   class Php < PhpEngine
     analyzer_for "php_pure"
 
-    # Precompiled once at load. The per-line gate below used to be
-    # `allow_patterns.any? { |pattern| line.includes? pattern }` — 7
-    # `String#includes?` scans of the line per pattern. Crystal's
-    # `String#includes?` is measurably slower than a single precompiled
-    # `Regex#matches?` call, and this runs on every line of every `.php`
-    # file in the project, so the union regex is a straight win.
+    # Precompiled once at load. The per-line gate below runs on every line
+    # of every `.php` file in the project, and Crystal's `String#includes?`
+    # is measurably slower than a single precompiled `Regex#matches?` call,
+    # so one union regex beats seven `includes?` scans per line.
     ALLOW_PATTERNS_RE = Regex.union(["$_GET", "$_POST", "$_REQUEST", "$_SERVER", "$_COOKIE", "$_FILES", "filter_input"])
 
     # Directory names that conventionally hold the document root. A
@@ -286,10 +284,6 @@ module Analyzer::Php
           io << (char == '\n' ? '\n' : ' ')
         end
       end
-    end
-
-    def allow_patterns
-      ["$_GET", "$_POST", "$_REQUEST", "$_SERVER", "$_COOKIE", "$_FILES", "filter_input"]
     end
   end
 end

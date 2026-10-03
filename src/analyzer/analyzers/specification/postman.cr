@@ -51,8 +51,8 @@ module Analyzer::Specification
         params = [] of Param
         resolved_url = resolve_vars(request_url, variables)
         url_path = extract_path_from_url(resolved_url)
-        extract_query_params(resolved_url).each { |param| add_param(params, param) }
-        extract_path_vars(url_path).each { |name| add_param(params, Param.new(name, "", "path")) }
+        extract_query_params(resolved_url).each { |param| push_param_once(params, param) }
+        extract_path_vars(url_path).each { |name| push_param_once(params, Param.new(name, "", "path")) }
         apply_auth(inherited_auth, params)
         @result << Endpoint.new(url_path, "GET", params, Details.new(PathInfo.new(source_path))) unless url_path.empty?
         return
@@ -82,8 +82,8 @@ module Analyzer::Specification
             param_value = scalar_to_s(header["value"]?) || ""
             # Skip common headers that are not user-controllable
             unless param_name.downcase == "content-type"
-              add_param(params, Param.new(param_name, param_value, "header"))
-              extract_cookie_params(param_value).each { |param| add_param(params, param) } if param_name.downcase == "cookie"
+              push_param_once(params, Param.new(param_name, param_value, "header"))
+              extract_cookie_params(param_value).each { |param| push_param_once(params, param) } if param_name.downcase == "cookie"
             end
           end
         end
@@ -103,7 +103,7 @@ module Analyzer::Specification
               json_body = JSON.parse(raw_content)
               if json_body.as_h?
                 json_body.as_h.each do |key, value|
-                  add_param(params, Param.new(key, value.to_s, "json"))
+                  push_param_once(params, Param.new(key, value.to_s, "json"))
                 end
               end
             rescue
@@ -117,7 +117,7 @@ module Analyzer::Specification
 
               if param_name = form_param["key"]?.try(&.as_s?)
                 param_value = scalar_to_s(form_param["value"]?) || ""
-                add_param(params, Param.new(param_name, param_value, "form"))
+                push_param_once(params, Param.new(param_name, param_value, "form"))
               end
             end
           end
@@ -128,14 +128,14 @@ module Analyzer::Specification
 
               if param_name = form_param["key"]?.try(&.as_s?)
                 param_value = scalar_to_s(form_param["value"]?) || scalar_to_s(form_param["src"]?) || ""
-                add_param(params, Param.new(param_name, param_value, "form"))
+                push_param_once(params, Param.new(param_name, param_value, "form"))
               end
             end
           end
         when "graphql"
           if graphql = body["graphql"]?
             if query = scalar_to_s(graphql["query"]?)
-              add_param(params, Param.new("query", query, "json"))
+              push_param_once(params, Param.new("query", query, "json"))
             end
 
             if variables_raw = scalar_to_s(graphql["variables"]?)
@@ -143,11 +143,11 @@ module Analyzer::Specification
                 parsed_variables = JSON.parse(variables_raw)
                 if variables_hash = parsed_variables.as_h?
                   variables_hash.each do |key, value|
-                    add_param(params, Param.new(key, value.to_s, "json"))
+                    push_param_once(params, Param.new(key, value.to_s, "json"))
                   end
                 end
               rescue
-                add_param(params, Param.new("variables", variables_raw, "json"))
+                push_param_once(params, Param.new("variables", variables_raw, "json"))
               end
             end
           end
@@ -170,9 +170,9 @@ module Analyzer::Specification
     private def process_url(url : JSON::Any, variables : Hash(String, String), params : Array(Param)) : String
       if url_string = url.as_s?
         resolved_url = resolve_vars(url_string, variables)
-        extract_query_params(resolved_url).each { |param| add_param(params, param) }
+        extract_query_params(resolved_url).each { |param| push_param_once(params, param) }
         url_path = extract_path_from_url(resolved_url)
-        extract_path_vars(url_path).each { |name| add_param(params, Param.new(name, "", "path")) }
+        extract_path_vars(url_path).each { |name| push_param_once(params, Param.new(name, "", "path")) }
         return url_path
       end
 
@@ -192,11 +192,11 @@ module Analyzer::Specification
 
           if param_name = query_param["key"]?.try(&.as_s?)
             param_value = scalar_to_s(query_param["value"]?) || ""
-            add_param(params, Param.new(param_name, param_value, "query"))
+            push_param_once(params, Param.new(param_name, param_value, "query"))
           end
         end
       elsif !raw.empty?
-        extract_query_params(raw).each { |param| add_param(params, param) }
+        extract_query_params(raw).each { |param| push_param_once(params, param) }
       end
 
       if variable_array = url["variable"]?.try(&.as_a?)
@@ -205,12 +205,12 @@ module Analyzer::Specification
 
           if param_name = path_var["key"]?.try(&.as_s?)
             param_value = scalar_to_s(path_var["value"]?) || ""
-            add_param(params, Param.new(param_name, param_value, "path"))
+            push_param_once(params, Param.new(param_name, param_value, "path"))
           end
         end
       end
 
-      extract_path_vars(url_path).each { |name| add_param(params, Param.new(name, "", "path")) }
+      extract_path_vars(url_path).each { |name| push_param_once(params, Param.new(name, "", "path")) }
       url_path
     end
 
@@ -371,13 +371,13 @@ module Analyzer::Specification
         name = fields["key"]? || ""
         value = fields["value"]? || ""
         location = (fields["in"]? || "header").downcase == "query" ? "query" : "header"
-        add_param(params, Param.new(name, value, location))
+        push_param_once(params, Param.new(name, value, location))
       when "bearer"
         token = fields["token"]? || ""
         auth_value = token.empty? ? "" : "Bearer #{token}"
-        add_param(params, Param.new("Authorization", auth_value, "header"))
+        push_param_once(params, Param.new("Authorization", auth_value, "header"))
       when "basic", "digest", "oauth1", "oauth2", "hawk", "ntlm", "awsv4", "edgegrid", "jwt", "akamai"
-        add_param(params, Param.new("Authorization", "", "header"))
+        push_param_once(params, Param.new("Authorization", "", "header"))
       end
     end
 
@@ -460,12 +460,6 @@ module Analyzer::Specification
       disabled = node["disabled"]?
       return false unless disabled
       disabled.as_bool? == true || disabled.as_s? == "true"
-    end
-
-    private def add_param(params : Array(Param), param : Param)
-      return if param.name.empty?
-      return if params.any? { |existing| existing.name == param.name && existing.param_type == param.param_type }
-      params << param
     end
   end
 end

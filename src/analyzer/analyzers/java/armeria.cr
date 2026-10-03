@@ -1093,18 +1093,14 @@ module Analyzer::Java
         if match.size > 0
           param_name = match[1]
           # Only add if not already present
-          unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "path" }
-            endpoint.push_param(Param.new(param_name, "", "path"))
-          end
+          endpoint.push_param(Param.new(param_name, "", "path"))
         end
       end
 
       url.scan(/:(\w+)/) do |match|
         next unless match.size > 0
         param_name = match[1]
-        unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "path" }
-          endpoint.push_param(Param.new(param_name, "", "path"))
-        end
+        endpoint.push_param(Param.new(param_name, "", "path"))
       end
     end
   end

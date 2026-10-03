@@ -108,10 +108,7 @@ class OutputBuilder
 
   @logger : NoirLogger
   @options : Hash(String, YAML::Any)
-  @is_debug : Bool
-  @is_verbose : Bool
   @is_color : Bool
-  @is_log : Bool
   @output_file : String
   @stdout_broken : Bool
 
@@ -125,8 +122,6 @@ class OutputBuilder
   property analyzer_failures : Array(AnalyzerFailure) = [] of AnalyzerFailure
 
   def initialize(options : Hash(String, YAML::Any))
-    @is_debug = any_to_bool(options["debug"])
-    @is_verbose = any_to_bool(options["verbose"])
     @options = options
     # Auto-disable color when STDOUT isn't a terminal — the `only-url`,
     # `only-param`, `only-header`, `only-cookie`, and `only-tag`
@@ -139,12 +134,11 @@ class OutputBuilder
     # precedence; this only flips off the default-on behavior when
     # stdout is redirected.
     @is_color = any_to_bool(options["color"]) && STDOUT.tty?
-    @is_log = any_to_bool(options["nolog"])
     @output_file = options["output"].to_s
     @io = STDOUT
     @stdout_broken = false
 
-    @logger = NoirLogger.new @is_debug, @is_verbose, @is_color, @is_log
+    @logger = NoirLogger.from_options(options, @is_color)
   end
 
   def ob_puts(message)
@@ -226,6 +220,15 @@ class OutputBuilder
   # implement only `print(endpoints)`.
   def print(endpoints : Array(Endpoint), passive_results : Array(PassiveScanResult))
     print(endpoints)
+  end
+
+  # The top-level document the structured formats (json/yaml/toml) serialize.
+  protected def report_document(endpoints : Array(Endpoint), passive_results : Array(PassiveScanResult))
+    {
+      "endpoints"       => endpoints,
+      "passive_results" => passive_results,
+      "errors"          => analyzer_failures,
+    }
   end
 
   # `?` is a reserved delimiter: whatever parser reads the baked URL takes the
@@ -451,92 +454,31 @@ class OutputBuilder
     tail.empty? ? "/" : tail
   end
 
-  protected def noir_callee_json(callee : Callee) : JSON::Any
-    data = {
-      "name" => JSON::Any.new(callee.name),
-    } of String => JSON::Any
-
-    if path = callee.path
-      data["path"] = JSON::Any.new(path)
-    end
-
-    if line = callee.line
-      data["line"] = JSON::Any.new(line.to_i64)
-    end
-
-    JSON::Any.new(data)
-  end
-
-  protected def noir_callees_json(endpoint : Endpoint) : Array(JSON::Any)
-    endpoint.callees.map { |callee| noir_callee_json(callee) }
+  # `Callee` and `AIContextEntry` serialize in field order and omit nil
+  # fields, which is exactly the shape the extensions carry.
+  protected def noir_callees_json(endpoint : Endpoint) : JSON::Any
+    JSON.parse(endpoint.callees.to_json)
   end
 
   protected def add_noir_callees_extension(operation : Hash(String, JSON::Any), endpoint : Endpoint)
     return if endpoint.callees.empty?
 
-    operation["x-noir-callees"] = JSON::Any.new(noir_callees_json(endpoint))
+    operation["x-noir-callees"] = noir_callees_json(endpoint)
   end
 
-  protected def noir_ai_context_entry_json(entry : AIContextEntry) : JSON::Any
-    data = {
-      "kind" => JSON::Any.new(entry.kind),
-      "name" => JSON::Any.new(entry.name),
-    } of String => JSON::Any
-
-    if source = entry.source
-      data["source"] = JSON::Any.new(source)
-    end
-
-    if description = entry.description
-      data["description"] = JSON::Any.new(description)
-    end
-
-    if path = entry.path
-      data["path"] = JSON::Any.new(path)
-    end
-
-    if line = entry.line
-      data["line"] = JSON::Any.new(line.to_i64)
-    end
-
-    if confidence = entry.confidence
-      data["confidence"] = JSON::Any.new(confidence.to_i64)
-    end
-
-    if snippet = entry.snippet
-      data["snippet"] = JSON::Any.new(snippet)
-    end
-
-    JSON::Any.new(data)
-  end
-
+  # Nil for a missing or empty context: `AIContext` itself omits empty
+  # buckets but would still serialize as `{}`. Emitting `"guards":[]`
+  # after a feature filter looks like confirmed absence.
   protected def noir_ai_context_json(endpoint : Endpoint) : JSON::Any?
     context = endpoint.ai_context
     return unless context
     return if context.empty?
 
-    # Omit empty buckets — same semantics as plain/Postman and as
-    # AIContext's JSON::Serializable ignore_serialize rules. Emitting
-    # `"guards":[]` after a feature filter looks like confirmed absence.
-    data = {} of String => JSON::Any
-    append_ai_context_bucket_json(data, "guards", context.guards)
-    append_ai_context_bucket_json(data, "callees", context.callees)
-    append_ai_context_bucket_json(data, "sources", context.sources)
-    append_ai_context_bucket_json(data, "sinks", context.sinks)
-    append_ai_context_bucket_json(data, "validators", context.validators)
-    append_ai_context_bucket_json(data, "signals", context.signals)
-    JSON::Any.new(data)
-  end
-
-  private def append_ai_context_bucket_json(data : Hash(String, JSON::Any), key : String, entries : Array(AIContextEntry))
-    return if entries.empty?
-
-    data[key] = JSON::Any.new(entries.map { |entry| noir_ai_context_entry_json(entry) })
+    JSON.parse(context.to_json)
   end
 
   protected def add_noir_ai_context_extension(operation : Hash(String, JSON::Any), endpoint : Endpoint)
-    context_json = noir_ai_context_json(endpoint)
-    if context_json
+    if context_json = noir_ai_context_json(endpoint)
       operation["x-noir-ai-context"] = context_json
     end
   end
