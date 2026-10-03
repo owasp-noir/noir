@@ -560,15 +560,18 @@ module Analyzer::Go
     # `base_path + file_path` — a path that only exists when the scan base
     # happens to be the Go project root. Scanning the same project from one
     # directory up silently lost the route.
+    #
+    # `Path.posix`, not `Path[]`: a native Windows `Path` re-joins with `\`,
+    # and the result is matched against `/`-separated walk paths below.
     private def resolve_public_dir_path(p_dir : Hash(String, String)) : String
       file_path = p_dir["file_path"]
-      return Path[file_path].normalize.to_s if file_path.starts_with?("/") && static_target_exists?(file_path)
+      return Path.posix(file_path).normalize.to_s if file_path.starts_with?("/") && static_target_exists?(file_path)
 
       normalized_file_path = file_path.lstrip("/")
       root = base_path
       if source_path = p_dir["source_path"]?
         source_dir = File.dirname(source_path)
-        source_relative = Path[(source_dir + "/" + normalized_file_path).squeeze('/')].normalize.to_s
+        source_relative = Path.posix((source_dir + "/" + normalized_file_path).squeeze('/')).normalize.to_s
         if static_target_exists?(source_relative)
           return preserve_relative_prefix(source_relative, source_path)
         end
@@ -577,7 +580,7 @@ module Analyzer::Go
       end
 
       raw_full_path = (root + "/" + normalized_file_path).squeeze('/')
-      normalized_full_path = Path[raw_full_path].normalize.to_s
+      normalized_full_path = Path.posix(raw_full_path).normalize.to_s
 
       if root.starts_with?("./") && !normalized_full_path.starts_with?("./") && !normalized_full_path.starts_with?("/")
         "./#{normalized_full_path}"
