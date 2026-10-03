@@ -126,7 +126,7 @@ module Analyzer::Javascript
         next if methods.empty? || url.empty?
 
         line = line_number_for_index(content, match_start)
-        value_start = skip_ws(content, match_end)
+        value_start = skip_whitespace(content, match_end)
 
         methods.each do |method|
           details = Details.new(PathInfo.new(routes_file, line))
@@ -205,14 +205,6 @@ module Analyzer::Javascript
 
       close_brace = Noir::JSRouteExtractor.find_matching_brace(content, open_brace)
       close_brace ? content[open_brace..close_brace] : nil
-    end
-
-    private def skip_ws(content : String, pos : Int32) : Int32
-      i = pos
-      while i < content.size && content[i].whitespace?
-        i += 1
-      end
-      i
     end
 
     # ---------------------------------------------------------------------

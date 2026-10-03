@@ -180,44 +180,6 @@ module Analyzer::Typescript
         relative.includes?(".spec.")
     end
 
-    private def string_literal_mask(content : String) : Array(Bool)
-      mask = Array(Bool).new(content.bytesize, false)
-      i = 0
-
-      while i < content.bytesize
-        byte = content.byte_at(i)
-        if byte == '\''.ord || byte == '"'.ord || byte == '`'.ord
-          quote = byte
-          mask[i] = true
-          i += 1
-
-          while i < content.bytesize
-            current = content.byte_at(i)
-            mask[i] = true
-
-            if current == '\\'.ord && i + 1 < content.bytesize
-              i += 1
-              mask[i] = true
-            elsif current == quote
-              i += 1
-              break
-            end
-
-            i += 1
-          end
-        else
-          i += 1
-        end
-      end
-
-      mask
-    end
-
-    private def literal_position?(literal_mask : Array(Bool), pos : Int32?) : Bool
-      return false unless pos
-      pos < literal_mask.size && literal_mask[pos]
-    end
-
     private def router_key(router : Router) : RouterKey
       router_key(router.base_path, router.name)
     end
