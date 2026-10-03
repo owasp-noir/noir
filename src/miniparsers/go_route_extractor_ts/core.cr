@@ -212,7 +212,7 @@ module Noir
         string_values = collect_string_values(root, source)
         mux_chained_operands = Set(String).new
 
-        walk(root) do |node|
+        Noir::TreeSitter.walk(root) do |node|
           next unless group_assignment_node?(node)
           collect_group(node, source, group_prefixes, group_method, group_aliases, string_values)
         end
@@ -224,7 +224,7 @@ module Noir
         closure_groups = closure_group_methods.empty? ? [] of ClosureGroup : collect_closure_groups(root, source, closure_group_methods, group_prefixes)
 
         if handlefunc_methods
-          walk(root) do |node|
+          Noir::TreeSitter.walk(root) do |node|
             next unless Noir::TreeSitter.node_type(node) == "call_expression"
             next unless mux_route_chain_call?(node, source)
             function = Noir::TreeSitter.field(node, "function")
@@ -236,7 +236,7 @@ module Noir
           end
         end
 
-        walk(root) do |node|
+        Noir::TreeSitter.walk(root) do |node|
           next unless Noir::TreeSitter.node_type(node) == "call_expression"
           if route = decode_verb_call(node, source, group_prefixes, extra_verbs, group_method, group_aliases, string_values, closure_groups)
             routes << route
@@ -269,7 +269,7 @@ module Noir
       Noir::TreeSitter.parse_go(source) do |root|
         string_values = collect_string_values(root, source)
 
-        walk(root) do |node|
+        Noir::TreeSitter.walk(root) do |node|
           next unless group_assignment_node?(node)
           collect_group(node, source, group_prefixes, group_method, group_aliases, string_values)
         end
@@ -303,7 +303,7 @@ module Noir
     def collect_router_group_builders(source : String) : Hash(String, RouterBuilder)
       result = Hash(String, RouterBuilder).new
       Noir::TreeSitter.parse_go(source) do |root|
-        walk(root) do |node|
+        Noir::TreeSitter.walk(root) do |node|
           next unless Noir::TreeSitter.node_type(node) == "function_declaration"
           name_node = Noir::TreeSitter.field(node, "name")
           params = Noir::TreeSitter.field(node, "parameters")
@@ -343,7 +343,7 @@ module Noir
       calls = [] of Tuple(String, String)
       return calls if builders.empty?
       Noir::TreeSitter.parse_go(source) do |root|
-        walk(root) do |node|
+        Noir::TreeSitter.walk(root) do |node|
           next unless Noir::TreeSitter.node_type(node) == "call_expression"
           fn = Noir::TreeSitter.field(node, "function")
           next unless fn
@@ -405,11 +405,11 @@ module Noir
         string_values = collect_string_values(root, source)
         find_function_body_node(root, source, func_name) do |body|
           group_prefixes = external_groups.dup
-          walk(body) do |node|
+          Noir::TreeSitter.walk(body) do |node|
             next unless group_assignment_node?(node)
             collect_group(node, source, group_prefixes, "Group", [] of String, string_values)
           end
-          walk(body) do |node|
+          Noir::TreeSitter.walk(body) do |node|
             next unless Noir::TreeSitter.node_type(node) == "call_expression"
             if route = decode_verb_call(node, source, group_prefixes, [] of String, "Group", [] of String, string_values)
               routes << route
@@ -449,7 +449,7 @@ module Noir
     def extract_controller_methods(source : String) : Hash(String, Array(String))
       result = Hash(String, Array(String)).new
       Noir::TreeSitter.parse_go(source) do |root|
-        walk(root) do |node|
+        Noir::TreeSitter.walk(root) do |node|
           next unless Noir::TreeSitter.node_type(node) == "method_declaration"
           receiver = Noir::TreeSitter.field(node, "receiver")
           name_node = Noir::TreeSitter.field(node, "name")
@@ -493,7 +493,7 @@ module Noir
     def extract_engine_names(source : String) : Set(String)
       names = Set(String).new
       Noir::TreeSitter.parse_go(source) do |root|
-        walk(root) do |node|
+        Noir::TreeSitter.walk(root) do |node|
           case Noir::TreeSitter.node_type(node)
           when "short_var_declaration", "assignment_statement", "var_spec"
             collect_engine_assignment(node, source, names)
@@ -519,7 +519,7 @@ module Noir
       group_prefixes = Hash(String, String).new
       Noir::TreeSitter.parse_go(source) do |root|
         string_values = collect_string_values(root, source)
-        walk(root) do |node|
+        Noir::TreeSitter.walk(root) do |node|
           case Noir::TreeSitter.node_type(node)
           when "short_var_declaration", "assignment_statement", "var_spec"
             collect_engine_assignment(node, source, names)
@@ -716,13 +716,6 @@ module Noir
       HandleAll
     end
 
-    private def walk(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
-      block.call(node)
-      Noir::TreeSitter.each_named_child(node) do |child|
-        walk(child, &block)
-      end
-    end
-
     private def node_key(node : LibTreeSitter::TSNode) : String
       "#{LibTreeSitter.ts_node_start_byte(node)}:#{LibTreeSitter.ts_node_end_byte(node)}"
     end
@@ -758,7 +751,7 @@ module Noir
       ambiguous = Set(String).new
       loop do
         changed = false
-        walk(root) do |node|
+        Noir::TreeSitter.walk(root) do |node|
           name_value = string_assignment(node, source, values)
           next unless name_value
           name, value = name_value
@@ -1259,7 +1252,7 @@ module Noir
                                        methods : Array(String),
                                        groups : Hash(String, String)) : Array(ClosureGroup)
       result = [] of ClosureGroup
-      walk(root) do |node|
+      Noir::TreeSitter.walk(root) do |node|
         next unless Noir::TreeSitter.node_type(node) == "call_expression"
         function = Noir::TreeSitter.field(node, "function")
         next if function.nil?

@@ -25,7 +25,7 @@ module Noir
       Noir::TreeSitter.parse_go(source) do |root|
         string_values = collect_string_values(root, source)
         var_types = collect_controller_var_types(root, source)
-        walk(root) do |node|
+        Noir::TreeSitter.walk(root) do |node|
           next unless Noir::TreeSitter.node_type(node) == "call_expression"
           decode_beego_router_call(node, source, controller_methods, var_types, string_values).each do |route|
             routes << route
@@ -125,7 +125,7 @@ module Noir
     private def collect_controller_var_types(root : LibTreeSitter::TSNode,
                                              source : String) : Hash(String, String)
       var_types = Hash(String, String).new
-      walk(root) do |node|
+      Noir::TreeSitter.walk(root) do |node|
         next unless group_assignment_node?(node)
         left = Noir::TreeSitter.field(node, "left")
         right = Noir::TreeSitter.field(node, "right")

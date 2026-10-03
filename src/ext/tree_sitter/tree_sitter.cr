@@ -396,6 +396,15 @@ module Noir::TreeSitter
     end
   end
 
+  # Pre-order walk: yields `node`, then every named descendant. Depth is
+  # bounded by `each_named_child`.
+  def self.walk(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
+    block.call(node)
+    each_named_child(node) do |child|
+      walk(child, &block)
+    end
+  end
+
   @[NoInline]
   private def self.each_named_child_via_cursor(node : LibTreeSitter::TSNode, &)
     cursor = LibTreeSitter.ts_tree_cursor_new(node)

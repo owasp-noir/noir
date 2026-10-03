@@ -11,7 +11,7 @@ module Noir
     # candidate `.go` file.
     private def collect_http_aliases(root : LibTreeSitter::TSNode, source : String) : Set(String)
       aliases = Set(String).new
-      walk(root) do |node|
+      Noir::TreeSitter.walk(root) do |node|
         next unless Noir::TreeSitter.node_type(node) == "import_spec"
 
         alias_name : String? = nil
@@ -118,7 +118,7 @@ module Noir
           end
         end
 
-        walk(root) do |node|
+        Noir::TreeSitter.walk(root) do |node|
           next unless Noir::TreeSitter.node_type(node) == "call_expression"
           decode_net_http_registration(
             node, source, http_aliases, serve_mux_vars, string_values,
@@ -139,7 +139,7 @@ module Noir
                                        source : String,
                                        http_aliases : Set(String)) : Set(String)
       vars = Set(String).new
-      walk(root) do |node|
+      Noir::TreeSitter.walk(root) do |node|
         case Noir::TreeSitter.node_type(node)
         when "short_var_declaration", "assignment_statement", "var_spec"
           collect_serve_mux_assignment(node, source, http_aliases, vars)
@@ -401,7 +401,7 @@ module Noir
       method_vars = Set(String).new
 
       # First pass: find any local variables assigned from *.Method (e.g. `m := r.Method` or `method = r.Method`)
-      walk(body_node) do |node|
+      Noir::TreeSitter.walk(body_node) do |node|
         case Noir::TreeSitter.node_type(node)
         when "short_var_declaration", "assignment_statement", "var_spec"
           left = Noir::TreeSitter.field(node, "left")
@@ -418,7 +418,7 @@ module Noir
       end
 
       # Second pass: look for `==`, `!=` comparisons and `switch` statements
-      walk(body_node) do |node|
+      Noir::TreeSitter.walk(body_node) do |node|
         case Noir::TreeSitter.node_type(node)
         when "binary_expression"
           op = Noir::TreeSitter.field(node, "operator")

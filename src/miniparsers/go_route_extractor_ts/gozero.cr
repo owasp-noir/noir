@@ -27,7 +27,7 @@ module Noir
       Noir::TreeSitter.parse_go(source) do |root|
         group_prefixes = collect_gozero_group_prefixes(root, source)
 
-        walk(root) do |node|
+        Noir::TreeSitter.walk(root) do |node|
           next unless Noir::TreeSitter.node_type(node) == "call_expression"
           function = Noir::TreeSitter.field(node, "function")
           next if function.nil?
@@ -128,7 +128,7 @@ module Noir
       prefixes = Hash(String, String).new
       10.times do
         changed = false
-        walk(root) do |node|
+        Noir::TreeSitter.walk(root) do |node|
           next unless Noir::TreeSitter.node_type(node) == "short_var_declaration"
           left = Noir::TreeSitter.field(node, "left")
           right = Noir::TreeSitter.field(node, "right")

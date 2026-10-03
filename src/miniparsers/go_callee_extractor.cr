@@ -287,7 +287,7 @@ module Noir::GoCalleeExtractor
         local_functions[Noir::TreeSitter.node_text(name_node, source)] = child
       end
 
-      walk(root) do |node|
+      Noir::TreeSitter.walk(root) do |node|
         next unless Noir::TreeSitter.node_type(node) == "call_expression"
         row = Noir::TreeSitter.node_start_row(node)
         next unless route_rows.includes?(row)
@@ -710,7 +710,7 @@ module Noir::GoCalleeExtractor
     return vars if import_aliases.empty?
 
     Noir::TreeSitter.parse_go(source) do |root|
-      walk(root) do |node|
+      Noir::TreeSitter.walk(root) do |node|
         next unless imported_receiver_assignment_node?(node)
 
         left = Noir::TreeSitter.field(node, "left")
@@ -778,7 +778,7 @@ module Noir::GoCalleeExtractor
   def extract_import_aliases(source : String) : Hash(String, String)
     aliases = Hash(String, String).new
     Noir::TreeSitter.parse_go(source) do |root|
-      walk(root) do |node|
+      Noir::TreeSitter.walk(root) do |node|
         next unless Noir::TreeSitter.node_type(node) == "import_spec"
 
         alias_name : String? = nil
@@ -828,7 +828,7 @@ module Noir::GoCalleeExtractor
                                  sink : Array(Tuple(String, String, Int32)),
                                  line_offset : Int32,
                                  external_functions : Hash(String, FunctionBody))
-    walk(body_node) do |n|
+    Noir::TreeSitter.walk(body_node) do |n|
       next unless Noir::TreeSitter.node_type(n) == "call_expression"
       func = Noir::TreeSitter.field(n, "function")
       next unless func
@@ -906,13 +906,6 @@ module Noir::GoCalleeExtractor
       end
     else
       ""
-    end
-  end
-
-  private def walk(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
-    block.call(node)
-    Noir::TreeSitter.each_named_child(node) do |child|
-      walk(child, &block)
     end
   end
 end

@@ -87,7 +87,7 @@ module Noir
                                  router_names : Array(String)? = nil,
                                  extra_attributes : Hash(String, String)? = nil,
                                  results : Array(Decoration) = [] of Decoration) : Array(Decoration)
-      walk(root) do |node|
+      Noir::TreeSitter.walk(root) do |node|
         next unless Noir::TreeSitter.node_type(node) == "decorated_definition"
         collect_decorations(node, source, router_names, extra_attributes, results)
       end
@@ -111,7 +111,7 @@ module Noir
                                 module_names : Array(String),
                                 results : Array(BlueprintDecl) = [] of BlueprintDecl) : Array(BlueprintDecl)
       allowed = module_names.to_set
-      walk(root) do |node|
+      Noir::TreeSitter.walk(root) do |node|
         next unless Noir::TreeSitter.node_type(node) == "assignment"
         name_node = Noir::TreeSitter.field(node, "left")
         call_node = Noir::TreeSitter.field(node, "right")
@@ -207,13 +207,6 @@ module Noir
     end
 
     # ---- private helpers --------------------------------------------------
-
-    private def walk(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
-      block.call(node)
-      Noir::TreeSitter.each_named_child(node) do |child|
-        walk(child, &block)
-      end
-    end
 
     private def collect_decorations(deco_def : LibTreeSitter::TSNode,
                                     source : String,

@@ -35,7 +35,7 @@ module Noir::GoRequestParamExtractor
 
     cache = Hash(String, Array(Param)).new
     Noir::TreeSitter.parse_go(source) do |root|
-      walk(root) do |node|
+      Noir::TreeSitter.walk(root) do |node|
         next unless Noir::TreeSitter.node_type(node) == "call_expression"
         row = Noir::TreeSitter.node_start_row(node)
         next unless route_rows.includes?(row)
@@ -159,7 +159,7 @@ module Noir::GoRequestParamExtractor
                                      visiting : Set(String),
                                      sink : Array(Param),
                                      depth : Int32)
-    walk(body) do |node|
+    Noir::TreeSitter.walk(body) do |node|
       next unless Noir::TreeSitter.node_type(node) == "call_expression"
 
       extract_params_from_call(node, source, http_method).each do |param|
@@ -412,12 +412,5 @@ module Noir::GoRequestParamExtractor
     return if param.name.empty? || param.param_type.empty?
     return if params.any? { |existing| existing.name == param.name && existing.param_type == param.param_type }
     params << param
-  end
-
-  private def walk(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
-    block.call(node)
-    Noir::TreeSitter.each_named_child(node) do |child|
-      walk(child, &block)
-    end
   end
 end

@@ -38,7 +38,7 @@ module Noir
         # call may be chained (`ws.Path("/x").Consumes(...).Produces(...)`),
         # but the `Path` selector's operand is still the bare ws identifier.
         prefixes = Hash(String, String).new
-        walk(root) do |node|
+        Noir::TreeSitter.walk(root) do |node|
           next unless Noir::TreeSitter.node_type(node) == "call_expression"
           fn = Noir::TreeSitter.field(node, "function")
           next if fn.nil? || Noir::TreeSitter.node_type(fn) != "selector_expression"
@@ -52,7 +52,7 @@ module Noir
         end
 
         # Pass 2: every `<ws>.Route(<ws>.VERB("/sub")…)` registration.
-        walk(root) do |node|
+        Noir::TreeSitter.walk(root) do |node|
           next unless Noir::TreeSitter.node_type(node) == "call_expression"
           fn = Noir::TreeSitter.field(node, "function")
           next if fn.nil? || Noir::TreeSitter.node_type(fn) != "selector_expression"
