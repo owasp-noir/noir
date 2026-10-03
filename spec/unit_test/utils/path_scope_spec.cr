@@ -60,7 +60,7 @@ describe Noir::PathScope do
       # Only Windows treats `\\` as a separator; elsewhere it is an
       # ordinary filename character.
       {% if flag?(:windows) %}
-        Noir::PathScope.normalize_base("a\\\\b\\\\").should eq("a\\b")
+        Noir::PathScope.normalize_base("a\\\\b\\\\").should eq("a/b")
       {% else %}
         Noir::PathScope.normalize_base("a\\b\\").should eq("a\\b\\")
       {% end %}

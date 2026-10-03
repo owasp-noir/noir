@@ -109,7 +109,9 @@ module Noir
     # an earlier sweep. A relative base stays relative.
     # Separators a base path may legitimately use. Windows accepts both
     # forms; on POSIX a backslash is an ordinary filename character and
-    # must not be treated as a separator.
+    # must not be treated as a separator. The result is always joined with
+    # `/`: noir handles paths as `/`-separated strings throughout, and
+    # Windows file APIs accept `/` as readily as `\\`.
     BASE_SEPARATORS = File::SEPARATOR == '\\' ? {'\\', '/'} : {'/'}
 
     def normalize_base(base : String) : String
@@ -132,15 +134,15 @@ module Noir
       last = segment.to_s
       segments << last unless last.empty? || last == "."
 
-      joined = segments.join(File::SEPARATOR)
-      return joined.empty? ? File::SEPARATOR.to_s : "#{File::SEPARATOR}#{joined}" if rooted
+      joined = segments.join('/')
+      return joined.empty? ? "/" : "/#{joined}" if rooted
       return "." if joined.empty?
       # A Windows drive root ("C:\\") is the one place a trailing separator
       # carries meaning — without it "C:" names the current directory on
       # that drive instead.
       if File::SEPARATOR == '\\' && segments.size == 1 && joined.size == 2 &&
          joined[1] == ':' && base.size > 2
-        return "#{joined}#{File::SEPARATOR}"
+        return "#{joined}/"
       end
       joined
     end
