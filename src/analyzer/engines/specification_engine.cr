@@ -171,6 +171,57 @@ module Analyzer::Specification
       nil
     end
 
+    # The path of a request URL as written in a `.http` or Insomnia file —
+    # absolute, host-prefixed (`localhost:3000/users`) or path-only — with
+    # each `template_var` placeholder left unresolved turned into a `:name`
+    # path parameter. Returns "" for a non-HTTP scheme.
+    protected def template_url_path(url_string : String, template_var : Regex) : String
+      stripped = url_string.strip
+      return "" if stripped.empty?
+
+      if stripped =~ /^https?:\/\//i
+        uri = parse_absolute_url(stripped)
+        return "" unless uri
+        path = uri.path
+        return template_path(path.empty? ? "/" : path, template_var)
+      elsif stripped =~ /^[A-Za-z][A-Za-z0-9+.-]*:\/\//
+        return ""
+      end
+
+      # No scheme — treat as path-only or host-prefixed.
+      without_query = stripped.split("?", 2)[0].split("#", 2)[0]
+      path = without_query
+      unless path.starts_with?("/")
+        if looks_host_prefixed?(path)
+          parts = path.split("/", 2)
+          return "/" if parts.size == 1
+          path = "/" + parts[1]
+        else
+          path = "/" + path
+        end
+      end
+      template_path(path, template_var)
+    end
+
+    private def looks_host_prefixed?(value : String) : Bool
+      first = value.split("/", 2).first
+      first.includes?(".") || first.includes?(":") || first.downcase == "localhost" || first.includes?("{{")
+    end
+
+    private def template_path(path : String, template_var : Regex) : String
+      normalized = path.empty? ? "/" : path
+      normalized = "/" + normalized unless normalized.starts_with?("/")
+      normalized.gsub(template_var) do
+        ":#{template_var_name($1)}"
+      end
+    end
+
+    private def template_var_name(name : String) : String
+      normalized = name.gsub(/[^A-Za-z0-9_]/, "_")
+      normalized = normalized.lstrip('_').rstrip('_')
+      normalized.empty? ? "param" : normalized
+    end
+
     # Turns an OpenAPI-style `servers[].url` list into the base path every
     # endpoint in the document hangs off. Shared by OAS3 and OpenRPC, which
     # use the same `servers` object.
