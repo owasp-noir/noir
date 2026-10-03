@@ -5,10 +5,6 @@ class GoEngineSpecHarness < Analyzer::Go::GoEngine
   def test_add_param_to_endpoint(param : Param, endpoint : Endpoint)
     add_param_to_endpoint(param, endpoint)
   end
-
-  def test_add_static_path_if_valid(static_path : Hash(String, String), public_dirs : Array(Hash(String, String)))
-    add_static_path_if_valid(static_path, public_dirs)
-  end
 end
 
 describe Analyzer::Go::GoEngine do
@@ -57,33 +53,6 @@ describe Analyzer::Go::GoEngine do
       harness.test_add_param_to_endpoint(param, endpoint)
 
       endpoint.params.size.should eq(0)
-    end
-  end
-
-  describe "#add_static_path_if_valid" do
-    it "adds static path mapping if both static_path and file_path are present" do
-      public_dirs = [] of Hash(String, String)
-      mapping = {
-        "static_path" => "/assets",
-        "file_path"   => "public/assets",
-      }
-
-      harness.test_add_static_path_if_valid(mapping, public_dirs)
-
-      public_dirs.size.should eq(1)
-      public_dirs[0]["static_path"].should eq("/assets")
-    end
-
-    it "does not add static path mapping if static_path is empty" do
-      public_dirs = [] of Hash(String, String)
-      mapping = {
-        "static_path" => "",
-        "file_path"   => "public/assets",
-      }
-
-      harness.test_add_static_path_if_valid(mapping, public_dirs)
-
-      public_dirs.size.should eq(0)
     end
   end
 

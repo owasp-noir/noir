@@ -368,12 +368,13 @@ module Analyzer::Elixir
       end
     end
 
-    # Walk `@result` + `@route_map` once and group endpoints under every
-    # normalized controller key that `controller_refs_match?` would accept.
-    # Short mapped names (`UserController`) index under their last segment
-    # so an FQ lookup (`MyAppWeb.UserController`) still finds them; FQ
-    # mapped names only index under the full normalized form (matching
-    # the asymmetric equality rule in `controller_refs_match?`).
+    # Walk `@result` + `@route_map` once and group endpoints under the
+    # normalized controller key they can be matched by. The match rule is
+    # asymmetric: a short mapped name (`UserController`) matches any
+    # controller whose last segment equals it, so it indexes under that one
+    # segment and an FQ lookup (`MyAppWeb.UserController`) still finds it;
+    # an FQ mapped name matches only on full normalized equality, so it
+    # indexes under the full normalized form alone.
     private def build_controller_endpoint_index : Nil
       @controller_endpoint_index.clear
 
@@ -394,7 +395,7 @@ module Analyzer::Elixir
 
         # Short mappings are already a single segment after normalize.
         # Nothing further to index. FQ mappings stay under the full key
-        # only — `controller_refs_match?` requires full equality for them.
+        # only — they match on full equality alone.
       end
     end
 
@@ -783,8 +784,8 @@ module Analyzer::Elixir
       # Lookup under the full normalized name and, when it has a module
       # prefix, under the last segment so short mapped controllers
       # (`UserController`) still match an FQ module extract.
-      # Index keys already mirror `controller_refs_match?`: short mappings
-      # live under a single segment, FQ mappings only under the full form.
+      # Index keys already encode the match rule: short mappings live under
+      # a single segment, FQ mappings only under the full form.
       norm = normalize_controller_ref(controller_name)
       keys = [norm]
       if norm.includes?('.')
@@ -815,16 +816,6 @@ module Analyzer::Elixir
       route_path = endpoint.details.code_paths.first?
       base = route_path ? configured_base_for(route_path.path) : @base_path
       {base, "#{endpoint.method}::#{endpoint.url}"}
-    end
-
-    private def controller_refs_match?(controller_name : String, mapped_controller : String) : Bool
-      normalized_controller = normalize_controller_ref(controller_name)
-      normalized_mapping = normalize_controller_ref(mapped_controller)
-      if mapped_controller.includes?(".")
-        normalized_controller == normalized_mapping
-      else
-        normalized_controller.split('.').last == normalized_mapping
-      end
     end
 
     def find_function_end(lines : Array(String), start_index : Int32) : Int32

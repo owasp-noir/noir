@@ -495,12 +495,6 @@ module Analyzer::Go
       end
     end
 
-    def add_static_path_if_valid(static_path : Hash(String, String), public_dirs : Array(Hash(String, String)))
-      if !static_path["static_path"].empty? && !static_path["file_path"].empty?
-        public_dirs << static_path
-      end
-    end
-
     def static_dir_entry(source_path : String, static_path : String, file_path : String) : Hash(String, String)
       {
         "static_path" => static_path,
