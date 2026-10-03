@@ -10,12 +10,7 @@ module Analyzer::Php
   class Lumen < PhpEngine
     analyzer_for "php_lumen"
 
-    private struct RouteGroup
-      getter prefix, body, body_start, body_end
-
-      def initialize(@prefix : String, @body : String, @body_start : Int32, @body_end : Int32)
-      end
-    end
+    private record RouteGroup, prefix : String, body : String, body_start : Int32, body_end : Int32
 
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint

@@ -5,12 +5,7 @@ module Analyzer::Php
   class Symfony < PhpEngine
     analyzer_for "php_symfony"
 
-    private struct ClassRoutePrefix
-      getter path, body_start, body_end
-
-      def initialize(@path : String, @body_start : Int32, @body_end : Int32)
-      end
-    end
+    private record ClassRoutePrefix, path : String, body_start : Int32, body_end : Int32
 
     # Symfony route configs also live in YAML under config/routes*.
     # Extend the engine's default `.php`-only source set.

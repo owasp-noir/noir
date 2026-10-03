@@ -6,12 +6,7 @@ module Analyzer::Php
 
     @method_def_regexes = Hash(String, Regex).new
 
-    private struct RouteGroup
-      getter prefix, body, body_start, body_end
-
-      def initialize(@prefix : String, @body : String, @body_start : Int32, @body_end : Int32)
-      end
-    end
+    private record RouteGroup, prefix : String, body : String, body_start : Int32, body_end : Int32
 
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint

@@ -6,20 +6,10 @@ module Analyzer::Typescript
   class TanstackRouter < Analyzer::Javascript::JavascriptEngine
     analyzer_for "ts_tanstack_router"
 
-    private struct CodeRoute
-      getter name : String
-      getter path : String
-      getter parent : String?
-      getter block : String
-      # `start_pos` is a CHAR index (used for char-based navigation);
-      # `byte_start_pos` is the same position as a BYTE offset (used for
-      # the byte-indexed literal mask and newline counting).
-      getter start_pos : Int32
-      getter byte_start_pos : Int32
-
-      def initialize(@name : String, @path : String, @parent : String?, @block : String, @start_pos : Int32, @byte_start_pos : Int32)
-      end
-    end
+    # `start_pos` is a CHAR index (used for char-based navigation);
+    # `byte_start_pos` is the same position as a BYTE offset (used for
+    # the byte-indexed literal mask and newline counting).
+    private record CodeRoute, name : String, path : String, parent : String?, block : String, start_pos : Int32, byte_start_pos : Int32
 
     def analyze
       result = [] of Endpoint

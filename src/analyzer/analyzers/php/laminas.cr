@@ -33,12 +33,7 @@ module Analyzer::Php
         byte == 0x0B_u8 || byte == 0x0C_u8 || byte == 0x0D_u8
     end
 
-    private struct PhpArrayEntry
-      getter key, value, array_body
-
-      def initialize(@key : String, @value : String?, @array_body : String?)
-      end
-    end
+    private record PhpArrayEntry, key : String, value : String?, array_body : String?
 
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint

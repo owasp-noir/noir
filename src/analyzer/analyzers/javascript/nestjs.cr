@@ -11,21 +11,9 @@ module Analyzer::Javascript
     # type they map to. Iterated in this order when extracting params.
     REQUEST_OBJECT_FIELDS = { {"query", "query"}, {"body", "body"}, {"headers", "header"}, {"params", "path"} }
 
-    private struct GlobalPrefixExclude
-      getter path : String
-      getter method : String?
+    private record GlobalPrefixExclude, path : String, method : String? = nil
 
-      def initialize(@path : String, @method : String? = nil)
-      end
-    end
-
-    private struct GlobalPrefixConfig
-      getter prefix : String
-      getter excludes : Array(GlobalPrefixExclude)
-
-      def initialize(@prefix : String, @excludes : Array(GlobalPrefixExclude))
-      end
-    end
+    private record GlobalPrefixConfig, prefix : String, excludes : Array(GlobalPrefixExclude)
 
     # Project-wide `EnumName.Member` / `Object.prop` -> value map, used to
     # resolve `@Controller(...)` prefix constants imported from another

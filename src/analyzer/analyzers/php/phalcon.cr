@@ -340,12 +340,7 @@ module Analyzer::Php
     ANNOTATION_VERB_RE  = /@(Get|Post|Put|Patch|Delete|Options|Head)\s*\(\s*['"]([^'"]+)['"]/
     ANNOTATION_ROUTE_RE = /@Route\s*\(\s*['"]([^'"]+)['"]([^)]*)\)/m
 
-    private struct PhalconClassScope
-      getter path, body_start, body_end
-
-      def initialize(@path : String, @body_start : Int32, @body_end : Int32)
-      end
-    end
+    private record PhalconClassScope, path : String, body_start : Int32, body_end : Int32
 
     private def analyze_annotation_routes(path : String, content : String, include_callee : Bool) : Array(Endpoint)
       endpoints = [] of Endpoint

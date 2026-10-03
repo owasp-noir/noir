@@ -7,45 +7,26 @@ module Analyzer::Php
 
     @method_def_regexes = Hash(String, Regex).new
 
-    private struct RouteGroup
-      getter prefix, body, body_start, body_end
+    private record RouteGroup, prefix : String, body : String, body_start : Int32, body_end : Int32
 
-      def initialize(@prefix : String, @body : String, @body_start : Int32, @body_end : Int32)
-      end
-    end
+    private record ResourceRouteCall, resource : String, statement : String, start_pos : Int32
 
-    private struct ResourceRouteCall
-      getter resource, statement, start_pos
-
-      def initialize(@resource : String, @statement : String, @start_pos : Int32)
-      end
-    end
-
-    private struct ResourceEndpointTemplate
-      getter action, path, method
-
-      def initialize(@action : String, @path : String, @method : String)
-      end
-    end
+    private record ResourceEndpointTemplate, action : String, path : String, method : String
 
     # Everything the route scans need that is fixed for the body being
     # analyzed — one route file, or one `Route::…->group(...)` body during the
     # recursive pass. Bundled so the shared scan helpers below take the body
     # once instead of threading eight arguments through every call.
-    private struct RouteScanContext
-      getter content, file_path, include_callee, base_line, lexer, imports, route_groups, skip_ranges, handler_bodies
-
-      def initialize(@content : String,
-                     @file_path : String,
-                     @include_callee : Bool,
-                     @base_line : Int32,
-                     @lexer : Noir::PhpLexer,
-                     @imports : Hash(String, String),
-                     @route_groups : Array(RouteGroup),
-                     @skip_ranges : Array(Range(Int32, Int32)),
-                     @handler_bodies : Array(Range(Int32, Int32)))
-      end
-    end
+    private record RouteScanContext,
+      content : String,
+      file_path : String,
+      include_callee : Bool,
+      base_line : Int32,
+      lexer : Noir::PhpLexer,
+      imports : Hash(String, String),
+      route_groups : Array(RouteGroup),
+      skip_ranges : Array(Range(Int32, Int32)),
+      handler_bodies : Array(Range(Int32, Int32))
 
     alias ControllerActionBody = Tuple(String, String, Int32)
     alias ControllerActionMap = Hash(String, ControllerActionBody)
