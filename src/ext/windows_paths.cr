@@ -8,32 +8,40 @@
 # a helper, the path-producing stdlib methods return `/` on Windows. Every
 # Windows file API accepts `/`, and `\` can't appear in a Windows file name,
 # so the swap is lossless. Compiled out everywhere else.
+module Noir::WindowsPaths
+  # `\` to `/`, except for an extended-length path (`\\?\C:\...`): Windows
+  # passes those to the filesystem verbatim, so `/` there is not a separator.
+  def self.to_slash(path : String) : String
+    path.starts_with?("\\\\?\\") ? path : path.gsub('\\', '/')
+  end
+end
+
 {% if flag?(:windows) %}
   class File
     def self.join(*parts : String | Path) : String
-      previous_def.gsub('\\', '/')
+      Noir::WindowsPaths.to_slash(previous_def)
     end
 
     def self.join(parts : Enumerable) : String
-      previous_def.gsub('\\', '/')
+      Noir::WindowsPaths.to_slash(previous_def)
     end
 
     def self.expand_path(path : Path | String, dir = nil, *, home = false) : String
-      previous_def.gsub('\\', '/')
+      Noir::WindowsPaths.to_slash(previous_def)
     end
 
     def self.realpath(path : Path | String) : String
-      previous_def.gsub('\\', '/')
+      Noir::WindowsPaths.to_slash(previous_def)
     end
   end
 
   class Dir
     def self.current : String
-      previous_def.gsub('\\', '/')
+      Noir::WindowsPaths.to_slash(previous_def)
     end
 
     def self.tempdir : String
-      previous_def.gsub('\\', '/')
+      Noir::WindowsPaths.to_slash(previous_def)
     end
   end
 {% end %}
