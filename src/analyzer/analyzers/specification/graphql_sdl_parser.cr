@@ -410,7 +410,8 @@ module Analyzer::Specification
 
     # Walks the materialized char array (see cluster entry points) — O(1)
     # per access where `String#[](Int)` is O(n) on non-ASCII content.
-    private def skip_ws(chars : Array(Char), pos : Int32) : Int32
+    # Also used by `GraphqlTypedefs`.
+    def skip_ws(chars : Array(Char), pos : Int32) : Int32
       while pos < chars.size && chars[pos].ascii_whitespace?
         pos += 1
       end

@@ -145,15 +145,7 @@ module Analyzer::Specification
     # don't have to special-case single-line blocks like
     # `basic_auth { admin $2y$... }`.
     private def brace_delta(line : String) : Int32
-      opens = 0
-      closes = 0
-      line.each_char do |ch|
-        case ch
-        when '{' then opens += 1
-        when '}' then closes += 1
-        end
-      end
-      opens - closes
+      line.count('{') - line.count('}')
     end
 
     # ----------- JSON -----------

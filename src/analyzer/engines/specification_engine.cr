@@ -4,6 +4,7 @@ require "../../models/skipped_files"
 require "uri"
 require "json"
 require "yaml"
+require "xml"
 require "../../models/locator_keys"
 require "../../utils/media_filter"
 require "../../utils/spec_line_index"
@@ -580,6 +581,24 @@ module Analyzer::Specification
         resolve_path_item_yaml(ref_doc, node, seen)
       else
         {path_obj, doc}
+      end
+    end
+
+    # The non-empty strings of a YAML sequence (k8s `hosts` / `hostnames`).
+    protected def string_list(node : YAML::Any?) : Array(String)
+      return [] of String unless arr = node.try(&.as_a?)
+      arr.compact_map(&.as_s?).reject(&.empty?)
+    end
+
+    # First element child of `node` named `name` (XML formats: Burp, OData
+    # EDMX, WSDL).
+    protected def find_child(node : XML::Node, name : String) : XML::Node?
+      node.children.find { |c| c.element? && c.name == name }
+    end
+
+    protected def each_child(node : XML::Node, name : String, &)
+      node.children.each do |c|
+        yield c if c.element? && c.name == name
       end
     end
 

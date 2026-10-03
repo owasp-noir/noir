@@ -28,23 +28,10 @@ module Analyzer::Specification
       spec = root[YAML::Any.new("spec")]?.try(&.as_h?)
       return unless spec
 
-      hosts = collect_string_array(spec[YAML::Any.new("hosts")]?)
+      hosts = string_list(spec[YAML::Any.new("hosts")]?)
 
       http_rules = spec[YAML::Any.new("http")]?.try(&.as_a?) || [] of YAML::Any
       http_rules.each { |rule| process_http_rule(rule, hosts, details) }
-    end
-
-    private def collect_string_array(node : YAML::Any?) : Array(String)
-      result = [] of String
-      return result if node.nil?
-      arr = node.as_a?
-      return result unless arr
-      arr.each do |entry|
-        if str = entry.as_s?
-          result << str unless str.empty?
-        end
-      end
-      result
     end
 
     private def process_http_rule(rule : YAML::Any, hosts : Array(String), details : Details)

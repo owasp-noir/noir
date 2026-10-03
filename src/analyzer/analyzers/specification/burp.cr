@@ -251,13 +251,6 @@ module Analyzer::Specification
       end
     end
 
-    private def find_child(node : XML::Node, name : String) : XML::Node?
-      node.children.each do |child|
-        return child if child.element? && child.name == name
-      end
-      nil
-    end
-
     private def child_text(node : XML::Node, name : String) : String
       child = find_child(node, name)
       child ? (child.content || "") : ""
