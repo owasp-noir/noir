@@ -25,7 +25,7 @@ module Analyzer::Javascript
           if endpoint.url.includes?(":")
             endpoint.url.scan(/:(\w+)/) do |m|
               param = Param.new(m[1], "", "path")
-              endpoint.push_param(param) if !endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
+              endpoint.push_param(param)
             end
           end
 
@@ -418,9 +418,7 @@ module Analyzer::Javascript
       # Extract path parameters
       handler_body.scan(/req\.params\.(\w+)/) do |param_match|
         param_name = param_match[1]
-        if !endpoint.params.any? { |p| p.name == param_name && p.param_type == "path" }
-          endpoint.push_param(Param.new(param_name, "", "path"))
-        end
+        endpoint.push_param(Param.new(param_name, "", "path"))
       end
 
       # Extract from destructuring - improved to handle more patterns

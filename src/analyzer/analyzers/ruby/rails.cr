@@ -1569,7 +1569,7 @@ module Analyzer::Ruby
               raw_body_line = lines[index]
               body_line = strip_inline_comment(raw_body_line).strip
 
-              if closes_ruby_block?(body_line)
+              if ruby_closes_block?(body_line)
                 depth -= 1
                 break if depth == 0
                 body_lines << raw_body_line
@@ -1615,15 +1615,10 @@ module Analyzer::Ruby
       0
     end
 
-    private def closes_ruby_block?(line : String) : Bool
-      !!line.match(/^end\b/)
-    end
-
     private def dedup_by_name(params : Array(Param)) : Array(Param)
       seen = Set(String).new
       params.each_with_object([] of Param) do |p, acc|
-        next if seen.includes?(p.name)
-        seen << p.name
+        next unless seen.add?(p.name)
         acc << p
       end
     end

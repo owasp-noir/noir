@@ -30,14 +30,9 @@ module Analyzer::Javascript
   class Astro < JavascriptEngine
     analyzer_for "js_astro"
 
-    HTTP_METHODS    = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
     PAGE_EXTENSIONS = [".astro", ".md", ".mdx", ".html"]
     API_EXTENSIONS  = [".ts", ".js", ".mjs", ".tsx", ".jsx"]
     EXTENSIONS      = PAGE_EXTENSIONS + API_EXTENSIONS
-
-    # Lowest-cost defaults for endpoints whose handler doesn't
-    # advertise its verbs explicitly. Mirrors the Next.js fallback.
-    FALLBACK_API_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH"]
 
     def analyze
       result = [] of Endpoint
@@ -76,7 +71,7 @@ module Analyzer::Javascript
 
     private def analyze_page(path : String, relative : String, result : Array(Endpoint), mutex : Mutex)
       url = url_for(relative)
-      endpoint = build_endpoint(url, "GET", path)
+      endpoint = file_route_endpoint(url, "GET", path)
       mutex.synchronize { result << endpoint }
     end
 
@@ -93,20 +88,11 @@ module Analyzer::Javascript
       methods = detect_api_methods(content)
       mutex.synchronize do
         methods.each do |verb|
-          endpoint = build_endpoint(url, verb, path, api_method_line(content, verb) || 1)
+          endpoint = file_route_endpoint(url, verb, path, api_method_line(content, verb) || 1)
           attach_exported_callees(endpoint, content, path, verb) if callees_needed?
           result << endpoint
         end
       end
-    end
-
-    private def build_endpoint(url : String, verb : String, path : String, line : Int32 = 1) : Endpoint
-      endpoint = Endpoint.new(url, verb)
-      endpoint.details = Details.new(PathInfo.new(path, line))
-      url.scan(/\{(\w+)\}/) do |match|
-        endpoint.push_param(Param.new(match[1], "", "path"))
-      end
-      endpoint
     end
 
     private def attach_exported_callees(endpoint : Endpoint, content : String, path : String, verb : String)
@@ -144,53 +130,6 @@ module Analyzer::Javascript
         return "{#{m[1]}}"
       end
       seg
-    end
-
-    # Look for explicit verb exports first
-    # (`export const GET = ...` / `export async function POST() {}`),
-    # then fall back to the cross-method catch-all set.
-    # Compiled once per verb — interpolated regex literals would otherwise
-    # be rebuilt (full PCRE2 compile) for every method on every file.
-    EXPORT_FUNCTION_RES = HTTP_METHODS.map { |m| {m, /export\s+(?:async\s+)?function\s+#{m}\b/} }.to_h
-    EXPORT_CONST_RES    = HTTP_METHODS.map { |m| {m, /export\s+(?:const|let|var)\s+#{m}\b\s*(?::[^=]+)?=/} }.to_h
-    EXPORT_BRACE_RES    = HTTP_METHODS.map { |m| {m, /export\s+\{\s*[^}]*\b#{m}\b[^}]*\}/} }.to_h
-
-    private def detect_api_methods(content : String) : Array(String)
-      explicit = [] of String
-      HTTP_METHODS.each do |m|
-        # `export async function GET(...)`, `export function GET(...)`,
-        # `export const GET = ...`, `export const GET: APIRoute = ...`
-        # (the trailing TypeScript type annotation is optional), and
-        # the `export { GET }` re-export form.
-        if content.match(EXPORT_FUNCTION_RES[m]) ||
-           content.match(EXPORT_CONST_RES[m]) ||
-           content.match(EXPORT_BRACE_RES[m])
-          explicit << m
-        end
-      end
-      explicit.empty? ? FALLBACK_API_METHODS : explicit
-    end
-
-    private def api_method_line(content : String, verb : String) : Int32?
-      if match = content.match(EXPORT_FUNCTION_RES[verb])
-        return line_for_match(content, match)
-      end
-
-      if match = content.match(EXPORT_CONST_RES[verb])
-        return line_for_match(content, match)
-      end
-
-      if content.includes?("export {") && content.includes?(verb)
-        Noir::JSCalleeExtractor.exported_function_line(content, verb)
-      end
-    end
-
-    # `MatchData#begin` is a CHAR index; the inherited helper is the one
-    # that converts it to a byte offset before counting newlines. This used
-    # to slice `content.to_slice[0, start]` with the char index directly,
-    # which undercounts on any source with non-ASCII before the match.
-    private def line_for_match(content : String, match : Regex::MatchData) : Int32
-      line_number_for_index(content, match.begin(0) || 0)
     end
   end
 end

@@ -6,12 +6,7 @@ module Analyzer::Php
 
     @method_def_regexes = Hash(String, Regex).new
 
-    private struct RouteGroup
-      getter prefix, body, body_start, body_end
-
-      def initialize(@prefix : String, @body : String, @body_start : Int32, @body_end : Int32)
-      end
-    end
+    private record RouteGroup, prefix : String, body : String, body_start : Int32, body_end : Int32
 
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
@@ -219,31 +214,6 @@ module Analyzer::Php
       groups.any? { |group| pos >= group.body_start && pos < group.body_end }
     end
 
-    private def extract_inline_closure_body(content : String, pos : Int32, base_line : Int32) : Tuple(String?, Int32, Int32?)
-      return {nil, pos, nil} unless pos < content.size
-
-      scan_pos = skip_whitespace(content, pos)
-      return {nil, pos, nil} unless scan_pos < content.size
-
-      closure_regex = /\A(?:static\s+)?function\s*\([^)]*\)\s*(?:use\s*\([^)]*\)\s*)?(?::\s*[^{=]+)?\{/i
-      match = content[scan_pos..].match(closure_regex)
-      return {nil, pos, nil} unless match
-
-      brace_pos = scan_pos + match[0].size - 1
-      body_end = find_matching_php_close_brace(content, brace_pos)
-      return {nil, pos, nil} unless body_end
-
-      body_start_line = base_line + newline_count_before(content, brace_pos)
-      {content[(brace_pos + 1)...body_end], body_end + 1, body_start_line}
-    end
-
-    private def skip_whitespace(content : String, pos : Int32) : Int32
-      while pos < content.size && content[pos].ascii_whitespace?
-        pos += 1
-      end
-      pos
-    end
-
     private def normalize_route(route : String) : String
       normalized = route.gsub(/\[:(\w+)\]/) { ":#{$1}" }
       normalized = normalized.gsub(/:(\w+)/) { "{#{$1}}" }
@@ -417,7 +387,7 @@ module Analyzer::Php
         route_paths.uniq.each do |route_path|
           methods.each do |method|
             endpoint = Endpoint.new(route_path, method, params.dup, details.dup)
-            attach_action_callees(endpoint, method_body_info, path) if include_callee
+            attach_method_callees(endpoint, method_body_info, path) if include_callee
             endpoints << endpoint
           end
         end
@@ -436,7 +406,7 @@ module Analyzer::Php
           fallback_paths.uniq.each do |fallback_path|
             methods.each do |method|
               endpoint = Endpoint.new(fallback_path, method, params.dup, details.dup)
-              attach_action_callees(endpoint, method_body_info, path) if include_callee
+              attach_method_callees(endpoint, method_body_info, path) if include_callee
               endpoints << endpoint
             end
           end
@@ -634,13 +604,6 @@ module Analyzer::Php
       touches_post ? ["GET", "POST"] : ["GET"]
     end
 
-    private def attach_action_callees(endpoint : Endpoint, method_body : Tuple(String, Int32)?, path : String)
-      return unless method_body
-      body, start_line = method_body
-      callees = Noir::PhpCalleeExtractor.callees_for_body(body, path, start_line)
-      attach_php_callees(endpoint, callees)
-    end
-
     private def analyze_annotation_routes(path : String, content : String, include_callee : Bool) : Array(Endpoint)
       endpoints = [] of Endpoint
 
@@ -684,7 +647,7 @@ module Analyzer::Php
 
         methods.each do |method|
           endpoint = Endpoint.new(normalized_path, method, params.dup, details.dup)
-          attach_action_callees(endpoint, method_body_info, path) if include_callee
+          attach_method_callees(endpoint, method_body_info, path) if include_callee
           endpoints << endpoint
         end
 

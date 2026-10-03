@@ -10,16 +10,7 @@ module Analyzer::Typescript
     DEFAULT_PREFIX = "/api/trpc"
     alias RouterKey = Tuple(String, String)
 
-    private struct Router
-      getter base_path : String
-      getter name : String
-      getter body : String
-      getter file : String
-      getter line : Int32
-
-      def initialize(@base_path : String, @name : String, @body : String, @file : String, @line : Int32)
-      end
-    end
+    private record Router, base_path : String, name : String, body : String, file : String, line : Int32
 
     # A procedure exported as a standalone `const` and referenced by name
     # inside a router map — the modular layout large tRPC apps use
@@ -28,17 +19,7 @@ module Analyzer::Typescript
     # createDocumentRoute })`). `value` is the chain up to (and including)
     # the terminal `.query/.mutation/.subscription(` so input params and
     # callees resolve.
-    private struct Procedure
-      getter base_path : String
-      getter name : String
-      getter method : String
-      getter value : String
-      getter file : String
-      getter line : Int32
-
-      def initialize(@base_path, @name, @method, @value, @file, @line)
-      end
-    end
+    private record Procedure, base_path : String, name : String, method : String, value : String, file : String, line : Int32
 
     def analyze
       result = [] of Endpoint
@@ -197,44 +178,6 @@ module Analyzer::Typescript
       TEST_FIXTURE_PATH_MARKERS.any? { |marker| relative.includes?(marker) } ||
         relative.includes?(".test.") ||
         relative.includes?(".spec.")
-    end
-
-    private def string_literal_mask(content : String) : Array(Bool)
-      mask = Array(Bool).new(content.bytesize, false)
-      i = 0
-
-      while i < content.bytesize
-        byte = content.byte_at(i)
-        if byte == '\''.ord || byte == '"'.ord || byte == '`'.ord
-          quote = byte
-          mask[i] = true
-          i += 1
-
-          while i < content.bytesize
-            current = content.byte_at(i)
-            mask[i] = true
-
-            if current == '\\'.ord && i + 1 < content.bytesize
-              i += 1
-              mask[i] = true
-            elsif current == quote
-              i += 1
-              break
-            end
-
-            i += 1
-          end
-        else
-          i += 1
-        end
-      end
-
-      mask
-    end
-
-    private def literal_position?(literal_mask : Array(Bool), pos : Int32?) : Bool
-      return false unless pos
-      pos < literal_mask.size && literal_mask[pos]
     end
 
     private def router_key(router : Router) : RouterKey
@@ -964,9 +907,7 @@ module Analyzer::Typescript
             schema = input_body[(brace_open + 1)...close_brace]
             extract_schema_fields(schema).each do |name|
               next if name.empty? || name == "z"
-              unless endpoint.params.any? { |p| p.name == name && p.param_type == param_type }
-                endpoint.push_param(Param.new(name, "", param_type))
-              end
+              endpoint.push_param(Param.new(name, "", param_type))
             end
             return
           end
@@ -974,9 +915,7 @@ module Analyzer::Typescript
       end
 
       # Fallback: opaque schema, still expose the input slot.
-      unless endpoint.params.any? { |p| p.name == "input" && p.param_type == param_type }
-        endpoint.push_param(Param.new("input", "", param_type))
-      end
+      endpoint.push_param(Param.new("input", "", param_type))
     end
 
     private def procedure_input_body(value : String) : String?

@@ -56,7 +56,7 @@ module Analyzer::Javascript
           if endpoint.url.includes?(":")
             endpoint.url.scan(/:(\w+)/) do |m|
               param = Param.new(m[1], "", "path")
-              endpoint.push_param(param) if !endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
+              endpoint.push_param(param)
             end
           end
 
@@ -115,8 +115,7 @@ module Analyzer::Javascript
         next unless ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"].includes?(method)
         url = m[3]
         key = {method, url}
-        next if seen.includes?(key)
-        seen << key
+        next unless seen.add?(key)
 
         match_start = m.begin(0) || m.begin || 0
         call_start = content.index("this.route", match_start) || match_start
@@ -609,9 +608,7 @@ module Analyzer::Javascript
       # Extract path parameters
       handler_body.scan(/req\.params\.(\w+)|req\.params\[['"](\w+)['"]\]/) do |m|
         param_name = m[1] || m[2] || ""
-        if !endpoint.params.any? { |p| p.name == param_name && p.param_type == "path" }
-          endpoint.push_param(Param.new(param_name, "", "path")) unless param_name.empty?
-        end
+        endpoint.push_param(Param.new(param_name, "", "path")) unless param_name.empty?
       end
     end
 

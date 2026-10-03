@@ -41,8 +41,6 @@ module Analyzer::Javascript
   class Remix < JavascriptEngine
     analyzer_for "js_remix"
 
-    HTTP_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH"]
-
     PAGE_EXTENSIONS     = [".tsx", ".jsx"]
     RESOURCE_EXTENSIONS = [".ts", ".js", ".mjs"]
     EXTENSIONS          = PAGE_EXTENSIONS + RESOURCE_EXTENSIONS
@@ -93,7 +91,7 @@ module Analyzer::Javascript
 
         endpoints = verbs.map do |verb|
           endpoint_line = verb == "GET" ? (loader_line || 1) : (action_line || 1)
-          endpoint = build_endpoint(url, verb, path, endpoint_line)
+          endpoint = file_route_endpoint(url, verb, path, endpoint_line)
           if include_callee
             callees = verb == "GET" ? loader_callees : action_callees
             callees.try &.each do |name, callee_path, callee_line|
@@ -109,15 +107,6 @@ module Analyzer::Javascript
       end
 
       result
-    end
-
-    private def build_endpoint(url : String, verb : String, path : String, line : Int32 = 1) : Endpoint
-      endpoint = Endpoint.new(url, verb)
-      endpoint.details = Details.new(PathInfo.new(path, line))
-      url.scan(/\{(\w+)\}/) do |match|
-        endpoint.push_param(Param.new(match[1], "", "path"))
-      end
-      endpoint
     end
 
     private def strip_extension(name : String) : String
@@ -256,14 +245,6 @@ module Analyzer::Javascript
       if match = content.match(cached_regex("remix:line_named_const:#{name}") { /\b(?:const|let|var)\s+#{Regex.escape(name)}\b\s*(?::[^=]+)?=/ })
         line_for_match(content, match)
       end
-    end
-
-    # `MatchData#begin` is a CHAR index; the inherited helper is the one
-    # that converts it to a byte offset before counting newlines. This used
-    # to slice `content.to_slice[0, start]` with the char index directly,
-    # which undercounts on any source with non-ASCII before the match.
-    private def line_for_match(content : String, match : Regex::MatchData) : Int32
-      line_number_for_index(content, match.begin(0) || 0)
     end
   end
 end

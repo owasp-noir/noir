@@ -118,7 +118,7 @@ module Analyzer::Javascript
           url.scan(/:(\w+)/) do |m|
             if m.size > 0
               param = Param.new(m[1], "", "path")
-              endpoint.push_param(param) unless endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
+              endpoint.push_param(param)
             end
           end
 
@@ -127,7 +127,7 @@ module Analyzer::Javascript
           content.scan(/(?:getQuery|useQuery)\s*\(\s*event\s*\)\.(\w+)/) do |m|
             param_name = m[1]
             param = Param.new(param_name, "", "query")
-            endpoint.push_param(param) unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
+            endpoint.push_param(param)
           end
 
           # Pattern 2: Variable assignment - const query = getQuery(event); query.param
@@ -137,7 +137,7 @@ module Analyzer::Javascript
               param_name = m[1]
               next if ["toString", "valueOf", "constructor"].includes?(param_name)
               param = Param.new(param_name, "", "query")
-              endpoint.push_param(param) unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
+              endpoint.push_param(param)
             end
           end
 
@@ -146,7 +146,7 @@ module Analyzer::Javascript
             content.scan(/(?:body|data)\.(\w+)/) do |m|
               param_name = m[1]
               param = Param.new(param_name, "", "body")
-              endpoint.push_param(param) unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "body" }
+              endpoint.push_param(param)
             end
           end
 
@@ -154,14 +154,14 @@ module Analyzer::Javascript
           content.scan(/getHeader\s*\(\s*event\s*,\s*['"]([^'"]+)['"]/) do |m|
             header_name = m[1]
             param = Param.new(header_name, "", "header")
-            endpoint.push_param(param) unless endpoint.params.any? { |p| p.name == header_name && p.param_type == "header" }
+            endpoint.push_param(param)
           end
 
           # Extract cookie parameters from getCookie
           content.scan(/getCookie\s*\(\s*event\s*,\s*['"]([^'"]+)['"]/) do |m|
             cookie_name = m[1]
             param = Param.new(cookie_name, "", "cookie")
-            endpoint.push_param(param) unless endpoint.params.any? { |p| p.name == cookie_name && p.param_type == "cookie" }
+            endpoint.push_param(param)
           end
 
           attach_js_callees(endpoint, callees) if include_callee

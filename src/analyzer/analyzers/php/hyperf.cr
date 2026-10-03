@@ -4,12 +4,7 @@ module Analyzer::Php
   class Hyperf < PhpEngine
     analyzer_for "php_hyperf"
 
-    private struct ClassRoutePrefix
-      getter path, body_start, body_end
-
-      def initialize(@path : String, @body_start : Int32, @body_end : Int32)
-      end
-    end
+    private record ClassRoutePrefix, path : String, body_start : Int32, body_end : Int32
 
     HTTP_MAPPING_ATTRIBUTES = {
       "GetMapping"     => "GET",
@@ -338,14 +333,6 @@ module Analyzer::Php
     end
 
     # --- Callees + method body param extraction -------------------------------
-
-    private def attach_method_callees(endpoint : Endpoint, method_body : Tuple(String, Int32)?, path : String)
-      return unless method_body
-
-      body, start_line = method_body
-      callees = Noir::PhpCalleeExtractor.callees_for_body(body, path, start_line)
-      attach_php_callees(endpoint, callees)
-    end
 
     private def extract_method_params(method_body : String) : Array(Param)
       params = [] of Param

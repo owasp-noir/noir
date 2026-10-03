@@ -214,6 +214,14 @@ module Analyzer::Ruby
       Noir::RubyCalleeExtractor.attach_to(endpoint, callees)
     end
 
+    protected def attach_do_block_callees(endpoint : Endpoint, lines : Array(String), index : Int32, path : String)
+      if block = extract_ruby_do_block(lines, index)
+        body, body_start_line = block
+        callees = Noir::RubyCalleeExtractor.callees_for_body(body, path, body_start_line)
+        attach_ruby_callees(endpoint, callees)
+      end
+    end
+
     protected def extract_ruby_do_block(lines : Array(String), start_index : Int32) : Tuple(String, Int32)?
       return if start_index >= lines.size
 

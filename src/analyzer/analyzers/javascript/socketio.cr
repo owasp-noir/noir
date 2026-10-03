@@ -96,8 +96,7 @@ module Analyzer::Javascript
           next unless socket_vars.includes?(recv)
           next if RESERVED_EVENTS.includes?(event)
           url = build_url(current_ns, event)
-          next if seen.includes?(url)
-          seen << url
+          next unless seen.add?(url)
           @result << build_endpoint(url, path, line_no)
         end
       end
