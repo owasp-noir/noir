@@ -2,7 +2,7 @@ require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
 describe "RustAuthTagger" do
-  fixture_base = "#{__DIR__}/../../../functional_test/fixtures/rust/actix_auth"
+  fixture_base = File.expand_path("../../../functional_test/fixtures/rust/actix_auth", __DIR__)
   main_path = "#{fixture_base}/src/main.rs"
 
   # main.rs line reference:

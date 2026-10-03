@@ -2,7 +2,7 @@ require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
 describe "HonoAuthTagger" do
-  fixture_base = "#{__DIR__}/../../../functional_test/fixtures/javascript/hono_auth"
+  fixture_base = File.expand_path("../../../functional_test/fixtures/javascript/hono_auth", __DIR__)
   app_path = "#{fixture_base}/app.ts"
 
   # app.ts line reference (see actual fixture):

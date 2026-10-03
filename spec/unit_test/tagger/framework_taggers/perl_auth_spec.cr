@@ -10,7 +10,7 @@ def perl_auth_tag_for(path, line, options, tech = "perl_dancer2")
 end
 
 describe "PerlAuthTagger" do
-  fixture_base = "#{__DIR__}/../../../functional_test/fixtures/perl/dancer2_auth"
+  fixture_base = File.expand_path("../../../functional_test/fixtures/perl/dancer2_auth", __DIR__)
   app_path = "#{fixture_base}/lib/MyApp.pm"
   guarded_path = "#{fixture_base}/lib/Guarded.pm"
 
@@ -68,7 +68,7 @@ describe "PerlAuthTagger" do
   end
 
   it "labels a Catalyst `sub auto` global guard as Catalyst, not Dancer2" do
-    catalyst_path = "#{__DIR__}/../../../functional_test/fixtures/perl/catalyst_auth/lib/Admin.pm"
+    catalyst_path = File.expand_path("../../../functional_test/fixtures/perl/catalyst_auth/lib/Admin.pm", __DIR__)
     endpoint = perl_auth_tag_for(catalyst_path, 13, create_test_options, "perl_catalyst")
     endpoint.tags.empty?.should be_false
     endpoint.tags[0].name.should eq("auth")

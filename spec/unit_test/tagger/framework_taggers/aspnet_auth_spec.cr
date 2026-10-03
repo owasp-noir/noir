@@ -3,7 +3,7 @@ require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
 describe "AspnetAuthTagger" do
-  fixture_base = "#{__DIR__}/../../../functional_test/fixtures/csharp/aspnet_auth"
+  fixture_base = File.expand_path("../../../functional_test/fixtures/csharp/aspnet_auth", __DIR__)
   controller_path = "#{fixture_base}/Controllers/PostsController.cs"
 
   # PostsController.cs line reference:

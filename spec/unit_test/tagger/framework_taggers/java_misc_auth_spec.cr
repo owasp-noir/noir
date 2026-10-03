@@ -2,7 +2,7 @@ require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
 describe "JavaMiscAuthTagger" do
-  fixture_base = "#{__DIR__}/../../../functional_test/fixtures/java/vertx_auth"
+  fixture_base = File.expand_path("../../../functional_test/fixtures/java/vertx_auth", __DIR__)
   jwt_path = "#{fixture_base}/JwtController.java"
   dashboard_path = "#{fixture_base}/DashboardController.java"
   profile_path = "#{fixture_base}/ProfileController.java"
