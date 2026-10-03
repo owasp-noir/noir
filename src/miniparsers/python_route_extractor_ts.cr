@@ -122,28 +122,38 @@ module Noir
     # `.Blueprint` (e.g. `["flask"]`). A bare `Blueprint` call is always
     # accepted, matching the regex extractor.
     #
-    # Uses a tree-sitter query to find the two Blueprint assignment
-    # shapes (bare and module-qualified). The `url_prefix` keyword is
-    # still extracted procedurally because a Blueprint may be declared
-    # without one and the query language can't express "this keyword,
-    # if present" cleanly.
+    # Two assignment shapes count: bare `name = Blueprint(...)` and
+    # qualified `name = <module>.Blueprint(...)`. The module is read as
+    # full text from any node, so dotted prefixes like
+    # `my_pkg.flask.Blueprint(...)` (an `attribute`, not an identifier)
+    # still match.
     def extract_blueprints_from(root : LibTreeSitter::TSNode,
                                 source : String,
                                 module_names : Array(String),
                                 results : Array(BlueprintDecl) = [] of BlueprintDecl) : Array(BlueprintDecl)
       allowed = module_names.to_set
-      query = blueprint_query
-      query.each_match_raw(root, source) do |pattern_index, caps|
-        captures = caps.to_h
-        name_node = captures["name"]?
-        call_node = captures["call"]?
+      walk(root) do |node|
+        next unless Noir::TreeSitter.node_type(node) == "assignment"
+        name_node = Noir::TreeSitter.field(node, "left")
+        call_node = Noir::TreeSitter.field(node, "right")
         next unless name_node && call_node
+        next unless Noir::TreeSitter.node_type(name_node) == "identifier"
+        next unless Noir::TreeSitter.node_type(call_node) == "call"
+        function = Noir::TreeSitter.field(call_node, "function")
+        next unless function
 
-        # Pattern 1 is the qualified form; enforce the module allowlist.
-        if pattern_index == 1
-          module_node = captures["module"]?
-          next unless module_node
+        case Noir::TreeSitter.node_type(function)
+        when "identifier"
+          next unless Noir::TreeSitter.node_text(function, source) == "Blueprint"
+        when "attribute"
+          module_node = Noir::TreeSitter.field(function, "object")
+          attr_node = Noir::TreeSitter.field(function, "attribute")
+          next unless module_node && attr_node
+          next unless Noir::TreeSitter.node_type(attr_node) == "identifier"
+          next unless Noir::TreeSitter.node_text(attr_node, source) == "Blueprint"
           next unless allowed.includes?(Noir::TreeSitter.node_text(module_node, source))
+        else
+          next
         end
 
         name = Noir::TreeSitter.node_text(name_node, source)
@@ -198,44 +208,6 @@ module Noir
                  ""
                end
       "#{routers}|#{extras}"
-    end
-
-    # Lazily compiled, cached across all calls. Two patterns keep bare
-    # and qualified Blueprint shapes separate so the evaluator can tell
-    # them apart via `pattern_index`.
-    @@blueprint_query : Noir::TreeSitter::Query? = nil
-
-    private def blueprint_query : Noir::TreeSitter::Query
-      if q = @@blueprint_query
-        return q
-      end
-      # `object: (_) @module` (not `(identifier)`) so dotted prefixes
-      # like `my_pkg.flask.Blueprint(...)` still match — tree-sitter
-      # represents `my_pkg.flask` as an `attribute`, not an identifier,
-      # and the legacy procedural decoder accepted any node by reading
-      # its full text. We keep that parity.
-      q = Noir::TreeSitter::Query.new(
-        LibTreeSitter.tree_sitter_python,
-        <<-SCM
-          ; Pattern 0: bare `name = Blueprint(...)`
-          (assignment
-            left: (identifier) @name
-            right: (call
-              function: (identifier) @func) @call
-            (#eq? @func "Blueprint"))
-
-          ; Pattern 1: qualified `name = <module>.Blueprint(...)`
-          (assignment
-            left: (identifier) @name
-            right: (call
-              function: (attribute
-                object: (_) @module
-                attribute: (identifier) @attr)) @call
-            (#eq? @attr "Blueprint"))
-          SCM
-      )
-      @@blueprint_query = q
-      q
     end
 
     # Walk the `call` node's arguments and return the string value of
