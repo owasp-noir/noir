@@ -118,9 +118,15 @@ module Noir
 
     def normalize_base(base : String) : String
       return base if base.empty?
+      # An extended-length path (`\\?\C:\...`) is passed to Windows
+      # verbatim; rewriting its separators changes what it names.
+      return base if {{ flag?(:windows) }} && base.starts_with?("\\\\?\\")
 
       separators = BASE_SEPARATORS
       rooted = separators.includes?(base[0])
+      # A UNC share (`\\server\share`, `//server/share`) keeps both leading
+      # separators; one alone names the root of the current drive.
+      unc = {{ flag?(:windows) }} && base.size > 2 && rooted && separators.includes?(base[1])
 
       segments = [] of String
       segment = String::Builder.new
@@ -137,6 +143,7 @@ module Noir
       segments << last unless last.empty? || last == "."
 
       joined = segments.join('/')
+      return "//#{joined}" if unc && !joined.empty?
       return joined.empty? ? "/" : "/#{joined}" if rooted
       return "." if joined.empty?
       # A Windows drive root ("C:\\") is the one place a trailing separator
