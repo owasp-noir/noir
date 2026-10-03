@@ -24,7 +24,7 @@ def run_spring_class_level(source : String, line : Int32, ext : String = "java")
 end
 
 describe "SpringAuthTagger" do
-  fixture_base = "#{__DIR__}/../../../functional_test/fixtures/java/spring_auth"
+  fixture_base = File.expand_path("../../../functional_test/fixtures/java/spring_auth", __DIR__)
   controller_path = "#{fixture_base}/src/main/java/com/example/Controller.java"
   open_controller_path = "#{fixture_base}/src/main/java/com/example/OpenController.java"
 

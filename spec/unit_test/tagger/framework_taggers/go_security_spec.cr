@@ -51,9 +51,9 @@ private def go_endpoint(path : String, line : Int32, url : String, method : Stri
 end
 
 describe "GoSecurityTagger" do
-  echo_base = "#{__DIR__}/../../../functional_test/fixtures/go/echo_security"
+  echo_base = File.expand_path("../../../functional_test/fixtures/go/echo_security", __DIR__)
   echo_main = "#{echo_base}/main.go"
-  fiber_base = "#{__DIR__}/../../../functional_test/fixtures/go/fiber_security"
+  fiber_base = File.expand_path("../../../functional_test/fixtures/go/fiber_security", __DIR__)
   fiber_main = "#{fiber_base}/main.go"
 
   echo_opts = create_test_options
