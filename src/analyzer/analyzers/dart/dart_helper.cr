@@ -1,5 +1,6 @@
 require "../../../utils/path_scope"
 require "../../../utils/top_level_split"
+require "../../../utils/c_comments"
 require "../../../miniparsers/dart_callee_extractor"
 
 module Analyzer::Dart
@@ -29,76 +30,6 @@ module Analyzer::Dart
 
     def test_path?(path : String, base_paths : Array(String)) : Bool
       test_path?(path, base_path_for(path, base_paths))
-    end
-
-    # Replace `//` line and `/* */` block comments with spaces, leaving
-    # string literals and overall byte offsets intact so downstream
-    # regex/offset logic still lines up with the original source.
-    def strip_comments(text : String) : String
-      result = String::Builder.new
-      chars = text.chars
-      i = 0
-      in_string = false
-      string_quote = '\0'
-
-      while i < chars.size
-        c = chars[i]
-
-        if in_string
-          if c == '\\' && i + 1 < chars.size
-            result << c
-            result << chars[i + 1]
-            i += 2
-            next
-          end
-          in_string = false if c == string_quote
-          result << c
-          i += 1
-          next
-        end
-
-        if c == '"' || c == '\''
-          in_string = true
-          string_quote = c
-          result << c
-          i += 1
-          next
-        end
-
-        if c == '/' && i + 1 < chars.size && chars[i + 1] == '/'
-          while i < chars.size && chars[i] != '\n'
-            result << ' '
-            i += 1
-          end
-          next
-        end
-
-        if c == '/' && i + 1 < chars.size && chars[i + 1] == '*'
-          result << "  "
-          i += 2
-          # `i < chars.size`, not `i + 1 < chars.size`. The latter stopped one
-          # char early on an unterminated `/*`, so the file's final character
-          # was never blanked — it fell through to the verbatim `result << c`
-          # below and leaked out of the comment. Harmless for a letter, not
-          # harmless for the two that matter here: `/* x '` emitted a bare
-          # quote that opens a string state for everything after it, and
-          # `/* x }` emitted a brace that the brace counters read as real.
-          while i < chars.size && !(i + 1 < chars.size && chars[i] == '*' && chars[i + 1] == '/')
-            result << (chars[i] == '\n' ? '\n' : ' ')
-            i += 1
-          end
-          if i + 1 < chars.size
-            result << "  "
-            i += 2
-          end
-          next
-        end
-
-        result << c
-        i += 1
-      end
-
-      result.to_s
     end
 
     # Pull the contents of a leading single/double-quoted string literal

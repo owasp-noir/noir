@@ -204,7 +204,7 @@ module Analyzer::Dart
     METHOD_NOT_ALLOWED_REGEX = /methodNotAllowed|MethodNotAllowed|statusCode\s*:\s*405|\(\s*405\b/
 
     private def detect_methods(content : String) : Array(String)
-      cleaned = Helper.strip_comments(content)
+      cleaned = Noir::CComments.strip(content)
 
       verbs = [] of String
       HTTP_METHOD_PATTERNS.each do |verb, method_pattern|

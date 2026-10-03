@@ -91,7 +91,7 @@ module Analyzer::Dart
     # each. Operates on a comment-stripped copy so offsets in the original
     # line up byte-for-byte.
     private def scan_file(content : String, path : String, include_callee : Bool) : Array(Endpoint)
-      cleaned = Helper.strip_comments(content)
+      cleaned = Noir::CComments.strip(content)
       prefixes = router_prefixes(cleaned)
       return [] of Endpoint if prefixes.empty?
 

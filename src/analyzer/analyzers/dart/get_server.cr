@@ -70,7 +70,7 @@ module Analyzer::Dart
             next
           end
 
-          cleaned = Helper.strip_comments(content)
+          cleaned = Noir::CComments.strip(content)
           local_consts = collect_constants(cleaned)
           local_pages = collect_pages(cleaned, content, path)
           next if local_consts.empty? && local_pages.empty?

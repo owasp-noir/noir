@@ -1,4 +1,5 @@
 require "../../engines/specification_engine"
+require "../../../utils/c_comments"
 
 module Analyzer::Specification
   class Grpc < SpecificationEngine
@@ -38,7 +39,7 @@ module Analyzer::Specification
         rescue IO::Error
           next
         end
-        clean = strip_comments(content)
+        clean = Noir::CComments.strip(content, quotes: %("))
         package = parse_package(clean)
         parse_messages(clean).each do |name, fields|
           registry[name] = fields
@@ -53,7 +54,7 @@ module Analyzer::Specification
       # `service` / `rpc` / `message` declaration is never mistaken for a
       # live definition (a false-positive source). Newlines are preserved,
       # so reported line numbers stay accurate.
-      clean = strip_comments(content)
+      clean = Noir::CComments.strip(content, quotes: %("))
       package = parse_package(clean)
       parse_services(clean, file_path, package, registry)
     end
@@ -80,61 +81,6 @@ module Analyzer::Specification
       end
       simple = name.includes?(".") ? name.rpartition(".")[2] : name
       registry[simple]?
-    end
-
-    # Replaces `//` line comments and `/* */` block comments with spaces
-    # while preserving string literals, the total length, and every newline
-    # (so positions/line numbers in the cleaned copy match the original).
-    private def strip_comments(content : String) : String
-      chars = content.chars
-      size = chars.size
-      String.build(content.bytesize) do |io|
-        pos = 0
-        in_string = false
-        while pos < size
-          ch = chars[pos]
-          if in_string
-            io << ch
-            if ch == '"'
-              # A quote closes the string only when preceded by an EVEN
-              # number of backslashes (`\\"` toggles, `\"` does not).
-              bs = 0
-              bp = pos - 1
-              while bp >= 0 && chars[bp] == '\\'
-                bs += 1
-                bp -= 1
-              end
-              in_string = false if bs.even?
-            end
-            pos += 1
-          elsif ch == '/' && pos + 1 < size && chars[pos + 1] == '/'
-            # Line comment: blank to EOL, leaving the newline for the next loop.
-            while pos < size && chars[pos] != '\n'
-              io << ' '
-              pos += 1
-            end
-          elsif ch == '/' && pos + 1 < size && chars[pos + 1] == '*'
-            # Block comment: blank through the closing `*/`, keeping newlines.
-            io << ' ' << ' '
-            pos += 2
-            while pos < size && !(chars[pos] == '*' && pos + 1 < size && chars[pos + 1] == '/')
-              io << (chars[pos] == '\n' ? '\n' : ' ')
-              pos += 1
-            end
-            if pos < size
-              io << ' ' << ' '
-              pos += 2
-            end
-          elsif ch == '"'
-            in_string = true
-            io << ch
-            pos += 1
-          else
-            io << ch
-            pos += 1
-          end
-        end
-      end
     end
 
     private def parse_package(content : String) : String
