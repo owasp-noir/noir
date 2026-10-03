@@ -169,25 +169,13 @@ module Noir::GoCalleeExtractor
   # into every `FunctionBody`, so two identical files at different paths
   # must not share an entry.
   @@function_bodies_memo = Hash(UInt64, Hash(String, FunctionBody)).new
-  @@function_bodies_order = [] of UInt64
   @@method_bodies_memo = Hash(UInt64, Hash(String, Array(FunctionBody))).new
-  @@method_bodies_order = [] of UInt64
   @@bodies_memo_mutex = Mutex.new
-  @@bodies_clearer_registered = false
 
-  private def ensure_bodies_clearer_registered : Nil
-    return if @@bodies_clearer_registered
+  Noir::ExtractionResultCache.register_clearer do
     @@bodies_memo_mutex.synchronize do
-      return if @@bodies_clearer_registered
-      Noir::ExtractionResultCache.register_clearer do
-        @@bodies_memo_mutex.synchronize do
-          @@function_bodies_memo.clear
-          @@function_bodies_order.clear
-          @@method_bodies_memo.clear
-          @@method_bodies_order.clear
-        end
-      end
-      @@bodies_clearer_registered = true
+      @@function_bodies_memo.clear
+      @@method_bodies_memo.clear
     end
   end
 
@@ -213,7 +201,6 @@ module Noir::GoCalleeExtractor
   # One parse, both tables, memoized.
   private def collect_top_level_bodies(source : String,
                                        file_path : String) : Tuple(Hash(String, FunctionBody), Hash(String, Array(FunctionBody)))
-    ensure_bodies_clearer_registered
     fn_key = Noir::ExtractionResultCache.key(source, "go_fn_bodies", file_path)
     method_key = Noir::ExtractionResultCache.key(source, "go_method_bodies", file_path)
 
@@ -248,9 +235,9 @@ module Noir::GoCalleeExtractor
 
     @@bodies_memo_mutex.synchronize do
       functions = Noir::ExtractionResultCache.store_capped(
-        @@function_bodies_memo, @@function_bodies_order, fn_key, functions)
+        @@function_bodies_memo, fn_key, functions)
       methods = Noir::ExtractionResultCache.store_capped(
-        @@method_bodies_memo, @@method_bodies_order, method_key, methods)
+        @@method_bodies_memo, method_key, methods)
     end
 
     {functions, methods}

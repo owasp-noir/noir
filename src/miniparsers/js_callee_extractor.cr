@@ -42,14 +42,15 @@ module Noir::JSCalleeExtractor
   # callee mode each of those calls parsed it again. Keyed on the source and
   # `file_path` (baked into every entry); callers only read the table.
   @@routes_memo = Hash(UInt64, Hash(String, Array(Entry))).new
-  @@routes_order = [] of UInt64
   @@routes_mutex = Mutex.new
-  @@routes_clearer_registered = false
+
+  Noir::ExtractionResultCache.register_clearer do
+    @@routes_mutex.synchronize { @@routes_memo.clear }
+  end
 
   def callees_for_routes(source : String, file_path : String) : Hash(String, Array(Entry))
-    ensure_routes_clearer_registered
     key = Noir::ExtractionResultCache.key(source, "js_route_callees", file_path)
-    Noir::ExtractionResultCache.fetch(@@routes_memo, @@routes_order, key, @@routes_mutex) do
+    Noir::ExtractionResultCache.fetch(@@routes_memo, key, @@routes_mutex) do
       parse_callees_for_routes(source, file_path)
     end
   end
@@ -63,17 +64,6 @@ module Noir::JSCalleeExtractor
     by_route
   rescue
     {} of String => Array(Entry)
-  end
-
-  private def ensure_routes_clearer_registered : Nil
-    return if @@routes_clearer_registered
-    @@routes_mutex.synchronize do
-      return if @@routes_clearer_registered
-      Noir::ExtractionResultCache.register_clearer do
-        Noir::ExtractionResultCache.clear(@@routes_memo, @@routes_order, @@routes_mutex)
-      end
-      @@routes_clearer_registered = true
-    end
   end
 
   def callees_for_function_body(body : String,

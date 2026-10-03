@@ -193,16 +193,12 @@ module Noir::TreeSitter
   PARSE_FAILURE_MAX_ENTRIES = 4096
 
   @@parse_failures = Hash(UInt64, Bool).new
-  @@parse_failure_order = [] of UInt64
   @@parse_failure_mutex = Mutex.new
 
   # A second scan in the same process (diff mode, library use) gets a clean
   # slate, like every other content-keyed memo in the tree.
   Noir::ExtractionResultCache.register_clearer do
-    @@parse_failure_mutex.synchronize do
-      @@parse_failures.clear
-      @@parse_failure_order.clear
-    end
+    @@parse_failure_mutex.synchronize { @@parse_failures.clear }
   end
 
   private def self.parse_failure_key(source : String, language : LibTreeSitter::TSLanguage) : UInt64
@@ -235,7 +231,7 @@ module Noir::TreeSitter
         LibTreeSitter.ts_parser_reset(parser)
         @@parse_failure_mutex.synchronize do
           Noir::ExtractionResultCache.store_capped(
-            @@parse_failures, @@parse_failure_order, failure_key, true, PARSE_FAILURE_MAX_ENTRIES
+            @@parse_failures, failure_key, true, PARSE_FAILURE_MAX_ENTRIES
           )
         end
         raise "ts_parser_parse_string returned null (timed out after #{timeout // 1000}ms, or out of memory)"

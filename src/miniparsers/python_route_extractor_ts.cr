@@ -44,25 +44,13 @@ module Noir
     # Process-wide memo: same CodeLocator source buffer is often fed to
     # decorations + blueprints (and to multiple framework analyzers).
     @@decoration_memo = Hash(UInt64, Array(Decoration)).new
-    @@decoration_order = [] of UInt64
     @@blueprint_memo = Hash(UInt64, Array(BlueprintDecl)).new
-    @@blueprint_order = [] of UInt64
     @@memo_mutex = Mutex.new
-    @@clearer_registered = false
 
-    private def ensure_clearer_registered : Nil
-      return if @@clearer_registered
+    ExtractionResultCache.register_clearer do
       @@memo_mutex.synchronize do
-        return if @@clearer_registered
-        ExtractionResultCache.register_clearer do
-          @@memo_mutex.synchronize do
-            @@decoration_memo.clear
-            @@decoration_order.clear
-            @@blueprint_memo.clear
-            @@blueprint_order.clear
-          end
-        end
-        @@clearer_registered = true
+        @@decoration_memo.clear
+        @@blueprint_memo.clear
       end
     end
 
@@ -80,10 +68,9 @@ module Noir
     def extract_decorations(source : String,
                             router_names : Array(String)? = nil,
                             extra_attributes : Hash(String, String)? = nil) : Array(Decoration)
-      ensure_clearer_registered
       tag = decoration_options_tag(router_names, extra_attributes)
       key = ExtractionResultCache.key(source, "decorations", tag)
-      ExtractionResultCache.fetch(@@decoration_memo, @@decoration_order, key, mutex: @@memo_mutex) do
+      ExtractionResultCache.fetch(@@decoration_memo, key, mutex: @@memo_mutex) do
         results = [] of Decoration
         Noir::TreeSitter.parse_python(source) do |root|
           extract_decorations_from(root, source, router_names, extra_attributes, results)
@@ -162,7 +149,6 @@ module Noir
                                            module_names : Array(String),
                                            router_names : Array(String)? = nil,
                                            extra_attributes : Hash(String, String)? = nil) : Tuple(Array(Decoration), Array(BlueprintDecl))
-      ensure_clearer_registered
       deco_tag = decoration_options_tag(router_names, extra_attributes)
       bp_tag = module_names.join(",")
       deco_key = ExtractionResultCache.key(source, "decorations", deco_tag)
@@ -184,8 +170,8 @@ module Noir
       end
 
       @@memo_mutex.synchronize do
-        decorations = ExtractionResultCache.store_capped(@@decoration_memo, @@decoration_order, deco_key, decorations)
-        blueprints = ExtractionResultCache.store_capped(@@blueprint_memo, @@blueprint_order, bp_key, blueprints)
+        decorations = ExtractionResultCache.store_capped(@@decoration_memo, deco_key, decorations)
+        blueprints = ExtractionResultCache.store_capped(@@blueprint_memo, bp_key, blueprints)
       end
 
       {decorations, blueprints}
