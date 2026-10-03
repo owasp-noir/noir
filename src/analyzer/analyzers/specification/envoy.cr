@@ -55,7 +55,7 @@ module Analyzer::Specification
 
       virtual_hosts.each do |vh|
         next unless vh_h = vh.as_h?
-        domains = domain_list_yaml(vh_h[DOMAINS_KEY]?)
+        domains = domain_list(vh_h[DOMAINS_KEY]?)
         if routes_node = vh_h[ROUTES_KEY]?
           if routes = routes_node.as_a?
             routes.each { |route| process_route_yaml(route, domains, details) }
@@ -77,68 +77,21 @@ module Analyzer::Specification
       end
     end
 
-    private def domain_list_yaml(node : YAML::Any?) : Array(String)
-      return [] of String if node.nil?
-      return [] of String unless arr = node.as_a?
-      arr.compact_map(&.as_s?).reject { |d| d.empty? || d == "*" }
-    end
-
     private def process_route_yaml(route : YAML::Any, domains : Array(String), details : Details)
       return unless route_h = route.as_h?
       return unless match = route_h[MATCH_KEY]?
 
-      path = extract_path_yaml(match)
+      path = extract_path(match)
       return if path.nil? || path.empty?
 
-      method = extract_method_yaml(match) || "GET"
-      url = build_url(path)
-      emit(url, method, domains, details)
+      method = extract_method(match) || "GET"
+      emit(path, method, domains, details)
 
       if (route_action = route_h[ROUTE_KEY]?) && route_action.as_h?
         if rewrite = route_action["prefix_rewrite"]?.try(&.as_s?)
-          rewritten_url = build_url(rewrite)
-          emit(rewritten_url, method, domains, details) unless rewritten_url == url
+          emit(rewrite, method, domains, details) unless rewrite == path
         end
       end
-    end
-
-    private def extract_path_yaml(match : YAML::Any) : String?
-      return unless match.as_h?
-      if prefix = match["prefix"]?.try(&.as_s?)
-        return prefix
-      end
-      if path = match["path"]?.try(&.as_s?)
-        return path
-      end
-      # `path_separated_prefix` matches the prefix on a `/` boundary. It is a
-      # distinct match type in the proto, so a route that uses it was invisible.
-      if separated = match["path_separated_prefix"]?.try(&.as_s?)
-        return separated
-      end
-      if (safe_regex = match["safe_regex"]?) && safe_regex.as_h?
-        return safe_regex["regex"]?.try(&.as_s?)
-      end
-      # Envoy v2 legacy field
-      match["regex"]?.try(&.as_s?)
-    end
-
-    private def extract_method_yaml(match : YAML::Any) : String?
-      return unless match.as_h?
-      return unless headers_node = match["headers"]?
-      return unless headers = headers_node.as_a?
-      headers.each do |header|
-        next unless header.as_h?
-        next unless header["name"]?.try(&.as_s?) == ":method"
-        if exact = header["exact_match"]?.try(&.as_s?)
-          return exact.upcase
-        end
-        if (sm = header["string_match"]?) && sm.as_h?
-          if exact2 = sm["exact"]?.try(&.as_s?)
-            return exact2.upcase
-          end
-        end
-      end
-      nil
     end
 
     # ── JSON processing ───────────────────────────────────────────────────────
@@ -149,7 +102,7 @@ module Analyzer::Specification
 
       virtual_hosts.each do |vh|
         next unless vh_h = vh.as_h?
-        domains = domain_list_json(vh_h["domains"]?)
+        domains = domain_list(vh_h["domains"]?)
         if routes_node = vh_h["routes"]?
           if routes = routes_node.as_a?
             routes.each { |route| process_route_json(route, domains, details) }
@@ -171,32 +124,32 @@ module Analyzer::Specification
       end
     end
 
-    private def domain_list_json(node : JSON::Any?) : Array(String)
+    private def process_route_json(route : JSON::Any, domains : Array(String), details : Details)
+      return unless route_h = route.as_h?
+      return unless match = route_h["match"]?
+
+      path = extract_path(match)
+      return if path.nil? || path.empty?
+
+      method = extract_method(match) || "GET"
+      emit(path, method, domains, details)
+
+      if (route_action = route_h["route"]?) && route_action.as_h?
+        if rewrite = route_action["prefix_rewrite"]?.try(&.as_s?)
+          emit(rewrite, method, domains, details) unless rewrite == path
+        end
+      end
+    end
+
+    # ── Shared helpers ────────────────────────────────────────────────────────
+
+    private def domain_list(node) : Array(String)
       return [] of String if node.nil?
       return [] of String unless arr = node.as_a?
       arr.compact_map(&.as_s?).reject { |d| d.empty? || d == "*" }
     end
 
-    private def process_route_json(route : JSON::Any, domains : Array(String), details : Details)
-      return unless route_h = route.as_h?
-      return unless match = route_h["match"]?
-
-      path = extract_path_json(match)
-      return if path.nil? || path.empty?
-
-      method = extract_method_json(match) || "GET"
-      url = build_url(path)
-      emit(url, method, domains, details)
-
-      if (route_action = route_h["route"]?) && route_action.as_h?
-        if rewrite = route_action["prefix_rewrite"]?.try(&.as_s?)
-          rewritten_url = build_url(rewrite)
-          emit(rewritten_url, method, domains, details) unless rewritten_url == url
-        end
-      end
-    end
-
-    private def extract_path_json(match : JSON::Any) : String?
+    private def extract_path(match) : String?
       return unless match.as_h?
       if prefix = match["prefix"]?.try(&.as_s?)
         return prefix
@@ -204,16 +157,19 @@ module Analyzer::Specification
       if path = match["path"]?.try(&.as_s?)
         return path
       end
+      # `path_separated_prefix` matches the prefix on a `/` boundary. It is a
+      # distinct match type in the proto, so a route that uses it was invisible.
       if separated = match["path_separated_prefix"]?.try(&.as_s?)
         return separated
       end
       if (safe_regex = match["safe_regex"]?) && safe_regex.as_h?
         return safe_regex["regex"]?.try(&.as_s?)
       end
+      # Envoy v2 legacy field
       match["regex"]?.try(&.as_s?)
     end
 
-    private def extract_method_json(match : JSON::Any) : String?
+    private def extract_method(match) : String?
       return unless match.as_h?
       return unless headers_node = match["headers"]?
       return unless headers = headers_node.as_a?
@@ -230,15 +186,6 @@ module Analyzer::Specification
         end
       end
       nil
-    end
-
-    # ── Shared helpers ────────────────────────────────────────────────────────
-
-    # Envoy emits path-only URLs. The `virtual_hosts[].domains` value carries
-    # host-routing context but is not embedded in the URL because the endpoint
-    # optimizer always normalises paths to `/`-prefixed strings.
-    private def build_url(path : String) : String
-      path
     end
 
     # The optimizer dedupes on (method, url), so emitting one endpoint per

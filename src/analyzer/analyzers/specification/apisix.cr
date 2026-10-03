@@ -24,7 +24,7 @@ module Analyzer::Specification
         data = JSON.parse(content)
         routes = data["routes"]?.try(&.as_a?)
         return unless routes
-        routes.each { |route| process_route_json(route, details) }
+        routes.each { |route| process_route(route, details) }
       rescue e
         @logger.debug "Exception processing APISIX JSON #{path}"
         @logger.debug_sub e
@@ -39,20 +39,20 @@ module Analyzer::Specification
         data = YAML.parse(content)
         routes = data["routes"]?.try(&.as_a?)
         return unless routes
-        routes.each { |route| process_route_yaml(route, details) }
+        routes.each { |route| process_route(route, details) }
       rescue e
         @logger.debug "Exception processing APISIX YAML #{path}"
         @logger.debug_sub e
       end
     end
 
-    private def process_route_json(route : JSON::Any, details : Details)
+    private def process_route(route, details : Details)
       # Skip non-object array entries; subscripting a scalar raises "Expected Hash".
       return unless route.as_h?
-      paths = route_paths_json(route)
+      paths = route_paths(route)
       return if paths.empty?
-      methods = route_methods_json(route)
-      hosts = route_hosts_json(route)
+      methods = route_methods(route)
+      hosts = route_hosts(route)
 
       paths.each do |path|
         methods.each do |method|
@@ -61,22 +61,7 @@ module Analyzer::Specification
       end
     end
 
-    private def process_route_yaml(route : YAML::Any, details : Details)
-      # Skip non-object array entries; subscripting a scalar raises "Expected Hash".
-      return unless route.as_h?
-      paths = route_paths_yaml(route)
-      return if paths.empty?
-      methods = route_methods_yaml(route)
-      hosts = route_hosts_yaml(route)
-
-      paths.each do |path|
-        methods.each do |method|
-          @result << build_endpoint(path, method, hosts, details)
-        end
-      end
-    end
-
-    private def route_paths_json(route : JSON::Any) : Array(String)
+    private def route_paths(route) : Array(String)
       paths = [] of String
       if uri = route["uri"]?.try(&.as_s?)
         normalized = normalize_path(uri)
@@ -93,37 +78,7 @@ module Analyzer::Specification
       paths.uniq
     end
 
-    private def route_paths_yaml(route : YAML::Any) : Array(String)
-      paths = [] of String
-      if uri = route["uri"]?.try(&.as_s?)
-        normalized = normalize_path(uri)
-        paths << normalized unless normalized.empty?
-      end
-      if uris = route["uris"]?.try(&.as_a?)
-        uris.each do |uri_node|
-          if uri_text = uri_node.as_s?
-            normalized = normalize_path(uri_text)
-            paths << normalized unless normalized.empty?
-          end
-        end
-      end
-      paths.uniq
-    end
-
-    private def route_methods_json(route : JSON::Any) : Array(String)
-      methods = [] of String
-      if method_list = route["methods"]?.try(&.as_a?)
-        method_list.each do |method|
-          next unless method_text = method.as_s?
-          upper = method_text.upcase
-          next if upper.empty?
-          methods << upper
-        end
-      end
-      normalize_methods(methods)
-    end
-
-    private def route_methods_yaml(route : YAML::Any) : Array(String)
+    private def route_methods(route) : Array(String)
       methods = [] of String
       if method_list = route["methods"]?.try(&.as_a?)
         method_list.each do |method|
@@ -157,21 +112,7 @@ module Analyzer::Specification
       endpoint
     end
 
-    private def route_hosts_json(route : JSON::Any) : Array(String)
-      hosts = [] of String
-      if host = route["host"]?.try(&.as_s?)
-        hosts << host unless host.empty?
-      end
-      if host_list = route["hosts"]?.try(&.as_a?)
-        host_list.each do |host_node|
-          next unless host_text = host_node.as_s?
-          hosts << host_text unless host_text.empty?
-        end
-      end
-      hosts.uniq
-    end
-
-    private def route_hosts_yaml(route : YAML::Any) : Array(String)
+    private def route_hosts(route) : Array(String)
       hosts = [] of String
       if host = route["host"]?.try(&.as_s?)
         hosts << host unless host.empty?

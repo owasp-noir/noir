@@ -190,20 +190,6 @@ module Analyzer::Specification
       end
     end
 
-    private def apply_security_json(effective : JSON::Any?, schemes : Hash(String, Param), params : Array(Param))
-      return if schemes.empty?
-      return unless effective
-      return unless requirements = effective.as_a?
-      requirements.each do |requirement|
-        next unless requirement_h = requirement.as_h?
-        requirement_h.each_key do |scheme_name|
-          if param = schemes[scheme_name.to_s]?
-            params << param unless params.includes?(param)
-          end
-        end
-      end
-    end
-
     private def security_schemes_yaml(root : YAML::Any) : Hash(String, Param)
       result = {} of String => Param
       return result unless defs = root[YAML::Any.new("securityDefinitions")]?.try(&.as_h?)
@@ -227,49 +213,6 @@ module Analyzer::Specification
         end
       when "basic", "oauth2"
         Param.new("Authorization", "", "header")
-      end
-    end
-
-    private def apply_security_yaml(effective : YAML::Any?, schemes : Hash(String, Param), params : Array(Param))
-      return if schemes.empty?
-      return unless effective
-      return unless requirements = effective.as_a?
-      requirements.each do |requirement|
-        next unless requirement_h = requirement.as_h?
-        requirement_h.each_key do |scheme_name|
-          if param = schemes[scheme_name.to_s]?
-            params << param unless params.includes?(param)
-          end
-        end
-      end
-    end
-
-    # Resolves the `$ref` a Path Item may stand in for, and reports which
-    # document the result came from — a ref inside an operation that arrived
-    # from `./paths/pets.yaml` resolves from that file, not from the entry
-    # document that named it.
-    private def resolve_path_item_json(doc : SpecDoc(JSON::Any), path_obj : JSON::Any, seen : Set(String) = Set(String).new) : Tuple(JSON::Any, SpecDoc(JSON::Any))
-      return {path_obj, doc} unless path_obj_h = path_obj.as_h?
-      return {path_obj, doc} unless ref = path_obj_h["$ref"]?.try(&.as_s?)
-      return {path_obj, doc} unless seen.add?(ref_key(doc, ref))
-      if resolved = resolve_ref_json(doc, ref)
-        node, ref_doc = resolved
-        resolve_path_item_json(ref_doc, node, seen)
-      else
-        {path_obj, doc}
-      end
-    end
-
-    private def resolve_path_item_yaml(doc : SpecDoc(YAML::Any), path_obj : YAML::Any, seen : Set(String) = Set(String).new) : Tuple(YAML::Any, SpecDoc(YAML::Any))
-      return {path_obj, doc} unless path_obj_h = path_obj.as_h?
-      return {path_obj, doc} unless ref_node = path_obj_h[YAML::Any.new("$ref")]?
-      return {path_obj, doc} unless ref = ref_node.as_s?
-      return {path_obj, doc} unless seen.add?(ref_key(doc, ref))
-      if resolved = resolve_ref_yaml(doc, ref)
-        node, ref_doc = resolved
-        resolve_path_item_yaml(ref_doc, node, seen)
-      else
-        {path_obj, doc}
       end
     end
 
@@ -364,7 +307,7 @@ module Analyzer::Specification
             if method_obj_h = method_obj.as_h?
               effective_security = method_obj_h["security"] if method_obj_h.has_key?("security")
             end
-            apply_security_json(effective_security, schemes, params)
+            apply_security(effective_security, schemes, params)
 
             op_details = operation_details(details, line_index, ["paths", path, method])
             if params.size > 0
@@ -442,7 +385,7 @@ module Analyzer::Specification
             if method_obj_h = method_obj.as_h?
               effective_security = method_obj_h[YAML::Any.new("security")] if method_obj_h.has_key?(YAML::Any.new("security"))
             end
-            apply_security_yaml(effective_security, schemes, params)
+            apply_security(effective_security, schemes, params)
 
             op_details = operation_details(details, line_index, ["paths", path.to_s, method.to_s])
             if params.size > 0

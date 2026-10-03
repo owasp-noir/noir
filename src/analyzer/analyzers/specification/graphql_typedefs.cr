@@ -1,3 +1,5 @@
+require "./graphql_sdl_parser"
+
 module Analyzer::Specification
   # Shared extractor for inline `typeDefs` template literals, used by the
   # Apollo Server and GraphQL Yoga analyzers. Returns `(SDL, line_offset)`
@@ -43,7 +45,7 @@ module Analyzer::Specification
     private def skip_tag(chars : Array(Char), pos : Int32) : Int32
       {"graphql", "gql"}.each do |tag|
         next unless starts_with_at?(chars, pos, tag)
-        return skip_ws(chars, pos + tag.size)
+        return GraphqlSdlParser.skip_ws(chars, pos + tag.size)
       end
       pos
     end
@@ -187,14 +189,6 @@ module Analyzer::Specification
           end
         end
       end
-    end
-
-    private def skip_ws(chars : Array(Char), pos : Int32) : Int32
-      size = chars.size
-      while pos < size && chars[pos].ascii_whitespace?
-        pos += 1
-      end
-      pos
     end
 
     private def starts_with_at?(chars : Array(Char), pos : Int32, str : String) : Bool

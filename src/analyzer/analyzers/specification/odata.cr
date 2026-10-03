@@ -270,18 +270,5 @@ module Analyzer::Specification
       endpoint.add_tag(Tag.new("odata", "#{op_kind}:#{op_name}", "odata_analyzer"))
       @result << endpoint
     end
-
-    private def find_child(node : XML::Node, local_name : String) : XML::Node?
-      node.children.each do |c|
-        return c if c.element? && c.name == local_name
-      end
-      nil
-    end
-
-    private def each_child(node : XML::Node, local_name : String, &)
-      node.children.each do |c|
-        yield c if c.element? && c.name == local_name
-      end
-    end
   end
 end
