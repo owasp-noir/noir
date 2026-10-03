@@ -36,21 +36,13 @@ end
 class Tagger
   @logger : NoirLogger
   @options : Hash(String, YAML::Any)
-  @is_debug : Bool
-  @is_verbose : Bool
-  @is_color : Bool
-  @is_log : Bool
   @name : String
 
   def initialize(options : Hash(String, YAML::Any))
-    @is_debug = any_to_bool(options["debug"])
-    @is_verbose = any_to_bool(options["verbose"])
     @options = options
-    @is_color = any_to_bool(options["color"])
-    @is_log = any_to_bool(options["nolog"])
     @name = self.class.tagger_key
 
-    @logger = NoirLogger.new @is_debug, @is_verbose, @is_color, @is_log
+    @logger = NoirLogger.from_options(options)
   end
 
   # The registry key, read off the class's `Noir::TaggerFor` annotation.

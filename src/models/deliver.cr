@@ -45,14 +45,10 @@ class Deliver
 
   @logger : NoirLogger
   @options : Hash(String, YAML::Any)
-  @is_debug : Bool
-  @is_verbose : Bool
-  @is_color : Bool
-  @is_log : Bool
   getter proxy : String
   getter headers : Hash(String, String) = {} of String => String
-  getter matchers : Array(String) = [] of String
-  getter filters : Array(String) = [] of String
+  @matchers : Array(String)
+  @filters : Array(String)
   # Origin of `--url`, resolved lazily (see `target_origin`) and the set of
   # off-target origins already warned about, so the warning fires once per
   # host instead of once per endpoint.
@@ -63,12 +59,8 @@ class Deliver
 
   def initialize(options : Hash(String, YAML::Any))
     @options = options
-    @is_debug = any_to_bool(options["debug"])
-    @is_verbose = any_to_bool(options["verbose"])
-    @is_color = any_to_bool(options["color"])
-    @is_log = any_to_bool(options["nolog"])
     @proxy = options["probe_via"].to_s
-    @logger = NoirLogger.new @is_debug, @is_verbose, @is_color, @is_log
+    @logger = NoirLogger.from_options(options)
 
     options["probe_header"].as_a.each do |set_header|
       raw = set_header.to_s
@@ -96,18 +88,12 @@ class Deliver
       @headers[name] = value
     end
 
-    options["probe_match"].as_a.each do |matcher|
-      @matchers << matcher.to_s
-    end
-    @matchers.delete("")
+    @matchers = options["probe_match"].as_a.map(&.to_s).reject(&.empty?)
     unless @matchers.empty?
       @logger.info "#{@matchers.size} matchers added."
     end
 
-    options["probe_skip"].as_a.each do |filter|
-      @filters << filter.to_s
-    end
-    @filters.delete("")
+    @filters = options["probe_skip"].as_a.map(&.to_s).reject(&.empty?)
     unless @filters.empty?
       @logger.info "#{@filters.size} filters added."
     end
@@ -131,40 +117,24 @@ class Deliver
     result
   end
 
+  # An endpoint that satisfies several matchers (e.g. ["GET", "GET:/api"])
+  # is kept once, logged against the first.
   def apply_matchers(endpoints : Array(Endpoint))
-    result = [] of Endpoint
-    endpoints.each do |endpoint|
-      @matchers.each do |matcher|
-        next unless matches_pattern?(endpoint, matcher)
+    endpoints.select do |endpoint|
+      if matcher = @matchers.find { |pattern| matches_pattern?(endpoint, pattern) }
         @logger.debug "Endpoint '#{endpoint.method} #{endpoint.url}' matched with '#{matcher}'."
-        result << endpoint
-        # Stop after the first matching pattern so an endpoint that
-        # satisfies several matchers (e.g. matchers = ["GET", "GET:/api"])
-        # isn't emitted twice.
-        break
       end
+      matcher
     end
-
-    result
   end
 
   def apply_filters(endpoints : Array(Endpoint))
-    result = [] of Endpoint
-    endpoints.each do |endpoint|
-      should_filter = false
-      @filters.each do |filter|
-        if matches_pattern?(endpoint, filter)
-          @logger.debug "Endpoint '#{endpoint.method} #{endpoint.url}' filtered with '#{filter}'."
-          should_filter = true
-          break
-        end
+    endpoints.reject do |endpoint|
+      if filter = @filters.find { |pattern| matches_pattern?(endpoint, pattern) }
+        @logger.debug "Endpoint '#{endpoint.method} #{endpoint.url}' filtered with '#{filter}'."
       end
-      unless should_filter
-        result << endpoint
-      end
+      filter
     end
-
-    result
   end
 
   # Requests that never completed during the last `run` — connection
@@ -188,7 +158,12 @@ class Deliver
 
     apply_all(endpoints).each do |endpoint|
       next if endpoint.non_http? # can't HTTP-probe an app deep link or CLI command
-      next if skip_probe_target?(endpoint)
+      # `internal` is set by the Spring analyzer for `@FeignClient` /
+      # `@HttpExchange` interfaces, which declare requests the app makes to
+      # *other* services — they are not routes this app serves. Probing them
+      # fired those paths at the `-u` target, which does not own them. They
+      # stay in the catalog (export ships it as data); only the probe skips.
+      next if endpoint.internal
       # Built once per endpoint, outside the spawn: every fiber for this
       # endpoint sends the same headers and body.
       request_headers = probe_headers(endpoint)
@@ -212,7 +187,7 @@ class Deliver
             json: is_json,
             handle_errors: false,
             max_redirects: 0,
-            connect_timeout: probe_connect_timeout,
+            connect_timeout: PROBE_CONNECT_TIMEOUT,
             read_timeout: probe_read_timeout
           )
         rescue e
@@ -258,7 +233,7 @@ class Deliver
       form: body,
       headers: export_headers,
       json: true,
-      connect_timeout: export_connect_timeout,
+      connect_timeout: EXPORT_CONNECT_TIMEOUT,
       read_timeout: export_read_timeout
     )
   rescue e
@@ -293,8 +268,17 @@ class Deliver
   EXPORT_CONNECT_TIMEOUT = 10.seconds
   EXPORT_READ_TIMEOUT    = 60.seconds
 
-  # Verbs whose path templates get filled in before probing. Restricted to
-  # the read-only ones (the shared safe set, QUERY included) on purpose.
+  # Path-param names that name a number. A framework route constrained to an
+  # integer (`/users/{id:int}`, Django's `<int:pk>`) rejects a word, so these
+  # get `1`; anything else gets a harmless string.
+  NUMERIC_PATH_PARAM_RE = /\A(?:.*_)?(?:id|ids|pk|no|num|number|count|page|size|limit|offset|index|idx|version|seq|year|month|day|port)\z/i
+
+  # The URL to probe for this endpoint and verb. Leaves `endpoint.url`
+  # untouched — the reported catalog keeps the template, which is what the
+  # user wants to read; only the outbound request is concretized.
+  #
+  # Templates are filled only for the read-only verbs (`SAFE_HTTP_METHODS`,
+  # QUERY included), on purpose.
   #
   # `register_path_params` in the optimizer only substitutes a placeholder when
   # `--set-pvalue-path` supplied a value, so on a default scan `/users/{id}`
@@ -304,18 +288,8 @@ class Deliver
   # against a live record. Read-only verbs get the benefit without that risk;
   # for the rest the literal template still reaches an intercepting proxy,
   # where the user can edit and replay it deliberately.
-  PROBE_PATH_FILL_METHODS = SAFE_HTTP_METHODS
-
-  # Path-param names that name a number. A framework route constrained to an
-  # integer (`/users/{id:int}`, Django's `<int:pk>`) rejects a word, so these
-  # get `1`; anything else gets a harmless string.
-  NUMERIC_PATH_PARAM_RE = /\A(?:.*_)?(?:id|ids|pk|no|num|number|count|page|size|limit|offset|index|idx|version|seq|year|month|day|port)\z/i
-
-  # The URL to probe for this endpoint and verb. Leaves `endpoint.url`
-  # untouched — the reported catalog keeps the template, which is what the
-  # user wants to read; only the outbound request is concretized.
   protected def probe_url(endpoint : Endpoint, request_method : String) : String
-    return endpoint.url unless PROBE_PATH_FILL_METHODS.includes?(request_method.upcase)
+    return endpoint.url unless SAFE_HTTP_METHODS.includes?(request_method.upcase)
 
     fillers = {} of String => String
     endpoint.params.each do |param|
@@ -515,32 +489,12 @@ class Deliver
                     "Endpoints on that host are still probed, without your headers."
   end
 
-  # True for endpoints that belong in the reported catalog but must not be
-  # probed. `internal` is set by the Spring analyzer for `@FeignClient` /
-  # `@HttpExchange` interfaces, which declare requests the app makes to
-  # *other* services — they are not routes this app serves. Probing them
-  # fired those paths at the `-u` target, which does not own them, producing
-  # noise the user can't act on.
-  #
-  # Probe-side only: export ships the catalog as data, and the catalog
-  # legitimately includes outbound client declarations.
-  protected def skip_probe_target?(endpoint : Endpoint) : Bool
-    endpoint.internal
-  end
-
-  # Read through accessors rather than the constants directly so a spec can
-  # subclass with sub-second values and still exercise the real plumbing —
-  # asserting against the shipped defaults would mean 15-second specs.
-  protected def probe_connect_timeout : Time::Span
-    PROBE_CONNECT_TIMEOUT
-  end
-
+  # Read timeouts go through accessors rather than the constants directly so
+  # a spec can subclass with sub-second values and still exercise the real
+  # plumbing — asserting against the shipped defaults would mean 15-second
+  # specs.
   protected def probe_read_timeout : Time::Span
     PROBE_READ_TIMEOUT
-  end
-
-  protected def export_connect_timeout : Time::Span
-    EXPORT_CONNECT_TIMEOUT
   end
 
   protected def export_read_timeout : Time::Span

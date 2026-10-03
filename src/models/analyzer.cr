@@ -32,7 +32,6 @@ class Analyzer
   MAX_ANALYZER_WORKERS             = 64
 
   @result : Array(Endpoint)
-  @endpoint_references : Array(EndpointReference)
   @base_path : String
   @base_paths : Array(String)
   @normalized_base_paths : Array(Tuple(String, String))
@@ -40,8 +39,6 @@ class Analyzer
   @logger : NoirLogger
   @is_debug : Bool
   @is_verbose : Bool
-  @is_color : Bool
-  @is_log : Bool
   @raw_options : Hash(String, YAML::Any)
   @exclude_path : Noir::ExcludePath
   # path => longest-matching configured base. Populated lazily by
@@ -55,15 +52,12 @@ class Analyzer
     @normalized_base_paths = @base_paths.map { |base| {base, Noir::PathScope.normalize_root(base)} }
     @url = options["url"].to_s
     @result = [] of Endpoint
-    @endpoint_references = [] of EndpointReference
     @is_debug = any_to_bool(options["debug"])
     @is_verbose = any_to_bool(options["verbose"])
-    @is_color = any_to_bool(options["color"])
-    @is_log = any_to_bool(options["nolog"])
     @raw_options = options
     @exclude_path = Noir::ExcludePath.new(options["exclude_path"]?.to_s)
 
-    @logger = NoirLogger.new @is_debug, @is_verbose, @is_color, @is_log
+    @logger = NoirLogger.from_options(options)
   end
 
   def analyze

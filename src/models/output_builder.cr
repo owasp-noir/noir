@@ -108,10 +108,7 @@ class OutputBuilder
 
   @logger : NoirLogger
   @options : Hash(String, YAML::Any)
-  @is_debug : Bool
-  @is_verbose : Bool
   @is_color : Bool
-  @is_log : Bool
   @output_file : String
   @stdout_broken : Bool
 
@@ -125,8 +122,6 @@ class OutputBuilder
   property analyzer_failures : Array(AnalyzerFailure) = [] of AnalyzerFailure
 
   def initialize(options : Hash(String, YAML::Any))
-    @is_debug = any_to_bool(options["debug"])
-    @is_verbose = any_to_bool(options["verbose"])
     @options = options
     # Auto-disable color when STDOUT isn't a terminal — the `only-url`,
     # `only-param`, `only-header`, `only-cookie`, and `only-tag`
@@ -139,12 +134,11 @@ class OutputBuilder
     # precedence; this only flips off the default-on behavior when
     # stdout is redirected.
     @is_color = any_to_bool(options["color"]) && STDOUT.tty?
-    @is_log = any_to_bool(options["nolog"])
     @output_file = options["output"].to_s
     @io = STDOUT
     @stdout_broken = false
 
-    @logger = NoirLogger.new @is_debug, @is_verbose, @is_color, @is_log
+    @logger = NoirLogger.from_options(options, @is_color)
   end
 
   def ob_puts(message)
