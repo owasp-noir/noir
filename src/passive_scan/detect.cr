@@ -72,59 +72,42 @@ module NoirPassiveScan
     # per result (spam on OR).
     detected_logged = false
 
-    if rule.matchers_condition == "and"
+    and_condition = rule.matchers_condition == "and"
+    if and_condition
       # Necessary-but-not-sufficient gate: every matcher must appear
       # somewhere in the file. The per-line `all?` below is the real
       # confirmation.
       return unless matchers.all? { |matcher| match_file?(file_content, matcher) }
-
-      index = 0
-      file_content.each_line do |line|
-        if matchers.all? { |matcher| match_content?(line, matcher) }
-          # Drop runtime indirections / placeholders and bare
-          # variable-name mentions that cannot carry a checked-in
-          # secret. See NoirPassiveScan::FalsePositive for the invariant.
-          unless FalsePositive.suppress?(rule, line)
-            unless detected_logged
-              logger.try &.sub "├── Passive rule matched: #{rule.info.name}"
-              detected_logged = true
-            end
-            results << PassiveScanResult.new(rule, file_path, index + 1, line)
-          end
-        end
-        index += 1
-      end
+      active_matchers = matchers
     else
-      # OR branch: prune matchers that cannot fire on any line
-      # before the per-line loop, then walk the file once checking
-      # every survivor.
+      # OR: prune matchers that cannot fire on any line before the
+      # per-line loop, then walk the file once checking every survivor.
       active_matchers = matchers.select { |matcher| match_file?(file_content, matcher) }
       return if active_matchers.empty?
+    end
 
-      index = 0
-      file_content.each_line do |line|
-        # Stop at the first matcher that fires on this line. The
-        # previous shape pushed one `PassiveScanResult` per matcher
-        # hit — so a rule with both `word` and `regex` matchers
-        # joined by `or` (e.g. aws-access-key, github-token) would
-        # emit two duplicate entries for any line that happened to
-        # satisfy both matchers, even though it's the same finding.
-        active_matchers.each do |matcher|
-          if match_content?(line, matcher)
-            # Drop runtime indirections / placeholders and bare
-            # variable-name mentions that cannot carry a checked-in
-            # secret. See NoirPassiveScan::FalsePositive.
-            break if FalsePositive.suppress?(rule, line)
-            unless detected_logged
-              logger.try &.sub "├── Passive rule matched: #{rule.info.name}"
-              detected_logged = true
+    index = 0
+    file_content.each_line do |line|
+      # One result per line however many matchers fire on it: a rule with
+      # both `word` and `regex` matchers joined by `or` (e.g.
+      # aws-access-key, github-token) used to emit a duplicate entry for a
+      # line that satisfied both, even though it is the same finding.
+      hit = if and_condition
+              active_matchers.all? { |matcher| match_content?(line, matcher) }
+            else
+              active_matchers.any? { |matcher| match_content?(line, matcher) }
             end
-            results << PassiveScanResult.new(rule, file_path, index + 1, line)
-            break
-          end
+      # Drop runtime indirections / placeholders and bare variable-name
+      # mentions that cannot carry a checked-in secret. See
+      # NoirPassiveScan::FalsePositive for the invariant.
+      if hit && !FalsePositive.suppress?(rule, line)
+        unless detected_logged
+          logger.try &.sub "├── Passive rule matched: #{rule.info.name}"
+          detected_logged = true
         end
-        index += 1
+        results << PassiveScanResult.new(rule, file_path, index + 1, line)
       end
+      index += 1
     end
   end
 

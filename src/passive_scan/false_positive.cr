@@ -181,17 +181,9 @@ module NoirPassiveScan
       false
     end
 
-    # Decide whether a result on `line` for a rule of `category` should be
-    # dropped as a false positive. Only `secret` findings are eligible;
-    # everything else passes through unchanged. This category-only form is
-    # the reference/placeholder check; the rule-aware overload below adds
-    # matcher-type gating and the "merely mentioned" heuristic.
-    def self.suppress?(category : String, line : String) : Bool
-      return false unless category == "secret"
-      secret_reference?(line)
-    end
-
-    # Rule-aware suppression. In addition to the reference/placeholder
+    # Decide whether a result of `rule` on `line` should be dropped as a
+    # false positive. Only `secret` findings are eligible; everything else
+    # passes through unchanged. In addition to the reference/placeholder
     # check it gates on *which* matcher fired:
     #
     # - If a value-shape `regex` matcher hits the line, a real secret
