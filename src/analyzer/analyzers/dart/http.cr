@@ -76,7 +76,7 @@ module Analyzer::Dart
     end
 
     private def scan_file(content : String, path : String, include_callee : Bool) : Array(Endpoint)
-      cleaned = Helper.strip_comments(content)
+      cleaned = Noir::CComments.strip(content)
       lines = cleaned.lines
       offsets = line_offsets(content)
       endpoints = [] of Endpoint

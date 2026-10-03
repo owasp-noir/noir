@@ -95,7 +95,7 @@ module Analyzer::Dart
     end
 
     private def scan_file(content : String, path : String, include_callee : Bool) : Array(Endpoint)
-      cleaned = Helper.strip_comments(content)
+      cleaned = Noir::CComments.strip(content)
       groups = collect_groups(cleaned)
       top_vars = angel_router_vars(cleaned)
       group_params = groups.map(&.[:param]).to_set

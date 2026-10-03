@@ -8,8 +8,6 @@ module Analyzer::Clojure
   class Pedestal < Analyzer
     analyzer_for "clojure_pedestal"
 
-    CLOJURE_EXTENSIONS = {".clj", ".cljc", ".cljs"}
-
     HTTP_METHODS = {
       ":get"     => "GET",
       ":post"    => "POST",
@@ -46,7 +44,7 @@ module Analyzer::Clojure
     def analyze
       include_callee = callees_needed?
       all_files.each do |path|
-        next unless clojure_file?(path)
+        next unless Noir::ClojureScanner.clojure_file?(path)
 
         content = read_file_content(path)
         next unless pedestal_source?(content)
@@ -61,10 +59,6 @@ module Analyzer::Clojure
 
       Fiber.yield
       @result
-    end
-
-    private def clojure_file?(path : String) : Bool
-      CLOJURE_EXTENSIONS.any? { |ext| path.ends_with?(ext) }
     end
 
     private def pedestal_source?(content : String) : Bool
@@ -117,12 +111,12 @@ module Analyzer::Clojure
                              include_callee : Bool,
                              function_callees : Hash(String, Array(Noir::ClojureCalleeExtractor::Entry))) : Bool
       sym_start = Noir::ClojureScanner.skip_ws_and_comments(source, list_start + 1, list_end)
-      symbol, after_symbol = read_symbol(source, sym_start, list_end)
+      symbol, after_symbol = Noir::ClojureScanner.read_symbol(source, sym_start, list_end)
       return false if symbol.empty?
 
-      base = base_symbol(symbol)
+      base = Noir::ClojureScanner.base_symbol(symbol)
       if method = helper_method(symbol, base)
-        route_path, route_literal_end = first_string_literal(source, after_symbol, list_end)
+        route_path, route_literal_end = Noir::ClojureScanner.first_string_literal(source, after_symbol, list_end)
         # Pedestal route helpers take a literal path beginning with `/`
         # (`(route/get "/health" [] handler)`). A namespaced verb whose first
         # string is a full URL — `(client/post "http://host/api" ...)` from
@@ -239,7 +233,7 @@ module Analyzer::Clojure
       str_end = Noir::ClojureScanner.skip_string(source, i, vec_end)
       return false if str_end <= i
 
-      route_path = decode_string_literal(source.byte_slice(i, str_end - i + 1))
+      route_path = Noir::ClojureScanner.decode_string_literal(source.byte_slice(i, str_end - i + 1))
       return false unless route_path.starts_with?("/")
 
       full_path = Noir::URLPath.absolute_join(prefix, route_path)
@@ -324,12 +318,12 @@ module Analyzer::Clojure
         when ":path"
           if value_start < value_end && source.byte_at(value_start).unsafe_chr == '"'
             str_end = Noir::ClojureScanner.skip_string(source, value_start, value_end)
-            route_path = decode_string_literal(source.byte_slice(value_start, str_end - value_start + 1))
+            route_path = Noir::ClojureScanner.decode_string_literal(source.byte_slice(value_start, str_end - value_start + 1))
           end
         when ":verbs"
           verbs_range = {value_start, value_end}
         when ":method"
-          token, _ = read_form_token(source, value_start, value_end)
+          token, _ = Noir::ClojureScanner.read_form_token(source, value_start, value_end)
           if method = route_method(token)
             route_method = method
             method_pos = key_pos
@@ -369,7 +363,7 @@ module Analyzer::Clojure
       handled = false
       each_map_entry(source, start, limit) do |key, key_pos, value_start, value_end|
         next unless key.starts_with?('"') && key.ends_with?('"')
-        route_path = decode_string_literal(key)
+        route_path = Noir::ClojureScanner.decode_string_literal(key)
         next unless route_path.starts_with?("/")
         handled = true
 
@@ -417,7 +411,7 @@ module Analyzer::Clojure
         break if i >= limit
 
         key_pos = i
-        key, after_key = read_form_token(source, i, limit)
+        key, after_key = Noir::ClojureScanner.read_form_token(source, i, limit)
         break if key.empty?
 
         value_start = Noir::ClojureScanner.skip_ws_and_comments(source, after_key, limit)
@@ -470,14 +464,14 @@ module Analyzer::Clojure
                                        value_end : Int32,
                                        path : String,
                                        function_callees : Hash(String, Array(Noir::ClojureCalleeExtractor::Entry)))
-      token, _ = read_form_token(source, value_start, value_end)
+      token, _ = Noir::ClojureScanner.read_form_token(source, value_start, value_end)
       return if token.empty?
 
       if token.starts_with?('(')
         body = source.byte_slice(value_start, value_end - value_start)
         line = Noir::ClojureScanner.line_number_for(source, value_start)
         Noir::ClojureCalleeExtractor.attach_to(endpoint, Noir::ClojureCalleeExtractor.callees_for_body(body, path, line))
-      elsif handler_name = normalized_handler_symbol(token)
+      elsif handler_name = Noir::ClojureScanner.normalized_handler_symbol(token)
         if callees = function_callees[handler_name]?
           Noir::ClojureCalleeExtractor.attach_to(endpoint, callees)
         else
@@ -486,35 +480,7 @@ module Analyzer::Clojure
       end
     end
 
-    private def normalized_handler_symbol(token : String) : String?
-      name = token
-      if name.starts_with?("#'")
-        name = name[2..]
-      elsif name.starts_with?('\'') || name.starts_with?('`')
-        name = name[1..]
-      end
-
-      return unless handler_symbol?(name)
-      function_name(name)
-    end
-
-    private def handler_symbol?(token : String) : Bool
-      return false if token.starts_with?(':')
-      return false if token.starts_with?('"')
-      return false if {"nil", "true", "false"}.includes?(token)
-      !!token.match(/^[A-Za-z_.*+!?<>=][\w.\-*+!?<>=\/]*$/)
-    end
-
-    private def function_name(symbol : String) : String
-      if index = symbol.rindex('/')
-        symbol[(index + 1)..]
-      else
-        symbol
-      end
-    end
-
     private def add_param_once(endpoint : Endpoint, name : String, param_type : String)
-      return if endpoint.params.any? { |p| p.name == name && p.param_type == param_type }
       endpoint.push_param(Param.new(name, "", param_type))
     end
 
@@ -532,50 +498,9 @@ module Analyzer::Clojure
         next unless {":context", ":io.pedestal.http/context", "::http/context"}.includes?(key)
         next unless value_start < value_end && source.byte_at(value_start).unsafe_chr == '"'
         str_end = Noir::ClojureScanner.skip_string(source, value_start, value_end)
-        return decode_string_literal(source.byte_slice(value_start, str_end - value_start + 1))
+        return Noir::ClojureScanner.decode_string_literal(source.byte_slice(value_start, str_end - value_start + 1))
       end
       nil
-    end
-
-    private def first_string_literal(source : String, index : Int32, limit : Int32) : Tuple(String?, Int32)
-      i = Noir::ClojureScanner.skip_ws_and_comments(source, index, limit)
-      while i < limit
-        case source.byte_at(i).unsafe_chr
-        when ';'
-          i = Noir::ClojureScanner.skip_comment(source, i, limit)
-        when '"'
-          literal_end = Noir::ClojureScanner.skip_string(source, i, limit)
-          return {decode_string_literal(source.byte_slice(i, literal_end - i + 1)), literal_end}
-        when '(', '[', '{'
-          break
-        else
-          i += 1
-        end
-      end
-
-      {nil, i}
-    end
-
-    private def read_form_token(source : String, start : Int32, limit : Int32) : Tuple(String, Int32)
-      i = Noir::ClojureScanner.skip_ws_and_comments(source, start, limit)
-      return {"", i} if i >= limit
-
-      case source.byte_at(i).unsafe_chr
-      when '"'
-        e = Noir::ClojureScanner.skip_string(source, i, limit)
-        {source.byte_slice(i, e - i + 1), Noir::ClojureScanner.skip_ws_and_comments(source, e + 1, limit)}
-      when '('
-        e = Noir::ClojureScanner.find_matching_delimiter(source, i, '(', ')', limit)
-        e > i ? {source.byte_slice(i, e - i + 1), Noir::ClojureScanner.skip_ws_and_comments(source, e + 1, limit)} : {"", i}
-      when '['
-        e = Noir::ClojureScanner.find_matching_delimiter(source, i, '[', ']', limit)
-        e > i ? {source.byte_slice(i, e - i + 1), Noir::ClojureScanner.skip_ws_and_comments(source, e + 1, limit)} : {"", i}
-      when '{'
-        e = Noir::ClojureScanner.find_matching_delimiter(source, i, '{', '}', limit)
-        e > i ? {source.byte_slice(i, e - i + 1), Noir::ClojureScanner.skip_ws_and_comments(source, e + 1, limit)} : {"", i}
-      else
-        read_symbol(source, i, limit)
-      end
     end
 
     private def end_of_value(source : String, start : Int32, limit : Int32) : Int32
@@ -610,34 +535,13 @@ module Analyzer::Clojure
         when '_'
           end_of_value(source, i + 2, limit)
         else
-          _, after = read_symbol(source, i, limit)
+          _, after = Noir::ClojureScanner.read_symbol(source, i, limit)
           after
         end
       else
-        _, after = read_symbol(source, i, limit)
+        _, after = Noir::ClojureScanner.read_symbol(source, i, limit)
         after > i ? after : i + 1
       end
-    end
-
-    private def decode_string_literal(raw : String) : String
-      return raw unless raw.starts_with?('"') && raw.ends_with?('"') && raw.size >= 2
-      inner = raw[1...raw.size - 1]
-      inner.gsub(/\\(.)/, "\\1")
-    end
-
-    private def base_symbol(symbol : String) : String
-      parts = symbol.split('/')
-      parts.last? || symbol
-    end
-
-    private def read_symbol(source : String, index : Int32, limit : Int32) : Tuple(String, Int32)
-      i = index
-      while i < limit
-        char = source.byte_at(i).unsafe_chr
-        break if char.whitespace? || {',', '(', ')', '[', ']', '{', '}', '"', ';'}.includes?(char)
-        i += 1
-      end
-      {source.byte_slice(index, i - index), i}
     end
   end
 end

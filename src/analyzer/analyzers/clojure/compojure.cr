@@ -38,7 +38,6 @@ module Analyzer::Clojure
       ":form-params"   => "form",
       ":header-params" => "header",
     }
-    CLOJURE_EXTENSIONS = {".clj", ".cljc", ".cljs"}
     # Whole-file detection gate, evaluated once per candidate file.
     # `String#matches?` (PCRE2 JIT) replaces four naive `String#includes?`
     # char scans with a single pass; `Regex.union` auto-escapes each literal,
@@ -48,7 +47,7 @@ module Analyzer::Clojure
     def analyze
       include_callee = callees_needed?
       all_files.each do |path|
-        next unless clojure_file?(path)
+        next unless Noir::ClojureScanner.clojure_file?(path)
 
         content = read_file_content(path)
         next unless compojure_source?(content)
@@ -58,10 +57,6 @@ module Analyzer::Clojure
 
       Fiber.yield
       @result
-    end
-
-    private def clojure_file?(path : String) : Bool
-      CLOJURE_EXTENSIONS.any? { |ext| path.ends_with?(ext) }
     end
 
     private def compojure_source?(content : String) : Bool
@@ -81,9 +76,9 @@ module Analyzer::Clojure
           break if form_end <= i
 
           symbol_start = Noir::ClojureScanner.skip_ws_and_comments(source, i + 1, form_end)
-          symbol, after_symbol = read_symbol(source, symbol_start, form_end)
+          symbol, after_symbol = Noir::ClojureScanner.read_symbol(source, symbol_start, form_end)
 
-          base = base_symbol(symbol)
+          base = Noir::ClojureScanner.base_symbol(symbol)
 
           case base
           when "context"
@@ -125,7 +120,7 @@ module Analyzer::Clojure
       full_path = Noir::URLPath.absolute_join(prefix, route_path)
       endpoint = Endpoint.new(full_path, method, Details.new(PathInfo.new(path, Noir::ClojureScanner.line_number_for(source, form_start))))
 
-      path_param_names = extract_path_param_names(route_path)
+      path_param_names = Noir::ClojureScanner.extract_path_param_names(route_path)
       path_param_names.each do |name|
         endpoint.push_param(Param.new(name, "", "path"))
       end
@@ -167,7 +162,7 @@ module Analyzer::Clojure
         break if i >= form_end
 
         if source.byte_at(i).unsafe_chr == ':'
-          keyword, after_kw = read_symbol(source, i, form_end)
+          keyword, after_kw = Noir::ClojureScanner.read_symbol(source, i, form_end)
           value_start = Noir::ClojureScanner.skip_ws_and_comments(source, after_kw, form_end)
           value_end = resource_end_of_value(source, value_start, form_end)
 
@@ -241,7 +236,6 @@ module Analyzer::Clojure
 
     private def add_param_once(endpoint : Endpoint, name : String, param_type : String)
       return if name.empty?
-      return if endpoint.params.any? { |p| p.name == name && p.param_type == param_type }
       endpoint.push_param(Param.new(name, "", param_type))
     end
 
@@ -287,7 +281,7 @@ module Analyzer::Clojure
     private def emit_resource_endpoint(source : String, offset : Int32, route_path : String, method : String,
                                        path : String, include_callee : Bool, handler_range : Tuple(Int32, Int32)?)
       endpoint = Endpoint.new(route_path, method, Details.new(PathInfo.new(path, Noir::ClojureScanner.line_number_for(source, offset))))
-      extract_path_param_names(route_path).each do |name|
+      Noir::ClojureScanner.extract_path_param_names(route_path).each do |name|
         endpoint.push_param(Param.new(name, "", "path"))
       end
 
@@ -330,7 +324,7 @@ module Analyzer::Clojure
         i = Noir::ClojureScanner.skip_ws_and_comments(source, i, limit)
         break if i >= limit
         key_pos = i
-        key, after_key = read_symbol(source, i, limit)
+        key, after_key = Noir::ClojureScanner.read_symbol(source, i, limit)
         if key.empty?
           i = resource_end_of_value(source, i, limit)
           next
@@ -376,11 +370,11 @@ module Analyzer::Clojure
         when '_'
           resource_end_of_value(source, i + 2, limit)
         else
-          _, after = read_symbol(source, i, limit)
+          _, after = Noir::ClojureScanner.read_symbol(source, i, limit)
           after
         end
       else
-        _, after = read_symbol(source, i, limit)
+        _, after = Noir::ClojureScanner.read_symbol(source, i, limit)
         after > i ? after : i + 1
       end
     end
@@ -399,17 +393,9 @@ module Analyzer::Clojure
       when '('
         i
       else
-        _, after_symbol = read_symbol(source, i, limit)
+        _, after_symbol = Noir::ClojureScanner.read_symbol(source, i, limit)
         after_symbol
       end
-    end
-
-    private def extract_path_param_names(route_path : String) : Array(String)
-      names = [] of String
-      route_path.scan(/:([A-Za-z_][\w\-]*)/) do |match|
-        names << match[1]
-      end
-      names
     end
 
     # Compojure allows an inline regex constraint on a path param:
@@ -531,7 +517,7 @@ module Analyzer::Clojure
       when '('
         nil
       else
-        token, _ = read_symbol(source, i, limit)
+        token, _ = Noir::ClojureScanner.read_symbol(source, i, limit)
         token.empty? ? nil : token
       end
     end
@@ -546,55 +532,11 @@ module Analyzer::Clojure
       if i < limit && source.byte_at(i).unsafe_chr == '['
         vec_end = Noir::ClojureScanner.find_matching_delimiter(source, i, '[', ']', limit)
         return {nil, index} if vec_end <= i
-        route_path, _ = first_string_literal(source, i + 1, vec_end)
+        route_path, _ = Noir::ClojureScanner.first_string_literal(source, i + 1, vec_end)
         return {route_path, vec_end}
       end
 
-      first_string_literal(source, index, limit)
-    end
-
-    private def first_string_literal(source : String, index : Int32, limit : Int32) : Tuple(String?, Int32)
-      i = Noir::ClojureScanner.skip_ws_and_comments(source, index, limit)
-      while i < limit
-        case source.byte_at(i).unsafe_chr
-        when ';'
-          i = Noir::ClojureScanner.skip_comment(source, i, limit)
-        when '"'
-          literal_end = Noir::ClojureScanner.skip_string(source, i, limit)
-          return {decode_string_literal(source.byte_slice(i, literal_end - i + 1)), literal_end}
-        when '(', '[', '{'
-          break
-        else
-          i += 1
-        end
-      end
-
-      {nil, i}
-    end
-
-    private def decode_string_literal(raw : String) : String
-      return raw unless raw.starts_with?('"') && raw.ends_with?('"') && raw.size >= 2
-
-      inner = raw[1...raw.size - 1]
-      inner.gsub(/\\(.)/, "\\1")
-    end
-
-    private def base_symbol(symbol : String) : String
-      parts = symbol.split('/')
-      parts.last? || symbol
-    end
-
-    private def read_symbol(source : String, index : Int32, limit : Int32) : Tuple(String, Int32)
-      i = index
-      while i < limit
-        char = source.byte_at(i).unsafe_chr
-        # Commas are whitespace in Clojure, so they terminate a symbol just
-        # like spaces (keeps `[x, y]` from reading `x,` as one token).
-        break if char.whitespace? || char == ',' || {'(', ')', '[', ']', '{', '}', '"', ';'}.includes?(char)
-        i += 1
-      end
-
-      {source.byte_slice(index, i - index), i}
+      Noir::ClojureScanner.first_string_literal(source, index, limit)
     end
   end
 end

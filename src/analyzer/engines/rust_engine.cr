@@ -298,14 +298,6 @@ module Analyzer::Rust
       Noir::RustCalleeExtractor.attach_to(endpoint, callees)
     end
 
-    protected def extract_rust_function_body(lines : Array(String), start_index : Int32) : Tuple(String, Int32)?
-      function_body = extract_rust_function_body_with_end(lines, start_index)
-      return unless function_body
-
-      body, body_start_line, _ = function_body
-      {body, body_start_line}
-    end
-
     protected def extract_rust_function_body_with_end(lines : Array(String), start_index : Int32) : Tuple(String, Int32, Int32)?
       return if start_index >= lines.size
       return if Noir::RustCalleeExtractor.strip_comment(lines[start_index]).includes?(";")
@@ -531,6 +523,83 @@ module Analyzer::Rust
       return unless body
       entries = Noir::RustCalleeExtractorTS.callees_in_body(body, source, path)
       attach_rust_callees(endpoint, entries)
+    end
+
+    private def candidate_module_paths(current_path : String, module_parts : Array(String)) : Array(String)
+      return [] of String if module_parts.empty?
+
+      base_dir, parts = module_base_dir(current_path, module_parts)
+      return [] of String if parts.empty?
+
+      module_path = parts.join("/")
+      [
+        File.join(base_dir, "#{module_path}.rs"),
+        File.join(base_dir, module_path, "mod.rs"),
+      ]
+    end
+
+    private def module_base_dir(current_path : String, module_parts : Array(String)) : Tuple(String, Array(String))
+      first = module_parts.first
+      rest = module_parts[1..]? || [] of String
+
+      case first
+      when "crate"
+        {crate_src_dir(current_path), rest}
+      when "self"
+        {current_module_dir(current_path), rest}
+      when "super"
+        {File.dirname(current_module_dir(current_path)), rest}
+      else
+        {current_module_dir(current_path), module_parts}
+      end
+    end
+
+    private def current_module_dir(current_path : String) : String
+      File.dirname(current_path)
+    end
+
+    private def crate_src_dir(current_path : String) : String
+      marker = "/src/"
+      if idx = current_path.rindex(marker)
+        current_path[0, idx + marker.size - 1]
+      else
+        File.dirname(current_path)
+      end
+    end
+
+    # Canonical single module a `.rs` file is referred to by. A plain
+    # `foo.rs` is module `foo`; `foo/mod.rs` is module `foo`. A crate root
+    # (`src/main.rs` / `src/lib.rs`) has no module name of its own, so we key
+    # it by the crate directory — this keeps the identically named
+    # `examples/<x>/src/main.rs` roots of a framework example monorepo apart
+    # instead of collapsing them all to a shared `src` pseudo-module.
+    private def primary_module(path : String) : String
+      base = File.basename(path, ".rs")
+      dir = File.dirname(path)
+      case base
+      when "mod"
+        File.basename(dir)
+      when "lib", "main"
+        parent = File.basename(dir)
+        parent == "src" ? File.basename(File.dirname(dir)) : parent
+      else
+        base
+      end
+    end
+
+    # Byte range + name of every fn, for mapping a route node back to the
+    # builder fn that encloses it.
+    private def build_fn_ranges(root : LibTreeSitter::TSNode, source : String) : Array(Tuple(Int32, Int32, String))
+      ranges = [] of Tuple(Int32, Int32, String)
+      walk(root) do |n|
+        next unless Noir::TreeSitter.node_type(n) == "function_item"
+        name_node = Noir::TreeSitter.field(n, "name")
+        next unless name_node
+        s = LibTreeSitter.ts_node_start_byte(n).to_i
+        e = LibTreeSitter.ts_node_end_byte(n).to_i
+        ranges << {s, e, Noir::TreeSitter.node_text(name_node, source)}
+      end
+      ranges
     end
   end
 end

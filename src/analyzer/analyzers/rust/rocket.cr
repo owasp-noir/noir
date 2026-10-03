@@ -352,26 +352,6 @@ module Analyzer::Rust
       name ? Noir::TreeSitter.node_text(name, source) : nil
     end
 
-    # Canonical single module a `.rs` file is referred to by. A plain
-    # `foo.rs` is module `foo`; `foo/mod.rs` is module `foo`. A crate root
-    # (`src/main.rs` / `src/lib.rs`) has no module name of its own, so we key
-    # it by the crate directory — this keeps the identically named
-    # `examples/<x>/src/main.rs` roots of a framework example monorepo apart
-    # instead of collapsing them all to a shared `src` pseudo-module.
-    private def primary_module(path : String) : String
-      base = File.basename(path, ".rs")
-      dir = File.dirname(path)
-      case base
-      when "mod"
-        File.basename(dir)
-      when "lib", "main"
-        parent = File.basename(dir)
-        parent == "src" ? File.basename(File.dirname(dir)) : parent
-      else
-        base
-      end
-    end
-
     # Mount prefix(es) for a handler, matched module-aware so a leaf shared
     # across modules only inherits the prefix of the module that registers
     # it. nil when the handler isn't mounted anywhere visible.

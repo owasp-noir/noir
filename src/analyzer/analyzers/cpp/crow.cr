@@ -129,7 +129,7 @@ module Analyzer::Cpp
 
         methods.uniq.each do |method|
           endpoint = Endpoint.new(normalized_path, method, path_params.dup, details)
-          route_params.each { |param| push_unique(endpoint, param) }
+          route_params.each { |param| endpoint.push_param(param) }
           Noir::CppCalleeExtractor.attach_to(endpoint, route_callees) if include_callee
           result << endpoint
         end
@@ -285,11 +285,6 @@ module Analyzer::Cpp
         params << Param.new("body", "", "json")
       end
       params
-    end
-
-    private def push_unique(endpoint : Endpoint, param : Param)
-      return if endpoint.params.any? { |p| p.name == param.name && p.param_type == param.param_type }
-      endpoint.push_param(param)
     end
   end
 end

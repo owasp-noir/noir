@@ -538,48 +538,6 @@ module Analyzer::Rust
       entries
     end
 
-    private def candidate_module_paths(current_path : String, module_parts : Array(String)) : Array(String)
-      return [] of String if module_parts.empty?
-
-      base_dir, parts = module_base_dir(current_path, module_parts)
-      return [] of String if parts.empty?
-
-      module_path = parts.join("/")
-      [
-        File.join(base_dir, "#{module_path}.rs"),
-        File.join(base_dir, module_path, "mod.rs"),
-      ]
-    end
-
-    private def module_base_dir(current_path : String, module_parts : Array(String)) : Tuple(String, Array(String))
-      first = module_parts.first
-      rest = module_parts[1..]? || [] of String
-
-      case first
-      when "crate"
-        {crate_src_dir(current_path), rest}
-      when "self"
-        {current_module_dir(current_path), rest}
-      when "super"
-        {File.dirname(current_module_dir(current_path)), rest}
-      else
-        {current_module_dir(current_path), module_parts}
-      end
-    end
-
-    private def current_module_dir(current_path : String) : String
-      File.dirname(current_path)
-    end
-
-    private def crate_src_dir(current_path : String) : String
-      marker = "/src/"
-      if idx = current_path.rindex(marker)
-        current_path[0, idx + marker.size - 1]
-      else
-        File.dirname(current_path)
-      end
-    end
-
     private def call_function_text(call : LibTreeSitter::TSNode, source : String) : String?
       fn_node = Noir::TreeSitter.field(call, "function")
       return unless fn_node

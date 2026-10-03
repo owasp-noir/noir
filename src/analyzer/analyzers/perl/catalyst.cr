@@ -271,7 +271,7 @@ module Analyzer::Perl
             body_line = lines[body_index]
             body_lines << body_line
             code_line = code_lines[body_index]? || ""
-            brace_depth += brace_delta(code_line)
+            brace_depth += code_line.count('{') - code_line.count('}')
             opened = true if code_line.includes?("{")
             break if opened && brace_depth <= 0
             body_index += 1
@@ -786,15 +786,6 @@ module Analyzer::Perl
                           ext == ".psgi" || ext == ".t"
       return false if perl_test_path?(path, ext)
       true
-    end
-
-    private def brace_delta(line : String) : Int32
-      delta = 0
-      line.each_char do |char|
-        delta += 1 if char == '{'
-        delta -= 1 if char == '}'
-      end
-      delta
     end
 
     # Line-aligned copy with strings/comments/regexes blanked (newlines kept),

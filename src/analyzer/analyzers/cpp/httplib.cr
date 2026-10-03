@@ -110,7 +110,7 @@ module Analyzer::Cpp
         handler_block = handler_body(source, args[1]?, open_paren, close_paren)
         if handler_block
           body, start_line = handler_block
-          collect_params(body).each { |param| push_unique(endpoint, param) }
+          collect_params(body).each { |param| endpoint.push_param(param) }
           if include_callee
             Noir::CppCalleeExtractor.attach_to(endpoint,
               Noir::CppCalleeExtractor.callees_for_body(body, path, start_line))
@@ -230,11 +230,6 @@ module Analyzer::Cpp
       return if param.name.empty?
       return if params.any? { |p| p.name == param.name && p.param_type == param.param_type }
       params << param
-    end
-
-    private def push_unique(endpoint : Endpoint, param : Param)
-      return if endpoint.params.any? { |p| p.name == param.name && p.param_type == param.param_type }
-      endpoint.push_param(param)
     end
 
     # Delegates to the shared splitter; `Rules::CPP` reproduces this file's
