@@ -29,11 +29,7 @@ module LLM
     # `NoirLogger` (STDERR, gated on `--debug`) is where every other Noir
     # diagnostic goes. Nil until a run installs one, so a library caller
     # constructing no logger stays silent exactly as before.
-    @@logger : NoirLogger? = nil
-
-    def self.logger=(logger : NoirLogger?) : Nil
-      @@logger = logger
-    end
+    class_setter logger : NoirLogger? = nil
 
     private def self.debug(message : String) : Nil
       @@logger.try &.debug(message)
@@ -112,7 +108,6 @@ module LLM
     CACHE_FILE_PERMISSIONS = 0o600
 
     def self.ensure_dir : Nil
-      return if File.directory?(cache_dir)
       FileUtils.mkdir_p(cache_dir, CACHE_DIR_PERMISSIONS)
     end
 
@@ -178,25 +173,30 @@ module LLM
     # handles (its rename fails, `store` returns false, the next scan
     # re-requests).
     private def self.delete_matching(& : String -> Bool) : DeleteOutcome
-      return DeleteOutcome.new(0, 0) unless File.directory?(cache_dir)
       deleted = 0
       failed = 0
       orphans = 0
+      each_entry do |fp, tmp|
+        next unless yield(fp)
+        File.delete(fp)
+        tmp ? (orphans += 1) : (deleted += 1)
+      rescue e
+        debug("Cache delete failed for #{fp}: #{e.message}")
+        failed += 1
+      end
+      DeleteOutcome.new(deleted, failed, orphans)
+    end
+
+    # Every cache file — completed entries and stranded temp writes (`tmp`)
+    # — skipping anything else a user dropped into the directory.
+    private def self.each_entry(& : String, Bool ->) : Nil
+      return unless File.directory?(cache_dir)
       Dir.children(cache_dir).each do |entry|
         tmp = tmp_entry?(entry)
         next unless tmp || entry.ends_with?(CACHE_FILE_SUFFIX)
         fp = File.join(cache_dir, entry)
-        next unless File.file?(fp)
-        begin
-          next unless yield(fp)
-          File.delete(fp)
-          tmp ? (orphans += 1) : (deleted += 1)
-        rescue e
-          debug("Cache delete failed for #{fp}: #{e.message}")
-          failed += 1
-        end
+        yield fp, tmp if File.file?(fp)
       end
-      DeleteOutcome.new(deleted, failed, orphans)
     end
 
     # `orphans`/`orphan_bytes` are tracked apart from `entries`/`bytes` so
@@ -219,28 +219,20 @@ module LLM
       orphan_bytes = 0_i64
       oldest : Time? = nil
       newest : Time? = nil
-      if File.directory?(cache_dir)
-        Dir.children(cache_dir).each do |entry|
-          tmp = tmp_entry?(entry)
-          next unless tmp || entry.ends_with?(CACHE_FILE_SUFFIX)
-          fp = File.join(cache_dir, entry)
-          next unless File.file?(fp)
-          begin
-            info = File.info(fp)
-            if tmp
-              orphans += 1
-              orphan_bytes += info.size.to_i64
-              next
-            end
-            entries += 1
-            bytes += info.size.to_i64
-            mtime = info.modification_time
-            oldest = oldest ? (mtime < oldest ? mtime : oldest) : mtime
-            newest = newest ? (mtime > newest ? mtime : newest) : mtime
-          rescue e
-            debug("Cache stats: failed to read #{fp}: #{e.message}")
-          end
+      each_entry do |fp, tmp|
+        info = File.info(fp)
+        if tmp
+          orphans += 1
+          orphan_bytes += info.size.to_i64
+          next
         end
+        entries += 1
+        bytes += info.size.to_i64
+        mtime = info.modification_time
+        oldest = mtime if oldest.nil? || mtime < oldest
+        newest = mtime if newest.nil? || mtime > newest
+      rescue e
+        debug("Cache stats: failed to read #{fp}: #{e.message}")
       end
       Stats.new(
         entries: entries, bytes: bytes, oldest: oldest, newest: newest,
