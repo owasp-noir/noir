@@ -119,9 +119,9 @@ module Noir::ZigCalleeExtractor
     end
 
     chars = source.chars
-    comments = need_comments ? chars_to_string(strip_comments(chars)) : source
+    comments = need_comments ? strip_comments(chars).join : source
     non_code_chars = need_non_code ? strip_non_code(chars) : chars
-    non_code = need_non_code ? chars_to_string(non_code_chars) : source
+    non_code = need_non_code ? non_code_chars.join : source
     {
       comments:       comments,
       non_code:       non_code,
@@ -134,7 +134,7 @@ module Noir::ZigCalleeExtractor
     # string, char-literal, or double-quoted string markers. `/`/`\`/`'`/`"`
     # are single-byte ASCII, so byte_index (memchr) is allocation-free.
     return source unless strip_non_code_needed?(source)
-    chars_to_string(strip_non_code(source.chars))
+    strip_non_code(source.chars).join
   end
 
   # Like `strip_non_code` but keeps the contents of double-quoted string
@@ -145,7 +145,7 @@ module Noir::ZigCalleeExtractor
     # Fast path: with no `//`, `\\`, or `'` there is nothing to blank
     # (double-quoted strings are preserved as-is).
     return source unless strip_comments_needed?(source)
-    chars_to_string(strip_comments(source.chars))
+    strip_comments(source.chars).join
   end
 
   def function_table(source : String, file_path : String) : Array(FunctionInfo)
@@ -158,7 +158,7 @@ module Noir::ZigCalleeExtractor
   # `prepare` / `strip_non_code`, so callers that already paid for a strip
   # don't re-walk the file.
   def function_table_from(stripped : Array(Char), file_path : String) : Array(FunctionInfo)
-    stripped_str = chars_to_string(stripped)
+    stripped_str = stripped.join
     table = [] of FunctionInfo
 
     stripped_str.scan(FUNCTION_REGEX) do |match|
@@ -174,7 +174,7 @@ module Noir::ZigCalleeExtractor
       close_brace = find_matching(stripped, brace, '{', '}')
       next if close_brace.nil?
 
-      body = slice(stripped, brace + 1, close_brace)
+      body = stripped[(brace + 1)...close_brace].join
       table << {
         name:       name,
         body:       body,
@@ -222,7 +222,7 @@ module Noir::ZigCalleeExtractor
       next if seen.includes?(name)
 
       seen << name
-      entries << {name, file_path, start_line + newlines_before(body, offset)}
+      entries << {name, file_path, start_line + line_at(body, offset) - 1}
     end
 
     entries
@@ -452,19 +452,8 @@ module Noir::ZigCalleeExtractor
     while j >= 0 && (chars[j].ascii_alphanumeric? || chars[j] == '_')
       j -= 1
     end
-    word = slice(chars, j + 1, word_end)
+    word = chars[(j + 1)...word_end].join
     word == "struct" || word == "enum" || word == "union" || word == "opaque" || word == "error"
-  end
-
-  private def slice(chars : Array(Char), start : Int32, stop : Int32) : String
-    return "" if start >= stop
-    String.build do |io|
-      idx = start
-      while idx < stop && idx < chars.size
-        io << chars[idx]
-        idx += 1
-      end
-    end
   end
 
   def line_at(chars : Array(Char), offset : Int32) : Int32
@@ -496,24 +485,6 @@ module Noir::ZigCalleeExtractor
       i += 1
     end
     count
-  end
-
-  private def newlines_before(text : String, offset : Int32) : Int32
-    limit = text.char_index_to_byte_index(offset) || text.bytesize
-    count = 0
-    i = 0
-    text.each_byte do |b|
-      break if i >= limit
-      count += 1 if b == 0x0A_u8
-      i += 1
-    end
-    count
-  end
-
-  private def chars_to_string(chars : Array(Char)) : String
-    String.build(chars.size) do |io|
-      chars.each { |c| io << c }
-    end
   end
 
   # Markers that force a full `strip_comments` walk. `//` is the line/doc
