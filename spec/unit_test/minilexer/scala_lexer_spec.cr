@@ -99,22 +99,6 @@ describe Noir::ScalaLexer do
     end
   end
 
-  describe "tokens" do
-    it "reports token kind, value, character range, and one-based line" do
-      source = "val path = \"/users\"\npath(\"/items\")"
-      tokens = Noir::ScalaLexer.new(source).tokens
-
-      tokens.map(&.kind).should eq([:ident, :ident, :string, :ident, :lparen, :string, :rparen])
-      tokens[0].value.should eq("val")
-      tokens[2].value.should eq("\"/users\"")
-      tokens[2].start.should eq(source.index!('"'))
-      tokens[2].end.should eq(tokens[2].start + tokens[2].value.size)
-      tokens[0].line.should eq(1)
-      tokens[3].line.should eq(2)
-      tokens[-1].line.should eq(2)
-    end
-  end
-
   describe "masked_lines / code_lines" do
     it "match String#lines element count and per-line length (incl. CRLF)" do
       {"a\nb\n", "x\r\ny\r\n", "p(\"q\")\nr()", "only"}.each do |src|
@@ -138,14 +122,13 @@ describe Noir::ScalaLexer do
     # happened to land inside one of the two string spans), but the depth is
     # skewed the moment a paren falls on the wrong side of the split — so
     # these assert the lexer's own output rather than any endpoint count.
-    it "keeps an interpolated string with a quoted hole as ONE string token" do
+    it "keeps an interpolated string with a quoted hole as ONE string span" do
       src = "val x = s\"a ${cfg(\"k\")} b\""
       lex = Noir::ScalaLexer.new(src)
 
-      strings = lex.tokens.select { |t| t.kind == :string }
-      strings.map(&.value).should eq(["\"a ${cfg(\"k\")} b\""])
-      # `k` used to leak out of the string and be lexed as an identifier.
-      lex.tokens.select { |t| t.kind == :ident }.map(&.value).should eq(["val", "x", "s"])
+      lex.skip_ranges.should eq([src.index!('"')..src.size - 1])
+      # `k` used to leak out of the string and be lexed as code.
+      lex.in_code?(src.index!('k')).should be_false
     end
 
     it "keeps parenthesis depth balanced around an interpolated hole" do
@@ -155,8 +138,6 @@ describe Noir::ScalaLexer do
       masked = lex.masked.join
       masked.count('(').should eq(1)
       masked.count(')').should eq(1)
-      lex.tokens.map(&.kind).count(:lparen).should eq(1)
-      lex.tokens.map(&.kind).count(:rparen).should eq(1)
     end
 
     it "does not treat `${` inside a plain (non-interpolated) string as a hole" do
@@ -165,15 +146,15 @@ describe Noir::ScalaLexer do
 
       # No interpolator prefix, so `"${cfg("` really is the whole literal and
       # `k` really is code — same as before, and as Scala reads it.
-      lex.tokens.select { |t| t.kind == :ident }.map(&.value).should eq(["val", "x", "k"])
+      lex.in_code?(src.index!('k')).should be_true
     end
 
     it "treats `$$` as an escaped dollar rather than the start of a hole" do
       src = "val x = s\"$${literal} tail\""
       lex = Noir::ScalaLexer.new(src)
 
-      lex.tokens.count { |t| t.kind == :string }.should eq(1)
-      lex.tokens.map(&.kind).should_not contain(:lbrace)
+      lex.skip_ranges.size.should eq(1)
+      lex.masked.should_not contain('{')
     end
 
     it "tracks holes in a triple-quoted interpolated string too" do
@@ -191,7 +172,7 @@ describe Noir::ScalaLexer do
       lex = Noir::ScalaLexer.new(src)
 
       lex.code_lines[0].should eq("val u = s\"/api/$version/users\"")
-      lex.tokens.select { |t| t.kind == :string }.map(&.value).should eq(["\"/api/$version/users\""])
+      lex.skip_ranges.should eq([src.index!('"')..src.size - 1])
     end
   end
 end

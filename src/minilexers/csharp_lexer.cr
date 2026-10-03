@@ -1,24 +1,6 @@
 require "./masked_lexer"
 
 module Noir
-  # A single token produced by `CSharpLexer#tokens`. `start`/`end` are
-  # character indices into the original source (`end` exclusive); `line` is
-  # the 1-based line of `start`.
-  struct CSharpToken
-    getter kind : Symbol
-    getter value : String
-    getter start : Int32
-    getter end : Int32
-    getter line : Int32
-
-    def initialize(@kind : Symbol, @value : String, @start : Int32, @end : Int32, @line : Int32)
-    end
-
-    def to_s(io : IO) : Nil
-      io << @kind << '(' << @value << ')'
-    end
-  end
-
   # CSharpLexer is a hand-rolled structural lexer for C# source, modelled on
   # `Noir::PhpLexer`. The C# analyzers count `{`/`}`/`(`/`)` per line with no
   # string awareness (`line.count('{') - line.count('}')`), so a single `}` or
@@ -47,7 +29,6 @@ module Noir
     include MaskedLexer
 
     @chars : Array(Char)
-    @tokens : Array(CSharpToken)?
     @masked_lines : Array(String)?
     @code_lines : Array(String)?
     @code_source : String?
@@ -58,7 +39,6 @@ module Noir
       @size = @chars.size
       @masked = @chars.dup
       @spans = [] of Tuple(Symbol, Int32, Int32)
-      @tokens = nil
       @skip_ranges = nil
       @masked_lines = nil
       @code_lines = nil
@@ -386,9 +366,7 @@ module Noir
     # both a whole-source regex scan and the per-line view (the C# type
     # extractor does) would otherwise materialise the same string twice.
     def masked_source : String
-      @masked_source ||= String.build(@size) do |io|
-        @masked.each { |c| io << c }
-      end
+      @masked_source ||= @masked.join
     end
 
     # The source with **comments only** blanked to spaces — string and char
@@ -406,7 +384,7 @@ module Noir
         if @spans.none? { |(kind, _, _)| kind == :comment }
           # No comments at all — the common case for generated or terse
           # sources. Skip the char-array copy entirely.
-          String.build(@size) { |io| @chars.each { |c| io << c } }
+          @chars.join
         else
           chars = @chars.dup
           @spans.each do |(kind, start, finish)|
@@ -416,83 +394,13 @@ module Noir
               chars[idx] = ' ' unless chars[idx] == '\n'
             end
           end
-          String.build(@size) { |io| chars.each { |c| io << c } }
+          chars.join
         end
       end
     end
 
     def code_lines : Array(String)
       @code_lines ||= code_source.lines
-    end
-
-    # ---- token stream ------------------------------------------------------
-
-    def tokens : Array(CSharpToken)
-      @tokens ||= build_tokens
-    end
-
-    private def build_tokens : Array(CSharpToken)
-      result = [] of CSharpToken
-      span_idx = 0
-      spans = @spans
-      i = 0
-      line = 1
-      line_cursor = 0
-      line_for = ->(pos : Int32) do
-        while line_cursor < pos
-          line += 1 if @chars[line_cursor] == '\n'
-          line_cursor += 1
-        end
-        line
-      end
-
-      while i < @size
-        if span_idx < spans.size && spans[span_idx][1] == i
-          kind, s, e = spans[span_idx]
-          result << CSharpToken.new(kind, @chars[s...e].join, s, e, line_for.call(s))
-          span_idx += 1
-          i = e
-          next
-        end
-
-        c = @masked[i]
-        if c.ascii_whitespace?
-          i += 1
-        elsif ident_start?(c)
-          start = i
-          while i < @size && ident_char?(@masked[i])
-            i += 1
-          end
-          result << CSharpToken.new(:ident, @chars[start...i].join, start, i, line_for.call(start))
-        else
-          kind, len = punct_at(i)
-          if kind
-            result << CSharpToken.new(kind, @chars[i...i + len].join, i, i + len, line_for.call(i))
-            i += len
-          else
-            i += 1
-          end
-        end
-      end
-      result
-    end
-
-    private def punct_at(i : Int32) : Tuple(Symbol?, Int32)
-      c = @masked[i]
-      n = i + 1 < @size ? @masked[i + 1] : '\0'
-      case
-      when c == '=' && n == '>' then {:arrow, 2}
-      when c == '('             then {:lparen, 1}
-      when c == ')'             then {:rparen, 1}
-      when c == '['             then {:lbracket, 1}
-      when c == ']'             then {:rbracket, 1}
-      when c == '{'             then {:lbrace, 1}
-      when c == '}'             then {:rbrace, 1}
-      when c == ';'             then {:semicolon, 1}
-      when c == ','             then {:comma, 1}
-      when c == '.'             then {:dot, 1}
-      else                           {nil, 1}
-      end
     end
   end
 end
