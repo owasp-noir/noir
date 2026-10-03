@@ -9,8 +9,7 @@ module Analyzer::Clojure
   class Ring < Analyzer
     analyzer_for "clojure_ring"
 
-    CLOJURE_EXTENSIONS = {".clj", ".cljc", ".cljs"}
-    METHOD_KEYWORDS    = {
+    METHOD_KEYWORDS = {
       "get"     => "GET",
       "post"    => "POST",
       "put"     => "PUT",
@@ -30,7 +29,7 @@ module Analyzer::Clojure
 
     def analyze
       all_files.each do |path|
-        next unless clojure_file?(path)
+        next unless Noir::ClojureScanner.clojure_file?(path)
 
         content = read_file_content(path)
         next unless ring_source?(content)
@@ -42,10 +41,6 @@ module Analyzer::Clojure
 
       Fiber.yield
       @result
-    end
-
-    private def clojure_file?(path : String) : Bool
-      CLOJURE_EXTENSIONS.any? { |ext| path.ends_with?(ext) }
     end
 
     private def ring_source?(content : String) : Bool
@@ -85,9 +80,9 @@ module Analyzer::Clojure
           break if form_end <= i
 
           symbol_start = Noir::ClojureScanner.skip_ws_and_comments(source, i + 1, form_end, commas: false)
-          symbol, after_symbol = read_symbol(source, symbol_start, form_end)
+          symbol, after_symbol = Noir::ClojureScanner.read_symbol(source, symbol_start, form_end, commas: false)
 
-          base = base_symbol(symbol)
+          base = Noir::ClojureScanner.base_symbol(symbol)
 
           case base
           when "and"
@@ -150,7 +145,7 @@ module Analyzer::Clojure
 
         if is_key
           if token.starts_with?('"')
-            route = decode_literal(token)
+            route = Noir::ClojureScanner.decode_string_literal(token)
             emit_endpoint(source, path, i, "GET", route, seen) if route.starts_with?('/')
           elsif token.starts_with?('(')
             # Fall-through list of keys: `("/a" "/b")` — each string is a route.
@@ -169,7 +164,7 @@ module Analyzer::Clojure
         token, after = read_form_token(source, i, limit)
         break if token.empty?
         if token.starts_with?('"')
-          route = decode_literal(token)
+          route = Noir::ClojureScanner.decode_string_literal(token)
           emit_endpoint(source, path, i, "GET", route, seen) if route.starts_with?('/')
         end
         i = after
@@ -184,9 +179,9 @@ module Analyzer::Clojure
 
       first, second = tokens
       if first.starts_with?('"') && uri_accessor?(second)
-        decode_literal(first)
+        Noir::ClojureScanner.decode_string_literal(first)
       elsif uri_accessor?(first) && second.starts_with?('"')
-        decode_literal(second)
+        Noir::ClojureScanner.decode_string_literal(second)
       end
     end
 
@@ -207,8 +202,8 @@ module Analyzer::Clojure
           break if form_end <= i
 
           sym_start = Noir::ClojureScanner.skip_ws_and_comments(source, i + 1, form_end, commas: false)
-          symbol, after_symbol = read_symbol(source, sym_start, form_end)
-          if base_symbol(symbol) == "="
+          symbol, after_symbol = Noir::ClojureScanner.read_symbol(source, sym_start, form_end, commas: false)
+          if Noir::ClojureScanner.base_symbol(symbol) == "="
             if method = method_equality(source, after_symbol, form_end)
               return method
             end
@@ -295,15 +290,9 @@ module Analyzer::Clojure
         token = source.byte_slice(i, str_end - i + 1)
         {token, Noir::ClojureScanner.skip_ws_and_comments(source, str_end + 1, end_index, commas: false)}
       else
-        sym, after = read_symbol(source, i, end_index)
+        sym, after = Noir::ClojureScanner.read_symbol(source, i, end_index, commas: false)
         {sym, Noir::ClojureScanner.skip_ws_and_comments(source, after, end_index, commas: false)}
       end
-    end
-
-    private def decode_literal(raw : String) : String
-      return raw unless raw.starts_with?('"') && raw.ends_with?('"') && raw.size >= 2
-      inner = raw[1...raw.size - 1]
-      inner.gsub(/\\(.)/, "\\1")
     end
 
     private def decode_string(raw : String) : String
@@ -319,34 +308,11 @@ module Analyzer::Clojure
       line = Noir::ClojureScanner.line_number_for(content, offset)
       endpoint = Endpoint.new(route, method, Details.new(PathInfo.new(path, line)))
 
-      extract_path_param_names(route).each do |name|
+      Noir::ClojureScanner.extract_path_param_names(route).each do |name|
         endpoint.push_param(Param.new(name, "", "path"))
       end
 
       @result << endpoint
-    end
-
-    private def extract_path_param_names(route : String) : Array(String)
-      names = [] of String
-      route.scan(/:([A-Za-z_][\w\-]*)/) do |match|
-        names << match[1]
-      end
-      names
-    end
-
-    private def base_symbol(symbol : String) : String
-      parts = symbol.split('/')
-      parts.last? || symbol
-    end
-
-    private def read_symbol(source : String, index : Int32, limit : Int32) : Tuple(String, Int32)
-      i = index
-      while i < limit
-        char = source.byte_at(i).unsafe_chr
-        break if char.whitespace? || {'(', ')', '[', ']', '{', '}', '"', ';'}.includes?(char)
-        i += 1
-      end
-      {source.byte_slice(index, i - index), i}
     end
   end
 end

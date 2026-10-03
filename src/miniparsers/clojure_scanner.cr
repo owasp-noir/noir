@@ -120,5 +120,122 @@ module Noir
     def line_number_for(source : String, index : Int32, start_line : Int32 = 1) : Int32
       start_line + source.to_slice[0, index].count('\n'.ord.to_u8)
     end
+
+    CLOJURE_EXTENSIONS = {".clj", ".cljc", ".cljs"}
+
+    def clojure_file?(path : String) : Bool
+      CLOJURE_EXTENSIONS.any? { |ext| path.ends_with?(ext) }
+    end
+
+    # Read a bare symbol/keyword starting at `index`. Commas are whitespace in
+    # Clojure, so by default they terminate a symbol just like spaces (keeps
+    # `[x, y]` from reading `x,` as one token); pass `commas: false` to read
+    # through them.
+    def read_symbol(source : String, index : Int32, limit : Int32, commas : Bool = true) : Tuple(String, Int32)
+      i = index
+      while i < limit
+        char = source.byte_at(i).unsafe_chr
+        break if char.whitespace? || (commas && char == ',') || {'(', ')', '[', ']', '{', '}', '"', ';'}.includes?(char)
+        i += 1
+      end
+
+      {source.byte_slice(index, i - index), i}
+    end
+
+    # Reads the next `(...)` / `[...]` / `{...}` form, `"..."` string or bare
+    # symbol, returning its raw text and the offset after it (whitespace
+    # skipped). `commas` is forwarded to `read_symbol` only.
+    def read_form_token(source : String, start : Int32, limit : Int32, commas : Bool = true) : Tuple(String, Int32)
+      i = skip_ws_and_comments(source, start, limit)
+      return {"", i} if i >= limit
+
+      case source.byte_at(i).unsafe_chr
+      when '"'
+        e = skip_string(source, i, limit)
+        {source.byte_slice(i, e - i + 1), skip_ws_and_comments(source, e + 1, limit)}
+      when '('
+        e = find_matching_delimiter(source, i, '(', ')', limit)
+        e > i ? {source.byte_slice(i, e - i + 1), skip_ws_and_comments(source, e + 1, limit)} : {"", i}
+      when '['
+        e = find_matching_delimiter(source, i, '[', ']', limit)
+        e > i ? {source.byte_slice(i, e - i + 1), skip_ws_and_comments(source, e + 1, limit)} : {"", i}
+      when '{'
+        e = find_matching_delimiter(source, i, '{', '}', limit)
+        e > i ? {source.byte_slice(i, e - i + 1), skip_ws_and_comments(source, e + 1, limit)} : {"", i}
+      else
+        read_symbol(source, i, limit, commas)
+      end
+    end
+
+    # The first string literal before the next nested form, decoded, plus the
+    # offset of its closing quote.
+    def first_string_literal(source : String, index : Int32, limit : Int32) : Tuple(String?, Int32)
+      i = skip_ws_and_comments(source, index, limit)
+      while i < limit
+        case source.byte_at(i).unsafe_chr
+        when ';'
+          i = skip_comment(source, i, limit)
+        when '"'
+          literal_end = skip_string(source, i, limit)
+          return {decode_string_literal(source.byte_slice(i, literal_end - i + 1)), literal_end}
+        when '(', '[', '{'
+          break
+        else
+          i += 1
+        end
+      end
+
+      {nil, i}
+    end
+
+    def decode_string_literal(raw : String) : String
+      return raw unless raw.starts_with?('"') && raw.ends_with?('"') && raw.size >= 2
+
+      inner = raw[1...raw.size - 1]
+      inner.gsub(/\\(.)/, "\\1")
+    end
+
+    def base_symbol(symbol : String) : String
+      parts = symbol.split('/')
+      parts.last? || symbol
+    end
+
+    # `:name` segments of a route path, in order (duplicates kept).
+    def extract_path_param_names(route_path : String) : Array(String)
+      names = [] of String
+      route_path.scan(/:([A-Za-z_][\w\-]*)/) do |match|
+        names << match[1]
+      end
+      names
+    end
+
+    # A handler reference (`handler`, `#'ns/handler`, `'handler`) reduced to
+    # its unqualified function name; nil for keywords, strings and literals.
+    def normalized_handler_symbol(token : String) : String?
+      name = token
+      if name.starts_with?("#'")
+        name = name[2..]
+      elsif name.starts_with?('\'') || name.starts_with?('`')
+        name = name[1..]
+      end
+
+      return unless handler_symbol?(name)
+      function_name(name)
+    end
+
+    def handler_symbol?(token : String) : Bool
+      return false if token.starts_with?(':')
+      return false if token.starts_with?('"')
+      return false if {"nil", "true", "false"}.includes?(token)
+      !!token.match(/^[A-Za-z_.*+!?<>=][\w.\-*+!?<>=\/]*$/)
+    end
+
+    def function_name(symbol : String) : String
+      if index = symbol.rindex('/')
+        symbol[(index + 1)..]
+      else
+        symbol
+      end
+    end
   end
 end
