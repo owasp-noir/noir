@@ -20,18 +20,6 @@ module Analyzer::Python
       "headers" => {nil, "header"},
     }
 
-    # `QUERY` (RFC 10008) is safe/idempotent like GET but, per the method's
-    # whole purpose, carries its filter criteria in a request body like
-    # POST — so it joins the body-bearing methods for "form"/"json", not
-    # the read-only "query" (query-string) type.
-    REQUEST_PARAM_TYPES = {
-      "query"  => nil,
-      "form"   => ["POST", "PUT", "PATCH", "DELETE", "QUERY"],
-      "json"   => ["POST", "PUT", "PATCH", "DELETE", "QUERY"],
-      "cookie" => nil,
-      "header" => nil,
-    }
-
     # Hoisted out of the analyze loops: an interpolated regex literal
     # recompiles (PCRE2 JIT) on every evaluation, and these interpolate
     # only constants. The `.to_s` expansion is byte-identical to the
@@ -58,7 +46,6 @@ module Analyzer::Python
        /request\.#{field}\[['"']([^'"']+)['"']\]/}
     end
 
-    @keyword_regex_cache = Hash(::String, Regex).new
     @json_var_regex_cache = Hash(::String, Tuple(Regex, Regex)).new
 
     @file_content_cache = Hash(::String, ::String).new
@@ -436,8 +423,8 @@ module Analyzer::Python
 
       router_name = call_match[1]
       args = split_python_arguments(call_match[2])
-      static_path = extract_keyword_string(args, "uri") ||
-                    extract_keyword_string(args, "path") ||
+      static_path = extract_python_keyword_string(args, "uri") ||
+                    extract_python_keyword_string(args, "path") ||
                     args[0]?.try { |arg| Helper.extract_python_string(arg) } || ""
       return if static_path.empty?
 
@@ -489,7 +476,7 @@ module Analyzer::Python
     end
 
     private def extract_programmatic_handler_class(args : Array(::String)) : ::String
-      handler = extract_keyword_expression(args, "handler") || args[0]?
+      handler = extract_python_keyword_expression(args, "handler") || args[0]?
       return "" unless handler
 
       if class_match = handler.strip.match(AS_VIEW_RE)
@@ -500,7 +487,7 @@ module Analyzer::Python
     end
 
     private def extract_programmatic_handler(args : Array(::String)) : ::String
-      if handler = extract_keyword_expression(args, "handler")
+      if handler = extract_python_keyword_expression(args, "handler")
         return clean_reference(handler)
       end
 
@@ -509,13 +496,13 @@ module Analyzer::Python
     end
 
     private def extract_programmatic_route_path(args : Array(::String)) : ::String
-      if uri = extract_keyword_string(args, "uri")
+      if uri = extract_python_keyword_string(args, "uri")
         return uri
       end
-      if uri = extract_keyword_string(args, "uri_template")
+      if uri = extract_python_keyword_string(args, "uri_template")
         return uri
       end
-      if path = extract_keyword_string(args, "path")
+      if path = extract_python_keyword_string(args, "path")
         return path
       end
 
@@ -524,7 +511,7 @@ module Analyzer::Python
     end
 
     private def extract_programmatic_methods(args : Array(::String)) : Array(::String)
-      expression = extract_keyword_expression(args, "methods")
+      expression = extract_python_keyword_expression(args, "methods")
       return [] of ::String unless expression
 
       methods = [] of ::String
@@ -534,63 +521,11 @@ module Analyzer::Python
       methods
     end
 
-    # Memoized per keyword — the keyword set is tiny (`handler`, `uri`,
-    # `path`, `methods`, ...) but this runs per argument of every
-    # programmatic route.
-    private def keyword_expression_regex(keyword : ::String) : Regex
-      @keyword_regex_cache[keyword] ||= /^\s*#{Regex.escape(keyword)}\s*=\s*(.+)$/m
-    end
-
-    private def extract_keyword_expression(args : Array(::String), keyword : ::String) : ::String?
-      keyword_re = keyword_expression_regex(keyword)
-      args.each do |arg|
-        keyword_match = arg.match(keyword_re)
-        return keyword_match[1].strip if keyword_match
-      end
-
-      nil
-    end
-
-    private def extract_keyword_string(args : Array(::String), keyword : ::String) : ::String?
-      if expression = extract_keyword_expression(args, keyword)
-        return Helper.extract_python_string(expression)
-      end
-
-      nil
-    end
-
     private def clean_reference(expression : ::String) : ::String
       reference = expression.strip
       return reference if reference.matches?(DOTTED_REFERENCE_RE)
 
       ""
-    end
-
-    private def resolve_external_handler(handler_name : ::String,
-                                         current_path : ::String,
-                                         import_modules : Hash(::String, Tuple(::String, Int32))) : Tuple(::String, ::String)?
-      reference = handler_name.strip
-      return if reference.empty?
-
-      if reference.includes?(".")
-        receiver, function_name = reference.split(".", 2)
-        if import_info = import_modules[receiver]?
-          import_path = import_info.first
-          return {import_path, function_name} unless import_path.empty?
-        end
-
-        sibling_module_path = File.join(File.dirname(current_path), "#{receiver}.py")
-        return {sibling_module_path, function_name} if File.exists?(sibling_module_path)
-
-        return
-      end
-
-      if import_info = import_modules[reference]?
-        import_path = import_info.first
-        return {import_path, reference} unless import_path.empty?
-      end
-
-      nil
     end
 
     private def find_self_method_def(lines : Array(::String), route_line_index : Int32, handler_name : ::String) : Int32?
@@ -882,39 +817,6 @@ module Analyzer::Python
       path.gsub(/<([A-Za-z_][A-Za-z0-9_]*)(?::[^>]+)?>/) do |_match|
         "{#{$1}}"
       end
-    end
-
-    # Filters the parameters based on the HTTP method (similar to Flask analyzer)
-    private def get_filtered_params(method : String, params : Array(Param)) : Array(Param)
-      filtered_params = Array(Param).new
-      upper_method = method.upcase
-
-      params.each do |param|
-        is_support_param = false
-        support_methods = REQUEST_PARAM_TYPES.fetch(param.param_type, nil)
-        if support_methods.nil?
-          is_support_param = true
-        else
-          support_methods.each do |support_method|
-            if upper_method == support_method.upcase
-              is_support_param = true
-            end
-          end
-        end
-
-        filtered_params.each do |filtered_param|
-          if filtered_param.name == param.name && filtered_param.param_type == param.param_type
-            is_support_param = false
-            break
-          end
-        end
-
-        if is_support_param
-          filtered_params << param
-        end
-      end
-
-      filtered_params
     end
 
     private def parse_code_block(lines : Array(String)) : String?
