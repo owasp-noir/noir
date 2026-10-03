@@ -63,8 +63,7 @@ module Noir::GoCalleeExtractor
   # Per-directory function/method tables, built for a directory only when
   # someone asks for it.
   #
-  # The eager builders below (`package_function_bodies`,
-  # `package_method_bodies_if`, `GoEngine#collect_package_*`) parse every
+  # The eager builders (`GoEngine#collect_package_*`) parse every
   # `.go` file of the scan, but most callers only ever look up the
   # directories that hold a route file — Go's name resolution is scoped to
   # one package, so nothing else is consulted. On minio that was a parse of
@@ -140,78 +139,15 @@ module Noir::GoCalleeExtractor
     end
   end
 
-  # Walk every cached `.go` source in `file_contents` and collect
-  # top-level `function_declaration` nodes into a per-directory map
-  # so cross-file identifier-handler resolution is O(1) at lookup
-  # time. Keyed by directory because Go's name resolution is scoped
-  # to a single package (== single directory). Module-level twin of
-  # `GoEngine#collect_package_function_bodies` for analyzers (Chi)
-  # that don't inherit from `GoEngine`.
-  def package_function_bodies(file_contents : Hash(String, String)) : Hash(String, Hash(String, FunctionBody))
-    bodies = Hash(String, Hash(String, FunctionBody)).new
-    file_contents.each do |path, content|
-      dir = File.dirname(path)
-      fns = collect_function_bodies(content, path)
-      next if fns.empty?
-      bodies[dir] ||= Hash(String, FunctionBody).new
-      fns.each { |name, fb| bodies[dir][name] ||= fb }
-    end
-    bodies
-  end
-
-  # Like `package_function_bodies`, but returns an empty map immediately
-  # when `enabled` is false. Module-level twin of the
-  # `GoEngine#collect_package_function_bodies` gate for analyzers that
-  # don't inherit from `GoEngine`.
-  def package_function_bodies_if(enabled : Bool, file_contents : Hash(String, String)) : Hash(String, Hash(String, FunctionBody))
-    return Hash(String, Hash(String, FunctionBody)).new unless enabled
-    package_function_bodies(file_contents)
-  end
-
-  # Returns the cross-file function-body map for the given directory,
-  # or an empty map. Mirrors `GoEngine#ts_function_bodies_for_directory`.
-  def function_bodies_for_directory(package_bodies : Hash(String, Hash(String, FunctionBody)), dir : String) : Hash(String, FunctionBody)
-    package_bodies[dir]? || Hash(String, FunctionBody).new
-  end
-
   def function_bodies_for_directory(package_bodies : LazyPackageBodies, dir : String) : Hash(String, FunctionBody)
     package_bodies.functions_for(dir)
   end
 
-  # Lazy twins of `package_function_bodies_if` / `package_method_bodies_if`
-  # for callers that only look tables up per directory (see
-  # `LazyPackageBodies`). Same gates as the eager builders: none for
-  # functions, `func (` for methods.
+  # Per-directory tables for callers that only look them up per directory
+  # (see `LazyPackageBodies`): no gate for functions, `func (` for methods.
   def lazy_package_bodies_if(enabled : Bool, file_contents : Hash(String, String)) : LazyPackageBodies
     return LazyPackageBodies.empty unless enabled
     LazyPackageBodies.new(file_contents, function_gate: nil, method_gate: "func (")
-  end
-
-  # Per-directory `{method_name => [FunctionBody, ...]}` map so a
-  # method-value handler (`as.Campaigns`, `ctrl.Index`) can be resolved
-  # to its method body for callee extraction. Module-level twin of
-  # `GoEngine#collect_package_controller_method_bodies` for analyzers
-  # (Chi) that don't inherit from `GoEngine`. Returns an empty map
-  # immediately when `enabled` is false so default scans pay nothing.
-  def package_method_bodies_if(enabled : Bool, file_contents : Hash(String, String)) : Hash(String, Hash(String, Array(FunctionBody)))
-    bodies = Hash(String, Hash(String, Array(FunctionBody))).new
-    return bodies unless enabled
-    file_contents.each do |path, content|
-      next unless content.includes?("func (")
-      methods = collect_method_bodies(content, path)
-      next if methods.empty?
-      dir = File.dirname(path)
-      dir_map = (bodies[dir] ||= Hash(String, Array(FunctionBody)).new)
-      methods.each do |name, list|
-        (dir_map[name] ||= [] of FunctionBody).concat(list)
-      end
-    end
-    bodies
-  end
-
-  # Returns the per-directory method-body map, or an empty map.
-  def method_bodies_for_directory(package_method_bodies : Hash(String, Hash(String, Array(FunctionBody))), dir : String) : Hash(String, Array(FunctionBody))
-    package_method_bodies[dir]? || Hash(String, Array(FunctionBody)).new
   end
 
   def method_bodies_for_directory(package_method_bodies : LazyPackageBodies, dir : String) : Hash(String, Array(FunctionBody))
@@ -222,7 +158,7 @@ module Noir::GoCalleeExtractor
   #
   # A Go scan asks for these tables from several directions: the callee
   # pass (`GoEngine#collect_package_*`), the request-param pass
-  # (`GoRequestParamExtractor#package_*_for_dirs`), and once per Go
+  # (`GoRequestParamExtractor#lazy_package_bodies_for_dirs`), and once per Go
   # framework analyzer that survived detection — each over the same
   # `CodeLocator` content. Measured on a gitea checkout: 1734 Go parses
   # for 680 distinct sources, 2.55 parses per file, some files 8 times.
