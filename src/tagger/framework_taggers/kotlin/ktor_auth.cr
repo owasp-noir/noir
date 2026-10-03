@@ -90,7 +90,7 @@ class KtorAuthTagger < FrameworkTagger
         auth_frames << {
           threshold:   depth,
           start_line:  line_num,
-          prefix:      normalize_prefix(route_frames.map(&.[:prefix])),
+          prefix:      join_segments(route_frames.map(&.[:prefix])),
           description: "Protected by Ktor authenticate(\"#{auth_name}\") block",
         }
       end
@@ -122,12 +122,6 @@ class KtorAuthTagger < FrameworkTagger
       prefix:      frame[:prefix],
       description: frame[:description],
     }
-  end
-
-  private def normalize_prefix(segments : Array(String)) : String
-    joined = segments.join("")
-    parts = joined.split("/").reject(&.empty?)
-    parts.empty? ? "/" : "/" + parts.join("/")
   end
 
   private def check_endpoint(endpoint : Endpoint)
