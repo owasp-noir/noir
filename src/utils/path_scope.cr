@@ -112,7 +112,9 @@ module Noir
     # must not be treated as a separator. The result is always joined with
     # `/`: noir handles paths as `/`-separated strings throughout, and
     # Windows file APIs accept `/` as readily as `\\`.
-    BASE_SEPARATORS = File::SEPARATOR == '\\' ? {'\\', '/'} : {'/'}
+    # `File::SEPARATOR` is `'/'` on every platform in Crystal, Windows
+    # included, so the platform has to be read off the target flag.
+    BASE_SEPARATORS = {% if flag?(:windows) %} {'\\', '/'} {% else %} {'/'} {% end %}
 
     def normalize_base(base : String) : String
       return base if base.empty?
@@ -140,7 +142,7 @@ module Noir
       # A Windows drive root ("C:\\") is the one place a trailing separator
       # carries meaning — without it "C:" names the current directory on
       # that drive instead.
-      if File::SEPARATOR == '\\' && segments.size == 1 && joined.size == 2 &&
+      if {{ flag?(:windows) }} && segments.size == 1 && joined.size == 2 &&
          joined[1] == ':' && base.size > 2
         return "#{joined}/"
       end
