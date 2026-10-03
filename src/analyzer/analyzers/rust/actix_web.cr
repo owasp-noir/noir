@@ -531,19 +531,6 @@ module Analyzer::Rust
       end
     end
 
-    private def build_fn_ranges(root : LibTreeSitter::TSNode, source : String) : Array(Tuple(Int32, Int32, String))
-      ranges = [] of Tuple(Int32, Int32, String)
-      walk(root) do |n|
-        next unless Noir::TreeSitter.node_type(n) == "function_item"
-        name_node = Noir::TreeSitter.field(n, "name")
-        next unless name_node
-        s = LibTreeSitter.ts_node_start_byte(n).to_i
-        e = LibTreeSitter.ts_node_end_byte(n).to_i
-        ranges << {s, e, Noir::TreeSitter.node_text(name_node, source)}
-      end
-      ranges
-    end
-
     private def configure_route_paths(route_path : String,
                                       call : LibTreeSitter::TSNode,
                                       fn_ranges : Array(Tuple(Int32, Int32, String))?,

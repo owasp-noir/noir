@@ -6,8 +6,8 @@ class RustEngineSpecHarness < Analyzer::Rust::RustEngine
     [] of Endpoint
   end
 
-  def function_body(lines : Array(String), start_index : Int32) : Tuple(String, Int32)?
-    extract_rust_function_body(lines, start_index)
+  def function_body(lines : Array(String), start_index : Int32) : Tuple(String, Int32, Int32)?
+    extract_rust_function_body_with_end(lines, start_index)
   end
 end
 
@@ -34,7 +34,7 @@ describe Analyzer::Rust::RustEngine do
     real_body = harness.function_body(lines, 3)
     real_body.should_not be_nil
     if real_body
-      body, start_line = real_body
+      body, start_line, _ = real_body
       start_line.should eq(5)
       body.should contain("RealService::run")
     end

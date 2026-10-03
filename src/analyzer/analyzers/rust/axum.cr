@@ -1076,48 +1076,6 @@ module Analyzer::Rust
       context
     end
 
-    private def candidate_module_paths(current_path : String, module_parts : Array(String)) : Array(String)
-      return [] of String if module_parts.empty?
-
-      base_dir, parts = module_base_dir(current_path, module_parts)
-      return [] of String if parts.empty?
-
-      module_path = parts.join("/")
-      [
-        File.join(base_dir, "#{module_path}.rs"),
-        File.join(base_dir, module_path, "mod.rs"),
-      ]
-    end
-
-    private def module_base_dir(current_path : String, module_parts : Array(String)) : Tuple(String, Array(String))
-      first = module_parts.first
-      rest = module_parts[1..]? || [] of String
-
-      case first
-      when "crate"
-        {crate_src_dir(current_path), rest}
-      when "self"
-        {current_module_dir(current_path), rest}
-      when "super"
-        {File.dirname(current_module_dir(current_path)), rest}
-      else
-        {current_module_dir(current_path), module_parts}
-      end
-    end
-
-    private def current_module_dir(current_path : String) : String
-      File.dirname(current_path)
-    end
-
-    private def crate_src_dir(current_path : String) : String
-      marker = "/src/"
-      if idx = current_path.rindex(marker)
-        current_path[0, idx + marker.size - 1]
-      else
-        File.dirname(current_path)
-      end
-    end
-
     # ── utoipa-axum #[utoipa::path] support ──────────────────────────
 
     UTOIPA_VERBS = Set{"get", "post", "put", "delete", "patch", "head", "options", "trace"}
@@ -1633,20 +1591,6 @@ module Analyzer::Rust
 
     private def ensure_leading_slash(p : String) : String
       p.starts_with?("/") ? p : "/#{p}"
-    end
-
-    private def primary_module(path : String) : String
-      base = File.basename(path, ".rs")
-      dir = File.dirname(path)
-      case base
-      when "mod"
-        File.basename(dir)
-      when "lib", "main"
-        parent = File.basename(dir)
-        parent == "src" ? File.basename(File.dirname(dir)) : parent
-      else
-        base
-      end
     end
 
     # Walk `node`'s children pairing each `attribute_item` with the
