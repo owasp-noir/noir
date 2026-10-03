@@ -110,7 +110,7 @@ module NoirTaggers
     use_taggers_arr = use_taggers.split(",").map(&.strip.downcase)
     is_all = use_taggers_arr.includes?("all")
 
-    logger = build_logger(options)
+    logger = NoirLogger.from_options(options)
 
     # The registry key IS the tagger's `name` (`Tagger#initialize` reads it
     # back off the class), so an unselected tagger can be skipped without
@@ -131,15 +131,6 @@ module NoirTaggers
 
     # Run framework taggers (tech-aware, only instantiated when matching endpoints exist)
     run_framework_taggers(endpoints, options, use_taggers_arr, logger)
-  end
-
-  private def self.build_logger(options : Hash(String, YAML::Any)) : NoirLogger
-    NoirLogger.new(
-      any_to_bool(options["debug"]),
-      any_to_bool(options["verbose"]),
-      any_to_bool(options["color"]),
-      any_to_bool(options["nolog"])
-    )
   end
 
   private def self.run_framework_taggers(endpoints : Array(Endpoint), options : Hash(String, YAML::Any), use_taggers_arr : Array(String), logger : NoirLogger)
