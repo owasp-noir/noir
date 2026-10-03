@@ -2,19 +2,12 @@ require "../ext/tree_sitter/tree_sitter"
 require "./extraction_result_cache"
 
 module Noir
-  # Tree-sitter-backed port of `PythonRouteExtractor`.
-  #
-  # Unlike the regex extractor (which is line-oriented and relies on the
-  # caller to loop over lines), this one parses the whole source once and
-  # walks the resulting AST. That buys us:
+  # Tree-sitter-backed Python route decorator extractor. It parses the
+  # whole source once and walks the resulting AST, which handles:
   #
   #   * decorators split across multiple lines
   #   * paths / methods containing commas, brackets, or nested quotes
   #   * precise `def`/`class` line discovery without a forward-scanning heuristic
-  #
-  # Behaviour mirrors the regex extractor closely enough that the same
-  # analyzer adapters could switch to it with minimal changes; parity is
-  # verified in `spec/unit_test/miniparser/python_route_extractor_ts_spec.cr`.
   module TreeSitterPythonRouteExtractor
     extend self
 
@@ -76,8 +69,7 @@ module Noir
     # Parses `source` and returns every route decoration found.
     #
     # `router_names` optionally restricts which variable names count as
-    # routers; `nil` accepts any identifier (matching the regex extractor,
-    # which doesn't gate on the name).
+    # routers; `nil` accepts any identifier.
     #
     # `extra_attributes` optionally widens the set of decorator attribute
     # names that count as a route. Each entry maps an attribute name
@@ -120,7 +112,7 @@ module Noir
     #
     # `module_names` is the list of module prefixes allowed before
     # `.Blueprint` (e.g. `["flask"]`). A bare `Blueprint` call is always
-    # accepted, matching the regex extractor.
+    # accepted.
     #
     # Two assignment shapes count: bare `name = Blueprint(...)` and
     # qualified `name = <module>.Blueprint(...)`. The module is read as
