@@ -388,11 +388,7 @@ module Analyzer::Zig
     end
 
     private def extract_path_params(url : String) : Array(Param)
-      params = [] of Param
-      url.scan(/:([A-Za-z_]\w*)/) do |m|
-        params << Param.new(m[1], "", "path")
-      end
-      params
+      url.scan(/:([A-Za-z_]\w*)/).map { |m| Param.new(m[1], "", "path") }
     end
 
     # Join a mount/group prefix with a route path. A bare-root route ("/")

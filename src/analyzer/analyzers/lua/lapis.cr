@@ -662,7 +662,7 @@ module Analyzer::Lua
                                     content : String,
                                     after_assignment : Int32,
                                     handler_bodies : Hash(String, Noir::LuaCalleeExtractor::FunctionBody)) : Array(Noir::LuaCalleeExtractor::Entry)
-      value_start = skip_ws(content, after_assignment)
+      value_start = skip_ws_chars(content.chars, after_assignment)
       if starts_with_keyword?(content, value_start, "function")
         if body = Noir::LuaCalleeExtractor.extract_function_at(content, value_start)
           body_text, start_line = body
@@ -740,7 +740,7 @@ module Analyzer::Lua
         cursor += 1
       end
 
-      trailing = skip_ws(content, cursor)
+      trailing = skip_ws_chars(chars, cursor)
       return if trailing < limit && chars[trailing] == '('
 
       chars[ident_start...cursor].join
@@ -783,18 +783,6 @@ module Analyzer::Lua
       chars = content.chars
       cursor = index
       while cursor < chars.size && (chars[cursor].whitespace? || chars[cursor] == ',')
-        cursor += 1
-      end
-      cursor
-    end
-
-    private def skip_ws(content : String, index : Int32) : Int32
-      # `String#[]` re-walks from byte 0 on every call once the source
-      # contains any multi-byte char, turning this scan O(n^2); index a
-      # materialized Array(Char) instead (O(1) per access).
-      chars = content.chars
-      cursor = index
-      while cursor < chars.size && chars[cursor].whitespace?
         cursor += 1
       end
       cursor

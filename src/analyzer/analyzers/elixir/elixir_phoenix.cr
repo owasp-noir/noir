@@ -142,12 +142,12 @@ module Analyzer::Elixir
         line = lines[index]
 
         if line.includes?("\"\"\"")
-          count_substring(line, "\"\"\"").times { in_triple_double = !in_triple_double }
+          line.scan("\"\"\"") { in_triple_double = !in_triple_double }
           index += 1
           next
         end
         if line.includes?("'''")
-          count_substring(line, "'''").times { in_triple_single = !in_triple_single }
+          line.scan("'''") { in_triple_single = !in_triple_single }
           index += 1
           next
         end
@@ -948,19 +948,6 @@ module Analyzer::Elixir
       # Single multiline search for the first `defmodule` instead of
       # allocating an iterator over every line of large modules.
       content.match(MODULE_NAME_RE).try(&.[1])
-    end
-
-    # Count non-overlapping occurrences of `needle` without allocating a
-    # MatchData array (`String#scan(…​).size`).
-    private def count_substring(text : String, needle : String) : Int32
-      return 0 if needle.empty?
-      count = 0
-      i = 0
-      while j = text.index(needle, i)
-        count += 1
-        i = j + needle.size
-      end
-      count
     end
 
     private def normalize_controller_ref(controller : String) : String

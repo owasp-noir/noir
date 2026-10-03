@@ -162,7 +162,8 @@ module Analyzer::Perl
           end
         end
 
-        depth += brace_delta(code_lines[index]? || "")
+        code_line = code_lines[index]? || ""
+        depth += code_line.count('{') - code_line.count('}')
         while !prefix_stack.empty? && prefix_stack.last[0] >= depth
           prefix_stack.pop
         end
@@ -349,15 +350,6 @@ module Analyzer::Perl
       normalized = path.empty? ? "/" : path
       normalized = "/#{normalized}" unless normalized.starts_with?('/')
       normalized.size > 1 && normalized.ends_with?('/') ? normalized.rchop : normalized
-    end
-
-    private def brace_delta(line : String) : Int32
-      delta = 0
-      line.each_char do |char|
-        delta += 1 if char == '{'
-        delta -= 1 if char == '}'
-      end
-      delta
     end
 
     private def code_only_lines(pod_blanked : Array(String)) : Array(String)
