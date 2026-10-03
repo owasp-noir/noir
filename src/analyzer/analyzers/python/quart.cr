@@ -45,19 +45,6 @@ module Analyzer::Python
       }
     end
 
-    # `QUERY` (RFC 10008) is safe/idempotent like GET but, per the method's
-    # whole purpose, carries its filter criteria in a request body like
-    # POST — so it joins the body-bearing methods for "form"/"json", not
-    # the read-only "query" (query-string) type. Quart mirrors Flask's API
-    # 1:1 (including this table), so it gets the same treatment.
-    REQUEST_PARAM_TYPES = {
-      "query"  => nil,
-      "form"   => ["POST", "PUT", "PATCH", "DELETE", "QUERY"],
-      "json"   => ["POST", "PUT", "PATCH", "DELETE", "QUERY"],
-      "cookie" => nil,
-      "header" => nil,
-    }
-
     # `@app.websocket("/ws")` is the only attribute outside the
     # standard HTTP-method set that the tree-sitter extractor needs
     # to surface here. The synthesised method stays `GET` so the
@@ -310,7 +297,7 @@ module Analyzer::Python
           function_def_index = function_name.includes?(".") ? -1 : find_function_def(lines, function_name)
           if function_def_index < 0
             import_modules = find_imported_modules(base_path_for(path), path, source)
-            resolved = resolve_external_function_view(function_name, path, import_modules)
+            resolved = resolve_external_handler(function_name, path, import_modules)
             next unless resolved
 
             function_path, resolved_name = resolved
@@ -441,33 +428,6 @@ module Analyzer::Python
                    ""
                  end
       view_arg.matches?(DOTTED_REFERENCE_RE) ? view_arg : ""
-    end
-
-    private def resolve_external_function_view(function_ref : ::String,
-                                               current_path : ::String,
-                                               import_modules : Hash(::String, Tuple(::String, Int32))) : Tuple(::String, ::String)?
-      reference = function_ref.strip
-      return if reference.empty?
-
-      if reference.includes?(".")
-        receiver, function_name = reference.split(".", 2)
-        if import_info = import_modules[receiver]?
-          import_path = import_info.first
-          return {import_path, function_name} unless import_path.empty?
-        end
-
-        sibling_module_path = File.join(File.dirname(current_path), "#{receiver}.py")
-        return {sibling_module_path, function_name} if File.exists?(sibling_module_path)
-
-        return
-      end
-
-      if import_info = import_modules[reference]?
-        import_path = import_info.first
-        return {import_path, reference} unless import_path.empty?
-      end
-
-      nil
     end
 
     private def split_python_call_args(args : ::String) : Array(::String)
@@ -799,34 +759,6 @@ module Analyzer::Python
       end
 
       params
-    end
-
-    def get_filtered_params(method : ::String, params : Array(Param)) : Array(Param)
-      filtered_params = Array(Param).new
-      upper_method = method.upcase
-
-      params.each do |param|
-        is_support_param = false
-        support_methods = REQUEST_PARAM_TYPES.fetch(param.param_type, nil)
-        if support_methods.nil?
-          is_support_param = true
-        else
-          support_methods.each do |support_method|
-            is_support_param = true if upper_method == support_method.upcase
-          end
-        end
-
-        filtered_params.each do |filtered_param|
-          if filtered_param.name == param.name && filtered_param.param_type == param.param_type
-            is_support_param = false
-            break
-          end
-        end
-
-        filtered_params << param if is_support_param
-      end
-
-      filtered_params
     end
   end
 end

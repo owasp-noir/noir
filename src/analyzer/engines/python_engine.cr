@@ -128,6 +128,31 @@ module Analyzer::Python
       Noir::TopLevelSplit.split(args, ',', Noir::TopLevelSplit::Rules::PYTHON)
     end
 
+    # Walk forward from `def_index` collecting lines at strictly greater
+    # indentation than the def line — that's the function body. The def
+    # line itself is not included.
+    protected def extract_function_body(lines : Array(::String), def_index : Int32) : ::String
+      return "" if def_index >= lines.size
+      def_line = lines[def_index]
+      base_indent = def_line.size - def_line.lstrip.size
+
+      body = [] of ::String
+      i = def_index + 1
+      while i < lines.size
+        line = lines[i]
+        if line.strip.empty?
+          body << line
+          i += 1
+          next
+        end
+        current_indent = line.size - line.lstrip.size
+        break if current_indent <= base_indent
+        body << line
+        i += 1
+      end
+      body.join("\n")
+    end
+
     # Parses the definition of a function from the source lines starting at a given index
     def parse_function_def(source_lines : Array(::String), start_index : Int32) : FunctionDefinition?
       parameters = [] of FunctionParameter
@@ -276,6 +301,67 @@ module Analyzer::Python
     # directly without going through `PythonEngine`.
     def find_imported_modules(app_base_path : ::String, file_path : ::String, content : ::String? = nil) : Hash(::String, Tuple(::String, Int32))
       Noir::ImportGraph::Python.find_imported_modules(app_base_path, file_path, content)
+    end
+
+    # Resolve a handler reference that is not defined in `current_path`
+    # to `{file, function_name}`: `module.func` through an import or a
+    # sibling `module.py`, a bare `func` through a `from … import func`.
+    protected def resolve_external_handler(handler_name : ::String,
+                                           current_path : ::String,
+                                           import_modules : Hash(::String, Tuple(::String, Int32))) : Tuple(::String, ::String)?
+      reference = handler_name.strip
+      return if reference.empty?
+
+      if reference.includes?(".")
+        receiver, function_name = reference.split(".", 2)
+        if import_info = import_modules[receiver]?
+          import_path = import_info.first
+          return {import_path, function_name} unless import_path.empty?
+        end
+
+        sibling_module_path = File.join(File.dirname(current_path), "#{receiver}.py")
+        return {sibling_module_path, function_name} if File.exists?(sibling_module_path)
+
+        return
+      end
+
+      if import_info = import_modules[reference]?
+        import_path = import_info.first
+        return {import_path, reference} unless import_path.empty?
+      end
+
+      nil
+    end
+
+    # Methods a request-param type can arrive on (`nil` = any) for the
+    # Flask-style analyzers (Flask, Quart, Sanic). `QUERY` (RFC 10008) is
+    # safe/idempotent like GET but, per the method's whole purpose, carries
+    # its filter criteria in a request body like POST — so it joins the
+    # body-bearing methods for "form"/"json", not the read-only "query"
+    # (query-string) type.
+    REQUEST_PARAM_TYPES = {
+      "query"  => nil,
+      "form"   => ["POST", "PUT", "PATCH", "DELETE", "QUERY"],
+      "json"   => ["POST", "PUT", "PATCH", "DELETE", "QUERY"],
+      "cookie" => nil,
+      "header" => nil,
+    }
+
+    # Keep the params `method` can carry per `REQUEST_PARAM_TYPES`,
+    # deduplicated by (name, param_type).
+    protected def get_filtered_params(method : ::String, params : Array(Param)) : Array(Param)
+      filtered_params = Array(Param).new
+      upper_method = method.upcase
+
+      params.each do |param|
+        support_methods = REQUEST_PARAM_TYPES.fetch(param.param_type, nil)
+        next unless support_methods.nil? || support_methods.any? { |support_method| upper_method == support_method.upcase }
+        next if filtered_params.any? { |filtered| filtered.name == param.name && filtered.param_type == param.param_type }
+
+        filtered_params << param
+      end
+
+      filtered_params
     end
 
     # Finds all parameters in JSON objects within a given code block

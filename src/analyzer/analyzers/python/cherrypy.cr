@@ -598,28 +598,5 @@ module Analyzer::Python
     private def indent_level(line : ::String) : Int32
       line.size - line.lstrip.size
     end
-
-    # Collect indented lines following a `def` as the function body.
-    private def extract_function_body(lines : Array(::String), def_index : Int32) : ::String
-      return "" if def_index >= lines.size
-      def_line = lines[def_index]
-      base_indent = def_line.size - def_line.lstrip.size
-
-      body = [] of ::String
-      i = def_index + 1
-      while i < lines.size
-        line = lines[i]
-        if line.strip.empty?
-          body << line
-          i += 1
-          next
-        end
-        current_indent = line.size - line.lstrip.size
-        break if current_indent <= base_indent
-        body << line
-        i += 1
-      end
-      body.join("\n")
-    end
   end
 end

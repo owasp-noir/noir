@@ -370,30 +370,6 @@ module Analyzer::Python
       nil
     end
 
-    # Walk forward from `def_index` collecting lines at strictly greater
-    # indentation than the def line — that's the function body.
-    private def extract_function_body(lines : Array(String), def_index : Int32) : String
-      return "" if def_index >= lines.size
-      def_line = lines[def_index]
-      base_indent = def_line.size - def_line.lstrip.size
-
-      body = [] of String
-      i = def_index + 1
-      while i < lines.size
-        line = lines[i]
-        if line.strip.empty?
-          body << line
-          i += 1
-          next
-        end
-        current_indent = line.size - line.lstrip.size
-        break if current_indent <= base_indent
-        body << line
-        i += 1
-      end
-      body.join("\n")
-    end
-
     # Bottle attributes whose parameter type is independent of HTTP method.
     # Maps the Python accessor name on `request.<name>` to the noir param_type.
     DICT_ACCESSORS = {

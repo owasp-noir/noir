@@ -20,18 +20,6 @@ module Analyzer::Python
       "headers" => {nil, "header"},
     }
 
-    # `QUERY` (RFC 10008) is safe/idempotent like GET but, per the method's
-    # whole purpose, carries its filter criteria in a request body like
-    # POST — so it joins the body-bearing methods for "form"/"json", not
-    # the read-only "query" (query-string) type.
-    REQUEST_PARAM_TYPES = {
-      "query"  => nil,
-      "form"   => ["POST", "PUT", "PATCH", "DELETE", "QUERY"],
-      "json"   => ["POST", "PUT", "PATCH", "DELETE", "QUERY"],
-      "cookie" => nil,
-      "header" => nil,
-    }
-
     # Hoisted out of the analyze loops: an interpolated regex literal
     # recompiles (PCRE2 JIT) on every evaluation, and these interpolate
     # only constants. The `.to_s` expansion is byte-identical to the
@@ -566,33 +554,6 @@ module Analyzer::Python
       ""
     end
 
-    private def resolve_external_handler(handler_name : ::String,
-                                         current_path : ::String,
-                                         import_modules : Hash(::String, Tuple(::String, Int32))) : Tuple(::String, ::String)?
-      reference = handler_name.strip
-      return if reference.empty?
-
-      if reference.includes?(".")
-        receiver, function_name = reference.split(".", 2)
-        if import_info = import_modules[receiver]?
-          import_path = import_info.first
-          return {import_path, function_name} unless import_path.empty?
-        end
-
-        sibling_module_path = File.join(File.dirname(current_path), "#{receiver}.py")
-        return {sibling_module_path, function_name} if File.exists?(sibling_module_path)
-
-        return
-      end
-
-      if import_info = import_modules[reference]?
-        import_path = import_info.first
-        return {import_path, reference} unless import_path.empty?
-      end
-
-      nil
-    end
-
     private def find_self_method_def(lines : Array(::String), route_line_index : Int32, handler_name : ::String) : Int32?
       return unless handler_name.starts_with?("self.")
 
@@ -882,39 +843,6 @@ module Analyzer::Python
       path.gsub(/<([A-Za-z_][A-Za-z0-9_]*)(?::[^>]+)?>/) do |_match|
         "{#{$1}}"
       end
-    end
-
-    # Filters the parameters based on the HTTP method (similar to Flask analyzer)
-    private def get_filtered_params(method : String, params : Array(Param)) : Array(Param)
-      filtered_params = Array(Param).new
-      upper_method = method.upcase
-
-      params.each do |param|
-        is_support_param = false
-        support_methods = REQUEST_PARAM_TYPES.fetch(param.param_type, nil)
-        if support_methods.nil?
-          is_support_param = true
-        else
-          support_methods.each do |support_method|
-            if upper_method == support_method.upcase
-              is_support_param = true
-            end
-          end
-        end
-
-        filtered_params.each do |filtered_param|
-          if filtered_param.name == param.name && filtered_param.param_type == param.param_type
-            is_support_param = false
-            break
-          end
-        end
-
-        if is_support_param
-          filtered_params << param
-        end
-      end
-
-      filtered_params
     end
 
     private def parse_code_block(lines : Array(String)) : String?

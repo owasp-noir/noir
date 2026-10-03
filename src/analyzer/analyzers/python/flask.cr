@@ -42,18 +42,6 @@ module Analyzer::Python
       }
     end
 
-    # `QUERY` (RFC 10008) is safe/idempotent like GET but, per the method's
-    # whole purpose, carries its filter criteria in a request body like
-    # POST — so it joins the body-bearing methods for "form"/"json", not
-    # the read-only "query" (query-string) type.
-    REQUEST_PARAM_TYPES = {
-      "query"  => nil,
-      "form"   => ["POST", "PUT", "PATCH", "DELETE", "QUERY"],
-      "json"   => ["POST", "PUT", "PATCH", "DELETE", "QUERY"],
-      "cookie" => nil,
-      "header" => nil,
-    }
-
     # Per-line route-discovery patterns. These interpolate only the
     # PYTHON_VAR_NAME_REGEX/DOT_NATION constants, so the inline literals
     # were recompiling identical PCRE2 patterns on every source line of
@@ -682,7 +670,7 @@ module Analyzer::Python
       fn_def_index = fn_name.empty? || fn_name.includes?(".") ? nil : find_function_def(fs.lines, fn_name)
       if fn_def_index.nil? && !fn_name.empty?
         import_map = (fs.import_map_cache ||= find_imported_modules(fs.base_path, fs.path, fs.source))
-        if resolved = resolve_external_function_view(fn_name, fs.path, import_map)
+        if resolved = resolve_external_handler(fn_name, fs.path, import_map)
           fn_path, resolved_name = resolved
           if File.exists?(fn_path)
             fn_source = fetch_file_content(fn_path)
@@ -1860,33 +1848,6 @@ module Analyzer::Python
       view_arg.matches?(DOTTED_REFERENCE_RE) ? view_arg : ""
     end
 
-    private def resolve_external_function_view(function_ref : ::String,
-                                               current_path : ::String,
-                                               import_modules : Hash(::String, Tuple(::String, Int32))) : Tuple(::String, ::String)?
-      reference = function_ref.strip
-      return if reference.empty?
-
-      if reference.includes?(".")
-        receiver, function_name = reference.split(".", 2)
-        if import_info = import_modules[receiver]?
-          import_path = import_info.first
-          return {import_path, function_name} unless import_path.empty?
-        end
-
-        sibling_module_path = File.join(File.dirname(current_path), "#{receiver}.py")
-        return {sibling_module_path, function_name} if File.exists?(sibling_module_path)
-
-        return
-      end
-
-      if import_info = import_modules[reference]?
-        import_path = import_info.first
-        return {import_path, reference} unless import_path.empty?
-      end
-
-      nil
-    end
-
     private def split_python_call_args(args_str : ::String) : Array(::String)
       parts = [] of ::String
       current = String::Builder.new
@@ -2044,40 +2005,6 @@ module Analyzer::Python
       end
 
       params
-    end
-
-    # Filters the parameters based on the HTTP method
-    def get_filtered_params(method : ::String, params : Array(Param)) : Array(Param)
-      # Split to other module (duplicated method with analyzer_django)
-      filtered_params = Array(Param).new
-      upper_method = method.upcase
-
-      params.each do |param|
-        is_support_param = false
-        support_methods = REQUEST_PARAM_TYPES.fetch(param.param_type, nil)
-        if support_methods.nil?
-          is_support_param = true
-        else
-          support_methods.each do |support_method|
-            if upper_method == support_method.upcase
-              is_support_param = true
-            end
-          end
-        end
-
-        filtered_params.each do |filtered_param|
-          if filtered_param.name == param.name && filtered_param.param_type == param.param_type
-            is_support_param = false
-            break
-          end
-        end
-
-        if is_support_param
-          filtered_params << param
-        end
-      end
-
-      filtered_params
     end
 
     # Extracts parameters from the decorator
