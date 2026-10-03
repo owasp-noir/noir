@@ -5,9 +5,6 @@ module Analyzer::Swift
   class Vapor < SwiftEngine
     analyzer_for "swift_vapor"
 
-    # Maximum number of lines to look ahead for function parameters
-    LOOKAHEAD_LIMIT = 20
-
     # Patterns for route definitions in Vapor:
     # app.get("path") { ... }
     # app.post("path", "segment") { ... }
@@ -16,9 +13,8 @@ module Analyzer::Swift
     ON_ROUTE_PATTERN = /([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\.on\s*\(/
     # The base may be a dotted receiver (`app.routes.grouped(...)`), an implicit
     # `self` (bare `grouped(...)`), or a single identifier (`router.grouped(...)`).
-    GROUP_ASSIGN_PATTERN       = /\b(?:let|var)\s+([A-Za-z_]\w*)\s*=\s*(?:([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\.)?grouped\s*\(/
-    GROUP_CLOSURE_PATTERN      = /([A-Za-z_]\w*)\.group(?:ed)?\s*\(/
-    FUNCTION_SIGNATURE_PATTERN = /\bfunc\s+([A-Za-z_]\w*)\s*\(/
+    GROUP_ASSIGN_PATTERN  = /\b(?:let|var)\s+([A-Za-z_]\w*)\s*=\s*(?:([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\.)?grouped\s*\(/
+    GROUP_CLOSURE_PATTERN = /([A-Za-z_]\w*)\.group(?:ed)?\s*\(/
 
     # A function parameter (or binding) typed as a Vapor router:
     # `func routes(_ app: Application)`, `func boot(routes: RoutesBuilder)`,
@@ -131,50 +127,6 @@ module Analyzer::Swift
 
       path = "/" + path_segments.join("/")
       path
-    end
-
-    # Extract path parameters from the route pattern (e.g., :id, :userID)
-    def extract_path_params(route : String, endpoint : Endpoint)
-      route.scan(/:(\w+)/) do |match|
-        param_name = match[1]
-        endpoint.push_param(Param.new(param_name, "", "path"))
-      end
-    end
-
-    # Extract parameters from function body
-    def extract_function_params(lines : Array(String), start_index : Int32, endpoint : Endpoint)
-      in_function = false
-      brace_count = 0
-      seen_opening_brace = false
-
-      existing_path_params = Set(String).new
-      endpoint.params.each do |p|
-        existing_path_params.add(p.name) if p.param_type == "path"
-      end
-
-      (start_index...[start_index + LOOKAHEAD_LIMIT, lines.size].min).each do |i|
-        line = lines[i]
-
-        if line.includes?(" in ")
-          in_function = true
-        end
-
-        brace_count += line.count('{')
-        if brace_count > 0
-          seen_opening_brace = true
-        end
-        brace_count -= line.count('}')
-
-        extract_params_from_line(line, endpoint, existing_path_params)
-
-        if in_function && seen_opening_brace && brace_count == 0 && i > start_index
-          break
-        end
-
-        if i > start_index && route_definition?(line)
-          break
-        end
-      end
     end
 
     # Check if a line contains a route definition
@@ -341,48 +293,6 @@ module Analyzer::Swift
       group_prefix_stack << {variable, brace_depth + 1}
     end
 
-    private def call_arguments(line : String, args_start : Int32) : Tuple(String, Int32)?
-      # `chars` avoids per-index `String#[]`: on non-ASCII lines each direct
-      # `line[index]` re-walks from byte 0 to locate the char offset, making
-      # this scan O(n^2). Materializing the char array once keeps indexed
-      # access O(1) and the whole scan O(n); the single closing slice below
-      # (`line[args_start...index]`) is unchanged and still O(n) once.
-      chars = line.chars
-      depth = 1
-      in_string = false
-      escaped = false
-      quote = '"'
-      index = args_start
-
-      while index < chars.size
-        char = chars[index]
-
-        if in_string
-          if escaped
-            escaped = false
-          elsif char == '\\'
-            escaped = true
-          elsif char == quote
-            in_string = false
-          end
-        elsif char == '"' || char == '\''
-          in_string = true
-          quote = char
-        elsif char == '('
-          depth += 1
-        elsif char == ')'
-          depth -= 1
-          if depth == 0
-            return {line[args_start...index], index}
-          end
-        end
-
-        index += 1
-      end
-
-      nil
-    end
-
     private def update_group_depth(line : String,
                                    brace_depth : Int32,
                                    group_prefix_stack : Array(Tuple(String, Int32)),
@@ -396,16 +306,6 @@ module Analyzer::Swift
       end
 
       depth
-    end
-
-    private def prefix_for_receiver(receiver : String, prefix_by_receiver : Hash(String, String)) : String
-      receiver.split('.').reverse_each do |part|
-        if prefix = prefix_by_receiver[part]?
-          return prefix
-        end
-      end
-
-      ""
     end
 
     private def code_line(line : String) : String
@@ -524,99 +424,6 @@ module Analyzer::Swift
       end
 
       nil
-    end
-
-    private def named_handler_bodies(lines : Array(String)) : Hash(String, Tuple(String, Int32))
-      bodies = {} of String => Tuple(String, Int32)
-      block_comment_depth = 0
-      in_multiline_string = false
-
-      lines.each_with_index do |line, index|
-        stripped, block_comment_depth, in_multiline_string = Noir::SwiftCalleeExtractor.strip_non_code_with_state(
-          line,
-          block_comment_depth,
-          in_multiline_string
-        )
-        match = stripped.match(FUNCTION_SIGNATURE_PATTERN)
-        next unless match
-
-        handler_name = match[1]
-        next if bodies.has_key?(handler_name)
-
-        opening = stripped.index('{')
-        if opening
-          bodies[handler_name] = body_after_opening_brace(lines, index, opening)
-          next
-        end
-
-        if location = next_opening_brace(lines, index + 1, block_comment_depth, in_multiline_string)
-          opening_index, opening_brace = location
-          bodies[handler_name] = body_after_opening_brace(lines, opening_index, opening_brace)
-        end
-      end
-
-      bodies
-    end
-
-    private def next_opening_brace(lines : Array(String),
-                                   start_index : Int32,
-                                   block_comment_depth : Int32,
-                                   in_multiline_string : Bool) : Tuple(Int32, Int32)?
-      (start_index...[start_index + LOOKAHEAD_LIMIT, lines.size].min).each do |index|
-        stripped, block_comment_depth, in_multiline_string = Noir::SwiftCalleeExtractor.strip_non_code_with_state(
-          lines[index],
-          block_comment_depth,
-          in_multiline_string
-        )
-        if opening = stripped.index('{')
-          return {index, opening}
-        end
-
-        break if stripped.match(FUNCTION_SIGNATURE_PATTERN)
-      end
-
-      nil
-    end
-
-    private def body_after_opening_brace(lines : Array(String), opening_index : Int32, opening_brace : Int32) : Tuple(String, Int32)
-      route_line = lines[opening_index]
-      first_fragment = route_line[(opening_brace + 1)..]? || ""
-      clean_fragment, block_comment_depth, in_multiline_string = Noir::SwiftCalleeExtractor.strip_non_code_with_state(first_fragment, 0, false)
-      body_lines = [] of String
-      brace_count = 1 + clean_fragment.count('{') - clean_fragment.count('}')
-
-      if brace_count <= 0
-        closing_brace = clean_fragment.rindex('}')
-        first_fragment = first_fragment[0...closing_brace] if closing_brace
-        return {first_fragment, opening_index + 1}
-      end
-
-      body_lines << first_fragment
-      index = opening_index + 1
-
-      while index < lines.size && brace_count > 0
-        line = lines[index]
-        stripped, block_comment_depth, in_multiline_string = Noir::SwiftCalleeExtractor.strip_non_code_with_state(
-          line,
-          block_comment_depth,
-          in_multiline_string
-        )
-        next_brace_count = brace_count + stripped.count('{') - stripped.count('}')
-
-        if next_brace_count <= 0
-          if line.strip != "}"
-            closing_brace = stripped.rindex('}')
-            body_lines << (closing_brace ? line[0...closing_brace] : line)
-          end
-          break
-        end
-
-        body_lines << line
-        brace_count = next_brace_count
-        index += 1
-      end
-
-      {body_lines.join("\n"), opening_index + 1}
     end
   end
 end
