@@ -15,7 +15,10 @@ end
 
 # Append a value onto a comma-separated string option, accumulating across
 # repeated flags instead of overwriting (so `--flag a --flag b` keeps both).
-private def append_to_csv_option(hash : Hash(String, YAML::Any), key : String, value : String, reset_seen : Set(String)? = nil)
+# When `reset_if` equals the current value — e.g. an untouched default list —
+# the accumulation starts fresh so the first user value replaces the default
+# rather than appending to it.
+private def append_to_csv_option(hash : Hash(String, YAML::Any), key : String, value : String, reset_if : String? = nil, reset_seen : Set(String)? = nil)
   existing = (hash[key]? || YAML::Any.new("")).to_s
   if reset_seen && !reset_seen.includes?(key)
     # First CLI occurrence of this flag replaces any config-file value
@@ -24,6 +27,7 @@ private def append_to_csv_option(hash : Hash(String, YAML::Any), key : String, v
     existing = ""
     reset_seen << key
   end
+  existing = "" if reset_if && existing == reset_if
   combined = existing.empty? ? value : "#{existing},#{value}"
   hash[key] = YAML::Any.new(combined)
 end
@@ -600,7 +604,7 @@ def run_options_parser
       # do for `--use-taggers`, `--exclude-techs`, etc. The first
       # occurrence replaces the default CSV (`reset_seen`) instead of
       # appending onto it.
-      append_to_csv_option(noir_options, "ai_native_tools_allowlist", v, reset_seen: csv_reset_seen)
+      append_to_csv_option(noir_options, "ai_native_tools_allowlist", v, reset_if: LLM::NativeToolCalling.default_allowlist_csv, reset_seen: csv_reset_seen)
     end
     parser.on "--ai-max-token N", "Max tokens per request" do |v|
       validated = positive_int_or_die!("--ai-max-token", v)
