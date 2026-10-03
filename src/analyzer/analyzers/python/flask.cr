@@ -1644,7 +1644,11 @@ module Analyzer::Python
 
         lines = lines_by_path[decl.path] ||= fetch_file_content(decl.path).split("\n")
         decl.exposes.each do |expose|
-          normalized_path, path_params = normalize_flask_path_params(join_fab_paths(base, expose.route_path))
+          # `route_base` becomes the blueprint's `url_prefix`, so Flask joins
+          # it as `url_prefix.rstrip("/") + rule`: `@expose("/")` on
+          # `route_base = "/api/v1/chart"` is `/api/v1/chart/`, WITH the
+          # trailing slash (Superset's own OpenAPI spells it that way).
+          normalized_path, path_params = normalize_flask_path_params(Helper.normalized_join(base, expose.route_path))
           expose.methods.each do |method|
             params = path_params.dup
             if def_line = find_def_line(lines, expose.line_index)
@@ -1658,21 +1662,6 @@ module Analyzer::Python
           end
         end
       end
-    end
-
-    # `route_base` becomes the blueprint's `url_prefix`, so Flask joins it
-    # with the rule as `url_prefix.rstrip("/") + rule`: `@expose("/")` on
-    # `route_base = "/api/v1/chart"` is `/api/v1/chart/`, WITH the trailing
-    # slash, and Flask redirects the bare `/api/v1/chart` to it. Superset's
-    # own OpenAPI document spells all fifteen of its collection routes that
-    # way.
-    private def join_fab_paths(prefix : ::String, path : ::String) : ::String
-      return normalize_joined_flask_path(path) if prefix.empty?
-      return normalize_joined_flask_path(prefix) if path.empty?
-
-      normalized_prefix = prefix.ends_with?("/") ? prefix[0...-1] : prefix
-      normalized_path = path.starts_with?("/") ? path : "/#{path}"
-      normalize_joined_flask_path("#{normalized_prefix}#{normalized_path}")
     end
 
     private def parse_flask_appbuilder_expose_call(line : ::String) : Tuple(::String, Array(::String))?
@@ -1713,18 +1702,7 @@ module Analyzer::Python
     end
 
     private def join_flask_paths(prefix : ::String, path : ::String) : ::String
-      return normalize_joined_flask_path(path) if prefix.empty?
-      return normalize_joined_flask_path(prefix) if path.empty? || path == "/"
-
-      normalized_prefix = prefix.ends_with?("/") ? prefix[0...-1] : prefix
-      normalized_path = path.starts_with?("/") ? path : "/#{path}"
-      normalize_joined_flask_path("#{normalized_prefix}#{normalized_path}")
-    end
-
-    private def normalize_joined_flask_path(path : ::String) : ::String
-      normalized = path.gsub(/\/+/, "/")
-      normalized = "/#{normalized}" unless normalized.starts_with?("/")
-      normalized
+      path == "/" ? Helper.normalize_path(prefix) : Helper.normalized_join(prefix, path)
     end
 
     private def normalize_flask_path_params(path : ::String) : Tuple(::String, Array(Param))
