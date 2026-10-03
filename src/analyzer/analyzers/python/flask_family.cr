@@ -78,6 +78,40 @@ module Analyzer::Python
       PythonParser.new(path, content, @parsers, depth: 0)
     end
 
+    # Build endpoints from a single route decoration: split on declared
+    # `methods=[...]`, default to `method`, run the analyzer's own
+    # `extract_request_params` over the handler body once and filter the
+    # params per method.
+    def get_endpoints(method : ::String, route_path : ::String, extra_params : ::String, codeblock_lines : Array(::String), prefix : ::String)
+      endpoints = [] of Endpoint
+      methods = [] of ::String
+
+      if !prefix.ends_with?("/") && !route_path.starts_with?("/")
+        prefix = "#{prefix}/"
+      end
+
+      methods_match = extra_params.match /methods\s*=\s*(.*)/
+      if !methods_match.nil? && methods_match.size == 2
+        methods_match[1].scan(/['"]([^'"]*)['"']/) do |m|
+          method_name = m[1].upcase
+          methods << method_name if PythonEngine::HTTP_METHODS.any? { |hm| hm.upcase == method_name }
+        end
+      end
+      methods << method.upcase if methods.empty?
+
+      suspicious_params = extract_request_params(codeblock_lines)
+
+      methods.uniq.each do |http_method_name|
+        route_url = "#{prefix}#{route_path}"
+        route_url = "/#{route_url}" unless route_url.starts_with?("/")
+
+        params = get_filtered_params(http_method_name, suspicious_params)
+        endpoints << Endpoint.new(route_url.gsub("//", "/"), http_method_name, params)
+      end
+
+      endpoints
+    end
+
     private def split_python_call_args(args_str : ::String) : Array(::String)
       parts = [] of ::String
       current = String::Builder.new

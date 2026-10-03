@@ -1614,40 +1614,6 @@ module Analyzer::Python
       {normalized, params}
     end
 
-    # Extracts endpoint information from the given route and code block
-    def get_endpoints(method : ::String, route_path : ::String, extra_params : ::String, codeblock_lines : Array(::String), prefix : ::String)
-      endpoints = [] of Endpoint
-      methods = [] of ::String
-
-      if !prefix.ends_with?("/") && !route_path.starts_with?("/")
-        prefix = "#{prefix}/"
-      end
-
-      # Parse declared methods from route decorator
-      methods_match = extra_params.match /methods\s*=\s*(.*)/
-      if !methods_match.nil? && methods_match.size == 2
-        methods_match[1].scan(/['"]([^'"]*)['"']/) do |m|
-          method_name = m[1].upcase
-          methods << method_name if HTTP_METHODS.any? { |hm| hm.upcase == method_name }
-        end
-      end
-      if methods.empty?
-        methods << method.upcase
-      end
-
-      suspicious_params = extract_request_params(codeblock_lines)
-
-      methods.uniq.each do |http_method_name|
-        route_url = "#{prefix}#{route_path}"
-        route_url = "/#{route_url}" unless route_url.starts_with?("/")
-
-        params = get_filtered_params(http_method_name, suspicious_params)
-        endpoints << Endpoint.new(route_url.gsub("//", "/"), http_method_name, params)
-      end
-
-      endpoints
-    end
-
     private def extract_add_url_rule_function_name(args_str : ::String) : ::String
       if view_func_match = args_str.match(VIEW_FUNC_KWARG_RE)
         return view_func_match[1]
