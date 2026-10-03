@@ -12,10 +12,6 @@ module LLM::NativeToolCalling
     KNOWN_PROVIDERS.includes?(canonical_provider(provider))
   end
 
-  def self.default_allowlist : Array(String)
-    DEFAULT_ALLOWLIST.clone
-  end
-
   def self.default_allowlist_csv : String
     DEFAULT_ALLOWLIST.join(",")
   end
@@ -51,7 +47,7 @@ module LLM::NativeToolCalling
 
   def self.normalize_allowlist(allowlist : Array(String)? = nil) : Array(String)
     values = allowlist
-    values = default_allowlist if values.nil? || values.empty?
+    values = DEFAULT_ALLOWLIST if values.nil? || values.empty?
 
     values
       .map { |value| canonical_provider(value) }
