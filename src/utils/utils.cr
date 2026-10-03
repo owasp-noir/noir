@@ -27,7 +27,7 @@ def get_relative_path(base_path : String, path : String) : String
 end
 
 def any_to_bool(any) : Bool
-  %w[true yes].includes?(any.to_s.downcase)
+  {"true", "yes"}.includes?(any.to_s.downcase)
 end
 
 # Escapes glob metacharacters in a path string.
