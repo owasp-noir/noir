@@ -1,7 +1,6 @@
 require "../../../models/analyzer"
 require "../../engines/java_engine"
 require "../../../miniparsers/jaxrs_extractor_ts"
-require "../../../miniparsers/import_graph"
 require "yaml"
 require "../../../utils/url_path"
 require "../../../utils/path_scope"

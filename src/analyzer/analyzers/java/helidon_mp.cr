@@ -1,7 +1,6 @@
 require "../../../models/analyzer"
 require "../../engines/java_engine"
 require "../../../miniparsers/jaxrs_extractor_ts"
-require "../../../miniparsers/import_graph"
 require "../../../utils/url_path"
 
 module Analyzer::Java
