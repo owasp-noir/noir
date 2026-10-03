@@ -89,9 +89,9 @@ module Analyzer::Lua
         next false unless path_under_root?(expanded_path, root)
 
         expanded_root = Noir::PathScope.expand(root)
-        expanded_root = expanded_root.rstrip('/') unless expanded_root == File::SEPARATOR
-        tail = expanded_path[expanded_root.size..]?.try(&.lchop(File::SEPARATOR)) || ""
-        tail.split(File::SEPARATOR).any? { |seg| seg == "spec" || seg.starts_with?("spec_") }
+        expanded_root = expanded_root.rstrip('/') unless expanded_root == "/"
+        tail = expanded_path[expanded_root.size..]?.try(&.lchop('/')) || ""
+        tail.split('/').any? { |seg| seg == "spec" || seg.starts_with?("spec_") }
       end
     end
 
