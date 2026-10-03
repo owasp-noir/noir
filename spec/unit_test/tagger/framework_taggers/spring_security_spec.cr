@@ -42,10 +42,10 @@ private def build_endpoint(path : String, line : Int32?, url : String, method : 
 end
 
 describe "SpringSecurityTagger" do
-  global_base = "#{__DIR__}/../../../functional_test/fixtures/java/spring_security"
+  global_base = File.expand_path("../../../functional_test/fixtures/java/spring_security", __DIR__)
   controller = "#{global_base}/src/main/java/com/example/ApiController.java"
 
-  scoped_base = "#{__DIR__}/../../../functional_test/fixtures/java/spring_security_scoped"
+  scoped_base = File.expand_path("../../../functional_test/fixtures/java/spring_security_scoped", __DIR__)
 
   global_options = create_test_options
   global_options["base"] = YAML::Any.new(global_base)
@@ -53,7 +53,7 @@ describe "SpringSecurityTagger" do
   scoped_options = create_test_options
   scoped_options["base"] = YAML::Any.new(scoped_base)
 
-  extras_base = "#{__DIR__}/../../../functional_test/fixtures/java/spring_security_extras"
+  extras_base = File.expand_path("../../../functional_test/fixtures/java/spring_security_extras", __DIR__)
   webhook_ctrl = "#{extras_base}/src/main/java/com/example/WebhookController.java"
   admin_ctrl = "#{extras_base}/src/main/java/com/example/AdminController.java"
 

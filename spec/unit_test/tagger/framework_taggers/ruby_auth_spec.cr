@@ -3,7 +3,7 @@ require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
 describe "RubyAuthTagger" do
-  fixture_base = "#{__DIR__}/../../../functional_test/fixtures/ruby/rails_auth"
+  fixture_base = File.expand_path("../../../functional_test/fixtures/ruby/rails_auth", __DIR__)
   controller_path = "#{fixture_base}/app/controllers/posts_controller.rb"
 
   # posts_controller.rb line reference:
@@ -112,10 +112,10 @@ end
 
 # Additional tests for Grape + Roda support (B target)
 describe "RubyAuthTagger (Grape/Roda)" do
-  grape_base = "#{__DIR__}/../../../functional_test/fixtures/ruby/grape"
+  grape_base = File.expand_path("../../../functional_test/fixtures/ruby/grape", __DIR__)
   grape_path = "#{grape_base}/app.rb"
 
-  roda_base = "#{__DIR__}/../../../functional_test/fixtures/ruby/roda"
+  roda_base = File.expand_path("../../../functional_test/fixtures/ruby/roda", __DIR__)
   roda_path = "#{roda_base}/app.rb"
 
   it "detects Grape before { authenticate! } and helpers" do

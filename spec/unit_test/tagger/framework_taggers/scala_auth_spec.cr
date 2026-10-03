@@ -3,7 +3,7 @@ require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
 describe "ScalaAuthTagger" do
-  fixture_base = "#{__DIR__}/../../../functional_test/fixtures/scala/akka_auth"
+  fixture_base = File.expand_path("../../../functional_test/fixtures/scala/akka_auth", __DIR__)
   routes_path = "#{fixture_base}/Routes.scala"
   health_path = "#{fixture_base}/HealthRoutes.scala"
 

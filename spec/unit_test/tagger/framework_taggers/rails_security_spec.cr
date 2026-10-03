@@ -33,7 +33,7 @@ private def build_endpoint(path : String, line : Int32, method : String = "POST"
 end
 
 describe "RailsSecurityTagger" do
-  fixture_base = "#{__DIR__}/../../../functional_test/fixtures/ruby/rails_security"
+  fixture_base = File.expand_path("../../../functional_test/fixtures/ruby/rails_security", __DIR__)
   webhooks = "#{fixture_base}/app/controllers/webhooks_controller.rb"
   users = "#{fixture_base}/app/controllers/users_controller.rb"
   posts = "#{fixture_base}/app/controllers/posts_controller.rb"

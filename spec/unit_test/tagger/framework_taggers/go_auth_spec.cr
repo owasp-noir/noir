@@ -32,7 +32,7 @@ def run_go_auth(fixture_lines : Array(String), url : String, method : String, li
 end
 
 describe "GoAuthTagger" do
-  fixture_base = "#{__DIR__}/../../../functional_test/fixtures/go/gin_auth"
+  fixture_base = File.expand_path("../../../functional_test/fixtures/go/gin_auth", __DIR__)
   main_path = "#{fixture_base}/main.go"
 
   # main.go line reference:
@@ -152,7 +152,7 @@ end
 
 # Verify new Go framework targets (Hertz, Iris, GF) are supported by the same tagger
 describe "GoAuthTagger (expanded targets)" do
-  fixture_base = "#{__DIR__}/../../../functional_test/fixtures/go/gin_auth"
+  fixture_base = File.expand_path("../../../functional_test/fixtures/go/gin_auth", __DIR__)
   main_path = "#{fixture_base}/main.go"
 
   %w[go_hertz go_iris go_gf].each do |tech|
