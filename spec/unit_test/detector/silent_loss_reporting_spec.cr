@@ -259,6 +259,10 @@ describe "detection walk coverage reporting" do
   # `"errors": []` and exit 0 under `--strict` — the same output as a clean
   # scan of an empty directory, for a subtree that was never looked at.
   it "reports an entry it could not stat, and everything under it" do
+    # Windows refuses to create the tree in the first place (MAX_PATH).
+    {% if flag?(:windows) %}
+      pending! "cannot build a path past MAX_PATH on Windows"
+    {% end %}
     temp_dir = File.tempname("noir_unstattable_entry")
     Dir.mkdir_p(temp_dir)
 

@@ -390,10 +390,12 @@ describe ConfigInitializer do
     # and had no expansion at all, so `~/noir.yaml` resolved to a literal
     # `./~/noir.yaml` under the cwd.
     it "expands a leading ~ in the override path" do
+      # `~` resolves through `Path.home`, which reads USERPROFILE on Windows.
+      home_var = {% if flag?(:windows) %} "USERPROFILE" {% else %} "HOME" {% end %}
       home = File.tempname("noir-cfg-tilde-home-")
       Dir.mkdir(home)
-      saved_home = ENV["HOME"]?
-      ENV["HOME"] = home
+      saved_home = ENV[home_var]?
+      ENV[home_var] = home
       File.write(File.join(home, "noir.yaml"), "concurrency: 23\n")
 
       begin
@@ -401,9 +403,9 @@ describe ConfigInitializer do
         options["concurrency"].to_s.should eq("23")
       ensure
         if s = saved_home
-          ENV["HOME"] = s
+          ENV[home_var] = s
         else
-          ENV.delete("HOME")
+          ENV.delete(home_var)
         end
         FileUtils.rm_rf(home)
       end
@@ -426,6 +428,10 @@ describe ConfigInitializer do
     end
 
     it "falls back to defaults when the override path cannot be read" do
+      # Windows `chmod` only toggles the read-only bit; the file stays readable.
+      {% if flag?(:windows) %}
+        pending! "no unreadable-file permission on Windows"
+      {% end %}
       path = File.tempname("noir-config-noperm-", ".yaml")
       File.write(path, "format: json\n")
       File.chmod(path, 0o000)
