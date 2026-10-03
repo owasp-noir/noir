@@ -32,9 +32,6 @@ describe "Noir::Detection.build_applicable_lookup" do
   it "includes Supabase for a migration path but not a bare .sql basename probe" do
     supabase = Detector::Specification::Supabase.new(options)
     spring = Detector::Java::Spring.new(options)
-    # set_name is required for detector identity in some paths
-    supabase.set_name
-    spring.set_name
     detectors = [supabase.as(Detector), spring.as(Detector)]
     lookup = Noir::Detection.build_applicable_lookup(detectors)
 
@@ -48,7 +45,6 @@ describe "Noir::Detection.build_applicable_lookup" do
 
   it "includes Grails for a grails-app path via path-sensitive recheck" do
     grails = Detector::Groovy::Grails.new(options)
-    grails.set_name
     detectors = [grails.as(Detector)]
     lookup = Noir::Detection.build_applicable_lookup(detectors)
 

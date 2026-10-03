@@ -22,7 +22,9 @@ module Detector::Specification
   # schema served by PostgREST from any other schema.
   class Supabase < Detector
     # Registers every migration path in `CodeLocator`.
-    detector_for "supabase", idempotent: false
+    # Memo safety: `applicable?` consults the path
+    # (supabase/ and migrations/ gates), not just the basename.
+    detector_for "supabase", idempotent: false, path_sensitive: true
 
     # `alter table` counts too: a migration that only adds a column is
     # still part of the schema, and dropping those would leave the
@@ -49,12 +51,6 @@ module Detector::Specification
       end
 
       CodeLocator.instance.push(Noir::LocatorKeys::SUPABASE_MIGRATION, filename)
-      true
-    end
-
-    # Memo safety: `applicable?` consults the path
-    # (supabase/ and migrations/ gates), not just the basename.
-    def path_sensitive? : Bool
       true
     end
 

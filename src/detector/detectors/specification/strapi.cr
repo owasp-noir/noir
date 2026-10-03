@@ -12,7 +12,9 @@ module Detector::Specification
   # its shape is indistinguishable from an APISIX route export.
   class Strapi < Detector
     # Registers every schema and route path in `CodeLocator`.
-    detector_for "strapi", idempotent: false
+    # Memo safety: `applicable?` consults the path
+    # (/content-types/ gate), not just the basename.
+    detector_for "strapi", idempotent: false, path_sensitive: true
 
     SCHEMA_FILENAME  = "schema.json"
     ROUTE_EXTENSIONS = {".ts", ".js", ".mts", ".cts", ".mjs", ".cjs"}
@@ -36,12 +38,6 @@ module Detector::Specification
       end
 
       detect_routes(filename, file_contents)
-    end
-
-    # Memo safety: `applicable?` consults the path
-    # (/content-types/ gate), not just the basename.
-    def path_sensitive? : Bool
-      true
     end
 
     def applicable?(filename : String) : Bool

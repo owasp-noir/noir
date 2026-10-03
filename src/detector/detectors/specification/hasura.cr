@@ -20,7 +20,9 @@ module Detector::Specification
   # permission/relationship vocabulary.
   class Hasura < Detector
     # Registers every metadata path in `CodeLocator`.
-    detector_for "hasura", idempotent: false
+    # Memo safety: `applicable?` consults the path
+    # (metadata/** directory gate), not just the basename.
+    detector_for "hasura", idempotent: false, path_sensitive: true
 
     METADATA_SEGMENT = "/metadata/"
 
@@ -40,12 +42,6 @@ module Detector::Specification
       end
 
       detect_tables(filename, file_contents)
-    end
-
-    # Memo safety: `applicable?` consults the path
-    # (metadata/** directory gate), not just the basename.
-    def path_sensitive? : Bool
-      true
     end
 
     def applicable?(filename : String) : Bool

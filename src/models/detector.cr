@@ -21,7 +21,6 @@ class Detector
   @is_verbose : Bool
   @is_color : Bool
   @is_log : Bool
-  @name : String
   @base_path : String
   @base_paths : Array(String)
 
@@ -30,7 +29,6 @@ class Detector
     @is_verbose = any_to_bool(options["verbose"])
     @is_color = any_to_bool(options["color"])
     @is_log = any_to_bool(options["nolog"])
-    @name = ""
     @base_paths = options["base"].as_a.map(&.to_s)
     @base_path = @base_paths.first? || ""
 
@@ -88,6 +86,9 @@ class Detector
   # Declaring them sensitive would drop those detectors out of the basename
   # memo and slow the hot loop for no correctness gain here.
   #
+  # Pass `path_sensitive: true` for a hand-written `applicable?` that
+  # consults more than the basename (see `path_sensitive?` below).
+  #
   # Pass `idempotent: false` for a detector whose `detect` has side effects
   # (registering spec paths in `CodeLocator`), so the pass keeps calling it
   # after its first match.
@@ -96,14 +97,8 @@ class Detector
   # checks a parent directory, or excludes `.d.ts` — keeps its hand-written
   # `applicable?`. Pass just the tech name and define the method below; with
   # no terms the macro emits no gate to collide with.
-  macro detector_for(tech, extensions = nil, basenames = nil, path_segments = nil, idempotent = nil)
-    def set_name
-      @name = {{ tech }}
-    end
-
-    # The tech name without needing an instance, so the registry can be
-    # read off the classes themselves rather than from a parallel list.
-    def self.tech_name : String
+  macro detector_for(tech, extensions = nil, basenames = nil, path_segments = nil, idempotent = nil, path_sensitive = nil)
+    def name : String
       {{ tech }}
     end
 
@@ -125,7 +120,7 @@ class Detector
       end
     {% end %}
 
-    {% if path_segments && path_segments.any?(&.includes?("/")) %}
+    {% if path_sensitive || (path_segments && path_segments.any?(&.includes?("/"))) %}
       def path_sensitive? : Bool
         true
       end
@@ -261,10 +256,15 @@ class Detector
   def record_unparsable_document(filename : String, error : Exception) : Nil
     return unless error.is_a?(JSON::ParseException) || error.is_a?(YAML::ParseException)
 
-    Noir::SkippedFiles.record(@name, filename,
+    Noir::SkippedFiles.record(name, filename,
       error.message.presence || error.class.name,
       noun: "unparsable document", phase: Noir::SkippedFiles::Phase::Scan)
   end
 
-  getter name, logger
+  # The tech name; `detector_for` overrides it. Empty on the bare base.
+  def name : String
+    ""
+  end
+
+  getter logger
 end

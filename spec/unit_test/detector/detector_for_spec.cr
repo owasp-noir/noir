@@ -4,10 +4,7 @@ require "../../../src/models/detector"
 
 # `detector_for` replaced the hand-written `set_name` / `applicable?` /
 # `idempotent?` trio that every one of the 241 detectors carried. These specs
-# pin the macro's expansion, and the sweep at the bottom pins the invariant
-# that made the macro worth introducing: the tech name is declared exactly
-# once per detector, so `Class.tech_name` and the instance's `name` can never
-# disagree.
+# pin the macro's expansion.
 
 private class ExtOnlyDetector < Detector
   detector_for "spec_ext_only", extensions: %w[.foo .bar]
@@ -33,14 +30,15 @@ private class NameOnlyDetector < Detector
   detector_for "spec_name_only"
 end
 
+private class DeclaredPathSensitiveDetector < Detector
+  detector_for "spec_declared_path_sensitive", path_sensitive: true
+end
+
 describe "detector_for" do
   options = create_test_options
 
-  it "declares the tech name for both the instance and the class" do
-    detector = ExtOnlyDetector.new(options)
-    detector.set_name
-    detector.name.should eq "spec_ext_only"
-    ExtOnlyDetector.tech_name.should eq "spec_ext_only"
+  it "declares the tech name" do
+    ExtOnlyDetector.new(options).name.should eq "spec_ext_only"
   end
 
   it "gates on every declared extension and nothing else" do
@@ -88,6 +86,11 @@ describe "detector_for" do
   # `applicable?("a/b/c/zz.mod")` with `applicable?("zz.mod")`, which agree.
   # Declaring them sensitive would drop the detector out of the basename memo
   # for no correctness gain.
+  it "carries path_sensitive: true through for a hand-written gate" do
+    DeclaredPathSensitiveDetector.new(options).path_sensitive?.should be_true
+    NameOnlyDetector.new(options).path_sensitive?.should be_false
+  end
+
   it "leaves a separator-free substring term basename-memoizable" do
     detector = BareSubstringDetector.new(options)
     detector.path_sensitive?.should be_false
@@ -96,29 +99,8 @@ describe "detector_for" do
 
   it "emits no gate when only a name is declared" do
     detector = NameOnlyDetector.new(options)
-    NameOnlyDetector.tech_name.should eq "spec_name_only"
+    detector.name.should eq "spec_name_only"
     # Falls through to Detector's permissive default.
     detector.applicable?("anything.at.all").should be_true
-  end
-end
-
-describe "detector identity" do
-  it "declares each real detector's name exactly once" do
-    options = create_test_options
-    mismatched = [] of String
-
-    # `Detector::` is the production namespace — see the same filter in
-    # applicable_lookup_fidelity_spec.cr for why the sweep is scoped.
-    {% for sub in Detector.all_subclasses %}
-      {% if !sub.abstract? && sub.name.starts_with?("Detector::") %}
-        detector = {{ sub }}.new(options)
-        detector.set_name
-        unless detector.name == {{ sub }}.tech_name
-          mismatched << "{{ sub }}: name=#{detector.name} tech_name=#{{{ sub }}.tech_name}"
-        end
-      {% end %}
-    {% end %}
-
-    fail "detectors whose instance name and class tech_name disagree: #{mismatched}" unless mismatched.empty?
   end
 end

@@ -316,9 +316,7 @@ def build_detector_list(options : Hash(String, YAML::Any)) : Array(Detector)
   detector_list = [] of Detector
 
   {% for detector in Detector.all_subclasses.select { |sub| !sub.abstract? && sub.name.starts_with?("Detector::") }.sort_by(&.name) %}
-    instance = {{ detector }}.new(options)
-    instance.set_name
-    detector_list << instance
+    detector_list << {{ detector }}.new(options)
   {% end %}
 
   detector_list

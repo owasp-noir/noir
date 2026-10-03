@@ -4,7 +4,9 @@ require "../../../models/code_locator"
 module Detector::Specification
   class ApacheHttpd < Detector
     # Registers each Apache config path in `CodeLocator`.
-    detector_for "apache_httpd", idempotent: false
+    # Memo safety: `applicable?` consults the path
+    # (/nginx/ path exclusion), not just the basename.
+    detector_for "apache_httpd", idempotent: false, path_sensitive: true
 
     HTACCESS          = ".htaccess"
     APACHE_DIRECTIVES = [
@@ -30,12 +32,6 @@ module Detector::Specification
       return false unless apache_shape?(file_contents)
 
       CodeLocator.instance.push(Noir::LocatorKeys::APACHE_HTTPD_SPEC, filename)
-      true
-    end
-
-    # Memo safety: `applicable?` consults the path
-    # (/nginx/ path exclusion), not just the basename.
-    def path_sensitive? : Bool
       true
     end
 
