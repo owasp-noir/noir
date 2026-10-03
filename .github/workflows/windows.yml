@@ -1,0 +1,47 @@
+---
+name: Windows
+# Native Windows build + spec run (#2828). Kept out of ci.yml while Windows
+# support is being brought up, so a red Windows run doesn't gate merges.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/windows.yml
+      - shard.yml
+      - shard.lock
+      - src/**
+      - spec/**
+  workflow_dispatch:
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Keep LF line endings
+        # Fixtures and specs compare exact bytes/line numbers; CRLF checkout
+        # would turn every one of them into a false failure.
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v7
+      - uses: crystal-lang/install-crystal@v1
+        with:
+          crystal: 1.21.0
+      - name: Install shards
+        run: shards install
+      - name: Build
+        run: shards build --verbose
+      - name: Smoke test
+        run: ./bin/noir.exe -b spec/functional_test/fixtures/crystal/kemal
+      - name: Build spec suite
+        run: crystal build spec/suite.cr -o bin/noir_spec.exe
+      - name: Run specs
+        run: ./bin/noir_spec.exe
