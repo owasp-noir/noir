@@ -343,11 +343,7 @@ module Analyzer::Scala
     end
 
     private def skip_whitespace(chars : Array(Char), index : Int32) : Int32
-      i = index
-      while i < chars.size && chars[i].whitespace?
-        i += 1
-      end
-      i
+      chars.index(index) { |c| !c.whitespace? } || chars.size
     end
 
     private def next_unquoted_char(chars : Array(Char), needle : Char, start : Int32) : Int32?

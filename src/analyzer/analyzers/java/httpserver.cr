@@ -487,11 +487,7 @@ module Analyzer::Java
     end
 
     private def skip_whitespace(chars : Array(Char), index : Int32) : Int32
-      i = index
-      while i < chars.size && chars[i].ascii_whitespace?
-        i += 1
-      end
-      i
+      chars.index(index) { |c| !c.ascii_whitespace? } || chars.size
     end
 
     private def slice_chars(chars : Array(Char), from : Int32, to : Int32) : String
