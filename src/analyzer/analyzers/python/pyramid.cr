@@ -53,8 +53,6 @@ module Analyzer::Python
       end
     end
 
-    @keyword_regex_cache = Hash(String, Regex).new
-
     alias RouteNameKey = Tuple(String, String)
     alias RouteMap = Hash(RouteNameKey, Tuple(String, String))
 
@@ -307,24 +305,6 @@ module Analyzer::Python
       return if first.nil? || first.empty?
       return if first.includes?('=')
       return first if first.match(/^[A-Za-z_][A-Za-z0-9_]*$/)
-      nil
-    end
-
-    # Memoized per keyword — the keyword set is tiny (`name`) but this
-    # runs per argument of every static-view declaration.
-    private def keyword_string_regex(keyword : String) : Regex
-      @keyword_regex_cache[keyword] ||= /^\s*#{Regex.escape(keyword)}\s*=\s*(.+)$/m
-    end
-
-    private def extract_python_keyword_string(args : Array(String), keyword : String) : String?
-      keyword_re = keyword_string_regex(keyword)
-      args.each do |arg|
-        keyword_match = arg.match(keyword_re)
-        next unless keyword_match
-
-        return Helper.extract_python_string(keyword_match[1])
-      end
-
       nil
     end
 

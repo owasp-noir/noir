@@ -49,7 +49,6 @@ module Analyzer::Python
     BOTTLE_INSTANCE_RE    = /^(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:bottle\.)?Bottle\(/
     MOUNT_RE              = /\b(#{PYTHON_VAR_NAME_REGEX})\.mount\s*\(\s*[rf]?['"]([^'"]*)['"]\s*,\s*(#{PYTHON_VAR_NAME_REGEX})/
 
-    @keyword_regex_cache = Hash(::String, Regex).new
     @json_var_regex_cache = Hash(::String, Tuple(Regex, Regex)).new
 
     def analyze
@@ -157,9 +156,9 @@ module Analyzer::Python
 
       receiver = route_match[1]
       args = split_python_arguments(route_match[2])
-      route_path = extract_keyword_string(args, "path") ||
-                   extract_keyword_string(args, "rule") ||
-                   extract_keyword_string(args, "uri") ||
+      route_path = extract_python_keyword_string(args, "path") ||
+                   extract_python_keyword_string(args, "rule") ||
+                   extract_python_keyword_string(args, "uri") ||
                    args[0]?.try { |arg| Helper.extract_python_string(arg) }
       return unless route_path
 
@@ -338,24 +337,6 @@ module Analyzer::Python
            stripped.starts_with?("async def #{function_name} (")
           return index
         end
-      end
-
-      nil
-    end
-
-    # Memoized per keyword — the keyword set is tiny (`path`, `rule`,
-    # `uri`) but this runs per argument of every programmatic route.
-    private def keyword_string_regex(keyword : String) : Regex
-      @keyword_regex_cache[keyword] ||= /^\s*#{Regex.escape(keyword)}\s*=\s*(.+)$/m
-    end
-
-    private def extract_keyword_string(args : Array(String), keyword : String) : String?
-      keyword_re = keyword_string_regex(keyword)
-      args.each do |arg|
-        keyword_match = arg.match(keyword_re)
-        next unless keyword_match
-
-        return Helper.extract_python_string(keyword_match[1])
       end
 
       nil

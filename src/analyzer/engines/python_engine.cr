@@ -2,6 +2,7 @@ require "../../models/analyzer"
 require "../../miniparsers/import_graph"
 require "../../miniparsers/python_callee_extractor"
 require "../../utils/top_level_split"
+require "../analyzers/python/python_helper"
 require "json"
 
 module Analyzer::Python
@@ -362,6 +363,37 @@ module Analyzer::Python
       end
 
       filtered_params
+    end
+
+    # Memoized per keyword — the keyword set is tiny (`path`, `prefix`,
+    # `handler`, ...) but these run per argument of every programmatic
+    # route, and an interpolated regex literal recompiles on every call.
+    @keyword_regex_cache = Hash(::String, Regex).new
+
+    private def keyword_argument_regex(keyword : ::String) : Regex
+      @keyword_regex_cache[keyword] ||= /^\s*#{Regex.escape(keyword)}\s*=\s*(.+)$/m
+    end
+
+    # The stripped value of the first `keyword=<value>` among split call
+    # arguments, or nil when none names `keyword`.
+    protected def extract_python_keyword_expression(args : Array(::String), keyword : ::String) : ::String?
+      keyword_re = keyword_argument_regex(keyword)
+      args.each do |arg|
+        keyword_match = arg.match(keyword_re)
+        return keyword_match[1].strip if keyword_match
+      end
+
+      nil
+    end
+
+    # Like `extract_python_keyword_expression`, but only when the value is a
+    # string literal (returned unquoted).
+    protected def extract_python_keyword_string(args : Array(::String), keyword : ::String) : ::String?
+      if expression = extract_python_keyword_expression(args, keyword)
+        return Helper.extract_python_string(expression)
+      end
+
+      nil
     end
 
     # Finds all parameters in JSON objects within a given code block

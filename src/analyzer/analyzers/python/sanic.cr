@@ -46,7 +46,6 @@ module Analyzer::Python
        /request\.#{field}\[['"']([^'"']+)['"']\]/}
     end
 
-    @keyword_regex_cache = Hash(::String, Regex).new
     @json_var_regex_cache = Hash(::String, Tuple(Regex, Regex)).new
 
     @file_content_cache = Hash(::String, ::String).new
@@ -424,8 +423,8 @@ module Analyzer::Python
 
       router_name = call_match[1]
       args = split_python_arguments(call_match[2])
-      static_path = extract_keyword_string(args, "uri") ||
-                    extract_keyword_string(args, "path") ||
+      static_path = extract_python_keyword_string(args, "uri") ||
+                    extract_python_keyword_string(args, "path") ||
                     args[0]?.try { |arg| Helper.extract_python_string(arg) } || ""
       return if static_path.empty?
 
@@ -477,7 +476,7 @@ module Analyzer::Python
     end
 
     private def extract_programmatic_handler_class(args : Array(::String)) : ::String
-      handler = extract_keyword_expression(args, "handler") || args[0]?
+      handler = extract_python_keyword_expression(args, "handler") || args[0]?
       return "" unless handler
 
       if class_match = handler.strip.match(AS_VIEW_RE)
@@ -488,7 +487,7 @@ module Analyzer::Python
     end
 
     private def extract_programmatic_handler(args : Array(::String)) : ::String
-      if handler = extract_keyword_expression(args, "handler")
+      if handler = extract_python_keyword_expression(args, "handler")
         return clean_reference(handler)
       end
 
@@ -497,13 +496,13 @@ module Analyzer::Python
     end
 
     private def extract_programmatic_route_path(args : Array(::String)) : ::String
-      if uri = extract_keyword_string(args, "uri")
+      if uri = extract_python_keyword_string(args, "uri")
         return uri
       end
-      if uri = extract_keyword_string(args, "uri_template")
+      if uri = extract_python_keyword_string(args, "uri_template")
         return uri
       end
-      if path = extract_keyword_string(args, "path")
+      if path = extract_python_keyword_string(args, "path")
         return path
       end
 
@@ -512,7 +511,7 @@ module Analyzer::Python
     end
 
     private def extract_programmatic_methods(args : Array(::String)) : Array(::String)
-      expression = extract_keyword_expression(args, "methods")
+      expression = extract_python_keyword_expression(args, "methods")
       return [] of ::String unless expression
 
       methods = [] of ::String
@@ -520,31 +519,6 @@ module Analyzer::Python
         methods << method_match[1].upcase
       end
       methods
-    end
-
-    # Memoized per keyword — the keyword set is tiny (`handler`, `uri`,
-    # `path`, `methods`, ...) but this runs per argument of every
-    # programmatic route.
-    private def keyword_expression_regex(keyword : ::String) : Regex
-      @keyword_regex_cache[keyword] ||= /^\s*#{Regex.escape(keyword)}\s*=\s*(.+)$/m
-    end
-
-    private def extract_keyword_expression(args : Array(::String), keyword : ::String) : ::String?
-      keyword_re = keyword_expression_regex(keyword)
-      args.each do |arg|
-        keyword_match = arg.match(keyword_re)
-        return keyword_match[1].strip if keyword_match
-      end
-
-      nil
-    end
-
-    private def extract_keyword_string(args : Array(::String), keyword : ::String) : ::String?
-      if expression = extract_keyword_expression(args, keyword)
-        return Helper.extract_python_string(expression)
-      end
-
-      nil
     end
 
     private def clean_reference(expression : ::String) : ::String
