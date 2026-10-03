@@ -379,9 +379,7 @@ module Analyzer::Typescript
       url.scan(/:(\w+)/) do |match|
         if match.size > 0
           param_name = match[1]
-          unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "path" }
-            endpoint.push_param(Param.new(param_name, "", "path"))
-          end
+          endpoint.push_param(Param.new(param_name, "", "path"))
         end
       end
     end
@@ -401,9 +399,7 @@ module Analyzer::Typescript
           schema_content.scan(/(\w+)\s*:/) do |param_match|
             if param_match.size > 0
               param_name = param_match[1]
-              unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
-                endpoint.push_param(Param.new(param_name, "", "query"))
-              end
+              endpoint.push_param(Param.new(param_name, "", "query"))
             end
           end
         end
@@ -418,9 +414,7 @@ module Analyzer::Typescript
           search_content.scan(/(\w+)\s*:/) do |param_match|
             if param_match.size > 0
               param_name = param_match[1]
-              unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
-                endpoint.push_param(Param.new(param_name, "", "query"))
-              end
+              endpoint.push_param(Param.new(param_name, "", "query"))
             end
           end
         end
@@ -441,9 +435,7 @@ module Analyzer::Typescript
           params_str = match[1]
           params_str.split(",").each do |param|
             param_name = param.strip.split(":").first.strip.split("=").first.strip
-            unless param_name.empty? || endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
-              endpoint.push_param(Param.new(param_name, "", "query"))
-            end
+            endpoint.push_param(Param.new(param_name, "", "query")) unless param_name.empty?
           end
         end
       end
@@ -537,7 +529,6 @@ module Analyzer::Typescript
 
     private def push_unique_query_param(endpoint : Endpoint, param_name : String)
       return if param_name.empty?
-      return if endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
 
       endpoint.push_param(Param.new(param_name, "", "query"))
     end

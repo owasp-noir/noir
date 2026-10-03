@@ -36,7 +36,7 @@ module Analyzer::Javascript
           if endpoint.url.includes?(":")
             endpoint.url.scan(/:(\w+)/) do |m|
               param = Param.new(m[1], "", "path")
-              endpoint.push_param(param) if !endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
+              endpoint.push_param(param)
             end
           end
           result << endpoint
@@ -158,8 +158,7 @@ module Analyzer::Javascript
         next unless handler_seen
         # Skip duplicate (same triple already emitted for this file).
         key = {method, route_path, index + 1}
-        next if seen.includes?(key)
-        seen << key
+        next unless seen.add?(key)
 
         details = Details.new(PathInfo.new(path, index + 1))
         endpoint = Endpoint.new(route_path, method, details)
@@ -230,10 +229,7 @@ module Analyzer::Javascript
 
         # Extract path parameters from the route_path itself
         route_path.scan(/:(\w+)/) do |m|
-          if !endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
-            param = Param.new(m[1], "", "path")
-            endpoint.push_param(param)
-          end
+          endpoint.push_param(Param.new(m[1], "", "path"))
         end
 
         # Extract parameters from handler body
@@ -302,9 +298,7 @@ module Analyzer::Javascript
 
       # Extract path parameters from ctx.params.X
       handler_body.scan(/ctx\.params\.(\w+)/) do |m|
-        if !endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
-          endpoint.push_param(Param.new(m[1], "", "path"))
-        end
+        endpoint.push_param(Param.new(m[1], "", "path"))
       end
     end
   end

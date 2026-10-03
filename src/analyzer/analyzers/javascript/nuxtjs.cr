@@ -134,7 +134,7 @@ module Analyzer::Javascript
           url.scan(/:(\w+)/) do |m|
             if m.size > 0
               param = Param.new(m[1], "", "path")
-              endpoint.push_param(param) unless endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
+              endpoint.push_param(param)
             end
           end
 
@@ -143,17 +143,17 @@ module Analyzer::Javascript
           sanitized.scan(/(?:getQuery|useQuery|getValidatedQuery)\s*\(\s*event(?:\s*,[\s\S]*?)?\s*\)\.(\w+)/) do |m|
             param_name = m[1]
             param = Param.new(param_name, "", "query")
-            endpoint.push_param(param) unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
+            endpoint.push_param(param)
           end
           sanitized.scan(/(?:getQuery|useQuery|getValidatedQuery)\s*\(\s*event(?:\s*,[\s\S]*?)?\s*\)\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |m|
             param_name = m[1]
             param = Param.new(param_name, "", "query")
-            endpoint.push_param(param) unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
+            endpoint.push_param(param)
           end
           sanitized.scan(/(?:const|let|var)\s*\{\s*([^}]+?)\s*\}\s*=\s*(?:await\s+)?(?:getQuery|useQuery|getValidatedQuery)\s*\(\s*event(?:\s*,[\s\S]*?)?\s*\)/) do |m|
             extract_destructure_params(m[1]).each do |param_name|
               param = Param.new(param_name, "", "query")
-              endpoint.push_param(param) unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
+              endpoint.push_param(param)
             end
           end
 
@@ -165,12 +165,12 @@ module Analyzer::Javascript
               # Skip common non-parameter properties like 'toString', 'valueOf', etc.
               next if ["toString", "valueOf", "constructor"].includes?(param_name)
               param = Param.new(param_name, "", "query")
-              endpoint.push_param(param) unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
+              endpoint.push_param(param)
             end
             sanitized.scan(cached_regex("nuxtjs:query_bracket:#{query_var}") { /#{Regex.escape(query_var)}\s*\[\s*['"]([^'"]+)['"]\s*\]/ }) do |m|
               param_name = m[1]
               param = Param.new(param_name, "", "query")
-              endpoint.push_param(param) unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
+              endpoint.push_param(param)
             end
           end
 
@@ -180,7 +180,7 @@ module Analyzer::Javascript
             sanitized.scan(/(?:const|let|var)\s*\{\s*([^}]+?)\s*\}\s*=\s*(?:await\s+)?(?:readBody|readValidatedBody)\s*\(\s*event(?:\s*,[\s\S]*?)?\s*\)/) do |m|
               extract_destructure_params(m[1]).each do |param_name|
                 param = Param.new(param_name, "", "body")
-                endpoint.push_param(param) unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "body" }
+                endpoint.push_param(param)
               end
             end
             body_vars = ["body", "data"]
@@ -191,12 +191,12 @@ module Analyzer::Javascript
               sanitized.scan(cached_regex("nuxtjs:var_dot:#{body_var}") { /\b#{Regex.escape(body_var)}\.(\w+)/ }) do |m|
                 param_name = m[1]
                 param = Param.new(param_name, "", "body")
-                endpoint.push_param(param) unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "body" }
+                endpoint.push_param(param)
               end
               sanitized.scan(cached_regex("nuxtjs:var_bracket:#{body_var}") { /\b#{Regex.escape(body_var)}\s*\[\s*['"]([^'"]+)['"]\s*\]/ }) do |m|
                 param_name = m[1]
                 param = Param.new(param_name, "", "body")
-                endpoint.push_param(param) unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "body" }
+                endpoint.push_param(param)
               end
             end
           end
@@ -205,24 +205,24 @@ module Analyzer::Javascript
           sanitized.scan(/(?:getHeader|getRequestHeader)\s*\(\s*event\s*,\s*['"]([^'"]+)['"]/) do |m|
             header_name = m[1]
             param = Param.new(header_name, "", "header")
-            endpoint.push_param(param) unless endpoint.params.any? { |p| p.name == header_name && p.param_type == "header" }
+            endpoint.push_param(param)
           end
           sanitized.scan(/getHeaders\s*\(\s*event\s*\)\.(\w+)/) do |m|
             header_name = m[1]
             param = Param.new(header_name, "", "header")
-            endpoint.push_param(param) unless endpoint.params.any? { |p| p.name == header_name && p.param_type == "header" }
+            endpoint.push_param(param)
           end
           sanitized.scan(/(?:const|let|var)\s+(\w+)\s*=\s*getHeaders\s*\(\s*event\s*\)/) do |m|
             headers_var = m[1]
             sanitized.scan(cached_regex("nuxtjs:var_dot:#{headers_var}") { /\b#{Regex.escape(headers_var)}\.(\w+)/ }) do |mm|
               header_name = mm[1]
               param = Param.new(header_name, "", "header")
-              endpoint.push_param(param) unless endpoint.params.any? { |p| p.name == header_name && p.param_type == "header" }
+              endpoint.push_param(param)
             end
             sanitized.scan(cached_regex("nuxtjs:var_bracket:#{headers_var}") { /\b#{Regex.escape(headers_var)}\s*\[\s*['"]([^'"]+)['"]\s*\]/ }) do |mm|
               header_name = mm[1]
               param = Param.new(header_name, "", "header")
-              endpoint.push_param(param) unless endpoint.params.any? { |p| p.name == header_name && p.param_type == "header" }
+              endpoint.push_param(param)
             end
           end
 
@@ -230,12 +230,12 @@ module Analyzer::Javascript
           sanitized.scan(/getCookie\s*\(\s*event\s*,\s*['"]([^'"]+)['"]/) do |m|
             cookie_name = m[1]
             param = Param.new(cookie_name, "", "cookie")
-            endpoint.push_param(param) unless endpoint.params.any? { |p| p.name == cookie_name && p.param_type == "cookie" }
+            endpoint.push_param(param)
           end
           sanitized.scan(/getRouterParam\s*\(\s*event\s*,\s*['"]([^'"]+)['"]/) do |m|
             param_name = m[1]
             param = Param.new(param_name, "", "path")
-            endpoint.push_param(param) unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "path" }
+            endpoint.push_param(param)
           end
 
           attach_js_callees(endpoint, callees) if include_callee

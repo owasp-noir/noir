@@ -186,8 +186,7 @@ module Analyzer::Javascript
       # export async function NAME(args) { ... }
       sanitized.scan(/export\s+async\s+function\s+(\w+)\s*\(([^)]*)\)/) do |match|
         action_name = match[1]
-        next if seen.includes?(action_name)
-        seen << action_name
+        next unless seen.add?(action_name)
         original_match = content.match(cached_regex("nextjs:action_fn:#{action_name}") { /export\s+async\s+function\s+#{Regex.escape(action_name)}\s*\(([^)]*)\)/ })
         register_server_action(path, action_name, match[2], sanitized, match, content, original_match, result, mutex, include_callee)
       end
@@ -195,8 +194,7 @@ module Analyzer::Javascript
       # export const NAME = async (args) => { ... }
       sanitized.scan(/export\s+const\s+(\w+)\s*=\s*async\s*\(([^)]*)\)/) do |match|
         action_name = match[1]
-        next if seen.includes?(action_name)
-        seen << action_name
+        next unless seen.add?(action_name)
         original_match = content.match(cached_regex("nextjs:action_const:#{action_name}") { /export\s+const\s+#{Regex.escape(action_name)}\s*=\s*async\s*\(([^)]*)\)/ })
         register_server_action(path, action_name, match[2], sanitized, match, content, original_match, result, mutex, include_callee)
       end
@@ -636,13 +634,11 @@ module Analyzer::Javascript
 
     private def add_param(endpoint : Endpoint, name : String, type : String)
       return if name.empty?
-      return if endpoint.params.any? { |p| p.name == name && p.param_type == type }
       endpoint.push_param(Param.new(name, "", type))
     end
 
     private def add_unresolved_param(endpoint : Endpoint, name : String, type : String)
       return if name.empty?
-      return if endpoint.params.any? { |p| p.name == name && p.param_type == type }
       param = Param.new(name, "", type)
       param.add_tag(Tag.new("unresolved", "Key is a variable/constant identifier, not a string literal", "analyzer"))
       endpoint.push_param(param)

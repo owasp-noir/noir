@@ -53,7 +53,7 @@ module Analyzer::Javascript
             endpoint.url.scan(/:(\w+)/) do |m|
               if m.size > 0
                 param = Param.new(m[1], "", "path")
-                endpoint.push_param(param) if !endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
+                endpoint.push_param(param)
               end
             end
           end
@@ -194,9 +194,7 @@ module Analyzer::Javascript
         endpoint.details = Details.new(PathInfo.new(path, 1))
 
         route_path.scan(/:(\w+)/) do |m|
-          if m.size > 0 && !endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
-            endpoint.push_param(Param.new(m[1], "", "path"))
-          end
+          endpoint.push_param(Param.new(m[1], "", "path")) if m.size > 0
         end
 
         extract_oak_params_from_content(file_content, router_var || "app", match[2], route_path, endpoint)
@@ -242,9 +240,7 @@ module Analyzer::Javascript
       end
 
       handler_body.scan(/ctx\.params\.(\w+)/) do |m|
-        if m.size > 0 && !endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
-          endpoint.push_param(Param.new(m[1], "", "path"))
-        end
+        endpoint.push_param(Param.new(m[1], "", "path")) if m.size > 0
       end
     end
   end

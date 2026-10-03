@@ -910,10 +910,8 @@ module Analyzer::Javascript
       url.scan(/:(\w+)/) do |match|
         if match.size > 0
           param_name = match[1]
-          # Only add if not already added by @Param decorator
-          unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "path" }
-            endpoint.push_param(Param.new(param_name, "", "path"))
-          end
+          # push_param skips one already added by a @Param decorator
+          endpoint.push_param(Param.new(param_name, "", "path"))
         end
       end
     end

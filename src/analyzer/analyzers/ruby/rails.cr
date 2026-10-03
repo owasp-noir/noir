@@ -1618,8 +1618,7 @@ module Analyzer::Ruby
     private def dedup_by_name(params : Array(Param)) : Array(Param)
       seen = Set(String).new
       params.each_with_object([] of Param) do |p, acc|
-        next if seen.includes?(p.name)
-        seen << p.name
+        next unless seen.add?(p.name)
         acc << p
       end
     end

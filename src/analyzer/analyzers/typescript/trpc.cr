@@ -907,9 +907,7 @@ module Analyzer::Typescript
             schema = input_body[(brace_open + 1)...close_brace]
             extract_schema_fields(schema).each do |name|
               next if name.empty? || name == "z"
-              unless endpoint.params.any? { |p| p.name == name && p.param_type == param_type }
-                endpoint.push_param(Param.new(name, "", param_type))
-              end
+              endpoint.push_param(Param.new(name, "", param_type))
             end
             return
           end
@@ -917,9 +915,7 @@ module Analyzer::Typescript
       end
 
       # Fallback: opaque schema, still expose the input slot.
-      unless endpoint.params.any? { |p| p.name == "input" && p.param_type == param_type }
-        endpoint.push_param(Param.new("input", "", param_type))
-      end
+      endpoint.push_param(Param.new("input", "", param_type))
     end
 
     private def procedure_input_body(value : String) : String?

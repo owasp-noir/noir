@@ -157,8 +157,7 @@ module Analyzer::Ruby
       queue = roots.map { |r| {r, ""} }
       until queue.empty?
         cls, prefix = queue.shift
-        next if visited.includes?(cls)
-        visited << cls
+        next unless visited.add?(cls)
         inherited[cls] = prefix
         child_prefix = grape_join_segments(prefix, own_base[cls]? || "")
         (mounts[cls]? || [] of String).each do |child|
@@ -391,7 +390,6 @@ module Analyzer::Ruby
       # body param; a later `params[:x]` read in the handler body must not
       # re-add it as a separate `query` param. The declared type wins.
       return if param.param_type == "query" && endpoint.params.any? { |existing| existing.name == param.name && existing.param_type == "json" }
-      return if endpoint.params.any? { |existing| existing.name == param.name && existing.param_type == param.param_type }
       endpoint.push_param(param)
     end
 
