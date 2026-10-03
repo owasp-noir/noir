@@ -147,7 +147,7 @@ module Analyzer::Javascript
         files.each do |file_path, expanded_file_path|
           next unless Noir::PathScope.under_normalized_root?(expanded_file_path, root)
 
-          relative_path = expanded_file_path[root.size..]?.try(&.lchop(File::SEPARATOR)) || ""
+          relative_path = expanded_file_path[root.size..]?.try(&.lchop('/')) || ""
           next if relative_path.empty?
 
           url = if static_path == "/" || static_path.empty?
@@ -446,7 +446,7 @@ module Analyzer::Javascript
       dir = Noir::PathScope.expand(start_dir)
       bases = @base_paths.map do |base|
         expanded_base = Noir::PathScope.expand(base)
-        expanded_base == File::SEPARATOR ? expanded_base : expanded_base.rstrip('/')
+        expanded_base == "/" ? expanded_base : expanded_base.rstrip('/')
       end
 
       loop do
@@ -463,7 +463,7 @@ module Analyzer::Javascript
 
     private def add_project_root(roots : Array(String), root : String) : Nil
       expanded = Noir::PathScope.expand(root)
-      expanded = expanded.rstrip('/') unless expanded == File::SEPARATOR
+      expanded = expanded.rstrip('/') unless expanded == "/"
       roots << expanded unless roots.includes?(expanded)
     end
   end

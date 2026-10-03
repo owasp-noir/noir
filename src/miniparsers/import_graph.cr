@@ -231,11 +231,11 @@ module Noir
       end
 
       roots = [] of String
-      segments = expanded.split(File::SEPARATOR)
+      segments = expanded.split('/')
       if segments.size >= 4
         lang = segments[-1]
         if (lang == "java" || lang == "kotlin") && segments[-2] == "main" && segments[-3] == "src"
-          module_root = segments[0, segments.size - 3].join(File::SEPARATOR)
+          module_root = segments[0, segments.size - 3].join('/')
           workspace_root = File.dirname(module_root)
           safe_glob(File.join(workspace_root, "*", "src", "main", lang)) do |candidate|
             next unless Dir.exists?(candidate)
@@ -393,8 +393,8 @@ module Noir
       # path starts with — every import would be (wrongly) rejected as
       # out-of-boundary. Chomp the trailing separator so the check is robust
       # to both `project` and `project/` forms.
-      boundary_abs = Noir::PathScope.expand(boundary).chomp(File::SEPARATOR)
-      combined == boundary_abs || combined.starts_with?(boundary_abs + File::SEPARATOR)
+      boundary_abs = Noir::PathScope.expand(boundary).chomp('/')
+      combined == boundary_abs || combined.starts_with?(boundary_abs + "/")
     end
 
     # Containment of the symlink-resolved path. Both sides are resolved, so a

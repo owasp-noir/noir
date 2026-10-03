@@ -79,7 +79,7 @@ module Analyzer::Ruby
       expanded = CodeLocator.instance.expanded_path_for(path)
       return File.basename(path) unless Noir::PathScope.under_normalized_root?(expanded, normalized)
 
-      relative = expanded[normalized.size..].lchop(File::SEPARATOR)
+      relative = expanded[normalized.size..].lchop('/')
       relative.empty? ? File.basename(path) : relative
     end
 
