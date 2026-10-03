@@ -3,7 +3,7 @@ require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
 describe "PhpAuthTagger" do
-  fixture_base = "#{__DIR__}/../../../functional_test/fixtures/php/laravel_auth"
+  fixture_base = File.expand_path("../../../functional_test/fixtures/php/laravel_auth", __DIR__)
   controller_path = "#{fixture_base}/app/Http/Controllers/PostController.php"
   public_path = "#{fixture_base}/app/Http/Controllers/PublicController.php"
 
@@ -134,7 +134,7 @@ end
 
 # Light coverage for newly added PHP targets (Slim, Yii, CodeIgniter)
 describe "PhpAuthTagger (expanded targets)" do
-  slim_base = "#{__DIR__}/../../../functional_test/fixtures/php/slim"
+  slim_base = File.expand_path("../../../functional_test/fixtures/php/slim", __DIR__)
   slim_path = "#{slim_base}/index.php"
 
   it "runs without error on php_slim technology" do

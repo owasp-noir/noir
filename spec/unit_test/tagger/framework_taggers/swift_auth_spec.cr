@@ -2,7 +2,7 @@ require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
 describe "SwiftAuthTagger" do
-  fixture_base = "#{__DIR__}/../../../functional_test/fixtures/swift/vapor_auth"
+  fixture_base = File.expand_path("../../../functional_test/fixtures/swift/vapor_auth", __DIR__)
   routes_path = "#{fixture_base}/Sources/routes.swift"
 
   # routes.swift line reference:

@@ -2,7 +2,7 @@ require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
 describe "ElixirAuthTagger" do
-  fixture_base = "#{__DIR__}/../../../functional_test/fixtures/elixir/phoenix_auth"
+  fixture_base = File.expand_path("../../../functional_test/fixtures/elixir/phoenix_auth", __DIR__)
   controller_path = "#{fixture_base}/lib/myapp_web/controllers/post_controller.ex"
   public_path = "#{fixture_base}/lib/myapp_web/controllers/public_controller.ex"
 
