@@ -37,16 +37,6 @@ module Noir::SwiftCalleeExtractor
     entries.uniq
   end
 
-  def strip_comment(line : String, in_block_comment : Bool = false) : String
-    stripped, _ = strip_comment_with_state(line, in_block_comment)
-    stripped
-  end
-
-  def strip_comment_with_state(line : String, in_block_comment : Bool) : Tuple(String, Bool)
-    stripped, block_comment_depth, _ = strip_non_code_with_state(line, in_block_comment ? 1 : 0, false)
-    {stripped, block_comment_depth > 0}
-  end
-
   def strip_non_code_with_state(line : String,
                                 block_comment_depth : Int32,
                                 in_multiline_string : Bool) : Tuple(String, Int32, Bool)

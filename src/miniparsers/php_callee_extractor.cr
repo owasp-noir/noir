@@ -93,11 +93,6 @@ module Noir::PhpCalleeExtractor
     RESERVED.includes?(name.downcase)
   end
 
-  def strip_comment(line : String) : String
-    sanitized, _ = sanitize_line(line, false)
-    sanitized
-  end
-
   # ASCII byte values for the delimiters scanned below. All < 0x80, so a
   # UTF-8 multi-byte sequence (bytes >= 0x80) never collides with them.
   private BYTE_NEWLINE   = '\n'.ord.to_u8

@@ -25,8 +25,6 @@ module Noir::RustCalleeExtractorTS
 
   # Rust keywords + commonly-aliased control-flow constructors that
   # surface as `call_expression`s but carry no useful callee signal.
-  # Kept in sync with the legacy regex extractor's `RESERVED` set so
-  # callers see no behaviour change when swapping the implementation.
   RESERVED = Set{
     "as", "async", "await", "break", "const", "continue", "crate",
     "dyn", "else", "enum", "extern", "false", "fn", "for", "if",
@@ -60,8 +58,7 @@ module Noir::RustCalleeExtractorTS
     dedup(sink)
   end
 
-  # Drop-in replacement for `Noir::RustCalleeExtractor.callees_for_body`.
-  # Wraps `body_text` in a synthetic `fn _() { ... }` so the grammar
+  # Callees of a function body extracted as raw text. Wraps `body_text` in a synthetic `fn _() { ... }` so the grammar
   # has a complete top-level item to parse, then translates wrapper-
   # relative rows back to file-relative ones (`start_line` is the
   # 1-based file line of the body's first line).
