@@ -105,7 +105,7 @@ describe Noir::CliValidation do
 
     it "rejects directories passed as --config-file" do
       options = create_test_options
-      options["config_file"] = YAML::Any.new("/tmp")
+      options["config_file"] = YAML::Any.new(Dir.tempdir)
       expect_raises(Noir::CliValidation::Error, /is not a file/) do
         Noir::CliValidation.validate_config_file!(options)
       end
@@ -243,14 +243,14 @@ describe Noir::CliValidation do
 
     it "accepts an existing directory" do
       options = create_test_options
-      options["passive_scan_path"] = YAML::Any.new([YAML::Any.new("/tmp")])
+      options["passive_scan_path"] = YAML::Any.new([YAML::Any.new(Dir.tempdir)])
       Noir::CliValidation.validate_passive_scan_paths!(options)
     end
 
     it "flags the first invalid entry when multiple paths are passed" do
       options = create_test_options
       options["passive_scan_path"] = YAML::Any.new([
-        YAML::Any.new("/tmp"),
+        YAML::Any.new(Dir.tempdir),
         YAML::Any.new("/tmp/noir-no-such-dir-#{Random.rand(1_000_000)}"),
       ])
       expect_raises(Noir::CliValidation::Error, /does not exist/) do

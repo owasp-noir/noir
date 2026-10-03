@@ -21,7 +21,11 @@ describe "Noir::PathScope.expand" do
     end
   end
 
+  # The same-object fast path is POSIX-only (`already_expanded?`).
   it "returns an already-normal absolute path as is" do
+    {% unless flag?(:unix) %}
+      pending! "no same-object fast path off POSIX"
+    {% end %}
     path = "/srv/app/src/main.go"
     Noir::PathScope.expand(path).should be(path)
   end

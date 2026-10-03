@@ -157,14 +157,16 @@ describe "Noir::CLI::ConfigCommand.config_path" do
   end
 
   it "leaves an absolute --config-file path alone" do
-    Noir::CLI::ConfigCommand.config_path("/tmp/noir-test.yaml").should eq("/tmp/noir-test.yaml")
+    path = File.join(Dir.tempdir, "noir-test.yaml")
+    Noir::CLI::ConfigCommand.config_path(path).should eq(path)
   end
 
   it "resolves under NOIR_HOME when set" do
     saved = ENV["NOIR_HOME"]?
-    ENV["NOIR_HOME"] = "/tmp/noir-test-home"
+    noir_home = File.join(Dir.tempdir, "noir-test-home")
+    ENV["NOIR_HOME"] = noir_home
     begin
-      Noir::CLI::ConfigCommand.config_path.should eq("/tmp/noir-test-home/config.yaml")
+      Noir::CLI::ConfigCommand.config_path.should eq(File.join(noir_home, "config.yaml"))
     ensure
       if s = saved
         ENV["NOIR_HOME"] = s

@@ -3,7 +3,7 @@ require "../../../src/ai_context/augmentor"
 require "../../../src/output_builder/common"
 
 def with_temp_ai_context_source(content : String, ext : String = ".txt", & : String ->)
-  path = "/tmp/noir-ai-context-#{Random.rand(1_000_000)}#{ext}"
+  path = "#{Dir.tempdir}/noir-ai-context-#{Random.rand(1_000_000)}#{ext}"
   File.write(path, content)
   begin
     yield path
@@ -728,8 +728,8 @@ describe "NoirAIContext" do
   end
 
   it "adds GraphQL resolver evidence when an SDL operation is merged with Kotlin resolver code" do
-    schema_path = "/tmp/noir-ai-context-schema-#{Random.rand(1_000_000)}.graphqls"
-    resolver_path = "/tmp/noir-ai-context-resolver-#{Random.rand(1_000_000)}.kt"
+    schema_path = "#{Dir.tempdir}/noir-ai-context-schema-#{Random.rand(1_000_000)}.graphqls"
+    resolver_path = "#{Dir.tempdir}/noir-ai-context-resolver-#{Random.rand(1_000_000)}.kt"
     File.write(schema_path, "type Mutation {\n  deleteBook(id: ID!): Boolean\n}\n")
     File.write(resolver_path, <<-CODE)
       @Controller
@@ -1440,7 +1440,7 @@ describe "NoirAIContext" do
       }
       CODE
 
-    path = "/tmp/noir-ai-context-mobile-#{Random.rand(1_000_000)}.swift"
+    path = "#{Dir.tempdir}/noir-ai-context-mobile-#{Random.rand(1_000_000)}.swift"
     File.write(path, source)
     begin
       endpoint = Endpoint.new("myapp://open", "GET", Details.new(PathInfo.new("Info.plist")))

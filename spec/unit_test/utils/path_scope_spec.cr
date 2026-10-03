@@ -84,12 +84,15 @@ describe Noir::PathScope do
   end
 
   describe ".normalize_root" do
+    # `/app` is drive-relative on Windows, so anchor on an absolute root.
+    app = File.join(Dir.tempdir, "app")
+
     it "strips a trailing slash from a normalized root" do
-      Noir::PathScope.normalize_root("/app/").should eq("/app")
+      Noir::PathScope.normalize_root("#{app}/").should eq(app)
     end
 
     it "leaves a root without a trailing slash unchanged" do
-      Noir::PathScope.normalize_root("/app").should eq("/app")
+      Noir::PathScope.normalize_root(app).should eq(app)
     end
   end
 
@@ -157,7 +160,8 @@ describe Noir::PathScope do
           Dir.cd(target)
           Noir::PathScope.expand("x").should eq(File.expand_path("x", original))
           Noir::PathScope.expand("rel/../b").should eq(File.expand_path("rel/../b", original))
-          Noir::PathScope.expand("/app/./x").should eq("/app/x")
+          app = File.join(Dir.tempdir, "app")
+          Noir::PathScope.expand("#{app}/./x").should eq("#{app}/x")
         end
       end
     end
