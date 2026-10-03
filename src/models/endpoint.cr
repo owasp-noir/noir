@@ -105,14 +105,6 @@ struct Endpoint
     @details = details.detached_copy
   end
 
-  def protocol=(protocol : String)
-    @protocol = protocol
-  end
-
-  def internal=(internal : Bool)
-    @internal = internal
-  end
-
   # Dedup by (name, tagger) like push_callee/push_param do for their
   # collections, so re-tagging the same target (e.g. a match in two
   # code_paths) can't surface a duplicate "auth auth" in the text output.
@@ -195,10 +187,6 @@ struct Param
 
   def ==(other : Param) : Bool
     @name == other.name && @value == other.value && @param_type == other.param_type
-  end
-
-  def param_type=(value : String)
-    @param_type = value
   end
 
   # Request-body param types that share the `json` bucket. Fourteen analyzers
@@ -301,10 +289,6 @@ struct Details
     @technologies.sort!
   end
 
-  def status_code=(status_code : Int32)
-    @status_code = status_code
-  end
-
   def ==(other : Details) : Bool
     return false if @status_code != other.status_code
     return false if @technology != other.technology
@@ -340,14 +324,6 @@ struct PathInfo
 
   def ==(other : PathInfo) : Bool
     @path == other.path && @line == other.line
-  end
-end
-
-struct EndpointReference
-  include JSON::Serializable
-  property endpoint, metadata
-
-  def initialize(@endpoint : Endpoint, @metadata : Hash(Symbol, String))
   end
 end
 
@@ -421,12 +397,6 @@ struct AIContext
   property signals : Array(AIContextEntry) = [] of AIContextEntry
 
   def initialize
-    @guards = [] of AIContextEntry
-    @callees = [] of AIContextEntry
-    @sources = [] of AIContextEntry
-    @sinks = [] of AIContextEntry
-    @validators = [] of AIContextEntry
-    @signals = [] of AIContextEntry
   end
 
   def empty? : Bool

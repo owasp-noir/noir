@@ -766,7 +766,7 @@ describe "EndpointOptimizer" do
     end
 
     # `internal` marks a declaration of a request the app *makes*
-    # (`@FeignClient`, `@HttpExchange`), which `Deliver#skip_probe_target?`
+    # (`@FeignClient`, `@HttpExchange`), which `Deliver#probe_all`
     # reads to skip probing. Another analyzer finding a real served route at
     # the same address contradicts that, so it is cleared rather than kept —
     # otherwise whichever of the two sorted first decided whether a genuine

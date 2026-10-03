@@ -4,8 +4,8 @@
 # Every consumer reads it from here — the router's dispatch, each command's
 # `-h` page, `noir help`, and the zsh/bash/fish/elvish completion
 # generators. Before this module the same six lists were written out in as
-# many places (`KNOWN_COMMANDS`, `KNOWN_HELP_TARGETS`, each command's
-# `ACTIONS`, and once per shell in `completions.cr`), with nothing linking
+# many places (the router's verb list, `noir help`'s target list, each
+# command's `ACTIONS`, and once per shell in `completions.cr`), with nothing linking
 # them: a renamed action stayed "valid" in three completion scripts, and a
 # new subcommand had to be remembered in six files or it silently went
 # uncompleted.

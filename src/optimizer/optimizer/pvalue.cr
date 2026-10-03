@@ -21,60 +21,26 @@ class EndpointOptimizer
     param_value.to_s
   end
 
+  private PVALUE_TYPES = %w[query json form header cookie path]
+
+  # Per-type rules (`set_pvalue_<type>`) first, then the global `set_pvalue`.
   private def initialize_pvalue_rules : Hash(String, Array(PValueRule))
-    rules = Hash(String, Array(PValueRule)).new
-    param_types = ["query", "json", "form", "header", "cookie", "path"]
     global_pvalue = @options["set_pvalue"].as_a
-
-    param_types.each do |type|
-      pvalue_target = case type
-                      when "query"  then @options["set_pvalue_query"]
-                      when "json"   then @options["set_pvalue_json"]
-                      when "form"   then @options["set_pvalue_form"]
-                      when "header" then @options["set_pvalue_header"]
-                      when "cookie" then @options["set_pvalue_cookie"]
-                      when "path"   then @options["set_pvalue_path"]
-                      else               YAML::Any.new([] of YAML::Any)
-                      end
-
-      merged_pvalue_target = [] of YAML::Any
-      merged_pvalue_target.concat(pvalue_target.as_a)
-      merged_pvalue_target.concat(global_pvalue)
-
-      rules[type] = parse_rules(merged_pvalue_target)
+    PVALUE_TYPES.to_h do |type|
+      {type, parse_rules(@options["set_pvalue_#{type}"].as_a + global_pvalue)}
     end
-
-    rules
   end
 
+  # `key=value` or `key:value`, split on whichever separator comes first;
+  # no separator (or a `*` key) applies the value to every param.
   private def parse_rules(yaml_rules : Array(YAML::Any)) : Array(PValueRule)
-    parsed_rules = [] of PValueRule
-    yaml_rules.each do |pvalue|
+    yaml_rules.map do |pvalue|
       pvalue_str = pvalue.to_s
-      key = nil
-      value = pvalue_str
-
-      if pvalue_str.includes?("=") || pvalue_str.includes?(":")
-        first_equal = pvalue_str.index("=")
-        first_colon = pvalue_str.index(":")
-
-        if first_equal && (!first_colon || first_equal < first_colon)
-          split = pvalue_str.split("=", 2)
-          key = split[0]
-          value = split[1]
-        elsif first_colon
-          split = pvalue_str.split(":", 2)
-          key = split[0]
-          value = split[1]
-        end
+      if separator = pvalue_str.index(/[=:]/)
+        key = pvalue_str[0, separator]
+        value = pvalue_str[(separator + 1)..]
       end
-
-      if key == "*"
-        key = nil
-      end
-
-      parsed_rules << PValueRule.new(key, value)
+      PValueRule.new(key == "*" ? nil : key, value || pvalue_str)
     end
-    parsed_rules
   end
 end

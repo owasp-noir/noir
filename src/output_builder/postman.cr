@@ -6,14 +6,15 @@ require "json"
 
 @[Noir::OutputFormat(name: "postman", description: "Postman collection", order: 160, structured: true)]
 class OutputBuilderPostman < OutputBuilder
-  def print(endpoints : Array(Endpoint))
-    items = [] of Hash(String, JSON::Any)
+  # A request's key/value lists: headers, form fields, query, path variables.
+  private alias Pairs = Array(Hash(String, String))
+  private alias UrlObject = Hash(String, String | Array(String) | Pairs)
 
-    endpoints.each do |endpoint|
-      # mobile deep links / CLI commands aren't HTTP requests, so a Postman
-      # request item (URI.parse + {{baseUrl}} + HTTP verbs) is meaningless
-      # for them — keep them out of the collection.
-      next if endpoint.non_http?
+  def print(endpoints : Array(Endpoint))
+    # mobile deep links / CLI commands aren't HTTP requests, so a Postman
+    # request item (URI.parse + {{baseUrl}} + HTTP verbs) is meaningless
+    # for them — keep them out of the collection.
+    items = endpoints.reject(&.non_http?).flat_map do |endpoint|
       # `URI.parse` is used for the authority only — scheme / host / port sit
       # ahead of anything a route pattern can spell, so it reads those
       # correctly. The path, query and fragment come from `split_route_url`,
@@ -56,226 +57,107 @@ class OutputBuilderPostman < OutputBuilder
       url_obj = build_url_object(uri, path_with_vars, query_pairs)
 
       # Add path variables
-      path_vars = [] of JSON::Any
-      endpoint.params.each do |param|
-        if param.request_type == "path"
-          path_vars << JSON::Any.new({
-            "key"   => JSON::Any.new(param.name),
-            "value" => JSON::Any.new(param.value),
-          } of String => JSON::Any)
-        end
+      path_vars = endpoint.params.select { |param| param.request_type == "path" }.map do |param|
+        {"key" => param.name, "value" => param.value}
       end
-
-      if !path_vars.empty?
-        url_obj["variable"] = JSON::Any.new(path_vars)
-      end
+      url_obj["variable"] = path_vars unless path_vars.empty?
 
       # Build headers
-      headers = [] of JSON::Any
+      headers = Pairs.new
       endpoint.params.each do |param|
         if param.request_type == "header"
-          headers << JSON::Any.new({
-            "key"   => JSON::Any.new(param.name),
-            "value" => JSON::Any.new(param.value),
-          } of String => JSON::Any)
+          headers << {"key" => param.name, "value" => param.value}
         elsif param.request_type == "cookie"
-          # Find existing Cookie header or create new one. Header names are
-          # case-insensitive (RFC 7230), so match `cookie`/`COOKIE` too —
+          # Fold into an existing Cookie header or create one. Header names
+          # are case-insensitive (RFC 7230), so match `cookie`/`COOKIE` too —
           # otherwise a header-type param named `cookie` and the cookie-type
           # Cookie header would both be emitted. (Mirrors the Content-Type
           # case-insensitive match elsewhere in this builder.)
-          existing_cookie = headers.find { |h| h["key"].as_s.downcase == "cookie" }
-          if existing_cookie
-            # Append to existing cookie value
-            current_val = existing_cookie["value"].as_s
-            # We need to rebuild since JSON::Any is immutable
-            headers.reject! { |h| h["key"].as_s.downcase == "cookie" }
-            headers << JSON::Any.new({
-              "key"   => JSON::Any.new("Cookie"),
-              "value" => JSON::Any.new("#{current_val}; #{param.name}=#{param.value}"),
-            } of String => JSON::Any)
-          else
-            headers << JSON::Any.new({
-              "key"   => JSON::Any.new("Cookie"),
-              "value" => JSON::Any.new("#{param.name}=#{param.value}"),
-            } of String => JSON::Any)
+          cookie = "#{param.name}=#{param.value}"
+          if existing_cookie = headers.find { |h| h["key"].downcase == "cookie" }
+            cookie = "#{existing_cookie["value"]}; #{cookie}"
+            headers.reject! { |h| h["key"].downcase == "cookie" }
           end
+          headers << {"key" => "Cookie", "value" => cookie}
         end
       end
 
       # Build request body
-      body = nil
       has_json_body = endpoint.params.any? { |p| p.request_type == "json" }
       has_form_body = endpoint.params.any? { |p| p.request_type == "form" }
       has_file_body = endpoint.params.any? { |p| p.request_type == "file" }
       has_xml_body = endpoint.params.any? { |p| p.request_type == "xml" }
-
-      if has_json_body
-        json_body = {} of String => JSON::Any
-        endpoint.params.each do |param|
-          if param.request_type == "json"
-            json_body[param.name] = JSON::Any.new(param.value)
-          end
+      form_fields = endpoint.params.compact_map do |param|
+        case param.request_type
+        when "form" then {"key" => param.name, "value" => param.value, "type" => "text"}
+        when "file" then {"key" => param.name, "type" => "file", "src" => param.value}
         end
-
-        body_hash = {
-          "mode"    => JSON::Any.new("raw"),
-          "raw"     => JSON::Any.new(json_body.to_json),
-          "options" => JSON::Any.new({
-            "raw" => JSON::Any.new({
-              "language" => JSON::Any.new("json"),
-            } of String => JSON::Any),
-          } of String => JSON::Any),
-        } of String => JSON::Any
-
-        # Add Content-Type header if not already present
-        unless headers.any? { |h| h["key"].as_s.downcase == "content-type" }
-          headers << JSON::Any.new({
-            "key"   => JSON::Any.new("Content-Type"),
-            "value" => JSON::Any.new("application/json"),
-          } of String => JSON::Any)
-        end
-
-        if has_file_body
-          form_data = [] of JSON::Any
-          endpoint.params.each do |param|
-            if param.request_type == "form"
-              form_data << JSON::Any.new({
-                "key"   => JSON::Any.new(param.name),
-                "value" => JSON::Any.new(param.value),
-                "type"  => JSON::Any.new("text"),
-              } of String => JSON::Any)
-            elsif param.request_type == "file"
-              form_data << JSON::Any.new({
-                "key"  => JSON::Any.new(param.name),
-                "type" => JSON::Any.new("file"),
-                "src"  => JSON::Any.new(param.value),
-              } of String => JSON::Any)
-            end
-          end
-          body_hash["formdata"] = JSON::Any.new(form_data)
-        elsif has_form_body
-          form_data = [] of JSON::Any
-          endpoint.params.each do |param|
-            if param.request_type == "form"
-              form_data << JSON::Any.new({
-                "key"   => JSON::Any.new(param.name),
-                "value" => JSON::Any.new(param.value),
-                "type"  => JSON::Any.new("text"),
-              } of String => JSON::Any)
-            end
-          end
-          body_hash["urlencoded"] = JSON::Any.new(form_data)
-        end
-
-        body = body_hash
-      elsif has_file_body
-        form_data = [] of JSON::Any
-        endpoint.params.each do |param|
-          if param.request_type == "form"
-            form_data << JSON::Any.new({
-              "key"   => JSON::Any.new(param.name),
-              "value" => JSON::Any.new(param.value),
-              "type"  => JSON::Any.new("text"),
-            } of String => JSON::Any)
-          elsif param.request_type == "file"
-            form_data << JSON::Any.new({
-              "key"  => JSON::Any.new(param.name),
-              "type" => JSON::Any.new("file"),
-              "src"  => JSON::Any.new(param.value),
-            } of String => JSON::Any)
-          end
-        end
-
-        body = {
-          "mode"     => JSON::Any.new("formdata"),
-          "formdata" => JSON::Any.new(form_data),
-        } of String => JSON::Any
-      elsif has_form_body
-        form_data = [] of JSON::Any
-        endpoint.params.each do |param|
-          if param.request_type == "form"
-            form_data << JSON::Any.new({
-              "key"   => JSON::Any.new(param.name),
-              "value" => JSON::Any.new(param.value),
-              "type"  => JSON::Any.new("text"),
-            } of String => JSON::Any)
-          end
-        end
-
-        body = {
-          "mode"       => JSON::Any.new("urlencoded"),
-          "urlencoded" => JSON::Any.new(form_data),
-        } of String => JSON::Any
-      elsif has_xml_body
-        # Play `asXml` / Tapir `xmlBody` record a whole request body as
-        # `param_type: xml` (name typically `body`). `merged_query_pairs`
-        # used to treat anything outside KNOWN_NON_QUERY_TYPES as query,
-        # so `/xml` imported as `?body=` while `-f json` kept the type.
-        # OAS already emits application/xml; this is the Postman counterpart.
-        unless headers.any? { |h| h["key"].as_s.downcase == "content-type" }
-          headers << JSON::Any.new({
-            "key"   => JSON::Any.new("Content-Type"),
-            "value" => JSON::Any.new("application/xml"),
-          } of String => JSON::Any)
-        end
-
-        body = {
-          "mode"    => JSON::Any.new("raw"),
-          "raw"     => JSON::Any.new(xml_raw_body(endpoint.params)),
-          "options" => JSON::Any.new({
-            "raw" => JSON::Any.new({
-              "language" => JSON::Any.new("xml"),
-            } of String => JSON::Any),
-          } of String => JSON::Any),
-        } of String => JSON::Any
       end
 
-      expand_synthetic_http_methods(endpoint.method).each do |method|
-        # Build request object
-        request = {
-          "method" => JSON::Any.new(method),
-          "header" => JSON::Any.new(headers),
-          "url"    => JSON::Any.new(url_obj),
-        } of String => JSON::Any
+      body = if has_json_body
+               json_body = {} of String => String
+               endpoint.params.each do |param|
+                 json_body[param.name] = param.value if param.request_type == "json"
+               end
 
-        if body
-          request["body"] = JSON::Any.new(body)
-        end
+               # Add Content-Type header if not already present
+               unless headers.any? { |h| h["key"].downcase == "content-type" }
+                 headers << {"key" => "Content-Type", "value" => "application/json"}
+               end
+
+               raw_body = {"mode" => "raw", "raw" => json_body.to_json, "options" => {"raw" => {"language" => "json"}}}
+               if has_file_body
+                 raw_body.merge({"formdata" => form_fields})
+               elsif has_form_body
+                 raw_body.merge({"urlencoded" => form_fields})
+               else
+                 raw_body
+               end
+             elsif has_file_body
+               {"mode" => "formdata", "formdata" => form_fields}
+             elsif has_form_body
+               {"mode" => "urlencoded", "urlencoded" => form_fields}
+             elsif has_xml_body
+               # Play `asXml` / Tapir `xmlBody` record a whole request body as
+               # `param_type: xml` (name typically `body`). `merged_query_pairs`
+               # used to treat anything outside KNOWN_NON_QUERY_TYPES as query,
+               # so `/xml` imported as `?body=` while `-f json` kept the type.
+               # OAS already emits application/xml; this is the Postman counterpart.
+               unless headers.any? { |h| h["key"].downcase == "content-type" }
+                 headers << {"key" => "Content-Type", "value" => "application/xml"}
+               end
+
+               {"mode" => "raw", "raw" => xml_raw_body(endpoint.params), "options" => {"raw" => {"language" => "xml"}}}
+             end
+
+      expand_synthetic_http_methods(endpoint.method).map do |method|
+        # Build request object
+        request = {"method" => method, "header" => headers, "url" => url_obj}
+        request = body ? request.merge({"body" => body}) : request
 
         # Build item. The host is part of the name for an absolute URL:
         # without it `demo.example.com/api/users/{id}` and
         # `demo.example.com.evil/api/users/{id}` are two entries in the
         # sidebar reading exactly the same.
-        item = {
-          "name"    => JSON::Any.new("#{method} #{item_label(uri, url_parts)}"),
-          "request" => JSON::Any.new(request),
-        } of String => JSON::Any
-
+        item = {"name" => "#{method} #{item_label(uri, url_parts)}", "request" => request}
         if description = noir_ai_context_description(endpoint) || noir_callees_description(endpoint)
-          item["description"] = JSON::Any.new(description)
+          item["description"] = description
         end
-
-        items << item
+        item
       end
     end
 
     # Build collection
     collection = {
-      "info" => JSON::Any.new({
-        "name"   => JSON::Any.new("Generated by Noir"),
-        "schema" => JSON::Any.new("https://schema.getpostman.com/json/collection/v2.1.0/collection.json"),
-      } of String => JSON::Any),
-      "item"     => JSON::Any.new(items.map { |i| JSON::Any.new(i) }),
-      "variable" => JSON::Any.new([
-        JSON::Any.new({
-          "key"   => JSON::Any.new("baseUrl"),
-          "value" => JSON::Any.new(base_url),
-        } of String => JSON::Any),
-      ]),
-    } of String => JSON::Any
+      "info" => {
+        "name"   => "Generated by Noir",
+        "schema" => "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+      },
+      "item"     => items,
+      "variable" => [{"key" => "baseUrl", "value" => base_url}],
+    }
 
-    ob_puts JSON::Any.new(collection).to_pretty_json
+    ob_puts collection.to_pretty_json
   end
 
   # Postman addresses a request either through the collection's `baseUrl`
@@ -329,14 +211,14 @@ class OutputBuilderPostman < OutputBuilder
   end
 
   private def build_url_object(uri : URI, path_with_vars : Array(String),
-                               query_pairs : Array(Tuple(String, String))) : Hash(String, JSON::Any)
+                               query_pairs : Array(Tuple(String, String))) : UrlObject
     host = uri.host
     if host.nil? || host.empty?
-      url_obj = {
-        "raw"  => JSON::Any.new(with_query("{{baseUrl}}/#{path_with_vars.join("/")}", query_pairs)),
-        "host" => JSON::Any.new([JSON::Any.new("{{baseUrl}}")]),
-        "path" => JSON::Any.new(path_with_vars.map { |p| JSON::Any.new(p) }),
-      } of String => JSON::Any
+      url_obj = UrlObject{
+        "raw"  => with_query("{{baseUrl}}/#{path_with_vars.join("/")}", query_pairs),
+        "host" => ["{{baseUrl}}"],
+        "path" => path_with_vars,
+      }
       add_query_list(url_obj, query_pairs)
       return url_obj
     end
@@ -347,18 +229,18 @@ class OutputBuilderPostman < OutputBuilder
       io << ':' << uri.port if uri.port
     end
 
-    url_obj = {
+    url_obj = UrlObject{
       # Postman splits a real host into its domain labels.
-      "raw"  => JSON::Any.new(with_query("#{authority}/#{path_with_vars.join("/")}", query_pairs)),
-      "host" => JSON::Any.new(host.split('.').map { |label| JSON::Any.new(label) }),
-      "path" => JSON::Any.new(path_with_vars.map { |p| JSON::Any.new(p) }),
-    } of String => JSON::Any
+      "raw"  => with_query("#{authority}/#{path_with_vars.join("/")}", query_pairs),
+      "host" => host.split('.'),
+      "path" => path_with_vars,
+    }
 
     if scheme = uri.scheme
-      url_obj["protocol"] = JSON::Any.new(scheme)
+      url_obj["protocol"] = scheme
     end
     if port = uri.port
-      url_obj["port"] = JSON::Any.new(port.to_s)
+      url_obj["port"] = port.to_s
     end
 
     add_query_list(url_obj, query_pairs)
@@ -401,15 +283,10 @@ class OutputBuilderPostman < OutputBuilder
     "#{raw}?#{query_pairs.map { |name, value| "#{name}=#{value}" }.join("&")}"
   end
 
-  private def add_query_list(url_obj : Hash(String, JSON::Any), query_pairs : Array(Tuple(String, String)))
+  private def add_query_list(url_obj : UrlObject, query_pairs : Array(Tuple(String, String)))
     return if query_pairs.empty?
 
-    url_obj["query"] = JSON::Any.new(query_pairs.map do |name, value|
-      JSON::Any.new({
-        "key"   => JSON::Any.new(name),
-        "value" => JSON::Any.new(value),
-      } of String => JSON::Any)
-    end)
+    url_obj["query"] = query_pairs.map { |name, value| {"key" => name, "value" => value} }
   end
 
   # The sidebar shows this name alone, so it has to carry every part of the URL

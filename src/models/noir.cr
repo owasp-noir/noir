@@ -26,12 +26,6 @@ class NoirRunner
   @export_es : String
   @export_webhook : String
   @is_debug : Bool
-  @is_verbose : Bool
-  @is_color : Bool
-  @is_log : Bool
-  @no_spinner : Bool
-  @concurrency : Int32
-  @config_file : String
   @passive_scans : Array(PassiveScan)
   @passive_results : Array(PassiveScanResult)
   # Tech analyzers that raised during the last `analyze`, plus the files
@@ -45,7 +39,7 @@ class NoirRunner
   @scan_failures = [] of AnalyzerFailure
 
   getter options, techs, endpoints, logger, passive_results
-  setter endpoints
+  setter endpoints, techs
 
   # Everything this scan did not cover, from any phase. Empty is the positive
   # statement "the scan read what it was pointed at and delivered what it was
@@ -57,7 +51,6 @@ class NoirRunner
 
   def initialize(options)
     @options = options
-    @config_file = @options["config_file"].to_s
     # `@noir_home = Noir::Home.path` used to run here. Nothing ever read the
     # field, but `Noir::Home.path` dies when neither NOIR_HOME nor HOME is
     # set — so every scan in a HOME-less environment (distroless image,
@@ -85,13 +78,8 @@ class NoirRunner
     @export_es = @options["export_es"].to_s
     @export_webhook = @options["export_webhook"].to_s
     @is_debug = any_to_bool(@options["debug"])
-    @is_verbose = any_to_bool(@options["verbose"])
-    @is_color = any_to_bool(@options["color"])
-    @is_log = any_to_bool(@options["nolog"])
-    @no_spinner = any_to_bool(@options["no_spinner"])
-    @concurrency = @options["concurrency"].to_s.to_i
 
-    @logger = NoirLogger.new @is_debug, @is_verbose, @is_color, @is_log, @no_spinner
+    @logger = NoirLogger.from_options(@options, no_spinner: any_to_bool(@options["no_spinner"]))
 
     # The LLM disk cache swallows its own IO failures and has no logger of
     # its own (it is a module of class methods reached from several
@@ -360,9 +348,5 @@ class NoirRunner
     # only catches a library caller that built the options hash itself:
     # fall back to the default format rather than printing nothing at all.
     Noir::OutputFormats.render(Noir::OutputFormats::DEFAULT, @options, @endpoints, @passive_results, analyzer_failures)
-  end
-
-  def techs=(value : Array(String))
-    @techs = value
   end
 end

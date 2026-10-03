@@ -61,7 +61,7 @@ module Noir::CLI::Router
       return
     end
 
-    if !head.starts_with?("-") && KNOWN_COMMANDS.includes?(head)
+    if !head.starts_with?("-") && Catalog::NAMES.includes?(head)
       route(head, globals + rest[1..])
     elsif likely_mistyped_command?(head)
       # A bare word that is neither a known command nor an existing path is
@@ -92,14 +92,13 @@ module Noir::CLI::Router
   # so the v0 `noir <path>` shorthand keeps working.
   private def self.likely_mistyped_command?(head : String) : Bool
     return false if head.starts_with?("-")
-    return false if KNOWN_COMMANDS.includes?(head)
+    return false if Catalog::NAMES.includes?(head)
     return false if head.includes?("/") || head.includes?(".")
     return false if File.exists?(head)
     true
   end
 
-  # Router-consumed global flags, re-exported from `Noir::CLI` so the
-  # router and the legacy layer test the same list. `apply_global_color_flag!`
+  # Strips the router-consumed `GLOBAL_FLAGS`. `apply_global_color_flag!`
   # already acted on `--no-color`, and `--no-spinner` only means anything to
   # a scan's loading spinner. Neither is meaningful to the thin subcommands,
   # whose "first positional = action/subject" parsers would otherwise misread
@@ -107,8 +106,6 @@ module Noir::CLI::Router
   # --no-color`). They're stripped before those commands parse. `scan` is
   # deliberately excluded: its own OptionParser re-reads both flags to thread
   # color/spinner state through NoirRunner, so scan keeps the full argv.
-  GLOBAL_FLAGS = Noir::CLI::GLOBAL_FLAGS
-
   # Pure helper (no exit/die) so the strip rule stays unit-testable.
   def self.strip_global_flags(args : Array(String)) : Array(String)
     args.reject { |arg| GLOBAL_FLAGS.includes?(arg) }
@@ -125,7 +122,7 @@ module Noir::CLI::Router
     when "version"    then VersionCommand.run(strip_global_flags(args))
     when "help"       then HelpCommand.run(strip_global_flags(args))
     else
-      # KNOWN_COMMANDS guards this branch — should never be reached.
+      # Catalog::NAMES guards this branch — should never be reached.
       Noir::CLI.die("Unknown command: #{command}")
     end
   end

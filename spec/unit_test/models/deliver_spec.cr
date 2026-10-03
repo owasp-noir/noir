@@ -27,13 +27,15 @@ describe "Initialize" do
   it "Deliver with matchers" do
     options["probe_match"] = YAML::Any.new([YAML::Any.new("/admin")])
     object = Deliver.new options
-    object.matchers[0].to_s.should eq("/admin")
+    endpoints = [Endpoint.new("/admin", "GET"), Endpoint.new("/users", "GET")]
+    object.apply_matchers(endpoints).map(&.url).should eq(["/admin"])
   end
 
   it "Deliver with filters" do
     options["probe_skip"] = YAML::Any.new([YAML::Any.new("/admin")])
     object = Deliver.new options
-    object.filters[0].to_s.should eq("/admin")
+    endpoints = [Endpoint.new("/admin", "GET"), Endpoint.new("/users", "GET")]
+    object.apply_filters(endpoints).map(&.url).should eq(["/users"])
   end
 end
 

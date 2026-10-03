@@ -33,6 +33,13 @@ module OutputBuilderOasCommon
   # are unioned instead.
   UNIONED_OPERATION_KEYS = Set{"servers", "x-noir-operations", "x-noir-hosts"}
 
+  # A native Hash/Array/scalar literal as a fresh `JSON::Any`, for the values
+  # that land in the `Hash(String, JSON::Any)` trees the merge helpers below
+  # read and rebuild.
+  private def json_any(value) : JSON::Any
+    JSON.parse(value.to_json)
+  end
+
   # `declared_path_params` are the names the endpoint itself records as
   # `param_type == "path"`. They disambiguate `<a:b>` placeholders, whose two
   # halves are spelled in either order depending on the framework.
@@ -247,7 +254,7 @@ module OutputBuilderOasCommon
     return if variants.includes?(variant)
 
     variants << variant
-    path_item["x-noir-path-variants"] = JSON::Any.new(variants.map { |name| JSON::Any.new(name) })
+    path_item["x-noir-path-variants"] = json_any(variants)
   end
 
   # The operation fields the emitted version's Path Item Object accepts.
@@ -275,7 +282,7 @@ module OutputBuilderOasCommon
     end
 
     methods << method unless methods.includes?(method)
-    path_item["x-noir-unsupported-methods"] = JSON::Any.new(methods.map { |m| JSON::Any.new(m) })
+    path_item["x-noir-unsupported-methods"] = json_any(methods)
   end
 
   # The operation a verb the emitted version can't express would have had.
@@ -381,7 +388,7 @@ module OutputBuilderOasCommon
 
   private def with_parameter_enum(parameter : Hash(String, JSON::Any), values : Array(String)?) : Hash(String, JSON::Any)
     result = parameter.dup
-    encoded = values.try { |list| JSON::Any.new(list.map { |value| JSON::Any.new(value) }) }
+    encoded = values.try { |list| json_any(list) }
 
     if schema = enum_container(result)
       schema = schema.dup
@@ -403,7 +410,7 @@ module OutputBuilderOasCommon
   private def add_operation_names_extension(operation : Hash(String, JSON::Any), name : String?)
     return unless name
 
-    operation["x-noir-operations"] = JSON::Any.new([JSON::Any.new(name)])
+    operation["x-noir-operations"] = json_any([name])
   end
 
   private def union_json_arrays(existing : JSON::Any, incoming : JSON::Any) : JSON::Any
@@ -442,7 +449,7 @@ module OutputBuilderOasCommon
   private def add_unmapped_path_params_extension(operation : Hash(String, JSON::Any), names : Array(String))
     return if names.empty?
 
-    operation["x-noir-unmapped-path-params"] = JSON::Any.new(names.map { |name| JSON::Any.new(name) })
+    operation["x-noir-unmapped-path-params"] = json_any(names)
   end
 
   private def merge_parameters(existing : Array(JSON::Any), incoming : Array(JSON::Any)) : Array(JSON::Any)
@@ -617,9 +624,7 @@ module OutputBuilderOasCommon
   end
 
   private def schema_string : JSON::Any
-    JSON::Any.new({
-      "type" => JSON::Any.new("string"),
-    } of String => JSON::Any)
+    json_any({"type" => "string"})
   end
 
   # `values` are the concrete values a route spells out for the parameter,
@@ -627,42 +632,18 @@ module OutputBuilderOasCommon
   # `/wp-admin/admin-ajax.php?action=get_user_data` documents an `action`
   # parameter with no hint that `get_user_data` is what reaches the handler.
   # No values means unconstrained.
-  private def enum_values(values : Array(String)?) : Array(JSON::Any)?
-    return if values.nil? || values.empty?
-
-    values.map { |value| JSON::Any.new(value) }
-  end
-
   private def openapi_parameter(name : String, location : String, required : Bool, values : Array(String)? = nil) : Hash(String, JSON::Any)
-    schema = schema_string
-    if encoded = enum_values(values)
-      schema = JSON::Any.new({
-        "type" => JSON::Any.new("string"),
-        "enum" => JSON::Any.new(encoded),
-      } of String => JSON::Any)
-    end
+    schema = {"type" => "string"} of String => String | Array(String)
+    schema["enum"] = values if values && !values.empty?
 
-    {
-      "name"     => JSON::Any.new(name),
-      "in"       => JSON::Any.new(location),
-      "required" => JSON::Any.new(required),
-      "schema"   => schema,
-    } of String => JSON::Any
+    json_any({"name" => name, "in" => location, "required" => required, "schema" => schema}).as_h
   end
 
   private def swagger_parameter(name : String, location : String, required : Bool, values : Array(String)? = nil) : Hash(String, JSON::Any)
-    parameter = {
-      "name"     => JSON::Any.new(name),
-      "in"       => JSON::Any.new(location),
-      "type"     => JSON::Any.new("string"),
-      "required" => JSON::Any.new(required),
-    } of String => JSON::Any
+    parameter = {"name" => name, "in" => location, "type" => "string", "required" => required} of String => String | Bool | Array(String)
+    parameter["enum"] = values if values && !values.empty?
 
-    if encoded = enum_values(values)
-      parameter["enum"] = JSON::Any.new(encoded)
-    end
-
-    parameter
+    json_any(parameter).as_h
   end
 
   # The authority and scheme list `-u` names.

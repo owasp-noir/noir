@@ -114,7 +114,7 @@ private def ai_context_feature_list?(token : String) : Bool
   tokens = token.split(',').reject(&.empty?)
   return false if tokens.empty?
   return true if tokens.size > 1
-  Noir::OptionsParsing::AI_CONTEXT_FEATURES.includes?(tokens.first)
+  NoirAIContext::ACCEPTED_FEATURES.includes?(tokens.first)
 end
 
 private def base_help : String
@@ -148,8 +148,8 @@ end
 # them to the options hash.
 #
 # These were eight top-level `def`s and five SCREAMING constants leaking
-# into every compilation unit — `INCLUDE_TARGETS` and `AI_CONTEXT_FEATURES`
-# under names generic enough to collide. `run_options_parser` stays
+# into every compilation unit — `INCLUDE_TARGETS` among them, under a
+# name generic enough to collide. `run_options_parser` stays
 # top-level: it is the CLI's entry point, same as `detect_techs` and
 # `analysis_endpoints` on the scan side.
 module Noir::OptionsParsing
@@ -245,7 +245,7 @@ module Noir::OptionsParsing
   #
   # The heuristic for "is the next token a feature list?": lowercase words
   # joined by commas, where either (a) there's more than one comma-separated
-  # word, or (b) the single word matches the fixed vocabulary below exactly.
+  # word, or (b) the single word is in `NoirAIContext::ACCEPTED_FEATURES`.
   # A real filesystem path essentially never contains a literal comma, so
   # any multi-word comma list — typo'd feature names included — is routed
   # to `--ai-context=...` and left for the vocabulary check in
@@ -256,7 +256,6 @@ module Noir::OptionsParsing
   # directory name (`noir scan --ai-context myapp` must keep scanning `myapp`).
   # Both this and the flag's own validator used to spell the vocabulary out
   # by hand, and both omitted `sources`.
-  AI_CONTEXT_FEATURES = NoirAIContext::ACCEPTED_FEATURES
 
   def normalize_ai_context_flag(args : Array(String)) : Array(String)
     result = [] of String
@@ -602,12 +601,9 @@ def run_options_parser
     parser.on "--ai-native-tools-allowlist LIST", "Provider allowlist for native tool-calling (comma-separated; repeatable; default: #{LLM::NativeToolCalling.default_allowlist_csv})" do |v|
       # Accumulate so users can layer providers across multiple
       # `--ai-native-tools-allowlist` invocations the same way they
-      # do for `--use-taggers`, `--exclude-techs`, etc. The default
-      # is the global CSV — once any user value arrives, replace
-      # the default before extending. Without this guard, the user's
-      # first `--ai-native-tools-allowlist openai` would land
-      # appended onto the default list ("openai,anthropic,gemini,…
-      # ,openai") instead of replacing it.
+      # do for `--use-taggers`, `--exclude-techs`, etc. The first
+      # occurrence replaces the default CSV (`reset_seen`) instead of
+      # appending onto it.
       append_to_csv_option(noir_options, "ai_native_tools_allowlist", v, reset_if: LLM::NativeToolCalling.default_allowlist_csv, reset_seen: csv_reset_seen)
     end
     parser.on "--ai-max-token N", "Max tokens per request" do |v|
