@@ -45,10 +45,7 @@ class KtorAuthTagger < FrameworkTagger
     # Pre-scan for authenticate {} blocks with route prefixes
     pre_scan_auth_blocks
 
-    endpoints.each do |endpoint|
-      check_endpoint(endpoint)
-    end
-    endpoints
+    super
   end
 
   private def pre_scan_auth_blocks

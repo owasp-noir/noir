@@ -17,14 +17,12 @@ class SoapTagger < Tagger
   # (e.g. a `/products/soap` store listing).
   URL_MARKERS = ["?wsdl", ".wsdl", ".asmx"]
 
-  def perform(endpoints : Array(Endpoint))
-    endpoints.each do |endpoint|
-      check = soap_header?(endpoint) || soap_url?(endpoint.url)
+  private def check_endpoint(endpoint : Endpoint)
+    check = soap_header?(endpoint) || soap_url?(endpoint.url)
 
-      if check
-        tag = Tag.new("soap", "SOAP endpoint for XML-based web service communication, supporting structured information exchanges across network applications.", "SOAP")
-        endpoint.add_tag(tag)
-      end
+    if check
+      tag = Tag.new("soap", "SOAP endpoint for XML-based web service communication, supporting structured information exchanges across network applications.", "SOAP")
+      endpoint.add_tag(tag)
     end
   end
 

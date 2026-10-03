@@ -67,27 +67,25 @@ class WebhookTagger < Tagger
     "svix_id", "svix_signature", "svix_timestamp",
   }
 
-  def perform(endpoints : Array(Endpoint))
-    endpoints.each do |endpoint|
-      header_names = endpoint.params.compact_map do |param|
-        normalize_param_name(param.name) if param.param_type == "header"
-      end.to_set
+  private def check_endpoint(endpoint : Endpoint)
+    header_names = endpoint.params.compact_map do |param|
+      normalize_param_name(param.name) if param.param_type == "header"
+    end.to_set
 
-      has_signature_header = !(SIGNATURE_HEADERS & header_names).empty?
-      is_write = !READ_ONLY_METHODS.includes?(endpoint.method.upcase)
+    has_signature_header = !(SIGNATURE_HEADERS & header_names).empty?
+    is_write = !READ_ONLY_METHODS.includes?(endpoint.method.upcase)
 
-      check = strong_webhook_url?(endpoint.url) ||
-              has_signature_header ||
-              (is_write && medium_webhook_url?(endpoint.url))
+    check = strong_webhook_url?(endpoint.url) ||
+            has_signature_header ||
+            (is_write && medium_webhook_url?(endpoint.url))
 
-      if check
-        tag = Tag.new(
-          "webhook",
-          "Inbound webhook/callback endpoint; verify signature validation, replay protection, and source-IP trust, and review handlers for SSRF on outbound calls.",
-          "Webhook"
-        )
-        endpoint.add_tag(tag)
-      end
+    if check
+      tag = Tag.new(
+        "webhook",
+        "Inbound webhook/callback endpoint; verify signature validation, replay protection, and source-IP trust, and review handlers for SSRF on outbound calls.",
+        "Webhook"
+      )
+      endpoint.add_tag(tag)
     end
   end
 

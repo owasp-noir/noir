@@ -73,10 +73,25 @@ class Tagger
     @name
   end
 
+  # The per-endpoint shape: look at each endpoint, tag in place, hand the
+  # array back. Taggers declare only `check_endpoint`; those that need a
+  # pass over the whole set first (a project pre-scan, `mcp`'s legacy
+  # prefixes) override `perform` and call `super` or loop themselves.
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
-    # After inheriting the class, write an action code here.
-
+    endpoints.each do |endpoint|
+      check_endpoint(endpoint)
+    end
     endpoints
+  end
+
+  # Per-endpoint hook for taggers using the inherited `perform`.
+  #
+  # A no-op rather than `abstract`: the `Tagger` and `FrameworkTagger` bases
+  # are instantiated directly by their own specs and by the tagger-registry
+  # specs, so they cannot be abstract. A tagger that inherits `perform`
+  # without defining this tags nothing — each tagger's unit spec covers it,
+  # so that shows up as a failing spec rather than silence.
+  protected def check_endpoint(endpoint : Endpoint)
   end
 
   # Split a URL into lowercased, separator-delimited segments. Shared by the

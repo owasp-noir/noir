@@ -16,34 +16,32 @@ class GraphqlTagger < Tagger
   # values (a JSON body, a search string) for GraphQL syntax.
   BODY_PARAM_NAMES = Set{"query", "mutation", "subscription", "graphql", "gql"}
 
-  def perform(endpoints : Array(Endpoint))
-    endpoints.each do |endpoint|
-      names = endpoint.params.map(&.name.to_s.downcase)
-      names_set = Set.new(names)
+  private def check_endpoint(endpoint : Endpoint)
+    names = endpoint.params.map(&.name.to_s.downcase)
+    names_set = Set.new(names)
 
-      intersection = Set.new(WORDS) & names_set
+    intersection = Set.new(WORDS) & names_set
 
-      url_lower = endpoint.url.downcase
-      # `graphql` is distinctive enough as a substring; `gql` is too short
-      # to match loosely (e.g. `/gqlgen`-style strings), so anchor it to a
-      # path segment boundary.
-      is_graphql_url = url_lower.includes?("graphql") || !!url_lower.match(%r{/gql(\b|/|\z)})
+    url_lower = endpoint.url.downcase
+    # `graphql` is distinctive enough as a substring; `gql` is too short
+    # to match loosely (e.g. `/gqlgen`-style strings), so anchor it to a
+    # path segment boundary.
+    is_graphql_url = url_lower.includes?("graphql") || !!url_lower.match(%r{/gql(\b|/|\z)})
 
-      introspection = names_set.any? { |name| INTROSPECTION_NAMES.includes?(name) }
+    introspection = names_set.any? { |name| INTROSPECTION_NAMES.includes?(name) }
 
-      has_graphql_body = endpoint.params.any? do |param|
-        BODY_PARAM_NAMES.includes?(param.name.to_s.downcase) && graphql_document_value?(param.value)
-      end
+    has_graphql_body = endpoint.params.any? do |param|
+      BODY_PARAM_NAMES.includes?(param.name.to_s.downcase) && graphql_document_value?(param.value)
+    end
 
-      # Tag on any decisive signal (URL, introspection field, a body that
-      # parses as a GraphQL document) or on two or more GraphQL-shaped
-      # parameter names together (e.g. `query` + `variables`).
-      check = is_graphql_url || introspection || has_graphql_body || intersection.size >= 2
+    # Tag on any decisive signal (URL, introspection field, a body that
+    # parses as a GraphQL document) or on two or more GraphQL-shaped
+    # parameter names together (e.g. `query` + `variables`).
+    check = is_graphql_url || introspection || has_graphql_body || intersection.size >= 2
 
-      if check
-        tag = Tag.new("graphql", "GraphQL endpoint for flexible API queries, potentially exposing schema introspection and nested data access.", "GraphQL")
-        endpoint.add_tag(tag)
-      end
+    if check
+      tag = Tag.new("graphql", "GraphQL endpoint for flexible API queries, potentially exposing schema introspection and nested data access.", "GraphQL")
+      endpoint.add_tag(tag)
     end
   end
 

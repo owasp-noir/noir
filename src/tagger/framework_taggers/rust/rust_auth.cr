@@ -58,13 +58,7 @@ class RustAuthTagger < FrameworkTagger
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
     # Phase 1: Pre-scan for service/scope-level middleware
     pre_scan_middleware_scopes
-
-    # Phase 2: Check each endpoint
-    endpoints.each do |endpoint|
-      check_endpoint(endpoint)
-    end
-
-    endpoints
+    super
   end
 
   private def pre_scan_middleware_scopes

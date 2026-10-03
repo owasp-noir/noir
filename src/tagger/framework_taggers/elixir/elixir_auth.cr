@@ -53,10 +53,7 @@ class ElixirAuthTagger < FrameworkTagger
     @auth_scopes.clear
     pre_scan_router_pipelines
 
-    endpoints.each do |endpoint|
-      check_endpoint(endpoint)
-    end
-    endpoints
+    super
   end
 
   private def pre_scan_router_pipelines

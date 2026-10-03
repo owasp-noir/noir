@@ -29,12 +29,10 @@ class WebsocketTagger < Tagger
   # ordinary HTTP endpoints.
   URL_MARKERS = ["socket.io", "sockjs"]
 
-  def perform(endpoints : Array(Endpoint))
-    endpoints.each do |endpoint|
-      if websocket?(endpoint)
-        tag = Tag.new("websocket", "WebSocket endpoint for real-time, bidirectional communication between clients and servers, enabling efficient data exchanges.", "WebSocket")
-        endpoint.add_tag(tag)
-      end
+  private def check_endpoint(endpoint : Endpoint)
+    if websocket?(endpoint)
+      tag = Tag.new("websocket", "WebSocket endpoint for real-time, bidirectional communication between clients and servers, enabling efficient data exchanges.", "WebSocket")
+      endpoint.add_tag(tag)
     end
   end
 

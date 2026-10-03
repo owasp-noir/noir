@@ -33,20 +33,18 @@ class ApiDocsTagger < Tagger
   # source used `-`, `_`, or no separator at all.
   DOC_SEGMENTS_NORMALIZED = DOC_SEGMENTS.map(&.gsub(/[-_]/, "")).to_set
 
-  def perform(endpoints : Array(Endpoint))
-    endpoints.each do |endpoint|
-      segments = doc_segments(endpoint.url)
-      check = segments.any? { |seg| DOC_SEGMENTS_NORMALIZED.includes?(seg.gsub(/[-_]/, "")) } ||
-              api_schema?(segments)
+  private def check_endpoint(endpoint : Endpoint)
+    segments = doc_segments(endpoint.url)
+    check = segments.any? { |seg| DOC_SEGMENTS_NORMALIZED.includes?(seg.gsub(/[-_]/, "")) } ||
+            api_schema?(segments)
 
-      if check
-        tag = Tag.new(
-          "api_docs",
-          "API documentation / schema endpoint (Swagger, OpenAPI, GraphiQL, ReDoc, WSDL); exposes the full API surface and is frequently reachable without authentication — review for unauthenticated exposure and information disclosure.",
-          "ApiDocs"
-        )
-        endpoint.add_tag(tag)
-      end
+    if check
+      tag = Tag.new(
+        "api_docs",
+        "API documentation / schema endpoint (Swagger, OpenAPI, GraphiQL, ReDoc, WSDL); exposes the full API surface and is frequently reachable without authentication — review for unauthenticated exposure and information disclosure.",
+        "ApiDocs"
+      )
+      endpoint.add_tag(tag)
     end
   end
 

@@ -47,32 +47,30 @@ class DebugTagger < Tagger
     "trace", "traces", "console", "dump", "dumps", "prometheus",
   }
 
-  def perform(endpoints : Array(Endpoint))
-    endpoints.each do |endpoint|
-      param_names = endpoint.params.map { |param| normalize_param_name(param.name) }.to_set
-      url_segments = url_parts(endpoint.url)
+  private def check_endpoint(endpoint : Endpoint)
+    param_names = endpoint.params.map { |param| normalize_param_name(param.name) }.to_set
+    url_segments = url_parts(endpoint.url)
 
-      has_strong = !(STRONG_PARAM_NAMES & param_names).empty? ||
-                   url_segments.any? { |part| STRONG_PATH_PARTS.includes?(part) } ||
-                   internal_segment?(endpoint.url)
+    has_strong = !(STRONG_PARAM_NAMES & param_names).empty? ||
+                 url_segments.any? { |part| STRONG_PATH_PARTS.includes?(part) } ||
+                 internal_segment?(endpoint.url)
 
-      # Distinct weak path tokens only — a repeated segment
-      # (`/monitor/monitor-x`) can't satisfy the threshold by itself.
-      weak_tokens = Set(String).new
-      url_segments.each do |part|
-        weak_tokens << part if WEAK_PATH_PARTS.includes?(part)
-      end
+    # Distinct weak path tokens only — a repeated segment
+    # (`/monitor/monitor-x`) can't satisfy the threshold by itself.
+    weak_tokens = Set(String).new
+    url_segments.each do |part|
+      weak_tokens << part if WEAK_PATH_PARTS.includes?(part)
+    end
 
-      check = has_strong || weak_tokens.size >= 2
+    check = has_strong || weak_tokens.size >= 2
 
-      if check
-        tag = Tag.new(
-          "debug",
-          "Debug, diagnostic, or internal-only endpoint (debug consoles/toggles, profilers, actuator/management, pprof, heap/thread dumps, internal APIs); should not be publicly reachable — review for information exposure and unsafe diagnostic actions.",
-          "Debug"
-        )
-        endpoint.add_tag(tag)
-      end
+    if check
+      tag = Tag.new(
+        "debug",
+        "Debug, diagnostic, or internal-only endpoint (debug consoles/toggles, profilers, actuator/management, pprof, heap/thread dumps, internal APIs); should not be publicly reachable — review for information exposure and unsafe diagnostic actions.",
+        "Debug"
+      )
+      endpoint.add_tag(tag)
     end
   end
 
