@@ -26,6 +26,10 @@ describe Noir::WindowsPaths do
         File.realpath(Dir.tempdir).should_not contain('\\')
       end
 
+      it "answers false for an empty path instead of raising" do
+        File.exists?("").should be_false
+      end
+
       it "round-trips through the filesystem" do
         dir = File.join(Dir.tempdir, "noir-windows-paths-#{Random.rand(1_000_000)}")
         Dir.mkdir_p(File.join(dir, "sub"))

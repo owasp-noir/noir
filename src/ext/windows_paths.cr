@@ -33,6 +33,15 @@ end
     def self.realpath(path : Path | String) : String
       Noir::WindowsPaths.to_slash(previous_def)
     end
+
+    # On Windows this resolves the path through `GetFullPathNameW`, which
+    # rejects an empty string, so `File.exists?("")` raised instead of
+    # returning false — and took a whole analyzer down with it (classic
+    # ASP.NET MVC checks an optional, often-empty RouteConfig path).
+    def self.exists?(path : Path | String) : Bool
+      return false if path.to_s.empty?
+      previous_def
+    end
   end
 
   class Dir
