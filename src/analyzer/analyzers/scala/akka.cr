@@ -223,17 +223,13 @@ module Analyzer::Scala
         # Extract symbol parameters: parameter('name) { ... }
         block.scan(/parameter\s*\(\s*'(\w+)/) do |match|
           param_name = match[1]
-          unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
-            endpoint.push_param(Param.new(param_name, "", "query"))
-          end
+          endpoint.push_param(Param.new(param_name, "", "query"))
         end
 
         # Extract Symbol("name") parameters.
         block.scan(/parameter\s*\(\s*Symbol\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
           param_name = match[1]
-          unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
-            endpoint.push_param(Param.new(param_name, "", "query"))
-          end
+          endpoint.push_param(Param.new(param_name, "", "query"))
         end
 
         # Extract multiple parameters: parameters("name", "age") or parameters("name", "age".optional)
@@ -242,23 +238,17 @@ module Analyzer::Scala
           params_content.scan(/['"](\w+)['"]/) do |match|
             param_name = match[1]
             # Avoid duplicating parameters already added
-            unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
-              endpoint.push_param(Param.new(param_name, "", "query"))
-            end
+            endpoint.push_param(Param.new(param_name, "", "query"))
           end
 
           params_content.scan(/'(\w+)/) do |match|
             param_name = match[1]
-            unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
-              endpoint.push_param(Param.new(param_name, "", "query"))
-            end
+            endpoint.push_param(Param.new(param_name, "", "query"))
           end
 
           params_content.scan(/Symbol\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
             param_name = match[1]
-            unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
-              endpoint.push_param(Param.new(param_name, "", "query"))
-            end
+            endpoint.push_param(Param.new(param_name, "", "query"))
           end
         end
       end
@@ -353,11 +343,7 @@ module Analyzer::Scala
     end
 
     private def skip_whitespace(chars : Array(Char), index : Int32) : Int32
-      i = index
-      while i < chars.size && chars[i].whitespace?
-        i += 1
-      end
-      i
+      chars.index(index) { |c| !c.whitespace? } || chars.size
     end
 
     private def next_unquoted_char(chars : Array(Char), needle : Char, start : Int32) : Int32?
@@ -478,9 +464,7 @@ module Analyzer::Scala
     private def extract_path_params(endpoint : Endpoint, route_path : String)
       route_path.scan(/\{(\w+)\}/) do |match|
         param_name = match[1]
-        unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "path" }
-          endpoint.push_param(Param.new(param_name, "", "path"))
-        end
+        endpoint.push_param(Param.new(param_name, "", "path"))
       end
     end
 

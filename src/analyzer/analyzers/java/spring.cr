@@ -13,6 +13,8 @@ module Analyzer::Java
   class Spring < Analyzer
     analyzer_for "java_spring"
 
+    include JavaEngine
+
     REGEX_ROUTER_CODE_BLOCK = /route\(\)?.*?\);/m
     REGEX_ROUTE_CALL        = /((?:andRoute|route)\s*\(|\.)\s*(?:RequestPredicates\.)?(GET|POST|DELETE|PUT|PATCH|HEAD|OPTIONS)\s*\(/
 
@@ -75,18 +77,6 @@ module Analyzer::Java
     alias SpringRouteMapping = Noir::TreeSitterJavaRouteExtractor::ClassMapping
     alias SpringRoute = Noir::TreeSitterJavaRouteExtractor::Route
     alias PackageScopeKey = Tuple(String, String)
-
-    private struct SpringPathConfig
-      getter servlet_context_path : String
-      getter webflux_base_path : String
-
-      def initialize(@servlet_context_path = "", @webflux_base_path = "")
-      end
-
-      def web_base_path : String
-        @webflux_base_path.empty? ? @servlet_context_path : @webflux_base_path
-      end
-    end
 
     private struct SpringMetaAnnotationIndex
       getter by_package : Hash(PackageScopeKey, Hash(String, SpringRouteMapping))
@@ -550,20 +540,6 @@ module Analyzer::Java
       end
 
       routes
-    end
-
-    private def add_interface_routes(target : Array(SpringInterfaceRouteEntry),
-                                     seen : Set(String),
-                                     routes : Array(SpringInterfaceRouteEntry)?)
-      return unless routes
-
-      routes.each do |entry|
-        route = entry.route
-        key = "#{entry.path}:#{route.class_name}:#{route.method_name}:#{route.verb}:#{route.path}"
-        next if seen.includes?(key)
-        seen << key
-        target << entry
-      end
     end
 
     private def merge_route_condition_params(parameters : Array(Param), condition_params : Array(Param))
@@ -1241,29 +1217,6 @@ module Analyzer::Java
       SpringPropertyPath.resolve(path, properties)
     end
 
-    private def resource_dirs_for(project_root : String) : Array(String)
-      [
-        File.join(project_root, "src/main/resources"),
-        File.join(project_root, "resources"),
-        project_root,
-      ].uniq
-    end
-
-    private def read_properties(path : String) : Hash(String, String)
-      values = Hash(String, String).new
-      read_file_content(path).each_line do |line|
-        stripped = line.strip
-        next if stripped.empty? || stripped.starts_with?("#") || stripped.starts_with?("!")
-
-        if separator = stripped.index(/[=:]/)
-          key = stripped[...separator].strip
-          value = stripped[(separator + 1)..].strip
-          values[key] = value unless key.empty?
-        end
-      end
-      values
-    end
-
     private def merge_yaml_properties(values : Hash(String, String), path : String)
       document = YAML.parse(read_file_content(path))
       flatten_yaml_properties("", document, values)
@@ -1317,14 +1270,6 @@ module Analyzer::Java
       end
 
       base
-    end
-
-    private def normalize_optional_path(path : String?) : String
-      return "" unless path
-
-      trimmed = path.strip
-      return "" if trimmed.empty? || trimmed == "/"
-      trimmed.starts_with?("/") ? trimmed : "/#{trimmed}"
     end
   end
 end

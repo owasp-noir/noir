@@ -61,15 +61,11 @@ module Analyzer::Scala
               endpoint = Endpoint.new(full_path, method, [] of Param, Details.new(PathInfo.new(path, i + 1)))
 
               path_params.each do |name|
-                unless endpoint.params.any? { |p| p.name == name && p.param_type == "path" }
-                  endpoint.push_param(Param.new(name, "", "path"))
-                end
+                endpoint.push_param(Param.new(name, "", "path"))
               end
 
               query_params.each do |name|
-                unless endpoint.params.any? { |p| p.name == name && p.param_type == "query" }
-                  endpoint.push_param(Param.new(name, "", "query"))
-                end
+                endpoint.push_param(Param.new(name, "", "query"))
               end
 
               if body_type

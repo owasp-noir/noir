@@ -1,11 +1,16 @@
 require "../../models/analyzer"
+require "../../miniparsers/jaxrs_extractor_ts"
+require "../../miniparsers/import_graph"
 
 # Shared helpers for the Java analyzers. They each extend `Analyzer`
 # directly rather than a language-specific engine (historically the
 # Java set was the first family to land and never got an intermediate
 # class), so the helpers live as class methods on the JavaEngine
 # module and the callers import it explicitly. Mirrors the pattern
-# `Analyzer::Kotlin::KotlinEngine` follows.
+# `Analyzer::Kotlin::KotlinEngine` follows. Helpers that need the
+# analyzer instance (`read_file_content`) are private instance methods
+# instead, picked up with `include JavaEngine` — the JAX-RS family and
+# the Spring/Micronaut config readers, Kotlin Spring included.
 module Analyzer::Java
   module JavaEngine
     # Maven/Gradle pin test sources to `src/test/<lang>/` — `java`,
@@ -144,11 +149,189 @@ module Analyzer::Java
     # Module root of a Maven/Gradle source file: everything before
     # `/src/main/java/`, or the file's own directory outside that layout.
     def self.project_root_for(path : String) : String
-      marker = "/src/main/java/"
-      if index = path.index(marker)
-        path[...index]
-      else
-        File.dirname(path)
+      marker_root(path, {"/src/main/java/"}) || File.dirname(path)
+    end
+
+    # `path` up to the first of `markers` (tried in order) it contains, or
+    # nil when it contains none.
+    def self.marker_root(path : String, markers : Enumerable(String)) : String?
+      markers.each do |marker|
+        if index = path.index(marker)
+          return path[...index]
+        end
+      end
+      nil
+    end
+
+    # `server.servlet.context-path` / `spring.webflux.base-path` of one
+    # Spring module (Java and Kotlin analyzers alike).
+    struct SpringPathConfig
+      getter servlet_context_path : String
+      getter webflux_base_path : String
+
+      def initialize(@servlet_context_path = "", @webflux_base_path = "")
+      end
+
+      def web_base_path : String
+        @webflux_base_path.empty? ? @servlet_context_path : @webflux_base_path
+      end
+    end
+
+    # The instance helpers below are shared by the analyzers that
+    # `include JavaEngine`. `application_base_path_for` calls the
+    # includer's own `project_root_for`.
+
+    private def application_base_path_for(path : String,
+                                          package_name : String,
+                                          base_paths : Hash(Tuple(String, String), String)) : String
+      project_root = project_root_for(path)
+      keys = base_paths.keys.select { |key| key[0] == project_root }
+      keys.sort_by!(&.[1].size)
+      keys.reverse_each do |key|
+        base_package = key[1]
+        next unless package_name == base_package || package_name.starts_with?("#{base_package}.")
+        return base_paths[key]
+      end
+      ""
+    end
+
+    # Build the cross-file `@BeanParam` index for `path`. Same
+    # traversal as the DTO index — current file + same-package
+    # siblings + imports — but each file's `extract_bean_fields`
+    # result is memoised in the analyzer's per-run cache.
+    private def bean_index_for(path : String,
+                               content : String,
+                               package_name : String,
+                               cache : Hash(String, Hash(String, Array(Param))),
+                               imports : Array(Noir::ImportGraph::ImportRef)? = nil,
+                               current_file_beans : Hash(String, Array(Param))? = nil) : Hash(String, Array(Param))
+      result = Hash(String, Array(Param)).new
+      resolved_imports = imports || Noir::TreeSitterJavaParameterExtractor.extract_imports(content)
+
+      Noir::ImportGraph.related_files(path, package_name, resolved_imports, "java") do |file|
+        beans = cache[file] ||= begin
+          if file == path && current_file_beans
+            current_file_beans
+          else
+            body = file == path ? content : read_file_content(file)
+            Noir::TreeSitterJaxRsExtractor.extract_bean_fields(body)
+          end
+        rescue IO::Error
+          {} of String => Array(Param)
+        end
+
+        beans.each { |name, params| result[name] ||= params }
+      end
+
+      result
+    end
+
+    # Build the cross-file `@HttpMethod("VERB")` custom-annotation
+    # index for `path`. Same traversal as `bean_index_for` — the
+    # annotation type is typically declared in its own file, so this
+    # needs the same current file + same-package siblings + imports
+    # walk, gated on the file mentioning JAX-RS so unrelated `.java`
+    # files aren't parsed for annotation declarations.
+    private def custom_verb_index_for(path : String,
+                                      content : String,
+                                      package_name : String,
+                                      cache : Hash(String, Hash(String, String)),
+                                      imports : Array(Noir::ImportGraph::ImportRef)? = nil,
+                                      current_file_verbs : Hash(String, String)? = nil) : Hash(String, String)
+      result = Hash(String, String).new
+      resolved_imports = imports || Noir::TreeSitterJavaParameterExtractor.extract_imports(content)
+
+      Noir::ImportGraph.related_files(path, package_name, resolved_imports, "java") do |file|
+        verbs = cache[file] ||= begin
+          if file == path && current_file_verbs
+            current_file_verbs
+          else
+            body = file == path ? content : read_file_content(file)
+            if body.includes?("jakarta.ws.rs") || body.includes?("javax.ws.rs")
+              Noir::TreeSitterJaxRsExtractor.extract_custom_verb_annotations(body)
+            else
+              Hash(String, String).new
+            end
+          end
+        rescue IO::Error
+          Hash(String, String).new
+        end
+
+        verbs.each { |name, verb| result[name] ||= verb }
+      end
+
+      result
+    end
+
+    private def subresource_sources_for(path : String,
+                                        content : String,
+                                        package_name : String,
+                                        cache : Hash(String, String),
+                                        imports : Array(Noir::ImportGraph::ImportRef)? = nil,
+                                        current_file_class_names : Array(String)? = nil) : Hash(String, Noir::TreeSitterJaxRsExtractor::SourceEntry)
+      result = Hash(String, Noir::TreeSitterJaxRsExtractor::SourceEntry).new
+      resolved_imports = imports || Noir::TreeSitterJavaParameterExtractor.extract_imports(content)
+
+      Noir::ImportGraph.related_files(path, package_name, resolved_imports, "java") do |file|
+        body = cache[file] ||= begin
+          file == path ? content : read_file_content(file)
+        rescue IO::Error
+          ""
+        end
+        next if body.empty?
+        next unless body.includes?("jakarta.ws.rs") || body.includes?("javax.ws.rs")
+
+        class_names = file == path && current_file_class_names ? current_file_class_names : Noir::TreeSitterJaxRsExtractor.extract_class_names(body)
+        class_names.each do |name|
+          result[name] ||= {file, body}
+        end
+      end
+
+      result
+    end
+
+    private def resource_dirs_for(project_root : String) : Array(String)
+      [
+        File.join(project_root, "src/main/resources"),
+        File.join(project_root, "resources"),
+        project_root,
+      ].uniq
+    end
+
+    private def read_properties(path : String) : Hash(String, String)
+      values = Hash(String, String).new
+      read_file_content(path).each_line do |line|
+        stripped = line.strip
+        next if stripped.empty? || stripped.starts_with?("#") || stripped.starts_with?("!")
+
+        if separator = stripped.index(/[=:]/)
+          key = stripped[...separator].strip
+          value = stripped[(separator + 1)..].strip
+          values[key] = value unless key.empty?
+        end
+      end
+      values
+    end
+
+    private def normalize_optional_path(path : String?) : String
+      return "" unless path
+
+      trimmed = path.strip
+      return "" if trimmed.empty? || trimmed == "/"
+      trimmed.starts_with?("/") ? trimmed : "/#{trimmed}"
+    end
+
+    private def add_interface_routes(target : Array(T),
+                                     seen : Set(String),
+                                     routes : Array(T)?) forall T
+      return unless routes
+
+      routes.each do |entry|
+        route = entry.route
+        key = "#{entry.path}:#{route.class_name}:#{route.method_name}:#{route.verb}:#{route.path}"
+        next if seen.includes?(key)
+        seen << key
+        target << entry
       end
     end
   end

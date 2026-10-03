@@ -86,7 +86,7 @@ module Analyzer::Scala
         (n = chain.name) && (seen << n)
         segments, params = resolve_chain(chain.text, defs, consts, cache, seen)
         endpoint.url = segments.empty? ? "/" : "/" + segments.join("/")
-        params.each { |p| add_param(endpoint, p.name, p.value, p.param_type) }
+        params.each { |p| endpoint.push_param(Param.new(p.name, p.value, p.param_type)) }
         endpoints << endpoint
       end
 
@@ -476,13 +476,6 @@ module Analyzer::Scala
         end
       end
       io.to_s
-    end
-
-    private def add_param(endpoint : Endpoint, name : String, type_value : String, param_type : String)
-      existing = endpoint.params.find { |p| p.name == name && p.param_type == param_type }
-      return if existing
-
-      endpoint.push_param(Param.new(name, type_value, param_type))
     end
 
     private def default_path_name(segments : Array(String)) : String

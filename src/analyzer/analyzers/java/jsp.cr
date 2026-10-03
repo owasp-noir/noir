@@ -68,10 +68,6 @@ module Analyzer::Java
       result
     end
 
-    def allow_patterns
-      ["request.getParameter", "request.getAttribute", "request.getHeader", "request.getCookies", "${param.", "${param[", "${paramValues.", "${cookie.", "@WebServlet", "<servlet-mapping>"]
-    end
-
     private def collect_servlet_methods : Hash(ServletClassKey, Hash(String, Array(Param)))
       servlet_methods = Hash(ServletClassKey, Hash(String, Array(Param))).new
 
