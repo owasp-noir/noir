@@ -216,7 +216,7 @@ module Analyzer::Javascript
       url = "/" + action_name
       endpoint = Endpoint.new(url, "POST")
       endpoint.kind = "server-action"
-      endpoint.details = Details.new(PathInfo.new(path, param_body_info.try(&.[1]) || line_for_index(sanitized, match.begin(0) || 0)))
+      endpoint.details = Details.new(PathInfo.new(path, param_body_info.try(&.[1]) || line_number_for_index(sanitized, match.begin(0) || 0)))
 
       extract_server_action_params(args, body, endpoint)
       attach_callees(endpoint, path, callee_body_info) if include_callee && callee_body_info
@@ -330,7 +330,7 @@ module Analyzer::Javascript
       end
       return if depth > 0
 
-      {content[(open_pos + 1)...i], line_for_index(content, open_pos)}
+      {content[(open_pos + 1)...i], line_number_for_index(content, open_pos)}
     end
 
     private def attach_callees(endpoint : Endpoint, path : String, body_info : Tuple(String, Int32))
@@ -343,16 +343,6 @@ module Analyzer::Javascript
 
     private def typescript_source?(path : String) : Bool
       path.ends_with?(".ts") || path.ends_with?(".tsx")
-    end
-
-    # Both call sites pass a CHAR index (`MatchData#begin` at :218,
-    # `String#index` at :332); the inherited helper converts to a byte
-    # offset before counting newlines. The previous body sliced
-    # `content.to_slice[0, index]` with the char index directly, so any
-    # source with non-ASCII before the match reported a line number that
-    # was too low.
-    private def line_for_index(content : String, index : Int32) : Int32
-      line_number_for_index(content, index)
     end
 
     private def detect_pages_router_methods(content : String) : Array(String)

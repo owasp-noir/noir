@@ -33,12 +33,9 @@ module Analyzer::Javascript
   class Sveltekit < JavascriptEngine
     analyzer_for "js_sveltekit"
 
-    HTTP_METHODS    = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
     PAGE_EXTENSIONS = [".svelte", ".svx", ".md"]
     API_EXTENSIONS  = [".ts", ".js", ".mjs"]
     EXTENSIONS      = PAGE_EXTENSIONS + API_EXTENSIONS
-
-    FALLBACK_API_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH"]
 
     def analyze
       result = [] of Endpoint
@@ -98,7 +95,7 @@ module Analyzer::Javascript
 
     private def analyze_page(path : String, relative : String, result : Array(Endpoint), mutex : Mutex)
       url = url_for(relative)
-      endpoint = build_endpoint(url, "GET", path)
+      endpoint = file_route_endpoint(url, "GET", path)
       mutex.synchronize { result << endpoint }
     end
 
@@ -120,7 +117,7 @@ module Analyzer::Javascript
 
       url = url_for(relative)
       line = form_actions_line(content) || 1
-      endpoint = build_endpoint(url, "POST", path, line)
+      endpoint = file_route_endpoint(url, "POST", path, line)
       mutex.synchronize { result << endpoint }
     end
 
@@ -149,7 +146,7 @@ module Analyzer::Javascript
 
       methods = detect_api_methods(content)
       endpoints = methods.map do |verb|
-        endpoint = build_endpoint(url, verb, path, api_method_line(content, verb) || 1)
+        endpoint = file_route_endpoint(url, verb, path, api_method_line(content, verb) || 1)
         attach_callees(endpoint, path, content, verb) if include_callee
         endpoint
       end
@@ -157,15 +154,6 @@ module Analyzer::Javascript
       mutex.synchronize do
         endpoints.each { |endpoint| result << endpoint }
       end
-    end
-
-    private def build_endpoint(url : String, verb : String, path : String, line : Int32 = 1) : Endpoint
-      endpoint = Endpoint.new(url, verb)
-      endpoint.details = Details.new(PathInfo.new(path, line))
-      url.scan(/\{(\w+)\}/) do |match|
-        endpoint.push_param(Param.new(match[1], "", "path"))
-      end
-      endpoint
     end
 
     # Convert filesystem-relative path under `src/routes/` to URL.
@@ -193,46 +181,6 @@ module Analyzer::Javascript
 
     private def convert_segment(seg : String) : String
       seg.gsub(PARAM_GROUP_RE) { "{#{$1}}" }
-    end
-
-    # Compiled once per verb — interpolated regex literals would otherwise
-    # be rebuilt (full PCRE2 compile) for every method on every file.
-    EXPORT_FUNCTION_RES = HTTP_METHODS.map { |m| {m, /export\s+(?:async\s+)?function\s+#{m}\b/} }.to_h
-    EXPORT_CONST_RES    = HTTP_METHODS.map { |m| {m, /export\s+(?:const|let|var)\s+#{m}\b\s*(?::[^=]+)?=/} }.to_h
-    EXPORT_BRACE_RES    = HTTP_METHODS.map { |m| {m, /export\s+\{\s*[^}]*\b#{m}\b[^}]*\}/} }.to_h
-
-    private def detect_api_methods(content : String) : Array(String)
-      explicit = [] of String
-      HTTP_METHODS.each do |m|
-        if content.match(EXPORT_FUNCTION_RES[m]) ||
-           content.match(EXPORT_CONST_RES[m]) ||
-           content.match(EXPORT_BRACE_RES[m])
-          explicit << m
-        end
-      end
-      explicit.empty? ? FALLBACK_API_METHODS : explicit
-    end
-
-    private def api_method_line(content : String, verb : String) : Int32?
-      if match = content.match(EXPORT_FUNCTION_RES[verb])
-        return line_for_match(content, match)
-      end
-
-      if match = content.match(EXPORT_CONST_RES[verb])
-        return line_for_match(content, match)
-      end
-
-      if content.includes?("export {") && content.includes?(verb)
-        Noir::JSCalleeExtractor.exported_function_line(content, verb)
-      end
-    end
-
-    # `MatchData#begin` is a CHAR index; the inherited helper is the one
-    # that converts it to a byte offset before counting newlines. This used
-    # to slice `content.to_slice[0, start]` with the char index directly,
-    # which undercounts on any source with non-ASCII before the match.
-    private def line_for_match(content : String, match : Regex::MatchData) : Int32
-      line_number_for_index(content, match.begin(0) || 0)
     end
 
     private def attach_callees(endpoint : Endpoint, path : String, content : String, verb : String)

@@ -60,6 +60,71 @@ module Analyzer::Javascript
       path.ends_with?(".ts") || path.ends_with?(".mts") || path.ends_with?(".tsx") ? :typescript : :javascript
     end
 
+    # Endpoint for a file-routed framework (Astro, Fresh, Remix, SvelteKit):
+    # every `{name}` placeholder in the URL becomes a path param.
+    protected def file_route_endpoint(url : String, verb : String, path : String, line : Int32 = 1) : Endpoint
+      endpoint = Endpoint.new(url, verb)
+      endpoint.details = Details.new(PathInfo.new(path, line))
+      url.scan(/\{(\w+)\}/) do |match|
+        endpoint.push_param(Param.new(match[1], "", "path"))
+      end
+      endpoint
+    end
+
+    # `MatchData#begin` is a CHAR index; the inherited helper is the one
+    # that converts it to a byte offset before counting newlines. This used
+    # to slice `content.to_slice[0, start]` with the char index directly,
+    # which undercounts on any source with non-ASCII before the match.
+    protected def line_for_match(content : String, match : Regex::MatchData) : Int32
+      line_number_for_index(content, match.begin(0) || 0)
+    end
+
+    # Verb-named exports of a file-routed API module (Astro, SvelteKit).
+    FILE_ROUTE_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
+
+    # Lowest-cost defaults for endpoints whose handler doesn't
+    # advertise its verbs explicitly. Mirrors the Next.js fallback.
+    FALLBACK_API_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH"]
+
+    # Compiled once per verb — interpolated regex literals would otherwise
+    # be rebuilt (full PCRE2 compile) for every method on every file.
+    EXPORT_FUNCTION_RES = FILE_ROUTE_METHODS.map { |m| {m, /export\s+(?:async\s+)?function\s+#{m}\b/} }.to_h
+    EXPORT_CONST_RES    = FILE_ROUTE_METHODS.map { |m| {m, /export\s+(?:const|let|var)\s+#{m}\b\s*(?::[^=]+)?=/} }.to_h
+    EXPORT_BRACE_RES    = FILE_ROUTE_METHODS.map { |m| {m, /export\s+\{\s*[^}]*\b#{m}\b[^}]*\}/} }.to_h
+
+    # Look for explicit verb exports first
+    # (`export const GET = ...` / `export async function POST() {}`),
+    # then fall back to the cross-method catch-all set.
+    protected def detect_api_methods(content : String) : Array(String)
+      explicit = [] of String
+      FILE_ROUTE_METHODS.each do |m|
+        # `export async function GET(...)`, `export function GET(...)`,
+        # `export const GET = ...`, `export const GET: APIRoute = ...`
+        # (the trailing TypeScript type annotation is optional), and
+        # the `export { GET }` re-export form.
+        if content.match(EXPORT_FUNCTION_RES[m]) ||
+           content.match(EXPORT_CONST_RES[m]) ||
+           content.match(EXPORT_BRACE_RES[m])
+          explicit << m
+        end
+      end
+      explicit.empty? ? FALLBACK_API_METHODS : explicit
+    end
+
+    protected def api_method_line(content : String, verb : String) : Int32?
+      if match = content.match(EXPORT_FUNCTION_RES[verb])
+        return line_for_match(content, match)
+      end
+
+      if match = content.match(EXPORT_CONST_RES[verb])
+        return line_for_match(content, match)
+      end
+
+      if content.includes?("export {") && content.includes?(verb)
+        Noir::JSCalleeExtractor.exported_function_line(content, verb)
+      end
+    end
+
     protected def collect_static_paths(source_path : String, content : String, static_dirs : Array(Hash(String, String)), framework : Symbol? = nil) : Nil
       Noir::JSRouteExtractor.extract_static_paths(content, framework).each do |static_path|
         normalized = static_path.dup
