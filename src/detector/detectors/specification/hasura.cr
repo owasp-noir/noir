@@ -47,7 +47,7 @@ module Detector::Specification
     def applicable?(filename : String) : Bool
       return false unless filename.ends_with?(".yaml") || filename.ends_with?(".yml")
 
-      path = filename.includes?('\\') ? filename.gsub('\\', '/') : filename
+      path = filename.gsub('\\', '/')
       return true if path.includes?(METADATA_SEGMENT) || path.starts_with?("metadata/")
 
       basename = File.basename(path)

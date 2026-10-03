@@ -84,7 +84,7 @@ class JwtTagger < Tagger
   end
 
   private def auth_url?(url : String) : Bool
-    parts = url.downcase.tr("-", "_").split(/[\/\.]+/).reject(&.empty?)
+    parts = url.downcase.tr("-", "_").split(/[\/\.]+/, remove_empty: true)
     parts.any? { |part| AUTH_PATH_PARTS.includes?(part) }
   end
 end

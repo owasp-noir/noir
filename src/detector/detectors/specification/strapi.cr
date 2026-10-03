@@ -41,7 +41,7 @@ module Detector::Specification
     end
 
     def applicable?(filename : String) : Bool
-      path = normalize(filename)
+      path = filename.gsub('\\', '/')
       return true if schema_file?(filename)
       return false unless ROUTE_EXTENSIONS.includes?(File.extname(path).downcase)
 
@@ -79,7 +79,7 @@ module Detector::Specification
 
     private def schema_file?(filename : String) : Bool
       return false unless File.basename(filename) == SCHEMA_FILENAME
-      normalize(base_relative_path(filename)).includes?("/content-types/")
+      base_relative_path(filename).gsub('\\', '/').includes?("/content-types/")
     end
 
     # A Strapi route module lives at `src/api/<name>/routes/<file>` (or
@@ -109,10 +109,6 @@ module Detector::Specification
       end
 
       false
-    end
-
-    private def normalize(filename : String) : String
-      filename.includes?('\\') ? filename.gsub('\\', '/') : filename
     end
   end
 end

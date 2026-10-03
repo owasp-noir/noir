@@ -81,8 +81,7 @@ class FileUploadTagger < Tagger
   end
 
   private def upload_url?(url : String) : Bool
-    parts = url.downcase.split(/[\/\-_\.]+/).reject(&.empty?)
-    return true if parts.any? { |part| UPLOAD_PATH_PARTS.includes?(part) }
+    return true if url_parts(url).any? { |part| UPLOAD_PATH_PARTS.includes?(part) }
     segment_only_upload?(url)
   end
 

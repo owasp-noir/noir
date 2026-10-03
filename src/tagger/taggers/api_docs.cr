@@ -49,7 +49,7 @@ class ApiDocsTagger < Tagger
   end
 
   private def doc_segments(url : String) : Array(String)
-    url.downcase.split(/[\/.]+/).reject(&.empty?)
+    url.downcase.split(/[\/.]+/, remove_empty: true)
   end
 
   # `schema` is too generic to match on its own (GraphQL `/schema`,

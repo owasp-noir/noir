@@ -64,7 +64,7 @@ module Detector::Specification
     end
 
     def applicable?(filename : String) : Bool
-      path = filename.includes?('\\') ? filename.gsub('\\', '/') : filename
+      path = filename.gsub('\\', '/')
       # Declaration files carry the type without ever declaring a config,
       # and test files describe configs they do not serve.
       return false if path.ends_with?(".d.ts")

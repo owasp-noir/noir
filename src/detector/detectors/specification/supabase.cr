@@ -37,7 +37,7 @@ module Detector::Specification
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
 
-      path = normalize(filename)
+      path = filename.gsub('\\', '/')
 
       if File.basename(path) == "config.toml"
         CodeLocator.instance.push(Noir::LocatorKeys::SUPABASE_CONFIG, filename)
@@ -55,7 +55,7 @@ module Detector::Specification
     end
 
     def applicable?(filename : String) : Bool
-      path = normalize(filename)
+      path = filename.gsub('\\', '/')
 
       return true if File.basename(path) == "config.toml" && supabase_directory?(path)
       return false unless path.ends_with?(".sql")
@@ -74,16 +74,12 @@ module Detector::Specification
     # `.sql` under it look like a Supabase migration.
     private def strip_base(path : String) : String
       @base_paths.each do |base|
-        normalized = normalize(base).rstrip('/')
+        normalized = base.gsub('\\', '/').rstrip('/')
         next if normalized.empty?
         prefix = "#{normalized}/"
         return path[prefix.size..] if path.starts_with?(prefix)
       end
       path
-    end
-
-    private def normalize(filename : String) : String
-      filename.includes?('\\') ? filename.gsub('\\', '/') : filename
     end
   end
 end

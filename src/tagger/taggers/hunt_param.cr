@@ -101,8 +101,7 @@ class HuntParamTagger < Tagger
   # ["redirect", "url"], `file_path` -> ["file", "path"]).
   private def name_tokens(name : String) : Array(String)
     name.gsub(/([a-z0-9])([A-Z])/, "\\1_\\2")
-      .split(/[^A-Za-z0-9]+/)
-      .reject(&.empty?)
+      .split(/[^A-Za-z0-9]+/, remove_empty: true)
       .map(&.downcase)
   end
 

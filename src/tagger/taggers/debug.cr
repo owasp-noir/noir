@@ -75,14 +75,14 @@ class DebugTagger < Tagger
   end
 
   private def url_parts(url : String) : Array(String)
-    strip_scheme(url).downcase.split(/[\/\-_\.]+/).reject(&.empty?)
+    strip_scheme(url).downcase.split(/[\/\-_\.]+/, remove_empty: true)
   end
 
   # Slash/dot-delimited segments only (hyphens and underscores kept
   # inside a segment), so `internal` matches as its own path component
   # but not as part of a compound word.
   private def internal_segment?(url : String) : Bool
-    strip_scheme(url).downcase.split(/[\/.]+/).reject(&.empty?).any? { |seg| INTERNAL_SEGMENTS.includes?(seg) }
+    strip_scheme(url).downcase.split(/[\/.]+/, remove_empty: true).any? { |seg| INTERNAL_SEGMENTS.includes?(seg) }
   end
 
   # Drop a leading URI scheme (`scheme://`) before tokenizing. Mobile

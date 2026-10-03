@@ -69,8 +69,7 @@ class AdminTagger < Tagger
   end
 
   private def admin_url?(url : String) : Bool
-    parts = url.downcase.split(/[\/\-_\.]+/).reject(&.empty?)
-    parts.any? { |part| STRONG_PATH_PARTS.includes?(part) }
+    url_parts(url).any? { |part| STRONG_PATH_PARTS.includes?(part) }
   end
 
   # Strip case and separators so snake_case (`is_admin`), kebab-case

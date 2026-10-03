@@ -26,7 +26,7 @@ module Detector::Specification
       # path for zero signal.
       base = File.basename(filename).downcase
       return true if base.includes?("deploy") || base.includes?("kamal")
-      path = filename.includes?('\\') ? filename.gsub('\\', '/') : filename
+      path = filename.gsub('\\', '/')
       path.includes?("/.kamal/") || path.includes?("/config/deploy")
     end
 

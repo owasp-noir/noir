@@ -98,7 +98,7 @@ class OAuthTagger < Tagger
   # Split the path into `/`-`-`-`_`-`.`-delimited tokens (the loose form used
   # for the param-corroborated checks).
   private def path_parts(url : String) : Array(String)
-    path_only(url).split(/[\/\-_\.]+/).reject(&.empty?)
+    path_only(url).split(/[\/\-_\.]+/, remove_empty: true)
   end
 
   # True when a whole `/`-delimited path segment is itself a strong OAuth

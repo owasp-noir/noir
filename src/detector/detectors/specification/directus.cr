@@ -77,7 +77,7 @@ module Detector::Specification
     def applicable?(filename : String) : Bool
       return false unless SNAPSHOT_EXTENSIONS.includes?(File.extname(filename).downcase)
 
-      path = filename.includes?('\\') ? filename.gsub('\\', '/') : filename
+      path = filename.gsub('\\', '/')
       return false if test_path?(path)
 
       relative = base_relative_path(path)
