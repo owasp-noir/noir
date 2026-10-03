@@ -170,7 +170,7 @@ module Analyzer::Specification
         name, _, value = pair.partition('=')
         decoded_name = safe_unescape(name)
         next if decoded_name.empty?
-        push_unique(endpoint, Param.new(decoded_name, safe_unescape(value), "query"))
+        endpoint.push_param(Param.new(decoded_name, safe_unescape(value), "query"))
       end
     end
 
@@ -184,7 +184,7 @@ module Analyzer::Specification
           # automatically or carry no parameter signal.
           next
         else
-          push_unique(endpoint, Param.new(name, value, "header"))
+          endpoint.push_param(Param.new(name, value, "header"))
         end
       end
     end
@@ -195,7 +195,7 @@ module Analyzer::Specification
         next if trimmed.empty?
         name, _, val = trimmed.partition('=')
         next if name.empty?
-        push_unique(endpoint, Param.new(name, val, "cookie"))
+        endpoint.push_param(Param.new(name, val, "cookie"))
       end
     end
 
@@ -217,13 +217,13 @@ module Analyzer::Specification
           name, _, value = pair.partition('=')
           decoded_name = safe_unescape(name)
           next if decoded_name.empty?
-          push_unique(endpoint, Param.new(decoded_name, safe_unescape(value), "form"))
+          endpoint.push_param(Param.new(decoded_name, safe_unescape(value), "form"))
         end
       elsif content_type_lower.includes?("multipart/form-data")
         # Parameters live in each part's Content-Disposition `name=` attribute.
         trimmed_body.scan(/name="([^"]+)"/) do |match|
           name = match[1]
-          push_unique(endpoint, Param.new(name, "", "form"))
+          endpoint.push_param(Param.new(name, "", "form"))
         end
       end
     end
@@ -234,17 +234,12 @@ module Analyzer::Specification
         parsed = JSON.parse(body)
         if hash = parsed.as_h?
           hash.each_key do |key|
-            push_unique(endpoint, Param.new(key, "", "json"))
+            endpoint.push_param(Param.new(key, "", "json"))
           end
         end
       rescue e
         logger.debug "Failed to parse Burp JSON body for #{endpoint.url}: #{e}"
       end
-    end
-
-    private def push_unique(endpoint : Endpoint, param : Param)
-      return if endpoint.params.any? { |existing| existing.name == param.name && existing.param_type == param.param_type }
-      endpoint.push_param(param)
     end
 
     private def safe_unescape(value : String) : String

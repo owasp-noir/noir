@@ -583,6 +583,15 @@ module Analyzer::Specification
       end
     end
 
+    # Dedups on (name, param_type), mirroring `Endpoint#push_param`.
+    # Used while a param array is still being assembled, before the
+    # `Endpoint` exists.
+    protected def push_param_once(params : Array(Param), param : Param) : Nil
+      return if param.name.empty?
+      return if params.any? { |existing| existing.name == param.name && existing.param_type == param.param_type }
+      params << param
+    end
+
     # Appends a valueless `Param` unless an equal one is already present.
     #
     # Schema walks reach the same property twice whenever a document
