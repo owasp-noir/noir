@@ -6,14 +6,10 @@ module Detector::Java
       extensions: %w[pom.xml build.gradle build.gradle.kts settings.gradle.kts]
 
     def detect(filename : String, file_contents : String) : Bool
-      if (
-           (filename.includes? "pom.xml") || (filename.includes? "build.gradle") ||
-           (filename.includes? "build.gradle.kts") || (filename.includes? "settings.gradle.kts")
-         ) && (file_contents.includes? "com.linecorp.armeria")
-        true
-      else
-        false
-      end
+      (
+        (filename.includes? "pom.xml") || (filename.includes? "build.gradle") ||
+          (filename.includes? "build.gradle.kts") || (filename.includes? "settings.gradle.kts")
+      ) && (file_contents.includes? "com.linecorp.armeria")
     end
   end
 end

@@ -14,7 +14,11 @@ module Detector::Specification
   # merely preferred.
   class Directus < Detector
     # Registers each snapshot path in `CodeLocator`.
-    detector_for "directus", idempotent: false
+    # libyaml parses JSON as a YAML subset, so one code path covers the
+    # `--format json` snapshot too.
+    # Memo safety: `applicable?` consults the path
+    # (/directus/ and /snapshots/ gates), not just the basename.
+    detector_for "directus", idempotent: false, path_sensitive: true
 
     SNAPSHOT_EXTENSIONS = {".yaml", ".yml", ".json"}
 
@@ -70,18 +74,10 @@ module Detector::Specification
       true
     end
 
-    # libyaml parses JSON as a YAML subset, so one code path covers the
-    # `--format json` snapshot too.
-    # Memo safety: `applicable?` consults the path
-    # (/directus/ and /snapshots/ gates), not just the basename.
-    def path_sensitive? : Bool
-      true
-    end
-
     def applicable?(filename : String) : Bool
       return false unless SNAPSHOT_EXTENSIONS.includes?(File.extname(filename).downcase)
 
-      path = filename.includes?('\\') ? filename.gsub('\\', '/') : filename
+      path = filename.gsub('\\', '/')
       return false if test_path?(path)
 
       relative = base_relative_path(path)

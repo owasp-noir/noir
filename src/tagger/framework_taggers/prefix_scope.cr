@@ -27,4 +27,12 @@ module PrefixScope
     return true if normalized.empty?
     url == normalized || url.starts_with?("#{normalized}/")
   end
+
+  # Joins the nested scope/route segments enclosing a registration into one
+  # prefix: separators between and inside segments collapse, empty segments
+  # drop out, and no segments at all is the root `/`.
+  def join_segments(segments : Array(String)) : String
+    parts = segments.join.split('/', remove_empty: true)
+    parts.empty? ? "/" : "/" + parts.join('/')
+  end
 end

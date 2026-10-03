@@ -38,13 +38,7 @@ class SpringAuthTagger < FrameworkTagger
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
     # Phase 1: Pre-scan security config files
     pre_scan_security_configs
-
-    # Phase 2 & 3: Check each endpoint
-    endpoints.each do |endpoint|
-      check_endpoint(endpoint)
-    end
-
-    endpoints
+    super
   end
 
   private def pre_scan_security_configs

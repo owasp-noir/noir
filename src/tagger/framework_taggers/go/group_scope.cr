@@ -166,7 +166,7 @@ module GoRouteGroupScope
   # Join a base prefix and a new path segment into a normalized URL prefix:
   #   ("", "/web") -> "/web"   ("/api", "v1") -> "/api/v1"
   def self.join_prefix(base : String, seg : String) : String
-    parts = "#{base}/#{seg}".split("/").reject(&.empty?)
+    parts = "#{base}/#{seg}".split("/", remove_empty: true)
     parts.empty? ? "/" : "/" + parts.join("/")
   end
 end

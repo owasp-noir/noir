@@ -87,8 +87,7 @@ class SpringSecurityTagger < FrameworkTagger
 
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
     pre_scan_config
-    endpoints.each { |endpoint| check_endpoint(endpoint) }
-    endpoints
+    super
   end
 
   # ---- config pre-scan -------------------------------------------------

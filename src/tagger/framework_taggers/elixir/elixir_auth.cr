@@ -1,5 +1,6 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
+require "../prefix_scope"
 
 @[Noir::TaggerFor(key: "elixir_auth", name: "Elixir Auth Tagger", desc: "Identifies Phoenix/Plug authentication patterns (plugs, Guardian, Pow)", order: 190)]
 class ElixirAuthTagger < FrameworkTagger
@@ -53,10 +54,7 @@ class ElixirAuthTagger < FrameworkTagger
     @auth_scopes.clear
     pre_scan_router_pipelines
 
-    endpoints.each do |endpoint|
-      check_endpoint(endpoint)
-    end
-    endpoints
+    super
   end
 
   private def pre_scan_router_pipelines
@@ -87,7 +85,7 @@ class ElixirAuthTagger < FrameworkTagger
       # Check for authenticated pipeline within current scope
       PIPELINE_AUTH_PATTERNS.each do |pattern, desc|
         if stripped.matches?(pattern) && !scope_stack.empty?
-          prefix = normalize_scope(scope_stack)
+          prefix = PrefixScope.join_segments(scope_stack)
           @auth_scopes << {prefix: prefix, description: "Protected by #{desc}"}
         end
       end
@@ -96,12 +94,6 @@ class ElixirAuthTagger < FrameworkTagger
         scope_stack.pop
       end
     end
-  end
-
-  private def normalize_scope(segments : Array(String)) : String
-    joined = segments.join("")
-    parts = joined.split("/").reject(&.empty?)
-    parts.empty? ? "/" : "/" + parts.join("/")
   end
 
   private def check_endpoint(endpoint : Endpoint)

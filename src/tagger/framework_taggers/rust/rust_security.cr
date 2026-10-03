@@ -140,8 +140,7 @@ class RustSecurityTagger < FrameworkTagger
     # output non-deterministic.
     @protections.sort_by! { |p| {p.risk ? 0 : 1, p.tag, p.description} }
 
-    endpoints.each { |endpoint| apply_protections(endpoint) }
-    endpoints
+    super
   end
 
   private def pre_scan_protections
@@ -372,7 +371,7 @@ class RustSecurityTagger < FrameworkTagger
     str.count(char)
   end
 
-  private def apply_protections(endpoint : Endpoint)
+  private def check_endpoint(endpoint : Endpoint)
     url = endpoint.url
     @protections.each do |protection|
       next unless url_under_prefix?(url, protection.prefix)

@@ -5,7 +5,9 @@ require "../../../models/code_locator"
 module Detector::Specification
   class Vercel < Detector
     # Registers Vercel config paths in `CodeLocator`.
-    detector_for "vercel", idempotent: false
+    # Memo safety: `applicable?` consults the path
+    # (root-placement check via File.dirname), not just the basename.
+    detector_for "vercel", idempotent: false, path_sensitive: true
 
     CONFIG_FILES = {"vercel.json", "now.json"}
     @expanded_base_paths : Array(String)?
@@ -15,12 +17,6 @@ module Detector::Specification
       return false unless json_any?(file_contents)
 
       CodeLocator.instance.push(Noir::LocatorKeys::VERCEL_SPEC, filename)
-      true
-    end
-
-    # Memo safety: `applicable?` consults the path
-    # (root-placement check via File.dirname), not just the basename.
-    def path_sensitive? : Bool
       true
     end
 

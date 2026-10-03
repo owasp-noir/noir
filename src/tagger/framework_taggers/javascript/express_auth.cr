@@ -58,13 +58,7 @@ class ExpressAuthTagger < FrameworkTagger
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
     # Pre-scan: Find app.use() level auth middleware
     pre_scan_app_use_auth
-
-    # Check each endpoint
-    endpoints.each do |endpoint|
-      check_endpoint(endpoint)
-    end
-
-    endpoints
+    super
   end
 
   private def pre_scan_app_use_auth

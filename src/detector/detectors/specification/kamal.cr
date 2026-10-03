@@ -4,7 +4,9 @@ require "../../../models/code_locator"
 module Detector::Specification
   class Kamal < Detector
     # Registers each Kamal config path in `CodeLocator`.
-    detector_for "kamal", idempotent: false
+    # Memo safety: `applicable?` consults the path
+    # (/.kamal/ and /config/deploy gates), not just the basename.
+    detector_for "kamal", idempotent: false, path_sensitive: true
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
@@ -12,12 +14,6 @@ module Detector::Specification
       return false unless kamal_config?(file_contents)
 
       CodeLocator.instance.push(Noir::LocatorKeys::KAMAL_SPEC, filename)
-      true
-    end
-
-    # Memo safety: `applicable?` consults the path
-    # (/.kamal/ and /config/deploy gates), not just the basename.
-    def path_sensitive? : Bool
       true
     end
 
@@ -30,7 +26,7 @@ module Detector::Specification
       # path for zero signal.
       base = File.basename(filename).downcase
       return true if base.includes?("deploy") || base.includes?("kamal")
-      path = filename.includes?('\\') ? filename.gsub('\\', '/') : filename
+      path = filename.gsub('\\', '/')
       path.includes?("/.kamal/") || path.includes?("/config/deploy")
     end
 

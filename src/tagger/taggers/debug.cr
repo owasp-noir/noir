@@ -47,44 +47,42 @@ class DebugTagger < Tagger
     "trace", "traces", "console", "dump", "dumps", "prometheus",
   }
 
-  def perform(endpoints : Array(Endpoint))
-    endpoints.each do |endpoint|
-      param_names = endpoint.params.map { |param| normalize_param_name(param.name) }.to_set
-      url_segments = url_parts(endpoint.url)
+  private def check_endpoint(endpoint : Endpoint)
+    param_names = endpoint.params.map { |param| normalize_param_name(param.name) }.to_set
+    url_segments = url_parts(endpoint.url)
 
-      has_strong = !(STRONG_PARAM_NAMES & param_names).empty? ||
-                   url_segments.any? { |part| STRONG_PATH_PARTS.includes?(part) } ||
-                   internal_segment?(endpoint.url)
+    has_strong = !(STRONG_PARAM_NAMES & param_names).empty? ||
+                 url_segments.any? { |part| STRONG_PATH_PARTS.includes?(part) } ||
+                 internal_segment?(endpoint.url)
 
-      # Distinct weak path tokens only — a repeated segment
-      # (`/monitor/monitor-x`) can't satisfy the threshold by itself.
-      weak_tokens = Set(String).new
-      url_segments.each do |part|
-        weak_tokens << part if WEAK_PATH_PARTS.includes?(part)
-      end
+    # Distinct weak path tokens only — a repeated segment
+    # (`/monitor/monitor-x`) can't satisfy the threshold by itself.
+    weak_tokens = Set(String).new
+    url_segments.each do |part|
+      weak_tokens << part if WEAK_PATH_PARTS.includes?(part)
+    end
 
-      check = has_strong || weak_tokens.size >= 2
+    check = has_strong || weak_tokens.size >= 2
 
-      if check
-        tag = Tag.new(
-          "debug",
-          "Debug, diagnostic, or internal-only endpoint (debug consoles/toggles, profilers, actuator/management, pprof, heap/thread dumps, internal APIs); should not be publicly reachable — review for information exposure and unsafe diagnostic actions.",
-          "Debug"
-        )
-        endpoint.add_tag(tag)
-      end
+    if check
+      tag = Tag.new(
+        "debug",
+        "Debug, diagnostic, or internal-only endpoint (debug consoles/toggles, profilers, actuator/management, pprof, heap/thread dumps, internal APIs); should not be publicly reachable — review for information exposure and unsafe diagnostic actions.",
+        "Debug"
+      )
+      endpoint.add_tag(tag)
     end
   end
 
   private def url_parts(url : String) : Array(String)
-    strip_scheme(url).downcase.split(/[\/\-_\.]+/).reject(&.empty?)
+    strip_scheme(url).downcase.split(/[\/\-_\.]+/, remove_empty: true)
   end
 
   # Slash/dot-delimited segments only (hyphens and underscores kept
   # inside a segment), so `internal` matches as its own path component
   # but not as part of a compound word.
   private def internal_segment?(url : String) : Bool
-    strip_scheme(url).downcase.split(/[\/.]+/).reject(&.empty?).any? { |seg| INTERNAL_SEGMENTS.includes?(seg) }
+    strip_scheme(url).downcase.split(/[\/.]+/, remove_empty: true).any? { |seg| INTERNAL_SEGMENTS.includes?(seg) }
   end
 
   # Drop a leading URI scheme (`scheme://`) before tokenizing. Mobile

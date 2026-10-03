@@ -55,34 +55,32 @@ class CryptoTagger < Tagger
     "checksum", "cipher", "key_id", "kid", "certificate", "cert", "csr",
   }
 
-  def perform(endpoints : Array(Endpoint))
-    endpoints.each do |endpoint|
-      param_names = endpoint.params.map { |param| normalize_param_name(param.name) }.to_set
-      url_segments = url_parts(endpoint.url)
+  private def check_endpoint(endpoint : Endpoint)
+    param_names = endpoint.params.map { |param| normalize_param_name(param.name) }.to_set
+    url_segments = url_parts(endpoint.url)
 
-      has_strong = !(STRONG_PARAM_NAMES & param_names).empty? ||
-                   url_segments.any? { |part| STRONG_PATH_PARTS.includes?(part) }
+    has_strong = !(STRONG_PARAM_NAMES & param_names).empty? ||
+                 url_segments.any? { |part| STRONG_PATH_PARTS.includes?(part) }
 
-      # Union of distinct weak tokens across path and params. Deduping by
-      # token identity prevents one concept echoed in both the path and a
-      # query param (e.g. `/cert?cert=…`) — or a path segment repeated
-      # (`/certificate/certificate-status`) — from reaching the threshold
-      # on its own.
-      weak_tokens = WEAK_PARAM_NAMES & param_names
-      url_segments.each do |part|
-        weak_tokens << part if WEAK_PATH_PARTS.includes?(part)
-      end
+    # Union of distinct weak tokens across path and params. Deduping by
+    # token identity prevents one concept echoed in both the path and a
+    # query param (e.g. `/cert?cert=…`) — or a path segment repeated
+    # (`/certificate/certificate-status`) — from reaching the threshold
+    # on its own.
+    weak_tokens = WEAK_PARAM_NAMES & param_names
+    url_segments.each do |part|
+      weak_tokens << part if WEAK_PATH_PARTS.includes?(part)
+    end
 
-      check = has_strong || weak_tokens.size >= 2
+    check = has_strong || weak_tokens.size >= 2
 
-      if check
-        tag = Tag.new(
-          "crypto",
-          "Cryptographic operation endpoint (encryption/decryption, signing, hashing, or key management); review for weak or obsolete algorithms, padding/signing oracles, static IV/salt/nonce reuse, and key exposure.",
-          "Crypto"
-        )
-        endpoint.add_tag(tag)
-      end
+    if check
+      tag = Tag.new(
+        "crypto",
+        "Cryptographic operation endpoint (encryption/decryption, signing, hashing, or key management); review for weak or obsolete algorithms, padding/signing oracles, static IV/salt/nonce reuse, and key exposure.",
+        "Crypto"
+      )
+      endpoint.add_tag(tag)
     end
   end
 end

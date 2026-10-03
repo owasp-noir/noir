@@ -47,11 +47,7 @@ module NoirMobileLinker
         is_provider = provider_endpoint?(endpoint)
         methods = is_provider ? PROVIDER_HANDLER_METHODS : HANDLER_METHODS
         cache_key = "#{resolved[:lang]}:#{resolved[:path]}:#{cls[:simple]}:#{is_provider}"
-        info = handler_cache[cache_key]? || begin
-          fresh = android_handler_info(cls[:simple], resolved[:path], resolved[:lang], methods)
-          handler_cache[cache_key] = fresh
-          fresh
-        end
+        info = handler_cache[cache_key] ||= android_handler_info(cls[:simple], resolved[:path], resolved[:lang], methods)
         endpoints[i] = apply_handler_info(endpoint, info)
       rescue e
         logger.debug "Mobile linker failed for #{endpoint.url} (#{resolved[:path]}): #{e.message}"

@@ -47,32 +47,30 @@ class PaymentTagger < Tagger
     "subtotal", "balance", "total_amount", "amount_due", "grand_total",
   }
 
-  def perform(endpoints : Array(Endpoint))
-    endpoints.each do |endpoint|
-      param_names = endpoint.params.map { |param| normalize_param_name(param.name) }.to_set
+  private def check_endpoint(endpoint : Endpoint)
+    param_names = endpoint.params.map { |param| normalize_param_name(param.name) }.to_set
 
-      url_segments = url_parts(endpoint.url)
-      is_payment_url = url_segments.any? { |part| STRONG_PATH_PARTS.includes?(part) }
-      has_strong_param = !(STRONG_PARAM_NAMES & param_names).empty?
-      # `amount` and `currency` are each common in isolation, but the
-      # pair almost always marks a money-moving request.
-      has_amount_currency = param_names.includes?("amount") &&
-                            (param_names.includes?("currency") || param_names.includes?("currency_code"))
-      # An ambiguous path (e.g. `/transactions`) only counts when a money
-      # parameter corroborates it.
-      ambiguous_with_money = url_segments.any? { |part| AMBIGUOUS_PATH_PARTS.includes?(part) } &&
-                             !(MONEY_PARAM_NAMES & param_names).empty?
+    url_segments = url_parts(endpoint.url)
+    is_payment_url = url_segments.any? { |part| STRONG_PATH_PARTS.includes?(part) }
+    has_strong_param = !(STRONG_PARAM_NAMES & param_names).empty?
+    # `amount` and `currency` are each common in isolation, but the
+    # pair almost always marks a money-moving request.
+    has_amount_currency = param_names.includes?("amount") &&
+                          (param_names.includes?("currency") || param_names.includes?("currency_code"))
+    # An ambiguous path (e.g. `/transactions`) only counts when a money
+    # parameter corroborates it.
+    ambiguous_with_money = url_segments.any? { |part| AMBIGUOUS_PATH_PARTS.includes?(part) } &&
+                           !(MONEY_PARAM_NAMES & param_names).empty?
 
-      check = is_payment_url || has_strong_param || has_amount_currency || ambiguous_with_money
+    check = is_payment_url || has_strong_param || has_amount_currency || ambiguous_with_money
 
-      if check
-        tag = Tag.new(
-          "payment",
-          "Payment or financial transaction endpoint; review for business-logic flaws (amount/price tampering, currency confusion), IDOR on financial records, and replay.",
-          "Payment"
-        )
-        endpoint.add_tag(tag)
-      end
+    if check
+      tag = Tag.new(
+        "payment",
+        "Payment or financial transaction endpoint; review for business-logic flaws (amount/price tampering, currency confusion), IDOR on financial records, and replay.",
+        "Payment"
+      )
+      endpoint.add_tag(tag)
     end
   end
 end

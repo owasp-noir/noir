@@ -37,45 +37,43 @@ class OAuthTagger < Tagger
   # param-corroborated checks below miss them.
   OAUTH_FLOW_VERB_SEGMENTS = Set{"callback", "authorize", "authorization", "redirect"}
 
-  def perform(endpoints : Array(Endpoint))
-    endpoints.each do |endpoint|
-      param_names = endpoint.params.map { |param| normalize_param_name(param.name) }.to_set
-      intersection = WORDS & param_names
+  private def check_endpoint(endpoint : Endpoint)
+    param_names = endpoint.params.map { |param| normalize_param_name(param.name) }.to_set
+    intersection = WORDS & param_names
 
-      # Match against the URL path only — a host like `oauth.example.com`
-      # or `token.example.com` must not make every API route look like an
-      # OAuth endpoint.
-      parts = path_parts(endpoint.url)
-      strong_url = parts.any? { |part| STRONG_URL_PARTS.includes?(part) }
-      # A strong URL part implies a weak match too (e.g. `/oauth/token`).
-      weak_url = strong_url || parts.any? { |part| WEAK_URL_PARTS.includes?(part) }
+    # Match against the URL path only — a host like `oauth.example.com`
+    # or `token.example.com` must not make every API route look like an
+    # OAuth endpoint.
+    parts = path_parts(endpoint.url)
+    strong_url = parts.any? { |part| STRONG_URL_PARTS.includes?(part) }
+    # A strong URL part implies a weak match too (e.g. `/oauth/token`).
+    weak_url = strong_url || parts.any? { |part| WEAK_URL_PARTS.includes?(part) }
 
-      # OAuth authorization endpoints commonly use response_type +
-      # client_id + redirect_uri, while token endpoints can rely on
-      # HTTP Basic auth and expose only grant_type + code/verifier.
-      check = # A whole `/oauth|/oauth2|/openid|/oidc` path segment is an # unambiguous OAuth surface on its own — the host is already # stripped, so this can't fire on `oauth.example.com`. Catches # the param-less endpoints real OAuth servers expose (the # `/oauth2/auth` authorize redirect, `/oauth2/device/verify`, # `/oauth2/sessions/logout`, a GET on `/oauth2/register/{id}`).
-        strong_oauth_segment?(endpoint.url) ||
-          strong_oauth_params?(param_names) ||
-          # Under an unambiguous /oauth|/openid path, a single OAuth
-          # parameter is enough (device-flow `device_code`, an
-          # authorize page's `client_id`, a callback's `code`).
-          (strong_url && !intersection.empty?) ||
-          (weak_url && intersection.size >= 3) ||
-          (weak_url && oauth_authorization_params?(param_names)) ||
-          (weak_url && oauth_token_params?(param_names)) ||
-          # The authorization-code redirect handler — `/callback` (or
-          # `/auth/<provider>/callback`) receiving `code` + `state`.
-          oauth_callback?(parts, param_names) ||
-          # A param-less social-login flow handler under an auth/SSO
-          # context — `/auth/google/callback`, `/auth/google/redirect`,
-          # `/sso/callback`. The `code`/`state` params arrive at runtime,
-          # so the param checks above can't see them.
-          oauth_flow_path?(parts)
+    # OAuth authorization endpoints commonly use response_type +
+    # client_id + redirect_uri, while token endpoints can rely on
+    # HTTP Basic auth and expose only grant_type + code/verifier.
+    check = # A whole `/oauth|/oauth2|/openid|/oidc` path segment is an # unambiguous OAuth surface on its own — the host is already # stripped, so this can't fire on `oauth.example.com`. Catches # the param-less endpoints real OAuth servers expose (the # `/oauth2/auth` authorize redirect, `/oauth2/device/verify`, # `/oauth2/sessions/logout`, a GET on `/oauth2/register/{id}`).
+      strong_oauth_segment?(endpoint.url) ||
+        strong_oauth_params?(param_names) ||
+        # Under an unambiguous /oauth|/openid path, a single OAuth
+        # parameter is enough (device-flow `device_code`, an
+        # authorize page's `client_id`, a callback's `code`).
+        (strong_url && !intersection.empty?) ||
+        (weak_url && intersection.size >= 3) ||
+        (weak_url && oauth_authorization_params?(param_names)) ||
+        (weak_url && oauth_token_params?(param_names)) ||
+        # The authorization-code redirect handler — `/callback` (or
+        # `/auth/<provider>/callback`) receiving `code` + `state`.
+        oauth_callback?(parts, param_names) ||
+        # A param-less social-login flow handler under an auth/SSO
+        # context — `/auth/google/callback`, `/auth/google/redirect`,
+        # `/sso/callback`. The `code`/`state` params arrive at runtime,
+        # so the param checks above can't see them.
+        oauth_flow_path?(parts)
 
-      if check
-        tag = Tag.new("oauth", "Suspected OAuth endpoint for granting 3rd party access.", "Oauth")
-        endpoint.add_tag(tag)
-      end
+    if check
+      tag = Tag.new("oauth", "Suspected OAuth endpoint for granting 3rd party access.", "Oauth")
+      endpoint.add_tag(tag)
     end
   end
 
@@ -100,7 +98,7 @@ class OAuthTagger < Tagger
   # Split the path into `/`-`-`-`_`-`.`-delimited tokens (the loose form used
   # for the param-corroborated checks).
   private def path_parts(url : String) : Array(String)
-    path_only(url).split(/[\/\-_\.]+/).reject(&.empty?)
+    path_only(url).split(/[\/\-_\.]+/, remove_empty: true)
   end
 
   # True when a whole `/`-delimited path segment is itself a strong OAuth

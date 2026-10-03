@@ -46,33 +46,30 @@ class AdminTagger < Tagger
   # param on a read stays below the tag threshold, exactly as on a GET.
   READ_ONLY_METHODS = SAFE_HTTP_METHODS
 
-  def perform(endpoints : Array(Endpoint))
-    endpoints.each do |endpoint|
-      is_admin_url = admin_url?(endpoint.url)
-      is_write = !READ_ONLY_METHODS.includes?(endpoint.method.upcase)
-      has_strong_privilege_param = endpoint.params.any? do |param|
-        STRONG_PRIVILEGE_PARAM_NAMES_NORMALIZED.includes?(normalize_param_name(param.name))
-      end
-      has_weak_privilege_param = is_write && endpoint.params.any? do |param|
-        WEAK_PRIVILEGE_PARAM_NAMES_NORMALIZED.includes?(normalize_param_name(param.name))
-      end
+  private def check_endpoint(endpoint : Endpoint)
+    is_admin_url = admin_url?(endpoint.url)
+    is_write = !READ_ONLY_METHODS.includes?(endpoint.method.upcase)
+    has_strong_privilege_param = endpoint.params.any? do |param|
+      STRONG_PRIVILEGE_PARAM_NAMES_NORMALIZED.includes?(normalize_param_name(param.name))
+    end
+    has_weak_privilege_param = is_write && endpoint.params.any? do |param|
+      WEAK_PRIVILEGE_PARAM_NAMES_NORMALIZED.includes?(normalize_param_name(param.name))
+    end
 
-      check = is_admin_url || has_strong_privilege_param || has_weak_privilege_param
+    check = is_admin_url || has_strong_privilege_param || has_weak_privilege_param
 
-      if check
-        tag = Tag.new(
-          "admin",
-          "Administrative or privileged endpoint; high-value target for broken access control, privilege escalation, and forced browsing.",
-          "Admin"
-        )
-        endpoint.add_tag(tag)
-      end
+    if check
+      tag = Tag.new(
+        "admin",
+        "Administrative or privileged endpoint; high-value target for broken access control, privilege escalation, and forced browsing.",
+        "Admin"
+      )
+      endpoint.add_tag(tag)
     end
   end
 
   private def admin_url?(url : String) : Bool
-    parts = url.downcase.split(/[\/\-_\.]+/).reject(&.empty?)
-    parts.any? { |part| STRONG_PATH_PARTS.includes?(part) }
+    url_parts(url).any? { |part| STRONG_PATH_PARTS.includes?(part) }
   end
 
   # Strip case and separators so snake_case (`is_admin`), kebab-case

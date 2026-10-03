@@ -275,10 +275,3 @@ module NoirTechs
     false
   end
 end
-
-if __FILE__ == PROGRAM_NAME
-  # When running this file directly (e.g., `crystal run src/techs/techs.cr`),
-  # print the TECHS catalog as JSON. This block does not run when the file is
-  # required from other code (e.g., Noir's main application).
-  puts NoirTechs::TECHS.to_json
-end

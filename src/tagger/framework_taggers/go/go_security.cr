@@ -95,8 +95,7 @@ class GoSecurityTagger < FrameworkTagger
 
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
     pre_scan_middleware_scopes
-    endpoints.each { |endpoint| check_endpoint(endpoint) }
-    endpoints
+    super
   end
 
   # Phase 1: walk every .go file and record where security middleware is

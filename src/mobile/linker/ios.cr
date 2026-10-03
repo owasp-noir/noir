@@ -51,6 +51,8 @@ module NoirMobileLinker
   # groups their callees/params by kind. URL handlers process custom schemes;
   # userActivity handlers process universal links.
   module IosHandlers
+    extend Noir::MobileSwiftBody
+
     # Same-line markers for the brace that opens a handler body.
     URL_HANDLER_RES = [
       /\.onOpenURL\s*\{/,
@@ -142,25 +144,13 @@ module NoirMobileLinker
       activity = NoirMobileLinker::HandlerInfo.new
       expanded_scope = scope_root.try { |root| Noir::PathScope.expand(root).rstrip('/') }
 
-      CodeLocator.instance.files_by_extension(".swift").each do |path|
-        next unless in_scope?(path, expanded_scope)
-        next if skip_ios_source?(path, expanded_scope)
-        content = NoirMobileLinker.read_content(path)
-        next unless content
-        next unless swift_handler_candidate?(content)
-        scan_file(path, content, url, activity,
-          URL_HANDLER_RES, ACTIVITY_HANDLER_RES, SIGNATURE_START_RE, expanded_scope, objc: false)
-      end
-
-      {".m", ".mm"}.each do |ext|
-        CodeLocator.instance.files_by_extension(ext).each do |path|
-          next unless in_scope?(path, expanded_scope)
-          next if skip_ios_source?(path, expanded_scope)
-          content = NoirMobileLinker.read_content(path)
-          next unless content
-          next unless objc_handler_candidate?(content)
+      each_handler_source(expanded_scope) do |path, content, objc|
+        if objc
           scan_file(path, content, url, activity,
             OBJC_URL_HANDLER_RES, OBJC_ACTIVITY_HANDLER_RES, OBJC_SIGNATURE_START_RE, expanded_scope, objc: true)
+        else
+          scan_file(path, content, url, activity,
+            URL_HANDLER_RES, ACTIVITY_HANDLER_RES, SIGNATURE_START_RE, expanded_scope, objc: false)
         end
       end
 
@@ -168,22 +158,22 @@ module NoirMobileLinker
     end
 
     def self.xcode_project_root(path : String) : String?
-      dir = File.dirname(Noir::PathScope.expand(path))
-      XCODE_PROJECT_SEARCH_DEPTH.times do
-        has_project = !Dir.glob(File.join(dir, "*.xcodeproj")).empty? ||
-                      !Dir.glob(File.join(dir, "*.xcworkspace")).empty?
-        return dir if has_project
-        parent = File.dirname(dir)
-        break if parent == dir
-        dir = parent
+      nearest_ancestor(path) do |dir|
+        !Dir.glob(File.join(dir, "*.xcodeproj")).empty? ||
+          !Dir.glob(File.join(dir, "*.xcworkspace")).empty?
       end
-      nil
     end
 
     def self.nearest_handler_source_root(path : String) : String?
+      nearest_ancestor(path) { |dir| ios_handler_source_under?(dir) }
+    end
+
+    # The closest of `path`'s first XCODE_PROJECT_SEARCH_DEPTH ancestor
+    # directories for which the block holds.
+    private def self.nearest_ancestor(path : String, &) : String?
       dir = File.dirname(Noir::PathScope.expand(path))
       XCODE_PROJECT_SEARCH_DEPTH.times do
-        return dir if ios_handler_source_under?(dir)
+        return dir if yield dir
 
         parent = File.dirname(dir)
         break if parent == dir
@@ -195,30 +185,36 @@ module NoirMobileLinker
     private def self.in_scope?(path : String, scope_root : String?) : Bool
       return true unless scope_root
 
-      expanded = Noir::PathScope.expand(path)
-      expanded == scope_root || expanded.starts_with?(scope_root + "/")
+      Noir::PathScope.under_normalized_root?(Noir::PathScope.expand(path), scope_root)
     end
 
     private def self.ios_handler_source_under?(root : String) : Bool
-      expanded_root = Noir::PathScope.expand(root).rstrip('/')
+      each_handler_source(Noir::PathScope.expand(root).rstrip('/')) { return true }
+      false
+    end
 
+    # Yields every in-scope, non-skipped Swift then Objective-C source that
+    # carries a deep-link handler hint, and whether it is Objective-C.
+    private def self.each_handler_source(expanded_scope : String?, &)
       CodeLocator.instance.files_by_extension(".swift").each do |path|
-        next unless in_scope?(path, expanded_root)
-        next if skip_ios_source?(path, expanded_root)
+        next unless in_scope?(path, expanded_scope)
+        next if skip_ios_source?(path, expanded_scope)
         content = NoirMobileLinker.read_content(path)
-        return true if content && swift_handler_candidate?(content)
+        next unless content
+        next unless swift_handler_candidate?(content)
+        yield path, content, false
       end
 
       {".m", ".mm"}.each do |ext|
         CodeLocator.instance.files_by_extension(ext).each do |path|
-          next unless in_scope?(path, expanded_root)
-          next if skip_ios_source?(path, expanded_root)
+          next unless in_scope?(path, expanded_scope)
+          next if skip_ios_source?(path, expanded_scope)
           content = NoirMobileLinker.read_content(path)
-          return true if content && objc_handler_candidate?(content)
+          next unless content
+          next unless objc_handler_candidate?(content)
+          yield path, content, true
         end
       end
-
-      false
     end
 
     # `scope_root` is the Xcode project root the caller already resolved.
@@ -646,53 +642,6 @@ module NoirMobileLinker
       return true if name.includes?("URLContexts") && name.ends_with?(".first")
 
       false
-    end
-
-    # Finds the first `{` at/after the matched line (same line, else within a
-    # few lines for a func whose parameter list and/or brace wrap onto their
-    # own lines — a folded multi-line signature can run several lines before
-    # the body brace).
-    private def self.find_opening_brace(lines : Array(String), start : Int32) : NamedTuple(index: Int32, col: Int32)?
-      idx = start
-      while idx < lines.size && idx <= start + 6
-        col = lines[idx].index('{')
-        return {index: idx, col: col} if col
-        idx += 1
-      end
-      nil
-    end
-
-    # Brace-matched body text starting just after lines[opening_index][col],
-    # ignoring braces inside comments/strings. Ported from the Swift analyzers'
-    # shared body_after_opening_brace.
-    private def self.body_after_opening_brace(lines : Array(String), opening_index : Int32, col : Int32) : Tuple(String, Int32)
-      first = lines[opening_index][(col + 1)..]? || ""
-      clean, depth, in_string = Noir::SwiftCalleeExtractor.strip_non_code_with_state(first, 0, false)
-      brace = 1 + clean.count('{') - clean.count('}')
-      if brace <= 0
-        # Single-line body: trim the closing `}` and anything after it so a
-        # trailing `.padding()` etc. doesn't leak into the handler body.
-        closing = clean.rindex('}')
-        return {closing ? first[0...closing] : first, opening_index + 1}
-      end
-
-      body = [first]
-      idx = opening_index + 1
-      while idx < lines.size && brace > 0
-        line = lines[idx]
-        stripped, depth, in_string = Noir::SwiftCalleeExtractor.strip_non_code_with_state(line, depth, in_string)
-        nxt = brace + stripped.count('{') - stripped.count('}')
-        if nxt <= 0
-          closing = stripped.rindex('}')
-          body << (closing ? line[0...closing] : line) unless line.strip == "}"
-          break
-        end
-        body << line
-        brace = nxt
-        idx += 1
-      end
-
-      {body.join("\n"), opening_index + 1}
     end
   end
 end

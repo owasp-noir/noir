@@ -84,7 +84,7 @@ class McpTagger < Tagger
   end
 
   private def path_segments(path : String) : Array(String)
-    path.split("/").reject(&.empty?)
+    path.split("/", remove_empty: true)
   end
 
   private def legacy_prefix(segments : Array(String)) : String

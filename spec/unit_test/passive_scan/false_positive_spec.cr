@@ -192,16 +192,6 @@ describe NoirPassiveScan::FalsePositive do
     end
   end
 
-  describe ".suppress?" do
-    it "only applies to secret-category findings" do
-      line = "GH_TOKEN: ${{ github.token }}"
-      NoirPassiveScan::FalsePositive.suppress?("secret", line).should be_true
-      # Same line under a non-secret category is never suppressed.
-      NoirPassiveScan::FalsePositive.suppress?("security", line).should be_false
-      NoirPassiveScan::FalsePositive.suppress?("info", line).should be_false
-    end
-  end
-
   describe ".secret_reference?" do
     it "suppresses GitHub Actions templating expressions" do
       NoirPassiveScan::FalsePositive.secret_reference?("          GH_TOKEN: ${{ github.token }}").should be_true

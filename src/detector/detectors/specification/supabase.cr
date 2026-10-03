@@ -22,7 +22,9 @@ module Detector::Specification
   # schema served by PostgREST from any other schema.
   class Supabase < Detector
     # Registers every migration path in `CodeLocator`.
-    detector_for "supabase", idempotent: false
+    # Memo safety: `applicable?` consults the path
+    # (supabase/ and migrations/ gates), not just the basename.
+    detector_for "supabase", idempotent: false, path_sensitive: true
 
     # `alter table` counts too: a migration that only adds a column is
     # still part of the schema, and dropping those would leave the
@@ -35,7 +37,7 @@ module Detector::Specification
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
 
-      path = normalize(filename)
+      path = filename.gsub('\\', '/')
 
       if File.basename(path) == "config.toml"
         CodeLocator.instance.push(Noir::LocatorKeys::SUPABASE_CONFIG, filename)
@@ -52,14 +54,8 @@ module Detector::Specification
       true
     end
 
-    # Memo safety: `applicable?` consults the path
-    # (supabase/ and migrations/ gates), not just the basename.
-    def path_sensitive? : Bool
-      true
-    end
-
     def applicable?(filename : String) : Bool
-      path = normalize(filename)
+      path = filename.gsub('\\', '/')
 
       return true if File.basename(path) == "config.toml" && supabase_directory?(path)
       return false unless path.ends_with?(".sql")
@@ -78,16 +74,12 @@ module Detector::Specification
     # `.sql` under it look like a Supabase migration.
     private def strip_base(path : String) : String
       @base_paths.each do |base|
-        normalized = normalize(base).rstrip('/')
+        normalized = base.gsub('\\', '/').rstrip('/')
         next if normalized.empty?
         prefix = "#{normalized}/"
         return path[prefix.size..] if path.starts_with?(prefix)
       end
       path
-    end
-
-    private def normalize(filename : String) : String
-      filename.includes?('\\') ? filename.gsub('\\', '/') : filename
     end
   end
 end

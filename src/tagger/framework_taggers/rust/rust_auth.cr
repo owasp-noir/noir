@@ -1,5 +1,6 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
+require "../prefix_scope"
 
 @[Noir::TaggerFor(key: "rust_auth", name: "Rust Auth Tagger", desc: "Identifies Rust authentication patterns (guards, extractors, middleware)", order: 70)]
 class RustAuthTagger < FrameworkTagger
@@ -58,13 +59,7 @@ class RustAuthTagger < FrameworkTagger
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
     # Phase 1: Pre-scan for service/scope-level middleware
     pre_scan_middleware_scopes
-
-    # Phase 2: Check each endpoint
-    endpoints.each do |endpoint|
-      check_endpoint(endpoint)
-    end
-
-    endpoints
+    super
   end
 
   private def pre_scan_middleware_scopes
@@ -108,7 +103,7 @@ class RustAuthTagger < FrameworkTagger
 
       if has_auth
         # Determine scope: use stack or walk back to find scope
-        current_scope = scope_stack.empty? ? nil : normalize_scope(scope_stack)
+        current_scope = scope_stack.empty? ? nil : PrefixScope.join_segments(scope_stack)
         prefix = find_scope_for_line(lines, idx, current_scope)
         if prefix
           @middleware_scopes << {
@@ -123,12 +118,6 @@ class RustAuthTagger < FrameworkTagger
         scope_stack.pop unless scope_stack.empty?
       end
     end
-  end
-
-  private def normalize_scope(segments : Array(String)) : String
-    joined = segments.join("")
-    parts = joined.split("/").reject(&.empty?)
-    parts.empty? ? "/" : "/" + parts.join("/")
   end
 
   private def find_scope_for_line(lines : Array(String), line_idx : Int32, current_scope : String?) : String?

@@ -42,19 +42,17 @@ class FileUploadTagger < Tagger
   # (`POST /media`) still tags.
   SEGMENT_ONLY_PATH_PARTS = Set{"media"}
 
-  def perform(endpoints : Array(Endpoint))
-    endpoints.each do |endpoint|
-      has_upload_param = endpoint.params.any? { |param| upload_param?(param) }
-      is_upload_url = upload_url?(endpoint.url)
-      is_upload_method = UPLOAD_METHODS.includes?(endpoint.method.upcase)
-      has_multipart_header = endpoint.params.any? { |param| multipart_header?(param) }
+  private def check_endpoint(endpoint : Endpoint)
+    has_upload_param = endpoint.params.any? { |param| upload_param?(param) }
+    is_upload_url = upload_url?(endpoint.url)
+    is_upload_method = UPLOAD_METHODS.includes?(endpoint.method.upcase)
+    has_multipart_header = endpoint.params.any? { |param| multipart_header?(param) }
 
-      check = is_upload_method && (has_upload_param || is_upload_url || has_multipart_header)
+    check = is_upload_method && (has_upload_param || is_upload_url || has_multipart_header)
 
-      if check
-        tag = Tag.new("file_upload", "File upload endpoint potentially vulnerable to unrestricted file upload, path traversal, or malicious file execution.", "FileUpload")
-        endpoint.add_tag(tag)
-      end
+    if check
+      tag = Tag.new("file_upload", "File upload endpoint potentially vulnerable to unrestricted file upload, path traversal, or malicious file execution.", "FileUpload")
+      endpoint.add_tag(tag)
     end
   end
 
@@ -83,8 +81,7 @@ class FileUploadTagger < Tagger
   end
 
   private def upload_url?(url : String) : Bool
-    parts = url.downcase.split(/[\/\-_\.]+/).reject(&.empty?)
-    return true if parts.any? { |part| UPLOAD_PATH_PARTS.includes?(part) }
+    return true if url_parts(url).any? { |part| UPLOAD_PATH_PARTS.includes?(part) }
     segment_only_upload?(url)
   end
 

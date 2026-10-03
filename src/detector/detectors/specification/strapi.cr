@@ -12,7 +12,9 @@ module Detector::Specification
   # its shape is indistinguishable from an APISIX route export.
   class Strapi < Detector
     # Registers every schema and route path in `CodeLocator`.
-    detector_for "strapi", idempotent: false
+    # Memo safety: `applicable?` consults the path
+    # (/content-types/ gate), not just the basename.
+    detector_for "strapi", idempotent: false, path_sensitive: true
 
     SCHEMA_FILENAME  = "schema.json"
     ROUTE_EXTENSIONS = {".ts", ".js", ".mts", ".cts", ".mjs", ".cjs"}
@@ -38,14 +40,8 @@ module Detector::Specification
       detect_routes(filename, file_contents)
     end
 
-    # Memo safety: `applicable?` consults the path
-    # (/content-types/ gate), not just the basename.
-    def path_sensitive? : Bool
-      true
-    end
-
     def applicable?(filename : String) : Bool
-      path = normalize(filename)
+      path = filename.gsub('\\', '/')
       return true if schema_file?(filename)
       return false unless ROUTE_EXTENSIONS.includes?(File.extname(path).downcase)
 
@@ -83,7 +79,7 @@ module Detector::Specification
 
     private def schema_file?(filename : String) : Bool
       return false unless File.basename(filename) == SCHEMA_FILENAME
-      normalize(base_relative_path(filename)).includes?("/content-types/")
+      base_relative_path(filename).gsub('\\', '/').includes?("/content-types/")
     end
 
     # A Strapi route module lives at `src/api/<name>/routes/<file>` (or
@@ -113,10 +109,6 @@ module Detector::Specification
       end
 
       false
-    end
-
-    private def normalize(filename : String) : String
-      filename.includes?('\\') ? filename.gsub('\\', '/') : filename
     end
   end
 end

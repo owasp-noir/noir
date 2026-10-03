@@ -38,10 +38,7 @@ class HonoAuthTagger < FrameworkTagger
 
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
     pre_scan_use_auth
-    endpoints.each do |endpoint|
-      check_endpoint(endpoint)
-    end
-    endpoints
+    super
   end
 
   private def pre_scan_use_auth

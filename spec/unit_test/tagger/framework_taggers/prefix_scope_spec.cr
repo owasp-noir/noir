@@ -48,4 +48,17 @@ describe PrefixScope do
       PrefixScope.prefix_covers?("/WEB", "/web").should be_false
     end
   end
+
+  describe ".join_segments" do
+    it "joins nested segments into one rooted prefix" do
+      PrefixScope.join_segments(["/api", "/v1/", "users"]).should eq "/api/v1/users"
+      PrefixScope.join_segments(["/api/", "/v1"]).should eq "/api/v1"
+      PrefixScope.join_segments(["//admin//", ""]).should eq "/admin"
+    end
+
+    it "is the root for no segments" do
+      PrefixScope.join_segments([] of String).should eq "/"
+      PrefixScope.join_segments(["/", ""]).should eq "/"
+    end
+  end
 end

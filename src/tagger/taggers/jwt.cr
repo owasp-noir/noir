@@ -31,20 +31,18 @@ class JwtTagger < Tagger
 
   AUTH_PATH_PARTS = Set{"auth", "authenticate", "authentication", "login", "signin", "sign_in", "token", "refresh", "jwt"}
 
-  def perform(endpoints : Array(Endpoint))
-    endpoints.each do |endpoint|
-      signals = endpoint.params.count { |param| jwt_signal?(param) }
-      has_bearer_value = endpoint.params.any? { |param| bearer_or_jwt_value?(param.value) }
-      is_auth_url = auth_url?(endpoint.url)
+  private def check_endpoint(endpoint : Endpoint)
+    signals = endpoint.params.count { |param| jwt_signal?(param) }
+    has_bearer_value = endpoint.params.any? { |param| bearer_or_jwt_value?(param.value) }
+    is_auth_url = auth_url?(endpoint.url)
 
-      # Require either an unmistakable token value, multiple token/auth
-      # signals, or an auth-like route plus a non-CSRF token parameter.
-      check = has_bearer_value || signals >= 2 || (is_auth_url && signals >= 1)
+    # Require either an unmistakable token value, multiple token/auth
+    # signals, or an auth-like route plus a non-CSRF token parameter.
+    check = has_bearer_value || signals >= 2 || (is_auth_url && signals >= 1)
 
-      if check
-        tag = Tag.new("jwt", "JWT endpoint for token-based authentication, requiring validation of signature, expiration, and claims.", "JWT")
-        endpoint.add_tag(tag)
-      end
+    if check
+      tag = Tag.new("jwt", "JWT endpoint for token-based authentication, requiring validation of signature, expiration, and claims.", "JWT")
+      endpoint.add_tag(tag)
     end
   end
 
@@ -86,7 +84,7 @@ class JwtTagger < Tagger
   end
 
   private def auth_url?(url : String) : Bool
-    parts = url.downcase.tr("-", "_").split(/[\/\.]+/).reject(&.empty?)
+    parts = url.downcase.tr("-", "_").split(/[\/\.]+/, remove_empty: true)
     parts.any? { |part| AUTH_PATH_PARTS.includes?(part) }
   end
 end

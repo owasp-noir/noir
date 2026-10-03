@@ -3,22 +3,20 @@ require "../../models/endpoint"
 
 @[Noir::TaggerFor(key: "cors", name: "CORS Tagger", desc: "Identifies CORS endpoints", order: 30)]
 class CorsTagger < Tagger
-  def perform(endpoints : Array(Endpoint))
-    endpoints.each do |endpoint|
-      # CORS is a header-level concern: `Origin` and the whole
-      # `Access-Control-*` family are request/response headers. Matching
-      # a bare `origin` query/body param (e.g. `?origin=JFK` on a flights
-      # API) was a false positive, so only consider header params. A
-      # single CORS-related header is enough to flag the endpoint.
-      check = endpoint.params.any? do |param|
-        next false unless param.param_type == "header"
-        cors_header?(param.name.to_s)
-      end
+  private def check_endpoint(endpoint : Endpoint)
+    # CORS is a header-level concern: `Origin` and the whole
+    # `Access-Control-*` family are request/response headers. Matching
+    # a bare `origin` query/body param (e.g. `?origin=JFK` on a flights
+    # API) was a false positive, so only consider header params. A
+    # single CORS-related header is enough to flag the endpoint.
+    check = endpoint.params.any? do |param|
+      next false unless param.param_type == "header"
+      cors_header?(param.name.to_s)
+    end
 
-      if check
-        tag = Tag.new("cors", "CORS endpoint enabling cross-origin requests, allowing web applications from different domains to interact.", "CORS")
-        endpoint.add_tag(tag)
-      end
+    if check
+      tag = Tag.new("cors", "CORS endpoint enabling cross-origin requests, allowing web applications from different domains to interact.", "CORS")
+      endpoint.add_tag(tag)
     end
   end
 

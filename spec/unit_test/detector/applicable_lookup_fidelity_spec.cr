@@ -15,9 +15,7 @@ private def every_detector(options) : Array(Detector)
   detectors = [] of Detector
   {% for sub in Detector.all_subclasses %}
     {% if !sub.abstract? && sub.name.starts_with?("Detector::") %}
-      detector = {{ sub }}.new(options)
-      detector.set_name
-      detectors << detector.as(Detector)
+      detectors << {{ sub }}.new(options).as(Detector)
     {% end %}
   {% end %}
   detectors

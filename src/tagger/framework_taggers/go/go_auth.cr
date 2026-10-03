@@ -69,13 +69,7 @@ class GoAuthTagger < FrameworkTagger
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
     # Phase 1: Pre-scan for group-level middleware
     pre_scan_middleware_scopes
-
-    # Phase 2: Check each endpoint
-    endpoints.each do |endpoint|
-      check_endpoint(endpoint)
-    end
-
-    endpoints
+    super
   end
 
   private def pre_scan_middleware_scopes

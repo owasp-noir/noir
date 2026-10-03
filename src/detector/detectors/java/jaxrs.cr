@@ -32,11 +32,7 @@ module Detector::Java
     private def derivative_project?(filename : String) : Bool
       root = project_root_for(filename)
       @derivative_cache_mutex.synchronize do
-        cached = @derivative_cache[root]?
-        return cached unless cached.nil?
-        result = compute_derivative_project(root)
-        @derivative_cache[root] = result
-        result
+        @derivative_cache.put_if_absent(root) { compute_derivative_project(root) }
       end
     end
 
