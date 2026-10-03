@@ -17,6 +17,8 @@ module Analyzer::Java
   class Dropwizard < Analyzer
     analyzer_for "java_dropwizard"
 
+    include JavaEngine
+
     JAVA_EXTENSION = "java"
 
     # A bare `io.dropwizard` substring also matches Dropwizard's
@@ -215,97 +217,6 @@ module Analyzer::Java
       normalized = normalized.chomp('*').rstrip('/')
       return "" if normalized.empty? || normalized == "/"
       normalized
-    end
-
-    private def bean_index_for(path : String,
-                               content : String,
-                               package_name : String,
-                               cache : Hash(String, Hash(String, Array(Param))),
-                               imports : Array(Noir::ImportGraph::ImportRef)? = nil,
-                               current_file_beans : Hash(String, Array(Param))? = nil) : Hash(String, Array(Param))
-      result = Hash(String, Array(Param)).new
-      resolved_imports = imports || Noir::TreeSitterJavaParameterExtractor.extract_imports(content)
-
-      Noir::ImportGraph.related_files(path, package_name, resolved_imports, JAVA_EXTENSION) do |file|
-        beans = cache[file] ||= begin
-          if file == path && current_file_beans
-            current_file_beans
-          else
-            body = file == path ? content : read_file_content(file)
-            Noir::TreeSitterJaxRsExtractor.extract_bean_fields(body)
-          end
-        rescue IO::Error
-          {} of String => Array(Param)
-        end
-
-        beans.each { |name, params| result[name] ||= params }
-      end
-
-      result
-    end
-
-    # Build the cross-file `@HttpMethod("VERB")` custom-annotation
-    # index for `path`. Same traversal as `bean_index_for` — the
-    # annotation type is typically declared in its own file, so this
-    # needs the same current file + same-package siblings + imports
-    # walk, gated on the file mentioning JAX-RS so unrelated `.java`
-    # files aren't parsed for annotation declarations.
-    private def custom_verb_index_for(path : String,
-                                      content : String,
-                                      package_name : String,
-                                      cache : Hash(String, Hash(String, String)),
-                                      imports : Array(Noir::ImportGraph::ImportRef)? = nil,
-                                      current_file_verbs : Hash(String, String)? = nil) : Hash(String, String)
-      result = Hash(String, String).new
-      resolved_imports = imports || Noir::TreeSitterJavaParameterExtractor.extract_imports(content)
-
-      Noir::ImportGraph.related_files(path, package_name, resolved_imports, JAVA_EXTENSION) do |file|
-        verbs = cache[file] ||= begin
-          if file == path && current_file_verbs
-            current_file_verbs
-          else
-            body = file == path ? content : read_file_content(file)
-            if body.includes?("jakarta.ws.rs") || body.includes?("javax.ws.rs")
-              Noir::TreeSitterJaxRsExtractor.extract_custom_verb_annotations(body)
-            else
-              Hash(String, String).new
-            end
-          end
-        rescue IO::Error
-          Hash(String, String).new
-        end
-
-        verbs.each { |name, verb| result[name] ||= verb }
-      end
-
-      result
-    end
-
-    private def subresource_sources_for(path : String,
-                                        content : String,
-                                        package_name : String,
-                                        cache : Hash(String, String),
-                                        imports : Array(Noir::ImportGraph::ImportRef)? = nil,
-                                        current_file_class_names : Array(String)? = nil) : Hash(String, Noir::TreeSitterJaxRsExtractor::SourceEntry)
-      result = Hash(String, Noir::TreeSitterJaxRsExtractor::SourceEntry).new
-      resolved_imports = imports || Noir::TreeSitterJavaParameterExtractor.extract_imports(content)
-
-      Noir::ImportGraph.related_files(path, package_name, resolved_imports, JAVA_EXTENSION) do |file|
-        body = cache[file] ||= begin
-          file == path ? content : read_file_content(file)
-        rescue IO::Error
-          ""
-        end
-        next if body.empty?
-        next unless body.includes?("jakarta.ws.rs") || body.includes?("javax.ws.rs")
-
-        class_names = file == path && current_file_class_names ? current_file_class_names : Noir::TreeSitterJaxRsExtractor.extract_class_names(body)
-        class_names.each do |name|
-          result[name] ||= {file, body}
-        end
-      end
-
-      result
     end
 
     private def extract_asset_bundle_endpoints(content : String, application_context_path : String, path : String) : Array(Endpoint)
