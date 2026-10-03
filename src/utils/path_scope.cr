@@ -36,19 +36,14 @@ module Noir
     # identical to `File.expand_path(path)` as long as nothing changes the
     # working directory inside the pinned scope, which noir never does.
     #
-    # Always `/`-separated: on Windows `File.expand_path` joins with `\\`,
-    # but the walk and every analyzer match paths as `/` strings.
+    # Always `/`-separated, Windows included (see `ext/windows_paths.cr`).
     def expand(path : String) : String
       return path if already_expanded?(path)
-      expanded = if Path.new(path).absolute?
-                   File.expand_path(path, File::SEPARATOR_STRING)
-                 else
-                   File.expand_path(path, @@pinned_cwd || Dir.current)
-                 end
-      {% if flag?(:windows) %}
-        expanded = expanded.gsub('\\', '/')
-      {% end %}
-      expanded
+      if Path.new(path).absolute?
+        File.expand_path(path, File::SEPARATOR_STRING)
+      else
+        File.expand_path(path, @@pinned_cwd || Dir.current)
+      end
     end
 
     # True when `File.expand_path(path)` would return `path` unchanged: an
