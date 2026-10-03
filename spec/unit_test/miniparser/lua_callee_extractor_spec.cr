@@ -110,29 +110,18 @@ describe Noir::LuaCalleeExtractor do
     ])
   end
 
-  it "extracts MoonScript indented route bodies" do
-    source = <<-MOON
-      class extends lapis.Application
-        "/moon": =>
+  it "extracts callees from MoonScript indented route bodies" do
+    body_text = <<-MOON
           moon_service.load @params
           @render "profile"
           render_moon "home"
-        "/next": =>
-          next_call()
       MOON
 
-    arrow_end = source.index!("=>") + 2
-    body = Noir::LuaCalleeExtractor.extract_moonscript_block_after(source, arrow_end)
-    body.should_not be_nil
-
-    body.try do |body_text, start_line|
-      start_line.should eq(3)
-      Noir::LuaCalleeExtractor.callees_for_body(body_text, "app.moon", start_line).map { |name, _, line| {name, line} }.should eq([
-        {"moon_service.load", 3},
-        {"self.render", 4},
-        {"render_moon", 5},
-      ])
-    end
+    Noir::LuaCalleeExtractor.callees_for_body(body_text, "app.moon", 3).map { |name, _, line| {name, line} }.should eq([
+      {"moon_service.load", 3},
+      {"self.render", 4},
+      {"render_moon", 5},
+    ])
   end
 
   it "treats MoonScript keywords as callees only in .moon sources" do

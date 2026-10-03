@@ -121,53 +121,10 @@ module Noir::LuaCalleeExtractor
     {chars[body_start...body_end].join, line_number_for(chars, body_start)}
   end
 
-  # Public String overload kept for callers outside this module.
-  def extract_moonscript_block_after(source : String, arrow_end_index : Int32) : Tuple(String, Int32)?
-    extract_moonscript_block_after(source.chars, arrow_end_index)
-  end
-
-  def extract_moonscript_block_after(chars : Array(Char), arrow_end_index : Int32) : Tuple(String, Int32)?
-    route_line_start = line_start_for(chars, arrow_end_index)
-    route_indent = indentation_at(chars, route_line_start)
-    route_line_end = line_end_for(chars, arrow_end_index)
-    tail = chars[arrow_end_index...route_line_end].join.strip
-    unless tail.empty?
-      return {tail, line_number_for(chars, arrow_end_index)}
-    end
-
-    body_lines = [] of String
-    body_start_line = nil
-    index = route_line_end < chars.size ? route_line_end + 1 : chars.size
-
-    while index < chars.size
-      current_end = line_end_for(chars, index)
-      line = chars[index...current_end].join
-      stripped = line.strip
-
-      if stripped.empty?
-        body_lines << line if body_start_line
-        index = current_end < chars.size ? current_end + 1 : chars.size
-        next
-      end
-
-      indent = indentation_at(chars, index)
-      break if indent <= route_indent
-
-      body_start_line ||= line_number_for(chars, index)
-      body_lines << line
-      index = current_end < chars.size ? current_end + 1 : chars.size
-    end
-
-    return unless body_start_line
-
-    {body_lines.join("\n"), body_start_line}
-  end
-
   # Extract a MoonScript class-action value: everything from `value_start`
   # (just past a route header's `:`) through the end of the indentation
-  # block the header introduces. Unlike `extract_moonscript_block_after`,
-  # which assumes an inline arrow and stops at the first body line, this
-  # keeps the header line's trailing content (`respond_to {`, a wrapper
+  # block the header introduces. This keeps the header line's trailing
+  # content (`respond_to {`, a wrapper
   # call, an inline arrow) together with every more-indented line that
   # follows, so `respond_to` blocks and wrapped handlers are captured
   # whole. `start_line` is the header line, matching the offsets callers
@@ -239,14 +196,6 @@ module Noir::LuaCalleeExtractor
     end
 
     nil
-  end
-
-  # Public String overload kept for callers outside this module.
-  def line_number_for(source : String, index : Int32) : Int32
-    return 1 if index <= 0
-
-    limit = index > source.size ? source.size : index
-    source[0...limit].count('\n') + 1
   end
 
   def line_number_for(chars : Array(Char), index : Int32) : Int32
