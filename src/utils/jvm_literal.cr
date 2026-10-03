@@ -39,10 +39,6 @@ module Noir
         return value[1..-2]
       end
 
-      # `to_f?` rather than the `String#numeric?` helper: that one is
-      # monkey-patched onto ::String from inside `analyzers/python/fastapi.cr`,
-      # so depending on it here would make this module compile or not
-      # depending on which analyzer happened to be required first.
       numeric = value.delete('_')
       numeric = numeric[0..-2] if numeric.size > 1 && NUMERIC_SUFFIXES.includes?(numeric[-1])
       return numeric if !numeric.empty? && numeric.to_f?
