@@ -7,7 +7,7 @@ module Noir
     def extract_simple_statics(source : String, method_name : String = "Static") : Array(StaticPath)
       results = [] of StaticPath
       Noir::TreeSitter.parse_go(source) do |root|
-        walk(root) do |node|
+        Noir::TreeSitter.walk(root) do |node|
           next unless Noir::TreeSitter.node_type(node) == "call_expression"
           if sp = decode_simple_static(node, source, method_name)
             results << sp
@@ -24,7 +24,7 @@ module Noir
     def extract_goyave_statics(source : String) : Array(StaticPath)
       results = [] of StaticPath
       Noir::TreeSitter.parse_go(source) do |root|
-        walk(root) do |node|
+        Noir::TreeSitter.walk(root) do |node|
           next unless Noir::TreeSitter.node_type(node) == "call_expression"
           if sp = decode_goyave_static(node, source)
             results << sp
@@ -41,7 +41,7 @@ module Noir
     def extract_mux_statics(source : String) : Array(StaticPath)
       results = [] of StaticPath
       Noir::TreeSitter.parse_go(source) do |root|
-        walk(root) do |node|
+        Noir::TreeSitter.walk(root) do |node|
           next unless Noir::TreeSitter.node_type(node) == "call_expression"
           if sp = decode_mux_static(node, source)
             results << sp

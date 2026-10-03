@@ -36,7 +36,7 @@ module Analyzer::Javascript
           if endpoint.url.includes?(":")
             endpoint.url.scan(/:(\w+)/) do |m|
               param = Param.new(m[1], "", "path")
-              endpoint.push_param(param) if !endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
+              endpoint.push_param(param)
             end
           end
           result << endpoint
@@ -120,51 +120,6 @@ module Analyzer::Javascript
       end
     end
 
-    # Resolve every router variable's mount prefix(es) from the edge list.
-    # A variable that is never mounted into another (a root aggregator like
-    # the exported `router`) carries the empty prefix; children inherit the
-    # parent's prefix joined with the edge's own prefix. Iterated to a
-    # fixpoint so a two-level chain (root -> api -> child) fully resolves.
-    private def resolve_mount_edge_prefixes(edges : Array(Tuple(String, String, String))) : Hash(String, Array(String))
-      children = edges.map { |_, _, child| child }.to_set
-      prefixes = Hash(String, Array(String)).new { |h, k| h[k] = [] of String }
-
-      # Seed roots (never a mount target) with the empty prefix.
-      edges.each do |parent, _, _|
-        prefixes[parent] << "" if !children.includes?(parent) && prefixes[parent].empty?
-      end
-
-      max_iterations = 16
-      iterations = 0
-      changed = true
-      while changed && iterations < max_iterations
-        changed = false
-        iterations += 1
-        edges.each do |parent, prefix, child|
-          # Propagate only from a resolved parent (a seeded root or an
-          # already-resolved child). Defaulting an unresolved parent to ""
-          # would leak a wrong prefix (`/sub` instead of `/api/sub`).
-          parent_prefixes = prefixes[parent]?
-          next if parent_prefixes.nil? || parent_prefixes.empty?
-          parent_prefixes.each do |pp|
-            combined = if pp.empty?
-                         prefix
-                       elsif prefix.empty?
-                         pp
-                       else
-                         Noir::URLPath.join(pp, prefix)
-                       end
-            unless prefixes[child].includes?(combined)
-              prefixes[child] << combined
-              changed = true
-            end
-          end
-        end
-      end
-
-      prefixes
-    end
-
     # Match Strapi's declarative route entries: object literals
     # whose `method:` and `path:` keys sit on adjacent lines. Both
     # keys are bare identifiers (Strapi never quotes them) and the
@@ -203,8 +158,7 @@ module Analyzer::Javascript
         next unless handler_seen
         # Skip duplicate (same triple already emitted for this file).
         key = {method, route_path, index + 1}
-        next if seen.includes?(key)
-        seen << key
+        next unless seen.add?(key)
 
         details = Details.new(PathInfo.new(path, index + 1))
         endpoint = Endpoint.new(route_path, method, details)
@@ -275,10 +229,7 @@ module Analyzer::Javascript
 
         # Extract path parameters from the route_path itself
         route_path.scan(/:(\w+)/) do |m|
-          if !endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
-            param = Param.new(m[1], "", "path")
-            endpoint.push_param(param)
-          end
+          endpoint.push_param(Param.new(m[1], "", "path"))
         end
 
         # Extract parameters from handler body
@@ -347,9 +298,7 @@ module Analyzer::Javascript
 
       # Extract path parameters from ctx.params.X
       handler_body.scan(/ctx\.params\.(\w+)/) do |m|
-        if !endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
-          endpoint.push_param(Param.new(m[1], "", "path"))
-        end
+        endpoint.push_param(Param.new(m[1], "", "path"))
       end
     end
   end

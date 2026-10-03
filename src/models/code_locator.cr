@@ -14,10 +14,6 @@ class CodeLocator
   DEFAULT_CONTENT_CACHE_BUDGET = 512_i64 * 1024 * 1024
 
   @logger : NoirLogger
-  @is_debug : Bool
-  @is_verbose : Bool
-  @is_color : Bool
-  @is_log : Bool
   @s_map : Hash(String, String)
   @a_map : Hash(String, Array(String))
   @extension_index : Hash(String, Array(String))
@@ -30,17 +26,12 @@ class CodeLocator
   @content_cache_skipped : Int32
   @expanded_file_map : Array(Tuple(String, String))?
   @expanded_path_index : Hash(String, String)?
-  @scan_base_paths : Array(String)
+  getter scan_base_paths : Array(String)
 
   @lock : Mutex
 
   def initialize
-    options = {"debug" => "false", "verbose" => "false", "color" => "true", "nolog" => "false"}
-    @is_debug = any_to_bool(options["debug"])
-    @is_verbose = any_to_bool(options["verbose"])
-    @is_color = any_to_bool(options["color"])
-    @is_log = any_to_bool(options["nolog"])
-    @logger = NoirLogger.new @is_debug, @is_verbose, @is_color, @is_log
+    @logger = NoirLogger.new(false, false, true, false)
 
     @s_map = Hash(String, String).new
     @a_map = Hash(String, Array(String)).new
@@ -71,10 +62,6 @@ class CodeLocator
   # reads the roots from here.
   def scan_base_paths=(paths : Array(String))
     @scan_base_paths = paths.reject(&.empty?)
-  end
-
-  def scan_base_paths : Array(String)
-    @scan_base_paths
   end
 
   # `path` relative to the scan base that owns it, `/`-separated and

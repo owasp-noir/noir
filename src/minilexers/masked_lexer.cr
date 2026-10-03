@@ -34,8 +34,7 @@ module Noir
     @size : Int32
 
     # Recorded non-code regions as {kind, start, end_exclusive}. Used for
-    # `skip_ranges`, `in_code?`, and to splice string/comment spans into each
-    # lexer's token stream.
+    # `skip_ranges` and `in_code?`.
     @spans : Array(Tuple(Symbol, Int32, Int32))
 
     # Memo for `skip_ranges`.

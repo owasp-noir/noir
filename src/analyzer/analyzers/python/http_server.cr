@@ -283,10 +283,7 @@ module Analyzer::Python
 
       record = ->(name : ::String, ptype : ::String) do
         key = "#{ptype}:#{name}"
-        unless seen.includes?(key)
-          params << Param.new(name, "", ptype)
-          seen << key
-        end
+        params << Param.new(name, "", ptype) if seen.add?(key)
       end
 
       # Query: parse_qs( ... ).get / [ 'name' ] — covers both direct and urlparse(self.path).query cases.

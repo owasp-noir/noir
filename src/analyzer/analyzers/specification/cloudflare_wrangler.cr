@@ -51,7 +51,7 @@ module Analyzer::Specification
       return unless routes
       arr = routes.as_a?
       return unless arr
-      arr.each { |entry| emit_toml_route(entry, details) }
+      arr.each { |entry| emit_route(entry, details) }
     end
 
     private def process_toml_fallback(content : String, details : Details)
@@ -73,24 +73,10 @@ module Analyzer::Specification
       return unless routes
       arr = routes.as_a?
       return unless arr
-      arr.each { |entry| emit_json_route(entry, details) }
+      arr.each { |entry| emit_route(entry, details) }
     end
 
-    private def emit_toml_route(entry : TOML::Any, details : Details)
-      pattern = nil
-      zone = nil
-
-      if h = entry.as_h?
-        pattern = h["pattern"]?.try(&.as_s?)
-        zone = h["zone_name"]?.try(&.as_s?) || h["zone_id"]?.try(&.as_s?)
-      elsif s = entry.as_s?
-        pattern = s
-      end
-
-      register_endpoint(pattern, zone, details)
-    end
-
-    private def emit_json_route(entry : JSON::Any, details : Details)
+    private def emit_route(entry, details : Details)
       pattern = nil
       zone = nil
 

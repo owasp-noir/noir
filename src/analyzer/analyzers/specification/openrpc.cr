@@ -50,8 +50,8 @@ module Analyzer::Specification
         param_structure = method_obj["paramStructure"]?.try(&.as_s?)
 
         params = [] of Param
-        descriptors.each { |descriptor| push_param(params, Param.new(descriptor, "", "json")) }
-        push_param(params, Param.new(
+        descriptors.each { |descriptor| push_param_once(params, Param.new(descriptor, "", "json")) }
+        push_param_once(params, Param.new(
           "jsonrpc_#{name}",
           request_envelope(name, descriptors, param_structure),
           "json"
@@ -113,11 +113,6 @@ module Analyzer::Specification
         "params"  => params_node,
         "id"      => JSON::Any.new(1_i64),
       }.to_json
-    end
-
-    private def push_param(params : Array(Param), param : Param)
-      return if params.any? { |existing| existing.name == param.name && existing.param_type == param.param_type }
-      params << param
     end
 
     # Shares the OAS3 analyzer's `servers` handling so `--url` behaves the same

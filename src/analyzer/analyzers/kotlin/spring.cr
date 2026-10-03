@@ -2,6 +2,7 @@ require "../../../models/analyzer"
 require "../../../miniparsers/kotlin_route_extractor_ts"
 require "../../../miniparsers/kotlin_parameter_extractor_ts"
 require "../../../miniparsers/kotlin_callee_extractor"
+require "../../engines/java_engine"
 require "../../engines/kotlin_engine"
 require "../../../utils/utils.cr"
 require "../../../utils/path_scope"
@@ -12,20 +13,10 @@ module Analyzer::Kotlin
   class Spring < Analyzer
     analyzer_for "kotlin_spring"
 
+    include Analyzer::Java::JavaEngine
+
     KOTLIN_EXTENSION = "kt"
     alias SpringRoute = Noir::TreeSitterKotlinRouteExtractor::Route
-
-    private struct SpringPathConfig
-      getter servlet_context_path : String
-      getter webflux_base_path : String
-
-      def initialize(@servlet_context_path = "", @webflux_base_path = "")
-      end
-
-      def web_base_path : String
-        @webflux_base_path.empty? ? @servlet_context_path : @webflux_base_path
-      end
-    end
 
     SPRING_FRAMEWORK_CALLEE_NAMES = Set{
       "ok", "created", "accepted", "noContent", "notFound", "badRequest",
@@ -519,20 +510,6 @@ module Analyzer::Kotlin
       routes
     end
 
-    private def add_interface_routes(target : Array(SpringInterfaceRouteEntry),
-                                     seen : Set(String),
-                                     routes : Array(SpringInterfaceRouteEntry)?)
-      return unless routes
-
-      routes.each do |entry|
-        route = entry.route
-        key = "#{entry.path}:#{route.class_name}:#{route.method_name}:#{route.verb}:#{route.path}"
-        next if seen.includes?(key)
-        seen << key
-        target << entry
-      end
-    end
-
     private def visible_method_entries(index : SpringMethodIndex,
                                        package_name : String,
                                        imports : Array(Noir::ImportGraph::ImportRef),
@@ -675,29 +652,6 @@ module Analyzer::Kotlin
       )
     end
 
-    private def resource_dirs_for(project_root : String) : Array(String)
-      [
-        File.join(project_root, "src/main/resources"),
-        File.join(project_root, "resources"),
-        project_root,
-      ].uniq
-    end
-
-    private def read_properties(path : String) : Hash(String, String)
-      values = Hash(String, String).new
-      read_file_content(path).each_line do |line|
-        stripped = line.strip
-        next if stripped.empty? || stripped.starts_with?("#") || stripped.starts_with?("!")
-
-        if separator = stripped.index(/[=:]/)
-          key = stripped[...separator].strip
-          value = stripped[(separator + 1)..].strip
-          values[key] = value unless key.empty?
-        end
-      end
-      values
-    end
-
     private def merge_yaml_path_config(values : Hash(String, String), path : String)
       document = YAML.parse(read_file_content(path))
       if value = yaml_string_value(document, "server", "servlet", "context-path")
@@ -718,14 +672,6 @@ module Analyzer::Kotlin
       value.as_s?
     rescue
       nil
-    end
-
-    private def normalize_optional_path(path : String?) : String
-      return "" unless path
-
-      trimmed = path.strip
-      return "" if trimmed.empty? || trimmed == "/"
-      trimmed.starts_with?("/") ? trimmed : "/#{trimmed}"
     end
 
     private def graphql_paths_for(file_list : Array(String), path_configs : Hash(String, SpringPathConfig)) : Hash(String, String)
@@ -1653,13 +1599,7 @@ module Analyzer::Kotlin
     end
 
     private def project_root_for(path : String) : String
-      ["/src/main/kotlin/", "/src/"].each do |marker|
-        if index = path.index(marker)
-          return path[...index]
-        end
-      end
-
-      File.dirname(path)
+      Analyzer::Java::JavaEngine.marker_root(path, {"/src/main/kotlin/", "/src/"}) || File.dirname(path)
     end
   end
 end

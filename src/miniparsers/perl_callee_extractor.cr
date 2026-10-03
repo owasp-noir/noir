@@ -87,20 +87,12 @@ module Noir::PerlCalleeExtractor
 
   def extract_sub_after(source : String,
                         start_index : Int32,
-                        search_limit : Int32 = source.size,
-                        body_limit : Int32 = source.size) : Tuple(String, Int32)?
+                        search_limit : Int32 = source.size) : Tuple(String, Int32)?
     chars = code_chars(source)
     sub_index = find_keyword(chars, "sub", start_index, search_limit)
     return unless sub_index
 
-    extract_sub_at(chars, sub_index, body_limit)
-  end
-
-  # Public String overload kept for callers outside this module.
-  def extract_sub_at(source : String,
-                     sub_index : Int32,
-                     limit : Int32 = source.size) : Tuple(String, Int32)?
-    extract_sub_at(code_chars(source), sub_index, limit)
+    extract_sub_at(chars, sub_index)
   end
 
   def extract_sub_at(chars : Array(Char),
@@ -114,12 +106,6 @@ module Noir::PerlCalleeExtractor
     return unless close_brace
 
     {chars[(open_brace + 1)...close_brace].join, line_number_for(chars, open_brace + 1)}
-  end
-
-  # Public String overload kept for callers outside this module.
-  def find_matching_delimiter(source : String, open_index : Int32, open_char : Char, close_char : Char,
-                              limit : Int32 = source.size) : Int32?
-    find_matching_delimiter(code_chars(source), open_index, open_char, close_char, limit)
   end
 
   def find_matching_delimiter(chars : Array(Char), open_index : Int32, open_char : Char, close_char : Char,
@@ -371,25 +357,8 @@ module Noir::PerlCalleeExtractor
     stripped.to_s
   end
 
-  # Public String overload kept for callers outside this module.
-  # Walk characters up to `index` counting newlines — the previous
-  # `source[0...limit].count('\n')` allocated a full substring on every
-  # call (handler body extraction, named-sub indexing). `index` is a
-  # character offset (matches `source.chars` / `String#size` indexing),
-  # not a UTF-8 byte offset.
-  def line_number_for(source : String, index : Int32) : Int32
-    return 1 if index <= 0
-
-    count = 1
-    i = 0
-    source.each_char do |ch|
-      break if i >= index
-      count += 1 if ch == '\n'
-      i += 1
-    end
-    count
-  end
-
+  # `index` is a character offset (matches `source.chars` / `String#size`
+  # indexing), not a UTF-8 byte offset.
   def line_number_for(chars : Array(Char), index : Int32) : Int32
     return 1 if index <= 0
 

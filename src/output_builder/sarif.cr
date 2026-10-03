@@ -110,7 +110,7 @@ class OutputBuilderSarif < OutputBuilder
       properties = result["properties"]?.try(&.as_h?) || {} of String => JSON::Any
       noir_props = {} of String => JSON::Any
       unless endpoint.callees.empty?
-        noir_props["callees"] = JSON::Any.new(noir_callees_json(endpoint))
+        noir_props["callees"] = noir_callees_json(endpoint)
       end
       context_json = noir_ai_context_json(endpoint)
       if context_json

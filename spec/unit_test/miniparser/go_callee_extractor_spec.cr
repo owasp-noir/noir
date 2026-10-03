@@ -57,59 +57,42 @@ describe Noir::GoCalleeExtractor do
     end
   end
 
-  describe ".package_function_bodies" do
+  describe ".lazy_package_bodies_if" do
     it "groups per-file function bodies by directory" do
-      bodies = Noir::GoCalleeExtractor.package_function_bodies({
+      bodies = Noir::GoCalleeExtractor.lazy_package_bodies_if(true, {
         "app/handlers/users.go"  => "package handlers\nfunc UserShow() {}\n",
         "app/handlers/orders.go" => "package handlers\nfunc OrderList() {}\n",
         "app/server/main.go"     => "package server\nfunc Boot() {}\n",
       })
 
-      bodies.keys.sort!.should eq(["app/handlers", "app/server"])
-      bodies["app/handlers"].keys.sort!.should eq(["OrderList", "UserShow"])
-      bodies["app/server"].keys.should eq(["Boot"])
+      bodies.functions_for("app/handlers").keys.sort!.should eq(["OrderList", "UserShow"])
+      bodies.functions_for("app/server").keys.should eq(["Boot"])
     end
 
     it "earlier file wins on name collisions within a directory" do
-      bodies = Noir::GoCalleeExtractor.package_function_bodies({
+      bodies = Noir::GoCalleeExtractor.lazy_package_bodies_if(true, {
         "pkg/a.go" => "package p\nfunc Handler() {}\n",
         "pkg/b.go" => "package p\nfunc Handler() {}\n",
       })
 
-      pkg = bodies["pkg"]
+      pkg = bodies.functions_for("pkg")
       pkg.size.should eq(1)
       # First file in iteration order wins so cross-file lookups are
       # deterministic.
       pkg["Handler"].file_path.should eq("pkg/a.go")
     end
 
-    it "omits directories whose files declared no functions" do
-      bodies = Noir::GoCalleeExtractor.package_function_bodies({
+    it "is empty for a directory whose files declared no functions" do
+      bodies = Noir::GoCalleeExtractor.lazy_package_bodies_if(true, {
         "pkg/empty.go" => "package p\n",
       })
-      bodies.should be_empty
-    end
-  end
-
-  describe ".package_function_bodies_if" do
-    it "returns an empty map immediately when enabled=false" do
-      bodies = Noir::GoCalleeExtractor.package_function_bodies_if(false, {
-        "pkg/a.go" => "package p\nfunc Handler() {}\n",
-      })
-      bodies.should be_empty
-    end
-
-    it "delegates to package_function_bodies when enabled=true" do
-      bodies = Noir::GoCalleeExtractor.package_function_bodies_if(true, {
-        "pkg/a.go" => "package p\nfunc Handler() {}\n",
-      })
-      bodies["pkg"]["Handler"].file_path.should eq("pkg/a.go")
+      bodies.functions_for("pkg").should be_empty
     end
   end
 
   describe ".function_bodies_for_directory" do
     it "returns the body map for the requested directory" do
-      package_bodies = Noir::GoCalleeExtractor.package_function_bodies({
+      package_bodies = Noir::GoCalleeExtractor.lazy_package_bodies_if(true, {
         "pkg/a.go" => "package p\nfunc Handler() {}\n",
       })
       Noir::GoCalleeExtractor.function_bodies_for_directory(package_bodies, "pkg")
@@ -117,10 +100,10 @@ describe Noir::GoCalleeExtractor do
     end
 
     it "returns an empty map for an unknown directory rather than nil" do
-      Noir::GoCalleeExtractor.function_bodies_for_directory(
-        Hash(String, Hash(String, Noir::GoCalleeExtractor::FunctionBody)).new,
-        "nowhere"
-      ).should be_empty
+      package_bodies = Noir::GoCalleeExtractor.lazy_package_bodies_if(true, {
+        "pkg/a.go" => "package p\nfunc Handler() {}\n",
+      })
+      Noir::GoCalleeExtractor.function_bodies_for_directory(package_bodies, "nowhere").should be_empty
     end
   end
 
@@ -582,23 +565,25 @@ describe Noir::GoCalleeExtractor do
   end
 
   describe "LazyPackageBodies" do
-    it "matches the eager callee tables for every directory" do
+    it "builds each directory's function and method tables" do
       contents = {
         "/svc/h.go" => "package svc\n\nfunc Handle() { helper() }\nfunc (c *Ctl) Index() {}\n",
         "/svc/i.go" => "package svc\n\nfunc Handle() {}\nfunc (d *Dup) Index() {}\n",
         "/svc/t.go" => "package svc\n\nfunc\tTabbed() {}\n",
         "/lib/l.go" => "package lib\n\nfunc Lib() {}\n",
       }
-      functions = Noir::GoCalleeExtractor.package_function_bodies_if(true, contents)
-      methods = Noir::GoCalleeExtractor.package_method_bodies_if(true, contents)
       lazy = Noir::GoCalleeExtractor.lazy_package_bodies_if(true, contents)
 
-      ["/svc", "/lib", "/missing"].each do |dir|
-        Noir::GoCalleeExtractor.function_bodies_for_directory(lazy, dir)
-          .should eq(Noir::GoCalleeExtractor.function_bodies_for_directory(functions, dir))
-        Noir::GoCalleeExtractor.method_bodies_for_directory(lazy, dir)
-          .should eq(Noir::GoCalleeExtractor.method_bodies_for_directory(methods, dir))
-      end
+      svc = Noir::GoCalleeExtractor.function_bodies_for_directory(lazy, "/svc")
+      svc.keys.sort!.should eq(["Handle", "Tabbed"])
+      svc["Handle"].file_path.should eq("/svc/h.go")
+      svc_methods = Noir::GoCalleeExtractor.method_bodies_for_directory(lazy, "/svc")
+      svc_methods.keys.should eq(["Index"])
+      svc_methods["Index"].map(&.file_path).should eq(["/svc/h.go", "/svc/i.go"])
+      Noir::GoCalleeExtractor.function_bodies_for_directory(lazy, "/lib").keys.should eq(["Lib"])
+      Noir::GoCalleeExtractor.method_bodies_for_directory(lazy, "/lib").should be_empty
+      Noir::GoCalleeExtractor.function_bodies_for_directory(lazy, "/missing").should be_empty
+      Noir::GoCalleeExtractor.method_bodies_for_directory(lazy, "/missing").should be_empty
     end
 
     it "is empty when callees are not needed" do

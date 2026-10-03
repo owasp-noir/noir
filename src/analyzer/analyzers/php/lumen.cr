@@ -10,12 +10,7 @@ module Analyzer::Php
   class Lumen < PhpEngine
     analyzer_for "php_lumen"
 
-    private struct RouteGroup
-      getter prefix, body, body_start, body_end
-
-      def initialize(@prefix : String, @body : String, @body_start : Int32, @body_end : Int32)
-      end
-    end
+    private record RouteGroup, prefix : String, body : String, body_start : Int32, body_end : Int32
 
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
@@ -227,33 +222,8 @@ module Analyzer::Php
       nil
     end
 
-    private def skip_whitespace(content : String, pos : Int32) : Int32
-      while pos < content.size && content[pos].ascii_whitespace?
-        pos += 1
-      end
-      pos
-    end
-
     private def inside_group_body?(pos : Int32, groups : Array(RouteGroup)) : Bool
       groups.any? { |group| pos >= group.body_start && pos < group.body_end }
-    end
-
-    private def extract_inline_closure_body(content : String, pos : Int32, base_line : Int32) : Tuple(String?, Int32, Int32?)
-      return {nil, pos, nil} unless pos < content.size
-
-      scan_pos = skip_whitespace(content, pos)
-      return {nil, pos, nil} unless scan_pos < content.size
-
-      closure_regex = /\A(?:static\s+)?function\s*\([^)]*\)\s*(?:use\s*\([^)]*\)\s*)?(?::\s*[^{=]+)?\{/i
-      match = content[scan_pos..].match(closure_regex)
-      return {nil, pos, nil} unless match
-
-      brace_pos = scan_pos + match[0].size - 1
-      body_end = find_matching_php_close_brace(content, brace_pos)
-      return {nil, pos, nil} unless body_end
-
-      body_start_line = base_line + newline_count_before(content, brace_pos)
-      {content[(brace_pos + 1)...body_end], body_end + 1, body_start_line}
     end
 
     private def attach_route_callees(endpoint : Endpoint, body : String?, file_path : String, start_line : Int32?)

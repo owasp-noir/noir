@@ -59,7 +59,7 @@ module Noir::JavaCalleeExtractor
     # call site.
     resolved_decl_index = decl_index || build_method_decl_index(root, source)
 
-    walk(body) do |n|
+    Noir::TreeSitter.walk(body) do |n|
       node_type = Noir::TreeSitter.node_type(n)
       next unless node_type == "method_invocation" || node_type == "method_reference"
       name = callee_text(n, source)
@@ -91,7 +91,7 @@ module Noir::JavaCalleeExtractor
                       source : String,
                       file_path : String) : Array(Tuple(String, String, Int32))
     sink = [] of Tuple(String, String, Int32)
-    walk(body) do |n|
+    Noir::TreeSitter.walk(body) do |n|
       node_type = Noir::TreeSitter.node_type(n)
       next unless node_type == "method_invocation" || node_type == "method_reference"
       name = callee_text(n, source)
@@ -209,13 +209,6 @@ module Noir::JavaCalleeExtractor
     end
   end
 
-  private def walk(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
-    block.call(node)
-    Noir::TreeSitter.each_named_child(node) do |child|
-      walk(child, &block)
-    end
-  end
-
   # Build a same-file method-name -> start row map. `nil` value marks
   # an ambiguous name (multiple `method_declaration`s share it), so the
   # caller knows to keep the call site location instead of guessing
@@ -225,7 +218,7 @@ module Noir::JavaCalleeExtractor
   def build_method_decl_index(root : LibTreeSitter::TSNode,
                               source : String) : Hash(String, Int32?)
     index = {} of String => Int32?
-    walk(root) do |n|
+    Noir::TreeSitter.walk(root) do |n|
       next unless Noir::TreeSitter.node_type(n) == "method_declaration"
       name_node = Noir::TreeSitter.field(n, "name")
       next unless name_node

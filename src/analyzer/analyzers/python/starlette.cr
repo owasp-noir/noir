@@ -42,7 +42,6 @@ module Analyzer::Python
     @await_body_regex_cache = Hash(::String, AwaitBodyRegexes).new
     @attr_regex_cache = Hash(Tuple(::String, ::String), Tuple(Regex, Regex)).new
     @body_var_regex_cache = Hash(::String, Tuple(Regex, Regex)).new
-    @keyword_expr_regex_cache = Hash(::String, Regex).new
 
     private def await_body_regexes(request_name : ::String) : AwaitBodyRegexes
       @await_body_regex_cache[request_name] ||= begin
@@ -601,30 +600,6 @@ module Analyzer::Python
         methods << method_match[1].upcase
       end
       methods.uniq
-    end
-
-    # Memoized per keyword — the keyword set is tiny (`path`, `endpoint`,
-    # `methods`) but this runs per argument of every programmatic route.
-    private def keyword_expression_regex(keyword : ::String) : Regex
-      @keyword_expr_regex_cache[keyword] ||= /^\s*#{Regex.escape(keyword)}\s*=\s*(.+)$/m
-    end
-
-    private def extract_python_keyword_expression(args : Array(::String), keyword : ::String) : ::String?
-      keyword_re = keyword_expression_regex(keyword)
-      args.each do |arg|
-        keyword_match = arg.match(keyword_re)
-        return keyword_match[1].strip if keyword_match
-      end
-
-      nil
-    end
-
-    private def extract_python_keyword_string(args : Array(::String), keyword : ::String) : ::String?
-      if expression = extract_python_keyword_expression(args, keyword)
-        return Helper.extract_python_string(expression)
-      end
-
-      nil
     end
 
     private def clean_reference(expression : ::String) : ::String

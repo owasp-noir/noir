@@ -163,15 +163,6 @@ module MediaFilter
     SPEC_DOCUMENT_EXTENSION_SET.includes?(File.extname(file_path).downcase)
   end
 
-  # The size budget that applies to `file_path`.
-  def self.max_size_for(file_path : String) : Int32
-    max_size_for_extension(File.extname(file_path).downcase)
-  end
-
-  private def self.max_size_for_extension(extension : String) : Int32
-    SPEC_DOCUMENT_EXTENSION_SET.includes?(extension) ? MAX_SPEC_FILE_SIZE : MAX_FILE_SIZE
-  end
-
   # Decide whether a file should be skipped and, if so, return the human
   # readable reason in a single pass — avoids re-stat'ing the file just
   # to compose the log message. Returns `nil` when the file should be
@@ -187,7 +178,7 @@ module MediaFilter
     extension = File.extname(file_path).downcase
     return "media file (#{extension})" if MEDIA_EXTENSION_SET.includes?(extension)
 
-    limit = max_size || max_size_for_extension(extension)
+    limit = max_size || (SPEC_DOCUMENT_EXTENSION_SET.includes?(extension) ? MAX_SPEC_FILE_SIZE : MAX_FILE_SIZE)
 
     size = if info
              info.size

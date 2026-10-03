@@ -126,12 +126,7 @@ module Analyzer::Php
       endpoints
     end
 
-    private struct Scope
-      getter prefix, body, body_start, body_end
-
-      def initialize(@prefix : String, @body : String, @body_start : Int32, @body_end : Int32)
-      end
-    end
+    private record Scope, prefix : String, body : String, body_start : Int32, body_end : Int32
 
     # Route receivers in a CakePHP routes file: the injected builder under any
     # variable name (`$routes`, `$builder`, `$routeBuilder`, ...) or the static

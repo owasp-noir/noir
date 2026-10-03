@@ -53,7 +53,7 @@ module Analyzer::Javascript
             endpoint.url.scan(/:(\w+)/) do |m|
               if m.size > 0
                 param = Param.new(m[1], "", "path")
-                endpoint.push_param(param) if !endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
+                endpoint.push_param(param)
               end
             end
           end
@@ -145,51 +145,6 @@ module Analyzer::Javascript
       end
     end
 
-    # Resolve every router variable's mount prefix(es) from the edge list.
-    # A variable that is never mounted into another (a root aggregator like
-    # the exported `router`) carries the empty prefix; children inherit the
-    # parent's prefix joined with the edge's own prefix. Iterated to a
-    # fixpoint so a two-level chain (root -> api -> child) fully resolves.
-    private def resolve_mount_edge_prefixes(edges : Array(Tuple(String, String, String))) : Hash(String, Array(String))
-      children = edges.map { |_, _, child| child }.to_set
-      prefixes = Hash(String, Array(String)).new { |h, k| h[k] = [] of String }
-
-      # Seed roots (never a mount target) with the empty prefix.
-      edges.each do |parent, _, _|
-        prefixes[parent] << "" if !children.includes?(parent) && prefixes[parent].empty?
-      end
-
-      max_iterations = 16
-      iterations = 0
-      changed = true
-      while changed && iterations < max_iterations
-        changed = false
-        iterations += 1
-        edges.each do |parent, prefix, child|
-          # Propagate only from a resolved parent (a seeded root or an
-          # already-resolved child). Defaulting an unresolved parent to ""
-          # would leak a wrong prefix (`/sub` instead of `/api/sub`).
-          parent_prefixes = prefixes[parent]?
-          next if parent_prefixes.nil? || parent_prefixes.empty?
-          parent_prefixes.each do |pp|
-            combined = if pp.empty?
-                         prefix
-                       elsif prefix.empty?
-                         pp
-                       else
-                         Noir::URLPath.join(pp, prefix)
-                       end
-            unless prefixes[child].includes?(combined)
-              prefixes[child] << combined
-              changed = true
-            end
-          end
-        end
-      end
-
-      prefixes
-    end
-
     private def analyze_with_regex(path : String, result : Array(Endpoint))
       file_content = read_file_content(path)
       # Regex fallback for when the JSParser trips over a file (rare, but
@@ -239,9 +194,7 @@ module Analyzer::Javascript
         endpoint.details = Details.new(PathInfo.new(path, 1))
 
         route_path.scan(/:(\w+)/) do |m|
-          if m.size > 0 && !endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
-            endpoint.push_param(Param.new(m[1], "", "path"))
-          end
+          endpoint.push_param(Param.new(m[1], "", "path")) if m.size > 0
         end
 
         extract_oak_params_from_content(file_content, router_var || "app", match[2], route_path, endpoint)
@@ -287,9 +240,7 @@ module Analyzer::Javascript
       end
 
       handler_body.scan(/ctx\.params\.(\w+)/) do |m|
-        if m.size > 0 && !endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
-          endpoint.push_param(Param.new(m[1], "", "path"))
-        end
+        endpoint.push_param(Param.new(m[1], "", "path")) if m.size > 0
       end
     end
   end

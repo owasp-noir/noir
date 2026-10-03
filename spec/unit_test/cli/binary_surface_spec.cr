@@ -1,6 +1,7 @@
 require "../../spec_helper"
 require "file_utils"
 require "json"
+require "../../../src/cli/catalog"
 
 # End-to-end specs for the CLI front door, driven through the *built
 # binary*.
@@ -123,6 +124,22 @@ describe "noir CLI surface (built binary)" do
       result = run_noir(["-b", FIXTURE, "--build-info"])
       result.stdout.should contain("Crystal:")
       result.exit_code.should eq(0)
+    end
+  end
+
+  describe "noir help <command>" do
+    it "routes every catalog command to a help page" do
+      Noir::CLI::Catalog::NAMES.each do |name|
+        result = run_noir(["help", name])
+        result.stdout.should_not be_empty
+        result.exit_code.should eq(0)
+      end
+    end
+
+    it "dies on an unknown command" do
+      result = run_noir(["help", "bogus"])
+      result.stderr.should contain("Unknown command: bogus")
+      result.exit_code.should eq(1)
     end
   end
 

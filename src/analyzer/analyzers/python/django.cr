@@ -12,15 +12,6 @@ module Analyzer::Python
     @django_app_config_path_cache = Hash(::String, ::String).new
     @visited_app_config_paths = Set(::String).new
 
-    # `extract_python_keyword_expression` is called with a small, fixed
-    # set of recurring keywords ("route", "regex", "view", "prefix",
-    # "viewset", ...) once per URL-pattern/router-registration match, and
-    # internally re-evaluates the regex once per positional arg. Memoize
-    # the compiled Regex per keyword across the whole scan instead of
-    # rebuilding an identical PCRE2 pattern on every call (mirrors the
-    # @keyword_regex_cache pattern used by the other python analyzers).
-    @keyword_regex_cache = Hash(::String, Regex).new
-
     # Regular expressions for extracting Django URL configurations
     REGEX_ROOT_URLCONF = /\s*ROOT_URLCONF\s*=\s*r?['"]([^'"\\]*)['"]/
     REGEX_INCLUDE_URLS = /\binclude\s*\(\s*r?['"]([^'"\\]*)['"]/
@@ -1195,28 +1186,6 @@ module Analyzer::Python
       end
 
       view
-    end
-
-    private def keyword_expression_regex(keyword : ::String) : Regex
-      @keyword_regex_cache[keyword] ||= /^\s*#{Regex.escape(keyword)}\s*=\s*(.+)$/m
-    end
-
-    private def extract_python_keyword_expression(args : Array(::String), keyword : ::String) : ::String?
-      keyword_re = keyword_expression_regex(keyword)
-      args.each do |arg|
-        keyword_match = arg.match(keyword_re)
-        return keyword_match[1].strip if keyword_match
-      end
-
-      nil
-    end
-
-    private def extract_python_keyword_string(args : Array(::String), keyword : ::String) : ::String?
-      if expression = extract_python_keyword_expression(args, keyword)
-        return Helper.extract_python_string(expression)
-      end
-
-      nil
     end
 
     private def clean_python_reference(expression : ::String) : ::String

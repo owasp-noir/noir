@@ -13,6 +13,8 @@ module Analyzer::Java
   class Javalin < Analyzer
     analyzer_for "java_javalin"
 
+    include JavaEngine
+
     JAVA_EXTENSION  = "java"
     JAVALIN_MARKERS = ["io.javalin"]
 
@@ -216,12 +218,6 @@ module Analyzer::Java
         key.ends_with?(suffix) ? value : nil
       end.uniq!
       matches.size == 1 ? matches.first : nil
-    end
-
-    private def normalize_optional_path(path : String) : String
-      trimmed = path.strip
-      return "" if trimmed.empty? || trimmed == "/"
-      trimmed.starts_with?("/") ? trimmed : "/#{trimmed}"
     end
 
     private def first_argument(args : String) : String

@@ -1,15 +1,6 @@
 require "../../spec_helper"
 require "../../../src/utils/*"
 
-describe "remove_start_slash" do
-  it "with slash" do
-    remove_start_slash("/abcd/1234").should eq("abcd/1234")
-  end
-  it "without slash" do
-    remove_start_slash("abcd/1234").should eq("abcd/1234")
-  end
-end
-
 describe "get_relative_path" do
   it "start with ./" do
     get_relative_path("./abcd", "1.cr").should eq("1.cr")

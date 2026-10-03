@@ -42,7 +42,7 @@ module Analyzer::Php
       endpoints.concat(analyze_annotation_routes(path, content, include_callee))
       endpoints.concat(analyze_convention_routes(path, content, include_callee))
 
-      dedup_endpoints(endpoints)
+      endpoints.uniq { |endpoint| {endpoint.method, endpoint.url} }
     end
 
     # Every PHP analyzer is fed every `.php` file in a project-wide scan, so
@@ -340,12 +340,7 @@ module Analyzer::Php
     ANNOTATION_VERB_RE  = /@(Get|Post|Put|Patch|Delete|Options|Head)\s*\(\s*['"]([^'"]+)['"]/
     ANNOTATION_ROUTE_RE = /@Route\s*\(\s*['"]([^'"]+)['"]([^)]*)\)/m
 
-    private struct PhalconClassScope
-      getter path, body_start, body_end
-
-      def initialize(@path : String, @body_start : Int32, @body_end : Int32)
-      end
-    end
+    private record PhalconClassScope, path : String, body_start : Int32, body_end : Int32
 
     private def analyze_annotation_routes(path : String, content : String, include_callee : Bool) : Array(Endpoint)
       endpoints = [] of Endpoint
@@ -437,14 +432,6 @@ module Analyzer::Php
     private def class_prefix_for_position(scopes : Array(PhalconClassScope), pos : Int32) : String
       scope = scopes.find { |s| pos >= s.body_start && pos < s.body_end }
       scope ? scope.path : ""
-    end
-
-    private def attach_method_callees(endpoint : Endpoint, method_body : Tuple(String, Int32)?, file_path : String)
-      return unless method_body
-
-      body, start_line = method_body
-      callees = Noir::PhpCalleeExtractor.callees_for_body(body, file_path, start_line)
-      attach_php_callees(endpoint, callees)
     end
 
     # 6. Convention-based controller/action dispatch: a public `fooAction`
@@ -652,19 +639,6 @@ module Analyzer::Php
       end
 
       nil
-    end
-
-    private def dedup_endpoints(endpoints : Array(Endpoint)) : Array(Endpoint)
-      seen = Set(String).new
-      endpoints.select do |endpoint|
-        key = "#{endpoint.method}\0#{endpoint.url}"
-        if seen.includes?(key)
-          false
-        else
-          seen.add(key)
-          true
-        end
-      end
     end
   end
 end

@@ -30,15 +30,6 @@ module Analyzer::Specification
       endpoint
     end
 
-    # Dedups on (name, param_type), mirroring `Endpoint#push_param`.
-    # Used while a param array is still being assembled, before the
-    # `Endpoint` exists.
-    def push_param_once(params : Array(Param), param : Param) : Nil
-      return if param.name.empty?
-      return if params.any? { |existing| existing.name == param.name && existing.param_type == param.param_type }
-      params << param
-    end
-
     # `/:id` -> `/{id}`. Emit the brace form so the optimizer's
     # `add_path_parameters` pass picks the segment up: `normalize_url_shape`
     # only rewrites the colon form for insomnia/postman, so a `:id`

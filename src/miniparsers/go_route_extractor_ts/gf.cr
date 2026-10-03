@@ -45,7 +45,7 @@ module Noir
     def extract_gf_meta_routes(source : String) : Array(GfMetaRoute)
       results = [] of GfMetaRoute
       Noir::TreeSitter.parse_go(source) do |root|
-        walk(root) do |node|
+        Noir::TreeSitter.walk(root) do |node|
           next unless Noir::TreeSitter.node_type(node) == "type_spec"
           type_node = Noir::TreeSitter.field(node, "type")
           next if type_node.nil?

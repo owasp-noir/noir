@@ -1,28 +1,10 @@
 require "../../engines/python_engine"
+require "./python_helper"
 require "../../../utils/text_file"
 
 module Analyzer::Python
   class Tornado < PythonEngine
     analyzer_for "python_tornado"
-
-    # Reference: https://tornadoweb.org/en/stable/web.html
-    # Reference: https://tornadoweb.org/en/stable/httputil.html#tornado.httputil.HTTPServerRequest
-    REQUEST_PARAM_FIELDS = {
-      "arguments"      => {["GET"], "query"},
-      "body_arguments" => {["POST", "PUT", "PATCH", "DELETE"], "form"},
-      "files"          => {["POST", "PUT", "PATCH", "DELETE"], "form"},
-      "body"           => {["POST", "PUT", "PATCH", "DELETE"], "body"},
-      "headers"        => {nil, "header"},
-      "cookies"        => {nil, "cookie"},
-    }
-
-    REQUEST_PARAM_TYPES = {
-      "query"  => nil,
-      "form"   => ["POST", "PUT", "PATCH", "DELETE"],
-      "body"   => ["POST", "PUT", "PATCH", "DELETE"],
-      "cookie" => nil,
-      "header" => nil,
-    }
 
     CLASS_DEF_REGEX = /^class\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*[\(:]/
 
@@ -66,7 +48,7 @@ module Analyzer::Python
           # real routes. Flag every line that begins inside a
           # triple-quoted string so the route-detection entry points
           # below skip them.
-          docstring_line = compute_docstring_line_flags(lines)
+          docstring_line = Helper.docstring_line_flags(lines)
 
           lines.each_with_index do |line, line_index|
             next if docstring_line[line_index]
@@ -128,71 +110,6 @@ module Analyzer::Python
       end
 
       result
-    end
-
-    # For each line, whether its first character sits inside a
-    # triple-quoted string (i.e. a docstring opened on an earlier line).
-    # A single linear scan tracks the open/close `"""`/`'''` delimiters at
-    # file scope; single-line strings and `#` comments are skipped so a
-    # stray `"""` inside them doesn't flip the state.
-    private def compute_docstring_line_flags(lines : Array(::String)) : Array(Bool)
-      flags = Array(Bool).new(lines.size, false)
-      in_triple = false
-      triple_char = '\0'
-      lines.each_with_index do |line, idx|
-        flags[idx] = in_triple
-        i = 0
-        # `chars`, not `line[i]`: `String#[](Int)` walks from the start of the
-        # string on every call once the content is not single-byte, so
-        # indexing inside this loop was O(n^2) per line on any file with a
-        # non-ASCII comment or string literal. `join_multiline_call` below
-        # already carried this fix; this scan did not.
-        chars = line.chars
-        size = chars.size
-        while i < size
-          c = chars[i]
-          if in_triple
-            if c == triple_char && i + 2 < size && chars[i + 1] == triple_char && chars[i + 2] == triple_char
-              in_triple = false
-              i += 3
-              next
-            end
-            i += 1
-          elsif c == '#'
-            break # comment runs to end of line
-          elsif c == '"' || c == '\''
-            if i + 2 < size && chars[i + 1] == c && chars[i + 2] == c
-              in_triple = true
-              triple_char = c
-              i += 3
-              next
-            end
-            # Single-line string: skip to its closing quote, consuming a
-            # backslash and whatever follows it.
-            #
-            # An escape FLAG, not the one-character lookback this replaces
-            # (`line[i] == c && line[i - 1] != '\\'`): a lookback cannot tell
-            # an escaped quote from an escaped BACKSLASH followed by a quote,
-            # so `"C:\\"` read as unterminated and the scan ran off the end of
-            # the line — taking any `"""` later on that line with it, which is
-            # what decides whether the FOLLOWING lines count as docstring.
-            # Same defect as #2625 fixed in the Express router-mount scanner.
-            i += 1
-            while i < size
-              if chars[i] == '\\'
-                i += 2
-                next
-              end
-              break if chars[i] == c
-              i += 1
-            end
-            i += 1
-          else
-            i += 1
-          end
-        end
-      end
-      flags
     end
 
     private def join_multiline_call(lines : Array(::String), start_index : Int32) : ::String

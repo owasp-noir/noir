@@ -535,8 +535,7 @@ module Analyzer::Python
       until queue.empty?
         key, prefix = queue.shift
         visit_id = "#{key}\u{0}#{prefix}"
-        next if visited.includes?(visit_id)
-        visited << visit_id
+        next unless visited.add?(visit_id)
 
         inst = instances[key]?
         next unless inst
@@ -655,15 +654,6 @@ module Analyzer::Python
       ""
     end
 
-    private def extract_python_keyword_string(args : Array(::String), keyword : ::String) : ::String?
-      args.each do |arg|
-        if match = arg.match(/^\s*#{Regex.escape(keyword)}\s*=\s*(.+)$/m)
-          return Helper.extract_python_string(match[1].strip)
-        end
-      end
-      nil
-    end
-
     private def top_level_keyword_argument?(arg : ::String) : Bool
       !!arg.match(/^[A-Za-z_][A-Za-z0-9_]*\s*=/)
     end
@@ -714,15 +704,6 @@ module Analyzer::Python
       end.strip
 
       expression.empty? ? nil : expression
-    end
-
-    private def extract_python_keyword_expression(args : Array(::String), keyword : ::String) : ::String?
-      args.each do |arg|
-        if match = arg.match(/^\s*#{Regex.escape(keyword)}\s*=\s*(.+)$/m)
-          return match[1].strip
-        end
-      end
-      nil
     end
 
     # Delegates to the shared splitter. `Rules::SHARED_DEPTH_RAW`, not

@@ -17,22 +17,14 @@ end
 
 class Detector
   @logger : NoirLogger
-  @is_debug : Bool
-  @is_verbose : Bool
-  @is_color : Bool
-  @is_log : Bool
   @base_path : String
   @base_paths : Array(String)
 
   def initialize(options : Hash(String, YAML::Any))
-    @is_debug = any_to_bool(options["debug"])
-    @is_verbose = any_to_bool(options["verbose"])
-    @is_color = any_to_bool(options["color"])
-    @is_log = any_to_bool(options["nolog"])
     @base_paths = options["base"].as_a.map(&.to_s)
     @base_path = @base_paths.first? || ""
 
-    @logger = NoirLogger.new @is_debug, @is_verbose, @is_color, @is_log
+    @logger = NoirLogger.from_options(options)
   end
 
   def detect(filename : String, file_contents : String) : Bool
@@ -177,11 +169,6 @@ class Detector
     true
   end
 
-  # Detector content always arrives from `Noir::TextFile.read`, so the
-  # subject is known-valid UTF-8 and PCRE2's per-call revalidation is
-  # skippable. See `Noir::TextFile::MATCH_OPTIONS`.
-  CONTENT_MATCH_OPTIONS = Noir::TextFile::MATCH_OPTIONS
-
   # Whether any alternative of a precompiled `Regex.union` appears in
   # `file_contents`. With a union of plain literals this is exactly
   # OR-ing `String#includes?` over the same literals — `Regex.union`
@@ -199,8 +186,12 @@ class Detector
   # a substitute for a real pattern: keep purpose-built regexes as they
   # are, and keep a single `includes?` that merely gates an expensive
   # parse (there the substring check is the cheap half, not the cost).
+  #
+  # Detector content always arrives from `Noir::TextFile.read`, so the
+  # subject is known-valid UTF-8 and PCRE2's per-call revalidation is
+  # skippable. See `Noir::TextFile::MATCH_OPTIONS`.
   def content_matches?(file_contents : String, markers : Regex) : Bool
-    markers.matches?(file_contents, options: CONTENT_MATCH_OPTIONS)
+    markers.matches?(file_contents, options: Noir::TextFile::MATCH_OPTIONS)
   end
 
   # Per-gem regex memos for `gemfile_dependency?`/`gemspec_dependency?`.

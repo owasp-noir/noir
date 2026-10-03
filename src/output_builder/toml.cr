@@ -11,11 +11,7 @@ class OutputBuilderToml < OutputBuilder
     # one format that cannot fully honor that: `generate_toml` renders arrays
     # as `[[table]]` blocks, and an empty array has no block to render, so a
     # clean scan stays silent here. That asymmetry belongs to the format.
-    message = {
-      "endpoints"       => endpoints,
-      "passive_results" => passive_results,
-      "errors"          => analyzer_failures,
-    }.to_json
+    message = report_document(endpoints, passive_results).to_json
     json_obj = JSON.parse(message)
     toml_output = generate_toml(json_obj.as_h)
     ob_puts toml_output

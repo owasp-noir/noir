@@ -51,7 +51,7 @@ module Analyzer::Javascript
             endpoint.url.scan(/:(\w+)/) do |m|
               if m.size > 0
                 param = Param.new(m[1], "", "path")
-                endpoint.push_param(param) if !endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
+                endpoint.push_param(param)
               end
             end
           end
@@ -283,13 +283,13 @@ module Analyzer::Javascript
         url.scan(/:(\w+)/) do |pm|
           next unless pm.size > 0
           param = Param.new(pm[1], "", "path")
-          endpoint.push_param(param) unless endpoint.params.any? { |p| p.name == pm[1] && p.param_type == "path" }
+          endpoint.push_param(param)
         end
 
         # Extract handler params
         args.each_line do |handler_line|
           p = line_to_param(handler_line)
-          endpoint.push_param(p) if !p.name.empty? && !endpoint.params.any? { |bp| bp.name == p.name && bp.param_type == p.param_type }
+          endpoint.push_param(p) if !p.name.empty?
         end
 
         if include_callee
@@ -379,11 +379,11 @@ module Analyzer::Javascript
           url.scan(/:(\w+)/) do |pm|
             next unless pm.size > 0
             param = Param.new(pm[1], "", "path")
-            endpoint.push_param(param) unless endpoint.params.any? { |p| p.name == pm[1] && p.param_type == "path" }
+            endpoint.push_param(param)
           end
 
           body_params.each do |bp|
-            endpoint.push_param(bp) unless endpoint.params.any? { |p| p.name == bp.name && p.param_type == bp.param_type }
+            endpoint.push_param(bp)
           end
           attach_js_callees(endpoint, route_callees)
 

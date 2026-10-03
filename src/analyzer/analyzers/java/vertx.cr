@@ -318,9 +318,7 @@ module Analyzer::Java
       path.scan(/:(\w+)/) do |match|
         next unless match.size > 1
         param_name = match[1]
-        unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "path" }
-          endpoint.push_param(Param.new(param_name, "", "path"))
-        end
+        endpoint.push_param(Param.new(param_name, "", "path"))
       end
     end
 
@@ -558,9 +556,7 @@ module Analyzer::Java
       return unless names
 
       names.each do |name|
-        unless endpoint.params.any? { |p| p.name == name && p.param_type == "query" }
-          endpoint.push_param(Param.new(name, "", "query"))
-        end
+        endpoint.push_param(Param.new(name, "", "query"))
       end
     end
 

@@ -1,24 +1,6 @@
 require "./masked_lexer"
 
 module Noir
-  # A single token produced by `PhpLexer#tokens`. `start`/`end` are
-  # character indices into the original source (`end` exclusive); `line`
-  # is the 1-based line of `start`.
-  struct PhpToken
-    getter kind : Symbol
-    getter value : String
-    getter start : Int32
-    getter end : Int32
-    getter line : Int32
-
-    def initialize(@kind : Symbol, @value : String, @start : Int32, @end : Int32, @line : Int32)
-    end
-
-    def to_s(io : IO) : Nil
-      io << @kind << '(' << @value << ')'
-    end
-  end
-
   # PhpLexer is a hand-rolled structural lexer for PHP source. It exists to
   # replace the per-analyzer character state machines that every PHP analyzer
   # re-implements (balanced-brace matching, statement-end scanning, string/
@@ -49,7 +31,6 @@ module Noir
     include MaskedLexer
 
     @chars : Array(Char)
-    @tokens : Array(PhpToken)?
 
     # `source` is a whole `.php` file by default, so lexing starts in HTML
     # mode: nothing is code until the first `<?php` / `<?=`. Pass
@@ -61,7 +42,6 @@ module Noir
       @size = @chars.size
       @masked = Array(Char).new(@size)
       @spans = [] of Tuple(Symbol, Int32, Int32)
-      @tokens = nil
       @skip_ranges = nil
       scan(php_mode)
     end
@@ -353,105 +333,6 @@ module Noir
         i += 1
       end
       @size
-    end
-
-    # ---- token stream ------------------------------------------------------
-
-    # Lazily produce a flat token stream over the source: structural
-    # delimiters, `->`/`::`/`=>` operators, identifiers, `$variables`, and one
-    # token per string/comment/heredoc span. This is the reusable miniparser
-    # surface for consumers that want to walk PHP structurally (e.g. following
-    # a `Route::a(...)->b(...)->group(...)` method chain).
-    def tokens : Array(PhpToken)
-      @tokens ||= build_tokens
-    end
-
-    private def build_tokens : Array(PhpToken)
-      result = [] of PhpToken
-      span_idx = 0
-      spans = @spans
-      i = 0
-      # Running line counter. Tokens are emitted at non-decreasing start
-      # offsets, so advancing `line_cursor` monotonically keeps line lookup
-      # O(n) total instead of the O(n^2) a rescan-from-zero per token caused.
-      line = 1
-      line_cursor = 0
-      line_for = ->(pos : Int32) do
-        while line_cursor < pos
-          c = @chars[line_cursor]
-          # `\n`, `\r\n` and a bare `\r` (classic-Mac, which the heredoc masking
-          # also honours) each end a line; count the `\r` of `\r\n` only once.
-          if c == '\n'
-            line += 1
-          elsif c == '\r' && (line_cursor + 1 >= @size || @chars[line_cursor + 1] != '\n')
-            line += 1
-          end
-          line_cursor += 1
-        end
-        line
-      end
-
-      while i < @size
-        # Emit any recorded span that starts here.
-        if span_idx < spans.size && spans[span_idx][1] == i
-          kind, s, e = spans[span_idx]
-          span_idx += 1
-          i = e
-          # Inert markup outside `<?php … ?>` is masked like a string literal
-          # so it can never be read as code, but unlike a literal it is not
-          # part of the program: a `.php` file with no open tag at all is pure
-          # HTML and has no tokens.
-          next if kind == :html
-          result << PhpToken.new(kind, @chars[s...e].join, s, e, line_for.call(s))
-          next
-        end
-
-        c = @masked[i]
-        if c.ascii_whitespace?
-          i += 1
-        elsif c == '$' && i + 1 < @size && ident_start?(@masked[i + 1])
-          start = i
-          i += 1
-          while i < @size && ident_char?(@masked[i])
-            i += 1
-          end
-          result << PhpToken.new(:variable, @chars[start...i].join, start, i, line_for.call(start))
-        elsif ident_start?(c)
-          start = i
-          while i < @size && ident_char?(@masked[i])
-            i += 1
-          end
-          result << PhpToken.new(:ident, @chars[start...i].join, start, i, line_for.call(start))
-        else
-          kind, len = punct_at(i)
-          if kind
-            result << PhpToken.new(kind, @chars[i...i + len].join, i, i + len, line_for.call(i))
-            i += len
-          else
-            i += 1
-          end
-        end
-      end
-      result
-    end
-
-    private def punct_at(i : Int32) : Tuple(Symbol?, Int32)
-      c = @masked[i]
-      n = i + 1 < @size ? @masked[i + 1] : '\0'
-      case
-      when c == '-' && n == '>' then {:arrow, 2}
-      when c == ':' && n == ':' then {:double_colon, 2}
-      when c == '=' && n == '>' then {:double_arrow, 2}
-      when c == '('             then {:lparen, 1}
-      when c == ')'             then {:rparen, 1}
-      when c == '['             then {:lbracket, 1}
-      when c == ']'             then {:rbracket, 1}
-      when c == '{'             then {:lbrace, 1}
-      when c == '}'             then {:rbrace, 1}
-      when c == ';'             then {:semicolon, 1}
-      when c == ','             then {:comma, 1}
-      else                           {nil, 1}
-      end
     end
   end
 end

@@ -105,25 +105,13 @@ module Noir
     # amortises within a file via `_from(root)`, but other callers
     # (and any future multi-tech overlap) still re-parse whole buffers.
     @@routes_memo = Hash(UInt64, Array(Route)).new
-    @@routes_order = [] of UInt64
     @@constants_memo = Hash(UInt64, Hash(String, String)).new
-    @@constants_order = [] of UInt64
     @@memo_mutex = Mutex.new
-    @@clearer_registered = false
 
-    private def ensure_clearer_registered : Nil
-      return if @@clearer_registered
+    ExtractionResultCache.register_clearer do
       @@memo_mutex.synchronize do
-        return if @@clearer_registered
-        ExtractionResultCache.register_clearer do
-          @@memo_mutex.synchronize do
-            @@routes_memo.clear
-            @@routes_order.clear
-            @@constants_memo.clear
-            @@constants_order.clear
-          end
-        end
-        @@clearer_registered = true
+        @@routes_memo.clear
+        @@constants_memo.clear
       end
     end
 
@@ -131,9 +119,8 @@ module Noir
     # resolve. Top-level classes are scanned in order; nested classes
     # inherit their parent class's mapping prefix.
     def extract_routes(source : String) : Array(Route)
-      ensure_clearer_registered
       key = ExtractionResultCache.key(source, "java_routes")
-      ExtractionResultCache.fetch(@@routes_memo, @@routes_order, key, mutex: @@memo_mutex) do
+      ExtractionResultCache.fetch(@@routes_memo, key, mutex: @@memo_mutex) do
         routes = [] of Route
         Noir::TreeSitter.parse_java(source) do |root|
           routes = extract_routes_from(root, source)
@@ -143,9 +130,8 @@ module Noir
     end
 
     def extract_string_constants(source : String) : Hash(String, String)
-      ensure_clearer_registered
       key = ExtractionResultCache.key(source, "java_constants")
-      ExtractionResultCache.fetch(@@constants_memo, @@constants_order, key, mutex: @@memo_mutex) do
+      ExtractionResultCache.fetch(@@constants_memo, key, mutex: @@memo_mutex) do
         constants = Hash(String, String).new
         Noir::TreeSitter.parse_java(source) do |root|
           constants = extract_string_constants_from(root, source)

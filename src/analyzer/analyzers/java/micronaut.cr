@@ -8,6 +8,8 @@ module Analyzer::Java
   class Micronaut < Analyzer
     analyzer_for "java_micronaut"
 
+    include JavaEngine
+
     JAVA_EXTENSION    = "java"
     MICRONAUT_MARKERS = ["io.micronaut", "micronaut.io"]
     alias PackageScopeKey = Tuple(String, String)
@@ -164,20 +166,6 @@ module Analyzer::Java
       routes
     end
 
-    private def add_interface_routes(target : Array(MicronautInterfaceRouteEntry),
-                                     seen : Set(String),
-                                     routes : Array(MicronautInterfaceRouteEntry)?)
-      return unless routes
-
-      routes.each do |entry|
-        route = entry.route
-        key = "#{entry.path}:#{route.class_name}:#{route.method_name}:#{route.verb}:#{route.path}"
-        next if seen.includes?(key)
-        seen << key
-        target << entry
-      end
-    end
-
     private def java_imports(content : String) : Array(String)
       imports = [] of String
       content.scan(/^\s*import\s+(?!static\s)([A-Za-z_][A-Za-z0-9_.]*(?:\.\*)?)\s*;/m) do |match|
@@ -221,29 +209,6 @@ module Analyzer::Java
         normalize_optional_path(values["micronaut.server.context-path"]?),
         static_resource_mappings(values)
       )
-    end
-
-    private def resource_dirs_for(project_root : String) : Array(String)
-      [
-        File.join(project_root, "src/main/resources"),
-        File.join(project_root, "resources"),
-        project_root,
-      ].uniq
-    end
-
-    private def read_properties(path : String) : Hash(String, String)
-      values = Hash(String, String).new
-      read_file_content(path).each_line do |line|
-        stripped = line.strip
-        next if stripped.empty? || stripped.starts_with?("#") || stripped.starts_with?("!")
-
-        if separator = stripped.index(/[=:]/)
-          key = stripped[...separator].strip
-          value = stripped[(separator + 1)..].strip
-          values[key] = value unless key.empty?
-        end
-      end
-      values
     end
 
     private def merge_yaml_path_config(values : Hash(String, String), path : String)
@@ -290,14 +255,6 @@ module Analyzer::Java
       return "" if normalized.empty?
 
       normalized.starts_with?("/") ? normalized : "/#{normalized}"
-    end
-
-    private def normalize_optional_path(path : String?) : String
-      return "" unless path
-
-      trimmed = path.strip
-      return "" if trimmed.empty? || trimmed == "/"
-      trimmed.starts_with?("/") ? trimmed : "/#{trimmed}"
     end
   end
 end

@@ -169,7 +169,7 @@ module Analyzer::Javascript
         endpoint.url.scan(/:(\w+)/) do |m|
           if m.size > 0
             param = Param.new(m[1], "", "path")
-            endpoint.push_param(param) if !endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
+            endpoint.push_param(param)
           end
         end
       end

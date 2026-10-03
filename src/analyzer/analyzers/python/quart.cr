@@ -2,6 +2,7 @@ require "../../../miniparsers/python"
 require "../../../miniparsers/python_route_extractor"
 require "../../../miniparsers/python_route_extractor_ts"
 require "../../engines/python_engine"
+require "./flask_family"
 
 module Analyzer::Python
   # Quart is an ASGI re-implementation of Flask's API. Decorator,
@@ -16,47 +17,8 @@ module Analyzer::Python
   #     parameter extraction reads the function body line-by-line and
   #     the `await` prefix doesn't change the access shape.
   class Quart < PythonEngine
+    include FlaskFamily
     analyzer_for "python_quart"
-
-    # Reference: https://quart.palletsprojects.com/en/latest/reference/source/quart.wrappers.request.html
-    REQUEST_PARAM_FIELDS = {
-      "data"    => {["POST", "PUT", "PATCH", "DELETE"], "form"},
-      "args"    => {["GET"], "query"},
-      "form"    => {["POST", "PUT", "PATCH", "DELETE"], "form"},
-      "files"   => {["POST", "PUT", "PATCH", "DELETE"], "form"},
-      "values"  => {["GET", "POST", "PUT", "PATCH", "DELETE"], "query"},
-      "json"    => {["POST", "PUT", "PATCH", "DELETE"], "json"},
-      "cookies" => {nil, "cookie"},
-      "headers" => {nil, "header"},
-    }
-
-    # Precompiled per-field access patterns. `extract_request_params`
-    # runs once per route; rebuilding these interpolated regexes on
-    # every call recompiled PCRE2 patterns (8 fields × 2) per endpoint.
-    # Compile once here and reuse. {noir_param_type, bracket_re, get_re}
-    REQUEST_PARAM_FIELD_PATTERNS = REQUEST_PARAM_FIELDS.map do |field_name, tuple|
-      {
-        tuple[1],
-        Regex.new("request\\.#{field_name}\\[[rf]?['\"]([^'\"]*)['\"]\\]"),
-        # `.get(` and `.getlist(`: Quart mirrors Werkzeug's request
-        # MultiDicts, where `getlist("key")` is the standard accessor for
-        # repeated keys and reads the same first-arg key as `get`.
-        Regex.new("request\\.#{field_name}\\.get(?:list)?\\([rf]?['\"]([^'\"]*)['\"]"),
-      }
-    end
-
-    # `QUERY` (RFC 10008) is safe/idempotent like GET but, per the method's
-    # whole purpose, carries its filter criteria in a request body like
-    # POST — so it joins the body-bearing methods for "form"/"json", not
-    # the read-only "query" (query-string) type. Quart mirrors Flask's API
-    # 1:1 (including this table), so it gets the same treatment.
-    REQUEST_PARAM_TYPES = {
-      "query"  => nil,
-      "form"   => ["POST", "PUT", "PATCH", "DELETE", "QUERY"],
-      "json"   => ["POST", "PUT", "PATCH", "DELETE", "QUERY"],
-      "cookie" => nil,
-      "header" => nil,
-    }
 
     # `@app.websocket("/ws")` is the only attribute outside the
     # standard HTTP-method set that the tree-sitter extractor needs
@@ -80,21 +42,6 @@ module Analyzer::Python
     METHOD_VIEW_POS_VIEW_RE = /^\s*[rf]?['"][^'"]*['"]\s*,\s*[rf]?['"][^'"]*['"]\s*,\s*(#{PYTHON_VAR_NAME_REGEX})\.as_view\s*\(/
     METHOD_VIEW_POS_VAR_RE  = /^\s*[rf]?['"][^'"]*['"]\s*,\s*[rf]?['"][^'"]*['"]\s*,\s*(#{PYTHON_VAR_NAME_REGEX})(?:\s*,|\s*$)/
 
-    @file_content_cache = Hash(::String, ::String).new
-
-    # JSON-variable access patterns interpolate a discovered (dynamic but
-    # low-cardinality) identifier, so they can't be hoisted to constants —
-    # memoize them per variable name instead.
-    @json_param_regex_cache = Hash(::String, Tuple(Regex, Regex)).new
-
-    private def json_param_regexes(json_variable_name : ::String) : Tuple(Regex, Regex)
-      @json_param_regex_cache[json_variable_name] ||= {
-        /[^a-zA-Z_]#{Regex.escape(json_variable_name)}\[[rf]?['"]([^'"]*)['"]\]/,
-        /[^a-zA-Z_]#{Regex.escape(json_variable_name)}\.get\([rf]?['"]([^'"]*)['"]/,
-      }
-    end
-
-    @parsers = Hash(::String, PythonParser).new
     @routes = Hash(::String, Array(Tuple(Int32, ::String, ::String, ::String, Bool))).new
     @method_view_routes = Hash(::String, Array(Tuple(Int32, ::String, ::String, ::String, Array(::String)))).new
     @function_view_routes = Hash(::String, Array(Tuple(Int32, ::String, ::String, ::String, Array(::String)))).new
@@ -268,7 +215,7 @@ module Analyzer::Python
             codeblock,
             class_def_index,
             path,
-            definition_base_path: base_path_for(path),
+            definition_base_path: python_base_path_for(path),
             source: source,
           )
 
@@ -307,10 +254,10 @@ module Analyzer::Python
           function_path = path
           function_source = source
           function_lines = lines
-          function_def_index = function_name.includes?(".") ? -1 : find_function_def(lines, function_name)
-          if function_def_index < 0
-            import_modules = find_imported_modules(base_path_for(path), path, source)
-            resolved = resolve_external_function_view(function_name, path, import_modules)
+          function_def_index = function_name.includes?(".") ? nil : find_function_def(lines, function_name)
+          unless function_def_index
+            import_modules = find_imported_modules(python_base_path_for(path), path, source)
+            resolved = resolve_external_handler(function_name, path, import_modules)
             next unless resolved
 
             function_path, resolved_name = resolved
@@ -319,7 +266,7 @@ module Analyzer::Python
             function_source = fetch_file_content(function_path)
             function_lines = function_source.lines
             function_def_index = find_function_def(function_lines, resolved_name)
-            next if function_def_index < 0
+            next unless function_def_index
           end
 
           codeblock = parse_code_block(function_lines[function_def_index..])
@@ -332,7 +279,7 @@ module Analyzer::Python
             codeblock,
             function_def_index,
             function_path,
-            definition_base_path: base_path_for(function_path),
+            definition_base_path: python_base_path_for(function_path),
             source: function_source,
           )
 
@@ -352,7 +299,7 @@ module Analyzer::Python
           api_instances = path_api_instances[path]?
           prefix = (api_instances && api_instances.has_key?(router_name)) ? api_instances[router_name] : ""
 
-          class_def_index = find_class_def(lines, class_name)
+          class_def_index = find_python_class_def(lines, class_name)
           next if class_def_index < 0
 
           class_indent = lines[class_def_index].size - lines[class_def_index].lstrip.size
@@ -373,7 +320,7 @@ module Analyzer::Python
               codeblock,
               method_def_index,
               path,
-              definition_base_path: base_path_for(path),
+              definition_base_path: python_base_path_for(path),
               source: source,
             )
 
@@ -443,97 +390,6 @@ module Analyzer::Python
       view_arg.matches?(DOTTED_REFERENCE_RE) ? view_arg : ""
     end
 
-    private def resolve_external_function_view(function_ref : ::String,
-                                               current_path : ::String,
-                                               import_modules : Hash(::String, Tuple(::String, Int32))) : Tuple(::String, ::String)?
-      reference = function_ref.strip
-      return if reference.empty?
-
-      if reference.includes?(".")
-        receiver, function_name = reference.split(".", 2)
-        if import_info = import_modules[receiver]?
-          import_path = import_info.first
-          return {import_path, function_name} unless import_path.empty?
-        end
-
-        sibling_module_path = File.join(File.dirname(current_path), "#{receiver}.py")
-        return {sibling_module_path, function_name} if File.exists?(sibling_module_path)
-
-        return
-      end
-
-      if import_info = import_modules[reference]?
-        import_path = import_info.first
-        return {import_path, reference} unless import_path.empty?
-      end
-
-      nil
-    end
-
-    private def split_python_call_args(args : ::String) : Array(::String)
-      parts = [] of ::String
-      current = String::Builder.new
-      paren_depth = 0
-      bracket_depth = 0
-      single_quote = false
-      double_quote = false
-      escaped = false
-
-      args.each_char do |ch|
-        if escaped
-          current << ch
-          escaped = false
-          next
-        end
-
-        if ch == '\\'
-          current << ch
-          escaped = true
-          next
-        end
-
-        if single_quote
-          single_quote = false if ch == '\''
-          current << ch
-          next
-        end
-
-        if double_quote
-          double_quote = false if ch == '"'
-          current << ch
-          next
-        end
-
-        case ch
-        when '\''
-          single_quote = true
-        when '"'
-          double_quote = true
-        when '('
-          paren_depth += 1
-        when ')'
-          paren_depth -= 1 if paren_depth > 0
-        when '[', '{'
-          bracket_depth += 1
-        when ']', '}'
-          bracket_depth -= 1 if bracket_depth > 0
-        when ','
-          if paren_depth == 0 && bracket_depth == 0
-            part = current.to_s.strip
-            parts << part unless part.empty?
-            current = String::Builder.new
-            next
-          end
-        end
-
-        current << ch
-      end
-
-      part = current.to_s.strip
-      parts << part unless part.empty?
-      parts
-    end
-
     private def extract_add_url_rule_methods(args : ::String) : Array(::String)
       methods = [] of ::String
       methods_match = args.match(/methods\s*=\s*[\[\(](.*?)[\]\)]/m)
@@ -544,19 +400,6 @@ module Analyzer::Python
         methods << method if HTTP_METHODS.any? { |hm| hm.upcase == method }
       end
       methods
-    end
-
-    private def find_class_def(lines : Array(::String), class_name : ::String) : Int32
-      lines.each_with_index do |line, idx|
-        stripped = line.lstrip
-        class_prefix = "class #{class_name}"
-        if stripped.starts_with?(class_prefix) &&
-           (stripped.size == class_prefix.size || stripped[class_prefix.size].in?('(', ':', ' ', '\t'))
-          return idx
-        end
-      end
-
-      -1
     end
 
     private def infer_method_view_methods(lines : Array(::String), class_def_index : Int32, class_indent : Int32) : Array(::String)
@@ -580,46 +423,6 @@ module Analyzer::Python
       methods
     end
 
-    private def extract_class_declared_methods(lines : Array(::String), class_def_index : Int32, class_indent : Int32) : Array(::String)
-      methods = [] of ::String
-      i = class_def_index + 1
-      while i < lines.size
-        line = lines[i]
-        stripped = line.strip
-        unless stripped.empty?
-          indent = line.size - line.lstrip.size
-          break if indent <= class_indent
-
-          if stripped.match(/^methods\s*=/)
-            declaration = collect_python_collection_assignment(lines, i, line)
-            declaration.scan(/['"]([A-Za-z]+)['"]/) do |method_match|
-              method = method_match[1].upcase
-              methods << method if HTTP_METHODS.any? { |known| known.upcase == method }
-            end
-            break
-          end
-        end
-        i += 1
-      end
-
-      methods.uniq
-    end
-
-    private def collect_python_collection_assignment(lines : Array(::String), start_index : Int32, line : ::String) : ::String
-      return line unless line.includes?("[") || line.includes?("(")
-
-      pieces = [line]
-      depth = python_paren_delta(line) + python_bracket_delta(line)
-      i = start_index + 1
-      while i < lines.size && depth > 0
-        pieces << lines[i]
-        depth += python_paren_delta(lines[i]) + python_bracket_delta(lines[i])
-        i += 1
-      end
-
-      pieces.join(" ")
-    end
-
     private def find_method_def(lines : Array(::String), class_def_index : Int32, class_indent : Int32, method_name : ::String) : Int32
       # Compile once per call; an interpolated literal inside the loop
       # would be recompiled on every line.
@@ -638,106 +441,6 @@ module Analyzer::Python
       end
 
       -1
-    end
-
-    private def find_function_def(lines : Array(::String), function_name : ::String) : Int32
-      def_re = /^\s*(?:async\s+)?def\s+#{Regex.escape(function_name)}\s*\(/
-      lines.each_with_index do |line, index|
-        if line.match(def_re)
-          return index
-        end
-      end
-
-      -1
-    end
-
-    private def fetch_file_content(path : ::String) : ::String
-      @file_content_cache[path] ||= read_file_content(path)
-    end
-
-    private def base_path_for(file_path : ::String) : ::String
-      python_base_path_for(file_path)
-    end
-
-    private def clone_path_api_instances(path_api_instances : Hash(::String, Hash(::String, ::String))) : Hash(::String, Hash(::String, ::String))
-      cloned = Hash(::String, Hash(::String, ::String)).new
-      path_api_instances.each do |path, api_instances|
-        cloned[path] = api_instances.dup
-      end
-
-      cloned
-    end
-
-    private def apply_nested_blueprint_prefixes(path_api_instances : Hash(::String, Hash(::String, ::String)),
-                                                own_api_instances : Hash(::String, Hash(::String, ::String)),
-                                                blueprint_mounts : Hash(::String, Array(Tuple(::String, ::String, ::String))))
-      blueprint_mounts.each do |path, mounts|
-        api_instances = path_api_instances[path]?
-        next unless api_instances
-
-        own_prefixes = own_api_instances[path]? || api_instances
-        changed = true
-        while changed
-          changed = false
-          mounts.each do |mount|
-            parent_name, child_name, mount_prefix = mount
-            next unless api_instances.has_key?(child_name)
-
-            parent_prefix = api_instances[parent_name]? || ""
-            child_own_prefix = own_prefixes[child_name]? || ""
-            resolved_prefix = File.join(parent_prefix, mount_prefix, child_own_prefix)
-            next if api_instances[child_name] == resolved_prefix
-
-            api_instances[child_name] = resolved_prefix
-            changed = true
-          end
-        end
-      end
-    end
-
-    def create_parser(path : ::String, content : ::String = "") : PythonParser
-      content = fetch_file_content(path) if content.empty?
-      PythonParser.new(path, content, @parsers, depth: 0)
-    end
-
-    def get_parser(path : ::String, content : ::String = "") : PythonParser
-      @parsers[path] ||= create_parser(path, content)
-      @parsers[path]
-    end
-
-    # Build endpoints from a single route decoration. Mirrors the Flask
-    # adapter's behaviour: split on declared `methods=[...]`, default to
-    # GET, run parameter extraction over the handler body once and
-    # filter the params per method.
-    def get_endpoints(method : ::String, route_path : ::String, extra_params : ::String,
-                      codeblock_lines : Array(::String), prefix : ::String)
-      endpoints = [] of Endpoint
-      methods = [] of ::String
-
-      if !prefix.ends_with?("/") && !route_path.starts_with?("/")
-        prefix = "#{prefix}/"
-      end
-
-      methods_match = extra_params.match /methods\s*=\s*(.*)/
-      if !methods_match.nil? && methods_match.size == 2
-        methods_match[1].scan(/['"]([^'"]*)['"']/) do |m|
-          method_name = m[1].upcase
-          methods << method_name if HTTP_METHODS.any? { |hm| hm.upcase == method_name }
-        end
-      end
-      methods << method.upcase if methods.empty?
-
-      suspicious_params = extract_request_params(codeblock_lines)
-
-      methods.uniq.each do |http_method_name|
-        route_url = "#{prefix}#{route_path}"
-        route_url = "/#{route_url}" unless route_url.starts_with?("/")
-
-        params = get_filtered_params(http_method_name, suspicious_params)
-        endpoints << Endpoint.new(route_url.gsub("//", "/"), http_method_name, params)
-      end
-
-      endpoints
     end
 
     # Scans a handler body for `request.<field>` access patterns and
@@ -799,34 +502,6 @@ module Analyzer::Python
       end
 
       params
-    end
-
-    def get_filtered_params(method : ::String, params : Array(Param)) : Array(Param)
-      filtered_params = Array(Param).new
-      upper_method = method.upcase
-
-      params.each do |param|
-        is_support_param = false
-        support_methods = REQUEST_PARAM_TYPES.fetch(param.param_type, nil)
-        if support_methods.nil?
-          is_support_param = true
-        else
-          support_methods.each do |support_method|
-            is_support_param = true if upper_method == support_method.upcase
-          end
-        end
-
-        filtered_params.each do |filtered_param|
-          if filtered_param.name == param.name && filtered_param.param_type == param.param_type
-            is_support_param = false
-            break
-          end
-        end
-
-        filtered_params << param if is_support_param
-      end
-
-      filtered_params
     end
   end
 end

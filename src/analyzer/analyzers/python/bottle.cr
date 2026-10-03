@@ -49,7 +49,6 @@ module Analyzer::Python
     BOTTLE_INSTANCE_RE    = /^(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:bottle\.)?Bottle\(/
     MOUNT_RE              = /\b(#{PYTHON_VAR_NAME_REGEX})\.mount\s*\(\s*[rf]?['"]([^'"]*)['"]\s*,\s*(#{PYTHON_VAR_NAME_REGEX})/
 
-    @keyword_regex_cache = Hash(::String, Regex).new
     @json_var_regex_cache = Hash(::String, Tuple(Regex, Regex)).new
 
     def analyze
@@ -157,9 +156,9 @@ module Analyzer::Python
 
       receiver = route_match[1]
       args = split_python_arguments(route_match[2])
-      route_path = extract_keyword_string(args, "path") ||
-                   extract_keyword_string(args, "rule") ||
-                   extract_keyword_string(args, "uri") ||
+      route_path = extract_python_keyword_string(args, "path") ||
+                   extract_python_keyword_string(args, "rule") ||
+                   extract_python_keyword_string(args, "uri") ||
                    args[0]?.try { |arg| Helper.extract_python_string(arg) }
       return unless route_path
 
@@ -343,24 +342,6 @@ module Analyzer::Python
       nil
     end
 
-    # Memoized per keyword — the keyword set is tiny (`path`, `rule`,
-    # `uri`) but this runs per argument of every programmatic route.
-    private def keyword_string_regex(keyword : String) : Regex
-      @keyword_regex_cache[keyword] ||= /^\s*#{Regex.escape(keyword)}\s*=\s*(.+)$/m
-    end
-
-    private def extract_keyword_string(args : Array(String), keyword : String) : String?
-      keyword_re = keyword_string_regex(keyword)
-      args.each do |arg|
-        keyword_match = arg.match(keyword_re)
-        next unless keyword_match
-
-        return Helper.extract_python_string(keyword_match[1])
-      end
-
-      nil
-    end
-
     private def extract_callback_name(args : Array(String)) : String?
       args.each do |arg|
         callback_match = arg.match(/^\s*callback\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\s*$/)
@@ -368,30 +349,6 @@ module Analyzer::Python
       end
 
       nil
-    end
-
-    # Walk forward from `def_index` collecting lines at strictly greater
-    # indentation than the def line — that's the function body.
-    private def extract_function_body(lines : Array(String), def_index : Int32) : String
-      return "" if def_index >= lines.size
-      def_line = lines[def_index]
-      base_indent = def_line.size - def_line.lstrip.size
-
-      body = [] of String
-      i = def_index + 1
-      while i < lines.size
-        line = lines[i]
-        if line.strip.empty?
-          body << line
-          i += 1
-          next
-        end
-        current_indent = line.size - line.lstrip.size
-        break if current_indent <= base_indent
-        body << line
-        i += 1
-      end
-      body.join("\n")
     end
 
     # Bottle attributes whose parameter type is independent of HTTP method.
@@ -441,10 +398,7 @@ module Analyzer::Python
 
       record = ->(name : String, type : String) do
         key = "#{type}:#{name}"
-        unless seen.includes?(key)
-          params << Param.new(name, "", type)
-          seen << key
-        end
+        params << Param.new(name, "", type) if seen.add?(key)
       end
 
       body.scan(/([A-Za-z_][A-Za-z0-9_]*)\s*=\s*request\.json\b/) do |m|

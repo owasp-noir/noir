@@ -3,10 +3,6 @@ require "log"
 require "./catalog"
 
 module Noir::CLI
-  # Known top-level verbs. The router falls back to `scan` when ARGV[0]
-  # is not one of these (preserving the `noir -b ./app` v0 usage pattern).
-  KNOWN_COMMANDS = Catalog::NAMES
-
   # Point Crystal's global `Log` at STDERR.
   #
   # The stdlib configures that logger, at the bottom of its own `log.cr`,

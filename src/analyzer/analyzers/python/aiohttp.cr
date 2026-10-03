@@ -549,18 +549,12 @@ module Analyzer::Python
 
       route_path.scan(/\{(\w+)(?::[^}]+)?\}/) do |match|
         key = "path:#{match[1]}"
-        unless seen.includes?(key)
-          all_params << Param.new(match[1], "", "path")
-          seen << key
-        end
+        all_params << Param.new(match[1], "", "path") if seen.add?(key)
       end
 
       request_params.each do |p|
         key = "#{p.param_type}:#{p.name}"
-        unless seen.includes?(key)
-          all_params << p
-          seen << key
-        end
+        all_params << p if seen.add?(key)
       end
 
       details = Details.new(PathInfo.new(path, report_line + 1))
@@ -617,33 +611,6 @@ module Analyzer::Python
       true
     end
 
-    private def resolve_external_handler(handler_name : ::String,
-                                         current_path : ::String,
-                                         import_modules : Hash(::String, Tuple(::String, Int32))) : Tuple(::String, ::String)?
-      reference = handler_name.strip
-      return if reference.empty?
-
-      if reference.includes?(".")
-        receiver, function_name = reference.split(".", 2)
-        if import_info = import_modules[receiver]?
-          import_path = import_info.first
-          return {import_path, function_name} unless import_path.empty?
-        end
-
-        sibling_module_path = File.join(File.dirname(current_path), "#{receiver}.py")
-        return {sibling_module_path, function_name} if File.exists?(sibling_module_path)
-
-        return
-      end
-
-      if import_info = import_modules[reference]?
-        import_path = import_info.first
-        return {import_path, reference} unless import_path.empty?
-      end
-
-      nil
-    end
-
     private def websocket_response_body?(function_body : ::String) : Bool
       function_body.includes?("WebSocketResponse")
     end
@@ -693,28 +660,6 @@ module Analyzer::Python
         return idx if line.matches?(handler_def_re)
       end
       nil
-    end
-
-    private def extract_function_body(lines : Array(::String), def_index : Int32) : ::String
-      return "" if def_index >= lines.size
-      def_line = lines[def_index]
-      base_indent = def_line.size - def_line.lstrip.size
-
-      body = [] of ::String
-      i = def_index + 1
-      while i < lines.size
-        line = lines[i]
-        if line.strip.empty?
-          body << line
-          i += 1
-          next
-        end
-        current_indent = line.size - line.lstrip.size
-        break if current_indent <= base_indent
-        body << line
-        i += 1
-      end
-      body.join("\n")
     end
 
     private def extract_methods(extra_params : ::String) : Array(::String)
@@ -893,8 +838,6 @@ module Analyzer::Python
       "cookies" => "cookie",
     }
 
-    DICT_METHOD_NAMES = Set{"get", "getall", "getone", "items", "keys", "values", "pop"}
-
     # Build (and memoize) the request-access regex set for a given
     # request-var name. The patterns interpolate the var name, so they
     # can't be class constants — but there are only a couple of distinct
@@ -935,10 +878,7 @@ module Analyzer::Python
 
       record = ->(name : ::String, type : ::String) do
         key = "#{type}:#{name}"
-        unless seen.includes?(key)
-          params << Param.new(name, "", type)
-          seen << key
-        end
+        params << Param.new(name, "", type) if seen.add?(key)
       end
 
       # Guard each group with a cheap substring check on the distinctive

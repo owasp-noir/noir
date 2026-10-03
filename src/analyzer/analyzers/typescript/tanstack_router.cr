@@ -6,20 +6,10 @@ module Analyzer::Typescript
   class TanstackRouter < Analyzer::Javascript::JavascriptEngine
     analyzer_for "ts_tanstack_router"
 
-    private struct CodeRoute
-      getter name : String
-      getter path : String
-      getter parent : String?
-      getter block : String
-      # `start_pos` is a CHAR index (used for char-based navigation);
-      # `byte_start_pos` is the same position as a BYTE offset (used for
-      # the byte-indexed literal mask and newline counting).
-      getter start_pos : Int32
-      getter byte_start_pos : Int32
-
-      def initialize(@name : String, @path : String, @parent : String?, @block : String, @start_pos : Int32, @byte_start_pos : Int32)
-      end
-    end
+    # `start_pos` is a CHAR index (used for char-based navigation);
+    # `byte_start_pos` is the same position as a BYTE offset (used for
+    # the byte-indexed literal mask and newline counting).
+    private record CodeRoute, name : String, path : String, parent : String?, block : String, start_pos : Int32, byte_start_pos : Int32
 
     def analyze
       result = [] of Endpoint
@@ -217,44 +207,6 @@ module Analyzer::Typescript
       routes
     end
 
-    private def string_literal_mask(content : String) : Array(Bool)
-      mask = Array(Bool).new(content.bytesize, false)
-      i = 0
-
-      while i < content.bytesize
-        byte = content.byte_at(i)
-        if byte == '\''.ord || byte == '"'.ord || byte == '`'.ord
-          quote = byte
-          mask[i] = true
-          i += 1
-
-          while i < content.bytesize
-            current = content.byte_at(i)
-            mask[i] = true
-
-            if current == '\\'.ord && i + 1 < content.bytesize
-              i += 1
-              mask[i] = true
-            elsif current == quote
-              i += 1
-              break
-            end
-
-            i += 1
-          end
-        else
-          i += 1
-        end
-      end
-
-      mask
-    end
-
-    private def literal_position?(literal_mask : Array(Bool), pos : Int32?) : Bool
-      return false unless pos
-      pos < literal_mask.size && literal_mask[pos]
-    end
-
     private def extract_string_property(block : String, property : String) : String?
       property_re = cached_regex("tanstack:string_prop:#{property}") do
         /(?:^|[,{]\s*)#{Regex.escape(property)}\s*:\s*['"`]([^'"`]+)['"`]/m
@@ -427,9 +379,7 @@ module Analyzer::Typescript
       url.scan(/:(\w+)/) do |match|
         if match.size > 0
           param_name = match[1]
-          unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "path" }
-            endpoint.push_param(Param.new(param_name, "", "path"))
-          end
+          endpoint.push_param(Param.new(param_name, "", "path"))
         end
       end
     end
@@ -449,9 +399,7 @@ module Analyzer::Typescript
           schema_content.scan(/(\w+)\s*:/) do |param_match|
             if param_match.size > 0
               param_name = param_match[1]
-              unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
-                endpoint.push_param(Param.new(param_name, "", "query"))
-              end
+              endpoint.push_param(Param.new(param_name, "", "query"))
             end
           end
         end
@@ -466,9 +414,7 @@ module Analyzer::Typescript
           search_content.scan(/(\w+)\s*:/) do |param_match|
             if param_match.size > 0
               param_name = param_match[1]
-              unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
-                endpoint.push_param(Param.new(param_name, "", "query"))
-              end
+              endpoint.push_param(Param.new(param_name, "", "query"))
             end
           end
         end
@@ -489,9 +435,7 @@ module Analyzer::Typescript
           params_str = match[1]
           params_str.split(",").each do |param|
             param_name = param.strip.split(":").first.strip.split("=").first.strip
-            unless param_name.empty? || endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
-              endpoint.push_param(Param.new(param_name, "", "query"))
-            end
+            endpoint.push_param(Param.new(param_name, "", "query")) unless param_name.empty?
           end
         end
       end
@@ -585,7 +529,6 @@ module Analyzer::Typescript
 
     private def push_unique_query_param(endpoint : Endpoint, param_name : String)
       return if param_name.empty?
-      return if endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
 
       endpoint.push_param(Param.new(param_name, "", "query"))
     end

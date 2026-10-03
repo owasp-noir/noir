@@ -175,19 +175,6 @@ describe MediaFilter do
     end
   end
 
-  describe ".max_size_for" do
-    it "gives specification documents the larger budget" do
-      MediaFilter::MAX_SPEC_FILE_SIZE.should be >= MediaFilter::MAX_FILE_SIZE
-      MediaFilter.max_size_for("openapi.json").should eq(MediaFilter::MAX_SPEC_FILE_SIZE)
-      MediaFilter.max_size_for("k8s/ingress.yaml").should eq(MediaFilter::MAX_SPEC_FILE_SIZE)
-    end
-
-    it "keeps everything else on the media cap" do
-      MediaFilter.max_size_for("app.py").should eq(MediaFilter::MAX_FILE_SIZE)
-      MediaFilter.max_size_for("logo.png").should eq(MediaFilter::MAX_FILE_SIZE)
-    end
-  end
-
   describe "specification document budget" do
     it "reads a specification document past the media cap" do
       # The NetBox case: a 12MB generated `openapi.json` describing 308

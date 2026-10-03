@@ -2,57 +2,14 @@ require "../../../miniparsers/python"
 require "../../../miniparsers/python_route_extractor"
 require "../../../miniparsers/python_route_extractor_ts"
 require "../../engines/python_engine"
+require "./flask_family"
 
 module Analyzer::Python
   class Flask < PythonEngine
+    include FlaskFamily
     analyzer_for "python_flask"
 
     alias ScopedNameKey = Tuple(::String, ::String)
-
-    # Reference: https://stackoverflow.com/a/16664376
-    # Reference: https://tedboy.github.io/flask/generated/generated/flask.Request.html
-    REQUEST_PARAM_FIELDS = {
-      "data"    => {["POST", "PUT", "PATCH", "DELETE"], "form"},
-      "args"    => {["GET"], "query"},
-      "form"    => {["POST", "PUT", "PATCH", "DELETE"], "form"},
-      "files"   => {["POST", "PUT", "PATCH", "DELETE"], "form"},
-      "values"  => {["GET", "POST", "PUT", "PATCH", "DELETE"], "query"},
-      "json"    => {["POST", "PUT", "PATCH", "DELETE"], "json"},
-      "cookies" => {nil, "cookie"},
-      "headers" => {nil, "header"},
-    }
-
-    # `extract_request_params` runs once per route and used to rebuild
-    # two PCRE2 patterns per request field on every call (8 fields × 2 =
-    # 16 regex compilations per endpoint). PCRE2 JIT-compilation of an
-    # interpolated regex literal is ~3µs and dominated Flask scan time
-    # (profiling: ~50% of the analyzer). The field names are a fixed set,
-    # so precompile the access patterns once here and reuse them.
-    # Tuple shape: {noir_param_type, bracket_access_regex, get_access_regex}
-    # The get-access pattern accepts `.get(` and `.getlist(`: Werkzeug's
-    # request MultiDicts (`request.args`, `request.form`, …) expose
-    # `getlist("key")` as the standard accessor for repeated keys
-    # (`?tag=a&tag=b`), and it reads the same first string argument as the
-    # key — so `.get(?:list)?` captures both without a separate pattern.
-    REQUEST_PARAM_FIELD_PATTERNS = REQUEST_PARAM_FIELDS.map do |field_name, tuple|
-      {
-        tuple[1],
-        Regex.new("request\\.#{field_name}\\[[rf]?['\"]([^'\"]*)['\"]\\]"),
-        Regex.new("request\\.#{field_name}\\.get(?:list)?\\([rf]?['\"]([^'\"]*)['\"]"),
-      }
-    end
-
-    # `QUERY` (RFC 10008) is safe/idempotent like GET but, per the method's
-    # whole purpose, carries its filter criteria in a request body like
-    # POST — so it joins the body-bearing methods for "form"/"json", not
-    # the read-only "query" (query-string) type.
-    REQUEST_PARAM_TYPES = {
-      "query"  => nil,
-      "form"   => ["POST", "PUT", "PATCH", "DELETE", "QUERY"],
-      "json"   => ["POST", "PUT", "PATCH", "DELETE", "QUERY"],
-      "cookie" => nil,
-      "header" => nil,
-    }
 
     # Per-line route-discovery patterns. These interpolate only the
     # PYTHON_VAR_NAME_REGEX/DOT_NATION constants, so the inline literals
@@ -92,8 +49,6 @@ module Analyzer::Python
     # may wrap `add_resource` (e.g. redash's `add_org_resource`).
     RESOURCE_REGISTRAR_DEF_RE = /^(\s*)(?:async\s+)?def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(\s*self\s*,\s*resource\b/
 
-    @file_content_cache = Hash(::String, ::String).new
-    @parsers = Hash(::String, PythonParser).new
     @routes = Hash(::String, Array(Tuple(Int32, ::String, ::String, ::String))).new
     @class_views = Hash(::String, Array(Tuple(Int32, ::String, ::String, ::String, ::String, Array(::String)))).new
 
@@ -682,7 +637,7 @@ module Analyzer::Python
       fn_def_index = fn_name.empty? || fn_name.includes?(".") ? nil : find_function_def(fs.lines, fn_name)
       if fn_def_index.nil? && !fn_name.empty?
         import_map = (fs.import_map_cache ||= find_imported_modules(fs.base_path, fs.path, fs.source))
-        if resolved = resolve_external_function_view(fn_name, fs.path, import_map)
+        if resolved = resolve_external_handler(fn_name, fs.path, import_map)
           fn_path, resolved_name = resolved
           if File.exists?(fn_path)
             fn_source = fetch_file_content(fn_path)
@@ -722,7 +677,7 @@ module Analyzer::Python
             fn_codeblock,
             fn_def_index,
             fn_path,
-            definition_base_path: base_path_for(fn_path),
+            definition_base_path: python_base_path_for(fn_path),
             source: fn_source,
           )
         end
@@ -815,7 +770,7 @@ module Analyzer::Python
           lines = fetch_file_content(path).lines
           expect_params, class_def_index = extract_params_from_decorator(path, lines, line_index)
           api_instances = state.path_api_instances[path]
-          route_base_path = base_path_for(path)
+          route_base_path = python_base_path_for(path)
           namespace_prefix = state.namespace_prefixes[{route_base_path, router_name}]?
           if api_instances.has_key?(router_name)
             prefix = api_instances[router_name]
@@ -903,7 +858,7 @@ module Analyzer::Python
                 codeblock,
                 _class_def_index,
                 path,
-                definition_base_path: base_path_for(path),
+                definition_base_path: python_base_path_for(path),
                 source: fetch_file_content(path),
               )
 
@@ -957,7 +912,7 @@ module Analyzer::Python
           # @global_variables and the assumed file is wrong. Resolve the
           # defining module through the import map and re-scan there.
           if class_def_index == -1
-            import_map = import_map_by_path[path] ||= find_imported_modules(base_path_for(path), path)
+            import_map = import_map_by_path[path] ||= find_imported_modules(python_base_path_for(path), path)
             if (import_info = import_map[class_name]?) && !import_info[0].empty? && File.exists?(import_info[0])
               class_file = import_info[0]
               class_lines = fetch_file_content(class_file).lines
@@ -1021,7 +976,7 @@ module Analyzer::Python
               codeblock,
               method_def_index,
               class_file,
-              definition_base_path: base_path_for(class_file),
+              definition_base_path: python_base_path_for(class_file),
               source: fetch_file_content(class_file),
             )
 
@@ -1066,59 +1021,6 @@ module Analyzer::Python
       aliases
     end
 
-    private def extract_class_declared_methods(class_lines : Array(::String), class_def_index : Int32, class_indent : Int32) : Array(::String)
-      methods = [] of ::String
-      i = class_def_index + 1
-      while i < class_lines.size
-        line = class_lines[i]
-        stripped = line.strip
-        unless stripped.empty?
-          indent = line.size - line.lstrip.size
-          break if indent <= class_indent
-
-          if stripped.match(/^methods\s*=/)
-            declaration = collect_python_collection_assignment(class_lines, i, line)
-            declaration.scan(/['"]([A-Za-z]+)['"]/) do |m|
-              method = m[1].upcase
-              methods << method if HTTP_METHODS.any? { |known| known.upcase == method }
-            end
-            break
-          end
-        end
-        i += 1
-      end
-
-      methods.uniq
-    end
-
-    private def collect_python_collection_assignment(lines : Array(::String), start_index : Int32, line : ::String) : ::String
-      return line unless line.includes?("[") || line.includes?("(")
-
-      pieces = [line]
-      depth = python_paren_delta(line) + python_bracket_delta(line)
-      i = start_index + 1
-      while i < lines.size && depth > 0
-        pieces << lines[i]
-        depth += python_paren_delta(lines[i]) + python_bracket_delta(lines[i])
-        i += 1
-      end
-
-      pieces.join(" ")
-    end
-
-    # Locate `class <name>(...):` in a file's lines (-1 when absent).
-    private def find_python_class_def(class_lines : Array(::String), class_name : ::String) : Int32
-      class_prefix = "class #{class_name}"
-      class_lines.each_with_index do |line, idx|
-        stripped = line.lstrip
-        if stripped.starts_with?(class_prefix) &&
-           (stripped.size == class_prefix.size || stripped[class_prefix.size].in?('(', ':', ' ', '\t'))
-          return idx
-        end
-      end
-      -1
-    end
-
     private def find_class_method_def(class_lines : Array(::String), class_def_index : Int32, class_indent : Int32, method_name : ::String) : Int32
       i = class_def_index + 1
       while i < class_lines.size
@@ -1135,22 +1037,6 @@ module Analyzer::Python
       end
 
       -1
-    end
-
-    # Fetch file content, preferring the detector-populated global
-    # cache. The per-analyzer `@file_content_cache` is kept on top to
-    # keep Flask's internal lookups (called 2–3× per file across the
-    # class/blueprint passes) cheap even when the global cache is
-    # disabled — otherwise the fallback would do that many fresh
-    # `File.read` calls per file.
-    private def fetch_file_content(path : ::String) : ::String
-      @file_content_cache[path] ||= read_file_content(path)
-    end
-
-    # Pick the base path that owns this file so the engine's definition
-    # resolver can locate imported modules relative to the right root.
-    private def base_path_for(file_path : ::String) : ::String
-      python_base_path_for(file_path)
     end
 
     # Decorator-based Python web frameworks whose route syntax is
@@ -1533,8 +1419,7 @@ module Analyzer::Python
                                             visited : Set(::String), depth : Int32) : Nil
       return if depth > 16
       key = "#{decl.path}\t#{decl.name}"
-      return if visited.includes?(key)
-      visited << key
+      return unless visited.add?(key)
       chain << decl
 
       decl.bases.each do |base|
@@ -1657,7 +1542,11 @@ module Analyzer::Python
 
         lines = lines_by_path[decl.path] ||= fetch_file_content(decl.path).split("\n")
         decl.exposes.each do |expose|
-          normalized_path, path_params = normalize_flask_path_params(join_fab_paths(base, expose.route_path))
+          # `route_base` becomes the blueprint's `url_prefix`, so Flask joins
+          # it as `url_prefix.rstrip("/") + rule`: `@expose("/")` on
+          # `route_base = "/api/v1/chart"` is `/api/v1/chart/`, WITH the
+          # trailing slash (Superset's own OpenAPI spells it that way).
+          normalized_path, path_params = normalize_flask_path_params(Helper.normalized_join(base, expose.route_path))
           expose.methods.each do |method|
             params = path_params.dup
             if def_line = find_def_line(lines, expose.line_index)
@@ -1671,21 +1560,6 @@ module Analyzer::Python
           end
         end
       end
-    end
-
-    # `route_base` becomes the blueprint's `url_prefix`, so Flask joins it
-    # with the rule as `url_prefix.rstrip("/") + rule`: `@expose("/")` on
-    # `route_base = "/api/v1/chart"` is `/api/v1/chart/`, WITH the trailing
-    # slash, and Flask redirects the bare `/api/v1/chart` to it. Superset's
-    # own OpenAPI document spells all fifteen of its collection routes that
-    # way.
-    private def join_fab_paths(prefix : ::String, path : ::String) : ::String
-      return normalize_joined_flask_path(path) if prefix.empty?
-      return normalize_joined_flask_path(prefix) if path.empty?
-
-      normalized_prefix = prefix.ends_with?("/") ? prefix[0...-1] : prefix
-      normalized_path = path.starts_with?("/") ? path : "/#{path}"
-      normalize_joined_flask_path("#{normalized_prefix}#{normalized_path}")
     end
 
     private def parse_flask_appbuilder_expose_call(line : ::String) : Tuple(::String, Array(::String))?
@@ -1726,18 +1600,7 @@ module Analyzer::Python
     end
 
     private def join_flask_paths(prefix : ::String, path : ::String) : ::String
-      return normalize_joined_flask_path(path) if prefix.empty?
-      return normalize_joined_flask_path(prefix) if path.empty? || path == "/"
-
-      normalized_prefix = prefix.ends_with?("/") ? prefix[0...-1] : prefix
-      normalized_path = path.starts_with?("/") ? path : "/#{path}"
-      normalize_joined_flask_path("#{normalized_prefix}#{normalized_path}")
-    end
-
-    private def normalize_joined_flask_path(path : ::String) : ::String
-      normalized = path.gsub(/\/+/, "/")
-      normalized = "/#{normalized}" unless normalized.starts_with?("/")
-      normalized
+      path == "/" ? Helper.normalize_path(prefix) : Helper.normalized_join(prefix, path)
     end
 
     private def normalize_flask_path_params(path : ::String) : Tuple(::String, Array(Param))
@@ -1749,100 +1612,6 @@ module Analyzer::Python
       end
 
       {normalized, params}
-    end
-
-    private def clone_path_api_instances(path_api_instances : Hash(::String, Hash(::String, ::String))) : Hash(::String, Hash(::String, ::String))
-      cloned = Hash(::String, Hash(::String, ::String)).new
-      path_api_instances.each do |path, api_instances|
-        cloned[path] = api_instances.dup
-      end
-
-      cloned
-    end
-
-    private def apply_nested_blueprint_prefixes(path_api_instances : Hash(::String, Hash(::String, ::String)),
-                                                own_api_instances : Hash(::String, Hash(::String, ::String)),
-                                                blueprint_mounts : Hash(::String, Array(Tuple(::String, ::String, ::String))))
-      blueprint_mounts.each do |path, mounts|
-        api_instances = path_api_instances[path]?
-        next unless api_instances
-
-        own_prefixes = own_api_instances[path]? || api_instances
-        changed = true
-        # Bound the fixpoint loop: an acyclic mount graph converges in at most
-        # `mounts.size` propagation passes. A circular mount (A registers B and
-        # B registers A) would otherwise grow the prefix every pass and never
-        # converge -> infinite loop + unbounded memory on cyclic input.
-        iterations = 0
-        max_iterations = mounts.size + 1
-        while changed && iterations < max_iterations
-          iterations += 1
-          changed = false
-          mounts.each do |mount|
-            parent_name, child_name, mount_prefix = mount
-            next unless api_instances.has_key?(child_name)
-
-            parent_prefix = api_instances[parent_name]? || ""
-            child_own_prefix = own_prefixes[child_name]? || ""
-            resolved_prefix = File.join(parent_prefix, mount_prefix, child_own_prefix)
-            next if api_instances[child_name] == resolved_prefix
-
-            api_instances[child_name] = resolved_prefix
-            changed = true
-          end
-        end
-      end
-    end
-
-    # Create a Python parser for a given path and content. The
-    # parser walks the file with tree-sitter and recursively
-    # absorbs globals from imported modules — no lexer step.
-    def create_parser(path : ::String, content : ::String = "") : PythonParser
-      content = fetch_file_content(path) if content.empty?
-      @logger.debug "Parsing #{path}"
-      parser = PythonParser.new(path, content, @parsers, depth: 0)
-      @logger.debug "Parsed #{path}"
-      parser
-    end
-
-    # Get a parser for a given path
-    def get_parser(path : ::String, content : ::String = "") : PythonParser
-      @parsers[path] ||= create_parser(path, content)
-      @parsers[path]
-    end
-
-    # Extracts endpoint information from the given route and code block
-    def get_endpoints(method : ::String, route_path : ::String, extra_params : ::String, codeblock_lines : Array(::String), prefix : ::String)
-      endpoints = [] of Endpoint
-      methods = [] of ::String
-
-      if !prefix.ends_with?("/") && !route_path.starts_with?("/")
-        prefix = "#{prefix}/"
-      end
-
-      # Parse declared methods from route decorator
-      methods_match = extra_params.match /methods\s*=\s*(.*)/
-      if !methods_match.nil? && methods_match.size == 2
-        methods_match[1].scan(/['"]([^'"]*)['"']/) do |m|
-          method_name = m[1].upcase
-          methods << method_name if HTTP_METHODS.any? { |hm| hm.upcase == method_name }
-        end
-      end
-      if methods.empty?
-        methods << method.upcase
-      end
-
-      suspicious_params = extract_request_params(codeblock_lines)
-
-      methods.uniq.each do |http_method_name|
-        route_url = "#{prefix}#{route_path}"
-        route_url = "/#{route_url}" unless route_url.starts_with?("/")
-
-        params = get_filtered_params(http_method_name, suspicious_params)
-        endpoints << Endpoint.new(route_url.gsub("//", "/"), http_method_name, params)
-      end
-
-      endpoints
     end
 
     private def extract_add_url_rule_function_name(args_str : ::String) : ::String
@@ -1859,122 +1628,6 @@ module Analyzer::Python
                    ""
                  end
       view_arg.matches?(DOTTED_REFERENCE_RE) ? view_arg : ""
-    end
-
-    private def resolve_external_function_view(function_ref : ::String,
-                                               current_path : ::String,
-                                               import_modules : Hash(::String, Tuple(::String, Int32))) : Tuple(::String, ::String)?
-      reference = function_ref.strip
-      return if reference.empty?
-
-      if reference.includes?(".")
-        receiver, function_name = reference.split(".", 2)
-        if import_info = import_modules[receiver]?
-          import_path = import_info.first
-          return {import_path, function_name} unless import_path.empty?
-        end
-
-        sibling_module_path = File.join(File.dirname(current_path), "#{receiver}.py")
-        return {sibling_module_path, function_name} if File.exists?(sibling_module_path)
-
-        return
-      end
-
-      if import_info = import_modules[reference]?
-        import_path = import_info.first
-        return {import_path, reference} unless import_path.empty?
-      end
-
-      nil
-    end
-
-    private def split_python_call_args(args_str : ::String) : Array(::String)
-      parts = [] of ::String
-      current = String::Builder.new
-      paren_depth = 0
-      bracket_depth = 0
-      single_quote = false
-      double_quote = false
-      escaped = false
-
-      args_str.each_char do |ch|
-        if escaped
-          current << ch
-          escaped = false
-          next
-        end
-
-        if ch == '\\'
-          current << ch
-          escaped = true
-          next
-        end
-
-        if single_quote
-          single_quote = false if ch == '\''
-          current << ch
-          next
-        end
-
-        if double_quote
-          double_quote = false if ch == '"'
-          current << ch
-          next
-        end
-
-        case ch
-        when '\''
-          single_quote = true
-        when '"'
-          double_quote = true
-        when '('
-          paren_depth += 1
-        when ')'
-          paren_depth -= 1 if paren_depth > 0
-        when '[', '{'
-          bracket_depth += 1
-        when ']', '}'
-          bracket_depth -= 1 if bracket_depth > 0
-        when ','
-          if paren_depth == 0 && bracket_depth == 0
-            part = current.to_s.strip
-            parts << part unless part.empty?
-            current = String::Builder.new
-            next
-          end
-        end
-
-        current << ch
-      end
-
-      part = current.to_s.strip
-      parts << part unless part.empty?
-      parts
-    end
-
-    private def find_function_def(lines : Array(::String), function_name : ::String) : Int32?
-      # Compile once per call; an interpolated literal inside the loop
-      # would be recompiled on every line.
-      def_re = /^\s*(?:async\s+)?def\s+#{Regex.escape(function_name)}\s*\(/
-      lines.each_with_index do |line, index|
-        if line.match(def_re)
-          return index
-        end
-      end
-
-      nil
-    end
-
-    # JSON-variable access patterns interpolate a discovered (dynamic but
-    # low-cardinality) identifier, so they can't be hoisted to constants —
-    # memoize them per variable name instead.
-    @json_param_regex_cache = Hash(::String, Tuple(Regex, Regex)).new
-
-    private def json_param_regexes(json_variable_name : ::String) : Tuple(Regex, Regex)
-      @json_param_regex_cache[json_variable_name] ||= {
-        /[^a-zA-Z_]#{Regex.escape(json_variable_name)}\[[rf]?['"]([^'"]*)['"]\]/,
-        /[^a-zA-Z_]#{Regex.escape(json_variable_name)}\.get\([rf]?['"]([^'"]*)['"]/,
-      }
     end
 
     # Extracts request parameters from a code block by detecting JSON variable
@@ -2047,40 +1700,6 @@ module Analyzer::Python
       params
     end
 
-    # Filters the parameters based on the HTTP method
-    def get_filtered_params(method : ::String, params : Array(Param)) : Array(Param)
-      # Split to other module (duplicated method with analyzer_django)
-      filtered_params = Array(Param).new
-      upper_method = method.upcase
-
-      params.each do |param|
-        is_support_param = false
-        support_methods = REQUEST_PARAM_TYPES.fetch(param.param_type, nil)
-        if support_methods.nil?
-          is_support_param = true
-        else
-          support_methods.each do |support_method|
-            if upper_method == support_method.upcase
-              is_support_param = true
-            end
-          end
-        end
-
-        filtered_params.each do |filtered_param|
-          if filtered_param.name == param.name && filtered_param.param_type == param.param_type
-            is_support_param = false
-            break
-          end
-        end
-
-        if is_support_param
-          filtered_params << param
-        end
-      end
-
-      filtered_params
-    end
-
     # Extracts parameters from the decorator
     def extract_params_from_decorator(path : ::String, lines : Array(::String), line_index : Int32, direction : Symbol = :down) : Tuple(Array(Param), Int32)
       params = [] of Param
@@ -2092,7 +1711,7 @@ module Analyzer::Python
       # this, `@app.route(` ate everything up to the matching `)`
       # was treated as "not a decorator and not a def", skipping
       # the whole route. `find_def_line` got the same fix earlier.
-      paren_depth = direction == :down && (deco_line = lines[line_index]?) ? flask_line_paren_delta(deco_line) : 0
+      paren_depth = direction == :down && (deco_line = lines[line_index]?) ? python_paren_delta(deco_line) : 0
 
       # Iterate through the lines until the decorator ends
       while (direction == :down && codeline_index < lines.size) || (direction == :up && codeline_index >= 0)
@@ -2106,14 +1725,14 @@ module Analyzer::Python
         # the line as decorator content and keep walking without
         # checking the `\s*@` prefix.
         if direction == :down && paren_depth > 0
-          paren_depth += flask_line_paren_delta(current_line)
+          paren_depth += python_paren_delta(current_line)
           codeline_index += 1
           next
         end
         decorator_match = current_line.match /\s*@/
         break if decorator_match.nil?
         if direction == :down
-          paren_depth += flask_line_paren_delta(current_line)
+          paren_depth += python_paren_delta(current_line)
         end
 
         # Extract parameters from the expect decorator
@@ -2226,38 +1845,6 @@ module Analyzer::Python
         end
       end
       _prefix
-    end
-
-    # Net `(` − `)` count for a single line, ignoring parens that
-    # fall inside single- or double-quoted strings. Used by
-    # `extract_params_from_decorator` to walk through multi-line
-    # decorator headers without breaking the loop on continuation
-    # tokens.
-    private def flask_line_paren_delta(line : ::String) : Int32
-      depth = 0
-      in_quote = nil
-      escaped = false
-      line.each_char do |ch|
-        if in_quote
-          if escaped
-            escaped = false
-          elsif ch == '\\'
-            escaped = true
-          elsif ch == in_quote
-            in_quote = nil
-          end
-          next
-        end
-        case ch
-        when '\'', '"'
-          in_quote = ch
-        when '('
-          depth += 1
-        when ')'
-          depth -= 1
-        end
-      end
-      depth
     end
   end
 end
