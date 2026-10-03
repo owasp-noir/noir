@@ -368,8 +368,7 @@ module Analyzer::Python
       return if depth > MAX_DEPTH
 
       key = "#{file_path}::#{class_start_line}::#{url_path}"
-      return if visited.includes?(key)
-      visited << key
+      return unless visited.add?(key)
 
       source = reg.source_cache[file_path] ||= read_file_content(file_path)
       lines = sanitize_python_lines(source.lines)
@@ -577,10 +576,7 @@ module Analyzer::Python
       seen = Set(::String).new
       record = ->(name : ::String, type : ::String) do
         key = "#{type}:#{name}"
-        unless seen.includes?(key)
-          params << Param.new(name, "", type)
-          seen << key
-        end
+        params << Param.new(name, "", type) if seen.add?(key)
       end
 
       body.scan(/cherrypy\.request\.headers\s*\[\s*['"]([^'"]+)['"]\s*\]/) { |m| record.call(m[1], "header") }

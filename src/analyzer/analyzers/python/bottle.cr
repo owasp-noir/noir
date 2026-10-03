@@ -441,10 +441,7 @@ module Analyzer::Python
 
       record = ->(name : String, type : String) do
         key = "#{type}:#{name}"
-        unless seen.includes?(key)
-          params << Param.new(name, "", type)
-          seen << key
-        end
+        params << Param.new(name, "", type) if seen.add?(key)
       end
 
       body.scan(/([A-Za-z_][A-Za-z0-9_]*)\s*=\s*request\.json\b/) do |m|

@@ -349,10 +349,7 @@ module Analyzer::Python
       seen = Set(::String).new
       record = ->(name : ::String, type : ::String) do
         key = "#{type}:#{name}"
-        unless seen.includes?(key)
-          params << Param.new(name, "", type)
-          seen << key
-        end
+        params << Param.new(name, "", type) if seen.add?(key)
       end
 
       body.scan(/\brequest\.input\(\s*[rf]?['"]([^'"]+)['"]/) { |m| record.call(m[1], "query") }

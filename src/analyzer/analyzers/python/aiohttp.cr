@@ -549,18 +549,12 @@ module Analyzer::Python
 
       route_path.scan(/\{(\w+)(?::[^}]+)?\}/) do |match|
         key = "path:#{match[1]}"
-        unless seen.includes?(key)
-          all_params << Param.new(match[1], "", "path")
-          seen << key
-        end
+        all_params << Param.new(match[1], "", "path") if seen.add?(key)
       end
 
       request_params.each do |p|
         key = "#{p.param_type}:#{p.name}"
-        unless seen.includes?(key)
-          all_params << p
-          seen << key
-        end
+        all_params << p if seen.add?(key)
       end
 
       details = Details.new(PathInfo.new(path, report_line + 1))
@@ -893,8 +887,6 @@ module Analyzer::Python
       "cookies" => "cookie",
     }
 
-    DICT_METHOD_NAMES = Set{"get", "getall", "getone", "items", "keys", "values", "pop"}
-
     # Build (and memoize) the request-access regex set for a given
     # request-var name. The patterns interpolate the var name, so they
     # can't be class constants — but there are only a couple of distinct
@@ -935,10 +927,7 @@ module Analyzer::Python
 
       record = ->(name : ::String, type : ::String) do
         key = "#{type}:#{name}"
-        unless seen.includes?(key)
-          params << Param.new(name, "", type)
-          seen << key
-        end
+        params << Param.new(name, "", type) if seen.add?(key)
       end
 
       # Guard each group with a cheap substring check on the distinctive

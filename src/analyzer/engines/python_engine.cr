@@ -278,11 +278,6 @@ module Analyzer::Python
       Noir::ImportGraph::Python.find_imported_modules(app_base_path, file_path, content)
     end
 
-    # See `find_imported_modules` — same delegator.
-    def find_imported_package(package_path : ::String, dotted_as_names : ::String) : Array(Tuple(::String, ::String, Int32))
-      Noir::ImportGraph::Python.find_imported_package(package_path, dotted_as_names)
-    end
-
     # Finds all parameters in JSON objects within a given code block
     def find_json_params(codeblock_lines : Array(::String), json_var_names : Array(::String)) : Array(Param)
       params = [] of Param
@@ -535,10 +530,6 @@ module Analyzer::Python
       # one deep at most.
       return if depth > 4
 
-      # `to_f?` rather than the `String#numeric?` helper, which is
-      # monkey-patched onto ::String from inside `analyzers/python/fastapi.cr`
-      # — an engine must not depend on one of its analyzers having been
-      # required first.
       return value if value.to_f?
 
       TRIPLE_QUOTE_FENCES.each do |fence|

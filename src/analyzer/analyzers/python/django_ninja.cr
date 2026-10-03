@@ -535,8 +535,7 @@ module Analyzer::Python
       until queue.empty?
         key, prefix = queue.shift
         visit_id = "#{key}\u{0}#{prefix}"
-        next if visited.includes?(visit_id)
-        visited << visit_id
+        next unless visited.add?(visit_id)
 
         inst = instances[key]?
         next unless inst

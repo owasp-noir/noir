@@ -1533,8 +1533,7 @@ module Analyzer::Python
                                             visited : Set(::String), depth : Int32) : Nil
       return if depth > 16
       key = "#{decl.path}\t#{decl.name}"
-      return if visited.includes?(key)
-      visited << key
+      return unless visited.add?(key)
       chain << decl
 
       decl.bases.each do |base|
@@ -2092,7 +2091,7 @@ module Analyzer::Python
       # this, `@app.route(` ate everything up to the matching `)`
       # was treated as "not a decorator and not a def", skipping
       # the whole route. `find_def_line` got the same fix earlier.
-      paren_depth = direction == :down && (deco_line = lines[line_index]?) ? flask_line_paren_delta(deco_line) : 0
+      paren_depth = direction == :down && (deco_line = lines[line_index]?) ? python_paren_delta(deco_line) : 0
 
       # Iterate through the lines until the decorator ends
       while (direction == :down && codeline_index < lines.size) || (direction == :up && codeline_index >= 0)
@@ -2106,14 +2105,14 @@ module Analyzer::Python
         # the line as decorator content and keep walking without
         # checking the `\s*@` prefix.
         if direction == :down && paren_depth > 0
-          paren_depth += flask_line_paren_delta(current_line)
+          paren_depth += python_paren_delta(current_line)
           codeline_index += 1
           next
         end
         decorator_match = current_line.match /\s*@/
         break if decorator_match.nil?
         if direction == :down
-          paren_depth += flask_line_paren_delta(current_line)
+          paren_depth += python_paren_delta(current_line)
         end
 
         # Extract parameters from the expect decorator
@@ -2226,38 +2225,6 @@ module Analyzer::Python
         end
       end
       _prefix
-    end
-
-    # Net `(` − `)` count for a single line, ignoring parens that
-    # fall inside single- or double-quoted strings. Used by
-    # `extract_params_from_decorator` to walk through multi-line
-    # decorator headers without breaking the loop on continuation
-    # tokens.
-    private def flask_line_paren_delta(line : ::String) : Int32
-      depth = 0
-      in_quote = nil
-      escaped = false
-      line.each_char do |ch|
-        if in_quote
-          if escaped
-            escaped = false
-          elsif ch == '\\'
-            escaped = true
-          elsif ch == in_quote
-            in_quote = nil
-          end
-          next
-        end
-        case ch
-        when '\'', '"'
-          in_quote = ch
-        when '('
-          depth += 1
-        when ')'
-          depth -= 1
-        end
-      end
-      depth
     end
   end
 end

@@ -520,50 +520,9 @@ module Analyzer::Python
                                             index : Int32,
                                             line : ::String) : ::String
       return line unless line.matches?(/@(?:get|post|put|patch|delete|head|options|route|websocket(?:_listener|_stream)?)\s*\(/)
-      delta = python_decorator_paren_delta(line)
-      return line if delta <= 0
+      return line if python_paren_delta(line) <= 0
 
-      pieces = [line]
-      i = index + 1
-      while i < lines.size && delta > 0
-        nxt = lines[i]
-        pieces << nxt
-        delta += python_decorator_paren_delta(nxt)
-        break if delta <= 0
-        i += 1
-      end
-      pieces.join(' ')
-    end
-
-    # Net `(` − `)` count, ignoring parens inside string literals on
-    # the same line. Single-quote / double-quote with backslash escape
-    # are recognized; triple-quoted strings on decorator lines are
-    # vanishingly rare in real code.
-    private def python_decorator_paren_delta(line : ::String) : Int32
-      depth = 0
-      in_quote = nil
-      escaped = false
-      line.each_char do |ch|
-        if in_quote
-          if escaped
-            escaped = false
-          elsif ch == '\\'
-            escaped = true
-          elsif ch == in_quote
-            in_quote = nil
-          end
-          next
-        end
-        case ch
-        when '\'', '"'
-          in_quote = ch
-        when '('
-          depth += 1
-        when ')'
-          depth -= 1
-        end
-      end
-      depth
+      join_until_python_call_closes(lines, index, line)
     end
   end
 end
