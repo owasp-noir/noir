@@ -45,7 +45,7 @@ module Analyzer::Crystal
 
     def analyze
       super
-      collect_public_dir_endpoints
+      collect_public_dir_endpoints(@public_folders, @static_disabled_bases)
       @result
     end
 
@@ -268,62 +268,6 @@ module Analyzer::Crystal
 
     private def controller_action_key(controller : String, action : String) : String
       "#{controller}##{action}"
-    end
-
-    private def collect_public_dir_endpoints
-      # Process public folder files
-      base_paths.each do |base|
-        next if @static_disabled_bases.includes?(base)
-        get_public_files(base).each do |file|
-          # Extract the path after "/public/" regardless of depth
-          # Scan-base-relative, never absolute: the leftmost `/public/`
-          # wins, so a `public/` directory above the scan base put the
-          # whole intervening path into the served URL.
-          if base_relative_path(file) =~ /\/public\/(.*)/
-            relative_path = $1
-            @result << Endpoint.new("/#{relative_path}", "GET")
-          end
-        end
-      end
-
-      # Process other public folders
-      @public_folders.each do |base, folder|
-        next if @static_disabled_bases.includes?(base)
-
-        # `folder` is fixed for this outer iteration, but the interpolated
-        # regex below used to be rebuilt (a full PCRE2 JIT compile) on every
-        # file the folder contains. Precompute it once per folder instead of
-        # once per file, and escape the discovered name since it comes from
-        # arbitrary source text and may contain regex metacharacters.
-        nested_folder = folder.includes?("/")
-        folder_path = nested_folder ? (folder.ends_with?("/") ? folder : "#{folder}/") : ""
-        folder_re = if nested_folder
-                      /\/#{Regex.escape(folder.split("/").last)}\/(.*)/
-                    else
-                      /\/#{Regex.escape(folder)}\/(.*)/
-                    end
-
-        get_public_dir_files(base, folder).each do |file|
-          # Extract relative path from the custom folder
-          if nested_folder
-            # For absolute paths or paths with directories
-            if file.starts_with?(folder_path)
-              relative_path = file.sub(folder_path, "")
-              @result << Endpoint.new("/#{relative_path}", "GET")
-            elsif file =~ folder_re
-              # Try to find the folder component in the path
-              relative_path = $1
-              @result << Endpoint.new("/#{relative_path}", "GET")
-            end
-          elsif file =~ folder_re
-            # For simple folder names (no slashes)
-            relative_path = $1
-            @result << Endpoint.new("/#{relative_path}", "GET")
-          end
-        end
-      end
-    rescue e
-      logger.debug e
     end
 
     # Amber prefers `verb "/path", Controller, :action`. One combined

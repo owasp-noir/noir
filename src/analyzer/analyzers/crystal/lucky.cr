@@ -168,25 +168,6 @@ module Analyzer::Crystal
       attach_crystal_callees(endpoint, callees)
     end
 
-    private def collect_public_dir_endpoints
-      # `get_public_files` scopes to `public/` directories that sit
-      # next to a `shard.yml`, so files in unrelated `*/public/`
-      # subtrees (e.g. a built docs site at `docs/public/`) no
-      # longer leak in as fake Lucky endpoints.
-      each_public_file do |file|
-        # Extract the path after "/public/" regardless of depth
-        # Scan-base-relative, never absolute: the leftmost `/public/`
-        # wins, so a `public/` directory above the scan base put the
-        # whole intervening path into the served URL.
-        if base_relative_path(file) =~ /\/public\/(.*)/
-          relative_path = $1
-          @result << Endpoint.new("/#{relative_path}", "GET")
-        end
-      end
-    rescue e
-      logger.debug e
-    end
-
     # Lucky uniquely registers TRACE routes. Shared engine verbs cover the
     # rest; this is stitched in via `match_crystal_simple_route(..., extra:)`.
     TRACE_ROUTE_PATTERN = /(?:^|[^.\w])trace\s*(?:\(\s*)?['"](.+?)['"]/
