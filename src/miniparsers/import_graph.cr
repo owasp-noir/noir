@@ -32,11 +32,9 @@ module Noir
     PACKAGE_SIBLINGS_MAX_ENTRIES  =  32_768
 
     @@import_resolution_cache = Hash(String, Array(String)).new
-    @@import_resolution_order = [] of String
     @@import_resolution_mutex = Mutex.new
 
     @@package_siblings_cache = Hash(String, Array(String)).new
-    @@package_siblings_order = [] of String
     @@package_siblings_mutex = Mutex.new
 
     DIRECTORY_MAX_ENTRIES = 262_144
@@ -48,14 +46,8 @@ module Noir
     # different tree in the same process (`--diff`, library use).
     Noir::ExtractionResultCache.register_clearer do
       @@sibling_source_roots_mutex.synchronize { @@sibling_source_roots_cache.clear }
-      @@import_resolution_mutex.synchronize do
-        @@import_resolution_cache.clear
-        @@import_resolution_order.clear
-      end
-      @@package_siblings_mutex.synchronize do
-        @@package_siblings_cache.clear
-        @@package_siblings_order.clear
-      end
+      @@import_resolution_mutex.synchronize { @@import_resolution_cache.clear }
+      @@package_siblings_mutex.synchronize { @@package_siblings_cache.clear }
       @@directory_mutex.synchronize { @@directory_cache.clear }
     end
 
@@ -168,7 +160,7 @@ module Noir
       end
 
       @@import_resolution_mutex.synchronize do
-        store_capped(@@import_resolution_cache, @@import_resolution_order, cache_key, resolved, IMPORT_RESOLUTION_MAX_ENTRIES)
+        Noir::ExtractionResultCache.store_capped(@@import_resolution_cache, cache_key, resolved, IMPORT_RESOLUTION_MAX_ENTRIES)
       end
     end
 
@@ -187,7 +179,7 @@ module Noir
       safe_glob("#{package_dir}/*.#{extension}") { |sibling| siblings << sibling }
 
       @@package_siblings_mutex.synchronize do
-        store_capped(@@package_siblings_cache, @@package_siblings_order, cache_key, siblings, PACKAGE_SIBLINGS_MAX_ENTRIES)
+        Noir::ExtractionResultCache.store_capped(@@package_siblings_cache, cache_key, siblings, PACKAGE_SIBLINGS_MAX_ENTRIES)
       end
     end
 
@@ -207,29 +199,6 @@ module Noir
         @@directory_cache[path] = exists
       end
       exists
-    end
-
-    # FIFO-capped insert-or-keep; the caller holds the store's mutex.
-    # Keeps the memos from growing without bound on a monorepo while
-    # staying large enough that the working set never thrashes.
-    private def self.store_capped(store : Hash(String, Array(String)),
-                                  order : Array(String),
-                                  key : String,
-                                  value : Array(String),
-                                  max_entries : Int32) : Array(String)
-      unless store.has_key?(key)
-        if store.size >= max_entries
-          drop = store.size // 2
-          drop.times do
-            old = order.shift?
-            break unless old
-            store.delete(old)
-          end
-        end
-        store[key] = value
-        order << key
-      end
-      store[key]
     end
 
     # Infer the source root by stripping the package path from the

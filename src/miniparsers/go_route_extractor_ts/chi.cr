@@ -71,7 +71,7 @@ module Noir
     # nothing that used to be reported disappears.
     def collect_route_helpers(root : LibTreeSitter::TSNode, source : String) : RouteHelperIndex
       index = RouteHelperIndex.new
-      walk(root) do |node|
+      Noir::TreeSitter.walk(root) do |node|
         case Noir::TreeSitter.node_type(node)
         when "function_declaration"
           name_node = Noir::TreeSitter.field(node, "name")
@@ -97,7 +97,7 @@ module Noir
         end
       end
       return index if index.empty?
-      walk(root) do |node|
+      Noir::TreeSitter.walk(root) do |node|
         next unless Noir::TreeSitter.node_type(node) == "call_expression"
         function = Noir::TreeSitter.field(node, "function")
         next unless function && Noir::TreeSitter.node_type(function) == "identifier"

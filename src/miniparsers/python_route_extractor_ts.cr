@@ -2,19 +2,12 @@ require "../ext/tree_sitter/tree_sitter"
 require "./extraction_result_cache"
 
 module Noir
-  # Tree-sitter-backed port of `PythonRouteExtractor`.
-  #
-  # Unlike the regex extractor (which is line-oriented and relies on the
-  # caller to loop over lines), this one parses the whole source once and
-  # walks the resulting AST. That buys us:
+  # Tree-sitter-backed Python route decorator extractor. It parses the
+  # whole source once and walks the resulting AST, which handles:
   #
   #   * decorators split across multiple lines
   #   * paths / methods containing commas, brackets, or nested quotes
   #   * precise `def`/`class` line discovery without a forward-scanning heuristic
-  #
-  # Behaviour mirrors the regex extractor closely enough that the same
-  # analyzer adapters could switch to it with minimal changes; parity is
-  # verified in `spec/unit_test/miniparser/python_route_extractor_ts_spec.cr`.
   module TreeSitterPythonRouteExtractor
     extend self
 
@@ -51,33 +44,20 @@ module Noir
     # Process-wide memo: same CodeLocator source buffer is often fed to
     # decorations + blueprints (and to multiple framework analyzers).
     @@decoration_memo = Hash(UInt64, Array(Decoration)).new
-    @@decoration_order = [] of UInt64
     @@blueprint_memo = Hash(UInt64, Array(BlueprintDecl)).new
-    @@blueprint_order = [] of UInt64
     @@memo_mutex = Mutex.new
-    @@clearer_registered = false
 
-    private def ensure_clearer_registered : Nil
-      return if @@clearer_registered
+    ExtractionResultCache.register_clearer do
       @@memo_mutex.synchronize do
-        return if @@clearer_registered
-        ExtractionResultCache.register_clearer do
-          @@memo_mutex.synchronize do
-            @@decoration_memo.clear
-            @@decoration_order.clear
-            @@blueprint_memo.clear
-            @@blueprint_order.clear
-          end
-        end
-        @@clearer_registered = true
+        @@decoration_memo.clear
+        @@blueprint_memo.clear
       end
     end
 
     # Parses `source` and returns every route decoration found.
     #
     # `router_names` optionally restricts which variable names count as
-    # routers; `nil` accepts any identifier (matching the regex extractor,
-    # which doesn't gate on the name).
+    # routers; `nil` accepts any identifier.
     #
     # `extra_attributes` optionally widens the set of decorator attribute
     # names that count as a route. Each entry maps an attribute name
@@ -88,10 +68,9 @@ module Noir
     def extract_decorations(source : String,
                             router_names : Array(String)? = nil,
                             extra_attributes : Hash(String, String)? = nil) : Array(Decoration)
-      ensure_clearer_registered
       tag = decoration_options_tag(router_names, extra_attributes)
       key = ExtractionResultCache.key(source, "decorations", tag)
-      ExtractionResultCache.fetch(@@decoration_memo, @@decoration_order, key, mutex: @@memo_mutex) do
+      ExtractionResultCache.fetch(@@decoration_memo, key, mutex: @@memo_mutex) do
         results = [] of Decoration
         Noir::TreeSitter.parse_python(source) do |root|
           extract_decorations_from(root, source, router_names, extra_attributes, results)
@@ -108,7 +87,7 @@ module Noir
                                  router_names : Array(String)? = nil,
                                  extra_attributes : Hash(String, String)? = nil,
                                  results : Array(Decoration) = [] of Decoration) : Array(Decoration)
-      walk(root) do |node|
+      Noir::TreeSitter.walk(root) do |node|
         next unless Noir::TreeSitter.node_type(node) == "decorated_definition"
         collect_decorations(node, source, router_names, extra_attributes, results)
       end
@@ -120,30 +99,40 @@ module Noir
     #
     # `module_names` is the list of module prefixes allowed before
     # `.Blueprint` (e.g. `["flask"]`). A bare `Blueprint` call is always
-    # accepted, matching the regex extractor.
+    # accepted.
     #
-    # Uses a tree-sitter query to find the two Blueprint assignment
-    # shapes (bare and module-qualified). The `url_prefix` keyword is
-    # still extracted procedurally because a Blueprint may be declared
-    # without one and the query language can't express "this keyword,
-    # if present" cleanly.
+    # Two assignment shapes count: bare `name = Blueprint(...)` and
+    # qualified `name = <module>.Blueprint(...)`. The module is read as
+    # full text from any node, so dotted prefixes like
+    # `my_pkg.flask.Blueprint(...)` (an `attribute`, not an identifier)
+    # still match.
     def extract_blueprints_from(root : LibTreeSitter::TSNode,
                                 source : String,
                                 module_names : Array(String),
                                 results : Array(BlueprintDecl) = [] of BlueprintDecl) : Array(BlueprintDecl)
       allowed = module_names.to_set
-      query = blueprint_query
-      query.each_match_raw(root, source) do |pattern_index, caps|
-        captures = caps.to_h
-        name_node = captures["name"]?
-        call_node = captures["call"]?
+      Noir::TreeSitter.walk(root) do |node|
+        next unless Noir::TreeSitter.node_type(node) == "assignment"
+        name_node = Noir::TreeSitter.field(node, "left")
+        call_node = Noir::TreeSitter.field(node, "right")
         next unless name_node && call_node
+        next unless Noir::TreeSitter.node_type(name_node) == "identifier"
+        next unless Noir::TreeSitter.node_type(call_node) == "call"
+        function = Noir::TreeSitter.field(call_node, "function")
+        next unless function
 
-        # Pattern 1 is the qualified form; enforce the module allowlist.
-        if pattern_index == 1
-          module_node = captures["module"]?
-          next unless module_node
+        case Noir::TreeSitter.node_type(function)
+        when "identifier"
+          next unless Noir::TreeSitter.node_text(function, source) == "Blueprint"
+        when "attribute"
+          module_node = Noir::TreeSitter.field(function, "object")
+          attr_node = Noir::TreeSitter.field(function, "attribute")
+          next unless module_node && attr_node
+          next unless Noir::TreeSitter.node_type(attr_node) == "identifier"
+          next unless Noir::TreeSitter.node_text(attr_node, source) == "Blueprint"
           next unless allowed.includes?(Noir::TreeSitter.node_text(module_node, source))
+        else
+          next
         end
 
         name = Noir::TreeSitter.node_text(name_node, source)
@@ -160,7 +149,6 @@ module Noir
                                            module_names : Array(String),
                                            router_names : Array(String)? = nil,
                                            extra_attributes : Hash(String, String)? = nil) : Tuple(Array(Decoration), Array(BlueprintDecl))
-      ensure_clearer_registered
       deco_tag = decoration_options_tag(router_names, extra_attributes)
       bp_tag = module_names.join(",")
       deco_key = ExtractionResultCache.key(source, "decorations", deco_tag)
@@ -182,8 +170,8 @@ module Noir
       end
 
       @@memo_mutex.synchronize do
-        decorations = ExtractionResultCache.store_capped(@@decoration_memo, @@decoration_order, deco_key, decorations)
-        blueprints = ExtractionResultCache.store_capped(@@blueprint_memo, @@blueprint_order, bp_key, blueprints)
+        decorations = ExtractionResultCache.store_capped(@@decoration_memo, deco_key, decorations)
+        blueprints = ExtractionResultCache.store_capped(@@blueprint_memo, bp_key, blueprints)
       end
 
       {decorations, blueprints}
@@ -198,44 +186,6 @@ module Noir
                  ""
                end
       "#{routers}|#{extras}"
-    end
-
-    # Lazily compiled, cached across all calls. Two patterns keep bare
-    # and qualified Blueprint shapes separate so the evaluator can tell
-    # them apart via `pattern_index`.
-    @@blueprint_query : Noir::TreeSitter::Query? = nil
-
-    private def blueprint_query : Noir::TreeSitter::Query
-      if q = @@blueprint_query
-        return q
-      end
-      # `object: (_) @module` (not `(identifier)`) so dotted prefixes
-      # like `my_pkg.flask.Blueprint(...)` still match — tree-sitter
-      # represents `my_pkg.flask` as an `attribute`, not an identifier,
-      # and the legacy procedural decoder accepted any node by reading
-      # its full text. We keep that parity.
-      q = Noir::TreeSitter::Query.new(
-        LibTreeSitter.tree_sitter_python,
-        <<-SCM
-          ; Pattern 0: bare `name = Blueprint(...)`
-          (assignment
-            left: (identifier) @name
-            right: (call
-              function: (identifier) @func) @call
-            (#eq? @func "Blueprint"))
-
-          ; Pattern 1: qualified `name = <module>.Blueprint(...)`
-          (assignment
-            left: (identifier) @name
-            right: (call
-              function: (attribute
-                object: (_) @module
-                attribute: (identifier) @attr)) @call
-            (#eq? @attr "Blueprint"))
-          SCM
-      )
-      @@blueprint_query = q
-      q
     end
 
     # Walk the `call` node's arguments and return the string value of
@@ -257,13 +207,6 @@ module Noir
     end
 
     # ---- private helpers --------------------------------------------------
-
-    private def walk(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
-      block.call(node)
-      Noir::TreeSitter.each_named_child(node) do |child|
-        walk(child, &block)
-      end
-    end
 
     private def collect_decorations(deco_def : LibTreeSitter::TSNode,
                                     source : String,

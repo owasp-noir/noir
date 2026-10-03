@@ -115,54 +115,6 @@ describe Noir::PhpLexer do
     end
   end
 
-  describe "#tokens" do
-    it "produces a structural stream with operators, idents and string spans" do
-      src = %(Route::get('/x')->name('home');)
-      kinds = Noir::PhpLexer.new(src, php_mode: true).tokens.map(&.kind)
-      kinds.should eq([
-        :ident, :double_colon, :ident, :lparen, :string, :rparen,
-        :arrow, :ident, :lparen, :string, :rparen, :semicolon,
-      ])
-    end
-
-    it "records line numbers and string values" do
-      src = "a();\nRoute::post('/y');"
-      str = Noir::PhpLexer.new(src, php_mode: true).tokens.find! { |t| t.kind == :string }
-      str.value.should eq("'/y'")
-      str.line.should eq(2)
-    end
-
-    it "tokenizes variables, => and array brackets in a closure" do
-      src = %(fn($r) => [$r => 1];)
-      kinds = Noir::PhpLexer.new(src, php_mode: true).tokens.map(&.kind)
-      kinds.should eq([
-        :ident, :lparen, :variable, :rparen, :double_arrow,
-        :lbracket, :variable, :double_arrow, :rbracket, :semicolon,
-      ])
-    end
-
-    it "emits comment and heredoc span tokens with correct kinds" do
-      src = "/* c */ $x = <<<EOT\nbody\nEOT;\n"
-      kinds = Noir::PhpLexer.new(src, php_mode: true).tokens.map(&.kind)
-      kinds.should contain(:comment)
-      kinds.should contain(:heredoc)
-      kinds.should contain(:variable)
-    end
-
-    it "returns no tokens for empty source and skips a lone $" do
-      Noir::PhpLexer.new("").tokens.should be_empty
-      Noir::PhpLexer.new("$ ", php_mode: true).tokens.should be_empty
-    end
-
-    it "numbers token lines under bare-CR and CRLF endings" do
-      cr = Noir::PhpLexer.new("a();\rb();\rc();", php_mode: true).tokens
-      cr.find! { |t| t.value == "b" }.line.should eq(2)
-      cr.find! { |t| t.value == "c" }.line.should eq(3)
-      crlf = Noir::PhpLexer.new("a();\r\nb();", php_mode: true).tokens
-      crlf.find! { |t| t.value == "b" }.line.should eq(2)
-    end
-  end
-
   # A `.php` file is HTML with islands of code in it. Everything outside
   # `<?php … ?>` is literal output: lexing it as code let one apostrophe in
   # prose open a string that masked the rest of the file, so every route
@@ -179,10 +131,8 @@ describe Noir::PhpLexer do
       lex.masked.size.should eq(src.size)
       lex.in_code?(src.index!("Route::get")).should be_true
       lex.in_code?(src.index!("Route::post")).should be_true
-      lex.tokens.map(&.value).should contain("Route")
-      # The prose itself is inert, and it produces no token of its own.
+      # The prose itself is inert.
       lex.in_code?(src.index!("Today")).should be_false
-      lex.tokens.map(&.value).should_not contain("Today")
     end
 
     it "returns to HTML mode at `?>` and back to code at the next open tag" do
@@ -196,15 +146,14 @@ describe Noir::PhpLexer do
       lex.in_code?(src.index!("'/after'")).should be_false
       lex.in_code?(src.index!("Route::get('/after'")).should be_true
       lex.in_code?(src.index!("report")).should be_false
-      lex.tokens.count { |t| t.value == "Route" }.should eq(2)
+      lex.in_code?(src.index!("Route::get('/before'")).should be_true
     end
 
     it "opens code on the `<?=` short echo tag" do
       src = "<h1>it's here</h1>\n<?= route('/x') ?>\n<p>and's here</p>\n"
       lex = Noir::PhpLexer.new(src)
       lex.in_code?(src.index!("route")).should be_true
-      lex.tokens.map(&.value).should contain("route")
-      lex.tokens.map(&.value).should_not contain("h1")
+      lex.in_code?(src.index!("h1")).should be_false
     end
 
     it "keeps PHP mode when `?>` is written inside a string or a block comment" do
@@ -216,7 +165,6 @@ describe Noir::PhpLexer do
         PHP
       lex = Noir::PhpLexer.new(src)
       lex.in_code?(src.index!("Route::get")).should be_true
-      lex.tokens.map(&.value).should contain("Route")
     end
 
     it "closes PHP mode when `?>` ends a one-line `//` or `#` comment" do
@@ -229,18 +177,18 @@ describe Noir::PhpLexer do
       end
     end
 
-    it "yields no tokens for a file that never opens PHP" do
+    it "masks the whole of a file that never opens PHP" do
       src = "<h1>Today's report</h1>\n<p>No code here; just { markup }.</p>\n"
       lex = Noir::PhpLexer.new(src)
       lex.masked.size.should eq(src.size)
-      lex.tokens.should be_empty
+      lex.masked.all?(&.ascii_whitespace?).should be_true
       lex.in_code?(0).should be_false
       lex.masked.should_not contain('{')
     end
 
     it "does not open PHP on an XML processing instruction" do
       src = "<?xml version=\"1.0\"?>\n<note>it's inert</note>\n"
-      Noir::PhpLexer.new(src).tokens.should be_empty
+      Noir::PhpLexer.new(src).masked.all?(&.ascii_whitespace?).should be_true
     end
 
     it "lexes to EOF when the final PHP block is never closed" do
@@ -256,7 +204,7 @@ describe Noir::PhpLexer do
       lex = Noir::PhpLexer.new(src)
       lex.masked.size.should eq(src.size)
       # 20 header lines, `<?php` on 21, the route on 22.
-      lex.tokens.find! { |t| t.value == "Route" }.line.should eq(22)
+      lex.masked.join.lines[21].should start_with("Route::get")
     end
 
     it "does not start a heredoc or a comment from markup outside PHP" do

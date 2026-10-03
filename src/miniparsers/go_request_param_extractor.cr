@@ -7,57 +7,8 @@ module Noir::GoRequestParamExtractor
 
   MAX_HELPER_DEPTH = 3
 
-  def package_function_bodies_for_dirs(file_contents : Hash(String, String),
-                                       dirs : Set(String)) : Hash(String, Hash(String, Noir::GoCalleeExtractor::FunctionBody))
-    bodies = Hash(String, Hash(String, Noir::GoCalleeExtractor::FunctionBody)).new
-    return bodies if dirs.empty?
-
-    file_contents.each do |path, content|
-      dir = File.dirname(path)
-      next unless dirs.includes?(dir)
-      next unless content.includes?("func ")
-      fns = Noir::GoCalleeExtractor.collect_function_bodies(content, path)
-      next if fns.empty?
-      bodies[dir] ||= Hash(String, Noir::GoCalleeExtractor::FunctionBody).new
-      fns.each { |name, fb| bodies[dir][name] ||= fb }
-    end
-
-    bodies
-  end
-
-  def package_method_bodies_for_dirs(file_contents : Hash(String, String),
-                                     dirs : Set(String)) : Hash(String, Hash(String, Array(Noir::GoCalleeExtractor::FunctionBody)))
-    bodies = Hash(String, Hash(String, Array(Noir::GoCalleeExtractor::FunctionBody))).new
-    return bodies if dirs.empty?
-
-    file_contents.each do |path, content|
-      dir = File.dirname(path)
-      next unless dirs.includes?(dir)
-      next unless content.includes?("func (")
-      methods = Noir::GoCalleeExtractor.collect_method_bodies(content, path)
-      next if methods.empty?
-      dir_map = (bodies[dir] ||= Hash(String, Array(Noir::GoCalleeExtractor::FunctionBody)).new)
-      methods.each do |name, list|
-        (dir_map[name] ||= [] of Noir::GoCalleeExtractor::FunctionBody).concat(list)
-      end
-    end
-
-    bodies
-  end
-
-  def function_bodies_for_directory(package_bodies : Hash(String, Hash(String, Noir::GoCalleeExtractor::FunctionBody)),
-                                    dir : String) : Hash(String, Noir::GoCalleeExtractor::FunctionBody)
-    package_bodies[dir]? || Hash(String, Noir::GoCalleeExtractor::FunctionBody).new
-  end
-
-  def method_bodies_for_directory(package_bodies : Hash(String, Hash(String, Array(Noir::GoCalleeExtractor::FunctionBody))),
-                                  dir : String) : Hash(String, Array(Noir::GoCalleeExtractor::FunctionBody))
-    package_bodies[dir]? || Hash(String, Array(Noir::GoCalleeExtractor::FunctionBody)).new
-  end
-
-  # Lazy form of `package_function_bodies_for_dirs` and
-  # `package_method_bodies_for_dirs` together: same `dirs` restriction,
-  # same per-file gates, but a directory is parsed only when a route file
+  # Function and method tables restricted to `dirs`, behind the `func ` /
+  # `func (` per-file gates. A directory is parsed only when a route file
   # in it asks for its table. See `Noir::GoCalleeExtractor::LazyPackageBodies`.
   def lazy_package_bodies_for_dirs(file_contents : Hash(String, String),
                                    dirs : Set(String)) : Noir::GoCalleeExtractor::LazyPackageBodies
@@ -84,7 +35,7 @@ module Noir::GoRequestParamExtractor
 
     cache = Hash(String, Array(Param)).new
     Noir::TreeSitter.parse_go(source) do |root|
-      walk(root) do |node|
+      Noir::TreeSitter.walk(root) do |node|
         next unless Noir::TreeSitter.node_type(node) == "call_expression"
         row = Noir::TreeSitter.node_start_row(node)
         next unless route_rows.includes?(row)
@@ -208,7 +159,7 @@ module Noir::GoRequestParamExtractor
                                      visiting : Set(String),
                                      sink : Array(Param),
                                      depth : Int32)
-    walk(body) do |node|
+    Noir::TreeSitter.walk(body) do |node|
       next unless Noir::TreeSitter.node_type(node) == "call_expression"
 
       extract_params_from_call(node, source, http_method).each do |param|
@@ -461,12 +412,5 @@ module Noir::GoRequestParamExtractor
     return if param.name.empty? || param.param_type.empty?
     return if params.any? { |existing| existing.name == param.name && existing.param_type == param.param_type }
     params << param
-  end
-
-  private def walk(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
-    block.call(node)
-    Noir::TreeSitter.each_named_child(node) do |child|
-      walk(child, &block)
-    end
   end
 end

@@ -38,7 +38,7 @@ module Noir::PhpCalleeExtractor
 
     if line.includes?("::") || line.includes?("->")
       line.scan(CLASS_PROPERTY_CALL_REGEX) do |match|
-        name = normalize_object_call(match[1])
+        name = normalize_call(match[1])
         next if skip_callee?(name)
 
         entries << {name, file_path, line_number}
@@ -46,7 +46,7 @@ module Noir::PhpCalleeExtractor
 
       if line.includes?("->")
         line.scan(OBJECT_CALL_REGEX) do |match|
-          name = normalize_object_call(match[1])
+          name = normalize_call(match[1])
           next if skip_callee?(name)
 
           entries << {name, file_path, line_number}
@@ -55,7 +55,7 @@ module Noir::PhpCalleeExtractor
 
       if line.includes?("::")
         line.scan(STATIC_CALL_REGEX) do |match|
-          name = normalize_static_call(match[1])
+          name = normalize_call(match[1])
           next if skip_callee?(name)
 
           entries << {name, file_path, line_number}
@@ -78,11 +78,7 @@ module Noir::PhpCalleeExtractor
     line[0...name_start].match(/\bfunction\s*&?\s*$/) ? true : false
   end
 
-  private def normalize_object_call(name : String) : String
-    name.gsub(/\s+/, "")
-  end
-
-  private def normalize_static_call(name : String) : String
+  private def normalize_call(name : String) : String
     name.gsub(/\s+/, "")
   end
 
@@ -91,11 +87,6 @@ module Noir::PhpCalleeExtractor
     return false if name.includes?("->") || name.includes?("::")
 
     RESERVED.includes?(name.downcase)
-  end
-
-  def strip_comment(line : String) : String
-    sanitized, _ = sanitize_line(line, false)
-    sanitized
   end
 
   # ASCII byte values for the delimiters scanned below. All < 0x80, so a
