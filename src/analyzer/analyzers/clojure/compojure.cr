@@ -236,7 +236,6 @@ module Analyzer::Clojure
 
     private def add_param_once(endpoint : Endpoint, name : String, param_type : String)
       return if name.empty?
-      return if endpoint.params.any? { |p| p.name == name && p.param_type == param_type }
       endpoint.push_param(Param.new(name, "", param_type))
     end
 

@@ -171,7 +171,6 @@ module Analyzer::Cpp
 
     private def push_unique(endpoint : Endpoint, param : Param)
       return if param.name.empty?
-      return if endpoint.params.any? { |p| p.name == param.name && p.param_type == param.param_type }
       endpoint.push_param(param)
     end
 

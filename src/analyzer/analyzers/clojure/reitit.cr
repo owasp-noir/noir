@@ -477,7 +477,6 @@ module Analyzer::Clojure
       names.each do |name|
         next if name.empty?
         next if ptype == "path" && path_param_set.includes?(name)
-        next if endpoint.params.any? { |p| p.name == name && p.param_type == ptype }
         endpoint.push_param(Param.new(name, "", ptype))
       end
     end
