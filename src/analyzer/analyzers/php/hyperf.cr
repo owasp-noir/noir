@@ -334,14 +334,6 @@ module Analyzer::Php
 
     # --- Callees + method body param extraction -------------------------------
 
-    private def attach_method_callees(endpoint : Endpoint, method_body : Tuple(String, Int32)?, path : String)
-      return unless method_body
-
-      body, start_line = method_body
-      callees = Noir::PhpCalleeExtractor.callees_for_body(body, path, start_line)
-      attach_php_callees(endpoint, callees)
-    end
-
     private def extract_method_params(method_body : String) : Array(Param)
       params = [] of Param
       seen = Set(String).new

@@ -42,7 +42,7 @@ module Analyzer::Php
       endpoints.concat(analyze_annotation_routes(path, content, include_callee))
       endpoints.concat(analyze_convention_routes(path, content, include_callee))
 
-      dedup_endpoints(endpoints)
+      endpoints.uniq { |endpoint| {endpoint.method, endpoint.url} }
     end
 
     # Every PHP analyzer is fed every `.php` file in a project-wide scan, so
@@ -434,14 +434,6 @@ module Analyzer::Php
       scope ? scope.path : ""
     end
 
-    private def attach_method_callees(endpoint : Endpoint, method_body : Tuple(String, Int32)?, file_path : String)
-      return unless method_body
-
-      body, start_line = method_body
-      callees = Noir::PhpCalleeExtractor.callees_for_body(body, file_path, start_line)
-      attach_php_callees(endpoint, callees)
-    end
-
     # 6. Convention-based controller/action dispatch: a public `fooAction`
     #    method on a controller extending `Phalcon\Mvc\Controller` maps to
     #    `/{controller}/{action}` (default action `index` is omitted), with
@@ -647,19 +639,6 @@ module Analyzer::Php
       end
 
       nil
-    end
-
-    private def dedup_endpoints(endpoints : Array(Endpoint)) : Array(Endpoint)
-      seen = Set(String).new
-      endpoints.select do |endpoint|
-        key = "#{endpoint.method}\0#{endpoint.url}"
-        if seen.includes?(key)
-          false
-        else
-          seen.add(key)
-          true
-        end
-      end
     end
   end
 end

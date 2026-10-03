@@ -204,7 +204,7 @@ module Analyzer::Php
 
         methods.each do |method|
           endpoint = Endpoint.new(route_path, method, params, details)
-          attach_action_callees(endpoint, method_body_info, path) if include_callee
+          attach_method_callees(endpoint, method_body_info, path) if include_callee
           endpoints << endpoint
         end
       end
@@ -238,14 +238,6 @@ module Analyzer::Php
         end
       end
       result
-    end
-
-    private def attach_action_callees(endpoint : Endpoint, method_body : Tuple(String, Int32)?, path : String)
-      return unless method_body
-
-      body, start_line = method_body
-      callees = Noir::PhpCalleeExtractor.callees_for_body(body, path, start_line)
-      attach_php_callees(endpoint, callees)
     end
 
     private def extract_action_signature_params(signature : String) : Array(Param)

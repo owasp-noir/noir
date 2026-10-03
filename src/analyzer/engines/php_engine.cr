@@ -110,6 +110,42 @@ module Analyzer::Php
       Noir::PhpCalleeExtractor.attach_to(endpoint, callees)
     end
 
+    protected def attach_method_callees(endpoint : Endpoint, method_body : Tuple(String, Int32)?, path : String)
+      return unless method_body
+
+      body, start_line = method_body
+      callees = Noir::PhpCalleeExtractor.callees_for_body(body, path, start_line)
+      attach_php_callees(endpoint, callees)
+    end
+
+    # Body of an inline `function (...) use (...) { ... }` closure handler
+    # starting at `pos`: `{body, position after the closure, body start line}`,
+    # or `{nil, pos, nil}` when no closure starts there.
+    protected def extract_inline_closure_body(content : String, pos : Int32, base_line : Int32) : Tuple(String?, Int32, Int32?)
+      return {nil, pos, nil} unless pos < content.size
+
+      scan_pos = skip_whitespace(content, pos)
+      return {nil, pos, nil} unless scan_pos < content.size
+
+      closure_regex = /\A(?:static\s+)?function\s*\([^)]*\)\s*(?:use\s*\([^)]*\)\s*)?(?::\s*[^{=]+)?\{/i
+      match = content[scan_pos..].match(closure_regex)
+      return {nil, pos, nil} unless match
+
+      brace_pos = scan_pos + match[0].size - 1
+      body_end = find_matching_php_close_brace(content, brace_pos)
+      return {nil, pos, nil} unless body_end
+
+      body_start_line = base_line + newline_count_before(content, brace_pos)
+      {content[(brace_pos + 1)...body_end], body_end + 1, body_start_line}
+    end
+
+    private def skip_whitespace(content : String, pos : Int32) : Int32
+      while pos < content.size && content[pos].ascii_whitespace?
+        pos += 1
+      end
+      pos
+    end
+
     protected def extract_php_method_body_after(content : String, start_pos : Int32) : Tuple(String, Int32)?
       return unless start_pos < content.size
 
