@@ -306,7 +306,7 @@ module Analyzer::Ruby
             end
             pending_params.clear
 
-            attach_route_callees(endpoint, lines, index, path) if include_callee
+            attach_do_block_callees(endpoint, lines, index, path) if include_callee
             @result << endpoint
             last_endpoint = endpoint
             block_kinds << :other unless stripped.match(/\bend\b/)
@@ -328,7 +328,7 @@ module Analyzer::Ruby
             end
             pending_params.clear
 
-            attach_route_callees(endpoint, lines, index, path) if include_callee
+            attach_do_block_callees(endpoint, lines, index, path) if include_callee
             @result << endpoint
             last_endpoint = endpoint
             block_kinds << :other unless stripped.match(/\bend\b/)
@@ -403,14 +403,6 @@ module Analyzer::Ruby
         return m[1]
       end
       ""
-    end
-
-    private def attach_route_callees(endpoint : Endpoint, lines : Array(String), index : Int32, path : String)
-      if block = extract_ruby_do_block(lines, index)
-        body, body_start_line = block
-        callees = Noir::RubyCalleeExtractor.callees_for_body(body, path, body_start_line)
-        attach_ruby_callees(endpoint, callees)
-      end
     end
 
     private def build_path(mount_prefix : String, class_prefix : String, version_prefix : String, prefix_segments : Array(String), raw : String) : String
