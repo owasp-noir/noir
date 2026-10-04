@@ -1,3 +1,5 @@
+require "../ext/windows_paths"
+
 def get_relative_path(base_path : String, path : String) : String
   # First, determine the path relative to the base_path, without other normalization.
   unstripped_path = if base_path == "."
