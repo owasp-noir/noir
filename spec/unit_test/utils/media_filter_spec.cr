@@ -92,7 +92,7 @@ describe MediaFilter do
 
   describe ".binary_content_signature?" do
     it "returns false for plain text content" do
-      temp = "/tmp/noir-binsig-text-#{Random.rand(1_000_000)}.py"
+      temp = "#{Dir.tempdir}/noir-binsig-text-#{Random.rand(1_000_000)}.py"
       File.write(temp, "def hello():\n    return 'hi'\n")
       begin
         MediaFilter.binary_content_signature?(temp).should be_false
@@ -102,7 +102,7 @@ describe MediaFilter do
     end
 
     it "returns true for content containing NUL bytes" do
-      temp = "/tmp/noir-binsig-bin-#{Random.rand(1_000_000)}.py"
+      temp = "#{Dir.tempdir}/noir-binsig-bin-#{Random.rand(1_000_000)}.py"
       # `dd` style random bytes — virtually certain to contain a NUL
       # in 1KB. Use a deterministic NUL-bearing payload so the test
       # isn't probabilistic.
@@ -115,7 +115,7 @@ describe MediaFilter do
     end
 
     it "returns false for empty files (nothing to sample)" do
-      temp = "/tmp/noir-binsig-empty-#{Random.rand(1_000_000)}.py"
+      temp = "#{Dir.tempdir}/noir-binsig-empty-#{Random.rand(1_000_000)}.py"
       File.write(temp, "")
       begin
         MediaFilter.binary_content_signature?(temp).should be_false
@@ -137,7 +137,7 @@ describe MediaFilter do
       # with `ArgumentError: UTF-8 error: code points greater than
       # 0x10ffff are not defined`. The binary-sniff in skip_check
       # catches it before any analyzer regex runs.
-      temp = "/tmp/noir-skip-binary-#{Random.rand(1_000_000)}.py"
+      temp = "#{Dir.tempdir}/noir-skip-binary-#{Random.rand(1_000_000)}.py"
       File.write(temp, "import os\x00\x01\x02unparseable")
       begin
         reason = MediaFilter.skip_check(temp)
@@ -149,7 +149,7 @@ describe MediaFilter do
     end
 
     it "does not skip ordinary text source files" do
-      temp = "/tmp/noir-skip-text-#{Random.rand(1_000_000)}.py"
+      temp = "#{Dir.tempdir}/noir-skip-text-#{Random.rand(1_000_000)}.py"
       File.write(temp, "from flask import Flask\napp = Flask(__name__)\n")
       begin
         MediaFilter.skip_check(temp).should be_nil
