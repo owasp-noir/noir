@@ -1,6 +1,6 @@
 +++
 title = "Install Noir"
-description = "Install OWASP Noir via Homebrew, Snapcraft, Docker, Nix, AUR, .deb, .rpm, .apk, binary download, or from source."
+description = "Install OWASP Noir via Homebrew, Snapcraft, Docker, Nix, AUR, .deb, .rpm, .apk, binary download (Linux, macOS, Windows), or from source."
 weight = 2
 sort_by = "weight"
 prev_page_path = "/get_started/overview/"
@@ -102,11 +102,11 @@ nix run github:owasp-noir/noir -- -h
 
 ## Direct Binary Download
 
-No package manager? Grab a prebuilt binary from [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest). Linux and macOS builds are provided.
+No package manager? Grab a prebuilt binary from [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest). Linux and macOS builds are provided, and Windows (x86_64) builds start with the first release after v1.4.0.
 
 To install or update:
 
-1. Download the binary for your platform (e.g., `noir-v1.4.0-linux-x86_64` on Linux, or `noir-v1.4.0-osx-arm64.tar.gz` on macOS).
+1. Download the binary for your platform (e.g., `noir-v1.4.0-linux-x86_64` on Linux, `noir-v1.4.0-osx-arm64.tar.gz` on macOS, or `noir-vX.Y.Z-windows-x86_64.exe` on Windows).
 2. **Linux**: make it executable and move it into your `PATH`:
 
     ```bash
@@ -127,7 +127,18 @@ To install or update:
 
     The macOS archive ships OpenSSL libraries in `lib/`; do not move only the `noir` binary without them.
 
-4. Verify:
+4. **Windows**: the `.exe` is self-contained. Rename it to `noir.exe` and put it in a folder on your `PATH`. In PowerShell, for a per-user install:
+
+    ```powershell
+    $dir = "$env:LOCALAPPDATA\noir"
+    New-Item -ItemType Directory -Force $dir | Out-Null
+    Move-Item .\noir-v*-windows-x86_64.exe "$dir\noir.exe"
+    [Environment]::SetEnvironmentVariable("Path", [Environment]::GetEnvironmentVariable("Path", "User") + ";$dir", "User")
+    ```
+
+    Open a new terminal so the updated `PATH` takes effect.
+
+5. Verify:
 
     ```bash
     noir --version
@@ -251,6 +262,10 @@ For custom builds or contributing back to the project.
 
 {% alert_warning() %}
 Requires the [Crystal](https://crystal-lang.org/install/) programming language.
+{% end %}
+
+{% alert_info() %}
+**Windows:** besides [Crystal for Windows](https://crystal-lang.org/install/on_windows/), the build compiles the bundled Tree-sitter grammars with a small shell script, so it also needs [Git for Windows](https://gitforwindows.org/) (for `sh`) and `clang` (the "C++ Clang tools for Windows" component of Visual Studio Build Tools, or [LLVM](https://releases.llvm.org/)). Run the steps below from Git Bash; the binary is written to `bin\noir.exe`.
 {% end %}
 
 To install:
