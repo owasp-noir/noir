@@ -147,18 +147,20 @@ module Noir
     end
 
     # The path of `base` relative to the repository root, "" for the root
-    # itself. Git reports the root as a real path, so the base is resolved the
-    # same way before comparing — on macOS `/tmp` is `/private/tmp`, and
-    # comparing the spelled path against the real one would put every base
-    # outside the repository.
+    # itself. Asked of git (`--show-prefix`) rather than worked out by
+    # comparing paths: the spelled base and git's reported root can name the
+    # same directory differently — `/tmp` vs `/private/tmp` on macOS, an 8.3
+    # short name (`RUNNER~1`) vs the long one on Windows — and git already
+    # resolves both the way it resolved the root.
     private def relative_to_root(base : String, toplevel : String) : String
-      real = File.realpath(base)
-      return "" if real == toplevel
-      prefix = toplevel.ends_with?('/') ? toplevel : "#{toplevel}/"
-      unless real.starts_with?(prefix)
-        raise Error.new("--diff-ref base path is outside the repository #{toplevel}: #{base}")
+      dir = File.directory?(base) ? base : File.dirname(base)
+      result = git(["-C", dir, "rev-parse", "--show-prefix"])
+      unless result[:ok]
+        raise Error.new("--diff-ref base path is outside the repository #{toplevel}: #{base}#{detail(result[:error])}")
       end
-      real[prefix.size..]
+      prefix = result[:output].strip.chomp('/')
+      return prefix if dir == base
+      prefix.empty? ? File.basename(base) : "#{prefix}/#{File.basename(base)}"
     end
 
     # Reads REF's tree into a private index, lists the files under the scan
