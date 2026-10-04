@@ -515,7 +515,9 @@ describe "noir CLI surface (built binary)" do
       begin
         # The brace group sends both noir's stderr and its exit status to
         # `log`, because `$?` after a pipeline in `sh` belongs to `head`.
-        Process.run("/bin/sh", args: [
+        # `sh` by name, not `/bin/sh`: on Windows that path is drive-rooted
+        # and missing, while Git for Windows puts `sh` on PATH.
+        Process.run("sh", args: [
           "-c", "{ \"$0\" list techs; echo \"rc=$?\" >&2; } 2>\"$1\" | head -1 >/dev/null",
           BINARY, log,
         ])
