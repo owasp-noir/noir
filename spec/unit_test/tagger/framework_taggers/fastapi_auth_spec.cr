@@ -2,7 +2,7 @@ require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
 describe "FastAPIAuthTagger" do
-  fixture_base = "#{__DIR__}/../../../functional_test/fixtures/python/fastapi_auth"
+  fixture_base = File.expand_path("../../../functional_test/fixtures/python/fastapi_auth", __DIR__)
   main_path = "#{fixture_base}/main.py"
 
   # main.py line reference:

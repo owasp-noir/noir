@@ -2,7 +2,7 @@ require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
 describe "FastEndpointsAuthTagger" do
-  fixture_base = "#{__DIR__}/../../../functional_test/fixtures/csharp/fastendpoints"
+  fixture_base = File.expand_path("../../../functional_test/fixtures/csharp/fastendpoints", __DIR__)
   create_user_path = "#{fixture_base}/Endpoints/CreateUserEndpoint.cs"
   ping_path = "#{fixture_base}/Endpoints/PingEndpoint.cs"
 

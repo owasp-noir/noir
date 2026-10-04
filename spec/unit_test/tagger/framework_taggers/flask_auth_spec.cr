@@ -25,7 +25,7 @@ private def flask_detect(decorator : String) : Endpoint
 end
 
 describe "FlaskAuthTagger" do
-  fixture_base = "#{__DIR__}/../../../functional_test/fixtures/python/flask_auth"
+  fixture_base = File.expand_path("../../../functional_test/fixtures/python/flask_auth", __DIR__)
   app_path = "#{fixture_base}/app.py"
 
   # app.py line reference — the route decorator, which is the line the
