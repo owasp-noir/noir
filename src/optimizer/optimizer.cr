@@ -186,8 +186,8 @@ class EndpointOptimizer
       # Mobile deep-link URLs are kept verbatim: a `${...}` there is an
       # unresolved gradle manifest placeholder, not a JS template literal
       # for the shape-normalizer to rewrite.
-      tiny_tmp.url = normalize_url_shape(tiny_tmp.url) unless tiny_tmp.non_http?
-      dedup_url = tiny_tmp.non_http? ? tiny_tmp.url : normalize_url_shape(tiny_tmp.url, collection_endpoint?(tiny_tmp))
+      tiny_tmp.url = normalize_url_shape(tiny_tmp.url, technology: tiny_tmp.details.technology) unless tiny_tmp.non_http?
+      dedup_url = tiny_tmp.non_http? ? tiny_tmp.url : normalize_url_shape(tiny_tmp.url, collection_endpoint?(tiny_tmp), tiny_tmp.details.technology)
 
       key = {tiny_tmp.method, dedup_url, endpoint_source_scope(tiny_tmp, cross_tech_keys)}
 
@@ -504,7 +504,7 @@ class EndpointOptimizer
     absolute_url = normalized.matches?(ABSOLUTE_URL_RE)
     normalized = "/#{normalized}" if !absolute_url && normalized[0] != '/' && !endpoint.non_http?
     return normalized if endpoint.non_http?
-    normalized = normalize_url_shape(normalized, collection_endpoint?(endpoint))
+    normalized = normalize_url_shape(normalized, collection_endpoint?(endpoint), endpoint.details.technology)
     normalized
   end
 

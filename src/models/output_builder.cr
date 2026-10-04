@@ -103,6 +103,11 @@ class OutputBuilder
   # apart, so the two can never disagree about where the route ends.
   INLINE_QUERY = /\?([^?\/#]*=[^?#]*)/
 
+  # Noir uses this fragment shape to distinguish GraphQL/RPC operations that
+  # share one transport path from literal `#` characters in route paths.
+  GRAPHQL_OPERATION_FRAGMENT  = /#[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*/
+  JSON_RPC_OPERATION_FRAGMENT = /#[A-Za-z_][A-Za-z0-9_]*_[A-Za-z_][A-Za-z0-9_]*/
+
   # `scheme://authority` at the head of an absolute endpoint URL.
   ROUTE_AUTHORITY = /\A[a-z][a-z0-9+.\-]*:\/\/[^\/]*/i
 
@@ -427,10 +432,9 @@ class OutputBuilder
     end
 
     fragment = nil
-    if index = route.index('#')
-      candidate = route[(index + 1)..]
-      fragment = candidate unless candidate.empty?
-      route = route[0...index]
+    if match = route.match(GRAPHQL_OPERATION_FRAGMENT) || route.match(JSON_RPC_OPERATION_FRAGMENT)
+      fragment = match[0][1..]
+      route = route[0...match.begin]
     end
 
     {route: route, query: query, fragment: fragment}
@@ -442,6 +446,12 @@ class OutputBuilder
   # `demo.example.com` from `demo.example.com.evil`.
   protected def route_authority(route : String) : String?
     route.match(ROUTE_AUTHORITY).try(&.[0])
+  end
+
+  # Verbatim JavaScript RegExp route literals contain escaped slashes. They
+  # remain useful in ordinary reports but are not valid HTTP catalog paths.
+  protected def regex_literal_route?(endpoint : Endpoint) : Bool
+    endpoint.url.includes?("\\/")
   end
 
   # The path portion of a route, with any `scheme://authority` prefix removed.
