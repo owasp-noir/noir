@@ -25,7 +25,30 @@ end
     # The path the OS itself resolves `path` to — every symlink and junction
     # along it followed, short names expanded — the way Python's and Go's
     # Windows `realpath` work. Raises `File::Error` when it does not exist.
+    #
+    # The API answers in extended-length form (`\\?\C:\...`). The prefix
+    # is dropped only when the ordinary spelling resolves to the very same
+    # path: without it Win32 trims a trailing dot or space and applies
+    # MAX_PATH, so `\\?\C:\repo\file.` would turn into a different file.
+    # A kept prefix makes a containment check against an unprefixed base
+    # fail, which is the safe direction.
     def self.final_path(path : String) : String
+      final = extended_final_path(path)
+      ordinary = if final.starts_with?("\\\\?\\UNC\\")
+                   "\\\\#{final[8..]}"
+                 elsif final.starts_with?("\\\\?\\")
+                   final[4..]
+                 end
+      return final unless ordinary
+
+      begin
+        extended_final_path(ordinary) == final ? ordinary : final
+      rescue ::File::Error
+        final
+      end
+    end
+
+    private def self.extended_final_path(path : String) : String
       handle = LibC.CreateFileW(Crystal::System.to_wstr(path), LibC::FILE_READ_ATTRIBUTES,
         LibC::DEFAULT_SHARE_MODE, nil, LibC::OPEN_EXISTING, LibC::FILE_FLAG_BACKUP_SEMANTICS,
         LibC::HANDLE.null)
@@ -33,7 +56,7 @@ end
         raise ::File::Error.from_winerror("Error resolving real path", file: path)
       end
 
-      final = begin
+      begin
         Crystal::System.retry_wstr_buffer do |buffer, small_buf|
           len = LibC.GetFinalPathNameByHandleW(handle, buffer, buffer.size, 0)
           if 0 < len < buffer.size
@@ -46,15 +69,6 @@ end
         end
       ensure
         LibC.CloseHandle(handle)
-      end
-
-      # The API answers in extended-length form; hand back the ordinary one.
-      if final.starts_with?("\\\\?\\UNC\\")
-        "\\\\#{final[8..]}"
-      elsif final.starts_with?("\\\\?\\")
-        final[4..]
-      else
-        final
       end
     end
   end

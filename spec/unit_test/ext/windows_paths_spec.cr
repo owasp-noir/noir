@@ -46,6 +46,25 @@ describe Noir::WindowsPaths do
         end
       end
 
+      it "keeps the extended-length prefix when the ordinary spelling names another file" do
+        dir = File.join(Dir.tempdir, "noir-windows-prefix-#{Random.rand(1_000_000)}")
+        Dir.mkdir_p(dir)
+        # `file.` only exists through `\\?\`; plain Win32 would read `file`.
+        extended = "\\\\?\\#{File.realpath(dir).gsub('/', '\\')}\\file."
+        begin
+          File.write(extended, "dot")
+          File.write(File.join(dir, "file"), "plain")
+          resolved = File.realpath(extended)
+          resolved.should start_with("\\\\?\\")
+          resolved.should end_with("file.")
+          File.realpath(File.join(dir, "file")).should_not start_with("\\\\?\\")
+        ensure
+          # Ordinary deletion would trim the dot and miss this file.
+          File.delete?(extended)
+          FileUtils.rm_rf(dir)
+        end
+      end
+
       it "raises for a path that does not exist" do
         expect_raises(File::Error) { File.realpath(File.join(Dir.tempdir, "noir-no-such-#{Random.rand(1_000_000)}")) }
       end
