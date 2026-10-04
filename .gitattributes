@@ -12,3 +12,10 @@ docs/tools/cli-capture/**/*.py linguist-documentation=false
 docs/tools/cli-capture/**/*.sh linguist-vendored=false
 docs/tools/cli-capture/**/*.sh linguist-documentation=false
 src/ext/tree_sitter/runtime/src/*.c linguist-vendored=false
+
+# Check out LF everywhere, Windows included. Git for Windows defaults to
+# core.autocrlf=true: a CRLF build.sh makes `sh` fail at `set -eu` (no
+# Tree-sitter, no build), CRLF sources would bake `\r` into heredoc and
+# macro-embedded assets, and specs compare fixture bytes and line numbers.
+# Nothing in the repository is stored with CRLF, so this changes no file.
+* text=auto eol=lf

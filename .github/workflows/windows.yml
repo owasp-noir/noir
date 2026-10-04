@@ -36,10 +36,6 @@ jobs:
       run:
         shell: bash
     steps:
-      - name: Keep LF line endings
-        # Fixtures and specs compare exact bytes/line numbers; CRLF checkout
-        # would turn every one of them into a false failure.
-        run: git config --global core.autocrlf false
       - uses: actions/checkout@v7
       - uses: crystal-lang/install-crystal@v1
         with:
