@@ -56,6 +56,21 @@ describe Noir::GitSnapshot do
     end
   end
 
+  it "keeps a leading space in a base directory's name" do
+    with_repo do |repo|
+      spaced = File.join(repo, " app")
+      Dir.mkdir_p(spaced)
+      File.write(File.join(spaced, "routes.rb"), "get '/spaced' do\nend\n")
+      git!(repo, "add", "-A")
+      git!(repo, "commit", "-q", "-m", "spaced")
+      with_snapshot("HEAD", [spaced]) do |snapshot|
+        base = snapshot.bases.first
+        base.should end_with("/ app")
+        File.read(File.join(base, "routes.rb")).should contain("/spaced")
+      end
+    end
+  end
+
   it "maps a base inside the repository to the same place in the snapshot" do
     with_repo do |repo|
       with_snapshot("HEAD~1", [File.join(repo, "app")]) do |snapshot|
