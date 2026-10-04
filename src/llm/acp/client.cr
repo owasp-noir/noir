@@ -125,11 +125,11 @@ module LLM
       normalized = target.downcase
       case normalized
       when "codex"
-        {"npx", CODEX_ARGS.clone}
+        npm_shim("npx", CODEX_ARGS.clone)
       when "gemini"
-        {"gemini", GEMINI_ARGS.clone}
+        npm_shim("gemini", GEMINI_ARGS.clone)
       when "claude", "claude-code"
-        {"npx", CLAUDE_ARGS.clone}
+        npm_shim("npx", CLAUDE_ARGS.clone)
       else
         unless custom_command_allowed?
           raise UnsupportedACPTargetError.new(
@@ -142,6 +142,18 @@ module LLM
         args = parts.size > 1 ? parts[1..-1] : [] of String
         {command, args}
       end
+    end
+
+    # `npx` and an npm-installed `gemini` are `.cmd` shims on Windows.
+    # `CreateProcessW` only looks for `.exe`, and Crystal refuses to launch a
+    # `.cmd` directly (BatBadBut), so go through `cmd.exe`. Safe here because
+    # the arguments are the fixed constants above, never user input.
+    private def self.npm_shim(command : String, args : Array(String)) : Tuple(String, Array(String))
+      {% if flag?(:windows) %}
+        {"cmd.exe", ["/d", "/c", command] + args}
+      {% else %}
+        {command, args}
+      {% end %}
     end
 
     def request_messages(messages : Array(Hash(String, String)), format : String = "json") : String
