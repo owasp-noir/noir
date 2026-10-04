@@ -13,29 +13,38 @@ describe LLM::ACPClient do
   end
 
   describe ".resolve_command" do
+    # On Windows the npm shims run through `cmd.exe` (see `npm_shim`).
+    shim = ->(command : String, args : Array(String)) do
+      {% if flag?(:windows) %}
+        {"cmd.exe", ["/d", "/c", command] + args}
+      {% else %}
+        {command, args}
+      {% end %}
+    end
+
     it "maps codex to npx codex acp adapter" do
-      command, args = LLM::ACPClient.resolve_command("acp:codex")
-      command.should eq("npx")
-      args.should eq(["@zed-industries/codex-acp"])
+      LLM::ACPClient.resolve_command("acp:codex").should eq(shim.call("npx", ["@zed-industries/codex-acp"]))
     end
 
     it "maps gemini to experimental acp mode" do
-      command, args = LLM::ACPClient.resolve_command("acp:gemini")
-      command.should eq("gemini")
-      args.should eq(["--experimental-acp"])
+      LLM::ACPClient.resolve_command("acp:gemini").should eq(shim.call("gemini", ["--experimental-acp"]))
     end
 
     it "maps claude to npx claude agent acp adapter" do
-      command, args = LLM::ACPClient.resolve_command("acp:claude")
-      command.should eq("npx")
-      args.should eq(["@zed-industries/claude-agent-acp"])
+      LLM::ACPClient.resolve_command("acp:claude").should eq(shim.call("npx", ["@zed-industries/claude-agent-acp"]))
     end
 
     it "maps claude-code alias to npx claude agent acp adapter" do
-      command, args = LLM::ACPClient.resolve_command("acp:claude-code")
-      command.should eq("npx")
-      args.should eq(["@zed-industries/claude-agent-acp"])
+      LLM::ACPClient.resolve_command("acp:claude-code").should eq(shim.call("npx", ["@zed-industries/claude-agent-acp"]))
     end
+
+    {% if flag?(:windows) %}
+      it "can actually launch an npm .cmd shim through cmd.exe" do
+        found = Process.run("cmd.exe", ["/d", "/c", "where", "npx"]).success?
+        pending! "npx is not installed" unless found
+        Process.run("cmd.exe", ["/d", "/c", "npx", "--version"]).success?.should be_true
+      end
+    {% end %}
 
     it "refuses an arbitrary command target (no code execution)" do
       ENV.delete("NOIR_ACP_ALLOW_CUSTOM_COMMAND")
