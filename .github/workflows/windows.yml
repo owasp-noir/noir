@@ -1,11 +1,19 @@
 ---
 name: Windows
-# Native Windows build + spec run (#2828). Kept out of ci.yml while Windows
-# support is being brought up, so a red Windows run doesn't gate merges.
+# Native Windows build + spec run (#2828). Its own workflow rather than a
+# ci.yml job because it also runs on stacked PRs, whose base is not main.
 on:
   # No `branches:` filter: Windows work lands as stacked PRs whose base is
   # another PR's branch, not main.
   pull_request:
+    paths:
+      - .github/workflows/windows.yml
+      - shard.yml
+      - shard.lock
+      - src/**
+      - spec/**
+  push:
+    branches: [main]
     paths:
       - .github/workflows/windows.yml
       - shard.yml
@@ -28,10 +36,6 @@ jobs:
       run:
         shell: bash
     steps:
-      - name: Keep LF line endings
-        # Fixtures and specs compare exact bytes/line numbers; CRLF checkout
-        # would turn every one of them into a false failure.
-        run: git config --global core.autocrlf false
       - uses: actions/checkout@v7
       - uses: crystal-lang/install-crystal@v1
         with:
@@ -39,7 +43,9 @@ jobs:
       - name: Install shards
         run: shards install
       - name: Build
-        run: shards build --verbose
+        # --static, as release-binaries.yml builds the shipped .exe, so a
+        # static-CRT link failure shows up here rather than at release time.
+        run: shards build --verbose --static
       - name: Smoke test
         # A scan that finds nothing still exits 0, so assert on the count.
         run: |

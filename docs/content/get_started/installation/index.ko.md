@@ -1,6 +1,6 @@
 +++
 title = "Noir 설치"
-description = "Homebrew, Snapcraft, Docker, Nix, AUR, .deb, .rpm, .apk, 바이너리 다운로드 또는 소스 빌드를 통해 OWASP Noir를 설치합니다."
+description = "Homebrew, Snapcraft, Docker, Nix, AUR, .deb, .rpm, .apk, 바이너리 다운로드(Linux, macOS, Windows) 또는 소스 빌드를 통해 OWASP Noir를 설치합니다."
 weight = 2
 sort_by = "weight"
 prev_page_path = "/get_started/overview/"
@@ -102,11 +102,11 @@ nix run github:owasp-noir/noir -- -h
 
 ## 직접 바이너리 사용
 
-패키지 매니저가 없다면 [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest)에서 빌드된 바이너리를 받을 수 있습니다. Linux와 macOS용이 제공됩니다.
+패키지 매니저가 없다면 [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest)에서 빌드된 바이너리를 받을 수 있습니다. Linux와 macOS용이 제공되며, Windows(x86_64)용은 v1.4.0 다음 릴리즈부터 제공됩니다.
 
 설치 및 업데이트:
 
-1. 플랫폼에 맞는 바이너리를 다운로드합니다(예: Linux는 `noir-v1.4.0-linux-x86_64`, macOS는 `noir-v1.4.0-osx-arm64.tar.gz`).
+1. 플랫폼에 맞는 바이너리를 다운로드합니다(예: Linux는 `noir-v1.4.0-linux-x86_64`, macOS는 `noir-v1.4.0-osx-arm64.tar.gz`, Windows는 `noir-vX.Y.Z-windows-x86_64.exe`).
 2. **Linux**: 실행 권한을 부여한 뒤 `PATH`로 옮깁니다.
 
     ```bash
@@ -127,7 +127,18 @@ nix run github:owasp-noir/noir -- -h
 
     macOS 아카이브에는 OpenSSL 라이브러리가 `lib/`에 포함되어 있으므로, `noir` 바이너리만 따로 옮기지 마세요.
 
-4. 설치를 확인합니다.
+4. **Windows**: `.exe` 하나로 동작합니다. 이름을 `noir.exe`로 바꾸고 `PATH`에 들어 있는 폴더에 둡니다. 사용자 단위로 설치하려면 PowerShell에서 다음을 실행합니다.
+
+    ```powershell
+    $dir = "$env:LOCALAPPDATA\noir"
+    New-Item -ItemType Directory -Force $dir | Out-Null
+    Move-Item -Force .\noir-v*-windows-x86_64.exe "$dir\noir.exe"
+    [Environment]::SetEnvironmentVariable("Path", [Environment]::GetEnvironmentVariable("Path", "User") + ";$dir", "User")
+    ```
+
+    바뀐 `PATH`가 적용되도록 터미널을 새로 엽니다. 나중에 업데이트할 때는 새로 받은 파일로 `Move-Item` 줄만 다시 실행하면 됩니다(`-Force`가 기존 `noir.exe`를 교체합니다).
+
+5. 설치를 확인합니다.
 
     ```bash
     noir --version
@@ -251,6 +262,10 @@ Alpine Linux 사용자는 [GitHub Releases](https://github.com/owasp-noir/noir/r
 
 {% alert_warning() %}
 [Crystal](https://crystal-lang.org/install/) 프로그래밍 언어가 필요합니다.
+{% end %}
+
+{% alert_info() %}
+**Windows:** 빌드할 때 내장된 Tree-sitter 문법을 작은 셸 스크립트로 컴파일합니다. 그래서 [Crystal for Windows](https://crystal-lang.org/install/on_windows/) 외에 [Git for Windows](https://gitforwindows.org/)(`sh` 제공)와 `clang`(Visual Studio Build Tools의 "C++ Clang tools for Windows" 구성 요소 또는 [LLVM](https://releases.llvm.org/))이 필요합니다. 아래 단계는 Git Bash에서 실행하세요. 바이너리는 `bin\noir.exe`에 생성됩니다.
 {% end %}
 
 설치:
