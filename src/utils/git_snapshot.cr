@@ -158,7 +158,9 @@ module Noir
       unless result[:ok]
         raise Error.new("--diff-ref base path is outside the repository #{toplevel}: #{base}#{detail(result[:error])}")
       end
-      prefix = result[:output].strip.chomp('/')
+      # Only git's line ending: a base directory may legitimately start or end
+      # with a space.
+      prefix = result[:output].chomp.chomp('/')
       return prefix if dir == base
       prefix.empty? ? File.basename(base) : "#{prefix}/#{File.basename(base)}"
     end
