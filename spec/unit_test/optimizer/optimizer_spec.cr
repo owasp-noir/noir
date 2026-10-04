@@ -1097,6 +1097,17 @@ describe "EndpointOptimizer" do
       result = optimizer.normalize_url_shapes(endpoints)
       result[0].url.should eq("/^\\/api\\/(\\d+)$/")
     end
+
+    it "strips Python regex anchors without trimming Grape literal dollar signs" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      endpoints = [
+        tech_endpoint("/^tags/?$", "GET", "python_django", "urls.py"),
+        tech_endpoint("/dollar$", "GET", "ruby_grape", "api.rb"),
+      ]
+
+      result = optimizer.normalize_url_shapes(endpoints)
+      result.map(&.url).should eq(["/tags/?", "/dollar$"])
+    end
   end
 
   describe "combine_url_and_endpoints" do

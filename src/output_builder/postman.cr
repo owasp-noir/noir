@@ -14,7 +14,7 @@ class OutputBuilderPostman < OutputBuilder
     # mobile deep links / CLI commands aren't HTTP requests, so a Postman
     # request item (URI.parse + {{baseUrl}} + HTTP verbs) is meaningless
     # for them — keep them out of the collection.
-    items = endpoints.reject(&.non_http?).flat_map do |endpoint|
+    items = endpoints.reject { |endpoint| endpoint.non_http? || regex_literal_route?(endpoint) }.flat_map do |endpoint|
       # `URI.parse` is used for the authority only — scheme / host / port sit
       # ahead of anything a route pattern can spell, so it reads those
       # correctly. The path, query and fragment come from `split_route_url`,

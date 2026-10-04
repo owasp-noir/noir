@@ -4,8 +4,9 @@ require "../../../src/output_builder/oas_common"
 private struct OasCommonTestHelper
   include OutputBuilderOasCommon
 
-  def test_normalize_oas_path(raw_url : String, declared_path_params : Array(String) = [] of String)
-    normalize_oas_path(raw_url, declared_path_params)
+  def test_normalize_oas_path(raw_url : String, declared_path_params : Array(String) = [] of String,
+                              technologies : Array(String) = [] of String)
+    normalize_oas_path(raw_url, declared_path_params, technologies)
   end
 
   def test_extract_unmapped_path_parameters(parameters : Array(Hash(String, JSON::Any)), template_names : Array(String))
@@ -43,10 +44,10 @@ describe OutputBuilderOasCommon do
   describe "#normalize_oas_path" do
     it "normalizes express style optional segments and param syntax" do
       helper.test_normalize_oas_path("/users/:id").should eq("/users/{id}")
-      helper.test_normalize_oas_path("/users/[id]").should eq("/users/{id}")
+      helper.test_normalize_oas_path("/users/[id]", [] of String, ["cfml_wheels"]).should eq("/users/{id}")
       helper.test_normalize_oas_path("/users/<int:id>").should eq("/users/{id}")
-      helper.test_normalize_oas_path("/users/*id").should eq("/users/{id}")
-      helper.test_normalize_oas_path("/files/*").should eq("/files/{wildcard}")
+      helper.test_normalize_oas_path("/users/*id", [] of String, ["perl_mojolicious"]).should eq("/users/{id}")
+      helper.test_normalize_oas_path("/files/*", [] of String, ["elixir_phoenix"]).should eq("/files/{wildcard}")
     end
 
     it "keeps hyphens inside colon and bracket path placeholders" do
@@ -54,7 +55,7 @@ describe OutputBuilderOasCommon do
       # stop at the hyphen and emit `/items/{item}-id` with `item-id` unmapped.
       helper.test_normalize_oas_path("/items/:item-id").should eq("/items/{item-id}")
       helper.test_normalize_oas_path("/api/orders/:order-id").should eq("/api/orders/{order-id}")
-      helper.test_normalize_oas_path("/users/[user-id]").should eq("/users/{user-id}")
+      helper.test_normalize_oas_path("/users/[user-id]", [] of String, ["cfml_wheels"]).should eq("/users/{user-id}")
       # A trailing `.ext` stays literal — Express `:id.json` is `{id}.json`.
       helper.test_normalize_oas_path("/docs/:slug.json").should eq("/docs/{slug}.json")
     end
@@ -62,7 +63,8 @@ describe OutputBuilderOasCommon do
     it "names each bare wildcard distinctly" do
       # A path template variable may not repeat, so `/api/*/v1/*` cannot emit
       # `{wildcard}` twice.
-      helper.test_normalize_oas_path("/api/*/v1/*").should eq("/api/{wildcard}/v1/{wildcard2}")
+      helper.test_normalize_oas_path("/api/*/v1/*", [] of String, ["elixir_phoenix"])
+        .should eq("/api/{wildcard}/v1/{wildcard2}")
     end
 
     it "resolves name-first typed placeholders" do
@@ -97,7 +99,13 @@ describe OutputBuilderOasCommon do
         .should eq("/annotated/files/{filePath}")
       helper.test_normalize_oas_path("/assets/{**path}").should eq("/assets/{path}")
       # A bare `*` segment still becomes a named variable.
-      helper.test_normalize_oas_path("/files/*").should eq("/files/{wildcard}")
+      helper.test_normalize_oas_path("/files/*", [] of String, ["elixir_phoenix"]).should eq("/files/{wildcard}")
+    end
+
+    it "keeps literal stars and brackets for frameworks that do not use them as params" do
+      helper.test_normalize_oas_path("/star*", [] of String, ["js_express"]).should eq("/star*")
+      helper.test_normalize_oas_path("/[abc]", [] of String, ["js_express"]).should eq("/[abc]")
+      helper.test_normalize_oas_path("/files/*").should eq("/files/*")
     end
   end
 

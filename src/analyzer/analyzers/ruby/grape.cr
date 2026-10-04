@@ -20,7 +20,7 @@ module Analyzer::Ruby
     # `get '/users' do` (capturing the path literal/symbol); `_BARE_DO`
     # matches the path-less `get do` form.
     GRAPE_VERB_WITH_PATH = GRAPE_VERBS.to_h do |verb|
-      {verb, /^#{verb}\b(?:\s+(['":][\w\/\-:]+[\'""]?))?(?:\s*,[^#]*?)?\s*do\b/}
+      {verb, /^#{verb}\b(?:\s+('[^']*'|"[^"]*"|:[^\s,]+))?(?:\s*,[^#]*?)?\s*do\b/}
     end
     GRAPE_VERB_BARE_DO = GRAPE_VERBS.to_h do |verb|
       {verb, /^#{verb}\s+do\b/}

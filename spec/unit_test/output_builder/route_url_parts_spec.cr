@@ -114,6 +114,53 @@ describe "route URL parts in reconstructing builders" do
     end
   end
 
+  describe "literal hash path characters" do
+    it "keeps them in OAS and Postman paths while still splitting operation fragments" do
+      endpoint = Endpoint.new("/hash#frag", "GET")
+
+      oas2 = render(OutputBuilderOas2.new(builder_options), [endpoint])
+      oas3 = render(OutputBuilderOas3.new(builder_options), [endpoint])
+      postman = render(OutputBuilderPostman.new(builder_options), [endpoint])
+
+      oas2["paths"].as_h.keys.should eq(["/hash#frag"])
+      oas3["paths"].as_h.keys.should eq(["/hash#frag"])
+      postman["item"][0]["request"]["url"]["raw"].as_s.should eq("{{baseUrl}}/hash#frag")
+    end
+  end
+
+  describe "JavaScript RegExp route literals" do
+    it "omits them from OAS and Postman HTTP catalogs" do
+      endpoint = Endpoint.new("/^\\/users\\/(\\d+)$/", "GET")
+
+      render(OutputBuilderOas2.new(builder_options), [endpoint])["paths"].as_h.should be_empty
+      render(OutputBuilderOas3.new(builder_options), [endpoint])["paths"].as_h.should be_empty
+      render(OutputBuilderPostman.new(builder_options), [endpoint])["item"].as_a.should be_empty
+    end
+  end
+
+  describe "framework-specific OAS path syntax" do
+    it "preserves literal Express stars and brackets" do
+      details = Details.new
+      details.technology = "js_express"
+      endpoints = [
+        Endpoint.new("/star*", "GET", details),
+        Endpoint.new("/[abc]", "GET", details),
+      ]
+
+      doc = render(OutputBuilderOas3.new(builder_options), endpoints)
+      doc["paths"].as_h.keys.should eq(["/star*", "/[abc]"])
+    end
+
+    it "normalizes CFML Wheels bracket params" do
+      details = Details.new
+      details.technology = "cfml_wheels"
+      endpoint = Endpoint.new("/users/[key]", "GET", details)
+
+      doc = render(OutputBuilderOas3.new(builder_options), [endpoint])
+      doc["paths"].as_h.keys.should eq(["/users/{key}"])
+    end
+  end
+
   describe "absolute URL authority" do
     it "keeps both hosts when two absolute endpoints collapse onto one oas3 operation" do
       endpoints = [
@@ -147,7 +194,11 @@ describe "route URL parts in reconstructing builders" do
     it "does not truncate a regex route at its `?`" do
       # Drogon `/grp/(?:a|b)/(.*)?` used to emit the path `/grp/(` and a query
       # parameter named `:a|b)/(.*)?`.
-      doc = render(OutputBuilderOas3.new(builder_options), [Endpoint.new("/grp/(?:a|b)/(.*)?", "GET")])
+      details = Details.new
+      details.technology = "cpp_drogon"
+      endpoint = Endpoint.new("/grp/(?:a|b)/(.*)?", "GET", details)
+
+      doc = render(OutputBuilderOas3.new(builder_options), [endpoint])
       doc["paths"].as_h.keys.should eq(["/grp/({a}|b)/(.{wildcard})"])
     end
 

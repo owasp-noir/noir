@@ -35,14 +35,14 @@ class EndpointOptimizer
       # there is an unresolved gradle manifest placeholder (kept verbatim
       # and tagged by the Android analyzer), not a JS template literal.
       next if endpoint.non_http?
-      endpoint.url = normalize_url_shape(endpoint.url)
+      endpoint.url = normalize_url_shape(endpoint.url, technology: endpoint.details.technology)
       endpoints[idx] = endpoint
     end
 
     endpoints
   end
 
-  private def normalize_url_shape(url : String, normalize_colon_segments : Bool = false) : String
+  private def normalize_url_shape(url : String, normalize_colon_segments : Bool = false, technology : String? = nil) : String
     return url if url.empty?
 
     # Skip URLs that look like a verbatim regex literal — Express
@@ -78,13 +78,14 @@ class EndpointOptimizer
       name.empty? ? "{var}" : "{#{name}}"
     end
 
-    # Strip Python regex anchors at the path boundary.
+    # Strip regex anchors at the path boundary. Grape accepts a literal `$`
+    # at the end of a route, so only that ambiguous suffix is technology-gated.
     normalized = normalized.sub(/^\/\^/, "/")
-    normalized = normalized.sub(/\$$/, "")
+    normalized = normalized.sub(/\$$/, "") unless technology == "ruby_grape"
     normalized = normalized.sub(/\\Z$/, "")
     normalized = normalized.sub(/\/\$$/, "/")
 
-    # Backslash-escaped dots (re_path `r"\.json"`) → literal dot.
+    # Backslash-escaped dots (Python re_path `r"\.json"`) → literal dot.
     normalized = normalized.gsub("\\.", ".")
 
     # Final path double-slash collapse in case the rewrites left an

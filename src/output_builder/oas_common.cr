@@ -26,6 +26,8 @@ module OutputBuilderOasCommon
   # the same way.
   PATH_CONVERTER_TYPES = Set{"int", "str", "string", "slug", "uuid", "float", "bool", "path", "any"}
 
+  SPLAT_PATH_TECHS = Set{"clojure_pedestal", "cpp_drogon", "elixir_bandit", "elixir_phoenix", "elixir_plug", "haskell_yesod", "lua_lapis", "perl_mojolicious", "scala_play"}
+
   # Operation keys whose value is a list of alternatives rather than a single
   # answer. When two endpoints collapse onto one path+method, keeping the
   # first one's value throws the rest away — `servers` would name one of two
@@ -49,9 +51,12 @@ module OutputBuilderOasCommon
   # first `?` even when the `?` was regex or optional-segment syntax rather
   # than a query separator — Drogon's `/grp/(?:a|b)/(.*)?` emitted the path
   # `/grp/(` and Giraffe's `/legacy(/?)` emitted `/legacy(/`.
-  private def normalize_oas_path(raw_path : String, declared_path_params : Array(String) = [] of String) : String
+  private def normalize_oas_path(raw_path : String, declared_path_params : Array(String) = [] of String,
+                                 technologies : Array(String) = [] of String) : String
     path = raw_path
     path = "/" if path.empty?
+    bracket_path_tech = technologies.includes?("cfml_wheels")
+    splat_path_tech = technologies.any? { |tech| SPLAT_PATH_TECHS.includes?(tech) }
 
     # Google AIP / gRPC-transcoding resource patterns (`{name=projects/*}`)
     # embed a path pattern inside the placeholder. Left alone, the `*` pass
@@ -67,8 +72,10 @@ module OutputBuilderOasCommon
     path = path.gsub(/\{\/:([A-Za-z_][A-Za-z0-9_-]*)\}/, "/:\\1")
     path = path.gsub(/\{\/([^{}]+)\}/, "/\\1")
 
-    # Bracket-style path params (`.NET` / Rails-ish `/users/[id]`) → `{id}`.
-    path = path.gsub(/\[([A-Za-z_][A-Za-z0-9_-]*)\]/, "{\\1}")
+    # Bracket-style path params (CFML Wheels `/users/[id]`) → `{id}`.
+    if bracket_path_tech
+      path = path.gsub(/\[([A-Za-z_][A-Za-z0-9_-]*)\]/, "{\\1}")
+    end
 
     # Play's routes file spells a constrained param `$path<.+>`. The regex is
     # a constraint, not a name, and neither `<…>` pass below matches it, so
@@ -92,7 +99,9 @@ module OutputBuilderOasCommon
     # longer bound to anything.
     path = path.gsub(/\{\*+(\w+)\}/, "{\\1}")
 
-    path = path.gsub(/\*(\w+)/, "{\\1}")
+    if splat_path_tech
+      path = path.gsub(/\*(\w+)/, "{\\1}")
+    end
     # Colon placeholders allow hyphens (`:item-id`, `:order-id`). `\w+` stopped
     # at `-` and turned `/items/:item-id` into `/items/{item}-id` with the
     # declared `item-id` path param left unmapped (`x-noir-unmapped-path-params`).
@@ -104,10 +113,12 @@ module OutputBuilderOasCommon
     # a valid OAS path template char; collapse a run of `*` to a named var.
     # Two of them in one path (`/api/*/v1/*`) have to get distinct names —
     # a repeated template variable is not a valid path template.
-    wildcards = 0
-    path = path.gsub(/\*+/) do
-      wildcards += 1
-      wildcards == 1 ? "{wildcard}" : "{wildcard#{wildcards}}"
+    if splat_path_tech
+      wildcards = 0
+      path = path.gsub(/\*+/) do
+        wildcards += 1
+        wildcards == 1 ? "{wildcard}" : "{wildcard#{wildcards}}"
+      end
     end
 
     # A `?` that reaches here is route syntax a path template has no way to
@@ -598,7 +609,8 @@ module OutputBuilderOasCommon
   private def resolve_oas_path(endpoint : Endpoint, route : String, parameters : Array(Hash(String, JSON::Any)),
                                canonical_paths : Hash(String, String)) : {String, String?}
     declared_path_params = endpoint.params.compact_map { |p| p.name if p.request_type == "path" }
-    oas_path = normalize_oas_path(route_path(route), declared_path_params)
+    technologies = endpoint.details.technologies + [endpoint.details.technology || ""]
+    oas_path = normalize_oas_path(route_path(route), declared_path_params, technologies)
     canonical_path = canonical_oas_path(oas_path, canonical_paths)
     return {oas_path, nil} if canonical_path == oas_path
 
