@@ -3,8 +3,9 @@ name: Windows
 # Native Windows build + spec run (#2828). Kept out of ci.yml while Windows
 # support is being brought up, so a red Windows run doesn't gate merges.
 on:
+  # No `branches:` filter: Windows work lands as stacked PRs whose base is
+  # another PR's branch, not main.
   pull_request:
-    branches: [main]
     paths:
       - .github/workflows/windows.yml
       - shard.yml
@@ -40,7 +41,11 @@ jobs:
       - name: Build
         run: shards build --verbose
       - name: Smoke test
-        run: ./bin/noir.exe -b spec/functional_test/fixtures/crystal/kemal
+        # A scan that finds nothing still exits 0, so assert on the count.
+        run: |
+          count=$(./bin/noir.exe -b spec/functional_test/fixtures/crystal/kemal -f json 2>/dev/null | jq '.endpoints | length')
+          echo "endpoints: $count"
+          test "$count" -gt 0
       - name: Build spec suite
         run: crystal build spec/suite.cr -o bin/noir_spec.exe
       - name: Run specs

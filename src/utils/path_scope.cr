@@ -35,13 +35,20 @@ module Noir
     # falling back to `Dir.current` outside a pinned scope. The result is
     # identical to `File.expand_path(path)` as long as nothing changes the
     # working directory inside the pinned scope, which noir never does.
+    #
+    # Always `/`-separated: on Windows `File.expand_path` joins with `\\`,
+    # but the walk and every analyzer match paths as `/` strings.
     def expand(path : String) : String
       return path if already_expanded?(path)
-      if Path.new(path).absolute?
-        File.expand_path(path, File::SEPARATOR_STRING)
-      else
-        File.expand_path(path, @@pinned_cwd || Dir.current)
-      end
+      expanded = if Path.new(path).absolute?
+                   File.expand_path(path, File::SEPARATOR_STRING)
+                 else
+                   File.expand_path(path, @@pinned_cwd || Dir.current)
+                 end
+      {% if flag?(:windows) %}
+        expanded = expanded.gsub('\\', '/')
+      {% end %}
+      expanded
     end
 
     # True when `File.expand_path(path)` would return `path` unchanged: an
@@ -88,7 +95,7 @@ module Noir
     # separator stripped (except the filesystem root itself).
     def normalize_root(root : String) : String
       expanded = expand(root)
-      expanded == File::SEPARATOR ? expanded : expanded.rstrip('/')
+      expanded == "/" ? expanded : expanded.rstrip('/')
     end
 
     # Canonical form of a user-supplied *base* path, preserving whether it
@@ -168,13 +175,13 @@ module Noir
     # already-normalized root. Use this in per-file loops where the root is
     # loop-invariant (normalize it once with `normalize_root`).
     def under_normalized_root?(expanded_path : String, normalized_root : String) : Bool
-      return expanded_path.starts_with?(File::SEPARATOR) if normalized_root == File::SEPARATOR
+      return expanded_path.starts_with?('/') if normalized_root == "/"
       return false unless expanded_path.starts_with?(normalized_root)
       # Boundary test on the byte after the root rather than
-      # `starts_with?(normalized_root + File::SEPARATOR)`: this runs inside
+      # `starts_with?(normalized_root + "/")`: this runs inside
       # files x roots loops, and the concatenation allocated a string per call.
       expanded_path.bytesize == normalized_root.bytesize ||
-        expanded_path.byte_at(normalized_root.bytesize) == File::SEPARATOR.ord
+        expanded_path.byte_at(normalized_root.bytesize) == '/'.ord
     end
 
     # The most specific (longest normalized) base in `bases` that contains
@@ -239,7 +246,7 @@ module Noir
       expanded_path = expand(path)
       normalized = normalize_root(base_path)
       return File.basename(path) unless under_normalized_root?(expanded_path, normalized)
-      relative = expanded_path[normalized.size..].lchop(File::SEPARATOR)
+      relative = expanded_path[normalized.size..].lchop('/')
       relative.empty? ? File.basename(path) : relative
     end
   end

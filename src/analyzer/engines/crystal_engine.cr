@@ -95,8 +95,8 @@ module Analyzer::Crystal
         next false unless path_under_root?(expanded_path, root)
 
         expanded_root = Noir::PathScope.expand(root)
-        expanded_root = expanded_root.rstrip('/') unless expanded_root == File::SEPARATOR
-        relative = expanded_path[expanded_root.size..]?.try(&.lchop(File::SEPARATOR)) || ""
+        expanded_root = expanded_root.rstrip('/') unless expanded_root == "/"
+        relative = expanded_path[expanded_root.size..]?.try(&.lchop('/')) || ""
         relative.starts_with?("spec/")
       end
     end
