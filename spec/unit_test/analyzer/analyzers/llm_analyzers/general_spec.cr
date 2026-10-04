@@ -79,6 +79,44 @@ describe Analyzer::AI::Unified do
   # LLM picked, and the LLM is steered by the source tree being scanned.
   # Anything that escapes the scan base gets read and shipped to the provider.
   describe "#path_within_base?" do
+    {% if flag?(:windows) %}
+      it "confines agent file tools across a directory junction on Windows" do
+        root = File.tempname("noir-agent-junction")
+        outside = File.tempname("noir-agent-junction-outside")
+        begin
+          Dir.mkdir_p(File.join(root, "src"))
+          Dir.mkdir_p(outside)
+          File.write(File.join(root, "src", "app.rb"), "get '/' do; end\n")
+          File.write(File.join(outside, "id_rsa"), "PRIVATE KEY\n")
+          # A junction, unlike `File.symlink`, needs no privilege to plant.
+          link = File.join(root, "vendor").gsub('/', '\\')
+          Process.run("cmd.exe", ["/d", "/c", "mklink", "/J", link, outside.gsub('/', '\\')]).success?.should be_true
+
+          options = Hash{
+            "url"         => YAML::Any.new(""),
+            "debug"       => YAML::Any.new(false),
+            "verbose"     => YAML::Any.new(false),
+            "color"       => YAML::Any.new(false),
+            "nolog"       => YAML::Any.new(false),
+            "ai_provider" => YAML::Any.new("http://localhost:8000"),
+            "ai_model"    => YAML::Any.new("test-model"),
+            "ai_key"      => YAML::Any.new(""),
+            "base"        => YAML::Any.new([YAML::Any.new(root)]),
+          }
+          analyzer = Analyzer::AI::Unified.new(options)
+
+          analyzer.path_within_base?(File.join(root, "src", "app.rb")).should be_true
+          analyzer.path_within_base?(File.join(root, "vendor")).should be_false
+          analyzer.path_within_base?(File.join(root, "vendor", "id_rsa")).should be_false
+        ensure
+          # Remove the junction itself first so rm_rf can't follow it out.
+          Dir.delete?(File.join(root, "vendor"))
+          FileUtils.rm_rf(root)
+          FileUtils.rm_rf(outside)
+        end
+      end
+    {% end %}
+
     it "confines agent file tools to the scan base, symlinks included" do
       root = File.tempname("noir-agent-base")
       outside = File.tempname("noir-agent-outside")
