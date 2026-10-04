@@ -847,7 +847,15 @@ module Analyzer::AI
     def path_within_base?(path : String) : Bool
       expanded = Noir::PathScope.expand(path)
       return false unless contained_in?(expanded, @expanded_base_paths)
-      return true unless File.symlink?(expanded) || symlinked_ancestor?(expanded)
+      {% if flag?(:windows) %}
+        # `File.symlink?` is false for a directory junction (`mklink /J`, a
+        # mount-point reparse point that needs no privilege to create), so
+        # the link shortcut below would never resolve one. Resolve every
+        # path that exists; a missing one has nothing to read.
+        return true unless File.exists?(expanded)
+      {% else %}
+        return true unless File.symlink?(expanded) || symlinked_ancestor?(expanded)
+      {% end %}
 
       real = resolved_real_path(expanded)
       return false if real.nil?
