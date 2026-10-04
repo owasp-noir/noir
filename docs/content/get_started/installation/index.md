@@ -132,11 +132,11 @@ To install or update:
     ```powershell
     $dir = "$env:LOCALAPPDATA\noir"
     New-Item -ItemType Directory -Force $dir | Out-Null
-    Move-Item .\noir-v*-windows-x86_64.exe "$dir\noir.exe"
+    Move-Item -Force .\noir-v*-windows-x86_64.exe "$dir\noir.exe"
     [Environment]::SetEnvironmentVariable("Path", [Environment]::GetEnvironmentVariable("Path", "User") + ";$dir", "User")
     ```
 
-    Open a new terminal so the updated `PATH` takes effect.
+    Open a new terminal so the updated `PATH` takes effect. To update later, run the `Move-Item` line again with the new download (`-Force` replaces the old `noir.exe`).
 
 5. Verify:
 

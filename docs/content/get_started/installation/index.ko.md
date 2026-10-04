@@ -132,11 +132,11 @@ nix run github:owasp-noir/noir -- -h
     ```powershell
     $dir = "$env:LOCALAPPDATA\noir"
     New-Item -ItemType Directory -Force $dir | Out-Null
-    Move-Item .\noir-v*-windows-x86_64.exe "$dir\noir.exe"
+    Move-Item -Force .\noir-v*-windows-x86_64.exe "$dir\noir.exe"
     [Environment]::SetEnvironmentVariable("Path", [Environment]::GetEnvironmentVariable("Path", "User") + ";$dir", "User")
     ```
 
-    바뀐 `PATH`가 적용되도록 터미널을 새로 엽니다.
+    바뀐 `PATH`가 적용되도록 터미널을 새로 엽니다. 나중에 업데이트할 때는 새로 받은 파일로 `Move-Item` 줄만 다시 실행하면 됩니다(`-Force`가 기존 `noir.exe`를 교체합니다).
 
 5. 설치를 확인합니다.
 
