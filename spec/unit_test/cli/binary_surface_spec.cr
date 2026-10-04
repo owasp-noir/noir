@@ -13,7 +13,7 @@ require "../../../src/cli/catalog"
 # codes, and the stdout/stderr split can only be pinned by running the
 # real program, so these examples assert all three separately.
 private REPO_ROOT = File.expand_path(File.join(__DIR__, "..", "..", ".."))
-private BINARY    = File.join(REPO_ROOT, "bin", "noir")
+private BINARY    = File.join(REPO_ROOT, "bin", {% if flag?(:windows) %} "noir.exe" {% else %} "noir" {% end %})
 private FIXTURE   = File.join(REPO_ROOT, "spec", "functional_test", "fixtures", "ruby", "sinatra")
 # A second, deliberately different codebase, so `--diff-path` has something
 # to report as added/removed rather than an empty diff.
