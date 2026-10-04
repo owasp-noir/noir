@@ -21,7 +21,13 @@ jobs:
             platform: macos
           - os: macos-15-intel
             platform: macos
+          - os: windows-latest
+            platform: windows
     runs-on: ${{ matrix.os }}
+    # Windows runners default to PowerShell; every step here is bash.
+    defaults:
+      run:
+        shell: bash
     steps:
       - name: Refresh apt package indexes
         if: runner.os == 'Linux'
@@ -68,6 +74,14 @@ jobs:
           chmod +x scripts/package-macos.sh
           scripts/package-macos.sh "$BIN" "build/noir-${GITHUB_REF_SLUG}-osx-${ARCH}.tar.gz"
           rm -f "$BIN"
+      - if: matrix.platform == 'windows'
+        name: Build binary (Windows)
+        # --static links the static CRT, so the .exe runs without the Visual
+        # C++ redistributable installed.
+        run: |
+          mkdir -p build
+          crystal build src/noir.cr -o "build/noir-${GITHUB_REF_SLUG}-windows-${ARCH}.exe" --release --no-debug --static
+          rm -f build/*.pdb build/*.lib build/*.exp
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
