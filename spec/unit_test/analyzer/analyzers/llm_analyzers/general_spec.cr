@@ -110,7 +110,9 @@ describe Analyzer::AI::Unified do
           analyzer.path_within_base?(File.join(root, "vendor", "id_rsa")).should be_false
         ensure
           # Remove the junction itself first so rm_rf can't follow it out.
-          Dir.delete?(File.join(root, "vendor"))
+          # `rmdir` drops just the link; Crystal's `Dir.delete` refuses a
+          # reparse point.
+          Process.run("cmd.exe", ["/d", "/c", "rmdir", File.join(root, "vendor").gsub('/', '\\')])
           FileUtils.rm_rf(root)
           FileUtils.rm_rf(outside)
         end
