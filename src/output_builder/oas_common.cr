@@ -28,6 +28,25 @@ module OutputBuilderOasCommon
 
   SPLAT_PATH_TECHS = Set{"clojure_pedestal", "cpp_drogon", "elixir_bandit", "elixir_phoenix", "elixir_plug", "haskell_yesod", "lua_lapis", "perl_mojolicious", "scala_play"}
 
+  # Same set as `EndpointOptimizer::ANGLE_PATH_TECHS`. `<id>` / `<int:id>`
+  # are placeholders only for these frameworks. Rewriting them for Express
+  # turned `/users/<script>alert(1)</script>` into the invalid template
+  # `/users/{script}alert(1)</script>`.
+  ANGLE_PATH_TECHS = Set{
+    "crystal_marten",
+    "dart_shelf",
+    "perl_mojolicious",
+    "php_yii",
+    "python_bottle",
+    "python_django",
+    "python_flask",
+    "python_quart",
+    "python_sanic",
+    "r_plumber",
+    "rust_rocket",
+    "rust_salvo",
+  }
+
   # Operation keys whose value is a list of alternatives rather than a single
   # answer. When two endpoints collapse onto one path+method, keeping the
   # first one's value throws the rest away — `servers` would name one of two
@@ -57,6 +76,10 @@ module OutputBuilderOasCommon
     path = "/" if path.empty?
     bracket_path_tech = technologies.includes?("cfml_wheels")
     splat_path_tech = technologies.any? { |tech| SPLAT_PATH_TECHS.includes?(tech) }
+    # Empty means unknown and keeps the historical rewrite (`<int:id>` →
+    # `{id}`). A named technology that is not in the set leaves the brackets.
+    known_techs = technologies.reject(&.empty?)
+    angle_path_tech = known_techs.empty? || known_techs.any? { |tech| ANGLE_PATH_TECHS.includes?(tech) }
 
     # Google AIP / gRPC-transcoding resource patterns (`{name=projects/*}`)
     # embed a path pattern inside the placeholder. Left alone, the `*` pass
@@ -84,10 +107,15 @@ module OutputBuilderOasCommon
 
     # Convert typed placeholders before the generic :param pass; otherwise
     # `<int:id>` becomes `<int{id}>` and can no longer be normalized.
-    path = path.gsub(/<([^:<>]+):(\w+)>/) do |_, match|
-      "{#{angle_placeholder_name(match[1], match[2], declared_path_params)}}"
+    # Only frameworks that spell params this way. A literal Express segment
+    # stays `<...>`, including one that is not a whole placeholder
+    # (`<script>alert(1)</script>`).
+    if angle_path_tech
+      path = path.gsub(/<([^:<>]+):(\w+)>/) do |_, match|
+        "{#{angle_placeholder_name(match[1], match[2], declared_path_params)}}"
+      end
+      path = path.gsub(/<(\w+)>/, "{\\1}")
     end
-    path = path.gsub(/<(\w+)>/, "{\\1}")
 
     # Catch-all placeholders keep the rest-of-path marker inside the braces:
     # Armeria `{*filePath}`, Salvo `{**path}`, ASP.NET and Spring `{*slug}`.

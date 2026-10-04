@@ -1098,15 +1098,40 @@ describe "EndpointOptimizer" do
       result[0].url.should eq("/^\\/api\\/(\\d+)$/")
     end
 
-    it "strips Python regex anchors without trimming Grape literal dollar signs" do
+    it "strips Python regex anchors without trimming literal dollar signs" do
       optimizer = EndpointOptimizer.new(logger, options)
       endpoints = [
         tech_endpoint("/^tags/?$", "GET", "python_django", "urls.py"),
+        tech_endpoint("/articles/\\.json\\Z", "GET", "python_django", "urls.py"),
         tech_endpoint("/dollar$", "GET", "ruby_grape", "api.rb"),
+        tech_endpoint("/dollar$", "GET", "js_express", "app.js"),
+        tech_endpoint("/price/$", "GET", "js_express", "app.js"),
+        tech_endpoint("/^caret", "GET", "js_express", "app.js"),
+        tech_endpoint("/keep$mid", "GET", "js_express", "app.js"),
+        tech_endpoint("/dollar$", "GET", "python_flask", "app.py"),
+        tech_endpoint("/^start", "GET", "ruby_sinatra", "app.rb"),
+        tech_endpoint("/dollar$", "GET", "ruby_rails", "routes.rb"),
+        tech_endpoint("/dollar$", "GET", "java_spring", "Ctrl.java"),
+        tech_endpoint("/dollar$", "GET", "php_laravel", "web.php"),
+        tech_endpoint("/dollar$", "GET", "oas3", "openapi.yaml"),
       ]
 
       result = optimizer.normalize_url_shapes(endpoints)
-      result.map(&.url).should eq(["/tags/?", "/dollar$"])
+      result.map(&.url).should eq([
+        "/tags/?",
+        "/articles/.json",
+        "/dollar$",
+        "/dollar$",
+        "/price/$",
+        "/^caret",
+        "/keep$mid",
+        "/dollar$",
+        "/^start",
+        "/dollar$",
+        "/dollar$",
+        "/dollar$",
+        "/dollar$",
+      ])
     end
   end
 
@@ -1320,10 +1345,24 @@ describe "EndpointOptimizer" do
 
     it "extracts parameters from angle bracket patterns" do
       optimizer = EndpointOptimizer.new(logger, options)
+      flask = Details.new
+      flask.technology = "python_flask"
+      django = Details.new
+      django.technology = "python_django"
+      marten = Details.new
+      marten.technology = "crystal_marten"
+      express = Details.new
+      express.technology = "js_express"
+
       endpoints = [
-        Endpoint.new("/users/<id>", "GET"),
-        Endpoint.new("/posts/<int:post_id>", "GET"), # Django style
-        Endpoint.new("/items/<name:str>", "GET"),    # Marten style
+        Endpoint.new("/users/<id>", "GET", [] of Param, flask),
+        Endpoint.new("/posts/<int:post_id>", "GET", [] of Param, django), # Django style
+        Endpoint.new("/items/<name:str>", "GET", [] of Param, marten),    # Marten style
+        # Express keeps the brackets. They are not placeholders, and a
+        # partial `<word>` must not become a path param.
+        Endpoint.new("/files/<id>", "GET", [] of Param, express),
+        Endpoint.new("/users/<script>alert(1)</script>", "GET", [] of Param, express),
+        Endpoint.new("/plain/<id>", "GET"),
       ]
 
       result = optimizer.add_path_parameters(endpoints)
@@ -1335,6 +1374,12 @@ describe "EndpointOptimizer" do
 
       result[2].params.size.should eq(1)
       result[2].params[0].name.should eq("name")
+
+      result[3].params.should be_empty
+      result[3].url.should eq("/files/<id>")
+      result[4].params.should be_empty
+      result[4].url.should eq("/users/<script>alert(1)</script>")
+      result[5].params.map(&.name).should eq(["id"])
     end
 
     it "splits colon params joined by a hyphen or a dot" do
@@ -1379,8 +1424,9 @@ describe "EndpointOptimizer" do
         # Name-first frameworks keep their order.
         Endpoint.new("/users/<id:int>", "GET", [] of Param, sanic),
         Endpoint.new("/posts/<pk:custom>", "GET", [] of Param, marten),
-        # No technology: converter arguments are still not part of the name.
-        Endpoint.new("/v/<float(signed=True):ratio>", "GET"),
+        # Name-first, and not converter-first: arguments are still not part
+        # of the name (`float(signed=True)` must not survive as the param).
+        Endpoint.new("/v/<float(signed=True):ratio>", "GET", [] of Param, sanic),
       ]
 
       result = optimizer.add_path_parameters(endpoints)

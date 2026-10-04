@@ -98,14 +98,21 @@ class EndpointOptimizer
       end
 
       # `<param>` patterns (Django / Flask / Marten / Bottle style).
-      url.scan(ANGLE_PLACEHOLDER_RE) do |match|
-        param = angle_bracket_param(match[1], endpoint)
-        # Skip regex fragments. Play declares constrained path params as
-        # `$name<regex>`, so the framework analyzer already recorded
-        # `name`; the `<regex>` body (e.g. `\w{8}`, `[\w-]{2,6}`) is not
-        # a param name.
-        next unless valid_path_param_name?(param)
-        placeholders << PathPlaceholder.new(match.byte_begin(0), match.byte_end(0), param)
+      # A known string-route technology (Express and friends) keeps `<...>`
+      # as literal text — `/files/<id>` is not a path param, and
+      # `/users/<script>alert(1)</script>` must not invent `script`.
+      # No technology at all still scans: callers and specs build endpoints
+      # before a framework is known, and `<int:id>` there is the placeholder.
+      if angle_placeholder_tech?(endpoint.details.technology)
+        url.scan(ANGLE_PLACEHOLDER_RE) do |match|
+          param = angle_bracket_param(match[1], endpoint)
+          # Skip regex fragments. Play declares constrained path params as
+          # `$name<regex>`, so the framework analyzer already recorded
+          # `name`; the `<regex>` body (e.g. `\w{8}`, `[\w-]{2,6}`) is not
+          # a param name.
+          next unless valid_path_param_name?(param)
+          placeholders << PathPlaceholder.new(match.byte_begin(0), match.byte_end(0), param)
+        end
       end
 
       # `/*param` patterns (wildcard / glob).
@@ -135,7 +142,26 @@ class EndpointOptimizer
 
   COLON_SEGMENT_RE     = /\/:([^\/{}]+)/
   ANGLE_PLACEHOLDER_RE = /<([^>]+)>/
-  SPLAT_SEGMENT_RE     = /\/\*([^\/]+)/
+
+  # Frameworks whose route syntax uses `<name>` / `<type:name>` / `<name:type>`
+  # placeholders. Mirrored by `OutputBuilderOasCommon::ANGLE_PATH_TECHS`.
+  # Crow's `<int>` is a type token the analyzer already rewrote to `{paramN}`,
+  # so it is not in this set — treating the type as the name would be wrong.
+  ANGLE_PATH_TECHS = Set{
+    "crystal_marten",
+    "dart_shelf",
+    "perl_mojolicious",
+    "php_yii",
+    "python_bottle",
+    "python_django",
+    "python_flask",
+    "python_quart",
+    "python_sanic",
+    "r_plumber",
+    "rust_rocket",
+    "rust_salvo",
+  }
+  SPLAT_SEGMENT_RE = /\/\*([^\/]+)/
 
   # A `:name` param name. Hyphens are part of the identifier — kebab-case
   # path params are idiomatic in Clojure (`/:artifact-id`, `/:group-id`) and
@@ -264,6 +290,13 @@ class EndpointOptimizer
   # not part of the converter name — `<int(signed=True):num>` used to fail
   # the builtin check and resolve to the whole `int(signed=True)` — so they
   # are dropped before splitting.
+  # Nil/empty means the framework is unknown, so the historical `<...>`
+  # scan still runs. A named technology must be one that uses the syntax.
+  private def angle_placeholder_tech?(technology : String?) : Bool
+    return true if technology.nil? || technology.empty?
+    ANGLE_PATH_TECHS.includes?(technology)
+  end
+
   private def angle_bracket_param(raw : String, endpoint : Endpoint) : String
     raw = raw.gsub(CONVERTER_ARGS_RE, "") if raw.includes?('(')
     parts = raw.split(":")
