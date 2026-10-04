@@ -16,6 +16,20 @@
 set -eu
 D="$(cd "$(dirname "$0")" && pwd)"
 CC_BIN="${CC:-cc}"
+PIC="-fPIC"
+
+# Windows (Git Bash / MSYS sh): link.exe reads a leading `/` as an option,
+# so MSYS paths like /d/a/... get dropped — emit D:/a/... instead. clang
+# targets MSVC by default there and takes the same flags as cc, while a
+# MinGW `cc` would produce objects that don't link against the MSVC CRT.
+# -fPIC is an error on the MSVC target.
+case "$(uname -s)" in
+  MINGW* | MSYS* | CYGWIN*)
+    D="$(cygpath -m "$D")"
+    CC_BIN="${CC:-clang}"
+    PIC=""
+    ;;
+esac
 
 # --- Compile the tree-sitter runtime once --------------------------------
 RUNTIME_SRC="$D/runtime/src/lib.c"
@@ -48,7 +62,7 @@ if [ "$runtime_stale" -eq 1 ]; then
   # The -I flags are inlined (rather than expanded from a single
   # $RUNTIME_INCLUDE variable) so project paths containing spaces
   # don't word-split and break the compile.
-  $CC_BIN -c -O2 -fPIC -std=c11 -fvisibility=hidden \
+  $CC_BIN -c -O2 $PIC -std=c11 -fvisibility=hidden \
     -D_DEFAULT_SOURCE \
     -I"$D/runtime/include" -I"$D/runtime/src" \
     -o "$RUNTIME_OBJ" "$RUNTIME_SRC" 1>&2
@@ -73,7 +87,7 @@ for g in $GRAMMARS; do
       # Grammars only need the runtime's public api.h, not the private
       # headers, so we pass just the include dir (not the src dir).
       # shellcheck disable=SC2086
-      $CC_BIN -c -O2 -fPIC -I"$GD" -I"$D/runtime/include" \
+      $CC_BIN -c -O2 $PIC -I"$GD" -I"$D/runtime/include" \
         -o "$OBJ" "$SRC" 1>&2
     fi
     OBJS="$OBJS $OBJ"

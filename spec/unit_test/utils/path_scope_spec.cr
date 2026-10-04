@@ -56,11 +56,27 @@ describe Noir::PathScope do
       end
     end
 
+    {% if flag?(:windows) %}
+      it "keeps a UNC share's double leading separator on Windows" do
+        {
+          "\\\\server\\share\\project" => "//server/share/project",
+          "//server/share/project/"    => "//server/share/project",
+          "\\\\?\\C:\\long\\path"      => "\\\\?\\C:\\long\\path",
+          "C:\\proj\\"                 => "C:/proj",
+          "C:\\"                       => "C:/",
+        }.each do |input, expected|
+          once = Noir::PathScope.normalize_base(input)
+          once.should eq(expected)
+          Noir::PathScope.normalize_base(once).should eq(once)
+        end
+      end
+    {% end %}
+
     it "leaves a backslash alone on POSIX" do
       # Only Windows treats `\\` as a separator; elsewhere it is an
       # ordinary filename character.
       {% if flag?(:windows) %}
-        Noir::PathScope.normalize_base("a\\\\b\\\\").should eq("a\\b")
+        Noir::PathScope.normalize_base("a\\\\b\\\\").should eq("a/b")
       {% else %}
         Noir::PathScope.normalize_base("a\\b\\").should eq("a\\b\\")
       {% end %}

@@ -603,7 +603,9 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
         begin
           listing.entries.each do |listed|
             entry = listed.name
-            full_path = File.join(dir, entry)
+            # Not `File.join`: on Windows it joins with `\\`, and every
+            # path downstream is matched as a `/`-separated string.
+            full_path = dir.ends_with?('/') ? "#{dir}#{entry}" : "#{dir}/#{entry}"
             info = listed.info
             if info.nil?
               # `File.info?` turns every `stat(2)` failure into `nil`, and

@@ -109,14 +109,24 @@ module Noir
     # an earlier sweep. A relative base stays relative.
     # Separators a base path may legitimately use. Windows accepts both
     # forms; on POSIX a backslash is an ordinary filename character and
-    # must not be treated as a separator.
-    BASE_SEPARATORS = File::SEPARATOR == '\\' ? {'\\', '/'} : {'/'}
+    # must not be treated as a separator. The result is always joined with
+    # `/`: noir handles paths as `/`-separated strings throughout, and
+    # Windows file APIs accept `/` as readily as `\\`.
+    # `File::SEPARATOR` is `'/'` on every platform in Crystal, Windows
+    # included, so the platform has to be read off the target flag.
+    BASE_SEPARATORS = {% if flag?(:windows) %} {'\\', '/'} {% else %} {'/'} {% end %}
 
     def normalize_base(base : String) : String
       return base if base.empty?
+      # An extended-length path (`\\?\C:\...`) is passed to Windows
+      # verbatim; rewriting its separators changes what it names.
+      return base if {{ flag?(:windows) }} && base.starts_with?("\\\\?\\")
 
       separators = BASE_SEPARATORS
       rooted = separators.includes?(base[0])
+      # A UNC share (`\\server\share`, `//server/share`) keeps both leading
+      # separators; one alone names the root of the current drive.
+      unc = {{ flag?(:windows) }} && base.size > 2 && rooted && separators.includes?(base[1])
 
       segments = [] of String
       segment = String::Builder.new
@@ -132,15 +142,16 @@ module Noir
       last = segment.to_s
       segments << last unless last.empty? || last == "."
 
-      joined = segments.join(File::SEPARATOR)
-      return joined.empty? ? File::SEPARATOR.to_s : "#{File::SEPARATOR}#{joined}" if rooted
+      joined = segments.join('/')
+      return "//#{joined}" if unc && !joined.empty?
+      return joined.empty? ? "/" : "/#{joined}" if rooted
       return "." if joined.empty?
       # A Windows drive root ("C:\\") is the one place a trailing separator
       # carries meaning — without it "C:" names the current directory on
       # that drive instead.
-      if File::SEPARATOR == '\\' && segments.size == 1 && joined.size == 2 &&
+      if {{ flag?(:windows) }} && segments.size == 1 && joined.size == 2 &&
          joined[1] == ':' && base.size > 2
-        return "#{joined}#{File::SEPARATOR}"
+        return "#{joined}/"
       end
       joined
     end
