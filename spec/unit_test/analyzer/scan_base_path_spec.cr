@@ -72,6 +72,7 @@ HOSTILE_ANCESTORS = [
   {"javascript/nuxtjs", "server"},
   {"javascript/sveltekit", "src"},
   {"javascript/remix", "app"},
+  {"javascript/react_router_flat", "app"},
   {"javascript/astro", "src"},
   {"javascript/nitro", "routes"},
   {"javascript/fresh", "routes"},

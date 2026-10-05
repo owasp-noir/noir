@@ -38,6 +38,7 @@ module Analyzer::Javascript
   #     hard to represent without per-route alternatives).
   #   * The legacy v1 nested-folder convention — v2 flat is what
   #     the toolchain has been on since Remix 1.15 / Remix 2.
+  #     (v2 folder routes — `routes/users.$id/route.tsx` — are read.)
   class Remix < JavascriptEngine
     analyzer_for "js_remix"
 
@@ -47,66 +48,130 @@ module Analyzer::Javascript
 
     NON_GET_VERBS = ["POST", "PUT", "PATCH", "DELETE"]
 
+    # A folder route's module: `routes/users.$id/route.tsx` (or `index.tsx`).
+    FOLDER_ROUTE_MODULES = ["route", "index"]
+
+    # A Remix project is anchored by `remix.config.*` or a package.json
+    # pulling in a Remix v2 package. Scoping to it keeps Remix off a sibling
+    # React Router app's `app/routes/`, which uses the same file convention.
+    # Not the bare `@remix-run/` scope: React Router apps depend on
+    # utilities published under it (`@remix-run/node-fetch-server`).
+    PACKAGE_MARKERS = %w[dev react node serve server-runtime cloudflare cloudflare-pages cloudflare-workers deno express architect]
+      .map { |name| %("@remix-run/#{name}") }
+    CONFIG_BASENAMES = ["remix.config.js", "remix.config.ts", "remix.config.mjs", "remix.config.cjs"]
+
+    # React Router v7's route config. Remix has none, so an app directory
+    # holding one belongs to React Router even inside a Remix project root
+    # (a monorepo whose root package.json hoists `@remix-run/dev`).
+    ROUTE_CONFIG_BASENAMES = ["routes.ts", "routes.js", "routes.mts", "routes.mjs"]
+    ROUTE_CONFIG_MARKER    = "@react-router/"
+
     def analyze
       result = [] of Endpoint
       mutex = Mutex.new
       include_callee = callees_needed?
+      roots = project_roots
+      react_router_dirs = react_router_apps
 
       parallel_file_scan(EXTENSIONS) do |path|
-        # Scan-base-relative, never absolute: `String#index` takes the
-        # FIRST occurrence, so a same-named directory above the scan base
-        # won outright and the derived URL changed with the checkout path.
-        scoped = base_relative_path(path)
-        idx = scoped.index("/app/routes/")
-        next if idx.nil?
+        next unless path_under_project_roots?(path, roots)
+        next unless name = flat_route_name(path)
+        next if (app = flat_route(Noir::PathScope.expand(path))) && react_router_dirs.has_key?(app[0])
 
-        relative = scoped[(idx + "/app/routes/".size)..-1]
-        # Remix only looks at the directly-named route file. Files
-        # nested deeper inside a route's directory (`route.tsx` /
-        # subcomponents) are component wiring, not route hosts.
-        next if relative.includes?("/")
-
-        leaf = strip_extension(relative)
-        next if leaf.empty?
-
-        url = url_for(leaf)
-
-        content = begin
-          read_file_content(path)
-        rescue e
-          logger.debug "Error reading #{path}: #{e.message}"
-          next
-        end
-
-        is_page = PAGE_EXTENSIONS.any? { |ext| relative.ends_with?(ext) }
-        has_loader = export_named?(content, "loader")
-        has_action = export_named?(content, "action")
-        verbs = detect_verbs(is_page, has_loader, has_action)
-        next if verbs.empty?
-
-        loader_line = has_loader ? exported_handler_line(content, "loader") : nil
-        action_line = has_action ? exported_handler_line(content, "action") : nil
-        loader_callees = include_callee && has_loader ? Noir::JSCalleeExtractor.callees_for_exported_function(content, path, "loader") : nil
-        action_callees = include_callee && has_action ? Noir::JSCalleeExtractor.callees_for_exported_function(content, path, "action") : nil
-
-        endpoints = verbs.map do |verb|
-          endpoint_line = verb == "GET" ? (loader_line || 1) : (action_line || 1)
-          endpoint = file_route_endpoint(url, verb, path, endpoint_line)
-          if include_callee
-            callees = verb == "GET" ? loader_callees : action_callees
-            callees.try &.each do |name, callee_path, callee_line|
-              endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
-            end
-          end
-          endpoint
-        end
-
-        mutex.synchronize do
-          endpoints.each { |endpoint| result << endpoint }
-        end
+        endpoints = module_endpoints(url_for(name), path, include_callee)
+        mutex.synchronize { result.concat(endpoints) } if endpoints
       end
 
       result
+    end
+
+    private def project_roots : Array(String)
+      discover_js_project_roots(PACKAGE_MARKERS, CONFIG_BASENAMES)
+    end
+
+    # Expanded app directory → the React Router route configs that build it.
+    # A config inside another config's directory is a split-out part of that
+    # app (`app/features/admin/routes.ts`), so its module paths resolve
+    # against the outer app directory, not its own.
+    private def react_router_apps : Hash(String, Array(String))
+      configs = {} of String => String
+      ROUTE_CONFIG_BASENAMES.each do |basename|
+        get_files_by_basename(basename).each do |path|
+          content = begin
+            read_file_content(path)
+          rescue e
+            logger.debug "Error reading #{path}: #{e.message}"
+            next
+          end
+          configs[path] = File.dirname(Noir::PathScope.expand(path)) if content.includes?(ROUTE_CONFIG_MARKER)
+        end
+      end
+
+      apps = {} of String => Array(String)
+      configs.each do |path, dir|
+        app = configs.values.select { |root| Noir::PathScope.under_normalized_root?(dir, root) }.min_by(&.size)
+        (apps[app] ||= [] of String) << path
+      end
+      apps
+    end
+
+    # Dot-flat route name of a module under `app/routes/`: a flat file
+    # (`routes/users.$id.tsx`) or a folder route, whose module is the
+    # folder's `route.tsx` / `index.tsx` (`routes/users.$id/route.tsx`).
+    # Anything nested deeper is component wiring, not a route host.
+    private def flat_route_name(path : String) : String?
+      # Scan-base-relative, never absolute: an `app/` directory above the
+      # scan base must not turn the tree under it into routes.
+      flat_route(base_relative_path(path)).try do |app_dir, name|
+        name if File.basename(app_dir) == "app"
+      end
+    end
+
+    # `{app_dir, route_name}` for a module directly under `<app_dir>/routes/`.
+    private def flat_route(path : String) : Tuple(String, String)?
+      dir = File.dirname(path)
+      name = strip_extension(File.basename(path))
+      if File.basename(dir) != "routes" && FOLDER_ROUTE_MODULES.includes?(name)
+        name = File.basename(dir)
+        dir = File.dirname(dir)
+      end
+      return unless File.basename(dir) == "routes"
+      return if name.empty?
+      {File.dirname(dir), name}
+    end
+
+    # Endpoints one route module serves at `url`, or nil when it serves none
+    # (a resource module without `loader` / `action`) or cannot be read.
+    private def module_endpoints(url : String, path : String, include_callee : Bool) : Array(Endpoint)?
+      content = begin
+        read_file_content(path)
+      rescue e
+        logger.debug "Error reading #{path}: #{e.message}"
+        return
+      end
+
+      is_page = PAGE_EXTENSIONS.any? { |ext| path.ends_with?(ext) }
+      has_loader = export_named?(content, "loader")
+      has_action = export_named?(content, "action")
+      verbs = detect_verbs(is_page, has_loader, has_action)
+      return if verbs.empty?
+
+      loader_line = has_loader ? exported_handler_line(content, "loader") : nil
+      action_line = has_action ? exported_handler_line(content, "action") : nil
+      loader_callees = include_callee && has_loader ? Noir::JSCalleeExtractor.callees_for_exported_function(content, path, "loader") : nil
+      action_callees = include_callee && has_action ? Noir::JSCalleeExtractor.callees_for_exported_function(content, path, "action") : nil
+
+      verbs.map do |verb|
+        endpoint_line = verb == "GET" ? (loader_line || 1) : (action_line || 1)
+        endpoint = file_route_endpoint(url, verb, path, endpoint_line)
+        if include_callee
+          callees = verb == "GET" ? loader_callees : action_callees
+          callees.try &.each do |name, callee_path, callee_line|
+            endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
+          end
+        end
+        endpoint
+      end
     end
 
     private def strip_extension(name : String) : String

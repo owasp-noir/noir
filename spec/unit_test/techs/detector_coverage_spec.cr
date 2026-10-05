@@ -77,7 +77,6 @@ UNTESTED_DETECTORS = [
   "java/spark",
   "javascript/cli",
   "javascript/hapi",
-  "javascript/remix",
   "javascript/sveltekit",
   "kotlin/cli",
   "kotlin/http4k",
@@ -165,6 +164,6 @@ describe "detector spec coverage" do
   # Guards the guard: a broken glob would make every example above pass
   # vacuously.
   it "finds every registered detector" do
-    detector_paths.size.should eq 254
+    detector_paths.size.should eq 255
   end
 end

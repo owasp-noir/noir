@@ -124,3 +124,83 @@ describe "Fresh project scoping" do
     end
   end
 end
+
+describe "Remix and React Router project scoping" do
+  it "keeps each analyzer on its own app's routes/ directory" do
+    # Both frameworks read the same `app/routes/` convention, so without a
+    # project root each one claimed the other's routes as its own.
+    root = File.tempname("noir-remix-rr-scope")
+
+    begin
+      remix = File.join(root, "remix-app")
+      FileUtils.mkdir_p(File.join(remix, "app", "routes"))
+      File.write(File.join(remix, "package.json"), %({"dependencies": {"@remix-run/node": "^2.0.0"}}))
+      File.write(File.join(remix, "app", "routes", "about.tsx"), "export default function About() {}\n")
+
+      # No `app/routes.ts`: React Router falls back to the file convention.
+      rr = File.join(root, "rr-app")
+      FileUtils.mkdir_p(File.join(rr, "app", "routes"))
+      File.write(File.join(rr, "package.json"), %({"devDependencies": {"@react-router/dev": "^7.9.0"}}))
+      File.write(File.join(rr, "app", "routes", "users.$id.tsx"), <<-TSX)
+        export async function loader({ params }) {
+          return { id: params.id };
+        }
+
+        export default function User() {}
+        TSX
+
+      endpoints = scan_tree(root)
+      tech_sources(endpoints, "js_remix").should eq([File.join(remix, "app", "routes", "about.tsx")])
+      tech_sources(endpoints, "js_react_router").should eq([File.join(rr, "app", "routes", "users.$id.tsx")])
+      endpoints.select { |e| e.details.technology == "js_react_router" }.map(&.url).uniq!.should eq(["/users/{id}"])
+    ensure
+      FileUtils.rm_rf(root) if Dir.exists?(root)
+    end
+  end
+
+  it "splits apps by route config when one root package.json hoists both" do
+    # A root package.json naming both frameworks makes the repo root a project
+    # root for each, so roots alone cannot tell the apps apart. The route
+    # config can: every React Router app has one and no Remix app does.
+    root = File.tempname("noir-remix-rr-hoisted")
+
+    begin
+      File.write(File.join(root.tap { |r| FileUtils.mkdir_p(r) }, "package.json"),
+        %({"devDependencies": {"@remix-run/dev": "^2.0.0", "@react-router/dev": "^7.9.0"}}))
+
+      remix_routes = File.join(root, "apps", "remix", "app", "routes")
+      FileUtils.mkdir_p(remix_routes)
+      File.write(File.join(remix_routes, "about.tsx"), "export default function About() {}\n")
+
+      rr_app = File.join(root, "apps", "rr", "app")
+      FileUtils.mkdir_p(File.join(rr_app, "routes"))
+      FileUtils.mkdir_p(File.join(rr_app, "features", "admin"))
+      File.write(File.join(rr_app, "routes.ts"), <<-TS)
+        import { type RouteConfig, index } from "@react-router/dev/routes";
+        export default [index("routes/home.tsx")] satisfies RouteConfig;
+        TS
+      File.write(File.join(rr_app, "routes", "home.tsx"), "export default function Home() {}\n")
+      # A split-out config: its module paths are relative to the app
+      # directory, not to the directory the file sits in.
+      File.write(File.join(rr_app, "features", "admin", "routes.ts"), <<-TS)
+        import { prefix, route } from "@react-router/dev/routes";
+        export default prefix("admin", [route("users", "features/admin/users.tsx")]);
+        TS
+      File.write(File.join(rr_app, "features", "admin", "users.tsx"), <<-TSX)
+        export async function action() {}
+        export default function Users() {}
+        TSX
+
+      endpoints = scan_tree(root)
+      tech_sources(endpoints, "js_remix").should eq([File.join(remix_routes, "about.tsx")])
+
+      rr = endpoints.select { |e| e.details.technology == "js_react_router" }
+      rr.map(&.url).uniq!.sort!.should eq(["/", "/admin/users"])
+      rr.find! { |e| e.method == "POST" }.details.code_paths.first.path.should eq(File.join(rr_app, "features", "admin", "users.tsx"))
+      # `routes/home.tsx` is the index route, never `/home`.
+      endpoints.map(&.url).should_not contain("/home")
+    ensure
+      FileUtils.rm_rf(root) if Dir.exists?(root)
+    end
+  end
+end
