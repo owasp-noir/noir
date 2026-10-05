@@ -2,7 +2,7 @@ require "../../../models/detector"
 
 module Detector::Java
   class JaxRs < Detector
-    detector_for "java_jaxrs", extensions: %w[.java]
+    detector_for "java_jaxrs", extensions: %w[.java .kt]
 
     # Frameworks that ride on JAX-RS but ship their own detector.
     # Quarkus / Dropwizard / Helidon MP projects should report as that
@@ -10,7 +10,7 @@ module Detector::Java
     DERIVATIVE_MARKERS = ["io.quarkus", "io.dropwizard", "io.helidon.microprofile"]
 
     # `derivative_project?` answers a project-wide question — "does any
-    # Java file under this root pull in Quarkus/Dropwizard?" — whose
+    # source file under this root pull in Quarkus/Dropwizard?" — whose
     # answer is identical for every file that shares a root. The detector
     # instance is shared across the whole scan, so memoise per root.
     # Without this the glob+read sweep ran once per `.java` file, making
@@ -23,7 +23,7 @@ module Detector::Java
     @derivative_cache_mutex = Mutex.new
 
     def detect(filename : String, file_contents : String) : Bool
-      return false unless filename.ends_with?(".java")
+      return false unless filename.ends_with?(".java") || filename.ends_with?(".kt")
       return false if DERIVATIVE_MARKERS.any? { |marker| file_contents.includes?(marker) }
       return false if derivative_project?(filename)
       file_contents.includes?("jakarta.ws.rs") || file_contents.includes?("javax.ws.rs")
@@ -46,10 +46,10 @@ module Detector::Java
     DERIVATIVE_MANIFEST_GLOBS = %w[pom.xml build.gradle build.gradle.kts]
 
     private def compute_derivative_project(root : String) : Bool
-      java_glob = File.join(root, "src/main/java/**/*.java")
-      fallback_glob = File.join(root, "**/*.java")
-      candidates = Dir.glob(java_glob)
-      candidates = Dir.glob(fallback_glob) if candidates.empty?
+      source_globs = %w[src/main/java/**/*.java src/main/kotlin/**/*.kt].map { |glob| File.join(root, glob) }
+      fallback_globs = %w[**/*.java **/*.kt].map { |glob| File.join(root, glob) }
+      candidates = Dir.glob(source_globs)
+      candidates = Dir.glob(fallback_globs) if candidates.empty?
       candidates += DERIVATIVE_MANIFEST_GLOBS.map { |name| File.join(root, name) }
 
       locator = CodeLocator.instance
@@ -68,12 +68,12 @@ module Detector::Java
     end
 
     private def project_root_for(path : String) : String
-      marker = "/src/main/java/"
-      if index = path.index(marker)
-        path[...index]
-      else
-        File.dirname(path)
+      {"/src/main/java/", "/src/main/kotlin/"}.each do |marker|
+        if index = path.index(marker)
+          return path[...index]
+        end
       end
+      File.dirname(path)
     end
   end
 end

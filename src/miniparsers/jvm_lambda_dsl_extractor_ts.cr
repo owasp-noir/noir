@@ -763,7 +763,7 @@ module Noir
     # Single-`/` join: `prefix + suffix` with one separator,
     # collapsing trailing/leading slashes. Empty prefix or suffix is
     # passed through unchanged.
-    private def crud_collection_path(item_path : String) : String
+    def crud_collection_path(item_path : String) : String
       trimmed = item_path.rstrip('/')
       return trimmed if trimmed.empty?
 

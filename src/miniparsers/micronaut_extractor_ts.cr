@@ -4,6 +4,7 @@ require "../models/endpoint"
 require "./java_callee_extractor"
 require "./java_parameter_extractor_ts"
 require "./java_route_extractor_ts"
+require "../utils/jvm_media_type"
 
 module Noir
   # Tree-sitter-backed Micronaut route + parameter extractor.
@@ -624,34 +625,24 @@ module Noir
             end
           end
           next unless keys.includes?(key) && value
-          if format = consumes_format_from_text(Noir::TreeSitter.node_text(value, source))
+          if format = Noir::JvmMediaType.body_format(Noir::TreeSitter.node_text(value, source))
             return format
           end
         end
         return
       end
 
-      consumes_format_from_text(Noir::TreeSitter.node_text(args, source))
-    end
-
-    private def consumes_format_from_text(text : String) : String?
-      if text.includes?("APPLICATION_FORM_URLENCODED") || text.includes?("application/x-www-form-urlencoded")
-        "form"
-      elsif text.includes?("APPLICATION_JSON") || text.includes?("application/json")
-        "json"
-      elsif text.includes?("MULTIPART_FORM_DATA") || text.includes?("multipart/form-data")
-        "form"
-      end
+      Noir::JvmMediaType.body_format(Noir::TreeSitter.node_text(args, source))
     end
 
     # Micronaut joins class + method paths with a single `/`. Empty
     # method path → just the class prefix (no trailing slash).
-    private def strip_uri_template_query(path : String) : String
+    def strip_uri_template_query(path : String) : String
       normalized = path.gsub(/\{\?[^}]*\}/, "")
       normalized.empty? ? "/" : normalized
     end
 
-    private def uri_template_query_vars(path : String) : Array(String)
+    def uri_template_query_vars(path : String) : Array(String)
       vars = [] of String
       path.scan(/\{\?([^}]*)\}/) do |match|
         match[1].split(',').each do |raw|
@@ -662,7 +653,7 @@ module Noir
       vars.uniq
     end
 
-    private def uri_template_path_vars(path : String) : Array(String)
+    def uri_template_path_vars(path : String) : Array(String)
       vars = [] of String
       path.scan(/\{([^}?][^}]*)\}/) do |match|
         name = normalize_uri_template_var(match[1])
@@ -680,7 +671,7 @@ module Noir
       name.strip
     end
 
-    private def merge_query_template_params(params : Array(Param), query_vars : Array(String))
+    def merge_query_template_params(params : Array(Param), query_vars : Array(String))
       query_vars.each do |name|
         next if params.any? { |param| param.name == name && param.param_type == "query" }
         params << Param.new(name, "", "query")

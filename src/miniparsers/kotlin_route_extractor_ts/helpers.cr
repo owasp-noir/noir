@@ -28,25 +28,8 @@ module Noir
       return unless mods
       Noir::TreeSitter.each_named_child(mods) do |ann|
         next unless Noir::TreeSitter.node_type(ann) == "annotation"
-        Noir::TreeSitter.each_named_child(ann) do |child|
-          case Noir::TreeSitter.node_type(child)
-          when "user_type"
-            name = simple_annotation_name(Noir::TreeSitter.node_text(child, source))
-            yield name, nil, Noir::TreeSitter.node_start_row(ann)
-          when "constructor_invocation"
-            # `user_type` + `value_arguments` pair.
-            inner_name = ""
-            args : LibTreeSitter::TSNode? = nil
-            Noir::TreeSitter.each_named_child(child) do |sub|
-              case Noir::TreeSitter.node_type(sub)
-              when "user_type"
-                inner_name = simple_annotation_name(Noir::TreeSitter.node_text(sub, source))
-              when "value_arguments"
-                args = sub
-              end
-            end
-            yield inner_name, args, Noir::TreeSitter.node_start_row(ann) unless inner_name.empty?
-          end
+        if entry = annotation_name_and_args(ann, source)
+          yield entry[0], entry[1], Noir::TreeSitter.node_start_row(ann)
         end
       end
     end
@@ -71,15 +54,21 @@ module Noir
     # Kotlin `value_arguments` contains `value_argument` children.
     # Each argument is either positional (a single child that's a
     # literal) or named (has a `simple_identifier` + expression).
+    # `keys` names the keyword arguments that carry the path; Spring's
+    # are `value`/`path`, Micronaut's `value`/`uri`/`uris`. Positional
+    # arguments are the fallback unless `positional` is off (a key such as
+    # `defaultValue` is never passed positionally).
     private def annotation_paths(args_node : LibTreeSitter::TSNode?,
                                  source : String,
                                  string_constants : Hash(String, String),
-                                 local_string_constants : Hash(String, String)) : Array(String)
+                                 local_string_constants : Hash(String, String),
+                                 keys : Enumerable(String) = {"value", "path"},
+                                 positional : Bool = true) : Array(String)
       empty = [] of String
       return empty unless args_node
       return empty unless Noir::TreeSitter.node_type(args_node) == "value_arguments"
 
-      positional = [] of String
+      positional_values = [] of String
       keyword = [] of String
 
       Noir::TreeSitter.each_named_child(args_node) do |arg|
@@ -88,18 +77,18 @@ module Noir
         next unless value_node
 
         if kind == :keyword
-          next unless key == "value" || key == "path"
+          next unless keys.includes?(key)
           collect_string_values(value_node, source, keyword, string_constants, local_string_constants)
         elsif kind == :bare_identifier
           if value = local_string_constants[key]?
-            positional << value unless value.empty?
+            positional_values << value unless value.empty?
           end
         else
-          collect_string_values(value_node, source, positional, string_constants, local_string_constants)
+          collect_string_values(value_node, source, positional_values, string_constants, local_string_constants)
         end
       end
 
-      keyword.empty? ? positional : keyword
+      keyword.empty? && positional ? positional_values : keyword
     end
 
     # Return `{:keyword | :positional | :bare_identifier, key_or_nil, value_node}`.
@@ -538,6 +527,206 @@ module Noir
         end
       end
       buf
+    end
+
+    # ---- JVM resource-class helpers (JAX-RS, Micronaut) -------------
+
+    alias ResourceAnnotation = Tuple(String, LibTreeSitter::TSNode?, Int32)
+
+    # Kotlin scalars a resource method binds from a single request value,
+    # lower-cased like the Java extractors' `PRIMITIVE_TYPES`.
+    KOTLIN_SCALAR_TYPES = TreeSitterJaxRsExtractor::PRIMITIVE_TYPES | Set{"any", "unit"}
+
+    # Yield every class/object/interface declaration under `node` with all
+    # of its annotations as `{name, args, line}`. That includes the ones
+    # tree-sitter-kotlin split off into a preceding `prefix_expression`
+    # sibling (see `walk_classes`): it hits the first class after the
+    # imports whenever the list opens with a bare annotation such as
+    # Quarkus' `@ApplicationScoped @Path("/x")`.
+    private def each_annotated_class(node : LibTreeSitter::TSNode,
+                                     source : String,
+                                     depth : Int32 = 0,
+                                     &block : LibTreeSitter::TSNode, Array(ResourceAnnotation) ->)
+      return if depth > Noir::TreeSitter::MAX_AST_DEPTH
+
+      strays = [] of ResourceAnnotation
+      Noir::TreeSitter.each_named_child(node) do |child|
+        case Noir::TreeSitter.node_type(child)
+        when "class_declaration", "object_declaration", "interface_declaration"
+          annotations = strays
+          each_annotation(child, source) { |name, args, line| annotations << {name, args, line} }
+          block.call(child, annotations)
+          strays = [] of ResourceAnnotation
+          each_annotated_class(child, source, depth + 1, &block)
+        when "prefix_expression"
+          if prefix_expression_has_annotation?(child)
+            line = Noir::TreeSitter.node_start_row(child)
+            collect_stray_annotations(child, source).each { |(name, args)| strays << {name, args, line} }
+          else
+            strays = [] of ResourceAnnotation
+            each_annotated_class(child, source, depth + 1, &block)
+          end
+        else
+          strays = [] of ResourceAnnotation
+          each_annotated_class(child, source, depth + 1, &block)
+        end
+      end
+    end
+
+    # String values of one annotation's arguments. `args` is the usual
+    # `value_arguments`, or the bare `parenthesized_expression` a stray
+    # annotation carries.
+    private def annotation_values(args : LibTreeSitter::TSNode?,
+                                  source : String,
+                                  string_constants : Hash(String, String),
+                                  local_string_constants : Hash(String, String),
+                                  keys : Enumerable(String) = {"value"},
+                                  positional : Bool = true) : Array(String)
+      return [] of String unless args
+      if Noir::TreeSitter.node_type(args) == "parenthesized_expression"
+        values = [] of String
+        collect_string_values(args, source, values, string_constants, local_string_constants) if positional
+        return values
+      end
+      annotation_paths(args, source, string_constants, local_string_constants, keys, positional)
+    end
+
+    # Yield `{name, type_node, annotations}` for each parameter of a
+    # `function_declaration`. Kotlin keeps a parameter's annotations in a
+    # `parameter_modifiers` sibling just before the `parameter` node.
+    private def each_function_parameter(func : LibTreeSitter::TSNode, source : String, &)
+      Noir::TreeSitter.each_named_child(func) do |child|
+        next unless Noir::TreeSitter.node_type(child) == "function_value_parameters"
+
+        annotations = [] of ResourceAnnotation
+        Noir::TreeSitter.each_named_child(child) do |entry|
+          case Noir::TreeSitter.node_type(entry)
+          when "parameter_modifiers"
+            Noir::TreeSitter.each_named_child(entry) do |ann|
+              next unless Noir::TreeSitter.node_type(ann) == "annotation"
+              annotation_name_and_args(ann, source).try { |(name, args)| annotations << {name, args, Noir::TreeSitter.node_start_row(ann)} }
+            end
+          when "parameter"
+            name = ""
+            type_node : LibTreeSitter::TSNode? = nil
+            Noir::TreeSitter.each_named_child(entry) do |part|
+              case Noir::TreeSitter.node_type(part)
+              when "simple_identifier" then name = Noir::TreeSitter.node_text(part, source) if name.empty?
+              when "user_type", "nullable_type"
+                type_node ||= part
+              end
+            end
+            yield name, type_node, annotations unless name.empty?
+            annotations = [] of ResourceAnnotation
+          end
+        end
+      end
+    end
+
+    private def annotation_name_and_args(ann : LibTreeSitter::TSNode, source : String) : Tuple(String, LibTreeSitter::TSNode?)?
+      Noir::TreeSitter.each_named_child(ann) do |child|
+        case Noir::TreeSitter.node_type(child)
+        when "user_type"
+          return {simple_annotation_name(Noir::TreeSitter.node_text(child, source)), nil}
+        when "constructor_invocation"
+          name = ""
+          args : LibTreeSitter::TSNode? = nil
+          Noir::TreeSitter.each_named_child(child) do |sub|
+            case Noir::TreeSitter.node_type(sub)
+            when "user_type"       then name = simple_annotation_name(Noir::TreeSitter.node_text(sub, source))
+            when "value_arguments" then args = sub
+            end
+          end
+          return {name, args} unless name.empty?
+        end
+      end
+      nil
+    end
+
+    # Simple name of a parameter / return type: `Book` for `Book?`,
+    # `List` for `List<Book>`, `Optional` for `java.util.Optional<Book>`.
+    # A wrapper named in `unwrap` (`Mono<Book>`) resolves to its first
+    # type argument instead.
+    private def resource_type_name(node : LibTreeSitter::TSNode?,
+                                   source : String,
+                                   unwrap : Set(String) = Set(String).new,
+                                   depth : Int32 = 0) : String
+      return "" unless node && depth < 8
+
+      case Noir::TreeSitter.node_type(node)
+      when "nullable_type", "type_projection"
+        resource_type_name(Noir::TreeSitter.first_named_child(node), source, unwrap, depth + 1)
+      when "user_type"
+        outer = ""
+        type_args : LibTreeSitter::TSNode? = nil
+        Noir::TreeSitter.each_named_child(node) do |child|
+          case Noir::TreeSitter.node_type(child)
+          when "type_identifier" then outer = Noir::TreeSitter.node_text(child, source)
+          when "type_arguments"  then type_args = child
+          end
+        end
+        if (args = type_args) && unwrap.includes?(outer.downcase)
+          inner = resource_type_name(Noir::TreeSitter.first_named_child(args), source, unwrap, depth + 1)
+          return inner unless inner.empty?
+        end
+        outer
+      else
+        ""
+      end
+    end
+
+    # The declared return type of a `function_declaration` (the type node
+    # after its parameter list), or "" for an inferred one.
+    private def function_return_type_name(func : LibTreeSitter::TSNode, source : String) : String
+      seen_params = false
+      Noir::TreeSitter.each_named_child(func) do |child|
+        case Noir::TreeSitter.node_type(child)
+        when "function_value_parameters" then seen_params = true
+        when "user_type", "nullable_type"
+          return resource_type_name(child, source) if seen_params
+        end
+      end
+      ""
+    end
+
+    # 1-hop callees of a resource method body as `{name, line}`.
+    private def function_callees(func : LibTreeSitter::TSNode, source : String) : Array(Tuple(String, Int32))
+      Noir::TreeSitter.each_named_child(func) do |child|
+        next unless Noir::TreeSitter.node_type(child) == "function_body"
+        return Noir::KotlinCalleeExtractor.callees_in_lambda(child, source, "", skip_routing: false).map do |(name, _path, line)|
+          {name, line}
+        end
+      end
+      [] of Tuple(String, Int32)
+    end
+
+    # `{start_byte, end_byte, callees}` for every function in `source`, so
+    # an adapter that finds a route by annotation offset (Quarkus
+    # `@Route`) can pick the enclosing function's callees.
+    def extract_function_callee_spans(source : String, file_path : String) : Array(Tuple(Int32, Int32, Array(Tuple(String, String, Int32))))
+      spans = [] of Tuple(Int32, Int32, Array(Tuple(String, String, Int32)))
+      Noir::TreeSitter.parse_kotlin(source) do |root|
+        Noir::TreeSitter.walk(root) do |node|
+          next unless Noir::TreeSitter.node_type(node) == "function_declaration"
+          Noir::TreeSitter.each_named_child(node) do |body|
+            next unless Noir::TreeSitter.node_type(body) == "function_body"
+            spans << {LibTreeSitter.ts_node_start_byte(node).to_i, LibTreeSitter.ts_node_end_byte(node).to_i,
+                      Noir::KotlinCalleeExtractor.callees_in_lambda(body, source, file_path, skip_routing: false)}
+          end
+        end
+      end
+      spans
+    end
+
+    # DTO fields a body parameter of type `type_name` fans out into, or nil
+    # when the type isn't a known Kotlin class. Server-managed fields
+    # (`@Id`, audit columns, ...) are never client input.
+    private def dto_body_params(type_name : String,
+                                dto_index : Hash(String, Array(TreeSitterKotlinParameterExtractor::FieldInfo)),
+                                format : String) : Array(Param)?
+      fields = dto_index[type_name]?
+      return unless fields
+      fields.reject(&.server_managed?).map { |field| Param.new(field.name, field.literal_default, format) }
     end
   end
 end

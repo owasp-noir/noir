@@ -5,6 +5,7 @@ require "./java_callee_extractor"
 require "./java_parameter_extractor_ts"
 require "./java_route_extractor_ts"
 require "./import_graph"
+require "../utils/jvm_media_type"
 
 module Noir
   # Tree-sitter-backed JAX-RS / Jakarta REST extractor.
@@ -796,13 +797,8 @@ module Noir
       each_annotation(decl, source) do |name, args, _|
         next unless name == "Consumes"
         next unless args
-        text = Noir::TreeSitter.node_text(args, source)
-        if text.includes?("APPLICATION_FORM_URLENCODED") || text.includes?("application/x-www-form-urlencoded")
-          result = "form"
-        elsif text.includes?("APPLICATION_JSON") || text.includes?("application/json")
-          result = "json"
-        elsif text.includes?("MULTIPART_FORM_DATA") || text.includes?("multipart/form-data")
-          result = "form"
+        if format = Noir::JvmMediaType.body_format(Noir::TreeSitter.node_text(args, source))
+          result = format
         end
       end
       result
