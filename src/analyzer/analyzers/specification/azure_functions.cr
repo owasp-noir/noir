@@ -1,4 +1,5 @@
 require "../../engines/specification_engine"
+require "../../../miniparsers/azure_functions_extractor"
 
 module Analyzer::Specification
   class AzureFunctions < SpecificationEngine
@@ -13,28 +14,46 @@ module Analyzer::Specification
     # `/products/{id}`.
     DEFAULT_ROUTE_PREFIX = "api"
 
-    def analyze
-      # `host.json` sits at the function-app root, one level above each
-      # function's own directory, and is shared by every function in the app.
-      # Resolve it once per app root instead of per function.
-      prefixes = {} of String => String
+    # `host.json` sits at the function-app root and is shared by every
+    # function in the app, so each directory's prefix is resolved once.
+    @prefixes = {} of String => String
 
+    def analyze
       each_spec_file_with_details(Noir::LocatorKeys::AZURE_FUNCTIONS_SPEC) do |path, details|
         content = read_file_content(path)
-        app_root = File.dirname(File.dirname(path))
-        prefix = prefixes[app_root] ||= route_prefix_for(app_root)
-        process_doc(JSON.parse(content), path, prefix, details)
+        base = configured_base_for(path)
+        prefix = route_prefix_for(File.dirname(path), base.empty? ? nil : Noir::PathScope.normalize_root(base))
+        if File.basename(path) == "function.json"
+          process_doc(JSON.parse(content), path, prefix, details)
+        else
+          process_code(path, content, prefix)
+        end
       end
 
       @result
     end
 
-    # Reads `extensions.http.routePrefix` (Functions v2+) or the v1 `http.routePrefix`
-    # from the app's `host.json`. An unreadable or absent file leaves the host default.
-    private def route_prefix_for(app_root : String) : String
-      host_json = File.join(app_root, "host.json")
-      return DEFAULT_ROUTE_PREFIX unless File.exists?(host_json)
+    # Nearest `host.json` at or above `dir`, without leaving the scan base
+    # `root`: one level up from a function's `function.json` folder, or the
+    # project root for code-first apps whose sources sit in nested folders
+    # (`src/functions/*.js`, `Functions/*.cs`).
+    private def route_prefix_for(dir : String, root : String?) : String
+      @prefixes[dir] ||= begin
+        host_json = File.join(dir, "host.json")
+        parent = File.dirname(dir)
+        if File.exists?(host_json)
+          host_route_prefix(host_json)
+        elsif parent != dir && (root.nil? || Noir::PathScope.under_normalized_root?(Noir::PathScope.expand(parent), root))
+          route_prefix_for(parent, root)
+        else
+          DEFAULT_ROUTE_PREFIX
+        end
+      end
+    end
 
+    # Reads `extensions.http.routePrefix` (Functions v2+) or the v1 `http.routePrefix`
+    # from the app's `host.json`. An unreadable or absent key leaves the host default.
+    private def host_route_prefix(host_json : String) : String
       doc = JSON.parse(read_file_content(host_json))
       http = doc["extensions"]?.try(&.as_h?).try(&.["http"]?) || doc["http"]?
       value = http.try(&.as_h?).try(&.["routePrefix"]?).try(&.as_s?)
@@ -45,6 +64,23 @@ module Analyzer::Specification
       @logger.debug "Azure Functions analyzer failed to read #{host_json}"
       @logger.debug_sub e
       DEFAULT_ROUTE_PREFIX
+    end
+
+    private def process_code(path : String, content : String, route_prefix : String)
+      Noir::AzureFunctionsExtractor.extract(path, content).each do |trigger|
+        # An empty route falls back to the function name, as the host does.
+        route = trigger.route.presence || trigger.name.presence || next
+        methods = trigger.methods.empty? ? [METHOD_ANY] : trigger.methods.uniq
+
+        methods.each do |method|
+          # A `Details` per endpoint: its `code_paths` array is shared by
+          # reference, and the optimizer appends to it when merging.
+          endpoint = Endpoint.new(compose_path(route_prefix, route), method, Details.new(PathInfo.new(path, trigger.line)))
+          trigger.name.presence.try { |name| endpoint.add_tag(Tag.new("azure-function-name", name, "azure_functions_analyzer")) }
+          trigger.auth_level.try { |level| endpoint.add_tag(Tag.new("azure-auth-level", level, "azure_functions_analyzer")) }
+          @result << endpoint
+        end
+      end
     end
 
     private def process_doc(doc : JSON::Any, path : String, route_prefix : String, details : Details)

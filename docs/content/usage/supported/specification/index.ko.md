@@ -26,6 +26,10 @@ sort_by = "weight"
 | Asyncapi | JSON | ☑️ | ☑️ | ✗ | ✗ | ☑️ | ✗ | ✗ |
 | Asyncapi | YAML | ☑️ | ☑️ | ✗ | ✗ | ☑️ | ✗ | ✗ |
 | Azure Functions | JSON | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| Azure Functions | CS | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| Azure Functions | PY | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| Azure Functions | JS | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| Azure Functions | TS | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Bruno | BRU | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ |
 | Burp | XML | ☑️ | ☑️ | ☑️ | ✗ | ☑️ | ☑️ | ☑️ |
 | Caddy | CADDYFILE | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
