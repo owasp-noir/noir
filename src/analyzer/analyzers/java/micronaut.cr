@@ -1,6 +1,7 @@
 require "../../../models/analyzer"
 require "../../engines/java_engine"
 require "../../../miniparsers/micronaut_extractor_ts"
+require "../../../miniparsers/kotlin_route_extractor_ts"
 require "yaml"
 require "../../../utils/url_path"
 
@@ -10,7 +11,6 @@ module Analyzer::Java
 
     include JavaEngine
 
-    JAVA_EXTENSION    = "java"
     MICRONAUT_MARKERS = ["io.micronaut", "micronaut.io"]
     alias PackageScopeKey = Tuple(String, String)
 
@@ -57,6 +57,7 @@ module Analyzer::Java
     def analyze
       include_callee = callees_needed?
       dto_builder = Noir::TreeSitterJavaDtoIndex.new
+      kotlin_dto_builder = Noir::TreeSitterKotlinDtoIndex.new
 
       file_list = all_files()
       path_configs = path_configs_for(file_list)
@@ -69,29 +70,27 @@ module Analyzer::Java
       end
 
       file_list.each do |path|
-        next unless path.ends_with?(".#{JAVA_EXTENSION}")
+        next unless jvm_source?(path)
         next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
 
         content = read_file_content(path)
         next unless MICRONAUT_MARKERS.any? { |marker| content.includes?(marker) }
 
+        base_path = (path_configs[JavaEngine.project_root_for(path)]? || MicronautPathConfig.new).context_path
+        if path.ends_with?(".kt")
+          analyze_kotlin_file(path, content, kotlin_dto_builder, base_path, include_callee)
+          next
+        end
+
         package_name = Noir::TreeSitterJavaParameterExtractor.extract_package_name(content)
         next if package_name.empty?
 
         dto_index = dto_builder.build_for(path, content)
         imports = java_imports(content)
-        base_path = (path_configs[JavaEngine.project_root_for(path)]? || MicronautPathConfig.new).context_path
 
         Noir::TreeSitterMicronautExtractor.extract_routes(content, dto_index, include_callees: include_callee).each do |route|
-          line = route.line + 1
-          details = Details.new(PathInfo.new(path, line))
-          endpoint = Endpoint.new(Noir::URLPath.join_trimmed(base_path, route.path), route.verb, route.params, details)
-          endpoint.protocol = route.protocol
-          route.callees.each do |(name, callee_line)|
-            endpoint.push_callee(Callee.new(name, path: path, line: callee_line))
-          end
-          @result << endpoint
+          @result << jvm_route_endpoint(route, Noir::URLPath.join_trimmed(base_path, route.path), path)
         end
 
         Noir::TreeSitterMicronautExtractor.extract_controller_interface_implementations(content).each do |implementation|
@@ -100,13 +99,7 @@ module Analyzer::Java
               entry_route = entry.route
               implementation.paths.each do |implementation_path|
                 inherited_path = Noir::URLPath.join_trimmed(implementation_path, entry_route.path)
-                details = Details.new(PathInfo.new(entry.path, entry_route.line + 1))
-                endpoint = Endpoint.new(Noir::URLPath.join_trimmed(base_path, inherited_path), entry_route.verb, entry_route.params, details)
-                endpoint.protocol = entry_route.protocol
-                entry_route.callees.each do |name, callee_line|
-                  endpoint.push_callee(Callee.new(name, path: entry.path, line: callee_line))
-                end
-                @result << endpoint
+                @result << jvm_route_endpoint(entry_route, Noir::URLPath.join_trimmed(base_path, inherited_path), entry.path)
               end
             end
           end
@@ -117,13 +110,26 @@ module Analyzer::Java
       @result
     end
 
+    private def analyze_kotlin_file(path : String,
+                                    content : String,
+                                    dto_builder : Noir::TreeSitterKotlinDtoIndex,
+                                    base_path : String,
+                                    include_callee : Bool)
+      Noir::TreeSitter.parse_kotlin(content) do |root|
+        dto_index = dto_builder.build_for_with_root(path, content, root)
+        Noir::TreeSitterKotlinRouteExtractor.extract_micronaut_routes_from(root, content, dto_index, include_callees: include_callee).each do |route|
+          @result << jvm_route_endpoint(route, Noir::URLPath.join_trimmed(base_path, route.path), path)
+        end
+      end
+    end
+
     private def collect_interface_route_index(file_list : Array(String),
                                               dto_builder : Noir::TreeSitterJavaDtoIndex,
                                               include_callee : Bool) : MicronautInterfaceRouteIndex
       index = MicronautInterfaceRouteIndex.new
 
       file_list.each do |path|
-        next unless path.ends_with?(".#{JAVA_EXTENSION}")
+        next unless path.ends_with?(".java")
         next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
 
@@ -179,7 +185,7 @@ module Analyzer::Java
       project_roots = Set(String).new
 
       file_list.each do |path|
-        next unless path.ends_with?(".#{JAVA_EXTENSION}")
+        next unless jvm_source?(path)
         next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
         project_roots << JavaEngine.project_root_for(path)

@@ -71,7 +71,6 @@ UNTESTED_DETECTORS = [
   "java/cli",
   "java/dropwizard",
   "java/javalin",
-  "java/jaxrs",
   "java/micronaut",
   "java/quarkus",
   "java/spark",

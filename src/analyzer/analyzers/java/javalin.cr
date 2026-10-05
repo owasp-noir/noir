@@ -1,6 +1,7 @@
 require "../../../models/analyzer"
 require "../../engines/java_engine"
 require "../../../miniparsers/jvm_lambda_dsl_extractor_ts"
+require "../../../miniparsers/kotlin_route_extractor_ts"
 require "../../../utils/url_path"
 
 module Analyzer::Java
@@ -15,7 +16,6 @@ module Analyzer::Java
 
     include JavaEngine
 
-    JAVA_EXTENSION  = "java"
     JAVALIN_MARKERS = ["io.javalin"]
 
     # Javalin's request-context helpers. `header` and `cookie`
@@ -51,20 +51,30 @@ module Analyzer::Java
       include_callee = callees_needed?
       file_list = all_files()
       file_list.each do |path|
-        next unless path.ends_with?(".#{JAVA_EXTENSION}")
+        next unless jvm_source?(path)
+        kotlin = path.ends_with?(".kt")
         next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
 
         content = read_file_content(path)
         next unless JAVALIN_MARKERS.any? { |m| content.includes?(m) }
 
-        context_path = context_path_for(content)
-        Noir::TreeSitterJvmLambdaDslExtractor.extract_routes(content, CONFIG, include_callees: include_callee).each do |route|
+        constants = string_constants_for(content, kotlin)
+        # The config scans below are textual; for Kotlin they read a
+        # comment-free copy (offsets kept), since a `// note` after
+        # `contextPath = "/api"` would otherwise end up in the value.
+        config_source = kotlin ? Noir::KotlinSourceMask.code_only(content) : content
+        context_path = context_path_for(config_source, constants, kotlin)
+        routes = if kotlin
+                   Noir::TreeSitterKotlinRouteExtractor.extract_lambda_dsl_routes(content, CONFIG, constants, include_callees: include_callee)
+                 else
+                   Noir::TreeSitterJvmLambdaDslExtractor.extract_routes(content, CONFIG, include_callees: include_callee)
+                 end
+        routes.each do |route|
           @result << build_endpoint(route, path, context_path)
         end
 
-        constants = string_constants_for(content)
-        collect_static_file_endpoints(content, constants).each do |entry|
+        collect_static_file_endpoints(config_source, constants, kotlin).each do |entry|
           endpoint_path, line = entry
           @result << Endpoint.new(Noir::URLPath.join_trimmed(context_path, endpoint_path), "GET", Details.new(PathInfo.new(path, line)))
         end
@@ -101,27 +111,35 @@ module Analyzer::Java
     end
 
     private def collect_static_file_endpoints(content : String,
-                                              constants : Hash(String, String)) : Array(Tuple(String, Int32))
+                                              constants : Hash(String, String),
+                                              kotlin : Bool) : Array(Tuple(String, Int32))
       endpoints = [] of Tuple(String, Int32)
-      collect_static_file_add_endpoints(content, constants, endpoints)
+      collect_static_file_add_endpoints(content, constants, endpoints, kotlin)
       collect_webjar_endpoints(content, endpoints)
       endpoints.uniq
     end
 
     private def collect_static_file_add_endpoints(content : String,
                                                   constants : Hash(String, String),
-                                                  endpoints : Array(Tuple(String, Int32)))
+                                                  endpoints : Array(Tuple(String, Int32)),
+                                                  kotlin : Bool)
       offset = 0
       while marker = next_static_files_add_marker(content, offset)
         offset = marker + 3
-        open_idx = content.index('(', marker)
+        # Kotlin also configures it with a trailing lambda:
+        # `staticFiles.add { it.hostedPath = "/assets" }`.
+        open_idx = content.index(kotlin ? /[({]/ : '(', marker)
         next unless open_idx
-        close_idx = find_matching_paren(content, open_idx)
+        close_idx = if content[open_idx] == '{'
+                      JavaEngine.find_matching_delimiter(content, open_idx, '{', '}')
+                    else
+                      find_matching_paren(content, open_idx)
+                    end
         next unless close_idx
 
         args = content[(open_idx + 1)...close_idx]
         line = line_number_for_index(content, marker)
-        if hosted_path = hosted_path_from_static_file_config(args, constants)
+        if hosted_path = hosted_path_from_static_file_config(args, constants, kotlin)
           endpoints << {static_mount_path(hosted_path), line}
         elsif directory_add_call?(args)
           endpoints << {"/**", line}
@@ -146,9 +164,16 @@ module Analyzer::Java
       markers.min?
     end
 
+    # Kotlin statements end at the newline, Java ones at the `;`.
+    JAVA_HOSTED_PATH_RE    = /\.hostedPath\s*=\s*([^;]+);/
+    KOTLIN_HOSTED_PATH_RE  = /\.hostedPath\s*=\s*([^;\n]+)/
+    JAVA_CONTEXT_PATH_RE   = /(?:router|routing)\.contextPath\s*=\s*([^;]+);/
+    KOTLIN_CONTEXT_PATH_RE = /(?:router|routing)\.contextPath\s*=\s*([^;\n]+)/
+
     private def hosted_path_from_static_file_config(args : String,
-                                                    constants : Hash(String, String)) : String?
-      args.scan(/\.hostedPath\s*=\s*([^;]+);/) do |match|
+                                                    constants : Hash(String, String),
+                                                    kotlin : Bool) : String?
+      args.scan(kotlin ? KOTLIN_HOSTED_PATH_RE : JAVA_HOSTED_PATH_RE) do |match|
         if hosted_path = resolve_string_expression(match[1], constants)
           return hosted_path
         end
@@ -166,10 +191,8 @@ module Analyzer::Java
       normalized.empty? ? "/**" : Noir::URLPath.join_trimmed(normalized, "**")
     end
 
-    private def context_path_for(content : String) : String
-      constants = string_constants_for(content)
-
-      content.scan(/(?:router|routing)\.contextPath\s*=\s*([^;]+);/) do |match|
+    private def context_path_for(content : String, constants : Hash(String, String), kotlin : Bool) : String
+      content.scan(kotlin ? KOTLIN_CONTEXT_PATH_RE : JAVA_CONTEXT_PATH_RE) do |match|
         if context_path = resolve_string_expression(match[1], constants)
           return normalize_optional_path(context_path)
         end
@@ -184,7 +207,12 @@ module Analyzer::Java
       ""
     end
 
-    private def string_constants_for(content : String) : Hash(String, String)
+    private def string_constants_for(content : String, kotlin : Bool) : Hash(String, String)
+      if kotlin
+        return Noir::TreeSitterKotlinRouteExtractor.expand_constant_interpolations(
+          Noir::TreeSitterKotlinRouteExtractor.extract_string_constants(content))
+      end
+
       constants = Hash(String, String).new
       Noir::TreeSitter.parse_java(content) do |root|
         constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants_from(root, content)

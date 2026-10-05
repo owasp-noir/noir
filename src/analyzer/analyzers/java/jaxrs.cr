@@ -1,6 +1,7 @@
 require "../../../models/analyzer"
 require "../../engines/java_engine"
 require "../../../miniparsers/jaxrs_extractor_ts"
+require "../../../miniparsers/kotlin_route_extractor_ts"
 require "xml"
 require "../../../utils/url_path"
 
@@ -10,7 +11,6 @@ module Analyzer::Java
 
     include JavaEngine
 
-    JAVA_EXTENSION = "java"
     alias ApplicationBaseKey = Tuple(String, String)
 
     # `jaxrs_or_websocket_source?` gates the per-file tree-sitter parse;
@@ -27,12 +27,13 @@ module Analyzer::Java
       bean_cache = Hash(String, Hash(String, Array(Param))).new
       source_cache = Hash(String, String).new
       custom_verb_cache = Hash(String, Hash(String, String)).new
+      kotlin_dto_builder = Noir::TreeSitterKotlinDtoIndex.new
 
       file_list = all_files()
       application_base_paths = application_base_paths_for(file_list)
       derivative_project_roots = derivative_project_roots_for(file_list)
       file_list.each do |path|
-        next unless path.ends_with?(".#{JAVA_EXTENSION}")
+        next unless jvm_source?(path)
         next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
         next if derivative_project_roots.includes?(project_root_for(path))
@@ -48,6 +49,11 @@ module Analyzer::Java
         # Dropwizard) so the same resource class doesn't surface as
         # both `java_jaxrs` and `java_quarkus` endpoints.
         next if claimed_by_derivative?(content)
+
+        if path.ends_with?(".kt")
+          analyze_kotlin_file(path, content, kotlin_dto_builder, application_base_paths, include_callee)
+          next
+        end
 
         Noir::TreeSitter.parse_java(content) do |root|
           package_name = Noir::TreeSitterJavaParameterExtractor.extract_package_name_from(root, content)
@@ -65,21 +71,31 @@ module Analyzer::Java
 
           Noir::TreeSitterJaxRsExtractor.extract_routes_from(root, content, dto_index, bean_index, subresource_sources,
             custom_verb_annotations: custom_verb_annotations, include_callees: include_callee).each do |route|
-            line = route.line + 1
-            details = Details.new(PathInfo.new(route.file_path || path, line))
             endpoint_path = route.protocol == "ws" ? route.path : Noir::URLPath.join_trimmed(application_base_path, route.path)
-            endpoint = Endpoint.new(endpoint_path, route.verb, route.params, details)
-            endpoint.protocol = route.protocol
-            route.callees.each do |name, callee_line|
-              endpoint.push_callee(Callee.new(name, path: route.file_path || path, line: callee_line))
-            end
-            @result << endpoint
+            @result << jvm_route_endpoint(route, endpoint_path, route.file_path || path)
           end
         end
       end
 
       Fiber.yield
       @result
+    end
+
+    private def analyze_kotlin_file(path : String,
+                                    content : String,
+                                    dto_builder : Noir::TreeSitterKotlinDtoIndex,
+                                    application_base_paths : Hash(ApplicationBaseKey, String),
+                                    include_callee : Bool)
+      Noir::TreeSitter.parse_kotlin(content) do |root|
+        package_name = Noir::TreeSitterKotlinParameterExtractor.extract_package_name_from(root, content)
+        dto_index = dto_builder.build_for_with_root(path, content, root)
+        application_base_path = application_base_path_for(path, package_name, application_base_paths)
+
+        Noir::TreeSitterKotlinRouteExtractor.extract_jaxrs_routes_from(root, content, dto_index, include_callees: include_callee).each do |route|
+          endpoint_path = route.protocol == "ws" ? route.path : Noir::URLPath.join_trimmed(application_base_path, route.path)
+          @result << jvm_route_endpoint(route, endpoint_path, path)
+        end
+      end
     end
 
     APPLICATION_PATH_RE = Regex.union("ApplicationPath")
@@ -90,7 +106,7 @@ module Analyzer::Java
       application_packages = Hash(String, Array(ApplicationBaseKey)).new { |hash, key| hash[key] = [] of ApplicationBaseKey }
 
       file_list.each do |path|
-        next unless path.ends_with?(".#{JAVA_EXTENSION}")
+        next unless jvm_source?(path)
         next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
 
@@ -100,6 +116,11 @@ module Analyzer::Java
         next unless content_matches?(content, APPLICATION_PATH_RE)
         next unless content_matches?(content, WS_RS_PACKAGE_RE)
         next if claimed_by_derivative?(content)
+
+        if path.ends_with?(".kt")
+          add_kotlin_application_path(path, content, base_paths)
+          next
+        end
 
         Noir::TreeSitter.parse_java(content) do |root|
           package_name = Noir::TreeSitterJavaParameterExtractor.extract_package_name_from(root, content)
@@ -138,7 +159,7 @@ module Analyzer::Java
       roots = Set(String).new
 
       file_list.each do |path|
-        next unless path.ends_with?(".#{JAVA_EXTENSION}") || DERIVATIVE_MANIFEST_BASENAMES.includes?(File.basename(path))
+        next unless jvm_source?(path) || DERIVATIVE_MANIFEST_BASENAMES.includes?(File.basename(path))
         next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
 
@@ -168,7 +189,7 @@ module Analyzer::Java
       # may carry a trailing slash depending on how `-b` was passed.
       # Strip it so this root compares equal to the marker-derived
       # root for `.java` files in the same module.
-      JavaEngine.marker_root(path, {"/src/main/java/", "/src/main/resources/", "/src/main/webapp/"}) || configured_base_for(path).rstrip('/')
+      JavaEngine.marker_root(path, {"/src/main/java/", "/src/main/kotlin/", "/src/main/resources/", "/src/main/webapp/"}) || configured_base_for(path).rstrip('/')
     end
 
     private def web_xml_base_paths_for(file_list : Array(String),

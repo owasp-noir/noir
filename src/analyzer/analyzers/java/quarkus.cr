@@ -2,6 +2,7 @@ require "../../../models/analyzer"
 require "../../engines/java_engine"
 require "../../../miniparsers/java_callee_extractor"
 require "../../../miniparsers/jaxrs_extractor_ts"
+require "../../../miniparsers/kotlin_route_extractor_ts"
 require "yaml"
 require "../../../utils/url_path"
 require "../../../utils/top_level_split"
@@ -20,7 +21,6 @@ module Analyzer::Java
 
     include JavaEngine
 
-    JAVA_EXTENSION  = "java"
     QUARKUS_MARKERS = ["io.quarkus", "quarkus.io"]
     alias ApplicationBaseKey = Tuple(String, String)
 
@@ -39,6 +39,7 @@ module Analyzer::Java
       bean_cache = Hash(String, Hash(String, Array(Param))).new
       source_cache = Hash(String, String).new
       custom_verb_cache = Hash(String, Hash(String, String)).new
+      kotlin_dto_builder = Noir::TreeSitterKotlinDtoIndex.new
 
       file_list = all_files()
       path_configs = path_configs_for(file_list)
@@ -54,13 +55,18 @@ module Analyzer::Java
       end
 
       file_list.each do |path|
-        next unless path.ends_with?(".#{JAVA_EXTENSION}")
+        next unless jvm_source?(path)
         next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
         next unless quarkus_roots.includes?(project_root_for(path))
 
         content = read_file_content(path)
         next unless quarkus_route_source?(content)
+
+        if path.ends_with?(".kt")
+          analyze_kotlin_file(path, content, kotlin_dto_builder, path_configs, application_base_paths, include_callee)
+          next
+        end
 
         Noir::TreeSitter.parse_java(content) do |root|
           package_name = Noir::TreeSitterJavaParameterExtractor.extract_package_name_from(root, content)
@@ -83,14 +89,7 @@ module Analyzer::Java
 
           Noir::TreeSitterJaxRsExtractor.extract_routes_from(root, content, dto_index, bean_index, subresource_sources,
             custom_verb_annotations: custom_verb_annotations, include_callees: include_callee).each do |route|
-            line = route.line + 1
-            details = Details.new(PathInfo.new(route.file_path || path, line))
-            endpoint = Endpoint.new(Noir::URLPath.join_trimmed(configured_base_path, route.path), route.verb, route.params, details)
-            endpoint.protocol = route.protocol
-            route.callees.each do |name, callee_line|
-              endpoint.push_callee(Callee.new(name, path: route.file_path || path, line: callee_line))
-            end
-            @result << endpoint
+            @result << jvm_route_endpoint(route, Noir::URLPath.join_trimmed(configured_base_path, route.path), route.file_path || path)
           end
         end
       end
@@ -99,11 +98,33 @@ module Analyzer::Java
       @result
     end
 
+    private def analyze_kotlin_file(path : String,
+                                    content : String,
+                                    dto_builder : Noir::TreeSitterKotlinDtoIndex,
+                                    path_configs : Hash(String, QuarkusPathConfig),
+                                    application_base_paths : Hash(ApplicationBaseKey, String),
+                                    include_callee : Bool)
+      extract_reactive_route_endpoints(content, path, path_configs, include_callee).each do |endpoint|
+        @result << endpoint
+      end
+
+      Noir::TreeSitter.parse_kotlin(content) do |root|
+        package_name = Noir::TreeSitterKotlinParameterExtractor.extract_package_name_from(root, content)
+        dto_index = dto_builder.build_for_with_root(path, content, root)
+        application_base_path = application_base_path_for(path, package_name, application_base_paths)
+        configured_base_path = configured_base_path_for(path, path_configs, application_base_path)
+
+        Noir::TreeSitterKotlinRouteExtractor.extract_jaxrs_routes_from(root, content, dto_index, include_callees: include_callee).each do |route|
+          @result << jvm_route_endpoint(route, Noir::URLPath.join_trimmed(configured_base_path, route.path), path)
+        end
+      end
+    end
+
     private def quarkus_project_roots_for(file_list : Array(String)) : Set(String)
       roots = Set(String).new
 
       file_list.each do |path|
-        next unless path.ends_with?(".#{JAVA_EXTENSION}")
+        next unless jvm_source?(path)
         next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
 
@@ -118,7 +139,7 @@ module Analyzer::Java
       base_paths = Hash(ApplicationBaseKey, String).new
 
       file_list.each do |path|
-        next unless path.ends_with?(".#{JAVA_EXTENSION}")
+        next unless jvm_source?(path)
         next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
         next unless quarkus_roots.includes?(project_root_for(path))
@@ -126,6 +147,11 @@ module Analyzer::Java
         content = read_file_content(path)
         next unless content.includes?("ApplicationPath")
         next unless jaxrs_source?(content)
+
+        if path.ends_with?(".kt")
+          add_kotlin_application_path(path, content, base_paths)
+          next
+        end
 
         Noir::TreeSitter.parse_java(content) do |root|
           package_name = Noir::TreeSitterJavaParameterExtractor.extract_package_name_from(root, content)
@@ -165,7 +191,7 @@ module Analyzer::Java
       project_roots = Set(String).new
 
       file_list.each do |path|
-        next unless path.ends_with?(".#{JAVA_EXTENSION}")
+        next unless jvm_source?(path)
         next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
         project_roots << project_root_for(path)
@@ -363,22 +389,30 @@ module Analyzer::Java
 
     private def reactive_route_method_callees(content : String, path : String) : Array(ReactiveMethodCallees)
       result = [] of ReactiveMethodCallees
+      if path.ends_with?(".kt")
+        Noir::TreeSitterKotlinRouteExtractor.extract_function_callee_spans(content, path).each do |(start_byte, end_byte, entries)|
+          result << ReactiveMethodCallees.new(start_byte, end_byte, reactive_callees(entries))
+        end
+        return result
+      end
+
       Noir::TreeSitter.parse_java(content) do |root|
         walk_method_declarations(root) do |method|
           body = Noir::TreeSitter.field(method, "body")
           next unless body
 
-          callees = Noir::JavaCalleeExtractor.callees_in_body(body, content, path).map do |(name, callee_path, callee_line)|
-            Callee.new(name, path: callee_path, line: callee_line)
-          end
           result << ReactiveMethodCallees.new(
             LibTreeSitter.ts_node_start_byte(method).to_i,
             LibTreeSitter.ts_node_end_byte(method).to_i,
-            callees
+            reactive_callees(Noir::JavaCalleeExtractor.callees_in_body(body, content, path))
           )
         end
       end
       result
+    end
+
+    private def reactive_callees(entries : Array(Tuple(String, String, Int32))) : Array(Callee)
+      entries.map { |(name, callee_path, callee_line)| Callee.new(name, path: callee_path, line: callee_line) }
     end
 
     private def reactive_method_callees_for(method_callees : Array(ReactiveMethodCallees),
@@ -561,7 +595,11 @@ module Analyzer::Java
     end
 
     private def parameter_variable_name(arg : String) : String
-      cleaned = arg.gsub(/@\w+(?:\([^)]*\))?/, " ").strip
+      cleaned = arg.gsub(/@[\w:]+(?:\([^)]*\))?/, " ").strip
+      # Kotlin declares `name: Type`; a Java parameter never has a `:`.
+      if colon = cleaned.index(':')
+        return cleaned[...colon].strip.split.last? || ""
+      end
       if match = cleaned.match(/([A-Za-z_][A-Za-z0-9_]*)\s*(?:=[^=]*)?\z/)
         match[1]
       else

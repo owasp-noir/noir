@@ -1,5 +1,6 @@
 require "../../models/analyzer"
 require "../../miniparsers/jaxrs_extractor_ts"
+require "../../miniparsers/kotlin_route_extractor_ts"
 require "../../miniparsers/import_graph"
 require "../../utils/c_comments"
 
@@ -92,9 +93,10 @@ module Analyzer::Java
     end
 
     # Module root of a Maven/Gradle source file: everything before
-    # `/src/main/java/`, or the file's own directory outside that layout.
+    # `/src/main/java/` (or `/src/main/kotlin/`), or the file's own directory
+    # outside that layout.
     def self.project_root_for(path : String) : String
-      marker_root(path, {"/src/main/java/"}) || File.dirname(path)
+      marker_root(path, {"/src/main/java/", "/src/main/kotlin/"}) || File.dirname(path)
     end
 
     # `path` up to the first of `markers` (tried in order) it contains, or
@@ -125,6 +127,36 @@ module Analyzer::Java
     # The instance helpers below are shared by the analyzers that
     # `include JavaEngine`. `application_base_path_for` calls the
     # includer's own `project_root_for`.
+
+    # `route` is any JVM extractor's `Route` (JAX-RS, Micronaut): verb,
+    # params, 0-based line, `{name, line}` callees and protocol. `file` is
+    # where the route and its callees live.
+    private def jvm_route_endpoint(route, url : String, file : String) : Endpoint
+      endpoint = Endpoint.new(url, route.verb, route.params, Details.new(PathInfo.new(file, route.line + 1)))
+      endpoint.protocol = route.protocol
+      route.callees.each do |(name, line)|
+        endpoint.push_callee(Callee.new(name, path: file, line: line))
+      end
+      endpoint
+    end
+
+    private def jvm_source?(path : String) : Bool
+      path.ends_with?(".java") || path.ends_with?(".kt")
+    end
+
+    # Record a Kotlin `@ApplicationPath` under `{project root, package}`,
+    # the key `application_base_path_for` reads.
+    private def add_kotlin_application_path(path : String,
+                                            content : String,
+                                            base_paths : Hash(Tuple(String, String), String))
+      Noir::TreeSitter.parse_kotlin(content) do |root|
+        key = {project_root_for(path), Noir::TreeSitterKotlinParameterExtractor.extract_package_name_from(root, content)}
+        next if base_paths.has_key?(key)
+        if base_path = Noir::TreeSitterKotlinRouteExtractor.extract_jaxrs_application_path_from(root, content)
+          base_paths[key] = base_path
+        end
+      end
+    end
 
     private def application_base_path_for(path : String,
                                           package_name : String,
