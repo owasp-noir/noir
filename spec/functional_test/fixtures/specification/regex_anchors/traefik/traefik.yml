@@ -1,0 +1,5 @@
+http:
+  routers:
+    r1:
+      rule: "PathRegexp(`^/traefik/[0-9]+$`)"
+      service: s

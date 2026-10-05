@@ -142,26 +142,7 @@ class EndpointOptimizer
 
   COLON_SEGMENT_RE     = /\/:([^\/{}]+)/
   ANGLE_PLACEHOLDER_RE = /<([^>]+)>/
-
-  # Frameworks whose route syntax uses `<name>` / `<type:name>` / `<name:type>`
-  # placeholders. Mirrored by `OutputBuilderOasCommon::ANGLE_PATH_TECHS`.
-  # Crow's `<int>` is a type token the analyzer already rewrote to `{paramN}`,
-  # so it is not in this set — treating the type as the name would be wrong.
-  ANGLE_PATH_TECHS = Set{
-    "crystal_marten",
-    "dart_shelf",
-    "perl_mojolicious",
-    "php_yii",
-    "python_bottle",
-    "python_django",
-    "python_flask",
-    "python_quart",
-    "python_sanic",
-    "r_plumber",
-    "rust_rocket",
-    "rust_salvo",
-  }
-  SPLAT_SEGMENT_RE = /\/\*([^\/]+)/
+  SPLAT_SEGMENT_RE     = /\/\*([^\/]+)/
 
   # A `:name` param name. Hyphens are part of the identifier — kebab-case
   # path params are idiomatic in Clojure (`/:artifact-id`, `/:group-id`) and
@@ -285,7 +266,7 @@ class EndpointOptimizer
   # scan still runs. A named technology must be one that uses the syntax.
   private def angle_placeholder_tech?(technology : String?) : Bool
     return true if technology.nil? || technology.empty?
-    ANGLE_PATH_TECHS.includes?(technology)
+    Noir::URLPath::ANGLE_PLACEHOLDER_TECHS.includes?(technology)
   end
 
   # Werkzeug converter arguments: `int(signed=True)`, `any(about, help)`.

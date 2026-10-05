@@ -147,8 +147,10 @@ module Analyzer::Specification
 
         scan_matchers(alt) do |name, args|
           case name.downcase
-          when "path", "pathprefix", "pathregexp"
+          when "path", "pathprefix"
             args.each { |arg| paths << normalize_path(arg) }
+          when "pathregexp"
+            args.each { |arg| paths << normalize_path(Noir::URLPath.strip_regex_anchors(arg)) }
           when "method"
             args.each { |arg| methods << arg.upcase }
           end

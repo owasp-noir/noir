@@ -198,7 +198,7 @@ module Analyzer::Cpp
     private def normalize_path(raw : String) : Tuple(String, Array(Param))
       # Regex routes are kept verbatim — the captures are positional, with no
       # named placeholders to rewrite.
-      return {raw, [] of Param} if raw.matches?(REGEX_META)
+      return {Noir::URLPath.strip_regex_anchors(raw), [] of Param} if raw.matches?(REGEX_META)
 
       params = [] of Param
       normalized = raw.gsub(NAMED_PARAM_REGEX) do

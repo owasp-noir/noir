@@ -1098,12 +1098,13 @@ describe "EndpointOptimizer" do
       result[0].url.should eq("/^\\/api\\/(\\d+)$/")
     end
 
-    it "strips Python regex anchors without trimming literal dollar signs" do
+    it "leaves regex anchors and literal dollar signs to the analyzers" do
+      # Only the analyzer knows whether a route is a regex, so it strips the
+      # anchors (`Noir::URLPath.strip_regex_anchors`). Here a `^` or `$` is
+      # path text whatever the technology.
       optimizer = EndpointOptimizer.new(logger, options)
       endpoints = [
         tech_endpoint("/^tags/?$", "GET", "python_django", "urls.py"),
-        tech_endpoint("/articles/\\.json\\Z", "GET", "python_django", "urls.py"),
-        tech_endpoint("/^/re/[0-9]+$", "GET", "traefik", "traefik.yml"),
         tech_endpoint("/dollar$", "GET", "ruby_grape", "api.rb"),
         tech_endpoint("/dollar$", "GET", "js_express", "app.js"),
         tech_endpoint("/price/$", "GET", "js_express", "app.js"),
@@ -1118,22 +1119,7 @@ describe "EndpointOptimizer" do
       ]
 
       result = optimizer.normalize_url_shapes(endpoints)
-      result.map(&.url).should eq([
-        "/tags/?",
-        "/articles/.json",
-        "/re/[0-9]+",
-        "/dollar$",
-        "/dollar$",
-        "/price/$",
-        "/^caret",
-        "/keep$mid",
-        "/dollar$",
-        "/^start",
-        "/dollar$",
-        "/dollar$",
-        "/dollar$",
-        "/dollar$",
-      ])
+      result.map(&.url).should eq(endpoints.map(&.url))
     end
   end
 

@@ -151,5 +151,34 @@ module Noir
 
       path.starts_with?("/") ? path : "/#{path}"
     end
+
+    # Frameworks whose route syntax spells params `<name>` / `<type:name>` /
+    # `<name:type>`. Anywhere else `<...>` is literal path text: Express
+    # `/files/<id>` is not a param, and `/users/<script>alert(1)</script>`
+    # must not become `{script}`. Shared by the optimizer's param pass and
+    # the OAS path template. Crow's `<int>` is a type token the analyzer
+    # already rewrote to `{paramN}`, so it is not in the set.
+    ANGLE_PLACEHOLDER_TECHS = Set{
+      "crystal_marten",
+      "dart_shelf",
+      "perl_mojolicious",
+      "php_yii",
+      "python_bottle",
+      "python_django",
+      "python_flask",
+      "python_quart",
+      "python_sanic",
+      "r_plumber",
+      "rust_rocket",
+      "rust_salvo",
+    }
+
+    # Turn a regex route into the path it matches: drop a leading `^`, a
+    # trailing `$` or `\Z`, and unescape `\.`. Analyzers call this only on
+    # routes they know are regexes (Django `re_path`, nginx `location ~`,
+    # Traefik `PathRegexp`, ...). A string route keeps a literal `^` or `$`.
+    def self.strip_regex_anchors(pattern : String) : String
+      pattern.lchop('^').sub(/(?:\$|\\Z)\z/, "").gsub("\\.", ".")
+    end
   end
 end

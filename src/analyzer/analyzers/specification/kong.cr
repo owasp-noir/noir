@@ -80,7 +80,7 @@ module Analyzer::Specification
         path_type = regex ? "regex" : "prefix"
         # In Kong 3.x the leading `~` is the marker that selects regex mode, not
         # a path segment; leaving it in produced URLs like `/~/status/\d+`.
-        path = path.lchop('~') if regex
+        path = Noir::URLPath.strip_regex_anchors(path.lchop('~')) if regex
         methods.each do |method|
           endpoint = Endpoint.new(path, method, details)
           endpoint.add_tag(Tag.new("kong-path-type", path_type, "kong_analyzer"))

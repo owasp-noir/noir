@@ -163,10 +163,10 @@ module Analyzer::Specification
         return separated
       end
       if (safe_regex = match["safe_regex"]?) && safe_regex.as_h?
-        return safe_regex["regex"]?.try(&.as_s?)
+        return safe_regex["regex"]?.try(&.as_s?).try { |regex| Noir::URLPath.strip_regex_anchors(regex) }
       end
       # Envoy v2 legacy field
-      match["regex"]?.try(&.as_s?)
+      match["regex"]?.try(&.as_s?).try { |regex| Noir::URLPath.strip_regex_anchors(regex) }
     end
 
     private def extract_method(match) : String?

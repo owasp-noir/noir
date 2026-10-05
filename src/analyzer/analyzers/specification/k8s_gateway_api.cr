@@ -124,6 +124,7 @@ module Analyzer::Specification
     end
 
     private def emit_endpoint(path : String, method : String, path_type : String, hosts : Array(String), origin : String, details : Details, params : Array(Param) = [] of Param)
+      path = Noir::URLPath.strip_regex_anchors(path) if path_type.downcase == "regularexpression"
       hosts = [""] if hosts.empty?
       hosts.each do |host|
         endpoint = Endpoint.new(path, method, params.dup, details)

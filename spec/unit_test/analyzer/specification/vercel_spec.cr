@@ -31,7 +31,7 @@ describe "Vercel Analyzer" do
       }
       JSON
 
-    endpoints.map(&.url).sort!.should eq ["/(.*)", "/api/v1/(.*)", "/old", "^/legacy/(.*)"]
+    endpoints.map(&.url).sort!.should eq ["/(.*)", "/api/v1/(.*)", "/legacy/(.*)", "/old"]
     endpoints.all? { |e| e.method == "ANY" }.should be_true
   end
 
@@ -62,7 +62,7 @@ describe "Vercel Analyzer" do
       }
       JSON
 
-    endpoints.map(&.url).sort!.should eq ["/blog/*", "^/api/(.*)"]
+    endpoints.map(&.url).sort!.should eq ["/api/(.*)", "/blog/*"]
     endpoints.each do |endpoint|
       tag_descriptions(endpoint, "pattern").should eq ["vercel_source_matcher"]
     end

@@ -1,6 +1,7 @@
 require "json"
 require "uri"
 require "../utils/http_symbols"
+require "../utils/url_path"
 
 module OutputBuilderOasCommon
   # The operation keys a Path Item Object accepts. `query` (RFC 10008)
@@ -27,25 +28,6 @@ module OutputBuilderOasCommon
   PATH_CONVERTER_TYPES = Set{"int", "str", "string", "slug", "uuid", "float", "bool", "path", "any"}
 
   SPLAT_PATH_TECHS = Set{"clojure_pedestal", "cpp_drogon", "elixir_bandit", "elixir_phoenix", "elixir_plug", "haskell_yesod", "lua_lapis", "perl_mojolicious", "scala_play"}
-
-  # Same set as `EndpointOptimizer::ANGLE_PATH_TECHS`. `<id>` / `<int:id>`
-  # are placeholders only for these frameworks. Rewriting them for Express
-  # turned `/users/<script>alert(1)</script>` into the invalid template
-  # `/users/{script}alert(1)</script>`.
-  ANGLE_PATH_TECHS = Set{
-    "crystal_marten",
-    "dart_shelf",
-    "perl_mojolicious",
-    "php_yii",
-    "python_bottle",
-    "python_django",
-    "python_flask",
-    "python_quart",
-    "python_sanic",
-    "r_plumber",
-    "rust_rocket",
-    "rust_salvo",
-  }
 
   # Operation keys whose value is a list of alternatives rather than a single
   # answer. When two endpoints collapse onto one path+method, keeping the
@@ -79,7 +61,7 @@ module OutputBuilderOasCommon
     # Empty means unknown and keeps the historical rewrite (`<int:id>` →
     # `{id}`). A named technology that is not in the set leaves the brackets.
     known_techs = technologies.reject(&.empty?)
-    angle_path_tech = known_techs.empty? || known_techs.any? { |tech| ANGLE_PATH_TECHS.includes?(tech) }
+    angle_path_tech = known_techs.empty? || known_techs.any? { |tech| Noir::URLPath::ANGLE_PLACEHOLDER_TECHS.includes?(tech) }
 
     # Google AIP / gRPC-transcoding resource patterns (`{name=projects/*}`)
     # embed a path pattern inside the placeholder. Left alone, the `*` pass

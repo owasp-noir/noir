@@ -100,7 +100,8 @@ module Analyzer::Python
       path_api_instances.each do |path, _|
         @routes[path]?.try &.each do |route_info|
           line_index, _, route_path, handler_class = route_info
-          endpoints = extract_endpoints_from_handler(path, route_path, handler_class)
+          # Tornado routes are regexes; `^` / `$` are anchors, not path text.
+          endpoints = extract_endpoints_from_handler(path, Noir::URLPath.strip_regex_anchors(route_path), handler_class)
           endpoints.each do |endpoint|
             details = Details.new(PathInfo.new(path, line_index + 1))
             endpoint.details = details
