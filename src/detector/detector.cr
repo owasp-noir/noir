@@ -570,6 +570,11 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
       dir_pool.close
     end
 
+    # Overlapping scan bases can reach the same source file more than once.
+    # Check `--exclude-path` per base first, then process each accepted path
+    # once so passive findings and the analyzer file registry stay unique.
+    seen_file_paths = Set(String).new
+
     base_paths.each do |base_path|
       # Pre-compute base path prefix for fast relative path calculation
       base_prefix = base_path.ends_with?("/") ? base_path : base_path + "/"
@@ -676,6 +681,8 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
                 next
               end
             end
+
+            next unless seen_file_paths.add?(Noir::PathScope.expand(full_path))
 
             if skip_reason = MediaFilter.skip_check(full_path, info: info, sniff_binary: false)
               logger.debug "Skipping #{full_path}: #{skip_reason}"
