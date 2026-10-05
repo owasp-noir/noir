@@ -21,6 +21,8 @@ expected_endpoints = [
   Endpoint.new("/api/users", "PATCH"),
   Endpoint.new("/api/users", "DELETE"),
   Endpoint.new("/{splat}", "GET", [Param.new("splat", "", "path")]),
+  # Folder route: `settings/route.tsx`; `form.tsx` beside it is not a route.
+  Endpoint.new("/settings", "GET"),
 ]
 
 FunctionalTester.new("fixtures/javascript/remix/", {

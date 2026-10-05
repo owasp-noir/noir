@@ -124,3 +124,37 @@ describe "Fresh project scoping" do
     end
   end
 end
+
+describe "Remix and React Router project scoping" do
+  it "keeps each analyzer on its own app's routes/ directory" do
+    # Both frameworks read the same `app/routes/` convention, so without a
+    # project root each one claimed the other's routes as its own.
+    root = File.tempname("noir-remix-rr-scope")
+
+    begin
+      remix = File.join(root, "remix-app")
+      FileUtils.mkdir_p(File.join(remix, "app", "routes"))
+      File.write(File.join(remix, "package.json"), %({"dependencies": {"@remix-run/node": "^2.0.0"}}))
+      File.write(File.join(remix, "app", "routes", "about.tsx"), "export default function About() {}\n")
+
+      # No `app/routes.ts`: React Router falls back to the file convention.
+      rr = File.join(root, "rr-app")
+      FileUtils.mkdir_p(File.join(rr, "app", "routes"))
+      File.write(File.join(rr, "package.json"), %({"devDependencies": {"@react-router/dev": "^7.9.0"}}))
+      File.write(File.join(rr, "app", "routes", "users.$id.tsx"), <<-TSX)
+        export async function loader({ params }) {
+          return { id: params.id };
+        }
+
+        export default function User() {}
+        TSX
+
+      endpoints = scan_tree(root)
+      tech_sources(endpoints, "js_remix").should eq([File.join(remix, "app", "routes", "about.tsx")])
+      tech_sources(endpoints, "js_react_router").should eq([File.join(rr, "app", "routes", "users.$id.tsx")])
+      endpoints.select { |e| e.details.technology == "js_react_router" }.map(&.url).uniq!.should eq(["/users/{id}"])
+    ensure
+      FileUtils.rm_rf(root) if Dir.exists?(root)
+    end
+  end
+end

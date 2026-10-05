@@ -6,7 +6,11 @@ module Detector::Javascript
       extensions: %w[.js .mjs .cjs .jsx .ts .tsx],
       basenames: %w[package.json]
 
-    PACKAGE_MARKER = /@remix-run\//
+    # Remix v2's own packages. The `@remix-run/` scope alone is not a Remix
+    # app: React Router and Remix 3 publish utilities under it
+    # (`@remix-run/node-fetch-server`, `@remix-run/router`), and React
+    # Router v7 apps that pull one in read as Remix.
+    PACKAGE_MARKER = /@remix-run\/(?:dev|react|node|serve|server-runtime|cloudflare|cloudflare-pages|cloudflare-workers|deno|express|architect)(?![\w-])/
     VITE_MARKER    = /@remix-run\/dev/
 
     def detect(filename : String, file_contents : String) : Bool
