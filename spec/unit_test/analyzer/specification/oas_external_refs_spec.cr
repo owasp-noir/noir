@@ -90,6 +90,59 @@ describe "OpenAPI external $ref resolution" do
     end
   end
 
+  it "decodes percent-encoded characters in a local ref file path" do
+    with_temp_dir("noir_oas_encoded_file_ref") do |dir|
+      entry = File.join(dir, "openapi.yaml")
+      File.write(entry, <<-YAML)
+        openapi: 3.0.1
+        info:
+          title: Encoded file
+          version: '1'
+        paths:
+          /pets:
+            $ref: './paths/pets%20list.yaml'
+        YAML
+      Dir.mkdir_p(File.join(dir, "paths"))
+      File.write(File.join(dir, "paths", "pets list.yaml"), <<-YAML)
+        get:
+          operationId: listPets
+        YAML
+
+      endpoints = analyze_oas3(dir, entry)
+
+      endpoints.map(&.url).should eq(["/pets"])
+    end
+  end
+
+  it "decodes percent-encoded characters in a JSON Pointer fragment" do
+    with_temp_dir("noir_oas_encoded_pointer_ref") do |dir|
+      entry = File.join(dir, "openapi.yaml")
+      File.write(entry, <<-YAML)
+        openapi: 3.0.1
+        info:
+          title: Encoded pointer
+          version: '1'
+        paths:
+          /pets:
+            get:
+              parameters:
+                - $ref: '#/components/parameters/Fields%20By%20Name'
+        components:
+          parameters:
+            Fields By Name:
+              name: fields
+              in: query
+              schema:
+                type: string
+        YAML
+
+      endpoints = analyze_oas3(dir, entry)
+
+      endpoints.size.should eq(1)
+      endpoints[0].params.map(&.name).should contain("fields")
+    end
+  end
+
   it "refuses a ref that resolves outside the scan base" do
     with_temp_dir("noir_oas_escape") do |dir|
       project = File.join(dir, "project")

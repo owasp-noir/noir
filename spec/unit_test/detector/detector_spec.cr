@@ -302,4 +302,40 @@ describe "detect_techs passive results" do
       FileUtils.rm_rf(temp_dir)
     end
   end
+
+  it "processes a file once when scan bases overlap" do
+    temp_dir = File.tempname("noir_detector_overlapping_bases")
+    nested_base = File.join(temp_dir, "apps", "api")
+    Dir.mkdir_p(nested_base)
+    source = File.join(nested_base, "config.env")
+    File.write(source, "SECRET_TOKEN=value\n")
+
+    rule = PassiveScan.new(YAML.parse(
+      "id: overlap-test\ncategory: secret\ntechs: ['*']\n" \
+      "info: {name: overlap, author: [], severity: high, description: overlap, reference: []}\n" \
+      "matchers-condition: or\nmatchers:\n  - {type: word, condition: or, patterns: [SECRET_TOKEN]}\n"))
+    base_paths = [temp_dir, nested_base]
+    options = create_test_options
+    options["base"] = YAML::Any.new(base_paths.map { |path| YAML::Any.new(path) })
+    logger = NoirLogger.new(false, false, false, true)
+    locator = CodeLocator.instance
+    locator.clear_all
+
+    begin
+      findings = detect_techs(base_paths, options, [rule], logger)[1]
+
+      findings.size.should eq(1)
+      locator.all_files.count { |path| path == source }.should eq(1)
+
+      # Exclusions are evaluated relative to each configured base first: a
+      # parent-root match can be absent relative to the nested base, where
+      # that same file should still be visited once.
+      options["exclude_path"] = YAML::Any.new("apps/api/config.env")
+      nested_finding = detect_techs(base_paths, options, [rule], logger)[1]
+      nested_finding.size.should eq(1)
+    ensure
+      locator.clear_all
+      FileUtils.rm_rf(temp_dir)
+    end
+  end
 end

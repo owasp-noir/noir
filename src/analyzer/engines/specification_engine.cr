@@ -399,13 +399,14 @@ module Analyzer::Specification
       node.nil? ? nil : {node, target}
     end
 
-    # Splits a `$ref` into its file part and its JSON Pointer; either may be
-    # empty.
+    # Splits and URI-decodes a `$ref`'s file part and JSON Pointer fragment;
+    # either may be empty. Decode after splitting so an encoded `#` remains
+    # part of the filename.
     protected def split_ref(ref : String) : Tuple(String, String)
       if index = ref.index('#')
-        {ref[0, index], ref[(index + 1)..]}
+        {URI.decode(ref[0, index]), URI.decode(ref[(index + 1)..])}
       else
-        {ref, ""}
+        {URI.decode(ref), ""}
       end
     end
 

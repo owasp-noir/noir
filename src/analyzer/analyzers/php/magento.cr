@@ -42,8 +42,8 @@ module Analyzer::Php
 
     def analyze
       @front_names = build_front_name_map
-      parallel_file_scan do |path|
-        result.concat(analyze_file(path))
+      ordered_file_scan { |path| analyze_file(path) }.each do |file_endpoints|
+        result.concat(file_endpoints)
       end
       result
     end

@@ -69,9 +69,9 @@ module Analyzer::Perl
       include_callee = callees_needed?
       controller_callees = include_callee ? index_controller_callees : ControllerCalleeIndex.new
 
-      parallel_file_scan do |path|
-        result.concat(analyze_file(path, include_callee, controller_callees))
-      end
+      ordered_file_scan do |path|
+        analyze_file(path, include_callee, controller_callees)
+      end.each { |file_endpoints| result.concat(file_endpoints) }
       result
     end
 
