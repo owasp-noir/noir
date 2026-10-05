@@ -98,14 +98,21 @@ class EndpointOptimizer
       end
 
       # `<param>` patterns (Django / Flask / Marten / Bottle style).
-      url.scan(ANGLE_PLACEHOLDER_RE) do |match|
-        param = angle_bracket_param(match[1], endpoint)
-        # Skip regex fragments. Play declares constrained path params as
-        # `$name<regex>`, so the framework analyzer already recorded
-        # `name`; the `<regex>` body (e.g. `\w{8}`, `[\w-]{2,6}`) is not
-        # a param name.
-        next unless valid_path_param_name?(param)
-        placeholders << PathPlaceholder.new(match.byte_begin(0), match.byte_end(0), param)
+      # A known string-route technology (Express and friends) keeps `<...>`
+      # as literal text — `/files/<id>` is not a path param, and
+      # `/users/<script>alert(1)</script>` must not invent `script`.
+      # No technology at all still scans: callers and specs build endpoints
+      # before a framework is known, and `<int:id>` there is the placeholder.
+      if angle_placeholder_tech?(endpoint.details.technology)
+        url.scan(ANGLE_PLACEHOLDER_RE) do |match|
+          param = angle_bracket_param(match[1], endpoint)
+          # Skip regex fragments. Play declares constrained path params as
+          # `$name<regex>`, so the framework analyzer already recorded
+          # `name`; the `<regex>` body (e.g. `\w{8}`, `[\w-]{2,6}`) is not
+          # a param name.
+          next unless valid_path_param_name?(param)
+          placeholders << PathPlaceholder.new(match.byte_begin(0), match.byte_end(0), param)
+        end
       end
 
       # `/*param` patterns (wildcard / glob).
@@ -254,6 +261,13 @@ class EndpointOptimizer
   # `app.url_map.converters`), so the builtin list alone can't recognize a
   # custom one; `<yyyy:year>` declares `year`, not `yyyy`.
   CONVERTER_FIRST_TECHS = Set{"python_django", "python_flask", "python_quart"}
+
+  # Nil/empty means the framework is unknown, so the historical `<...>`
+  # scan still runs. A named technology must be one that uses the syntax.
+  private def angle_placeholder_tech?(technology : String?) : Bool
+    return true if technology.nil? || technology.empty?
+    Noir::URLPath::ANGLE_PLACEHOLDER_TECHS.includes?(technology)
+  end
 
   # Werkzeug converter arguments: `int(signed=True)`, `any(about, help)`.
   CONVERTER_ARGS_RE = /\([^()]*\)/

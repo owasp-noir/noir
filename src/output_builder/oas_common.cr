@@ -1,6 +1,7 @@
 require "json"
 require "uri"
 require "../utils/http_symbols"
+require "../utils/url_path"
 
 module OutputBuilderOasCommon
   # The operation keys a Path Item Object accepts. `query` (RFC 10008)
@@ -57,6 +58,10 @@ module OutputBuilderOasCommon
     path = "/" if path.empty?
     bracket_path_tech = technologies.includes?("cfml_wheels")
     splat_path_tech = technologies.any? { |tech| SPLAT_PATH_TECHS.includes?(tech) }
+    # Empty means unknown and keeps the historical rewrite (`<int:id>` →
+    # `{id}`). A named technology that is not in the set leaves the brackets.
+    known_techs = technologies.reject(&.empty?)
+    angle_path_tech = known_techs.empty? || known_techs.any? { |tech| Noir::URLPath::ANGLE_PLACEHOLDER_TECHS.includes?(tech) }
 
     # Google AIP / gRPC-transcoding resource patterns (`{name=projects/*}`)
     # embed a path pattern inside the placeholder. Left alone, the `*` pass
@@ -84,10 +89,15 @@ module OutputBuilderOasCommon
 
     # Convert typed placeholders before the generic :param pass; otherwise
     # `<int:id>` becomes `<int{id}>` and can no longer be normalized.
-    path = path.gsub(/<([^:<>]+):(\w+)>/) do |_, match|
-      "{#{angle_placeholder_name(match[1], match[2], declared_path_params)}}"
+    # Only frameworks that spell params this way. A literal Express segment
+    # stays `<...>`, including one that is not a whole placeholder
+    # (`<script>alert(1)</script>`).
+    if angle_path_tech
+      path = path.gsub(/<([^:<>]+):(\w+)>/) do |_, match|
+        "{#{angle_placeholder_name(match[1], match[2], declared_path_params)}}"
+      end
+      path = path.gsub(/<(\w+)>/, "{\\1}")
     end
-    path = path.gsub(/<(\w+)>/, "{\\1}")
 
     # Catch-all placeholders keep the rest-of-path marker inside the braces:
     # Armeria `{*filePath}`, Salvo `{**path}`, ASP.NET and Spring `{*slug}`.

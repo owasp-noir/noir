@@ -526,7 +526,7 @@ module Analyzer::Cpp
       # Regex routes are kept verbatim: `?` is a quantifier / `(?:...)` group,
       # not the query-string separator, so neither splitting nor placeholder
       # rewriting applies.
-      return {raw, [] of Param, [] of Param} if via_regex
+      return {Noir::URLPath.strip_regex_anchors(raw), [] of Param, [] of Param} if via_regex
 
       path_part, _, query = raw.partition('?')
       query_params = extract_query_params(query)

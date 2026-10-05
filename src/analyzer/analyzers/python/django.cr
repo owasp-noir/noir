@@ -776,7 +776,7 @@ module Analyzer::Python
     end
 
     private def normalize_django_route(route : ::String) : ::String
-      normalized = route.gsub(/^\^/, "").gsub(/\$$/, "")
+      normalized = Noir::URLPath.strip_regex_anchors(route)
       normalized = normalize_django_named_regex_groups(normalized)
       strip_django_optional_quantifiers(normalized)
     end

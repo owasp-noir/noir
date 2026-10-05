@@ -17,10 +17,11 @@ class EndpointOptimizer
   #     (or `{field}` for `${obj.field}`) so the AI/output payload
   #     surfaces it as a path placeholder rather than as a literal
   #     `${...}` segment.
-  #   - Python regex anchors `^` (leading) and `$`/`\Z` (trailing) —
-  #     `re_path` patterns commonly include these.
-  #   - Python regex backslash-escaped dots `\.` — rewrite to plain
-  #     `.` for the visible URL.
+  #
+  # Regex anchors (`^`, `$`, `\Z`) and `\.` escapes are not touched here:
+  # only the analyzer knows whether a route is a regex, so regex-route
+  # analyzers strip them with `Noir::URLPath.strip_regex_anchors`. A string
+  # route (Express `/dollar$`, Sinatra `/^start`) keeps them as path text.
   #   - Spring `{name:regex}` — strip the inline regex constraint so
   #     the placeholder is `{name}` regardless of framework dialect.
   #   - Postman / Express-style `:name` path segments — rewrite to
@@ -35,14 +36,14 @@ class EndpointOptimizer
       # there is an unresolved gradle manifest placeholder (kept verbatim
       # and tagged by the Android analyzer), not a JS template literal.
       next if endpoint.non_http?
-      endpoint.url = normalize_url_shape(endpoint.url, technology: endpoint.details.technology)
+      endpoint.url = normalize_url_shape(endpoint.url)
       endpoints[idx] = endpoint
     end
 
     endpoints
   end
 
-  private def normalize_url_shape(url : String, normalize_colon_segments : Bool = false, technology : String? = nil) : String
+  private def normalize_url_shape(url : String, normalize_colon_segments : Bool = false) : String
     return url if url.empty?
 
     # Skip URLs that look like a verbatim regex literal — Express
@@ -77,16 +78,6 @@ class EndpointOptimizer
       name = tokens.last? || ""
       name.empty? ? "{var}" : "{#{name}}"
     end
-
-    # Strip regex anchors at the path boundary. Grape accepts a literal `$`
-    # at the end of a route, so only that ambiguous suffix is technology-gated.
-    normalized = normalized.sub(/^\/\^/, "/")
-    normalized = normalized.sub(/\$$/, "") unless technology == "ruby_grape"
-    normalized = normalized.sub(/\\Z$/, "")
-    normalized = normalized.sub(/\/\$$/, "/")
-
-    # Backslash-escaped dots (Python re_path `r"\.json"`) → literal dot.
-    normalized = normalized.gsub("\\.", ".")
 
     # Final path double-slash collapse in case the rewrites left an
     # adjacent pair. Skip absolute URLs entirely; the `//` after the

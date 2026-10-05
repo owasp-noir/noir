@@ -281,6 +281,8 @@ module Analyzer::Specification
     private def emit_endpoint(path : String, path_type : String, hosts : Array(String), origin : String, source_path : String, line : Int32, target : String? = nil)
       return if path.empty?
 
+      # `*Match` directives and `RewriteRule` take regexes.
+      path = Noir::URLPath.strip_regex_anchors(path) if path_type.ends_with?("regex") || path_type == "rewrite-source"
       detail = Details.new(PathInfo.new(source_path, line))
       hosts = [""] if hosts.empty?
       hosts.each do |host|

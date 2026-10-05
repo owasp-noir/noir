@@ -128,6 +128,9 @@ module Analyzer::Specification
     end
 
     private def emit_endpoint(path : String, path_type : String, host : String, tls_hosts : Set(String), details : Details, origin : String = "rule")
+      # ingress-nginx reads `ImplementationSpecific` paths as regexes when
+      # `use-regex` is on; `Exact` / `Prefix` paths are literal.
+      path = Noir::URLPath.strip_regex_anchors(path) if path_type == "ImplementationSpecific"
       endpoint = Endpoint.new(path, DEFAULT_METHOD, details)
       endpoint.add_tag(Tag.new("ingress-path-type", path_type.downcase, "k8s_ingress_analyzer"))
       endpoint.add_tag(Tag.new("ingress-host", host, "k8s_ingress_analyzer")) unless host.empty?

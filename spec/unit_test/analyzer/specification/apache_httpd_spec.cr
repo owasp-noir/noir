@@ -39,10 +39,10 @@ describe "Apache httpd Analyzer" do
 
     pairs = endpoints.map { |e| {e.url, tag_descriptions(e, "apache-path-type").first} }.sort!
     pairs.should eq([
+      {"/admin/(.*)", "regex"},
+      {"/api/(.*)", "rewrite-source"},
       {"/static", "alias"},
       {"/v1/users", "prefix"},
-      {"^/admin/(.*)$", "regex"},
-      {"^/api/(.*)$", "rewrite-source"},
     ])
     endpoints.each do |e|
       tag_descriptions(e, "apache-host").should eq ["api.example.com"]
@@ -72,9 +72,9 @@ describe "Apache httpd Analyzer" do
     pairs.should eq([
       {"/api", "proxy"},
       {"/cgi-bin/", "script-alias"},
+      {"/legacy/(.*)", "redirect-regex"},
       {"/old", "redirect"},
-      {"^/legacy/(.*)$", "redirect-regex"},
-      {"^/ws/(.*)$", "proxy-regex"},
+      {"/ws/(.*)", "proxy-regex"},
     ])
     endpoints.each do |e|
       tag_descriptions(e, "apache-host").should eq ["proxy.example.com"]
@@ -91,7 +91,7 @@ describe "Apache httpd Analyzer" do
       </LocationMatch>
       CONF
 
-    endpoints.map(&.url).sort!.should eq ["/backend", "^/files/(.*)$"]
+    endpoints.map(&.url).sort!.should eq ["/backend", "/files/(.*)"]
   end
 
   it "skips no-substitution and static asset rewrites" do
@@ -102,7 +102,7 @@ describe "Apache httpd Analyzer" do
       RewriteRule ^remote/(.*) remote.php [L]
       CONF
 
-    endpoints.map(&.url).should eq ["^remote/(.*)"]
+    endpoints.map(&.url).should eq ["remote/(.*)"]
   end
 
   it "supports multiple ServerAlias hosts" do

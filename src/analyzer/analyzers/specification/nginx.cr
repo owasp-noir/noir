@@ -122,6 +122,7 @@ module Analyzer::Specification
                   else           "prefix"
                   end
 
+      path = Noir::URLPath.strip_regex_anchors(path) if path_type.starts_with?("regex")
       detail = Details.new(PathInfo.new(details.code_paths.first.path, line))
       hosts = [""] if hosts.empty?
       hosts.each do |host|

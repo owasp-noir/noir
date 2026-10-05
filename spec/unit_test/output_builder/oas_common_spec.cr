@@ -45,7 +45,7 @@ describe OutputBuilderOasCommon do
     it "normalizes express style optional segments and param syntax" do
       helper.test_normalize_oas_path("/users/:id").should eq("/users/{id}")
       helper.test_normalize_oas_path("/users/[id]", [] of String, ["cfml_wheels"]).should eq("/users/{id}")
-      helper.test_normalize_oas_path("/users/<int:id>").should eq("/users/{id}")
+      helper.test_normalize_oas_path("/users/<int:id>", [] of String, ["python_django"]).should eq("/users/{id}")
       helper.test_normalize_oas_path("/users/*id", [] of String, ["perl_mojolicious"]).should eq("/users/{id}")
       helper.test_normalize_oas_path("/files/*", [] of String, ["elixir_phoenix"]).should eq("/files/{wildcard}")
     end
@@ -70,14 +70,14 @@ describe OutputBuilderOasCommon do
     it "resolves name-first typed placeholders" do
       # Sanic / Bottle / Marten spell the placeholder `<name:type>`, the
       # reverse of Django / Flask's `<type:name>`.
-      helper.test_normalize_oas_path("/users/<id:int>").should eq("/users/{id}")
-      helper.test_normalize_oas_path("/posts/<post_id:uuid>").should eq("/posts/{post_id}")
-      helper.test_normalize_oas_path("/n/<int(min=1):page>").should eq("/n/{page}")
+      helper.test_normalize_oas_path("/users/<id:int>", [] of String, ["python_sanic"]).should eq("/users/{id}")
+      helper.test_normalize_oas_path("/posts/<post_id:uuid>", [] of String, ["python_sanic"]).should eq("/posts/{post_id}")
+      helper.test_normalize_oas_path("/n/<int(min=1):page>", [] of String, ["python_flask"]).should eq("/n/{page}")
     end
 
     it "prefers the endpoint's declared path params for typed placeholders" do
-      helper.test_normalize_oas_path("/a/<foo:bar>", ["bar"]).should eq("/a/{bar}")
-      helper.test_normalize_oas_path("/a/<foo:bar>", ["foo"]).should eq("/a/{foo}")
+      helper.test_normalize_oas_path("/a/<foo:bar>", ["bar"], ["python_django"]).should eq("/a/{bar}")
+      helper.test_normalize_oas_path("/a/<foo:bar>", ["foo"], ["crystal_marten"]).should eq("/a/{foo}")
     end
 
     it "collapses resource patterns and constrained placeholders" do
@@ -106,6 +106,16 @@ describe OutputBuilderOasCommon do
       helper.test_normalize_oas_path("/star*", [] of String, ["js_express"]).should eq("/star*")
       helper.test_normalize_oas_path("/[abc]", [] of String, ["js_express"]).should eq("/[abc]")
       helper.test_normalize_oas_path("/files/*").should eq("/files/*")
+    end
+
+    it "keeps literal angle brackets unless the framework uses them as params" do
+      helper.test_normalize_oas_path("/files/<id>", [] of String, ["js_express"]).should eq("/files/<id>")
+      helper.test_normalize_oas_path("/users/<script>alert(1)</script>", [] of String, ["js_express"])
+        .should eq("/users/<script>alert(1)</script>")
+      helper.test_normalize_oas_path("/files/<id>", [] of String, ["python_flask"]).should eq("/files/{id}")
+      # No technology: still a placeholder. Callers build endpoints before a
+      # framework is known (`/users/<int:user_id>` in the OAS specs).
+      helper.test_normalize_oas_path("/users/<int:user_id>").should eq("/users/{user_id}")
     end
   end
 

@@ -235,3 +235,17 @@ describe "Noir::URLPath.absolute_join" do
     Noir::URLPath.absolute_join("", "").should eq("/")
   end
 end
+
+describe "Noir::URLPath.strip_regex_anchors" do
+  it "drops boundary anchors and unescapes dots" do
+    Noir::URLPath.strip_regex_anchors("^/admin/.*$").should eq("/admin/.*")
+    Noir::URLPath.strip_regex_anchors("^tags/?$").should eq("tags/?")
+    Noir::URLPath.strip_regex_anchors("articles/\\.json\\Z").should eq("articles/.json")
+    Noir::URLPath.strip_regex_anchors("/price/$").should eq("/price/")
+  end
+
+  it "leaves a `^` or `$` that is not at the boundary" do
+    Noir::URLPath.strip_regex_anchors("/keep$mid").should eq("/keep$mid")
+    Noir::URLPath.strip_regex_anchors("/a/[^/]+").should eq("/a/[^/]+")
+  end
+end

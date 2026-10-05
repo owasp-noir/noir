@@ -36,10 +36,10 @@ describe "Nginx Analyzer" do
 
     pairs = endpoints.map { |e| {e.url, tag_descriptions(e, "nginx-path-type").first} }.sort!
     pairs.should eq([
+      {"/admin/.*", "regex"},
       {"/healthz", "exact"},
       {"/static/", "prefix-stop"},
       {"/v1/users", "prefix"},
-      {"^/admin/.*", "regex"},
     ])
     endpoints.each(&.method.should(eq("ANY")))
     endpoints.each(&.protocol.should(eq("https")))
@@ -74,7 +74,7 @@ describe "Nginx Analyzer" do
       }
       CONF
 
-    endpoints.map(&.url).should eq(["(?:#.*#|\\.(?:bak|conf|log)|~)$"])
+    endpoints.map(&.url).should eq(["(?:#.*#|.(?:bak|conf|log)|~)"])
   end
 
   it "skips internal named and templated locations" do
