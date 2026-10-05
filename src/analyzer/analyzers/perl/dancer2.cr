@@ -57,9 +57,9 @@ module Analyzer::Perl
 
     def analyze
       include_callee = callees_needed?
-      parallel_file_scan do |path|
-        result.concat(analyze_file(path, include_callee))
-      end
+      ordered_file_scan do |path|
+        analyze_file(path, include_callee)
+      end.each { |file_endpoints| result.concat(file_endpoints) }
       result
     end
 

@@ -13,8 +13,12 @@ require "../../models/analyzer"
 # `Analyzer#scan_files` for the shared skeleton.
 abstract class FileScanEngine < Analyzer
   def analyze
-    parallel_file_scan do |path|
-      result.concat(analyze_file(path))
+    # On a parallel execution context, appending into `result` from each
+    # worker races on the shared Array. It also makes endpoint order depend
+    # on worker completion time. Keep file parsing parallel, then merge on
+    # this fiber in input order.
+    ordered_file_scan { |path| analyze_file(path) }.each do |file_endpoints|
+      result.concat(file_endpoints)
     end
     result
   end
