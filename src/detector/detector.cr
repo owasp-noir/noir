@@ -682,7 +682,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
               end
             end
 
-            next unless seen_file_paths.add?(Noir::PathScope.expand(full_path))
+            next if base_paths.size > 1 && !seen_file_paths.add?(Noir::PathScope.expand(full_path))
 
             if skip_reason = MediaFilter.skip_check(full_path, info: info, sniff_binary: false)
               logger.debug "Skipping #{full_path}: #{skip_reason}"
