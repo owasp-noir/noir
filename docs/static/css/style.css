@@ -978,21 +978,26 @@ pre.mermaid svg { max-width: 100%; height: auto; margin-inline: auto; }
 .logowall { border-bottom: 1px solid var(--border-subtle); }
 .logowall-inner {
   display: flex; align-items: center; justify-content: center;
-  flex-wrap: wrap; gap: clamp(2.5rem, 8vw, 7rem);
-  padding-block: 3.5rem;
+  flex-wrap: wrap; gap: clamp(2.5rem, 6vw, 6rem);
+  padding-block: clamp(3.5rem, 6vw, 5rem);
 }
-/* All three lockups sit near a 2.8:1 aspect, so a shared height reads as
-   optically balanced without per-logo tuning. */
+/* All four lockups sit near a 2.8:1 aspect, so a shared height reads as
+   optically balanced without per-logo tuning. The height scales with the
+   viewport so the row of four still fits on one line down to 768px. */
 .logowall img {
-  height: 48px; width: auto;
+  height: clamp(40px, 4.6vw, 64px); width: auto;
   filter: var(--logo-filter);
   transition: filter 0.25s var(--ease);
 }
-/* At 390px the three lockups plus the desktop gap total 369px against 350px of
-   usable width, which wraps them onto two rows. Tighten the gap instead. */
+/* Four lockups (~480px at 42px tall) cannot share one row on a phone, and a
+   free wrap leaves a 3+1 orphan. Pin them to a 2x2 grid instead. */
 @media (max-width: 767px) {
-  .logowall img { height: 34px; }
-  .logowall-inner { gap: 1.25rem; padding-block: 2.5rem; }
+  .logowall img { height: 42px; }
+  .logowall-inner {
+    display: grid; grid-template-columns: repeat(2, auto);
+    justify-content: center; justify-items: center;
+    gap: 1.75rem clamp(1.5rem, 8vw, 2.5rem); padding-block: 3rem;
+  }
 }
 .logowall a:hover img { filter: var(--logo-filter-hover); }
 

@@ -52,6 +52,9 @@ template = "landing"
     <a href="https://owasp.org/projects/noir" target="_blank" rel="noopener noreferrer">
       <img src="./images/owasp.webp" alt="OWASP" width="500" height="174" loading="lazy" decoding="async">
     </a>
+    <a href="https://owasp.org/www-chapter-seoul/" target="_blank" rel="noopener noreferrer">
+      <img src="./images/owasp-seoul.webp" alt="OWASP Seoul Chapter" width="540" height="174" loading="lazy" decoding="async">
+    </a>
     <a href="https://crystal-lang.org/" target="_blank" rel="noopener noreferrer">
       <img src="./images/crystal.webp" alt="Crystal" width="500" height="174" loading="lazy" decoding="async">
     </a>
