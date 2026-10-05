@@ -45,35 +45,33 @@ module Noir
       end
     end
 
+    FLAT_ROUTES_CALL = /\bflatRoutes\s*\(/
+
     def extract(source : String) : Config
       routes = [] of Route
-      flat = false
       # The JS grammar has no `satisfies`; the strip is same-line, so rows hold.
       normalized = source.gsub(JSObjectConfigExtractor::SATISFIES_ASSERTION, "")
       Noir::TreeSitter.parse_javascript(normalized) do |root|
-        walk(root, normalized, "/", routes) { flat = true }
+        walk(root, normalized, "/", routes)
       end
-      Config.new(routes, flat)
+      Config.new(routes, FLAT_ROUTES_CALL.matches?(source))
     end
 
-    private def walk(node : LibTreeSitter::TSNode, source : String, parent : String, routes : Array(Route), &on_flat : ->) : Nil
+    private def walk(node : LibTreeSitter::TSNode, source : String, parent : String, routes : Array(Route)) : Nil
       if Noir::TreeSitter.node_type(node) == "call_expression"
         case callee_name(node, source)
         when "route", "index", "layout", "prefix"
-          emit(node, source, parent, routes, &on_flat)
-          return
-        when "flatRoutes"
-          on_flat.call
+          emit(node, source, parent, routes)
           return
         end
       end
 
       Noir::TreeSitter.each_named_child(node) do |child|
-        walk(child, source, parent, routes, &on_flat)
+        walk(child, source, parent, routes)
       end
     end
 
-    private def emit(call : LibTreeSitter::TSNode, source : String, parent : String, routes : Array(Route), &on_flat : ->) : Nil
+    private def emit(call : LibTreeSitter::TSNode, source : String, parent : String, routes : Array(Route)) : Nil
       name = callee_name(call, source)
       args = [] of LibTreeSitter::TSNode
       if arguments = Noir::TreeSitter.field(call, "arguments")
@@ -101,7 +99,7 @@ module Noir
 
       # Children are the trailing array argument of route/layout/prefix.
       if (children = args.last?) && Noir::TreeSitter.node_type(children) == "array"
-        walk(children, source, child_parent, routes, &on_flat)
+        walk(children, source, child_parent, routes)
       end
     end
 
