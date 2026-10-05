@@ -104,3 +104,29 @@ describe "Azure Functions Analyzer" do
     endpoints[0].method.should eq "ANY"
   end
 end
+
+describe "Azure Functions Analyzer (code-first)" do
+  it "takes the prefix from the nearest host.json without leaving the scan base" do
+    outer = File.tempname("azure_outer")
+    project = File.join(outer, "proj")
+    Dir.mkdir_p(File.join(project, "src"))
+    File.write(File.join(outer, "host.json"), %({"extensions":{"http":{"routePrefix":"unrelated"}}}))
+    source = File.join(project, "src", "a.js")
+    File.write(source, %(const { app } = require("@azure/functions");\napp.http("users", { methods: ["GET", "POST"], route: "users", handler });\n))
+
+    locator = CodeLocator.instance
+    locator.clear Noir::LocatorKeys::AZURE_FUNCTIONS_SPEC
+    locator.push Noir::LocatorKeys::AZURE_FUNCTIONS_SPEC, source
+
+    options = create_test_options
+    options["base"] = YAML::Any.new([YAML::Any.new(project)])
+    endpoints = Analyzer::Specification::AzureFunctions.new(options).analyze
+
+    endpoints.map { |e| {e.url, e.method} }.should eq [{"/api/users", "GET"}, {"/api/users", "POST"}]
+    endpoints.map(&.details.code_paths.first.line).should eq [2, 2]
+    # Each endpoint owns its code_paths, so a merge into one cannot leak.
+    endpoints[0].details.code_paths.should_not be(endpoints[1].details.code_paths)
+  ensure
+    FileUtils.rm_rf(outer) if outer
+  end
+end
