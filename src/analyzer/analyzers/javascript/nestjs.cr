@@ -830,21 +830,21 @@ module Analyzer::Javascript
       # `@HostParam('account')` — subdomain capture when the controller
       # uses `@Controller({ host: ':account.example.com' })`.
       method_params.scan(/@HostParam\s*\(\s*['"`]([^'"`]+)['"`][\s\S]*?\)/) do |param_match|
-        endpoint.push_param(Param.new(param_match[1], "", "path")) if param_match.size > 0
+        endpoint.push_param(Param.new(param_match[1], "", "path"))
       end
 
       # `@UploadedFile('field')` / `@UploadedFiles('field')` — multer
       # integration. Unnamed forms get a generic 'file' / 'files' body
       # param so consumers still see the upload surface.
       method_params.scan(/@UploadedFile\s*\(\s*['"`]([^'"`]+)['"`][\s\S]*?\)/) do |param_match|
-        endpoint.push_param(Param.new(param_match[1], "", "body")) if param_match.size > 0
+        endpoint.push_param(Param.new(param_match[1], "", "body"))
       end
       if method_params =~ /@UploadedFile\s*\(\s*\)/
         endpoint.push_param(Param.new("file", "", "body"))
       end
 
       method_params.scan(/@UploadedFiles\s*\(\s*['"`]([^'"`]+)['"`][\s\S]*?\)/) do |param_match|
-        endpoint.push_param(Param.new(param_match[1], "", "body")) if param_match.size > 0
+        endpoint.push_param(Param.new(param_match[1], "", "body"))
       end
       if method_params =~ /@UploadedFiles\s*\(\s*\)/
         endpoint.push_param(Param.new("files", "", "body"))
@@ -853,12 +853,12 @@ module Analyzer::Javascript
 
     private def extract_interceptor_parameters(decorator_block : String, endpoint : Endpoint)
       decorator_block.scan(/(?:FileInterceptor|FilesInterceptor)\s*\(\s*['"`]([^'"`]+)['"`]/) do |match|
-        endpoint.push_param(Param.new(match[1], "", "body")) if match.size > 0
+        endpoint.push_param(Param.new(match[1], "", "body"))
       end
 
       decorator_block.scan(/FileFieldsInterceptor\s*\(\s*\[([\s\S]*?)\]/m) do |match|
         match[1].scan(/\bname\s*:\s*['"`]([^'"`]+)['"`]/) do |field|
-          endpoint.push_param(Param.new(field[1], "", "body")) if field.size > 0
+          endpoint.push_param(Param.new(field[1], "", "body"))
         end
       end
     end
