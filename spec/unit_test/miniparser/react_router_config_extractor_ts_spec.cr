@@ -28,7 +28,7 @@ describe Noir::TreeSitterReactRouterConfigExtractor do
             route("*", "routes/concerts/splat.tsx"),
             route("", "routes/concerts/same.tsx"),
           ]),
-          route("/concerts/trending", "routes/concerts/trending.tsx"),
+          route("/trending", "routes/concerts/trending.tsx"),
         ]),
       ] satisfies RouteConfig;
       TS
@@ -41,8 +41,59 @@ describe Noir::TreeSitterReactRouterConfigExtractor do
       {"/concerts/:city", "routes/concerts/city.tsx", 17},
       {"/concerts/:city/*", "routes/concerts/splat.tsx", 18},
       {"/concerts/:city", "routes/concerts/same.tsx", 19},
+      # `prefix()` absorbs a child's leading `/` (`joinRoutePaths`).
       {"/concerts/trending", "routes/concerts/trending.tsx", 21},
     ])
+  end
+
+  it "keeps an absolute route() child as written" do
+    source = <<-TS
+      export default [
+        route("users", "routes/users.tsx", [route("/users/:id", "routes/user.tsx")]),
+      ];
+      TS
+
+    rr_routes(source).map(&.[0]).should eq(["/users", "/users/:id"])
+  end
+
+  it "follows arrays bound to a name and ignores ones never exported" do
+    source = <<-TS
+      const api = [route("users", "routes/api/users.ts")];
+      export const legacy = [route("old", "routes/old.tsx")];
+      // ...(await flatRoutes()),
+      export default [index("routes/home.tsx"), ...prefix("api", api)] satisfies RouteConfig;
+      TS
+
+    config = Noir::TreeSitterReactRouterConfigExtractor.extract(source)
+    config.routes.map(&.path).should eq(["/", "/api/users"])
+    config.flat_routes?.should be_false
+  end
+
+  it "reads a type-annotated binding exported by name" do
+    source = <<-TS
+      const routes: RouteConfig = [index("pages/splash.tsx"), route("/brand", "pages/brand.tsx")];
+      if (process.env.NODE_ENV === "development") {
+        routes.push(route("/__playground", "pages/playground.tsx"));
+      }
+      export default routes;
+      TS
+
+    rr_routes(source).map(&.[0]).should eq(["/", "/brand"])
+  end
+
+  it "reads template-literal paths and defineRoutes callbacks" do
+    source = <<-TS
+      export default remixRoutesOptionAdapter((defineRoutes) =>
+        defineRoutes((route) => {
+          route(`about`, "routes/about.tsx", () => {
+            route(":id", "routes/member.tsx");
+          });
+          route(`team/${slug}`, "routes/team.tsx");
+        })
+      );
+      TS
+
+    rr_routes(source).map(&.[0]).should eq(["/about", "/about/:id"])
   end
 
   it "flags flatRoutes() and keeps the routes beside it" do

@@ -13,56 +13,65 @@ module Analyzer::Javascript
   #   ...(await flatRoutes())               → the Remix `app/routes/` convention
   #
   # The file convention therefore applies only where the config spreads
-  # `flatRoutes()` in. A project with no config — or one whose config reads
-  # as nothing we recognise — falls back to it rather than report nothing.
+  # `flatRoutes()` in. A config that reads as nothing we recognise, or a
+  # scan with no config at all, falls back to it rather than report nothing.
   #
   # Out of scope: `flatRoutes({ rootDirectory })` and a non-default
   # `appDirectory` for the file convention (config routes resolve against
-  # whatever directory holds `routes.ts`, so those are covered).
+  # whatever directory holds `routes.ts`, so those are covered), and route
+  # arrays imported from another file, which are not followed — a split-out
+  # `routes.ts` is still read on its own, without the importer's prefix.
   class ReactRouter < Remix
     analyzer_for "js_react_router"
 
     PACKAGE_MARKERS  = ["@react-router/dev"]
     CONFIG_BASENAMES = ["react-router.config.ts", "react-router.config.js", "react-router.config.mjs", "react-router.config.cjs"]
 
-    ROUTE_CONFIG_BASENAMES = ["routes.ts", "routes.js", "routes.mts", "routes.mjs"]
-    ROUTE_CONFIG_MARKER    = "@react-router/"
-
     def analyze
       result = [] of Endpoint
       include_callee = callees_needed?
-      roots = project_roots
+      apps = react_router_apps
 
       # Expanded path → path as scanned, so a config's `routes/user.tsx`
       # lands on the same path string every other endpoint reports.
       modules = {} of String => String
-      get_files_by_extensions(EXTENSIONS).each do |path|
-        modules[Noir::PathScope.expand(path)] = path if path_under_project_roots?(path, roots)
+      unless apps.empty?
+        get_files_by_extensions(EXTENSIONS).each { |path| modules[Noir::PathScope.expand(path)] = path }
       end
 
-      # Expanded app directory → whether its config opts into the file convention.
+      # Expanded app directory → whether it opts into the file convention.
       flat_dirs = {} of String => Bool
-      modules.each do |expanded, config_path|
-        next unless ROUTE_CONFIG_BASENAMES.includes?(File.basename(config_path))
-        content = read_file_content(config_path) rescue next
-        next unless content.includes?(ROUTE_CONFIG_MARKER)
+      apps.each do |app_dir, config_paths|
+        flat = false
+        declared = false
+        config_paths.each do |config_path|
+          config = begin
+            Noir::TreeSitterReactRouterConfigExtractor.extract(read_file_content(config_path))
+          rescue e
+            logger.debug "Error reading route config #{config_path}: #{e.message}"
+            Noir::SkippedFiles.record(tech, config_path, e.message.presence || e.class.name)
+            next
+          end
+          flat ||= config.flat_routes?
+          declared ||= !config.routes.empty?
 
-        app_dir = File.dirname(expanded)
-        config = Noir::TreeSitterReactRouterConfigExtractor.extract(content)
-        flat_dirs[app_dir] = config.flat_routes? || config.routes.empty?
-
-        config.routes.each do |route|
-          url = config_url(route.path)
-          if module_path = modules[File.expand_path(route.file, app_dir)]?
-            endpoints = module_endpoints(url, module_path, include_callee)
-            result.concat(endpoints) if endpoints
-          else
-            # Declared, but the module is outside the scan: the URL still exists.
-            result << file_route_endpoint(url, "GET", config_path, route.line)
+          config.routes.each do |route|
+            url = config_url(route.path)
+            if module_path = modules[File.expand_path(route.file, app_dir)]?
+              endpoints = module_endpoints(url, module_path, include_callee)
+              result.concat(endpoints) if endpoints
+            else
+              # Declared, but the module is outside the scan: the URL still exists.
+              result << file_route_endpoint(url, "GET", config_path, route.line)
+            end
           end
         end
+        # A config that declares nothing we read (a community convention such
+        # as `autoRoutes()`) falls back to the file convention.
+        flat_dirs[app_dir] = flat || !declared
       end
 
+      roots = project_roots
       mutex = Mutex.new
       parallel_file_scan(EXTENSIONS) do |path|
         next unless path_under_project_roots?(path, roots)
@@ -79,10 +88,13 @@ module Analyzer::Javascript
       discover_js_project_roots(PACKAGE_MARKERS, CONFIG_BASENAMES)
     end
 
+    # Every React Router app has a route config, so once the scan holds any,
+    # an app directory without one is not React Router's (a Remix app under
+    # the same root). With none at all, the Remix convention stands in.
     private def flat_route_name(path : String, flat_dirs : Hash(String, Bool)) : String?
+      return flat_route_name(path) if flat_dirs.empty?
       app_dir, name = flat_route(Noir::PathScope.expand(path)) || return
-      flat = flat_dirs[app_dir]?
-      flat.nil? ? flat_route_name(path) : (name if flat)
+      name if flat_dirs[app_dir]?
     end
 
     # `users/:id` → `/users/{id}`, `:lang?` → `{lang}`, `*` → `{splat}`

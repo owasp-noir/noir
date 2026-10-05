@@ -60,15 +60,23 @@ module Analyzer::Javascript
       .map { |name| %("@remix-run/#{name}") }
     CONFIG_BASENAMES = ["remix.config.js", "remix.config.ts", "remix.config.mjs", "remix.config.cjs"]
 
+    # React Router v7's route config. Remix has none, so an app directory
+    # holding one belongs to React Router even inside a Remix project root
+    # (a monorepo whose root package.json hoists `@remix-run/dev`).
+    ROUTE_CONFIG_BASENAMES = ["routes.ts", "routes.js", "routes.mts", "routes.mjs"]
+    ROUTE_CONFIG_MARKER    = "@react-router/"
+
     def analyze
       result = [] of Endpoint
       mutex = Mutex.new
       include_callee = callees_needed?
       roots = project_roots
+      react_router_dirs = react_router_apps
 
       parallel_file_scan(EXTENSIONS) do |path|
         next unless path_under_project_roots?(path, roots)
         next unless name = flat_route_name(path)
+        next if (app = flat_route(Noir::PathScope.expand(path))) && react_router_dirs.has_key?(app[0])
 
         endpoints = module_endpoints(url_for(name), path, include_callee)
         mutex.synchronize { result.concat(endpoints) } if endpoints
@@ -79,6 +87,32 @@ module Analyzer::Javascript
 
     private def project_roots : Array(String)
       discover_js_project_roots(PACKAGE_MARKERS, CONFIG_BASENAMES)
+    end
+
+    # Expanded app directory → the React Router route configs that build it.
+    # A config inside another config's directory is a split-out part of that
+    # app (`app/features/admin/routes.ts`), so its module paths resolve
+    # against the outer app directory, not its own.
+    private def react_router_apps : Hash(String, Array(String))
+      configs = {} of String => String
+      ROUTE_CONFIG_BASENAMES.each do |basename|
+        get_files_by_basename(basename).each do |path|
+          content = begin
+            read_file_content(path)
+          rescue e
+            logger.debug "Error reading #{path}: #{e.message}"
+            next
+          end
+          configs[path] = File.dirname(Noir::PathScope.expand(path)) if content.includes?(ROUTE_CONFIG_MARKER)
+        end
+      end
+
+      apps = {} of String => Array(String)
+      configs.each do |path, dir|
+        app = configs.values.select { |root| Noir::PathScope.under_normalized_root?(dir, root) }.min_by(&.size)
+        (apps[app] ||= [] of String) << path
+      end
+      apps
     end
 
     # Dot-flat route name of a module under `app/routes/`: a flat file
