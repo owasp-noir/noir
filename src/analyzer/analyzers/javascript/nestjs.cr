@@ -796,10 +796,8 @@ module Analyzer::Javascript
     private def extract_decorator_parameters(method_params : String, endpoint : Endpoint)
       # Extract @Query parameters
       method_params.scan(/@Query\s*\(\s*['"`]([^'"`]+)['"`][\s\S]*?\)/) do |param_match|
-        if param_match.size > 0
-          param_name = param_match[1]
-          endpoint.push_param(Param.new(param_name, "", "query"))
-        end
+        param_name = param_match[1]
+        endpoint.push_param(Param.new(param_name, "", "query"))
       end
       if method_params =~ /@Query\s*\(\s*(?:\)|[^'"`][\s\S]*?\))/
         endpoint.push_param(Param.new("query", "", "query"))
@@ -807,17 +805,13 @@ module Analyzer::Javascript
 
       # Extract @Param parameters (path parameters)
       method_params.scan(/@Param\s*\(\s*['"`]([^'"`]+)['"`][\s\S]*?\)/) do |param_match|
-        if param_match.size > 0
-          param_name = param_match[1]
-          endpoint.push_param(Param.new(param_name, "", "path"))
-        end
+        param_name = param_match[1]
+        endpoint.push_param(Param.new(param_name, "", "path"))
       end
 
       # Extract @Body('field') and @Body() / @Body(pipe)
       method_params.scan(/@Body\s*\(\s*['"`]([^'"`]+)['"`][\s\S]*?\)/) do |body_match|
-        if body_match.size > 0
-          endpoint.push_param(Param.new(body_match[1], "", "body"))
-        end
+        endpoint.push_param(Param.new(body_match[1], "", "body"))
       end
 
       if method_params =~ /@Body\s*\(\s*(?:\)|[^'"`][\s\S]*?\))/
@@ -826,10 +820,8 @@ module Analyzer::Javascript
 
       # Extract @Headers parameters
       method_params.scan(/@Headers\s*\(\s*['"`]([^'"`]+)['"`][\s\S]*?\)/) do |param_match|
-        if param_match.size > 0
-          param_name = param_match[1]
-          endpoint.push_param(Param.new(param_name, "", "header"))
-        end
+        param_name = param_match[1]
+        endpoint.push_param(Param.new(param_name, "", "header"))
       end
       if method_params =~ /@Headers\s*\(\s*(?:\)|[^'"`][\s\S]*?\))/
         endpoint.push_param(Param.new("headers", "", "header"))
@@ -908,11 +900,9 @@ module Analyzer::Javascript
     private def extract_path_parameters(url : String, endpoint : Endpoint)
       # Extract path parameters from URL patterns like :id
       url.scan(/:(\w+)/) do |match|
-        if match.size > 0
-          param_name = match[1]
-          # push_param skips one already added by a @Param decorator
-          endpoint.push_param(Param.new(param_name, "", "path"))
-        end
+        param_name = match[1]
+        # push_param skips one already added by a @Param decorator
+        endpoint.push_param(Param.new(param_name, "", "path"))
       end
     end
   end
