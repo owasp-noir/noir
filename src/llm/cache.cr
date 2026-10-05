@@ -87,11 +87,11 @@ module LLM
     # Returns a hex-encoded SHA256 digest.
     def self.key(provider : String, model : String, kind : String, format : String, payload : String) : String
       digest = Digest::SHA256.new
-      digest << provider << "|"
-      digest << model << "|"
-      digest << kind << "|"
-      digest << format << "|"
-      digest << payload
+      # Length prefixes keep fields distinct when a model, schema, or source
+      # payload itself contains the separator used by the old encoding.
+      {provider, model, kind, format, payload}.each do |part|
+        digest << part.bytesize.to_s << ":" << part
+      end
       digest.hexfinal
     end
 
