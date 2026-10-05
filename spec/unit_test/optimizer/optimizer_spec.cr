@@ -1103,6 +1103,7 @@ describe "EndpointOptimizer" do
       endpoints = [
         tech_endpoint("/^tags/?$", "GET", "python_django", "urls.py"),
         tech_endpoint("/articles/\\.json\\Z", "GET", "python_django", "urls.py"),
+        tech_endpoint("/^/re/[0-9]+$", "GET", "traefik", "traefik.yml"),
         tech_endpoint("/dollar$", "GET", "ruby_grape", "api.rb"),
         tech_endpoint("/dollar$", "GET", "js_express", "app.js"),
         tech_endpoint("/price/$", "GET", "js_express", "app.js"),
@@ -1120,6 +1121,7 @@ describe "EndpointOptimizer" do
       result.map(&.url).should eq([
         "/tags/?",
         "/articles/.json",
+        "/re/[0-9]+",
         "/dollar$",
         "/dollar$",
         "/price/$",

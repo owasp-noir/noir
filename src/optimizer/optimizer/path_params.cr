@@ -281,6 +281,13 @@ class EndpointOptimizer
   # custom one; `<yyyy:year>` declares `year`, not `yyyy`.
   CONVERTER_FIRST_TECHS = Set{"python_django", "python_flask", "python_quart"}
 
+  # Nil/empty means the framework is unknown, so the historical `<...>`
+  # scan still runs. A named technology must be one that uses the syntax.
+  private def angle_placeholder_tech?(technology : String?) : Bool
+    return true if technology.nil? || technology.empty?
+    ANGLE_PATH_TECHS.includes?(technology)
+  end
+
   # Werkzeug converter arguments: `int(signed=True)`, `any(about, help)`.
   CONVERTER_ARGS_RE = /\([^()]*\)/
 
@@ -290,13 +297,6 @@ class EndpointOptimizer
   # not part of the converter name — `<int(signed=True):num>` used to fail
   # the builtin check and resolve to the whole `int(signed=True)` — so they
   # are dropped before splitting.
-  # Nil/empty means the framework is unknown, so the historical `<...>`
-  # scan still runs. A named technology must be one that uses the syntax.
-  private def angle_placeholder_tech?(technology : String?) : Bool
-    return true if technology.nil? || technology.empty?
-    ANGLE_PATH_TECHS.includes?(technology)
-  end
-
   private def angle_bracket_param(raw : String, endpoint : Endpoint) : String
     raw = raw.gsub(CONVERTER_ARGS_RE, "") if raw.includes?('(')
     parts = raw.split(":")

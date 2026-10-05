@@ -79,12 +79,12 @@ class EndpointOptimizer
       name.empty? ? "{var}" : "{#{name}}"
     end
 
-    # Regex anchors and escaped dots belong to Django `re_path`. A literal
-    # Express `/dollar$` or
-    # `/^caret`, and the same strings on Flask, Sinatra, Rails, Spring,
-    # Laravel, Grape and OAS, are path text — stripping them rewrites the
-    # route. Grape's literal trailing `$` is the case that used to need
-    # its own exception; every non-regex technology now keeps it.
+    # Regex anchors and escaped dots belong to regex routes (Django
+    # `re_path`, proxy/gateway regex locations). A literal Express
+    # `/dollar$` or `/^caret`, and the same strings on Flask, Sinatra,
+    # Rails, Spring, Laravel, Grape and OAS, are path text — stripping them
+    # rewrites the route. Grape's literal trailing `$` is the case that used
+    # to need its own exception; every non-regex technology now keeps it.
     if regex_anchor_route?(technology)
       normalized = normalized.sub(/^\/\^/, "/")
       normalized = normalized.sub(/\$$/, "")
@@ -107,8 +107,23 @@ class EndpointOptimizer
   # these; this pass is the backstop for a `re_path` that still arrives
   # with them. String-route technologies are not in the set. django-ninja
   # is not: its own routes are string paths, and its `re_path` mounts are
-  # stripped in the analyzer.
-  REGEX_ANCHOR_TECHS = Set{"python_django"}
+  # stripped in the analyzer. The proxy and gateway configs hand their regex
+  # matchers (nginx `location ~`, Apache `LocationMatch`/`RedirectMatch`,
+  # Envoy `safe_regex`, Vercel `src`, Traefik `PathRegexp`, Istio/Gateway API
+  # `regex`, Kong `~`, ingress-nginx `use-regex`) through verbatim and rely
+  # on this pass to drop the anchors.
+  REGEX_ANCHOR_TECHS = Set{
+    "apache_httpd",
+    "envoy",
+    "istio_virtualservice",
+    "k8s_gateway_api",
+    "k8s_ingress",
+    "kong",
+    "nginx",
+    "python_django",
+    "traefik",
+    "vercel",
+  }
 
   private def regex_anchor_route?(technology : String?) : Bool
     !!technology && REGEX_ANCHOR_TECHS.includes?(technology)
