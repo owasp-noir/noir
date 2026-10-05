@@ -44,8 +44,8 @@ just test-func         # Run functional tests only (compiles just that directory
 ```
 
 `spec/suite.cr` requires `unit_test/**` plus `functional_test/testers/**` and
-nothing else, so `bin/noir_spec` holds exactly the 20,807 examples CI runs
-(5,698 unit and 15,109 functional).
+nothing else, so `bin/noir_spec` is the single binary CI uses for both test
+groups.
 
 Two constraints come with the binary:
 
@@ -65,9 +65,9 @@ Two constraints come with the binary:
 ### Tags
 
 `functional` marks every example that drives a real scan over a fixture: the
-15,109 registered under `spec/functional_test/testers/`. The remaining 5,698
-are the unit half. `just test` runs the two as parallel processes, which is
-why the run drops from 17.5s to 9.7s.
+examples registered under `spec/functional_test/testers/`. The remaining
+examples are the unit half. `just test` runs the two groups as parallel
+processes.
 
 `FunctionalTester` tags what it registers. **A hand-written `describe`,
 `context` or `it` in a tester file has to spell the tag itself:**
@@ -86,7 +86,8 @@ into it, so the split quietly stops being a split.
 ### Why one binary
 
 Compiling `src/` is essentially the whole cost of a spec run, and it does not
-grow when the suites are combined. Measured locally on a warm compiler cache:
+grow when the suites are combined. Historical local measurements on a warm
+compiler cache, when the suite contained 20,807 examples:
 
 | Command | wall | running examples | peak RSS |
 |---|---|---|---|
