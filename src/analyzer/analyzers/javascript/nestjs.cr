@@ -796,10 +796,8 @@ module Analyzer::Javascript
     private def extract_decorator_parameters(method_params : String, endpoint : Endpoint)
       # Extract @Query parameters
       method_params.scan(/@Query\s*\(\s*['"`]([^'"`]+)['"`][\s\S]*?\)/) do |param_match|
-        if param_match.size > 0
-          param_name = param_match[1]
-          endpoint.push_param(Param.new(param_name, "", "query"))
-        end
+        param_name = param_match[1]
+        endpoint.push_param(Param.new(param_name, "", "query"))
       end
       if method_params =~ /@Query\s*\(\s*(?:\)|[^'"`][\s\S]*?\))/
         endpoint.push_param(Param.new("query", "", "query"))
@@ -807,17 +805,13 @@ module Analyzer::Javascript
 
       # Extract @Param parameters (path parameters)
       method_params.scan(/@Param\s*\(\s*['"`]([^'"`]+)['"`][\s\S]*?\)/) do |param_match|
-        if param_match.size > 0
-          param_name = param_match[1]
-          endpoint.push_param(Param.new(param_name, "", "path"))
-        end
+        param_name = param_match[1]
+        endpoint.push_param(Param.new(param_name, "", "path"))
       end
 
       # Extract @Body('field') and @Body() / @Body(pipe)
       method_params.scan(/@Body\s*\(\s*['"`]([^'"`]+)['"`][\s\S]*?\)/) do |body_match|
-        if body_match.size > 0
-          endpoint.push_param(Param.new(body_match[1], "", "body"))
-        end
+        endpoint.push_param(Param.new(body_match[1], "", "body"))
       end
 
       if method_params =~ /@Body\s*\(\s*(?:\)|[^'"`][\s\S]*?\))/
@@ -826,10 +820,8 @@ module Analyzer::Javascript
 
       # Extract @Headers parameters
       method_params.scan(/@Headers\s*\(\s*['"`]([^'"`]+)['"`][\s\S]*?\)/) do |param_match|
-        if param_match.size > 0
-          param_name = param_match[1]
-          endpoint.push_param(Param.new(param_name, "", "header"))
-        end
+        param_name = param_match[1]
+        endpoint.push_param(Param.new(param_name, "", "header"))
       end
       if method_params =~ /@Headers\s*\(\s*(?:\)|[^'"`][\s\S]*?\))/
         endpoint.push_param(Param.new("headers", "", "header"))
@@ -838,21 +830,21 @@ module Analyzer::Javascript
       # `@HostParam('account')` — subdomain capture when the controller
       # uses `@Controller({ host: ':account.example.com' })`.
       method_params.scan(/@HostParam\s*\(\s*['"`]([^'"`]+)['"`][\s\S]*?\)/) do |param_match|
-        endpoint.push_param(Param.new(param_match[1], "", "path")) if param_match.size > 0
+        endpoint.push_param(Param.new(param_match[1], "", "path"))
       end
 
       # `@UploadedFile('field')` / `@UploadedFiles('field')` — multer
       # integration. Unnamed forms get a generic 'file' / 'files' body
       # param so consumers still see the upload surface.
       method_params.scan(/@UploadedFile\s*\(\s*['"`]([^'"`]+)['"`][\s\S]*?\)/) do |param_match|
-        endpoint.push_param(Param.new(param_match[1], "", "body")) if param_match.size > 0
+        endpoint.push_param(Param.new(param_match[1], "", "body"))
       end
       if method_params =~ /@UploadedFile\s*\(\s*\)/
         endpoint.push_param(Param.new("file", "", "body"))
       end
 
       method_params.scan(/@UploadedFiles\s*\(\s*['"`]([^'"`]+)['"`][\s\S]*?\)/) do |param_match|
-        endpoint.push_param(Param.new(param_match[1], "", "body")) if param_match.size > 0
+        endpoint.push_param(Param.new(param_match[1], "", "body"))
       end
       if method_params =~ /@UploadedFiles\s*\(\s*\)/
         endpoint.push_param(Param.new("files", "", "body"))
@@ -861,12 +853,12 @@ module Analyzer::Javascript
 
     private def extract_interceptor_parameters(decorator_block : String, endpoint : Endpoint)
       decorator_block.scan(/(?:FileInterceptor|FilesInterceptor)\s*\(\s*['"`]([^'"`]+)['"`]/) do |match|
-        endpoint.push_param(Param.new(match[1], "", "body")) if match.size > 0
+        endpoint.push_param(Param.new(match[1], "", "body"))
       end
 
       decorator_block.scan(/FileFieldsInterceptor\s*\(\s*\[([\s\S]*?)\]/m) do |match|
         match[1].scan(/\bname\s*:\s*['"`]([^'"`]+)['"`]/) do |field|
-          endpoint.push_param(Param.new(field[1], "", "body")) if field.size > 0
+          endpoint.push_param(Param.new(field[1], "", "body"))
         end
       end
     end
@@ -908,11 +900,9 @@ module Analyzer::Javascript
     private def extract_path_parameters(url : String, endpoint : Endpoint)
       # Extract path parameters from URL patterns like :id
       url.scan(/:(\w+)/) do |match|
-        if match.size > 0
-          param_name = match[1]
-          # push_param skips one already added by a @Param decorator
-          endpoint.push_param(Param.new(param_name, "", "path"))
-        end
+        param_name = match[1]
+        # push_param skips one already added by a @Param decorator
+        endpoint.push_param(Param.new(param_name, "", "path"))
       end
     end
   end
