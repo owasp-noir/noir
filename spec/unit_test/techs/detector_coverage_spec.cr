@@ -73,7 +73,6 @@ UNTESTED_DETECTORS = [
   "java/javalin",
   "java/micronaut",
   "java/quarkus",
-  "java/spark",
   "javascript/cli",
   "javascript/hapi",
   "javascript/sveltekit",
