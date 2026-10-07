@@ -6,6 +6,7 @@ require "../../../../utils/url_path"
 require "../express_constants"
 require "../../../../utils/text_file"
 require "../../../../miniparsers/js_route_extractor"
+require "../../../../miniparsers/firebase_functions_extractor"
 require "./js_module_resolver"
 
 module Analyzer::Javascript
@@ -55,6 +56,7 @@ module Analyzer::Javascript
     def scan
       locator = CodeLocator.instance
       main_files = collect_js_files
+      seed_firebase_function_mounts(main_files, locator) if @framework == :express
 
       # Global collections for two-pass processing
       file_contexts = Hash(String, FileContext).new
@@ -67,6 +69,35 @@ module Analyzer::Javascript
 
       # PASS 2: Process all deferred nested mounts now that all top-level mounts are known
       process_deferred_mounts(global_deferred_mounts, file_contexts, locator)
+    end
+
+    # The handler is the last argument: `onRequest(app)` / `onRequest({ region }, app)`.
+    FIREBASE_APP_HANDLER = /(?:\A|,)\s*([A-Za-z_$][\w$]*)\s*\z/
+
+    # `exports.api = functions.https.onRequest(app)` serves the Express `app`
+    # under `/api`, the function's name. The app is defined in this file or
+    # imported into it (`const app = require("./app")`).
+    private def seed_firebase_function_mounts(main_files : Array(String), locator : CodeLocator)
+      main_files.each do |file|
+        content = CodeLocator.instance.content_for(file) || Noir::TextFile.read(file)
+        apps = Noir::FirebaseFunctionsExtractor.extract(content).compact_map do |trigger|
+          next unless trigger.kind == "onRequest"
+          trigger.args.match(FIREBASE_APP_HANDLER).try { |m| {trigger.name, m[1]} }
+        end
+        # ponytail: one app per file; a prefix is file-wide, so two apps in one
+        # file would each pick up the other's prefix. Needs per-variable scoping.
+        next unless apps.size == 1
+
+        name, app = apps.first
+        escaped = Regex.escape(app)
+        spec = content.match(/\b#{escaped}\b[^=;\n]*=\s*require\s*\(\s*['"]([^'"]+)['"]/) ||
+               content.match(/\bimport\s+(?:#{escaped}|\{[^}]*\b#{escaped}\b[^}]*\})\s+from\s+['"]([^'"]+)['"]/)
+        target = spec.try { |m| resolve_require_path(file, m[1]) } || file
+        push_prefix_to_locator(locator, ExpressConstants.file_key(Noir::PathScope.expand(target)), "/#{name}",
+          "Firebase function mount: /#{name} -> #{target}")
+      rescue e
+        @logger.debug "Firebase function mount scan failed for #{file}: #{e.message}"
+      end
     end
 
     # Process a single file for router mounts
