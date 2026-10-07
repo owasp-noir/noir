@@ -138,6 +138,30 @@ module Noir
         clamp: true,
       )
 
+      # Inside a string literal commas/brackets are data, not structure — e.g.
+      # a route literal `"/a,b"` or a `new[] { "GET", "POST" }` arg. Single
+      # quotes are NOT a quote style: in C# they wrap a char literal, which
+      # never carries a route, and treating `'` as a quote would let an
+      # apostrophe inside a `"..."`-free fragment swallow the rest of the list.
+      #
+      # `Empties::DropTrailing`, not `DropAll`: the comma branch pushed
+      # `current.to_s.strip` with no emptiness guard, so `(a, , b)` kept its
+      # interior `""`; only the tail was guarded by `unless tail.empty?`.
+      #
+      # C# parameter lists. Serves analyzers/csharp/common.cr and
+      # miniparsers/wcf_extractor.cr. No other splitter combines `Nest::Angle`
+      # with per-kind counters — java/wicket.cr comes closest and shares one
+      # depth.
+      CSHARP_PARAMS = new(
+        nest: Nest::Paren | Nest::Bracket | Nest::Brace | Nest::Angle,
+        quotes: "\"",
+        escape: Escape::InQuotes,
+        strip: true,
+        empties: Empties::DropTrailing,
+        per_kind: true,
+        clamp: true,
+      )
+
       # Python call-argument lists and expression terms.
       # Serves the six byte-identical `split_python_arguments` clones in
       # analyzer/analyzers/python/{bottle,cherrypy,django,pyramid,sanic,

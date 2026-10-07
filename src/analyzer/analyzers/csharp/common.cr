@@ -11,8 +11,8 @@ module Analyzer::CSharp::Common
   #     (smaller solutions).
   #   * `/testassets/` — aspnetcore's helper-controller convention
   #     for spinning up a real server inside the test harness.
-  #   * `Tests.cs` / `Test.cs` filename — xUnit / NUnit / MSTest
-  #     suffix convention.
+  #   * `Tests.cs` / `Test.cs` filename (`.vb` alike) — xUnit / NUnit /
+  #     MSTest suffix convention.
   #
   # dotnet/aspnetcore alone parks ~3,600 phantom endpoints under
   # `src/Mvc/test/...` and similar trees. Production code never
@@ -25,9 +25,7 @@ module Analyzer::CSharp::Common
     return true if relative_path.includes?("/test/")
     return true if relative_path.includes?("/tests/")
     return true if relative_path.includes?("/testassets/")
-    base = File.basename(relative_path)
-    return true if base.ends_with?("Tests.cs")
-    base.ends_with?("Test.cs")
+    File.basename(relative_path).matches?(/Tests?\.(?:cs|vb)\z/)
   end
 
   # ASP.NET Core and classic ASP.NET MVC 5 spell a controller almost
@@ -187,31 +185,8 @@ module Analyzer::CSharp::Common
     {signature, index - 1}
   end
 
-  # Inside a string literal commas/brackets are data, not structure — e.g.
-  # a route literal `"/a,b"` or a `new[] { "GET", "POST" }` arg. Single
-  # quotes are NOT a quote style: in C# they wrap a char literal, which
-  # never carries a route, and treating `'` as a quote would let an
-  # apostrophe inside a `"..."`-free fragment swallow the rest of the list.
-  #
-  # `Empties::DropTrailing`, not `DropAll`: the comma branch pushed
-  # `current.to_s.strip` with no emptiness guard, so `(a, , b)` kept its
-  # interior `""`; only the tail was guarded by `unless tail.empty?`.
-  #
-  # File-local because no other splitter combines `Nest::Angle` with
-  # per-kind counters — java/wicket.cr comes closest and shares one depth.
-  SPLIT_PARAMETERS_RULES = Noir::TopLevelSplit::Rules.new(
-    nest: Noir::TopLevelSplit::Nest::Paren | Noir::TopLevelSplit::Nest::Bracket |
-          Noir::TopLevelSplit::Nest::Brace | Noir::TopLevelSplit::Nest::Angle,
-    quotes: "\"",
-    escape: Noir::TopLevelSplit::Escape::InQuotes,
-    strip: true,
-    empties: Noir::TopLevelSplit::Empties::DropTrailing,
-    per_kind: true,
-    clamp: true,
-  )
-
   protected def split_csharp_parameters(param_list : String) : Array(String)
-    Noir::TopLevelSplit.split(param_list, ',', SPLIT_PARAMETERS_RULES)
+    Noir::TopLevelSplit.split(param_list, ',', Noir::TopLevelSplit::Rules::CSHARP_PARAMS)
   end
 
   # Returns the substring inside the first balanced parameter-list parens of

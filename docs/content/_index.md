@@ -1,6 +1,6 @@
 +++
 title = "OWASP Noir"
-description = "Hunt every endpoint in your code. Noir statically analyses source across 29 languages and 208 frameworks, exposing shadow APIs and mapping the attack surface."
+description = "Hunt every endpoint in your code. Noir statically analyses source across 30 languages and 213 frameworks, exposing shadow APIs and mapping the attack surface."
 template = "landing"
 +++
 
@@ -93,8 +93,8 @@ template = "landing"
         <h3>Every mainstream stack</h3>
         <p>One binary, no plugins and no per-language setup. Frameworks the static rules miss fall back to an LLM.</p>
         <div class="stat-row">
-          <span><span class="stat-val">29</span><span class="stat-key">Languages</span></span>
-          <span><span class="stat-val">208</span><span class="stat-key">Frameworks</span></span>
+          <span><span class="stat-val">30</span><span class="stat-key">Languages</span></span>
+          <span><span class="stat-val">213</span><span class="stat-key">Frameworks</span></span>
         </div>
       </div>
     </article>

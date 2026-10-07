@@ -48,14 +48,7 @@ module Analyzer::Javascript
 
       parallel_file_scan(EXTENSIONS) do |path|
         next unless path_under_project_roots?(path, project_roots)
-        # Scan-base-relative, never absolute: `String#index` takes the
-        # FIRST occurrence, so a same-named directory above the scan base
-        # won outright and the derived URL changed with the checkout path.
-        scoped = base_relative_path(path)
-        idx = scoped.index("/src/routes/")
-        next if idx.nil?
-
-        relative = scoped[(idx + "/src/routes/".size)..-1]
+        relative = src_routes_relative(path) || next
         leaf = File.basename(relative)
         next if private_segment_in?(relative)
 
@@ -156,31 +149,9 @@ module Analyzer::Javascript
       end
     end
 
-    # Convert filesystem-relative path under `src/routes/` to URL.
-    # Drops the `+page.*` / `+server.*` leaf, hides `(group)` dirs,
-    # and translates `[id]` / `[...slug]` to `{id}` / `{slug}`.
+    # Drops the `+page.*` / `+server.*` leaf.
     private def url_for(relative : String) : String
-      segments = relative.split("/").reject(&.empty?)
-      segments.pop # remove the +page.* / +server.* leaf
-      segments = segments.reject { |seg| group_segment?(seg) }
-      mapped = segments.map { |seg| convert_segment(seg) }
-      url = "/" + mapped.join("/")
-      url = "/" if url == "/" || url.empty?
-      url.sub(/\/+$/, "").presence || "/"
-    end
-
-    private def group_segment?(seg : String) : Bool
-      seg.starts_with?("(") && seg.ends_with?(")")
-    end
-
-    # SvelteKit param group inside a route segment. Replaced in place so
-    # one segment can hold static text around it (`foo-[id]`, `@[user]`)
-    # and so every form normalizes to `{name}`:
-    #   [id]  [id=int]  [...rest]  [[opt]]  [[opt=int]]  [[...rest]]
-    PARAM_GROUP_RE = /\[+(?:\.{3})?(\w+)(?:=\w+)?\]+/
-
-    private def convert_segment(seg : String) : String
-      seg.gsub(PARAM_GROUP_RE) { "{#{$1}}" }
+      file_route_url(relative.split('/')[0...-1])
     end
 
     private def attach_callees(endpoint : Endpoint, path : String, content : String, verb : String)
