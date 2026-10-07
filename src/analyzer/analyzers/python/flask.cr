@@ -94,7 +94,7 @@ module Analyzer::Python
       blueprint_prefixes : Hash(ScopedNameKey, ::String),
       path_api_instances : Hash(::String, Hash(::String, ::String)),
       register_blueprint : Hash(::String, Hash(::String, ::String)),
-      blueprint_mounts : Hash(::String, Array(Tuple(::String, ::String, ::String))),
+      blueprint_mounts : Hash(::String, Array(Tuple(::String, ::String, ::String?))),
       # flask-restx namespaces are module-level singletons: the Api host
       # file (`api/__init__.py`) wires `api.add_namespace(ns, "/x")` with
       # the blueprint's `url_prefix` (`/api/v1`), but each namespace's
@@ -109,7 +109,7 @@ module Analyzer::Python
           blueprint_prefixes: Hash(ScopedNameKey, ::String).new,
           path_api_instances: Hash(::String, Hash(::String, ::String)).new,
           register_blueprint: Hash(::String, Hash(::String, ::String)).new,
-          blueprint_mounts: Hash(::String, Array(Tuple(::String, ::String, ::String))).new,
+          blueprint_mounts: Hash(::String, Array(Tuple(::String, ::String, ::String?))).new,
           namespace_prefixes: Hash(ScopedNameKey, ::String).new,
         )
       end
@@ -403,8 +403,8 @@ module Analyzer::Python
         parent_name = register_blueprint_match[1]
         blueprint_name = register_blueprint_match[2]
         url_prefix_match = original_line.match /url_prefix\s*=\s*[rf]?['"]([^'"]*)['"]/
-        blueprint_mount_prefix = url_prefix_match ? url_prefix_match[1] : ""
-        state.blueprint_mounts[fs.path] ||= [] of Tuple(::String, ::String, ::String)
+        blueprint_mount_prefix = url_prefix_match ? url_prefix_match[1] : nil
+        state.blueprint_mounts[fs.path] ||= [] of Tuple(::String, ::String, ::String?)
         state.blueprint_mounts[fs.path] << {parent_name, blueprint_name, blueprint_mount_prefix}
 
         if url_prefix_match
@@ -741,10 +741,11 @@ module Analyzer::Python
       end
     end
 
-    # Fold each `register_blueprint(bp, url_prefix=...)` mount into the
-    # blueprint's own prefix, then resolve blueprints mounted on other
-    # blueprints. Runs after the whole walk because the registering file
-    # may be scanned before the file that declares the blueprint.
+    # Apply each `register_blueprint(bp, url_prefix=...)` mount as the
+    # blueprint's prefix (it replaces the blueprint's own url_prefix),
+    # then resolve blueprints mounted on other blueprints. Runs after the
+    # whole walk because the registering file may be scanned before the
+    # file that declares the blueprint.
     private def resolve_blueprint_prefixes(state : ScanState) : Nil
       # Update the API instances with the blueprint prefixes
       own_api_instances = clone_path_api_instances(state.path_api_instances)
@@ -752,8 +753,10 @@ module Analyzer::Python
         blueprint_info.each do |blueprint_name, blueprint_prefix|
           if state.path_api_instances.has_key?(path)
             api_instances = state.path_api_instances[path]
-            own_prefix = api_instances[blueprint_name]? || ""
-            api_instances[blueprint_name] = File.join(blueprint_prefix, own_prefix)
+            # Flask's `BlueprintSetupState` uses the registration's
+            # url_prefix in place of the blueprint's own one; it falls
+            # back to the own prefix only when url_prefix is omitted.
+            api_instances[blueprint_name] = blueprint_prefix
           end
         end
       end
