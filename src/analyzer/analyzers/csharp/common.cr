@@ -95,6 +95,24 @@ module Analyzer::CSharp::Common
     EXPLICIT_BINDING_NAME_RE.match(param_def).try(&.[1])
   end
 
+  BINDING_ATTRIBUTES = {
+    "FromQuery"         => "query",
+    "FromRoute"         => "path",
+    "FromBody"          => "json",
+    "FromHeader"        => "header",
+    "FromForm"          => "form",
+    "FromServices"      => "service",
+    "FromKeyedServices" => "service",
+  }
+
+  # The request source a `[FromX]` attribute binds a parameter from.
+  def self.binding_attribute_type(param_def : String) : String?
+    BINDING_ATTRIBUTES.each do |attr, param_type|
+      return param_type if param_def.includes?("[#{attr}")
+    end
+    nil
+  end
+
   # Strips a route-template placeholder down to its bare parameter name:
   # `{id:int}` → `id`, `{slug?}` → `slug`, `{*catchAll}` → `catchAll`,
   # `{id=5}` → `id` (a default value), `{**slug:regex(a=b)}` → `slug`.

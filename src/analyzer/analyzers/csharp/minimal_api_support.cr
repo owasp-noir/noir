@@ -343,7 +343,7 @@ module Analyzer::CSharp::MinimalApiSupport
     return if cleaned.empty?
 
     explicit_name = extract_explicit_binding_name(cleaned)
-    param_type = binding_attribute_type(cleaned)
+    param_type = Common.binding_attribute_type(cleaned)
     cleaned = cleaned.gsub(/\[[^\]]+\]\s*/, "").strip
     cleaned = cleaned.sub(/=.*/, "").strip
     cleaned = cleaned.gsub(/\b(ref|out|in|params)\b/, "").strip
@@ -379,22 +379,6 @@ module Analyzer::CSharp::MinimalApiSupport
   private def extract_explicit_binding_name(param_def : String) : String?
     if match = param_def.match(/\[From(?:Query|Route|Body|Header|Form)\s*\([^\]]*(?:Name\s*=\s*)?"([^"]+)"/)
       return match[1]
-    end
-
-    nil
-  end
-
-  private def binding_attribute_type(param_def : String) : String?
-    {
-      "FromQuery"         => "query",
-      "FromRoute"         => "path",
-      "FromBody"          => "json",
-      "FromHeader"        => "header",
-      "FromForm"          => "form",
-      "FromServices"      => "service",
-      "FromKeyedServices" => "service",
-    }.each do |attr, param_type|
-      return param_type if param_def.includes?("[#{attr}")
     end
 
     nil
@@ -686,7 +670,7 @@ module Analyzer::CSharp::MinimalApiSupport
   # explicit `[FromHeader]`/`[FromQuery]`/`[FromRoute]` on the member.
   private def as_parameters_member_to_param(member_def : String, route_params : Array(String), http_method : String) : Param?
     explicit_name = extract_explicit_binding_name(member_def)
-    param_type = binding_attribute_type(member_def)
+    param_type = Common.binding_attribute_type(member_def)
     cleaned = member_def.gsub(/\[[^\]]*\]\s*/, "").strip
     cleaned = cleaned.sub(/=.*/, "").strip
     cleaned = cleaned.gsub(/\b(ref|out|in|params)\b/, "").strip
