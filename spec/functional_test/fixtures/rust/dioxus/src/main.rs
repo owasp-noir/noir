@@ -48,3 +48,13 @@ async fn update_profile(mut nickname: String) -> Result<()> {
 async fn search(filters: SearchQuery) -> Result<Vec<String>> {
     Ok(vec![])
 }
+
+#[server(endpoint = "login", session: auth::Session)]
+async fn login(username: String) -> Result<()> {
+    Ok(())
+}
+
+#[get("/files/{name}.json" /* served raw */)]
+async fn file(name: String) -> Result<String> {
+    Ok(name)
+}

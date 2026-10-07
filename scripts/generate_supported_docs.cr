@@ -331,6 +331,10 @@ COUNT_PATTERNS = [
   {"docs/content/_index.ko.md", :frameworks, /(개 언어와 )(\d+)(개 프레임워크)/},
   {"docs/content/_index.ko.md", :languages, /(<span class="stat-val">)(\d+)(<\/span><span class="stat-key">언어<\/span>)/},
   {"docs/content/_index.ko.md", :frameworks, /(<span class="stat-val">)(\d+)(<\/span><span class="stat-key">프레임워크<\/span>)/},
+  {"docs/content/get_started/overview/index.md", :frameworks, /(supports )(\d+)( frameworks across )/},
+  {"docs/content/get_started/overview/index.md", :languages, /( frameworks across )(\d+)( languages)/},
+  {"docs/content/get_started/overview/index.ko.md", :languages, /(등 )(\d+)(개 언어, )/},
+  {"docs/content/get_started/overview/index.ko.md", :frameworks, /(개 언어, )(\d+)(개 프레임워크를 지원)/},
   {"docs/content/usage/supported/cli/index.md", :cli_languages, /(across )(\d+)( languages\.)/},
   {"docs/content/usage/supported/cli/index.ko.md", :cli_languages, /()(\d+)(개 언어에 걸쳐)/},
 ]

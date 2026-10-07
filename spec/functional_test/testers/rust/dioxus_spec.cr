@@ -26,6 +26,12 @@ expected_endpoints = [
     Param.new("nickname", "", "json"),
   ]),
   Endpoint.new("/api/search", "GET"),
+  Endpoint.new("/api/login", "POST", [
+    Param.new("username", "", "json"),
+  ]),
+  Endpoint.new("/files/{name}.json", "GET", [
+    Param.new("name", "", "path"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/rust/dioxus/", {

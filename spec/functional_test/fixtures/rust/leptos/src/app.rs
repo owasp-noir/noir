@@ -1,3 +1,4 @@
+// 서버 함수는 테스트 모듈 바로 위에 있어도 누락되면 안 됩니다. 서버 함수는 테스트 모듈 바로 위에 있어도 누락되면 안 됩니다. 서버 함수는 테스트 모듈 바로 위에 있어도 누락되면 안 됩니다. 서버 함수는 테스트 모듈 바로 위에 있어도 누락되면 안 됩니다. 서버 함수는 테스트 모듈 바로 위에 있어도 누락되면 안 됩니다. 서버 함수는 테스트 모듈 바로 위에 있어도 누락되면 안 됩니다. 
 use leptos::prelude::*;
 use server_fn::codec::{GetUrl, Json, PatchJson};
 
@@ -48,6 +49,16 @@ pub async fn counter_stream(input: BoxedStream<i32, ServerFnError>) -> Result<Bo
     endpoint = "commented", /* fixed path */
 )]
 pub async fn commented(term: String) -> Result<(), ServerFnError> {
+    Ok(())
+}
+
+#[server(Lower, "/api", "getjson")]
+pub async fn lower(r#type: String, _: u8) -> Result<(), ServerFnError> {
+    Ok(())
+}
+
+#[server(endpoint = "")]
+pub async fn empty_ep() -> Result<(), ServerFnError> {
     Ok(())
 }
 

@@ -15,8 +15,9 @@ module Analyzer::Rust
       ["dioxus"]
     end
 
+    VERBS           = Set{"get", "post", "put", "delete", "patch"}
     VERB_ATTR_RE    = /#\s*\[\s*(?:\w+\s*::\s*)*(?:server|get|post|put|delete|patch)\b/
-    PATH_CAPTURE_RE = /\A(?:\{\*?(\w+)\}|[:*](\w+))\z/
+    PATH_CAPTURE_RE = %r{\{\*?(\w+)\}|(?:^|/)[:*](\w+)}
 
     # Rocket and actix spell their routes `#[get("/x")]` too, so a verb
     # attribute only counts in a file that names dioxus — a workspace whose
@@ -29,20 +30,16 @@ module Analyzer::Rust
       "json"
     end
 
-    protected def route_endpoint(name : String, arguments : Array(String),
+    protected def route_endpoint(name : String, attr : LibTreeSitter::TSNode,
                                  function : LibTreeSitter::TSNode, source : String) : Endpoint?
-      return super unless HTTP_VERBS.includes?(name)
+      return super unless VERBS.includes?(name)
       return unless source.includes?("dioxus")
-      literal = arguments.first?.try(&.strip) || return
+      literal = attribute_arguments(attr, source).first?.try(&.strip) || return
       return unless literal.starts_with?('"')
 
       path, _, query = unquote(literal).partition('?')
       bound = Set(String).new
-      path.split('/').each do |segment|
-        if m = segment.match(PATH_CAPTURE_RE)
-          bound << (m[1]? || m[2])
-        end
-      end
+      path.scan(PATH_CAPTURE_RE) { |m| bound << (m[1]? || m[2]) }
 
       params = [] of Param
       query.split('&').each do |field|

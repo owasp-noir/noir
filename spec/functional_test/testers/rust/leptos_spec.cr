@@ -26,6 +26,10 @@ expected_endpoints = [
   Endpoint.new("/api/commented", "GET", [
     Param.new("term", "", "query"),
   ]),
+  Endpoint.new("/api/lower", "GET", [
+    Param.new("type", "", "query"),
+  ]),
+  Endpoint.new("/api/empty_ep", "POST"),
 ]
 
 # `leptos_axum` in the manifest is also axum evidence; axum finds no routes.

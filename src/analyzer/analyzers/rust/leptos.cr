@@ -28,10 +28,12 @@ module Analyzer::Rust
             Noir::TopLevelSplit::Nest::Brace | Noir::TopLevelSplit::Nest::Angle,
       quotes: "\"")
 
-    SERVER_ATTR_RE  = /#\s*\[\s*(?:\w+\s*::\s*)*server\b/
-    CODEC_VERB_RE   = /\b(Get|Delete|Patch|Put|Websocket)/
-    COMMENT_RE      = %r{//[^\n]*|/\*.*?\*/}m
-    POSITIONAL_KEYS = {"name", "prefix", "encoding", "endpoint"}
+    SERVER_ATTR_RE = /#\s*\[\s*(?:\w+\s*::\s*)*server\b/
+    # server_fn lowercases a legacy encoding before matching it (`"getjson"`).
+    CODEC_VERB_RE = /\b(get|delete|patch|put|websocket)/i
+    # Dioxus `name: Type` server-side extractors, not URL configuration.
+    EXTRACTOR_ARG_RE = /\A\w+\s*:(?!:)/
+    POSITIONAL_KEYS  = {"name", "prefix", "encoding", "endpoint"}
 
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
@@ -44,8 +46,7 @@ module Analyzer::Rust
         each_routing_pair(root) do |attr, function|
           next if RustEngine.inside_test_region?(attr, test_regions)
           name = attribute_name(attr, source) || next
-          arguments = attribute_arguments(attr, source)
-          endpoint = route_endpoint(name, arguments, function, source) || next
+          endpoint = route_endpoint(name, attr, function, source) || next
           endpoint.details = Details.new(PathInfo.new(path, Noir::TreeSitter.node_start_row(attr) + 1))
           attach_handler_callees(function, source, path, endpoint) if include_callee
           endpoints << endpoint
@@ -64,20 +65,21 @@ module Analyzer::Rust
       "form"
     end
 
-    protected def route_endpoint(name : String, arguments : Array(String),
+    protected def route_endpoint(name : String, attr : LibTreeSitter::TSNode,
                                  function : LibTreeSitter::TSNode, source : String) : Endpoint?
       return unless name == "server"
-      fn_name = function_name(function, source) || return
+      fn_name = Noir::TreeSitter.field(function, "name").try { |n| Noir::TreeSitter.node_text(n, source) } || return
 
-      keyed = server_args(arguments)
+      keyed = server_args(attribute_arguments(attr, source))
       prefix = keyed["prefix"]? || "/api"
-      url = Noir::URLPath.join_rooted(prefix, keyed["endpoint"]? || fn_name)
+      # An empty endpoint falls back to the generated one, as in server_fn.
+      url = Noir::URLPath.join_rooted(prefix, keyed["endpoint"]?.presence || fn_name)
 
       codec = keyed["input"]? || keyed["encoding"]? || keyed["protocol"]?
       verb = codec.try(&.match(CODEC_VERB_RE)).try(&.[1])
       # A websocket server fn upgrades a GET; its arguments are a message
       # stream, not request fields.
-      if verb == "Websocket"
+      if verb.try(&.downcase) == "websocket"
         endpoint = Endpoint.new(url, "GET")
         endpoint.protocol = "ws"
         return endpoint
@@ -104,6 +106,7 @@ module Analyzer::Rust
     protected def server_args(arguments : Array(String)) : Hash(String, String)
       args = {} of String => String
       arguments.each_with_index do |arg, idx|
+        next if arg.matches?(EXTRACTOR_ARG_RE)
         if m = arg.match(/\A(\w+)\s*=\s*(.+)\z/m)
           args[m[1]] = unquote(m[2])
         elsif key = POSITIONAL_KEYS[idx]?
@@ -131,18 +134,25 @@ module Analyzer::Rust
     end
 
     # The attribute's argument list split at top-level commas; empty for a
-    # bare `#[server]`.
-    private def attribute_arguments(attr_item : LibTreeSitter::TSNode, source : String) : Array(String)
+    # bare `#[server]`. Comments are cut out by their node ranges — a regex
+    # would also cut the `//` in `"/a//b"`.
+    protected def attribute_arguments(attr_item : LibTreeSitter::TSNode, source : String) : Array(String)
       attr = find_named_child(attr_item, "attribute")
       arguments = attr && Noir::TreeSitter.field(attr, "arguments")
       return [] of String unless arguments
-      text = Noir::TreeSitter.node_text(arguments, source)[1...-1].gsub(COMMENT_RE, "")
-      Noir::TopLevelSplit.split(text, ',', ARG_RULES).reject(&.empty?)
-    end
 
-    protected def function_name(function : LibTreeSitter::TSNode, source : String) : String?
-      name = Noir::TreeSitter.field(function, "name") || return
-      Noir::TreeSitter.node_text(name, source)
+      start = LibTreeSitter.ts_node_start_byte(arguments).to_i
+      text = String.build do |io|
+        pos = start + 1
+        Noir::TreeSitter.each_named_child(arguments) do |child|
+          next unless Noir::TreeSitter.node_type(child).ends_with?("comment")
+          from = LibTreeSitter.ts_node_start_byte(child).to_i
+          io << source.byte_slice(pos, from - pos)
+          pos = LibTreeSitter.ts_node_end_byte(child).to_i
+        end
+        io << source.byte_slice(pos, LibTreeSitter.ts_node_end_byte(arguments).to_i - 1 - pos)
+      end
+      Noir::TopLevelSplit.split(text, ',', ARG_RULES).reject(&.empty?)
     end
 
     # Names of the function's plain `name: Type` parameters. Destructuring
@@ -153,8 +163,9 @@ module Analyzer::Rust
       Noir::TreeSitter.each_named_child(parameters) do |param|
         next unless Noir::TreeSitter.node_type(param) == "parameter"
         pattern = Noir::TreeSitter.field(param, "pattern") || next
-        name = Noir::TreeSitter.node_text(pattern, source).sub(/\Amut\s+/, "")
-        names << name if name.matches?(/\A[A-Za-z_]\w*\z/)
+        # `mut x` binds `x`; `r#type` is serialised as `type`; `_` is no field.
+        name = Noir::TreeSitter.node_text(pattern, source).sub(/\Amut\s+/, "").lchop("r#")
+        names << name if name != "_" && name.matches?(/\A[A-Za-z_]\w*\z/)
       end
       names
     end

@@ -18,7 +18,7 @@ module NoirTechs::Catalog::Rust
           :cookie => false,
         },
         :static_path => false,
-        :websocket   => false,
+        :websocket   => true,
       },
       :context => {:callee => true},
     },
