@@ -11,8 +11,8 @@ module Analyzer::CSharp::Common
   #     (smaller solutions).
   #   * `/testassets/` — aspnetcore's helper-controller convention
   #     for spinning up a real server inside the test harness.
-  #   * `Tests.cs` / `Test.cs` filename — xUnit / NUnit / MSTest
-  #     suffix convention.
+  #   * `Tests.cs` / `Test.cs` filename (`.vb` alike) — xUnit / NUnit /
+  #     MSTest suffix convention.
   #
   # dotnet/aspnetcore alone parks ~3,600 phantom endpoints under
   # `src/Mvc/test/...` and similar trees. Production code never
@@ -25,9 +25,7 @@ module Analyzer::CSharp::Common
     return true if relative_path.includes?("/test/")
     return true if relative_path.includes?("/tests/")
     return true if relative_path.includes?("/testassets/")
-    base = File.basename(relative_path)
-    return true if base.ends_with?("Tests.cs")
-    base.ends_with?("Test.cs")
+    File.basename(relative_path).matches?(/Tests?\.(?:cs|vb)\z/)
   end
 
   # ASP.NET Core and classic ASP.NET MVC 5 spell a controller almost
