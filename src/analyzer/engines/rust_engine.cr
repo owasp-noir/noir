@@ -134,7 +134,10 @@ module Analyzer::Rust
       bytes = source.to_slice
       pattern = /\#\s*\[\s*cfg\s*\(\s*test\s*\)\s*\]/
       source.scan(pattern) do |match|
-        attr_start = match.begin || next
+        # Byte offset: the scan below and tree-sitter's ranges are both in
+        # bytes, and `begin` counts chars, so non-ASCII text above the
+        # attribute shifted the region back over production code.
+        attr_start = match.byte_begin
         brace_idx = find_block_open_brace(bytes, attr_start + 1)
         next unless brace_idx
         close_idx = find_matching_close_brace(bytes, brace_idx)
