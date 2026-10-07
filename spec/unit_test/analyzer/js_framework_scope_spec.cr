@@ -204,3 +204,60 @@ describe "Remix and React Router project scoping" do
     end
   end
 end
+
+describe "src/routes/ framework project scoping" do
+  it "keeps SvelteKit, SolidStart and Qwik City on their own apps" do
+    # All three route from `src/routes/`; a default-exported `index.tsx` is
+    # a page to both SolidStart and Qwik City, so ownership is the only guard.
+    root = File.tempname("noir-src-routes-scope")
+
+    begin
+      kit = File.join(root, "kit", "src", "routes", "about")
+      FileUtils.mkdir_p(kit)
+      File.write(File.join(root, "kit", "package.json"), %({"devDependencies": {"@sveltejs/kit": "^2.0.0"}}))
+      File.write(File.join(kit, "+page.svelte"), "<h1>About</h1>\n")
+
+      solid = File.join(root, "solid", "src", "routes")
+      FileUtils.mkdir_p(solid)
+      File.write(File.join(root, "solid", "package.json"), %({"dependencies": {"@solidjs/start": "^1.1.0"}}))
+      File.write(File.join(solid, "pricing.tsx"), "export default function Pricing() {}\n")
+
+      qwik = File.join(root, "qwik", "src", "routes", "team")
+      FileUtils.mkdir_p(qwik)
+      File.write(File.join(root, "qwik", "package.json"), %({"devDependencies": {"@builder.io/qwik-city": "^1.12.0"}}))
+      File.write(File.join(qwik, "index.tsx"), "export default component$(() => null);\n")
+
+      endpoints = scan_tree(root)
+      tech_sources(endpoints, "js_sveltekit").should eq([File.join(kit, "+page.svelte")])
+      tech_sources(endpoints, "js_solidstart").should eq([File.join(solid, "pricing.tsx")])
+      tech_sources(endpoints, "js_qwik_city").should eq([File.join(qwik, "index.tsx")])
+    ensure
+      FileUtils.rm_rf(root) if Dir.exists?(root)
+    end
+  end
+end
+
+describe "src/routes/ framework hoisted package.json" do
+  it "leaves a nested app with its own package.json to its framework" do
+    # The root package.json names SolidStart, but `packages/kit` has its own
+    # manifest: its `+server.ts` verb export is not a SolidStart route.
+    root = File.tempname("noir-src-routes-hoisted")
+
+    begin
+      solid = File.join(root, "src", "routes")
+      FileUtils.mkdir_p(solid)
+      File.write(File.join(root, "package.json"), %({"dependencies": {"@solidjs/start": "^1.1.0"}}))
+      File.write(File.join(solid, "index.tsx"), "export default function Home() {}\n")
+
+      kit = File.join(root, "packages", "kit", "src", "routes", "api")
+      FileUtils.mkdir_p(kit)
+      File.write(File.join(root, "packages", "kit", "package.json"), %({"devDependencies": {"@sveltejs/kit": "^2.0.0"}}))
+      File.write(File.join(kit, "+server.ts"), "export const GET = () => new Response();\n")
+
+      endpoints = scan_tree(root)
+      tech_sources(endpoints, "js_solidstart").should eq([File.join(solid, "index.tsx")])
+    ensure
+      FileUtils.rm_rf(root) if Dir.exists?(root)
+    end
+  end
+end

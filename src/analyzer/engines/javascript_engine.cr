@@ -96,19 +96,49 @@ module Analyzer::Javascript
     # (`export const GET = ...` / `export async function POST() {}`),
     # then fall back to the cross-method catch-all set.
     protected def detect_api_methods(content : String) : Array(String)
-      explicit = [] of String
-      FILE_ROUTE_METHODS.each do |m|
-        # `export async function GET(...)`, `export function GET(...)`,
-        # `export const GET = ...`, `export const GET: APIRoute = ...`
-        # (the trailing TypeScript type annotation is optional), and
-        # the `export { GET }` re-export form.
-        if content.match(EXPORT_FUNCTION_RES[m]) ||
-           content.match(EXPORT_CONST_RES[m]) ||
-           content.match(EXPORT_BRACE_RES[m])
-          explicit << m
-        end
-      end
+      explicit = explicit_api_methods(content)
       explicit.empty? ? FALLBACK_API_METHODS : explicit
+    end
+
+    # `export async function GET(...)`, `export function GET(...)`,
+    # `export const GET = ...`, `export const GET: APIRoute = ...`
+    # (the trailing TypeScript type annotation is optional), and
+    # the `export { GET }` re-export form.
+    protected def explicit_api_methods(content : String) : Array(String)
+      FILE_ROUTE_METHODS.select do |m|
+        content.matches?(EXPORT_FUNCTION_RES[m]) ||
+          content.matches?(EXPORT_CONST_RES[m]) ||
+          content.matches?(EXPORT_BRACE_RES[m])
+      end
+    end
+
+    # A route module's page component (SolidStart, Qwik City). Line-anchored
+    # without consuming earlier lines, so `line_for_match` lands on it.
+    DEFAULT_EXPORT_RE = /^[ \t]*export\s+default\b/m
+
+    # Route-directory segments → URL for the `src/routes/` conventions
+    # (SvelteKit, SolidStart, Qwik City): `(group)` segments are hidden and
+    # every param group normalizes to `{name}`, in place, so static text
+    # around it survives (`foo-[id]`, `@[user]`):
+    #   [id]  [id=int]  [...rest]  [[opt]]  [[opt=int]]  [[...rest]]
+    FILE_ROUTE_PARAM_RE = /\[+(?:\.{3})?(\w+)(?:=\w+)?\]+/
+
+    # Path below `src/routes/`, or nil outside it. Scan-base-relative, never
+    # absolute: `String#index` takes the FIRST occurrence, so a same-named
+    # directory above the scan base won outright and the derived URL changed
+    # with the checkout path.
+    protected def src_routes_relative(path : String) : String?
+      scoped = base_relative_path(path)
+      idx = scoped.index("/src/routes/") || return
+      scoped[(idx + "/src/routes/".size)..]
+    end
+
+    protected def file_route_url(segments : Array(String)) : String
+      mapped = segments.compact_map do |seg|
+        next if seg.empty? || (seg.starts_with?('(') && seg.ends_with?(')'))
+        seg.gsub(FILE_ROUTE_PARAM_RE) { "{#{$1}}" }
+      end
+      "/" + mapped.join('/')
     end
 
     protected def api_method_line(content : String, verb : String) : Int32?
@@ -207,6 +237,36 @@ module Analyzer::Javascript
       end
 
       roots
+    end
+
+    # Expanded directory of every package.json → whether it names one of
+    # `package_markers`. Pair with `owned_by_js_package?` where frameworks
+    # share one layout (`src/routes/`): unlike `path_under_project_roots?`,
+    # a hoisted root package.json does not claim the apps nested below it.
+    protected def js_package_owners(package_markers : Array(String)) : Hash(String, Bool)
+      owners = {} of String => Bool
+      all_files.each do |file|
+        next unless File.basename(file) == "package.json"
+        content = begin
+          read_file_content(file)
+        rescue IO::Error
+          next
+        end
+        owners[File.dirname(Noir::PathScope.expand(file))] = package_markers.any? { |marker| content.includes?(marker) }
+      end
+      owners
+    end
+
+    # Whether the closest package.json above `path` names the framework.
+    protected def owned_by_js_package?(path : String, owners : Hash(String, Bool)) : Bool
+      dir = File.dirname(Noir::PathScope.expand(path))
+      loop do
+        owned = owners[dir]?
+        return owned unless owned.nil?
+        parent = File.dirname(dir)
+        return false if parent == dir
+        dir = parent
+      end
     end
 
     protected def path_under_project_roots?(path : String, roots : Array(String)) : Bool

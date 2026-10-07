@@ -73,6 +73,8 @@ HOSTILE_ANCESTORS = [
   {"javascript/sveltekit", "src"},
   {"javascript/remix", "app"},
   {"javascript/react_router_flat", "app"},
+  {"javascript/solidstart", "src"},
+  {"javascript/qwik_city", "src"},
   {"javascript/astro", "src"},
   {"javascript/nitro", "routes"},
   {"javascript/fresh", "routes"},
