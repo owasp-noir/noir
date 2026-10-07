@@ -1,0 +1,14 @@
+@page "{id:int}"
+@model EditModel
+@functions {
+    public class EditModel : PageModel
+    {
+        [BindProperty]
+        public required UserInput Input { get; set; }
+
+        public void OnGet(int id) { }
+
+        public IActionResult OnPut(int id) => Page();
+    }
+}
+<form method="post"></form>

@@ -1,0 +1,11 @@
+@attribute [Route("/contact")]
+
+<EditForm Model="Model" FormName="contact" method="post"></EditForm>
+
+@code {
+    [SupplyParameterFromForm]
+    public ContactModel? Model { get; set; }
+
+    [SupplyParameterFromQuery(Name = "ref")]
+    public string? Referrer { get; set; }
+}
