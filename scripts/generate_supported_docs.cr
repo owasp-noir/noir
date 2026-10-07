@@ -323,6 +323,8 @@ end
 # remove.
 COUNT_PATTERNS = [
   {"README.md", :frameworks, /(across \[)(\d+)( frameworks\])/},
+  {"docs/config.toml", :languages, /(across )(\d+)( languages and )/},
+  {"docs/config.toml", :frameworks, /( languages and )(\d+)( frameworks)/},
   {"docs/content/_index.md", :languages, /(across )(\d+)( languages and )/},
   {"docs/content/_index.md", :frameworks, /( languages and )(\d+)( frameworks)/},
   {"docs/content/_index.md", :languages, /(<span class="stat-val">)(\d+)(<\/span><span class="stat-key">Languages<\/span>)/},

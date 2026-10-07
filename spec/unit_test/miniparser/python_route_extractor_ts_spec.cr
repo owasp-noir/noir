@@ -113,4 +113,31 @@ describe Noir::TreeSitterPythonRouteExtractor do
     decos = Noir::TreeSitterPythonRouteExtractor.extract_decorations(source)
     decos.map(&.path).should eq(["/static"])
   end
+
+  it "reads a list of paths, the route= keyword and bare @route when asked" do
+    source = <<-PY
+      @http.route(["/shop", "/shop/page/<int:page>"], type="http", csrf=False)
+      def shop(self): pass
+
+      @http.route(route=["/a", "/b"])
+      def ab(self): pass
+
+      @route("/bare", auth="none")
+      def bare(self): pass
+      PY
+    decos = Noir::TreeSitterPythonRouteExtractor.extract_decorations(source, bare_route: true)
+    decos.map(&.paths).should eq([["/shop", "/shop/page/<int:page>"], ["/a", "/b"], ["/bare"]])
+    decos[0].keywords.should eq({"type" => "http", "csrf" => "False"})
+    decos[2].router_name.should eq("")
+
+    Noir::TreeSitterPythonRouteExtractor.extract_decorations(source).map(&.path).should eq(["/shop", "/a"])
+  end
+
+  it "does not read a positional verb list as paths" do
+    source = <<-PY
+      @app.route(PATH, ["GET", "POST"])
+      def handler(): pass
+      PY
+    Noir::TreeSitterPythonRouteExtractor.extract_decorations(source).should be_empty
+  end
 end
