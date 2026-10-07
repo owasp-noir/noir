@@ -472,6 +472,88 @@ describe Noir::TreeSitterKotlinRouteExtractor do
     Noir::TreeSitterKotlinRouteExtractor.extract_routes(source).should be_empty
   end
 
+  # tree-sitter-kotlin can parse an annotated class that is followed by
+  # another class as `prefix_expression > infix_expression` (`class`,
+  # the name and a `lambda_literal` body) with no ERROR node.
+  it "recovers routes from a class misparsed as an annotated infix expression" do
+    source = <<-KT
+      package com.ex
+
+      import org.springframework.web.bind.annotation.*
+
+      @RestController
+      @RequestMapping("/k1")
+      class K1 {
+          @GetMapping("/x")
+          fun x(): String = ""
+      }
+
+      @RestController
+      @RequestMapping("/k2")
+      class K2 {
+          @GetMapping("/y")
+          fun y(): String = ""
+      }
+      KT
+
+    routes = Noir::TreeSitterKotlinRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path, r.class_name, r.method_name} }.should eq([
+      {"GET", "/k1/x", "K1", "x"},
+      {"GET", "/k2/y", "K2", "y"},
+    ])
+  end
+
+  it "reads a keyword class prefix from a class misparsed as an infix expression" do
+    source = <<-KT
+      package com.ex
+
+      @RestController
+      @RequestMapping(value = ["/k1"], produces = ["application/json"])
+      class K1 {
+          @GetMapping("/x")
+          fun x(): String = ""
+      }
+
+      @RestController
+      class K2 {
+          @GetMapping("/y")
+          fun y(): String = ""
+      }
+      KT
+
+    routes = Noir::TreeSitterKotlinRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path, r.class_name} }.should eq([
+      {"GET", "/k1/x", "K1"},
+      {"GET", "/y", "K2"},
+    ])
+  end
+
+  it "does not recover routes from a misparsed @FeignClient class" do
+    source = <<-KT
+      package com.ex
+
+      import org.springframework.web.bind.annotation.*
+
+      @FeignClient(name = "remote")
+      @RequestMapping("/k1")
+      class K1 {
+          @GetMapping("/x")
+          fun x(): String = ""
+      }
+
+      @RestController
+      class K2 {
+          @GetMapping("/y")
+          fun y(): String = ""
+      }
+      KT
+
+    routes = Noir::TreeSitterKotlinRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path, r.class_name} }.should eq([
+      {"GET", "/y", "K2"},
+    ])
+  end
+
   it "extracts Spring GraphQL query and mutation mappings" do
     source = <<-KT
       package com.example
