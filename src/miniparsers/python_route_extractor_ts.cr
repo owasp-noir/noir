@@ -26,8 +26,13 @@ module Noir
       getter decorator_line : Int32 # 0-based line number of the decorator
       getter def_line : Int32       # 0-based line of the def/class (-1 if none found)
       getter def_name : String      # name of the def/class (empty if not found)
+      getter paths : Array(String)  # every path; `path` is the first (Odoo/Bottle accept a list)
+      # Every keyword argument: string literals decoded, anything else as
+      # source text (`auth="user"` → "user", `csrf=False` → "False").
+      getter keywords : Hash(String, String)
 
-      def initialize(@router_name, @attribute_name, @path, @methods, @decorator_line, @def_line, @def_name)
+      def initialize(@router_name, @attribute_name, @path, @methods, @decorator_line, @def_line, @def_name,
+                     @paths = [@path], @keywords = {} of String => String)
       end
     end
 
@@ -65,15 +70,20 @@ module Noir
     # should carry (Quart's `@app.websocket` is emitted as `GET` so the
     # downstream pipeline keeps treating it as an HTTP-shaped endpoint;
     # the caller flips `protocol = "ws"` based on `attribute_name`).
+    #
+    # `bare_route` also accepts an unqualified `@route(...)` (Odoo's
+    # `from odoo.http import route`); it yields an empty `router_name`.
     def extract_decorations(source : String,
                             router_names : Array(String)? = nil,
-                            extra_attributes : Hash(String, String)? = nil) : Array(Decoration)
+                            extra_attributes : Hash(String, String)? = nil,
+                            bare_route : Bool = false) : Array(Decoration)
       tag = decoration_options_tag(router_names, extra_attributes)
+      tag += "|bare" if bare_route
       key = ExtractionResultCache.key(source, "decorations", tag)
       ExtractionResultCache.fetch(@@decoration_memo, key, mutex: @@memo_mutex) do
         results = [] of Decoration
         Noir::TreeSitter.parse_python(source) do |root|
-          extract_decorations_from(root, source, router_names, extra_attributes, results)
+          extract_decorations_from(root, source, router_names, extra_attributes, results, bare_route)
         end
         results
       end
@@ -86,10 +96,11 @@ module Noir
                                  source : String,
                                  router_names : Array(String)? = nil,
                                  extra_attributes : Hash(String, String)? = nil,
-                                 results : Array(Decoration) = [] of Decoration) : Array(Decoration)
+                                 results : Array(Decoration) = [] of Decoration,
+                                 bare_route : Bool = false) : Array(Decoration)
       Noir::TreeSitter.walk(root) do |node|
         next unless Noir::TreeSitter.node_type(node) == "decorated_definition"
-        collect_decorations(node, source, router_names, extra_attributes, results)
+        collect_decorations(node, source, router_names, extra_attributes, results, bare_route)
       end
       results
     end
@@ -212,7 +223,8 @@ module Noir
                                     source : String,
                                     router_names : Array(String)?,
                                     extra_attributes : Hash(String, String)?,
-                                    sink : Array(Decoration))
+                                    sink : Array(Decoration),
+                                    bare_route : Bool = false)
       # A decorated_definition has one or more `decorator` named children
       # followed by a `function_definition` / `class_definition` in the
       # `definition` field.
@@ -227,16 +239,18 @@ module Noir
         next unless Noir::TreeSitter.node_type(child) == "decorator"
         call = find_call_inside_decorator(child)
         next unless call
-        if deco = decode_route_call(call, source, router_names, extra_attributes)
-          router_name, attribute_name, path, methods = deco
+        if deco = decode_route_call(call, source, router_names, extra_attributes, bare_route)
+          router_name, attribute_name, paths, methods, keywords = deco
           sink << Decoration.new(
             router_name,
             attribute_name,
-            path,
+            paths.first,
             methods,
             Noir::TreeSitter.node_start_row(child),
             def_line,
             def_name,
+            paths,
+            keywords,
           )
         end
       end
@@ -262,26 +276,35 @@ module Noir
     end
 
     # Given a `call` node that represents `<router>.<method>(...)` or
-    # `<router>.route(...)`, returns {router_name, path, methods} or nil.
+    # `<router>.route(...)`, returns {router_name, attribute, paths,
+    # methods, keywords} or nil.
     private def decode_route_call(call : LibTreeSitter::TSNode,
                                   source : String,
                                   router_names : Array(String)?,
-                                  extra_attributes : Hash(String, String)? = nil) : Tuple(String, String, String, Array(String))?
+                                  extra_attributes : Hash(String, String)? = nil,
+                                  bare_route : Bool = false) : Tuple(String, String, Array(String), Array(String), Hash(String, String))?
       function = Noir::TreeSitter.field(call, "function")
       return unless function
-      return unless Noir::TreeSitter.node_type(function) == "attribute"
 
-      object = Noir::TreeSitter.field(function, "object")
-      attribute = Noir::TreeSitter.field(function, "attribute")
-      return unless object && attribute
-      return unless Noir::TreeSitter.node_type(object) == "identifier"
-      return unless Noir::TreeSitter.node_type(attribute) == "identifier"
+      if bare_route && Noir::TreeSitter.node_type(function) == "identifier" &&
+         Noir::TreeSitter.node_text(function, source) == "route"
+        router_name = ""
+        attr_name = "route"
+      else
+        return unless Noir::TreeSitter.node_type(function) == "attribute"
 
-      router_name = Noir::TreeSitter.node_text(object, source)
-      attr_name = Noir::TreeSitter.node_text(attribute, source)
+        object = Noir::TreeSitter.field(function, "object")
+        attribute = Noir::TreeSitter.field(function, "attribute")
+        return unless object && attribute
+        return unless Noir::TreeSitter.node_type(object) == "identifier"
+        return unless Noir::TreeSitter.node_type(attribute) == "identifier"
 
-      if router_names && !router_names.includes?(router_name)
-        return
+        router_name = Noir::TreeSitter.node_text(object, source)
+        attr_name = Noir::TreeSitter.node_text(attribute, source)
+
+        if router_names && !router_names.includes?(router_name)
+          return
+        end
       end
 
       method_from_attr =
@@ -299,6 +322,8 @@ module Noir
       return unless args
 
       path = ""
+      list_paths = [] of String
+      keywords = {} of String => String
       methods = [] of String
       # Positional strings in order. The path is normally the first one, but
       # aiohttp's `RouteTableDef` spells its generic decorator
@@ -311,16 +336,25 @@ module Noir
         case Noir::TreeSitter.node_type(arg)
         when "string"
           positional_strings << decode_string(arg, source)
+        when "list"
+          # `@http.route(["/shop", "/shop/page/<int:page>"])` — one handler,
+          # several paths. Only the first list counts.
+          list_paths = decode_path_list(arg, source) if list_paths.empty?
         when "keyword_argument"
           name = Noir::TreeSitter.field(arg, "name")
           value = Noir::TreeSitter.field(arg, "value")
           next unless name && value
           key = Noir::TreeSitter.node_text(name, source)
+          keywords[key] = Noir::TreeSitter.node_type(value) == "string" ? decode_string(value, source) : Noir::TreeSitter.node_text(value, source)
+          # Odoo's `route=` keyword takes a path or a list of paths.
+          if key == "route" && list_paths.empty? && Noir::TreeSitter.node_type(value) == "list"
+            list_paths = decode_path_list(value, source)
+          end
           # `methods=` (Flask / Sanic) / `method=` (Bottle).
           # `decode_method_list` handles a list or a bare string.
           if key == "methods" || key == "method"
             methods = decode_method_list(value, source)
-          elsif (key == "path" || key == "rule" || key == "uri") && path.empty? &&
+          elsif (key == "path" || key == "rule" || key == "uri" || key == "route") && path.empty? &&
                 Noir::TreeSitter.node_type(value) == "string"
             # `path=`/`rule=`/`uri=` keyword forms — FastAPI's
             # `@app.get(path="/x")`, Bottle's `@app.route(path="/x")`,
@@ -333,6 +367,10 @@ module Noir
       end
 
       leading_verb = nil
+      if path.empty? && positional_strings.empty?
+        list_paths.reject!(&.empty?)
+        path = list_paths.first? || ""
+      end
       if path.empty?
         # A leading bare verb is only a verb when something else can be the
         # path; `@app.route("/get")` must stay a path.
@@ -353,7 +391,8 @@ module Noir
           methods = ["GET"] # Flask default for generic `.route` without methods=
         end
       end
-      {router_name, attr_name, path, methods}
+      paths = list_paths.size > 1 && path == list_paths.first ? list_paths : [path]
+      {router_name, attr_name, paths, methods, keywords}
     end
 
     # Decodes a `string` node's content. Python strings are parsed as
@@ -390,6 +429,18 @@ module Noir
         end
       end
       buf
+    end
+
+    # String elements of a list of paths. Bottle and Sanic take a list of
+    # verbs positionally (`@app.route(PATH, ["GET", "POST"])`); a list whose
+    # first element is a bare verb is that, not paths.
+    private def decode_path_list(list : LibTreeSitter::TSNode, source : String) : Array(String)
+      paths = [] of String
+      Noir::TreeSitter.each_named_child(list) do |elem|
+        paths << decode_string(elem, source) if Noir::TreeSitter.node_type(elem) == "string"
+      end
+      return [] of String if (first = paths.first?) && bare_http_method?(first)
+      paths
     end
 
     private def decode_method_list(value : LibTreeSitter::TSNode, source : String) : Array(String)
