@@ -73,17 +73,23 @@ module Noir
     #
     # `bare_route` also accepts an unqualified `@route(...)` (Odoo's
     # `from odoo.http import route`); it yields an empty `router_name`.
+    #
+    # `pathless` keeps a decorator that names no path (Frappe's
+    # `@frappe.whitelist()`, whose URL comes from the module); its `path`
+    # is empty.
     def extract_decorations(source : String,
                             router_names : Array(String)? = nil,
                             extra_attributes : Hash(String, String)? = nil,
-                            bare_route : Bool = false) : Array(Decoration)
+                            bare_route : Bool = false,
+                            pathless : Bool = false) : Array(Decoration)
       tag = decoration_options_tag(router_names, extra_attributes)
       tag += "|bare" if bare_route
+      tag += "|pathless" if pathless
       key = ExtractionResultCache.key(source, "decorations", tag)
       ExtractionResultCache.fetch(@@decoration_memo, key, mutex: @@memo_mutex) do
         results = [] of Decoration
         Noir::TreeSitter.parse_python(source) do |root|
-          extract_decorations_from(root, source, router_names, extra_attributes, results, bare_route)
+          extract_decorations_from(root, source, router_names, extra_attributes, results, bare_route, pathless)
         end
         results
       end
@@ -97,10 +103,11 @@ module Noir
                                  router_names : Array(String)? = nil,
                                  extra_attributes : Hash(String, String)? = nil,
                                  results : Array(Decoration) = [] of Decoration,
-                                 bare_route : Bool = false) : Array(Decoration)
+                                 bare_route : Bool = false,
+                                 pathless : Bool = false) : Array(Decoration)
       Noir::TreeSitter.walk(root) do |node|
         next unless Noir::TreeSitter.node_type(node) == "decorated_definition"
-        collect_decorations(node, source, router_names, extra_attributes, results, bare_route)
+        collect_decorations(node, source, router_names, extra_attributes, results, bare_route, pathless)
       end
       results
     end
@@ -224,7 +231,8 @@ module Noir
                                     router_names : Array(String)?,
                                     extra_attributes : Hash(String, String)?,
                                     sink : Array(Decoration),
-                                    bare_route : Bool = false)
+                                    bare_route : Bool = false,
+                                    pathless : Bool = false)
       # A decorated_definition has one or more `decorator` named children
       # followed by a `function_definition` / `class_definition` in the
       # `definition` field.
@@ -239,7 +247,7 @@ module Noir
         next unless Noir::TreeSitter.node_type(child) == "decorator"
         call = find_call_inside_decorator(child)
         next unless call
-        if deco = decode_route_call(call, source, router_names, extra_attributes, bare_route)
+        if deco = decode_route_call(call, source, router_names, extra_attributes, bare_route, pathless)
           router_name, attribute_name, paths, methods, keywords = deco
           sink << Decoration.new(
             router_name,
@@ -282,7 +290,8 @@ module Noir
                                   source : String,
                                   router_names : Array(String)?,
                                   extra_attributes : Hash(String, String)? = nil,
-                                  bare_route : Bool = false) : Tuple(String, String, Array(String), Array(String), Hash(String, String))?
+                                  bare_route : Bool = false,
+                                  pathless : Bool = false) : Tuple(String, String, Array(String), Array(String), Hash(String, String))?
       function = Noir::TreeSitter.field(call, "function")
       return unless function
 
@@ -382,7 +391,7 @@ module Noir
         end
       end
 
-      return if path.empty?
+      return if path.empty? && !pathless
 
       if methods.empty?
         if fallback = leading_verb || method_from_attr
