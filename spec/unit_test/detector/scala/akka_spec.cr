@@ -13,6 +13,18 @@ describe "Detect Scala Akka" do
     instance.detect("test.scala", "import akka.http.scaladsl.Http").should be_true
   end
 
+  it "test.scala with Apache Pekko HTTP import" do
+    instance.detect("test.scala", "import org.apache.pekko.http.scaladsl.server.Directives._").should be_true
+  end
+
+  it "test.scala with Pekko actors only" do
+    instance.detect("test.scala", "import org.apache.pekko.actor.typed.ActorSystem").should be_false
+  end
+
+  it "test.scala with a pekko.http config key only" do
+    instance.detect("test.scala", %(ConfigFactory.parseString("pekko.http.server.idle-timeout = 5s"))).should be_false
+  end
+
   it "test.scala without akka.http import" do
     instance.detect("test.scala", "import scala.concurrent.Future").should be_false
   end

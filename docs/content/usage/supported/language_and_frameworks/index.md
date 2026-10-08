@@ -5413,7 +5413,7 @@ This is the map: every framework Noir can read, and how much of each one it unde
 
 <div class="tech-grid">
   <article class="tech-card">
-    <h3 class="tech-card-title">Akka HTTP</h3>
+    <h3 class="tech-card-title">Akka HTTP / Pekko HTTP</h3>
     <div class="tech-card-row">
       <span class="tech-card-label">Route</span>
       <div class="tech-card-chips">
