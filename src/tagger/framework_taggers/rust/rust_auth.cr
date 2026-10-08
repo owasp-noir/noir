@@ -33,6 +33,8 @@ class RustAuthTagger < FrameworkTagger
   MIDDLEWARE_LAYER_PATTERNS = [
     /\.wrap\s*\(\s*(\w*[Aa]uth\w*)/,
     /\.wrap\s*\(\s*HttpAuthentication/,
+    # ntex spells actix's `.wrap(...)` as `.middleware(...)`.
+    /\.middleware\s*\(\s*(\w*[Aa]uth\w*)/,
     /\.layer\s*\(\s*(\w*[Aa]uth\w*)/,
     /\.layer\s*\(\s*middleware::from_fn\s*\(\s*(\w*auth\w*)/i,
   ]
@@ -52,7 +54,7 @@ class RustAuthTagger < FrameworkTagger
     [
       "rust_axum", "rust_rocket", "rust_actix_web",
       "rust_loco", "rust_rwf", "rust_tide",
-      "rust_warp", "rust_gotham",
+      "rust_warp", "rust_gotham", "rust_ntex",
     ]
   end
 

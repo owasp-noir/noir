@@ -46,7 +46,7 @@ JSON, JSONL, YAML, TOML 같은 모델 기반 포맷과 plain 모델 직렬화는
 | Python | Bottle, CherryPy, Django, Django Ninja, Falcon, FastAPI, Flask, Frappe, Litestar, Masonite, Odoo, Pyramid, Quart, Robyn, Sanic, Starlette, Tornado, aiohttp, http.server |
 | R | Plumber |
 | Ruby | Grape, Hanami, Padrino, Rails, Roda, Sinatra, WEBrick |
-| Rust | Actix Web, Axum, Dioxus, Gotham, Leptos, Loco, Poem, RWF, Rocket, Salvo, Tide, Warp |
+| Rust | Actix Web, Axum, Dioxus, Gotham, Leptos, Loco, Poem, RWF, Rocket, Salvo, Tide, Warp, ntex |
 | Scala | Akka HTTP / Pekko HTTP, Play Framework, Scalatra, Tapir, ZIO HTTP, http4s |
 | Swift | Hummingbird, Kitura, Vapor |
 | TypeScript | LoopBack, Midway, NestJS, TanStack Router, Wasp, tRPC |

@@ -55,7 +55,7 @@ module Analyzer::Rust
     GETOPTS_CALL_RE = /\b(\w+)\.(?:optopt|reqopt|optflagopt|optflag|optmulti)\s*\(\s*"([^"]*)"\s*,\s*"([^"]*)"/
 
     # Web crates: their env::var reads are config, not a CLI surface.
-    WEB_CRATE_RE = /\buse\s+(?:axum|actix_web|rocket|warp|tide|poem|salvo|gotham|loco_rs|hyper|tonic|tower_http)\b|::serve\s*\(|HttpServer::new|TcpListener::bind/
+    WEB_CRATE_RE = /\buse\s+(?:axum|actix_web|ntex|rocket|warp|tide|poem|salvo|gotham|loco_rs|hyper|tonic|tower_http)\b|::serve\s*\(|HttpServer::new|TcpListener::bind/
 
     def analyze
       cargo = collect_cargo_binaries
