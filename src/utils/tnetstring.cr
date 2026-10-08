@@ -29,9 +29,13 @@ module Tnetstring
   LIST_TYPE  = ']'.ord.to_u8
   DICT_TYPE  = '}'.ord.to_u8
 
+  # Nesting limit for lists/dicts; deeper input would overflow the stack.
+  MAX_DEPTH = 512
+
   # Parses one tnetstring value starting at byte offset `pos`.
   # Returns the decoded value and the next read position.
-  def self.parse(bytes : Bytes, pos : Int32 = 0) : Tuple(Value, Int32)
+  def self.parse(bytes : Bytes, pos : Int32 = 0, depth : Int32 = 0) : Tuple(Value, Int32)
+    raise ParseError.new("nesting too deep") if depth > MAX_DEPTH
     raise ParseError.new("unexpected end of input") if pos >= bytes.size
 
     colon = pos
@@ -47,14 +51,15 @@ module Tnetstring
     raise ParseError.new("negative length") if length < 0
 
     payload_start = colon + 1
+    # Compare via subtraction: payload_start + length can overflow Int32.
+    raise ParseError.new("payload out of bounds") if length >= bytes.size - payload_start
     payload_end = payload_start + length
-    raise ParseError.new("payload out of bounds") if payload_end >= bytes.size
 
     payload = bytes[payload_start, length]
     type_byte = bytes[payload_end]
     next_pos = payload_end + 1
 
-    {decode(type_byte, payload), next_pos}
+    {decode(type_byte, payload, depth), next_pos}
   end
 
   # Parses every top-level tnetstring value in `bytes`. The mitmproxy
@@ -70,7 +75,7 @@ module Tnetstring
     result
   end
 
-  private def self.decode(type_byte : UInt8, payload : Bytes) : Value
+  private def self.decode(type_byte : UInt8, payload : Bytes, depth : Int32) : Value
     case type_byte
     when STR_TYPE, BYTES_TYPE
       String.new(payload)
@@ -92,7 +97,7 @@ module Tnetstring
       list = [] of Value
       pos = 0
       while pos < payload.size
-        v, pos = parse(payload, pos)
+        v, pos = parse(payload, pos, depth + 1)
         list << v
       end
       list
@@ -100,8 +105,8 @@ module Tnetstring
       dict = {} of String => Value
       pos = 0
       while pos < payload.size
-        k, pos = parse(payload, pos)
-        v, pos = parse(payload, pos)
+        k, pos = parse(payload, pos, depth + 1)
+        v, pos = parse(payload, pos, depth + 1)
         raise ParseError.new("dict key must be a string") unless k.is_a?(String)
         dict[k] = v
       end

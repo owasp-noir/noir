@@ -264,4 +264,16 @@ describe "Terraform Analyzer" do
 
     endpoints.should be_empty
   end
+
+  it "survives deeply nested interpolation strings" do
+    nested = "${\"" * 60_000
+    endpoints = analyze_single <<-HCL
+      resource "aws_apigatewayv2_route" "a" {
+        route_key = "GET /items"
+        other     = "#{nested}"
+      }
+      HCL
+
+    endpoints.should be_a(Array(Endpoint))
+  end
 end
