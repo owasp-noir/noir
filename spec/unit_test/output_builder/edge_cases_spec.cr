@@ -26,7 +26,7 @@ describe "Output Builders Edge Cases" do
     output = builder.io.to_s
 
     # Should properly escape single quotes for shell
-    output.should contain("curl -i -X 'POST'")
+    output.should contain("curl -i -g -X 'POST'")
     output.should contain("--data-raw '{\"message\":\"Hello '\\''World'\\''\"")
     output.should contain("Content-Type: application/json")
   end
@@ -124,7 +124,7 @@ describe "Output Builders Edge Cases" do
     curl.io = IO::Memory.new
     curl.print([endpoint])
     curl_output = curl.io.to_s
-    curl_output.should contain("curl -i -X 'GET'")
+    curl_output.should contain("curl -i -g -X 'GET'")
 
     # Test httpie with empty values
     httpie = OutputBuilderHttpie.new(options)

@@ -10,7 +10,7 @@ Turn discovered endpoints into ready-to-run commands for popular HTTP clients. U
 
 ## cURL
 
-[cURL](https://curl.se/) is the most widely used command-line HTTP client. The generated commands include `-i` (show response headers), `-X` (HTTP method), `--data-raw` (urlencoded or JSON bodies, with the matching `Content-Type` header), `-F` (multipart uploads), `-H` (headers), and `--cookie` as appropriate.
+[cURL](https://curl.se/) is the most widely used command-line HTTP client. The generated commands include `-i` (show response headers), `-g` (disable URL globbing so `{id}` and `[..]` are sent literally), `-X` (HTTP method), `--data-raw` (urlencoded or JSON bodies, with the matching `Content-Type` header), `-F` (multipart uploads), `-H` (headers), and `--cookie` as appropriate.
 
 ```bash
 noir scan . -f curl -u https://www.example.com
@@ -18,9 +18,9 @@ noir scan . -f curl -u https://www.example.com
 
 Example output:
 ```bash
-curl -i -X 'GET' 'https://www.example.com/' -H 'x-api-key: '
-curl -i -X 'POST' 'https://www.example.com/query' --data-raw 'query=' -H 'Content-Type: application/x-www-form-urlencoded' --cookie 'my_auth='
-curl -i -X 'GET' 'https://www.example.com/token' --data-raw 'client_id=&redirect_url=&grant_type=' -H 'Content-Type: application/x-www-form-urlencoded'
+curl -i -g -X 'GET' 'https://www.example.com/' -H 'x-api-key: '
+curl -i -g -X 'POST' 'https://www.example.com/query' --data-raw 'query=' -H 'Content-Type: application/x-www-form-urlencoded' --cookie 'my_auth='
+curl -i -g -X 'GET' 'https://www.example.com/token' --data-raw 'client_id=&redirect_url=&grant_type=' -H 'Content-Type: application/x-www-form-urlencoded'
 ```
 
 ## HTTPie
@@ -68,7 +68,7 @@ Example (`POST /upload` with form field `title` and file field `avatar`):
 
 ```bash
 # cURL
-curl -i -X 'POST' 'https://www.example.com/upload' -F 'title=' -F 'avatar=@avatar'
+curl -i -g -X 'POST' 'https://www.example.com/upload' -F 'title=' -F 'avatar=@avatar'
 
 # HTTPie
 http --form 'POST' 'https://www.example.com/upload' 'title=' 'avatar@avatar'
