@@ -4,6 +4,14 @@ type ListParams struct {
 	PageSize int    `query:"limit"`
 	Cursor   string
 	Tenant   string `header:"X-Tenant"`
+	// `json:"-"` only drops a field whose location is the JSON body.
+	Auth   string `header:"Authorization" json:"-"`
+	Offset int    `json:"-"`
+}
+
+// Same name as shared.Other: must not be bound to `*shared.Other`.
+type Other struct {
+	Secret string
 }
 
 type UpdateParams struct {

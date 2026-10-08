@@ -1,6 +1,10 @@
 package users
 
-import "context"
+import (
+	"context"
+
+	"encore.app/shared"
+)
 
 //encore:service
 type Service struct{}
@@ -20,4 +24,9 @@ func (s *Service) Update(ctx context.Context, id int, p *UpdateParams) (*User, e
 //encore:api private
 func Create(ctx context.Context, p *UpdateParams) (*User, error) {
 	return &User{}, nil
+}
+
+//encore:api public method=POST path=/users/import
+func Import(ctx context.Context, p *shared.Other) error {
+	return nil
 }

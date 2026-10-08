@@ -6,6 +6,8 @@ expected_endpoints = [
     Param.new("q", "", "query"),
     Param.new("limit", "", "query"),
     Param.new("X-Token", "", "header"),
+    Param.new("X-Count", "", "header"),
+    Param.new("sort", "", "query"),
   ]),
   # No path: /<service>.<export>, the service named in encore.service.ts; no method: POST.
   Endpoint.new("/greeter.create", "POST", [
@@ -16,9 +18,16 @@ expected_endpoints = [
   Endpoint.new("/posts/:id", "PATCH", [Param.new("id", "", "path"), Param.new("title", "", "json")]),
   Endpoint.new("/hooks/*rest", "ANY", [Param.new("rest", "", "path")]),
   Endpoint.new("/chat", "GET", [Param.new("room", "", "query")]),
+  # A stream without a handshake has no request params.
+  Endpoint.new("/ticker", "GET"),
+  # Request type imported from ./types.
+  Endpoint.new("/tickets", "POST", [Param.new("subject", "", "json"), Param.new("priority", "", "json")]),
   Endpoint.new("/static/*path", "GET", [Param.new("path", "", "path")]),
+  Endpoint.new("/static/*path", "HEAD", [Param.new("path", "", "path")]),
   # The `!path` fallback is reported as a `*path` wildcard.
   Endpoint.new("/*path", "GET", [Param.new("path", "", "path")]),
+  Endpoint.new("/*path", "HEAD", [Param.new("path", "", "path")]),
+  Endpoint.new("/version", "GET"),
   Endpoint.new("/admin/stats", "GET"),
 ]
 
@@ -48,6 +57,7 @@ describe "Encore.ts endpoint flags", tags: "functional" do
     tags.call("POST", "/greeter.create").should contain({"auth", "Encore auth endpoint"})
     tags.call("GET", "/admin/stats").should eq [{"encore-access", "private"}]
     find.call("GET", "/chat").protocol.should eq "ws"
+    find.call("GET", "/ticker").protocol.should eq "ws"
     find.call("GET", "/search").protocol.should eq "http"
   end
 end

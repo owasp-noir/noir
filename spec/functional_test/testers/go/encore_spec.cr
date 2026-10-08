@@ -14,6 +14,9 @@ expected_endpoints = [
     Param.new("limit", "", "query"),
     Param.new("cursor", "", "query"),
     Param.new("X-Tenant", "", "header"),
+    # `json:"-"` drops only a JSON-body field.
+    Param.new("Authorization", "", "header"),
+    Param.new("offset", "", "query"),
   ]),
   Endpoint.new("/users/:id", "PUT", [
     Param.new("id", "", "path"),
@@ -33,6 +36,8 @@ expected_endpoints = [
     Param.new("Email", "", "json"),
     Param.new("X-Request-ID", "", "header"),
   ]),
+  # `*shared.Other` is not the package's own `Other` struct.
+  Endpoint.new("/users/import", "POST"),
 ]
 
 FunctionalTester.new("fixtures/go/encore/", {

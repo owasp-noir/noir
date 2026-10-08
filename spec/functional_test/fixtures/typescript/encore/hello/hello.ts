@@ -1,9 +1,14 @@
 import { api, Header, Query } from "encore.dev/api";
+import { CreateTicket } from "./types";
 
 interface SearchParams {
   q: Query<string>;
   limit?: Query<number>;
   token: Header<"X-Token">;
+  count?: Header<number, "X-Count">;
+  sort:
+    | "asc"
+    | "desc";
 }
 
 interface Response {
@@ -17,7 +22,7 @@ export const get = api(
   },
 );
 
-export const search = api<SearchParams, Response>(
+export const search = api<SearchParams, Record<string, Array<Response>>>(
   { expose: true, method: "GET", path: "/search" },
   async (p) => ({ message: p.q }),
 );
@@ -43,6 +48,17 @@ export const hook = api.raw(
 export const chat = api.streamInOut<{ room: Query<string> }, string, string>(
   { expose: true, path: "/chat" },
   async (handshake, stream) => {},
+);
+
+// No handshake: the type argument is the message, not a request.
+export const ticker = api.streamOut<Response>(
+  { expose: true, path: "/ticker" },
+  async (stream) => {},
+);
+
+export const ticket = api(
+  { expose: true, method: "POST", path: "/tickets" },
+  async (p: CreateTicket): Promise<Response> => ({ message: p.subject }),
 );
 
 export const assets = api.static({ expose: true, path: "/static/*path", dir: "./assets" });

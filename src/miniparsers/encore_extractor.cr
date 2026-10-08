@@ -23,11 +23,17 @@ module Noir
     # A request-struct field: Go field name and its raw tag text.
     record GoField, name : String, tag : String
 
-    # `kind` is `api`, `raw`, `streamIn`, `streamOut`, `streamInOut` or `static`.
-    # `config` is the first argument's object text; `fields` are the request
-    # type's fields (from the generic argument or the handler's parameter
-    # annotation), when the type is inline or declared in the same file.
-    record TsApi, name : String, kind : String, config : String, fields : Array(TsField), line : Int32
+    # One parsed `.go` file. Request types may live in another file of the
+    # package, so callers merge `structs` per directory.
+    record GoFile, package : String?, apis : Array(GoApi), structs : Hash(String, Array(GoField))
+
+    # `kind` is `api`, `raw`, `streamIn`, `streamOut`, `streamInOut` or `static`;
+    # `config` maps the first argument's keys to their value text. `fields`
+    # are the request type's fields when it is inline or declared in the
+    # file; a named type imported from a relative module is left to the
+    # caller as `request_import` (`{declared name, specifier}`).
+    record TsApi, name : String, kind : String, config : Hash(String, String),
+      fields : Array(TsField), request_import : Tuple(String, String)?, line : Int32
 
     # A request field: name and its TypeScript type text.
     record TsField, name : String, type : String
@@ -41,10 +47,8 @@ module Noir
       {url, url.split('/').compact_map { |seg| seg[1..] if seg.starts_with?(':') || seg.starts_with?('*') }}
     end
 
-    # Parses `source` once, returning its API declarations and every
-    # `type X struct {...}` (request types may live in another file of the
-    # package, so callers merge the struct tables per directory).
-    def extract_go(source : String) : Tuple(Array(GoApi), Hash(String, Array(GoField)))
+    def extract_go(source : String) : GoFile
+      package = nil
       apis = [] of GoApi
       structs = Hash(String, Array(GoField)).new
       TreeSitter.parse_go(source) do |root|
@@ -68,12 +72,15 @@ module Noir
           when "type_declaration"
             collect_structs(node, source, structs)
             directive = nil
+          when "package_clause"
+            package = TreeSitter.first_named_child(node).try { |n| TreeSitter.node_text(n, source) }
+            directive = nil
           else
             directive = nil
           end
         end
       end
-      {apis, structs}
+      GoFile.new(package, apis, structs)
     end
 
     private def go_api(node : LibTreeSitter::TSNode, directive : String, source : String) : GoApi?
@@ -102,6 +109,8 @@ module Noir
       GoApi.new(TreeSitter.node_text(name_node, source), options, fields, params, TreeSitter.node_start_row(node) + 1)
     end
 
+    # ponytail: Huma and go_route_extractor_ts/gf each carry their own
+    # struct-field walk; fold the three into one Go helper when a fourth appears.
     private def collect_structs(decl : LibTreeSitter::TSNode, source : String, structs : Hash(String, Array(GoField)))
       TreeSitter.each_named_child(decl) do |spec|
         next unless TreeSitter.node_type(spec) == "type_spec"
@@ -125,36 +134,63 @@ module Noir
       end
     end
 
-    # One level of generic nesting: `api<Req, Promise<Res>>(...)`.
-    TS_API = /\bexport\s+const\s+([A-Za-z_$][\w$]*)(?:\s*:[^=;\n]+)?\s*=\s*api(?:\.(raw|streamIn|streamOut|streamInOut|static))?\s*(?:<((?:[^<>]|<[^<>]*>)*)>)?\s*\(/
+    # The generic group recurses for nested `<...>` and steps over `=>`.
+    TS_API     = /\bexport\s+const\s+([A-Za-z_$][\w$]*)(?:\s*:[^=;\n]+)?\s*=\s*api(?:\.(raw|streamIn|streamOut|streamInOut|static))?\s*(?<generic><(?:=>|[^<>]|(?&generic))*>)?\s*\(/
+    TS_TYPE    = /\b(?:interface\s+([A-Za-z_$][\w$]*)\b[^{;]*|type\s+([A-Za-z_$][\w$]*)\s*=\s*)\{/
+    TS_IMPORT  = /\bimport\s+(?:type\s+)?\{([^}]*)\}\s*from\s*["'](\.{1,2}\/[^"']+)["']/
+    FIELD_HEAD = /\A(?:readonly\s+)?["']?([A-Za-z_$][\w$-]*)["']?\??\s*:\s*/
+    IDENTIFIER = /\A[A-Za-z_$][\w$]*\z/
+    TYPE_RULES = TopLevelSplit::Rules.new(
+      nest: TopLevelSplit::Nest::Paren | TopLevelSplit::Nest::Bracket | TopLevelSplit::Nest::Brace | TopLevelSplit::Nest::Angle,
+      quotes: "\"'`",
+      empties: TopLevelSplit::Empties::DropAll,
+      per_kind: true,
+    )
+    JS_RULES = TopLevelSplit::Rules::JS
 
     def extract_ts(content : String) : Array(TsApi)
       return [] of TsApi unless content.includes?("encore.dev")
 
       code = JSRouteExtractor.strip_js_comments(content)
+      types = nil
       apis = [] of TsApi
       code.scan(TS_API) do |m|
         open = m.end(0) - 1
         close = JSRouteExtractor.find_matching_paren(code, open) || next
-        args = TopLevelSplit.split(code[(open + 1)...close], ',', TopLevelSplit::Rules::JS)
+        args = TopLevelSplit.split(code[(open + 1)...close], ',', JS_RULES)
         config = args[0]? || next
         next unless config.starts_with?('{')
 
-        request = m[3]?.try { |g| TopLevelSplit.split(g, ',', TYPE_RULES).first? } || handler_request_type(args[1]?)
-        fields = request ? request_fields(request, code) : [] of TsField
-        apis << TsApi.new(m[1], m[2]? || "api", config, fields, JSRouteExtractor.line_for_char_pos(code, m.begin(0)))
+        kind = m[2]? || "api"
+        handler = handler_params(args[1]?)
+        request = m["generic"]?.try { |g| TopLevelSplit.split(g[1..-2], ',', TYPE_RULES).first? } ||
+                  handler.first?.try { |p| TopLevelSplit.split(p, ':', JS_RULES)[1]? }
+        # A stream's first type is its handshake only when the handler takes
+        # `(handshake, stream)`; otherwise it is the message type.
+        request = nil if kind.starts_with?("stream") && handler.size != 2
+
+        fields = [] of TsField
+        request_import = nil
+        if request = request.try(&.strip)
+          if request.starts_with?('{')
+            fields = fields_of(request)
+          elsif request.matches?(IDENTIFIER)
+            types ||= type_bodies(code)
+            if body = types[request]?
+              fields = fields_of(body)
+            else
+              request_import = relative_import(code, request)
+            end
+          end
+        end
+        apis << TsApi.new(m[1], kind, object_entries(config), fields, request_import, JSRouteExtractor.line_for_char_pos(code, m.begin(0)))
       end
       apis
     end
 
-    # `{ expose: true, method: "GET" }` → `"true"` for `expose`, `"\"GET\""` for `method`.
-    def ts_config_value(config : String, key : String) : String?
-      body = config.strip.lchop('{').rchop('}')
-      TopLevelSplit.split(body, ',', TopLevelSplit::Rules::JS).each do |entry|
-        colon = entry.index(':') || next
-        return entry[(colon + 1)..].strip if entry[0...colon].strip.strip("\"'") == key
-      end
-      nil
+    # Fields of the `interface`/`type` named `name` declared in `content`.
+    def declared_fields(content : String, name : String) : Array(TsField)
+      type_bodies(JSRouteExtractor.strip_js_comments(content))[name]?.try { |body| fields_of(body) } || [] of TsField
     end
 
     # Quoted strings in `value`: `"GET"` → `["GET"]`, `["GET", "POST"]` → both.
@@ -162,64 +198,74 @@ module Noir
       value.scan(/["'`]([^"'`]*)["'`]/).map(&.[1])
     end
 
-    # Fields of a request type: an inline `{ a: string; b?: Header<"X"> }`
-    # literal, or an `interface X {}` / `type X = {}` declared in the file.
-    private def request_fields(type : String, code : String) : Array(TsField)
-      type = type.strip
-      body = if type.starts_with?('{')
-               type
-             elsif type.matches?(/\A[A-Za-z_$][\w$]*\z/)
-               type_body(code, type)
-             end
-      return [] of TsField unless body
+    # Top-level generic arguments: `Header<number, "X-Count">` → `["number", "\"X-Count\""]`.
+    def generic_args(type : String) : Array(String)
+      open = type.index('<') || return [] of String
+      TopLevelSplit.split(type[(open + 1)...(type.rindex('>') || type.size)], ',', TYPE_RULES)
+    end
 
-      TopLevelSplit.split(body.strip.lchop('{').rchop('}'), ';', TYPE_RULES).flat_map do |part|
-        TopLevelSplit.split(part, '\n', TYPE_RULES)
-      end.flat_map do |part|
-        TopLevelSplit.split(part, ',', TYPE_RULES)
-      end.compact_map do |entry|
-        m = entry.match(/\A(?:readonly\s+)?["']?([A-Za-z_$][\w$-]*)["']?\??\s*:\s*(.+)\z/m) || next
-        TsField.new(m[1], m[2].strip)
+    # `{ expose: true, method: "GET" }` → `{"expose" => "true", "method" => "\"GET\""}`.
+    private def object_entries(object : String) : Hash(String, String)
+      TopLevelSplit.split(object.strip.lchop('{').rchop('}'), ',', JS_RULES).each_with_object({} of String => String) do |entry, hash|
+        colon = entry.index(':') || next
+        hash[entry[0...colon].strip.strip("\"'")] = entry[(colon + 1)..].strip
       end
     end
 
-    TYPE_RULES = TopLevelSplit::Rules.new(
-      nest: TopLevelSplit::Nest::Paren | TopLevelSplit::Nest::Bracket | TopLevelSplit::Nest::Brace | TopLevelSplit::Nest::Angle,
-      quotes: "\"'`",
-      empties: TopLevelSplit::Empties::DropAll,
-      per_kind: true,
-    )
-
-    private def type_body(code : String, name : String) : String?
-      m = code.match(/\b(?:interface\s+#{Regex.escape(name)}\b[^{]*|type\s+#{Regex.escape(name)}\s*=\s*)\{/) || return
-      open = m.end(0) - 1
-      close = JSRouteExtractor.find_matching_brace(code, open) || return
-      code[open..close]
+    # Every `interface X {...}` / `type X = {...}` body in `code`, by name.
+    private def type_bodies(code : String) : Hash(String, String)
+      bodies = Hash(String, String).new
+      code.scan(TS_TYPE) do |m|
+        open = m.end(0) - 1
+        close = JSRouteExtractor.find_matching_brace(code, open) || next
+        bodies[m[1]? || m[2]] ||= code[open..close]
+      end
+      bodies
     end
 
-    # The first handler parameter's annotation: `({ id }: { id: number })`
-    # or `(p: Params)` → `{ id: number }` / `Params`.
-    private def handler_request_type(handler : String?) : String?
-      handler = handler.try(&.lstrip.lchop("async").lstrip) || return
-      handler = handler.sub(/\Afunction\b[^(]*/, "")
-      return unless handler.starts_with?('(')
-      close = JSRouteExtractor.find_matching_paren(handler, 0) || return
-      first = TopLevelSplit.split(handler[1...close], ',', TopLevelSplit::Rules::JS).first? || return
-      colon = top_level_colon(first) || return
-      first[(colon + 1)..].strip
+    # Fields of a `{ a: string; b?: Header<"X"> }` body. Members end at `;`,
+    # `,` or a newline; a piece that is not a member head (`| "closed"`)
+    # continues the previous member's type.
+    private def fields_of(body : String) : Array(TsField)
+      members = [] of String
+      TopLevelSplit.split(body.strip.lchop('{').rchop('}'), ';', TYPE_RULES).each do |part|
+        TopLevelSplit.split(part, '\n', TYPE_RULES).each do |line|
+          TopLevelSplit.split(line, ',', TYPE_RULES).each do |entry|
+            if entry.matches?(FIELD_HEAD) || members.empty?
+              members << entry
+            else
+              members[-1] += " #{entry}"
+            end
+          end
+        end
+      end
+      members.compact_map do |member|
+        m = member.match(FIELD_HEAD) || next
+        type = member[m.end(0)..].strip
+        TsField.new(m[1], type) unless type.empty?
+      end
     end
 
-    # Index of the first `:` outside a destructuring `{...}` / `[...]`.
-    private def top_level_colon(text : String) : Int32?
-      depth = 0
-      text.each_char_with_index do |c, i|
-        case c
-        when '{', '[' then depth += 1
-        when '}', ']' then depth -= 1
-        when ':'      then return i if depth == 0
+    # `{declared name, "./specifier"}` for a name brought in by a relative
+    # `import { Name } from "./x"` (or `import { Declared as Name }`).
+    private def relative_import(code : String, name : String) : Tuple(String, String)?
+      code.scan(TS_IMPORT) do |m|
+        m[1].split(',').each do |spec|
+          declared, _, local = spec.strip.lchop("type ").partition(/\s+as\s+/)
+          return {declared, m[2]} if (local.presence || declared) == name
         end
       end
       nil
+    end
+
+    # Top-level parameters of an arrow or function handler:
+    # `async ({ id }: { id: number }, stream) => ...` → `["{ id }: { id: number }", "stream"]`.
+    private def handler_params(handler : String?) : Array(String)
+      handler = handler.try(&.lstrip.lchop("async").lstrip.sub(/\Afunction\b[^(]*/, "")) || return [] of String
+      return [handler.split(/\s*=>/, 2).first] if handler.matches?(/\A[A-Za-z_$][\w$]*\s*=>/)
+      return [] of String unless handler.starts_with?('(')
+      close = JSRouteExtractor.find_matching_paren(handler, 0) || return [] of String
+      TopLevelSplit.split(handler[1...close], ',', JS_RULES)
     end
   end
 end
