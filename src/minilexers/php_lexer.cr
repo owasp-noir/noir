@@ -300,7 +300,17 @@ module Noir
     # ---- structural helpers (character indices) ----------------------------
     #
     # `matching_delimiter`, `statement_end`, `skip_ranges` and `in_code?` come
-    # from `Noir::MaskedLexer`. Only the PHP-specific one lives here.
+    # from `Noir::MaskedLexer`. Only the PHP-specific ones live here.
+
+    # PHP spans never nest (unlike C#/Scala interpolation), so they are
+    # sorted and disjoint: binary-search the last span starting at or before
+    # `pos` instead of the shared linear scan, which made a per-match
+    # `in_code?` walk quadratic on string-heavy files.
+    def in_code?(pos : Int32) : Bool
+      return false unless 0 <= pos && pos < @size
+      after = @spans.bsearch_index { |(_, s, _)| s > pos } || @spans.size
+      after == 0 || pos >= @spans[after - 1][2]
+    end
 
     # Index of the first top-level expression terminator (`,` `;` or a closing
     # `) ] }` that would pop above the starting level) at or after `start_pos`.

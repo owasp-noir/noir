@@ -86,6 +86,15 @@ describe Noir::PhpLexer do
       # a genuine `#` line comment is masked.
       lex.in_code?(src.index!("real comment")).should be_false
     end
+
+    it "agrees with a linear span scan at every position" do
+      src = "<p>it's</p><?php $a = 'x'; // c\n/* b */ $b = \"y\"; ?>tail<?= 'z' ?>"
+      lex = Noir::PhpLexer.new(src)
+      (-1..src.size).each do |pos|
+        linear = 0 <= pos < src.size && lex.spans.none? { |(_, s, e)| s <= pos < e }
+        lex.in_code?(pos).should eq(linear)
+      end
+    end
   end
 
   describe "masking edge cases" do
