@@ -33,6 +33,10 @@ expected_endpoints = [
   ]),
   # Raw-string regex route, kept verbatim.
   httplib_endpoint("/files/(.*)", "GET"),
+  # Named handler with a trailing return type.
+  httplib_endpoint("/report", "GET", [
+    Param.new("format", "", "query"),
+  ]),
   # Plain route, no params.
   httplib_endpoint("/settings", "PATCH"),
 ]
