@@ -4,9 +4,9 @@
 module NoirTechs::Catalog::Scala
   AKKA = {
     :scala_akka => {
-      :framework => "Akka HTTP",
+      :framework => "Akka HTTP / Pekko HTTP",
       :language  => "Scala",
-      :similar   => ["akka", "akka-http", "akka_http", "scala-akka", "scala_akka"],
+      :similar   => ["akka", "akka-http", "akka_http", "scala-akka", "scala_akka", "pekko", "pekko-http", "pekko_http"],
       :supported => {
         :endpoint => true,
         :method   => true,

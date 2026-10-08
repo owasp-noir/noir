@@ -58,7 +58,7 @@ module Analyzer::Scala
     SYS_ENV = /\bsys\.env\s*(?:\(\s*"([^"]+)"|\.get\s*\(\s*"([^"]+)")/
 
     MARKERS = /\bscopt\b|\bOParser\b|\bcom\.monovore\.decline\b|\bOpts\.(?:option|flag|argument|arguments)\b|\bmainargs\b|\borg\.rogach\.scallop\b|\bScallopConf\b|\bcom\.twitter\.app\b/
-    WEB_RE  = /\bimport\s+(?:akka\.http|play\.api|org\.http4s|cask|com\.twitter\.finatra|com\.linecorp\.armeria|zhttp|zio\.http)\b/
+    WEB_RE  = /\bimport\s+(?:akka\.http|org\.apache\.pekko\.http|play\.api|org\.http4s|cask|com\.twitter\.finatra|com\.linecorp\.armeria|zhttp|zio\.http)\b/
 
     # One precompiled `Regex.union` scan (PCRE2 JIT) replaces four separate
     # `String#includes?` scans of the same buffer -- Crystal's `includes?` is
