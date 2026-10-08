@@ -1,0 +1,7 @@
+{
+    "require": {
+        "php": ">=8.2",
+        "api-platform/symfony": "^4.1",
+        "symfony/framework-bundle": "^7.2"
+    }
+}

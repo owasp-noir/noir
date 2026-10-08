@@ -35,7 +35,7 @@ module Noir
 
     # Recorded non-code regions as {kind, start, end_exclusive}. Used for
     # `skip_ranges` and `in_code?`.
-    @spans : Array(Tuple(Symbol, Int32, Int32))
+    getter spans : Array(Tuple(Symbol, Int32, Int32))
 
     # Memo for `skip_ranges`.
     @skip_ranges : Array(Range(Int32, Int32))?
