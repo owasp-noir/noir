@@ -52,7 +52,7 @@ module Analyzer::Python
       blueprint_prefixes = Hash(::String, ::String).new
       path_api_instances = Hash(::String, Hash(::String, ::String)).new
       register_blueprint = Hash(::String, Hash(::String, ::String)).new
-      blueprint_mounts = Hash(::String, Array(Tuple(::String, ::String, ::String))).new
+      blueprint_mounts = Hash(::String, Array(Tuple(::String, ::String, ::String?))).new
 
       python_files = python_source_files
       base_paths.each do |current_base_path|
@@ -142,8 +142,8 @@ module Analyzer::Python
               parent_name = register_blueprint_match[1]
               blueprint_name = register_blueprint_match[2]
               url_prefix_match = original_line.match /url_prefix\s*=\s*[rf]?['"]([^'"]*)['"]/
-              blueprint_mount_prefix = url_prefix_match ? url_prefix_match[1] : ""
-              blueprint_mounts[path] ||= [] of Tuple(::String, ::String, ::String)
+              blueprint_mount_prefix = url_prefix_match ? url_prefix_match[1] : nil
+              blueprint_mounts[path] ||= [] of Tuple(::String, ::String, ::String?)
               blueprint_mounts[path] << {parent_name, blueprint_name, blueprint_mount_prefix}
 
               if url_prefix_match
@@ -182,7 +182,9 @@ module Analyzer::Python
           if path_api_instances.has_key?(path)
             api_instances = path_api_instances[path]
             if api_instances.has_key?(blueprint_name)
-              api_instances[blueprint_name] = File.join(blueprint_prefix, api_instances[blueprint_name])
+              # The registration's url_prefix replaces the blueprint's
+              # own one (Quart reuses Flask's sansio Blueprint).
+              api_instances[blueprint_name] = blueprint_prefix
             end
           end
         end

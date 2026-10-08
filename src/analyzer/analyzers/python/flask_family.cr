@@ -202,7 +202,7 @@ module Analyzer::Python
 
     private def apply_nested_blueprint_prefixes(path_api_instances : Hash(::String, Hash(::String, ::String)),
                                                 own_api_instances : Hash(::String, Hash(::String, ::String)),
-                                                blueprint_mounts : Hash(::String, Array(Tuple(::String, ::String, ::String))))
+                                                blueprint_mounts : Hash(::String, Array(Tuple(::String, ::String, ::String?))))
       blueprint_mounts.each do |path, mounts|
         api_instances = path_api_instances[path]?
         next unless api_instances
@@ -223,8 +223,11 @@ module Analyzer::Python
             next unless api_instances.has_key?(child_name)
 
             parent_prefix = api_instances[parent_name]? || ""
-            child_own_prefix = own_prefixes[child_name]? || ""
-            resolved_prefix = File.join(parent_prefix, mount_prefix, child_own_prefix)
+            # A url_prefix given at registration replaces the child's own
+            # url_prefix; the own prefix applies only when it is omitted
+            # (nil). An explicit empty url_prefix still drops it.
+            child_prefix = mount_prefix || own_prefixes[child_name]? || ""
+            resolved_prefix = File.join(parent_prefix, child_prefix)
             next if api_instances[child_name] == resolved_prefix
 
             api_instances[child_name] = resolved_prefix
