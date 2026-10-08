@@ -67,10 +67,6 @@ module NoirAIContext
       when "sql"
         return true if name.matches?(/\b(URL\.Query|QueryParam|request\.query|req\.query|query_params|searchParams)\b/i)
         return true if snippet && snippet.matches?(/\b(URL\.Query\(\)\.Get|QueryParam\(|request\.query\.|req\.query\.|searchParams\.get)\b/i)
-        # `<client>.query` is already surfaced as a `data_store_query` sink;
-        # suppress the broader `sql` `\bquery\b` match so the same callee does
-        # not emit two near-identical sinks.
-        return true if name.matches?(/\b(?:mongo|client|neo4jClient)\.query\b/i)
       when "template_render"
         return true if name.matches?(/(?:^|\.)template\.(?:find|findAll|findById|count|save|insert|update|delete|remove)\b/i)
         return false unless snippet
