@@ -2803,6 +2803,33 @@ This is the map: every framework Noir can read, and how much of each one it unde
     </div>
   </article>
   <article class="tech-card">
+    <h3 class="tech-card-title">Egg.js</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip on">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip on">header</span>
+        <span class="tech-chip on">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
     <h3 class="tech-card-title">Elysia</h3>
     <div class="tech-card-row">
       <span class="tech-card-label">Route</span>
