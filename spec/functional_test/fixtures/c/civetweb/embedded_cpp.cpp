@@ -32,6 +32,16 @@ class StatusHandler : public CivetHandler
 	}
 };
 
+class AllHandler : public CivetHandler
+{
+  public:
+	bool
+	handleAll(const char *method, CivetServer *server, struct mg_connection *conn)
+	{
+		return true;
+	}
+};
+
 int
 main(int argc, char *argv[])
 {
@@ -40,5 +50,7 @@ main(int argc, char *argv[])
 	server.addHandler(DATA_URI, h_data);
 	server.addHandler("/status", new StatusHandler());
 	server.addWebSocketHandler("/ws", h_ws);
+	AllHandler h_all;
+	server.addHandler("/all", h_all);
 	return 0;
 }

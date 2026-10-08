@@ -18,8 +18,9 @@ answer_to_connection (void *cls, struct MHD_Connection *connection,
                       const char *version, const char *upload_data,
                       size_t *upload_data_size, void **req_cls)
 {
-  if ((0 == strcmp (url, LOGIN_URL)) &&
-      (0 == strcmp (method, MHD_HTTP_METHOD_POST)))
+  if ((0 == strcmp (method, MHD_HTTP_METHOD_POST)) &&
+      (0 == strcmp (content_type, "application/x-www-form-urlencoded; charset=utf-8")) &&
+      (0 == strcmp (url, LOGIN_URL)))
   {
     const char *user = MHD_lookup_connection_value (connection, MHD_POSTDATA_KIND, "user");
     return MHD_YES;
@@ -35,7 +36,11 @@ answer_to_connection (void *cls, struct MHD_Connection *connection,
     const char *sid = MHD_lookup_connection_value (connection, MHD_COOKIE_KIND, "sid");
     return MHD_YES;
   }
-  /* Not a URL comparison: a header value check. */
+  if (0 == strncmp (url, "/static/", 8))
+    return serve_file (connection, url + 8);
+  /* Not URL comparisons: a header value check, a curl option. */
+  if (0 == strcmp (curl_opt, "/tmp/curl"))
+    return MHD_NO;
   if (0 == strcmp (method, "OPTIONS") || 0 == strcmp (version, "/HTTP"))
     return MHD_NO;
   return MHD_NO;

@@ -14,14 +14,16 @@ expected_endpoints = [
     Param.new("brightness", "", "json"),
     Param.new("device_name", "", "json"),
   ]),
-  # `#define`d URI.
+  # Chained `#define`d URI.
   Endpoint.new("/api/stats", "GET", [Param.new("page", "", "query")]),
   # `#` (match anything) becomes `*`.
   Endpoint.new("/files/*", "GET"),
   ws,
   # Mongoose 6.x.
   Endpoint.new("/api/v1/status", "GET", [Param.new("verbose", "", "query")]),
-  Endpoint.new("/api/v1/sum", "GET", [Param.new("n1", "", "form")]),
+  # `handler MG_UD_ARG(NULL)` resolves to the handler.
+  Endpoint.new("/api/v1/sum", "POST", [Param.new("n1", "", "form")]),
+  Endpoint.new("/api/v1/broken", "GET"),
 ]
 
 tester = FunctionalTester.new("fixtures/c/mongoose/", {
@@ -35,7 +37,7 @@ describe "Mongoose route edge cases", tags: "functional" do
   it "skips comments, non-URI matches and the vendored library" do
     urls = tester.app.endpoints.map(&.url)
     urls.should_not contain("/commented")
-    urls.should_not contain("/device/rx")
+    urls.should_not contain("/home/security/alarm")
     urls.should_not contain("/vendored")
   end
 end

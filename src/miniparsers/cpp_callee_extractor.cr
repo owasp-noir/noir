@@ -134,6 +134,7 @@ module Noir::CppCalleeExtractor
   # call site, member call or prototype) as `{body, line}`. Run it on
   # comment-stripped source: a commented-out definition would otherwise win.
   def function_body(source : String, name : String) : Tuple(String, Int32)?
+    return if name.empty?
     offset = 0
     while start = source.byte_index(name, offset)
       offset = start + name.bytesize
@@ -150,15 +151,27 @@ module Noir::CppCalleeExtractor
       close_paren = find_matching_delimiter(source, open_paren, '(', ')')
       next unless close_paren
       body_open = find_next_code_char(source, '{', close_paren + 1)
-      # Only specifiers (`const`, `noexcept`) may sit between `)` and `{`;
-      # anything else is a call inside an expression or a prototype.
-      next unless body_open && source.byte_slice(close_paren + 1, body_open - close_paren - 1).matches?(/\A[\s\w]*\z/)
+      next unless body_open && definition_tail?(source.byte_slice(close_paren + 1, body_open - close_paren - 1))
       body_close = find_matching_delimiter(source, body_open, '{', '}')
       next unless body_close
       return {source.byte_slice(body_open + 1, body_close - body_open - 1), line_number_for(source, body_open)}
     end
 
     nil
+  end
+
+  # What may sit between a definition's `)` and `{`: specifiers, `noexcept(...)`,
+  # `-> T`, ref-qualifiers, attributes. A `;` means a prototype; an unmatched
+  # `)` means the name was a call inside `if (name(x)) {`.
+  private def definition_tail?(tail : String) : Bool
+    depth = 0
+    tail.each_char do |char|
+      return false if char == ';'
+      depth += 1 if char == '('
+      depth -= 1 if char == ')'
+      return false if depth < 0
+    end
+    true
   end
 
   def line_number_for(source : String, index : Int32) : Int32

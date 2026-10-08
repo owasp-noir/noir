@@ -1,5 +1,4 @@
-require "../../../models/analyzer"
-require "../../../miniparsers/c_http_support"
+require "../../engines/c_engine"
 
 module Analyzer::C
   # CivetWeb. Handlers are registered per URI pattern:
@@ -11,25 +10,18 @@ module Analyzer::C
   # A C handler is one function for every method, so the methods are the ones
   # it compares `request_method` against (GET if it never does). A C++
   # handler is a `CivetHandler` subclass whose `handleGet`/`handlePost`/...
-  # overrides are the methods.
-  class Civetweb < Analyzer
+  # overrides are the methods (`handleAll` alone serves them all).
+  class Civetweb < CEngine
     analyzer_for "c_civetweb"
 
     REGISTER_RE      = /\b(mg_set_request_handler|mg_set_websocket_handler(?:_with_subprotocols)?|addHandler|addWebSocketHandler)\s*\(/
     HANDLE_METHOD_RE = /\bhandle(Get|Post|Put|Delete|Patch|Head|Options)\s*\(/
+    ALL_METHODS      = %w[GET POST PUT DELETE PATCH]
 
-    def analyze
+    def analyze_file(path : String) : Array(Endpoint)
+      content = read_file_content(path)
+      return [] of Endpoint unless content.includes?("mg_set_") || content.includes?("Civet")
       include_callee = callees_needed?
-      files = get_files_by_extensions(Noir::CHttpSupport::EXTENSIONS)
-      ordered_scan_files(files) do |path|
-        next if Noir::CHttpSupport.vendored?(path)
-        content = read_file_content(path)
-        analyze_file(path, content, include_callee) if content.includes?("mg_set_") || content.includes?("Civet")
-      end.each { |endpoints| result.concat(endpoints) }
-      result
-    end
-
-    private def analyze_file(path : String, content : String, include_callee : Bool) : Array(Endpoint)
       unit = Noir::CHttpSupport.unit(content)
       source = unit.source
       endpoints = [] of Endpoint
@@ -39,7 +31,7 @@ module Analyzer::C
         call = match[1]
         c_api = call.starts_with?("mg_")
         url = Noir::CHttpSupport.route_path(Noir::CHttpSupport.string_value(args[c_api ? 1 : 0]?, unit)) || next
-        line = Noir::CppCalleeExtractor.line_number_for(source, match.byte_begin(0))
+        line = Noir::CHttpSupport.line_of(unit, match.byte_begin(0))
 
         if call.downcase.includes?("websocket")
           endpoints.concat Noir::CHttpSupport.endpoints(path, url, line, [] of String, "", nil, false, "ws")
@@ -54,6 +46,11 @@ module Analyzer::C
           body = handler.try { |h| handler_class_body(source, h.strip.lchop('&').lchop('*').strip) }
           methods = [] of String
           body[0].scan(HANDLE_METHOD_RE) { |m| methods << m[1].upcase } if body
+          # Only `handleAll` overridden: it serves every verb.
+          if body && methods.empty? && body[0].includes?("handleAll")
+            methods = Noir::CHttpSupport.methods_in(body[0])
+            methods = ALL_METHODS if methods.empty?
+          end
           endpoints.concat Noir::CHttpSupport.handler_route(unit, path, url, line, body, include_callee, methods.uniq)
         end
       end

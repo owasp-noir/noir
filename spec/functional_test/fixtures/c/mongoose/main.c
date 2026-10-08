@@ -1,7 +1,8 @@
 // Mongoose 7.x device dashboard (shape of mongoose/tutorials/http/device-dashboard).
 #include "mongoose.h"
 
-#define API_STATS "/api/stats"
+#define API_PREFIX "/api"
+#define API_STATS API_PREFIX "/stats"
 
 static void handle_login(struct mg_connection *c, struct mg_http_message *hm) {
   char user[64];
@@ -34,7 +35,7 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
       mg_http_reply(c, 200, "", "{}\n");
     } else if (mg_http_match_uri(hm, "/files/#")) {
       mg_http_reply(c, 200, "", "file\n");
-    } else if (mg_match(hm->uri, mg_str("/websocket"), NULL)) {
+    } else if (mg_match(http_message_received_from_peer->uri, mg_str("/websocket"), NULL)) {
       mg_ws_upgrade(c, hm, NULL);
     } else {
       struct mg_http_serve_opts opts = {.root_dir = "web_root"};
@@ -42,7 +43,8 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
     }
   } else if (ev == MG_EV_MQTT_MSG) {
     struct mg_mqtt_message *mm = (struct mg_mqtt_message *) ev_data;
-    if (mg_match(mm->topic, mg_str("/device/rx"), NULL)) {
+    // MQTT topics are not routes, even when they contain "uri".
+    if (mg_match(mm->topic, mg_str("/home/security/alarm"), NULL)) {
       mg_mqtt_pub(c, NULL);
     }
   }

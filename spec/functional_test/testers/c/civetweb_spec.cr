@@ -29,6 +29,12 @@ expected_endpoints = [
   Endpoint.new("/data", "POST", [Param.new("id", "", "query")]),
   Endpoint.new("/status", "GET"),
   civetweb_ws("/ws"),
+  # Only `handleAll` overridden: every verb.
+  Endpoint.new("/all", "GET"),
+  Endpoint.new("/all", "POST"),
+  Endpoint.new("/all", "PUT"),
+  Endpoint.new("/all", "DELETE"),
+  Endpoint.new("/all", "PATCH"),
 ]
 
 tester = FunctionalTester.new("fixtures/c/civetweb/", {

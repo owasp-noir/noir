@@ -1,5 +1,4 @@
-require "../../../models/analyzer"
-require "../../../miniparsers/c_http_support"
+require "../../engines/c_engine"
 
 module Analyzer::C
   # GNU libmicrohttpd. There is no route registration: `MHD_start_daemon`
@@ -8,29 +7,21 @@ module Analyzer::C
   #
   #     if (0 == strcmp(url, "/login") && 0 == strcmp(method, "POST")) { ... }
   #
-  # Each such URI comparison is a route. A daemon whose handler never
-  # compares the URI serves every path, reported as `/` with the handler's
-  # methods and params. Table-driven dispatch (`strcmp(pages[i].url, url)`)
+  # Each such URI comparison is a route (`strncmp` a prefix one). A daemon
+  # whose handler never compares the URI serves every path, reported as `/`
+  # with the handler's methods and params. Table-driven dispatch (`strcmp(pages[i].url, url)`)
   # and handlers defined in another file are not followed.
-  class Libmicrohttpd < Analyzer
+  class Libmicrohttpd < CEngine
     analyzer_for "c_libmicrohttpd"
 
     COMPARE_RE = /\bstrn?(?:case)?cmp\s*\(/
     DAEMON_RE  = /\bMHD_start_daemon\s*\(/
-    URI_ARG_RE = /ur[il]\b/i
+    URI_ARG_RE = /(?:\b|_)ur[il](?:\b|_)/i
 
-    def analyze
+    def analyze_file(path : String) : Array(Endpoint)
+      content = read_file_content(path)
+      return [] of Endpoint unless content.includes?("MHD_")
       include_callee = callees_needed?
-      files = get_files_by_extensions(Noir::CHttpSupport::EXTENSIONS)
-      ordered_scan_files(files) do |path|
-        next if Noir::CHttpSupport.vendored?(path)
-        content = read_file_content(path)
-        analyze_file(path, content, include_callee) if content.includes?("MHD_")
-      end.each { |endpoints| result.concat(endpoints) }
-      result
-    end
-
-    private def analyze_file(path : String, content : String, include_callee : Bool) : Array(Endpoint)
       unit = Noir::CHttpSupport.unit(content)
       source = unit.source
       endpoints = [] of Endpoint
@@ -41,9 +32,12 @@ module Analyzer::C
         next unless args.size >= 2
         url = nil
         args.first(2).each_with_index do |arg, i|
-          url ||= Noir::CHttpSupport.string_value(arg, unit) if args[1 - i].matches?(URI_ARG_RE)
+          other = args[1 - i]
+          url ||= Noir::CHttpSupport.string_value(arg, unit) if !other.includes?('"') && other.matches?(URI_ARG_RE)
         end
         url = Noir::CHttpSupport.route_path(url) || next
+        # `strncmp(url, "/api/", 5)` matches the whole subtree.
+        url += "*" if match[0].starts_with?("strn")
         endpoints.concat Noir::CHttpSupport.compared_route(unit, path, url, call_start, close, include_callee)
       end
       return endpoints unless endpoints.empty?
@@ -51,7 +45,7 @@ module Analyzer::C
       source.scan(DAEMON_RE) do |match|
         args, _ = Noir::CHttpSupport.call_args(source, match.byte_end(0) - 1) || next
         body = Noir::CHttpSupport.handler_body(unit, args[4]?) || next
-        line = Noir::CppCalleeExtractor.line_number_for(source, match.byte_begin(0))
+        line = Noir::CHttpSupport.line_of(unit, match.byte_begin(0))
         endpoints.concat Noir::CHttpSupport.handler_route(unit, path, "/", line, body, include_callee)
       end
       endpoints

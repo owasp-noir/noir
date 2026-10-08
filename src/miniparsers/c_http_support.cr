@@ -12,16 +12,12 @@ require "../utils/top_level_split"
 module Noir::CHttpSupport
   extend self
 
-  # C apps embed these libraries from C++ too (CivetWeb ships a C++ wrapper).
-  EXTENSIONS = %w[.c .h .cc .cpp .cxx .hpp]
-  # The libraries' own sources, vendored next to the app as the amalgamated
-  # file or as a whole checkout (`lib/mongoose/src/http.c`, its examples).
-  VENDORED     = Set{"mongoose.c", "mongoose.h", "civetweb.c", "civetweb.h", "CivetServer.cpp", "CivetServer.h", "microhttpd.h"}
-  VENDORED_DIR = %r{(?:\A|/)(?:mongoose|civetweb|libmicrohttpd)/(?:src|examples|tutorials|test)/}
-
-  # `#define NAME "/p"`, `static const char NAME[] = "/p";`, `const char *NAME = "/p";`
-  DEFINE_RE   = /#[ \t]*define[ \t]+([A-Za-z_]\w*)[ \t]+"([^"\n]*)"|\bconst\s+char\s*(?:\*\s*(?:const\s+)?)?([A-Za-z_]\w*)\s*(?:\[\s*\])?\s*=\s*"([^"\n]*)"\s*;/
-  STRING_EXPR = /\A(?:\s*(?:"(?:[^"\\]|\\.)*"|[A-Za-z_]\w*))+\s*\z/
+  # `#define NAME "/p"` (or `PREFIX "/p"`), `static const char NAME[] = "/p";`,
+  # `const char *NAME = "/p";`
+  DEFINE_RE = /#[ \t]*define[ \t]+([A-Za-z_]\w*)[ \t]+([^\n]*"[^\n]*)|\bconst\s+char\s*(?:\*\s*(?:const\s+)?)?([A-Za-z_]\w*)\s*(?:\[\s*\])?\s*=\s*("[^"\n]*")\s*;/
+  # Possessive throughout: a long identifier must not be re-split into
+  # shorter adjacent "identifiers" when the match fails.
+  STRING_EXPR = /\A(?:\s*+(?:"(?:[^"\\]|\\.)*+"|[A-Za-z_]\w*+))++\s*+\z/
   STRING_PART = /"((?:[^"\\]|\\.)*)"|([A-Za-z_]\w*)/
   # `strcmp(ri->request_method, "POST")`, `mg_match(hm->method, mg_str("POST"), NULL)`,
   # `strcmp("GET", method)`, `strcmp(method, MHD_HTTP_METHOD_POST)`. Negated
@@ -40,19 +36,34 @@ module Noir::CHttpSupport
   MHD_VALUE_RE = /\bMHD_lookup_connection_value(?:_n)?\s*\(\s*[^,]*,\s*MHD_(GET_ARGUMENT|HEADER|COOKIE|POSTDATA)_KIND\s*,\s*"([^"]+)"/
   MHD_KINDS    = {"GET_ARGUMENT" => "query", "HEADER" => "header", "COOKIE" => "cookie", "POSTDATA" => "form"}
   CALL_RE      = /(?<![\w.>])([A-Za-z_]\w*)\s*\(/
+  # The function in a handler argument: `fn`, `&fn`, `(Cast) &fn`, and
+  # Mongoose 6's `fn MG_UD_ARG(NULL)`.
+  HANDLER_NAME = /\A(?:\([^()]*\)\s*)?&?\s*([A-Za-z_]\w*)/
 
-  # Comment-stripped source plus its string constants.
-  record Unit, source : String, defines : Hash(String, String)
+  # Comment-stripped source, its string constants (name => expression), its
+  # newline offsets and the function bodies looked up so far.
+  record Unit, source : String, defines : Hash(String, String), newlines : Array(Int32),
+    bodies : Hash(String, Tuple(String, Int32)?) = {} of String => Tuple(String, Int32)?
 
   def unit(content : String) : Unit
     source = CppCalleeExtractor.strip_comments(content)
     defines = {} of String => String
     source.scan(DEFINE_RE) { |m| m[1]? ? (defines[m[1]] = m[2]) : (defines[m[3]] = m[4]) }
-    Unit.new(source, defines)
+    newlines = [] of Int32
+    source.each_byte.with_index { |byte, i| newlines << i if byte === '\n' }
+    Unit.new(source, defines, newlines)
   end
 
-  def vendored?(path : String) : Bool
-    VENDORED.includes?(File.basename(path)) || path.matches?(VENDORED_DIR)
+  # 1-based line of a byte offset; `line_number_for` recounts from the start
+  # of the file, which a dispatcher with hundreds of routes pays per route.
+  def line_of(unit : Unit, byte : Int32) : Int32
+    (unit.newlines.bsearch_index { |offset| offset >= byte } || unit.newlines.size) + 1
+  end
+
+  # Memoized `CppCalleeExtractor.function_body`: every route of a big
+  # dispatcher calls the same helpers.
+  def body_of(unit : Unit, name : String) : Tuple(String, Int32)?
+    unit.bodies.fetch(name) { unit.bodies[name] = CppCalleeExtractor.function_body(unit.source, name) }
   end
 
   # Top-level arguments of the call whose `(` is at `open_paren`, plus the
@@ -66,8 +77,8 @@ module Noir::CHttpSupport
   # A string argument: literals, `mg_str("...")`, `#define`d names and
   # adjacent concatenations of those (`AREA_URL "page"`). Nil for anything
   # computed at runtime.
-  def string_value(arg : String?, unit : Unit) : String?
-    return unless arg
+  def string_value(arg : String?, unit : Unit, depth = 0) : String?
+    return unless arg && depth < 8
     s = arg.strip
     s = s[7..-2].strip if s.starts_with?("mg_str(") && s.ends_with?(')')
     return unless s.matches?(STRING_EXPR)
@@ -76,7 +87,7 @@ module Noir::CHttpSupport
         if literal = m[1]?
           io << literal
         else
-          io << (unit.defines[m[2]]? || return)
+          io << (string_value(unit.defines[m[2]]?, unit, depth + 1) || return)
         end
       end
     end
@@ -116,7 +127,7 @@ module Noir::CHttpSupport
       names.each do |name|
         next if name.starts_with?("mg_") || name.starts_with?("MHD_") || CppCalleeExtractor::RESERVED.includes?(name)
         next if CppCalleeExtractor.function_body(body, name)
-        if callee = CppCalleeExtractor.function_body(unit.source, name)
+        if callee = body_of(unit, name)
           io << '\n' << callee[0]
         end
       end
@@ -133,9 +144,9 @@ module Noir::CHttpSupport
     endpoints(path, url, line, methods, scope, body, include_callee)
   end
 
-  # The function named by a handler argument (`handler`, `&handler`).
+  # The function named by a handler argument.
   def handler_body(unit : Unit, arg : String?) : Tuple(String, Int32)?
-    arg.try { |a| CppCalleeExtractor.function_body(unit.source, a.strip.lchop('&').strip) }
+    arg.try(&.strip.match(HANDLER_NAME)).try { |m| body_of(unit, m[1]) }
   end
 
   # A route found as a URI comparison inside a handler. The method comes
@@ -144,19 +155,26 @@ module Noir::CHttpSupport
   def compared_route(unit : Unit, path : String, url : String, call_start : Int32, close : Int32,
                      include_callee : Bool) : Array(Endpoint)
     source = unit.source
-    branch = branch_after(source, close)
+    branch = branch_after(unit, close)
     methods = methods_in(condition_around(source, call_start, close))
     methods = methods_in(branch[0]) if methods.empty? && branch
     scope = branch ? with_callees(unit, branch[0]) : ""
     protocol = scope.includes?("mg_ws_upgrade") ? "ws" : "http"
-    endpoints(path, url, CppCalleeExtractor.line_number_for(source, call_start), methods, scope, branch, include_callee, protocol)
+    endpoints(path, url, line_of(unit, call_start), methods, scope, branch, include_callee, protocol)
   end
 
   # The whole `if (...)` condition the URI test sits in: from the previous
-  # statement boundary to the branch opener.
+  # statement boundary (outside string literals) to the branch opener.
   private def condition_around(source : String, call_start : Int32, close : Int32) : String
     start = call_start - 1
-    while start >= 0 && !source.byte_at(start).unsafe_chr.in?('{', '}', ';')
+    in_string = false
+    while start >= 0
+      char = source.byte_at(start).unsafe_chr
+      if char == '"' && (start == 0 || source.byte_at(start - 1).unsafe_chr != '\\')
+        in_string = !in_string
+      elsif !in_string && char.in?('{', '}', ';')
+        break
+      end
       start -= 1
     end
     stop = CppCalleeExtractor.find_next_code_char(source, '{', close) || source.bytesize
@@ -167,13 +185,15 @@ module Noir::CHttpSupport
 
   # The `{ ... }` branch guarded by the URI test, or the single statement
   # of a brace-less branch.
-  private def branch_after(source : String, close : Int32) : Tuple(String, Int32)?
+  private def branch_after(unit : Unit, close : Int32) : Tuple(String, Int32)?
+    source = unit.source
     semicolon = CppCalleeExtractor.find_next_code_char(source, ';', close)
-    brace = CppCalleeExtractor.find_next_code_char(source, '{', close)
-    if brace && (semicolon.nil? || brace < semicolon)
-      CppCalleeExtractor.extract_block_after(source, close)
+    brace = CppCalleeExtractor.find_next_code_char(source, '{', close, semicolon || source.bytesize)
+    if brace
+      brace_close = CppCalleeExtractor.find_matching_delimiter(source, brace, '{', '}') || return
+      {source.byte_slice(brace + 1, brace_close - brace - 1), line_of(unit, brace)}
     elsif semicolon
-      {source.byte_slice(close + 1, semicolon - close), CppCalleeExtractor.line_number_for(source, close)}
+      {source.byte_slice(close + 1, semicolon - close), line_of(unit, close)}
     end
   end
 
