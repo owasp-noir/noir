@@ -14,7 +14,7 @@ module Analyzer::Javascript
     ENTRY_SUBDIRS = ["src", "lib", "app"]
 
     # JavaScript/TypeScript file extensions
-    JS_EXTENSIONS = [".js", ".ts", ".jsx", ".tsx"]
+    JS_EXTENSIONS = [".js", ".mjs", ".cjs", ".ts", ".mts", ".cts", ".jsx", ".tsx"]
 
     # File- and function-level keys for the router prefixes this analyzer
     # stashes in `CodeLocator`. The names are minted from the scanned path,

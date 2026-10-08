@@ -8,7 +8,7 @@ module Analyzer::Javascript
     # only uses `.js`/`.jsx`) pass their own list to `parallel_file_scan`.
     #
     # This list mirrors what the JS detectors declare in `extensions:`
-    # (`.js .mjs .cjs .jsx .ts .tsx`). It has to: detection and analysis
+    # (`.js .mjs .cjs .jsx .ts .mts .cts .tsx`). It has to: detection and analysis
     # read the same tree, so any extension a detector accepts but this
     # list omits produces a project that detects fine and then yields
     # zero endpoints, with nothing logged and nothing for `--strict` to
@@ -18,7 +18,7 @@ module Analyzer::Javascript
     # elysia, feathers, ...) already spelled `.mjs`/`.cjs` out by hand;
     # the six that relied on this default (express, fastify, hono,
     # restify, apollo, graphql_yoga, plus socketio) silently did not.
-    DEFAULT_EXTENSIONS      = [".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx"]
+    DEFAULT_EXTENSIONS      = [".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts", ".cts", ".tsx"]
     JS_PROJECT_ROOT_MARKERS = [
       "package.json",
       "next.config.js", "next.config.ts", "next.config.mjs", "next.config.cjs",
@@ -57,7 +57,7 @@ module Analyzer::Javascript
     end
 
     protected def javascript_source_language(path : String) : Symbol
-      path.ends_with?(".ts") || path.ends_with?(".mts") || path.ends_with?(".tsx") ? :typescript : :javascript
+      path.ends_with?(".ts") || path.ends_with?(".mts") || path.ends_with?(".cts") || path.ends_with?(".tsx") ? :typescript : :javascript
     end
 
     # Endpoint for a file-routed framework (Astro, Fresh, Remix, SvelteKit):

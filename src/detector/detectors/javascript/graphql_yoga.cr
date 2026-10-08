@@ -7,7 +7,7 @@ module Detector::Javascript
   # runtimes. The `createYoga` factory is the universal entry point, so
   # a literal-name match also covers wrapper helpers that re-export it.
   class GraphqlYoga < Detector
-    detector_for "js_graphql_yoga", extensions: %w[.js .mjs .cjs .jsx .ts .tsx]
+    detector_for "js_graphql_yoga", extensions: %w[.js .mjs .cjs .jsx .ts .mts .cts .tsx]
 
     SIGNALS = [
       /from\s+['"]graphql-yoga(?:\/[^'"]*)?['"]/,
