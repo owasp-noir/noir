@@ -104,7 +104,7 @@ module Analyzer::Php
         declaration = next_declaration(scan, lexer, offset)
         next unless declaration
         keyword, class_name, decl_pos = declaration
-        next unless {"class", "enum"}.includes?(keyword) && !class_name.empty?
+        next if class_name.empty? || !{"class", "enum"}.includes?(keyword)
         if decl_pos != class_pos
           flush.call
           class_pos = decl_pos
@@ -154,7 +154,7 @@ module Analyzer::Php
         if name = m[1]?
           imported << name
         elsif group = m[2]?
-          group.split(',') { |name| imported << name.strip.split(/\s+as\s+/).first }
+          group.split(",") { |entry| imported << entry.strip.split(/\s+as\s+/).first }
         elsif alias_name = m[3]?
           aliases << "#{alias_name}\\"
         end
