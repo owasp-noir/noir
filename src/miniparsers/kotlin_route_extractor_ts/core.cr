@@ -221,7 +221,8 @@ module Noir
           orphan_class = recoverable_orphan_class(child, source, outer_prefix, pending, string_constants, local_string_constants)
           pending = [] of LibTreeSitter::TSNode
         when "prefix_expression"
-          if recover_split_constructor_prefix(child, source, outer_prefix, routes, string_constants, local_string_constants)
+          if recover_split_constructor_prefix(child, source, outer_prefix, routes, string_constants, local_string_constants) ||
+             recover_infix_class_prefix(child, source, outer_prefix, routes, string_constants, local_string_constants)
             pending = [] of LibTreeSitter::TSNode
           else
             pending << child if prefix_expression_has_annotation?(child)
@@ -299,6 +300,72 @@ module Noir
         node, source, match[1], Noir::URLPath.join_absorbing(outer_prefix, class_prefix), routes, string_constants, local_string_constants
       )
       true
+    end
+
+    # tree-sitter-kotlin sometimes parses `@A @B("/x") class Foo { ... }`
+    # followed by another class as nested `prefix_expression`s around an
+    # `infix_expression` of `class`, `Foo` and a `lambda_literal` body,
+    # with no ERROR node. Read the class from that shape so its methods
+    # are not lost.
+    private def recover_infix_class_prefix(node : LibTreeSitter::TSNode,
+                                           source : String,
+                                           outer_prefix : String,
+                                           routes : Array(Route),
+                                           string_constants : Hash(String, String),
+                                           local_string_constants : Hash(String, String)) : Bool
+      infix = infix_class_expression(node, source)
+      return false unless infix
+      return true if collect_stray_annotations(node, source).any? { |entry| entry[0] == "FeignClient" }
+
+      class_name = Noir::TreeSitter.node_text(LibTreeSitter.ts_node_named_child(infix, 1_u32), source)
+      class_prefix = infix_class_mapping_prefix(node, source, string_constants, local_string_constants)
+      collect_recovered_function_routes(
+        LibTreeSitter.ts_node_named_child(infix, 2_u32), source, class_name,
+        Noir::URLPath.join_absorbing(outer_prefix, class_prefix), routes, string_constants, local_string_constants
+      )
+      true
+    end
+
+    # In this shape the annotations keep their `value_arguments`, so read
+    # them like modifier annotations (`value =` / `path =` or positional).
+    private def infix_class_mapping_prefix(node : LibTreeSitter::TSNode,
+                                           source : String,
+                                           string_constants : Hash(String, String),
+                                           local_string_constants : Hash(String, String)) : String
+      collect_stray_annotations(node, source).each do |entry|
+        name, args = entry
+        next unless ANNOTATION_VERBS.has_key?(name)
+        paths = annotation_paths(args, source, string_constants, local_string_constants)
+        return paths.first unless paths.empty?
+      end
+      ""
+    end
+
+    # The `infix_expression` at the end of a `prefix_expression` chain
+    # when it reads as `class Name { ... }`.
+    private def infix_class_expression(node : LibTreeSitter::TSNode, source : String) : LibTreeSitter::TSNode?
+      count = LibTreeSitter.ts_node_named_child_count(node)
+      count.times do |i|
+        child = LibTreeSitter.ts_node_named_child(node, i.to_u32)
+        case Noir::TreeSitter.node_type(child)
+        when "prefix_expression"
+          return infix_class_expression(child, source)
+        when "infix_expression"
+          return child if class_infix?(child, source)
+        end
+      end
+      nil
+    end
+
+    private def class_infix?(node : LibTreeSitter::TSNode, source : String) : Bool
+      return false unless LibTreeSitter.ts_node_named_child_count(node) == 3
+      keyword = LibTreeSitter.ts_node_named_child(node, 0_u32)
+      name = LibTreeSitter.ts_node_named_child(node, 1_u32)
+      body = LibTreeSitter.ts_node_named_child(node, 2_u32)
+      Noir::TreeSitter.node_type(keyword) == "simple_identifier" &&
+        Noir::TreeSitter.node_text(keyword, source) == "class" &&
+        Noir::TreeSitter.node_type(name) == "simple_identifier" &&
+        Noir::TreeSitter.node_type(body) == "lambda_literal"
     end
 
     private def split_constructor_prefix(node : LibTreeSitter::TSNode,
