@@ -18,7 +18,7 @@ class EndpointOptimizer
   # These endpoint types describe a surface from a document rather than an
   # executable handler. They need the same source-context promotion as an
   # imported collection when they sort before the implementation endpoint.
-  SPECIFICATION_TECHNOLOGIES = Set{"oas2", "oas3", "grpc", "graphql_sdl", "graphql_operation"}
+  SPECIFICATION_TECHNOLOGIES = Set{"oas2", "oas3", "grpc", "thrift", "graphql_sdl", "graphql_operation"}
 
   @logger : NoirLogger
   @options : Hash(String, YAML::Any)

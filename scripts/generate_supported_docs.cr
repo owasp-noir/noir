@@ -64,6 +64,7 @@ SPEC_FRIENDLY_NAMES = {
   "serverless_framework" => "Serverless Framework",
   "strapi"               => "Strapi (content-type schema)",
   "supabase"             => "Supabase / PostgREST (migrations)",
+  "thrift"               => "Apache Thrift",
   "traefik"              => "Traefik Dynamic Config",
   "typespec"             => "TypeSpec",
 }
