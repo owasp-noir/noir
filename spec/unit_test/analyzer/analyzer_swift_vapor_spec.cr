@@ -83,4 +83,35 @@ describe "swift vapor analyzer" do
     File.delete(temp_file) if temp_file && File.exists?(temp_file)
     Dir.delete(temp_dir) if temp_dir && Dir.exists?(temp_dir)
   end
+
+  it "composes chained grouped() calls and verbs called on a group expression" do
+    instance = Analyzer::Swift::Vapor.new(create_test_options)
+
+    temp_dir = File.tempname("swift_vapor_chain_test")
+    Dir.mkdir_p(temp_dir)
+    temp_file = File.join(temp_dir, "routes.swift")
+
+    File.write(temp_file, <<-SWIFT)
+      import Vapor
+
+      func routes(_ app: Application) throws {
+          app.grouped("inline").on(.GET, "d") { req in "d" }
+          let v2 = app.grouped("api").grouped("v2")
+          v2.get("x") { req in "x" }
+          app.grouped("m").group("n") { r in
+              r.get("o") { req in "o" }
+          }
+          app.grouped(AuthMiddleware()).grouped("secure").delete("s") { req in "s" }
+      }
+      SWIFT
+
+    urls = instance.analyze_file(temp_file).map { |e| "#{e.method} #{e.url}" }
+    urls.should contain("GET /inline/d")
+    urls.should contain("GET /api/v2/x")
+    urls.should contain("GET /m/n/o")
+    urls.should contain("DELETE /secure/s")
+  ensure
+    File.delete(temp_file) if temp_file && File.exists?(temp_file)
+    Dir.delete(temp_dir) if temp_dir && Dir.exists?(temp_dir)
+  end
 end
