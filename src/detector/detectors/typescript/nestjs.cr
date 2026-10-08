@@ -23,6 +23,8 @@ module Detector::Typescript
       # or `@Controller` or `@Module` or `NestFactory` literally; a memchr
       # scan is far cheaper than the alternation regex.
       return false unless file_contents.includes?("@nestjs") || file_contents.includes?("@Controller") || file_contents.includes?("@Module") || file_contents.includes?("NestFactory")
+      # Midway imports the same `@Controller` vocabulary from `@midwayjs/*`.
+      return false if file_contents.includes?("@midwayjs/")
       content_matches?(file_contents, SIGNAL)
     end
   end
