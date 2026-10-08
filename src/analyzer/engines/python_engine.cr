@@ -154,6 +154,34 @@ module Analyzer::Python
       body.join("\n")
     end
 
+    # `<receiver>.get("x")` / `.pop("x")` / `["x"]`, capturing the whole
+    # dotted receiver (the lookbehind keeps a long chain linear).
+    DICT_READ_RE = /(?<![\w.])((?:\w+\.)*\w+)(?:\.(?:get|pop)\(\s*['"]([^'"]+)['"]|\[\s*['"]([^'"]+)['"]\s*\])/
+
+    # Request parameters of a handler whose keyword arguments are the
+    # request's: its named arguments plus the keys read off its `**kwargs`
+    # dict or one of `request_dicts` (Odoo `request.params`, Frappe
+    # `frappe.form_dict`), also when qualified (`http.request.params`).
+    protected def handler_kwarg_names(lines : Array(::String), def_line : Int32, body : ::String,
+                                      request_dicts : Array(::String)) : Array(::String)
+      names = [] of ::String
+      kwargs = nil
+      parse_function_def(lines, def_line).try &.params.each do |param|
+        name = param.name
+        if name.starts_with?("**")
+          kwargs = name[2..]
+        elsif !name.starts_with?("*") && name != "self" && !name.empty?
+          names << name
+        end
+      end
+
+      body.scan(DICT_READ_RE) do |m|
+        receiver = m[1]
+        names << (m[2]? || m[3]) if receiver == kwargs || request_dicts.any? { |d| receiver == d || receiver.ends_with?(".#{d}") }
+      end
+      names.uniq
+    end
+
     # Parses the definition of a function from the source lines starting at a given index
     def parse_function_def(source_lines : Array(::String), start_index : Int32) : FunctionDefinition?
       parameters = [] of FunctionParameter

@@ -140,4 +140,15 @@ describe Noir::TreeSitterPythonRouteExtractor do
       PY
     Noir::TreeSitterPythonRouteExtractor.extract_decorations(source).should be_empty
   end
+
+  it "keeps a decorator without a path only when pathless" do
+    source = <<-PY
+      @frappe.whitelist(allow_guest=True, methods=["POST"])
+      def ping(): pass
+      PY
+    attrs = {"whitelist" => "GET"}
+    Noir::TreeSitterPythonRouteExtractor.extract_decorations(source, ["frappe"], attrs).should be_empty
+    deco = Noir::TreeSitterPythonRouteExtractor.extract_decorations(source, ["frappe"], attrs, pathless: true).first
+    {deco.path, deco.def_name, deco.methods, deco.keywords["allow_guest"]}.should eq({"", "ping", ["POST"], "True"})
+  end
 end

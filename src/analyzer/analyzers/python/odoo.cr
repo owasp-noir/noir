@@ -21,8 +21,6 @@ module Analyzer::Python
     PATH_PARAM_RE  = /<(?:[^<>]*:)?([A-Za-z_]\w*)>/
     PROTECTED_AUTH = %w[user bearer]
     TAGGER         = "odoo_analyzer"
-    # `<receiver>.get("x")` / `.pop("x")` / `["x"]`.
-    DICT_READ_RE = /\b(request\.params|\w+)(?:\.(?:get|pop)\(\s*['"]([^'"]+)['"]|\[\s*['"]([^'"]+)['"]\s*\])/
 
     def analyze
       ordered_parallel_analyze(python_source_files) do |path|
@@ -53,7 +51,7 @@ module Analyzer::Python
 
         def_line = deco.def_line
         body = def_line >= 0 ? extract_function_body(lines, def_line) : ""
-        arg_names = def_line >= 0 ? handler_args(lines, def_line, body) : [] of ::String
+        arg_names = def_line >= 0 ? handler_kwarg_names(lines, def_line, body, ["request.params"]) : [] of ::String
         callees = def_line >= 0 ? build_callees_from(body, def_line + 1, path, definition_base_path: base_path, source: source) : [] of Callee
 
         deco.paths.each do |route|
@@ -76,26 +74,6 @@ module Analyzer::Python
         end
       end
       endpoints
-    end
-
-    # Named handler arguments plus the keys read off its `**kwargs` dict
-    # (`kw.get("x")` / `kw["x"]`) or `request.params`.
-    private def handler_args(lines : Array(::String), def_line : Int32, body : ::String) : Array(::String)
-      names = [] of ::String
-      kwargs = nil
-      parse_function_def(lines, def_line).try &.params.each do |param|
-        name = param.name
-        if name.starts_with?("**")
-          kwargs = name[2..]
-        elsif !name.starts_with?("*") && name != "self" && !name.empty?
-          names << name
-        end
-      end
-
-      body.scan(DICT_READ_RE) do |m|
-        names << (m[2]? || m[3]) if m[1] == "request.params" || m[1] == kwargs
-      end
-      names.uniq
     end
   end
 end
