@@ -1466,7 +1466,10 @@ module Noir
       handler_body.scan(/(?:req|request)\.headers\s*\[\s*([A-Za-z_$]\w*)\s*\]/) do |match| # req.headers[CONST] — unresolved
         push_unresolved_param(endpoint, match[1], "header")
       end
-      handler_body.scan(/(?:req|request)\.headers\.(\w+)/) do |match| # req.headers.authorization
+      handler_body.scan(/(?:req|request)\.headers\.(\w++)(?!\s*\()/) do |match| # req.headers.authorization
+        endpoint.push_param(Param.new(match[1], "", "header"))
+      end
+      handler_body.scan(/(?:req|request)\.headers\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match| # Fetch API: req.headers.get("x-token")
         endpoint.push_param(Param.new(match[1], "", "header"))
       end
       handler_body.scan(/(?:req|request)\.header\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match| # req.header("x-token")
@@ -1518,7 +1521,10 @@ module Noir
       handler_body.scan(/(?:req|request)\.cookies\s*\[\s*([A-Za-z_$]\w*)\s*\]/) do |match| # req.cookies[CONST] — unresolved
         push_unresolved_param(endpoint, match[1], "cookie")
       end
-      handler_body.scan(/(?:req|request)\.cookies\.(\w+)/) do |match| # req.cookies.session
+      handler_body.scan(/(?:req|request)\.cookies\.(\w++)(?!\s*\()/) do |match| # req.cookies.session
+        endpoint.push_param(Param.new(match[1], "", "cookie"))
+      end
+      handler_body.scan(/(?:req|request)\.cookies\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match| # Bun: req.cookies.get("session")
         endpoint.push_param(Param.new(match[1], "", "cookie"))
       end
 
