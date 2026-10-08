@@ -389,6 +389,33 @@ sort_by = "weight"
     </div>
   </article>
   <article class="tech-card">
+    <h3 class="tech-card-title">HotChocolate</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip off">method</span>
+        <span class="tech-chip off">query</span>
+        <span class="tech-chip off">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip off">header</span>
+        <span class="tech-chip off">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip on">websocket</span>
+        <span class="tech-chip off">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
     <h3 class="tech-card-title">ServiceStack</h3>
     <div class="tech-card-row">
       <span class="tech-card-label">Route</span>
@@ -1309,6 +1336,33 @@ sort_by = "weight"
 ## Elixir
 
 <div class="tech-grid">
+  <article class="tech-card">
+    <h3 class="tech-card-title">Absinthe</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip off">query</span>
+        <span class="tech-chip off">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip off">header</span>
+        <span class="tech-chip off">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip on">websocket</span>
+        <span class="tech-chip off">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
   <article class="tech-card">
     <h3 class="tech-card-title">Bandit</h3>
     <div class="tech-card-row">
@@ -4669,6 +4723,33 @@ sort_by = "weight"
     </div>
   </article>
   <article class="tech-card">
+    <h3 class="tech-card-title">Graphene</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip off">query</span>
+        <span class="tech-chip off">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip off">header</span>
+        <span class="tech-chip off">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip on">websocket</span>
+        <span class="tech-chip off">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
     <h3 class="tech-card-title">Litestar</h3>
     <div class="tech-card-row">
       <span class="tech-card-label">Route</span>
@@ -4885,6 +4966,33 @@ sort_by = "weight"
     </div>
   </article>
   <article class="tech-card">
+    <h3 class="tech-card-title">Strawberry GraphQL</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip off">query</span>
+        <span class="tech-chip off">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip off">header</span>
+        <span class="tech-chip off">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip on">websocket</span>
+        <span class="tech-chip off">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
     <h3 class="tech-card-title">Tornado</h3>
     <div class="tech-card-row">
       <span class="tech-card-label">Route</span>
@@ -5077,6 +5185,33 @@ sort_by = "weight"
       <span class="tech-card-label">AI Context</span>
       <div class="tech-card-chips">
         <span class="tech-chip on">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title">GraphQL Ruby</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip off">query</span>
+        <span class="tech-chip off">path</span>
+        <span class="tech-chip on">body</span>
+        <span class="tech-chip off">header</span>
+        <span class="tech-chip off">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip on">websocket</span>
+        <span class="tech-chip off">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
         <span class="tech-chip on">sinks</span>
         <span class="tech-chip on">validators</span>
         <span class="tech-chip on">signals</span>

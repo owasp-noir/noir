@@ -50,10 +50,11 @@ module Analyzer::Elixir
           next
         end
 
-        # Only consider tokens at a word boundary.
+        # Only consider tokens at a word boundary. A `:` prefix makes the
+        # word an atom (`arg :end, :long`), not a block keyword.
         if i > 0
           prev = code[i - 1]
-          if prev.ascii_alphanumeric? || prev == '_'
+          if prev.ascii_alphanumeric? || prev == '_' || prev == ':'
             i = skip_elixir_word(code, i, size)
             next
           end
