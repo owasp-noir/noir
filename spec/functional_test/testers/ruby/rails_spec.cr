@@ -44,6 +44,22 @@ expected_endpoints = [
     Param.new("login", "", "cookie"),
     Param.new("discount", "", "cookie"),
   ]),
+  Endpoint.new("/articles", "POST", [
+    Param.new("title", "", "form"),
+    Param.new("body", "", "form"),
+  ]),
+  Endpoint.new("/articles/1", "PUT", [
+    Param.new("one", "", "form"),
+    Param.new("tags", "", "form"),
+    Param.new("meta", "", "form"),
+    Param.new("cat", "", "form"),
+  ]),
+  Endpoint.new("/articles/1", "PATCH", [
+    Param.new("one", "", "form"),
+    Param.new("tags", "", "form"),
+    Param.new("meta", "", "form"),
+    Param.new("cat", "", "form"),
+  ]),
   Endpoint.new("/up", "GET"),
   Endpoint.new("/service-worker", "GET"),
   Endpoint.new("/manifest", "GET"),

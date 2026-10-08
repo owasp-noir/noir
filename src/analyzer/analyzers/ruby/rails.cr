@@ -1,4 +1,5 @@
 require "../../engines/ruby_engine"
+require "../../../utils/top_level_split"
 
 module Analyzer::Ruby
   class Rails < RubyEngine
@@ -1468,6 +1469,8 @@ module Analyzer::Ruby
       callees_by_action = extract_action_callees(controller_content, path) if callees_needed?
 
       this_method = ""
+      permit_buf : String? = nil
+      permit_lines = 0
 
       controller_content.each_line.with_index do |raw_line, index|
         line = strip_inline_comment(raw_line)
@@ -1477,6 +1480,8 @@ module Analyzer::Ruby
           func_name = func_name.lchop("self.").strip
           unless func_name.empty?
             this_method = func_name
+            # An unclosed `permit(` must not swallow the next action's permits.
+            permit_buf = nil
             defined_actions << func_name
             action_lines[func_name] = index + 1
             method_bodies[this_method] ||= [] of String
@@ -1488,31 +1493,34 @@ module Analyzer::Ruby
           method_bodies[this_method] << line
         end
 
-        # Every param source below is a `[ ... ]` subscript except `permit(...)`.
-        # A line with neither a '[' nor the literal 'permit' cannot match any of
-        # them, so skip the four regex ops — this runs on every line of every
-        # controller in the app.
-        if line.includes?('[') || line.includes?("permit")
-          if pm = line.match(/permit\s*\(([^)]*)\)/)
-            pm[1].split(',').each do |raw|
-              name = raw.gsub(/[:\s'"]/, "")
-              next if name.empty? || this_method.empty?
-              # A permit list entry is always a lowercase symbol/string key
-              # (`:title`, `tag_ids`). Splat-of-constant args
-              # (`permit(*PERMITTED_PARAMS)`, `permit(:a, *Filter::KEYS)`)
-              # and the garbage left by naive comma-splitting of nested
-              # `key: [...]` forms survive the quote/colon strip as
-              # `*PERMITTED_PARAMS` / `*FilterKEYS` / `address[city`. Drop
-              # anything that isn't a clean identifier so those don't leak
-              # in as fabricated param names.
-              next unless name.matches?(/\A[a-z_][a-z0-9_]*\z/)
+        # `permit(...)` may wrap across lines, so collect lines until its parens
+        # balance (bounded: an unbalanced `permit(` must not swallow the file).
+        if buf = permit_buf
+          permit_buf = "#{buf} #{line}"
+          permit_lines += 1
+        elsif line.includes?("permit") && line.matches?(/permit\s*\(/)
+          permit_buf = line
+          permit_lines = 1
+        end
+        if buf = permit_buf
+          if args = permit_args(buf)
+            permit_buf = nil
+            permit_names(args).each do |name|
+              next if this_method.empty?
               params_body_by_action[this_method] ||= [] of Param
               params_body_by_action[this_method] << Param.new(name, "", param_type)
               params_query_by_action[this_method] ||= [] of Param
               params_query_by_action[this_method] << Param.new(name, "", "query")
             end
+          elsif permit_lines >= PERMIT_MAX_LINES
+            permit_buf = nil
           end
+        end
 
+        # Every param source below is a `[ ... ]` subscript. A line without a '['
+        # cannot match any of them, so skip the regex ops — this runs on every
+        # line of every controller in the app.
+        if line.includes?('[')
           line.scan(/params\[\s*(?::(\w+)|['"]([^'"]+)['"])\s*\]/) do |m|
             name = (m[1]? || m[2]?).to_s.strip
             next if name.empty? || this_method.empty?
@@ -1545,6 +1553,39 @@ module Analyzer::Ruby
         defined_actions, helper_calls_by_action, callees_by_action, action_lines)
       @controller_data_cache[path] = data
       data
+    end
+
+    PERMIT_MAX_LINES = 30
+    PERMIT_SPLIT     = Noir::TopLevelSplit::Rules.new
+
+    # Text between the parens of the first `permit(`, or nil while unbalanced.
+    # ponytail: quotes are not tracked, so a ")" inside a permit string literal
+    # closes early; permit lists hold symbols in practice.
+    private def permit_args(text : String) : String?
+      return unless m = text.match(/permit\s*\(/)
+      open = m.byte_end(0)
+      depth = 0
+      text.to_slice[open..].each_with_index do |b, i|
+        depth += 1 if b == '('.ord
+        if b == ')'.ord
+          return text.byte_slice(open, i) if depth == 0
+          depth -= 1
+        end
+      end
+      nil
+    end
+
+    # Param names from a permit argument list: the leading key of each
+    # top-level entry (`:title`, `"title"`, `tags: []`, `a: {b: 1}`, `:a => []`).
+    # Splats, constants and anything else that isn't a plain lowercase key are dropped.
+    private def permit_names(args : String) : Array(String)
+      names = [] of String
+      Noir::TopLevelSplit.split(args, ',', PERMIT_SPLIT).each do |entry|
+        if m = entry.match(/\A:?(?:"([a-z_][a-z0-9_]*)"|'([a-z_][a-z0-9_]*)'|([a-z_][a-z0-9_]*))\s*(?::(?!:)|=>|\z)/)
+          names << (m[1]? || m[2]? || m[3]).to_s
+        end
+      end
+      names
     end
 
     private def extract_action_callees(content : String, path : String) : Hash(String, Array(Noir::RubyCalleeExtractor::Entry))

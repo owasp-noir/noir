@@ -5,6 +5,8 @@ Rails.application.routes.draw do
     end
   end
 
+  resources :articles, only: [:create, :update]
+
   query "search", to: "posts#index"
   match "filter", to: "posts#index", via: :query
   match "both", to: "posts#index", via: [:get, :query]
