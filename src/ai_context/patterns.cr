@@ -8,6 +8,13 @@ module NoirAIContext
   # lexical constant lookup, while keeping the catalog separate from
   # the orchestration logic.
 
+  # Bare `query` / `execute` are mostly request-input accessors
+  # (`c.Query`, FastAPI `Query()`, `params.query`) or command objects
+  # (`useCase.execute`), so they count as SQL only on a DB-ish
+  # receiver. Raw SQL on any other receiver still surfaces through the
+  # `select ... from` source pattern.
+  SQL_RECEIVER_CALL = /\b(?:\w*db|db\w*|database|\w*conn(?:ection)?|con|cursor|cur|_?cr|pool|session|tx|transaction|stmt|statement|knex|sequelize|pg\w*|mysqli?|sqlite3?|pdo|sqlx?|repo|queryRunner|manager|jdbcTemplate|entityManager|dataSource)(?:\.|->|::)(?:query|execute)\b/i
+
   SINK_PATTERNS = [
     PatternDefinition.new(
       "data_store_query",
@@ -20,8 +27,8 @@ module NoirAIContext
       "sql",
       "Potential SQL/data-store sink inferred from code or callee name",
       78,
-      name_patterns: [/raw_?sql/i, /find_?by_?sql/i, /\bquery\b/i, /\bexecute\b/i, /\bselect\b/i],
-      source_patterns: [/find_by_sql/i, /\braw(sql|_sql)\b/i, /\bselect\b.+\bfrom\b/i, /\bexecute(Query|Sql)?\b/i]
+      name_patterns: [/raw_?sql/i, /find_?by_?sql/i, SQL_RECEIVER_CALL, /\bselect\b/i],
+      source_patterns: [/find_by_sql/i, /\braw(sql|_sql)\b/i, /\bselect\b.+\bfrom\b/i, /\bexecute(?:Query|Sql)\b/i, SQL_RECEIVER_CALL]
     ),
     PatternDefinition.new(
       "command_exec",
@@ -591,7 +598,10 @@ module NoirAIContext
       "credential_input",
       "Credential-bearing input; review secret handling, logging, and auth bypass paths",
       86,
-      name_patterns: [/\b(pass(word)?|token|secret|api[_-]?key|authorization|session|cookie|jwt|bearer)\b/i]
+      # Bare `session` / `cookie` name a transport slot, not a secret
+      # the caller types in; they made every cookie-bearing POST look
+      # like a login form (rate_limit_absence / priority_review noise).
+      name_patterns: [/\b(pass(word)?|token|secret|api[_-]?key|authorization|jwt|bearer)\b/i]
     ),
     PatternDefinition.new(
       "identifier_input",

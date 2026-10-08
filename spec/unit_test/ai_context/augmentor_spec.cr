@@ -1395,6 +1395,60 @@ describe "NoirAIContext" do
     context.sinks.map(&.kind).should_not contain("data_store_query")
   end
 
+  it "requires a DB-ish receiver before a query/execute callee counts as a sql sink" do
+    {
+      "cache.query"         => false,
+      "c.Query"             => false,
+      "Query"               => false,
+      "useCase.execute"     => false,
+      "pool.query"          => true,
+      "this.db.query"       => true,
+      "cursor.execute"      => true,
+      "db.session.execute"  => true,
+      "$pdo->query"         => true,
+      "self.env.cr.execute" => true,
+      "pgClient.query"      => true,
+      "queryRunner.query"   => true,
+    }.each do |name, sql|
+      endpoint = Endpoint.new("/items", "GET")
+      endpoint.push_callee(Callee.new(name, "app.js", 3))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+      context.sinks.map(&.kind).includes?("sql").should eq(sql), name
+    end
+  end
+
+  it "does not source-scan a command-object execute as a sql sink" do
+    source = <<-JS
+      app.post('/orders', (req, res) => {
+        return this.createOrderUseCase.execute(req.body)
+      })
+      JS
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/orders", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+      context.sinks.map(&.kind).should_not contain("sql")
+    end
+  end
+
+  it "does not treat a bare session cookie as credential input" do
+    endpoint = Endpoint.new("/cart", "POST")
+    endpoint.push_param(Param.new("session", "abc", "cookie"))
+    endpoint.push_param(Param.new("cookie", "abc", "header"))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+    context.signals.map(&.kind).should_not contain("credential_input")
+    context.signals.map(&.kind).should_not contain("rate_limit_absence")
+  end
+
   it "scopes the mobile webview_load sink to mobile endpoints" do
     # The two mobile-only sinks live in the global catalog but must only
     # apply to deep-link endpoints. An HTTP route handler with a
@@ -2900,7 +2954,7 @@ describe "NoirAIContext" do
       def sign_up():
           username = request.form['username']
           password = request.form['password']
-          User.query.filter(User.name == username).first()
+          db.execute("SELECT 1 FROM users WHERE name = '%s'" % username)
           db.session.add(User(username, password))
       CODE
 
@@ -2910,7 +2964,7 @@ describe "NoirAIContext" do
       details.add_path(PathInfo.new(path, 1))
       endpoint.details = details
       endpoint.push_param(Param.new("password", "x", "form"))
-      endpoint.push_callee(Callee.new("User.query.filter", path, 5))
+      endpoint.push_callee(Callee.new("db.execute", path, 5))
       endpoint.push_callee(Callee.new("db.session.add", path, 6))
 
       context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
@@ -2926,7 +2980,7 @@ describe "NoirAIContext" do
     # No guard, no rate-limit param, but state-change exists. Then
     # the create callee is a name-matched sql sink ("execute") —
     # let's instead use a clearer sink.
-    endpoint.push_callee(Callee.new("User.query", "controller.rb", 6))
+    endpoint.push_callee(Callee.new("db.execute", "controller.rb", 6))
 
     context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
     priority = context.signals.find(&.kind.== "priority_review")
