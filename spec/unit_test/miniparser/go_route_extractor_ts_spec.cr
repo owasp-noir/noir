@@ -673,6 +673,25 @@ describe Noir::TreeSitterGoRouteExtractor do
     ].sort)
   end
 
+  it "decodes chi Method(...) and http.MethodX constants as the verb" do
+    source = <<-GO
+      package main
+      func main() {
+          r := chi.NewRouter()
+          r.Method("PATCH", "/meth", http.HandlerFunc(h))
+          r.Method(http.MethodPut, "/put", http.HandlerFunc(h))
+          r.MethodFunc(http.MethodDelete, "/mf", h)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_chi_routes(source)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"DELETE", "/mf"},
+      {"PATCH", "/meth"},
+      {"PUT", "/put"},
+    ])
+  end
+
   it "does not read stdlib net/http Handle/HandleFunc as chi routes" do
     source = <<-GO
       package main
