@@ -144,6 +144,9 @@ expected_endpoints = [
   # @require_http_methods(["GET", "POST"]) under a non-route decorator.
   Endpoint.new("/require_methods", "GET"),
   Endpoint.new("/require_methods", "POST"),
+  # @api_view pins the verb set; request.data must not widen it.
+  Endpoint.new("/api_view_post", "POST", [Param.new("title", "", "form")]),
+  Endpoint.new("/api_view_get", "GET"),
   # DeleteView → GET (confirm) + POST (delete), never HTTP DELETE.
   Endpoint.new("/widget/delete", "GET"),
   Endpoint.new("/widget/delete", "POST"),

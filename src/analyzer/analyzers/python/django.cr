@@ -1223,6 +1223,7 @@ module Analyzer::Python
 
       # Function Based View
       function_start_index = content.index /(?:async\s+)?def\s+#{function_or_class_name}\s*\(/
+      restricted = false
       unless function_start_index.nil?
         function_codeblock = parse_code_block(content[function_start_index..])
         unless function_codeblock.nil?
@@ -1266,7 +1267,10 @@ module Analyzer::Python
 
             # A method-restricting decorator replaces the implicit GET.
             if rm = restricted_methods
-              suspicious_http_methods = rm unless rm.empty?
+              unless rm.empty?
+                suspicious_http_methods = rm
+                restricted = true
+              end
             end
           end
 
@@ -1282,7 +1286,10 @@ module Analyzer::Python
               end
             end
 
-            extract_params_from_line(line, suspicious_http_methods).each do |param|
+            # A decorator-restricted view keeps its verb set: body accessors
+            # (`request.data`, `request.POST`) must not widen it.
+            scan_methods = restricted ? suspicious_http_methods.dup : suspicious_http_methods
+            extract_params_from_line(line, scan_methods).each do |param|
               suspicious_params << param
             end
           end
@@ -1786,6 +1793,21 @@ module Analyzer::Python
       # `@require_safe` allows GET + HEAD.
       if decorator.matches?(/@\s*(?:\w+\.)*require_safe\b/)
         return ["GET", "HEAD"]
+      end
+
+      # DRF `@api_view([...])` / `@api_view(http_method_names=[...])`:
+      # the list is authoritative and a bare `@api_view()` means GET only.
+      if match = decorator.match(/@\s*(?:\w+\.)*api_view\b\s*(?:\((.*)\))?/)
+        args = match[1]?.to_s.strip
+        return ["GET"] if args.empty?
+        if list = args.match(/\A(?:http_method_names\s*=\s*)?[\[(]([^\])]*)[\])]/)
+          methods = [] of ::String
+          list[1].scan(/['"]([A-Za-z]+)['"]/) do |m|
+            verb = m[1].upcase
+            methods << verb if HTTP_METHODS.any? { |hm| hm.upcase == verb }
+          end
+          return methods.empty? ? nil : methods
+        end
       end
 
       nil
