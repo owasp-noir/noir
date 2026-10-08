@@ -960,6 +960,16 @@ module Noir
       extract_json_body_params(body, endpoint)
     end
 
+    # Query and body params a Fetch-API / node:http handler reads from a
+    # request spelled `req`: `searchParams.get("q")`, `URLSearchParams`,
+    # `JSON.parse(...)`, `await req.json()` / `req.formData()`. Shared with
+    # the file-routed serverless adapters, which normalize their request
+    # name to `req` first.
+    def self.extract_fetch_request_params(body : String, endpoint : Endpoint) : Nil
+      extract_query_params(body, endpoint)
+      extract_json_body_params(body, endpoint)
+    end
+
     private def self.scoped_body(body : String, scope_start : Int32?, scope_end : Int32?) : String
       return body unless scope_start && scope_end
       return body unless scope_start >= 0 && scope_start < scope_end && scope_end <= body.size
