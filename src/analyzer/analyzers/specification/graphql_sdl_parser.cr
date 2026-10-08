@@ -44,6 +44,23 @@ module Analyzer::Specification
       endpoints
     end
 
+    # One root field of a code-first schema (Strawberry, Graphene,
+    # HotChocolate, graphql-ruby, Absinthe), which has no SDL to parse: the
+    # host analyzer collects the field itself and gets the same endpoint shape
+    # as an SDL field. `root_kind` is "Query", "Mutation" or "Subscription";
+    # `type_name` is the schema's name for that root when it differs.
+    def field_endpoint(file_path : String, line : Int32?, root_kind : String, field_name : String,
+                       args : Array(NamedTuple(name: String, type: String)), return_type : String,
+                       tag_source : String, default_path : String = DEFAULT_GRAPHQL_PATH,
+                       type_name : String = root_kind) : Endpoint
+      endpoints = [] of Endpoint
+      directives = [] of NamedTuple(name: String, args: String)
+      emit_endpoint(file_path, line, field_name, args, return_type, directives,
+        ROOT_OPERATIONS[root_kind], type_name, root_kind, default_path, tag_source,
+        {} of String => Array(InputField), endpoints)
+      endpoints.first
+    end
+
     # Returns the mapping of root operation type → root name (custom or default).
     private def parse_schema_block(content : String) : Hash(String, String)
       mapping = {"Query" => "Query", "Mutation" => "Mutation", "Subscription" => "Subscription"}
