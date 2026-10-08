@@ -129,12 +129,13 @@ module Noir::Detection
 
   def add_android_source_prefixes_from_dir(dir : String, prefixes : Array(String))
     manifest_path = File.join(dir, "AndroidManifest.xml")
-    return unless File.exists?(manifest_path)
-
     begin
+      # `File.file?` raises (not false) on EACCES, and `File.exists?` is true
+      # for a directory named AndroidManifest.xml, whose read raises EISDIR.
+      return unless File.file?(manifest_path)
       content = Noir::TextFile.read(manifest_path)
       return unless content.includes?("<manifest")
-    rescue File::NotFoundError | File::AccessDeniedError
+    rescue IO::Error
       return
     end
 
