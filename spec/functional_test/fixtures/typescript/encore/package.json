@@ -1,0 +1,7 @@
+{
+  "name": "encore-fixture",
+  "type": "module",
+  "dependencies": {
+    "encore.dev": "^1.41.0"
+  }
+}
