@@ -97,6 +97,10 @@ module Analyzer::Javascript
     NEST_PACKAGE_MARKERS  = ["@nestjs/core", "@nestjs/common"]
     NEST_CONFIG_BASENAMES = ["nest-cli.json"]
 
+    protected def app_root_markers : Array(String)
+      NEST_PACKAGE_MARKERS
+    end
+
     # Route each discovered `setGlobalPrefix` to the endpoints it actually
     # governs.
     #
@@ -117,7 +121,7 @@ module Analyzer::Javascript
       # Sort before anything picks a winner: the collection order is fiber
       # completion order, which is not stable across runs.
       sorted = entries.sort_by { |(path, _)| path }
-      roots = discover_js_project_roots(NEST_PACKAGE_MARKERS, NEST_CONFIG_BASENAMES)
+      roots = discover_js_project_roots(app_root_markers, NEST_CONFIG_BASENAMES)
 
       by_root = {} of String => GlobalPrefixConfig
       sorted.each do |(path, config)|
@@ -221,11 +225,18 @@ module Analyzer::Javascript
       normalized
     end
 
+    # Midway imports the same `@Controller`/`@Get` vocabulary from
+    # `@midwayjs/*`. `Analyzer::Typescript::Midway` claims those `.ts` files
+    # and `Analyzer::Typescript::Nestjs` leaves them to it; JavaScript stays
+    # with this analyzer, as there is no JS Midway analyzer.
+    MIDWAY_IMPORT = "@midwayjs/"
+
+    protected def owns_source?(content : String) : Bool
+      true
+    end
+
     private def analyze_nestjs_file(path : String, result : Array(Endpoint), static_dirs : Array(Hash(String, String)), include_callee : Bool, global_prefix_holder : Array(Tuple(String, GlobalPrefixConfig)), global_prefix_mutex : Mutex)
       content = read_file_content(path)
-
-      collect_static_paths(path, content, static_dirs, :nestjs)
-      collect_static_paths(path, content, static_dirs, :express) if nestjs_bootstrap_source?(content)
 
       # Strip JS/TS comments so commented-out decorators
       # (e.g. `// @Get('/old')`) don't generate phantom routes.
@@ -233,12 +244,18 @@ module Analyzer::Javascript
 
       # `app.setGlobalPrefix('api')` in a bootstrap file scopes
       # every controller below it. Record it now; apply once after
-      # all files have been parsed.
-      if prefix = extract_global_prefix_config(sanitized)
+      # all files have been parsed. Read before the ownership gate: a
+      # Midway config file need not import `@midwayjs/*`.
+      if prefix = extract_global_prefix_config(sanitized, path)
         global_prefix_mutex.synchronize do
           global_prefix_holder << {path, prefix}
         end
       end
+
+      return unless owns_source?(content)
+
+      collect_static_paths(path, content, static_dirs, :nestjs)
+      collect_static_paths(path, content, static_dirs, :express) if nestjs_bootstrap_source?(content)
 
       analyze_nestjs_controllers(sanitized, path, result, include_callee)
     rescue e : Exception
@@ -262,7 +279,7 @@ module Analyzer::Javascript
     # Detect `app.setGlobalPrefix('api', { exclude: [...] })`.
     # Constants and dynamic expressions are ignored conservatively —
     # false-positive prefixing would mis-route every controller.
-    private def extract_global_prefix_config(content : String) : GlobalPrefixConfig?
+    private def extract_global_prefix_config(content : String, _path : String) : GlobalPrefixConfig?
       literal_values = extract_literal_values(content)
 
       content.scan(/\.setGlobalPrefix\s*\(/) do |match|
@@ -545,9 +562,14 @@ module Analyzer::Javascript
       # already joined the multi-line header for us.
       inner = decorator_inner(text, "Controller")
       return unless inner
-      return [""] if inner.empty?
+      literal_paths_from_expression(first_decorator_arg(inner), literal_values) || [""]
+    end
 
-      literal_paths_from_expression(inner, literal_values) || [""]
+    # Midway takes an options object after the path —
+    # `@Controller('/api', { middleware })`, `@Get('/', { summary })` —
+    # so only the first argument is the path. Nest decorators have one.
+    private def first_decorator_arg(inner : String) : String
+      split_top_level(inner, ',').first? || ""
     end
 
     private def decorator_inner(text : String, name : String) : String?
@@ -647,6 +669,7 @@ module Analyzer::Javascript
         "Post"        => ["POST"],
         "Put"         => ["PUT"],
         "Delete"      => ["DELETE"],
+        "Del"         => ["DELETE"], # Midway's spelling
         "Patch"       => ["PATCH"],
         "Options"     => ["OPTIONS"],
         "Head"        => ["HEAD"],
@@ -657,7 +680,7 @@ module Analyzer::Javascript
         "All" => ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
       }
 
-      class_content.scan(/@(Get|Post|Put|Delete|Patch|Options|Head|QueryMethod|Sse|All)\s*\(/) do |match|
+      class_content.scan(/@(Get|Post|Put|Delete|Del|Patch|Options|Head|QueryMethod|Sse|All)\s*\(/) do |match|
         decorator_start = match.begin(0)
         next unless decorator_start
 
@@ -671,7 +694,7 @@ module Analyzer::Javascript
         close_paren = Noir::JSRouteExtractor.find_matching_paren(class_content, open_paren)
         next unless close_paren
 
-        route_paths = literal_paths_from_expression(class_content[(open_paren + 1)...close_paren].strip, literal_values)
+        route_paths = literal_paths_from_expression(first_decorator_arg(class_content[(open_paren + 1)...close_paren]), literal_values)
         next unless route_paths
         signature = method_signature_after_decorators(class_content, close_paren + 1)
         next unless signature
