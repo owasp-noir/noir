@@ -62,21 +62,24 @@ module Noir
       end
     end
 
+    # `Bun.serve(...)` / `Deno.serve(...)` call openers, keyed by runtime.
+    RUNTIME_SERVE_CALLS = {
+      "Bun"  => /\bBun\s*\.\s*serve\s*\(/,
+      "Deno" => /\bDeno\s*\.\s*serve\s*\(/,
+    }
+
+    # `const NAME = new URLPattern({ pathname: "/p" })` or `new URLPattern("/p")`.
+    URL_PATTERN_DECL = /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*new\s+URLPattern\s*\(\s*(?:\{\s*pathname\s*:\s*)?(['"`])(\/[^'"`]*)\2/
+
     def self.extract(file_path : String, content : String, debug : Bool = false) : Array(Endpoint)
       return [] of Endpoint unless source_file?(file_path)
       return [] of Endpoint unless content.includes?("createServer")
-
-      stripped = JSRouteExtractor.strip_js_comments(content)
-      if JSRouteExtractor.minified_content?(stripped)
-        STDERR.puts "Skipping #{file_path} for node:http route extraction (minified/bundled asset)" if debug
-        return [] of Endpoint
-      end
-      if JSRouteExtractor.test_stub_only?(file_path, stripped)
-        STDERR.puts "Skipping #{file_path} for node:http route extraction (test-stub/non-server marker)" if debug
-        return [] of Endpoint
-      end
+      stripped = prepared_source(file_path, content, "node:http", debug)
+      return [] of Endpoint unless stripped
 
       named_handlers = collect_named_handlers(stripped)
+      url_patterns = collect_url_patterns(stripped)
+      newlines = newline_positions(stripped)
       endpoints = [] of Endpoint
       seen = Set(Tuple(String, String)).new
 
@@ -88,21 +91,219 @@ module Noir
           handler = handler_from_arg(stripped, arg_source, arg_start, named_handlers)
           next unless handler
 
-          extract_route_hits(handler).each do |hit|
-            key = {hit.method, hit.path}
-            next if seen.includes?(key)
-            seen << key
+          push_handler_routes(file_path, newlines, handler, url_patterns, endpoints, seen)
+        end
+      end
 
-            line = JSRouteExtractor.line_for_char_pos(stripped, handler.body_start_pos + hit.offset)
-            endpoint = Endpoint.new(hit.path, hit.method, Details.new(PathInfo.new(file_path, line)))
-            push_path_params(endpoint)
-            extract_params(handler, hit, endpoint)
-            endpoints << endpoint
+      endpoints
+    end
+
+    # Runtime-native servers: `Bun.serve({ routes, fetch })` and
+    # `Deno.serve(handler)` / `Deno.serve(options, handler)` /
+    # `Deno.serve({ handler })`. The fetch handler body branches on
+    # `req.method` / `new URL(req.url).pathname` exactly like a createServer
+    # listener, so it goes through the same route-hit scan; Bun's `routes`
+    # map is read key by key.
+    def self.extract_runtime_serve(file_path : String, content : String, runtime : String, debug : Bool = false) : Array(Endpoint)
+      return [] of Endpoint unless source_file?(file_path)
+      return [] of Endpoint unless content.includes?("#{runtime}.serve")
+      # Mock servers inside `Deno.test(...)` / `bun:test` suites (Deno names
+      # them `*_test.ts`, which the shared test-stub gate does not know).
+      return [] of Endpoint if content.includes?("Deno.test(") || content.includes?("bun:test")
+      stripped = prepared_source(file_path, content, "#{runtime}.serve", debug)
+      return [] of Endpoint unless stripped
+
+      named_handlers = collect_named_handlers(stripped)
+      url_patterns = collect_url_patterns(stripped)
+      newlines = newline_positions(stripped)
+      endpoints = [] of Endpoint
+      seen = Set(Tuple(String, String)).new
+
+      stripped.scan(RUNTIME_SERVE_CALLS[runtime]) do |match|
+        open_paren = match.end(0) - 1
+        close_paren = JSRouteExtractor.find_matching_paren(stripped, open_paren)
+        next unless close_paren
+
+        split_top_level_args(stripped, open_paren + 1, close_paren).each do |arg_source, arg_start|
+          options_open = arg_source.starts_with?("{") ? arg_start : object_literal_for(stripped, arg_source)
+          unless options_open
+            if handler = handler_from_arg(stripped, arg_source, arg_start, named_handlers)
+              push_handler_routes(file_path, newlines, handler, url_patterns, endpoints, seen)
+            end
+            next
+          end
+
+          each_object_entry(stripped, options_open) do |key, value, value_start, _key_start, method_shorthand|
+            case key
+            when "fetch", "handler"
+              if handler = entry_handler(stripped, value, value_start, named_handlers, method_shorthand)
+                push_handler_routes(file_path, newlines, handler, url_patterns, endpoints, seen)
+              end
+            when "routes", "static" # `static` is the pre-1.2.3 name of `routes`
+              routes_open = value.starts_with?("{") ? value_start : object_literal_for(stripped, value)
+              push_route_map(file_path, stripped, newlines, routes_open, named_handlers, endpoints, seen) if routes_open
+            end
           end
         end
       end
 
       endpoints
+    end
+
+    # Comment-stripped source, or nil (with a debug note) for minified
+    # bundles and test stubs.
+    private def self.prepared_source(file_path : String, content : String, label : String, debug : Bool) : String?
+      stripped = JSRouteExtractor.strip_js_comments(content)
+      if JSRouteExtractor.minified_content?(stripped)
+        STDERR.puts "Skipping #{file_path} for #{label} route extraction (minified/bundled asset)" if debug
+        return
+      end
+      if JSRouteExtractor.test_stub_only?(file_path, stripped)
+        STDERR.puts "Skipping #{file_path} for #{label} route extraction (test-stub/non-server marker)" if debug
+        return
+      end
+      stripped
+    end
+
+    private def self.push_handler_routes(file_path : String,
+                                         newlines : Array(Int32),
+                                         handler : Handler,
+                                         url_patterns : Hash(String, String),
+                                         endpoints : Array(Endpoint),
+                                         seen : Set(Tuple(String, String))) : Nil
+      extract_route_hits(handler, url_patterns).each do |hit|
+        push_route(file_path, newlines, hit, handler.body_start_pos + hit.offset, handler, endpoints, seen)
+      end
+    end
+
+    private def self.push_route(file_path : String,
+                                newlines : Array(Int32),
+                                hit : RouteHit,
+                                pos : Int32,
+                                handler : Handler?,
+                                endpoints : Array(Endpoint),
+                                seen : Set(Tuple(String, String))) : Nil
+      return unless seen.add?({hit.method, hit.path})
+
+      line = (newlines.bsearch_index { |newline| newline >= pos } || newlines.size) + 1
+      endpoint = Endpoint.new(hit.path, hit.method, Details.new(PathInfo.new(file_path, line)))
+      push_path_params(endpoint)
+      extract_params(handler, hit, endpoint) if handler
+      endpoints << endpoint
+    end
+
+    # Char indices of every `\n`, so a route's line is a binary search
+    # rather than a newline count from the top of the file per route.
+    private def self.newline_positions(content : String) : Array(Int32)
+      positions = [] of Int32
+      content.each_char_with_index { |char, idx| positions << idx if char == '\n' }
+      positions
+    end
+
+    # Bun `routes: { "/path": value }`. A value is a per-method object
+    # (`{ GET: fn, POST: fn }`), `false` (fall through to `fetch`), or
+    # anything else — a handler, a static `Response`, an HTML import — which
+    # Bun serves for every method; that is reported as the methods the
+    # handler branches on, or GET.
+    private def self.push_route_map(file_path : String,
+                                    content : String,
+                                    newlines : Array(Int32),
+                                    open_brace : Int32,
+                                    named_handlers : Hash(String, Handler),
+                                    endpoints : Array(Endpoint),
+                                    seen : Set(Tuple(String, String))) : Nil
+      each_object_entry(content, open_brace) do |raw_path, value, value_start, key_start, shorthand|
+        path = normalize_path(raw_path)
+        next if path.empty? || value == "false"
+
+        if value.starts_with?("{")
+          each_object_entry(content, value_start) do |raw_method, method_value, method_start, method_key_start, method_shorthand|
+            method = normalize_method(raw_method)
+            next if method.empty?
+
+            handler = entry_handler(content, method_value, method_start, named_handlers, method_shorthand)
+            push_route(file_path, newlines, RouteHit.new(method, path, 0), method_key_start, handler, endpoints, seen)
+          end
+        else
+          handler = entry_handler(content, value, value_start, named_handlers, shorthand)
+          methods = handler ? branched_methods(handler) : [] of String
+          methods = ["GET"] if methods.empty?
+          methods.each do |method|
+            push_route(file_path, newlines, RouteHit.new(method, path, 0), key_start, handler, endpoints, seen)
+          end
+        end
+      end
+    end
+
+    # Methods a catch-all handler dispatches on: `req.method === "X"`,
+    # `switch (req.method) { case "X": }`, or a `req.method !== "X"` guard.
+    private def self.branched_methods(handler : Handler) : Array(String)
+      refs = request_refs(handler.body, handler.request_name)
+      methods = [] of String
+      scan_if_conditions(handler.body) do |condition|
+        methods.concat(extract_methods(condition, refs.method_refs))
+        refs.method_refs.each do |ref|
+          neq_re = memo_ref_regex("m-neq", ref) do |ref_re|
+            /#{ref_re}(?:\s*\.\s*toUpperCase\s*\(\s*\))?\s*!==?\s*['"]([A-Za-z]+)['"]/i
+          end
+          condition.scan(neq_re) do |match|
+            method = normalize_method(match[1])
+            methods << method unless method.empty?
+          end
+        end
+      end
+      scan_switches(handler.body, refs.method_refs, [] of String) do |kind, values|
+        methods.concat(values) if kind == :method
+      end
+      methods.uniq
+    end
+
+    # Yields `key, value, value_start, key_start, method?` for each entry of
+    # the object literal opening at `open_brace`. A method shorthand
+    # (`fetch(req) { ... }`) yields its parameter list as the value with
+    # `method?` set; a bare shorthand property (`{ routes }`) yields the name
+    # as both key and value, so callers can resolve it as an identifier.
+    # Spreads and computed keys are skipped.
+    private def self.each_object_entry(content : String, open_brace : Int32, & : String, String, Int32, Int32, Bool -> Nil) : Nil
+      close_brace = JSRouteExtractor.find_matching_brace(content, open_brace)
+      return unless close_brace
+
+      split_top_level_args(content, open_brace + 1, close_brace).each do |entry, entry_start|
+        if match = entry.match(/\A(?:(['"`])(.*?)\1|([A-Za-z_$][\w$]*))\s*:/)
+          key = match[2]? || match[3]
+          value_start = skip_whitespace(content, entry_start + match.end(0))
+          yield key, entry[match.end(0)..].strip, value_start, entry_start, false
+        elsif match = entry.match(/\A(?:async\s+)?([A-Za-z_$][\w$]*)\s*\(/)
+          yield match[1], entry[(match.end(0) - 1)..], entry_start + match.end(0) - 1, entry_start, true
+        elsif entry.matches?(/\A[A-Za-z_$][\w$]*\z/)
+          yield entry, entry, entry_start, entry_start, false
+        end
+      end
+    end
+
+    # Handler for an object-entry value: a method shorthand's parameter list,
+    # or anything `handler_from_arg` accepts.
+    private def self.entry_handler(content : String, value : String, value_start : Int32,
+                                   named_handlers : Hash(String, Handler), method_shorthand : Bool) : Handler?
+      return handler_after_params(content, value_start) if method_shorthand
+      handler_from_arg(content, value, value_start, named_handlers)
+    end
+
+    # Brace of `const NAME = { ... }`, for `routes: NAME` / `{ routes }`.
+    private def self.object_literal_for(content : String, name : String) : Int32?
+      match = content.match(/(?:const|let|var)\s+#{Regex.escape(name)}\s*(?::[^=;]+)?=\s*\{/)
+      match.end(0) - 1 if match
+    end
+
+    private def self.collect_url_patterns(content : String) : Hash(String, String)
+      patterns = {} of String => String
+      return patterns unless content.includes?("URLPattern")
+
+      content.scan(URL_PATTERN_DECL) do |match|
+        path = normalize_path(match[3])
+        patterns[match[1]] = path unless path.empty?
+      end
+      patterns
     end
 
     def self.source_file?(file_path : String) : Bool
@@ -117,7 +318,7 @@ module Noir
       aliases.each do |name|
         content.scan(/\b#{Regex.escape(name)}\s*\.\s*createServer\s*\(/) do |match|
           match_start = match.begin(0) || 0
-          if open_paren = content.index("(", match_start)
+          if open_paren = content.index('(', match_start)
             starts << open_paren
           end
         end
@@ -126,7 +327,7 @@ module Noir
       direct_names.each do |name|
         content.scan(/(^|[^.\w$])#{Regex.escape(name)}\s*\(/) do |match|
           match_start = match.begin(0) || 0
-          if open_paren = content.index("(", match_start)
+          if open_paren = content.index('(', match_start)
             starts << open_paren
           end
         end
@@ -134,7 +335,7 @@ module Noir
 
       content.scan(/require\s*\(\s*['"](?:node:)?https?['"]\s*\)\s*\.\s*createServer\s*\(/) do |match|
         match_start = match.begin(0) || 0
-        if open_paren = content.index("(", match_start)
+        if open_paren = content.index('(', match_start)
           starts << open_paren
         end
       end
@@ -236,19 +437,25 @@ module Noir
     end
 
     private def self.function_handler_at(content : String, start_pos : Int32) : Handler?
-      function_idx = content.index(/\bfunction\b/, start_pos)
+      function_idx = content.index(/\bfunction\b/, start_pos, options: Noir::TextFile::MATCH_OPTIONS)
       return unless function_idx
       return if function_idx - start_pos > 80
 
-      param_open = content.index("(", function_idx)
+      param_open = content.index('(', function_idx)
       return unless param_open
+      handler_after_params(content, param_open)
+    end
+
+    # Handler whose parameter list opens at `param_open` and whose block
+    # follows it: a `function` expression or an object method shorthand.
+    private def self.handler_after_params(content : String, param_open : Int32) : Handler?
       param_close = JSRouteExtractor.find_matching_paren(content, param_open)
       return unless param_close
       params = content[(param_open + 1)...param_close]
       request_name = first_param_name(params)
       return unless request_name
 
-      open_brace = content.index("{", param_close)
+      open_brace = content.index('{', param_close)
       return unless open_brace
       close_brace = JSRouteExtractor.find_matching_brace(content, open_brace)
       return unless close_brace
@@ -257,7 +464,10 @@ module Noir
     end
 
     private def self.arrow_handler_at(content : String, start_pos : Int32) : Handler?
-      arrow_idx = content.index("=>", start_pos)
+      # Regex, not `index("=>", pos)`: the String overload walks every char
+      # from 0 to `pos` even on ASCII input, which made each handler lookup
+      # O(file). (The Char overload has an ASCII fast path.)
+      arrow_idx = content.index(/=>/, start_pos, options: Noir::TextFile::MATCH_OPTIONS)
       return unless arrow_idx
       return if arrow_idx - start_pos > 500
 
@@ -273,28 +483,42 @@ module Noir
       Handler.new(request_name, content[(body_start + 1)...close_brace], body_start + 1)
     end
 
+    # `(req: Request): Promise<Response> =>` / `async req =>` read forward
+    # from the head: a backward walk from `=>` stops at a TypeScript return
+    # type instead of the parameter list.
+    ARROW_HEAD = /\G\s*(?:async\s*)?(?:(\()|([A-Za-z_$][\w$]*)\s*=>)/
+
     private def self.arrow_params(content : String, start_pos : Int32, arrow_idx : Int32) : String
-      # Backward walk over a materialized chars array — `String#[](Int)`
-      # re-seeks from byte 0 per access once `content` holds a multi-byte
-      # char, and `find_open_paren_backward` can walk arbitrarily far left.
-      # One O(n) materialization per candidate handler keeps it linear.
-      chars = content.chars
-      left_end = arrow_idx - 1
-      while left_end >= start_pos && chars[left_end].whitespace?
+      if head = content.match(ARROW_HEAD, start_pos, options: Noir::TextFile::MATCH_OPTIONS)
+        return head[2] if head[2]?
+        open_paren = head.end(0) - 1
+        close_paren = JSRouteExtractor.find_matching_paren(content, open_paren)
+        return content[(open_paren + 1)...close_paren] if close_paren && close_paren < arrow_idx
+      end
+
+      # Backward walk over the `start_pos...arrow_idx` window only (at most
+      # 500 chars, see `arrow_handler_at`): the parameter list cannot start
+      # before `start_pos`. Materializing the whole file's chars here made
+      # every `const x = ...` declaration near an arrow O(file), so a module
+      # of N small handlers was O(N * file).
+      window = content[start_pos...arrow_idx]
+      chars = window.chars
+      left_end = chars.size - 1
+      while left_end >= 0 && chars[left_end].whitespace?
         left_end -= 1
       end
 
-      if left_end >= start_pos && chars[left_end] == ')'
+      if left_end >= 0 && chars[left_end] == ')'
         if left_open = find_open_paren_backward(chars, left_end)
-          return content[(left_open + 1)...left_end]
+          return window[(left_open + 1)...left_end]
         end
       end
 
       left_start = left_end
-      while left_start >= start_pos && identifier_char?(chars[left_start])
+      while left_start >= 0 && identifier_char?(chars[left_start])
         left_start -= 1
       end
-      content[(left_start + 1)..left_end]
+      window[(left_start + 1)..left_end]
     end
 
     private def self.find_open_paren_backward(chars : Array(Char), close_idx : Int32) : Int32?
@@ -332,7 +556,7 @@ module Noir
       split_top_level_args(params, 0, params.size).map(&.[0])
     end
 
-    private def self.extract_route_hits(handler : Handler) : Array(RouteHit)
+    private def self.extract_route_hits(handler : Handler, url_patterns : Hash(String, String)) : Array(RouteHit)
       refs = request_refs(handler.body, handler.request_name)
       routes = [] of RouteHit
       method_regions = [] of Region
@@ -340,9 +564,43 @@ module Noir
       method_hits = [] of ValueHit
       path_hits = [] of ValueHit
 
+      # `const m = PATTERN.exec(req.url); if (m) ...` — the canonical Deno
+      # URLPattern shape. A condition testing `m` scopes the route to its
+      # block; an alias only ever tested negated (`if (!m) return 404`)
+      # anchors the route at the `exec` call instead.
+      exec_aliases = [] of Tuple(String, String, Int32) # alias, path, declaration offset
+      url_patterns.each do |name, path|
+        exec_re = memo_ref_regex("u-exec", name) do |ref_re|
+          /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*#{ref_re}\s*\.\s*exec\s*\(/
+        end
+        handler.body.scan(exec_re) do |match|
+          exec_aliases << {match[1], path, match.begin(0)}
+        end
+      end
+      exec_aliases.sort_by!(&.[2])
+      tested_aliases = Set(Int32).new
+
       scan_if_conditions(handler.body) do |condition, offset, block_start, block_end|
         methods = extract_methods(condition, refs.method_refs)
         paths = extract_paths(condition, refs.path_refs)
+        url_patterns.each do |name, path|
+          call_re = memo_ref_regex("u-call", name) do |ref_re|
+            /#{ref_re}\s*\.\s*(?:test|exec)\s*\(/
+          end
+          paths << path if condition.matches?(call_re) && !paths.includes?(path)
+        end
+        # Two blocks may each declare `const match = X.exec(...)`; a condition
+        # reads the latest declaration of that name before it.
+        exec_aliases.map(&.[0]).uniq!.each do |alias_name|
+          decl = exec_aliases.reverse.find { |(name, _, decl_offset)| name == alias_name && decl_offset < offset }
+          next unless decl
+          alias_re = memo_ref_regex("u-alias", alias_name) do |ref_re|
+            /(?<![!.])#{ref_re}/
+          end
+          next unless condition.matches?(alias_re)
+          tested_aliases << decl[2]
+          paths << decl[1] unless paths.includes?(decl[1])
+        end
 
         if !methods.empty? && !paths.empty?
           methods.each do |method|
@@ -369,6 +627,15 @@ module Noir
           path_hits << ValueHit.new(values, case_start, case_start, case_end)
           path_regions << Region.new(values, case_start, case_end)
         end
+      end
+
+      # Only ever tested negated (`if (!m) return 404`): the route is the
+      # rest of the handler after the `exec`, so method branches below the
+      # guard pair with it like they would inside an `if (m) { }` block.
+      exec_aliases.each do |_, path, offset|
+        next if tested_aliases.includes?(offset)
+        path_hits << ValueHit.new([path], offset, offset, handler.body.size)
+        path_regions << Region.new([path], offset, handler.body.size)
       end
 
       path_hits.each do |hit|
@@ -433,6 +700,17 @@ module Noir
         path_refs << match[1] if match.size > 1
       end
 
+      # const { pathname } = new URL(req.url)
+      url_destructure_re = memo_ref_regex("url-destructure", request_name) do |ref_re|
+        /(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*new\s+URL\s*\([^)]*#{ref_re}\s*\.\s*url[^)]*\)/
+      end
+      body.scan(url_destructure_re) do |match|
+        match[1].split(",").each do |raw_part|
+          source_name, local_name = destructured_pair(raw_part)
+          path_refs << local_name if source_name == "pathname"
+        end
+      end
+
       body.scan(/(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*#{req_ref}\b/) do |match|
         next unless match.size > 1
         match[1].split(",").each do |raw_part|
@@ -463,7 +741,7 @@ module Noir
     private def self.scan_if_conditions(body : String, & : String, Int32, Int32?, Int32? -> Nil) : Nil
       body.scan(/\bif\s*\(/) do |match|
         if_start = match.begin(0) || 0
-        open_paren = body.index("(", if_start)
+        open_paren = body.index('(', if_start)
         next unless open_paren
         close_paren = JSRouteExtractor.find_matching_paren(body, open_paren)
         next unless close_paren
@@ -489,7 +767,7 @@ module Noir
                                    & : Symbol, Array(String), Int32, Int32 -> Nil) : Nil
       body.scan(/\bswitch\s*\(/) do |match|
         switch_start = match.begin(0) || 0
-        open_paren = body.index("(", switch_start)
+        open_paren = body.index('(', switch_start)
         next unless open_paren
         close_paren = JSRouteExtractor.find_matching_paren(body, open_paren)
         next unless close_paren
@@ -502,7 +780,7 @@ module Noir
                  next
                end
 
-        open_brace = body.index("{", close_paren)
+        open_brace = body.index('{', close_paren)
         next unless open_brace
         close_brace = JSRouteExtractor.find_matching_brace(body, open_brace)
         next unless close_brace
@@ -722,6 +1000,26 @@ module Noir
 
       body.scan(/JSON\s*\.\s*parse\s*\([^)]*\)\s*\.\s*([A-Za-z_$]\w*)/) do |match|
         endpoint.push_param(Param.new(match[1], "", "json")) if match.size > 1
+      end
+
+      # Fetch-API Request (Bun/Deno): `const { a } = await req.json()`,
+      # `const body = await req.json(); body.a`, `form.get("a")` on formData.
+      body.scan(/(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*(?::[^=;]+)?=\s*\(?\s*await\s+req\s*\.\s*json\s*\(/) do |match|
+        match[1].split(",").each do |raw_param|
+          name = clean_destructured_param(raw_param)
+          endpoint.push_param(Param.new(name, "", "json")) unless name.empty?
+        end
+      end
+      body.scan(/(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=;]+)?=\s*\(?\s*await\s+req\s*\.\s*(json|formData)\s*\(/) do |match|
+        param_type = match[2] == "json" ? "json" : "form"
+        access_re = if param_type == "json"
+                      memo_ref_regex("json-access", match[1]) { |ref_re| /#{ref_re}\s*\??\.\s*([A-Za-z_$][\w$]*)\b(?!\s*\()/ }
+                    else
+                      memo_ref_regex("form-access", match[1]) { |ref_re| /#{ref_re}\s*\??\.\s*(?:get|getAll|has)\s*\(\s*['"]([^'"]+)['"]/ }
+                    end
+        body.scan(access_re) do |access|
+          endpoint.push_param(Param.new(access[1], "", param_type))
+        end
       end
     end
 
