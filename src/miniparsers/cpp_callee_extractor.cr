@@ -130,6 +130,37 @@ module Noir::CppCalleeExtractor
     nil
   end
 
+  # Body of the first definition of free function `name` in `source` (not a
+  # call site, member call or prototype) as `{body, line}`. Run it on
+  # comment-stripped source: a commented-out definition would otherwise win.
+  def function_body(source : String, name : String) : Tuple(String, Int32)?
+    offset = 0
+    while start = source.byte_index(name, offset)
+      offset = start + name.bytesize
+      next if start > 0 && identifier_byte?(source.byte_at(start - 1).unsafe_chr)
+      next if offset < source.bytesize && identifier_byte?(source.byte_at(offset).unsafe_chr)
+      prev = start - 1
+      while prev >= 0 && source.byte_at(prev).unsafe_chr.whitespace?
+        prev -= 1
+      end
+      next if prev >= 0 && source.byte_at(prev).unsafe_chr.in?('.', '>', ':')
+
+      open_paren = find_next_code_char(source, '(', offset)
+      next unless open_paren && source.byte_slice(offset, open_paren - offset).blank?
+      close_paren = find_matching_delimiter(source, open_paren, '(', ')')
+      next unless close_paren
+      body_open = find_next_code_char(source, '{', close_paren + 1)
+      # Only specifiers (`const`, `noexcept`) may sit between `)` and `{`;
+      # anything else is a call inside an expression or a prototype.
+      next unless body_open && source.byte_slice(close_paren + 1, body_open - close_paren - 1).matches?(/\A[\s\w]*\z/)
+      body_close = find_matching_delimiter(source, body_open, '{', '}')
+      next unless body_close
+      return {source.byte_slice(body_open + 1, body_close - body_open - 1), line_number_for(source, body_open)}
+    end
+
+    nil
+  end
+
   def line_number_for(source : String, index : Int32) : Int32
     1 + source.to_slice[0, index].count('\n'.ord.to_u8)
   end

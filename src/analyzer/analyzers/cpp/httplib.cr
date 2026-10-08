@@ -45,15 +45,6 @@ module Analyzer::Cpp
     # naive substring scans.
     VERB_CALL_EVIDENCE_RE = Regex.union(".Get(", ".Post(", ".Put(", ".Delete(", ".Patch(", ".Options(")
 
-    # extract_function_body builds a `/\b#{Regex.escape(name)}\s*\(/` matcher
-    # for each named handler function it resolves. Crystal recompiles an
-    # interpolated regex literal on every evaluation, and this runs once per
-    # non-lambda route call in a scan, so a handler function reused across
-    # several routes would otherwise recompile the identical pattern each
-    # time. Cache the compiled regex per name in an instance Hash + `||=` so
-    # a repeated name reuses the already-compiled Regex.
-    @function_body_regex_cache = Hash(String, Regex).new
-
     def analyze
       include_callee = callees_needed?
 
@@ -131,45 +122,7 @@ module Analyzer::Cpp
       return unless handler_arg
       name = handler_arg.strip.lchop('&').strip
       return unless name.matches?(/\A[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*\z/)
-      simple = name.split("::").last
-      extract_function_body(source, simple)
-    end
-
-    private def extract_function_body(source : String, name : String) : Tuple(String, Int32)?
-      regex = @function_body_regex_cache[name] ||= /\b#{Regex.escape(name)}\s*\(/
-      source.scan(regex) do |match|
-        match_start = source.char_index_to_byte_index(match.begin(0) || 0) || 0
-        # Skip call sites (`foo.name(`, `obj::name(`); we want the definition.
-        prev = previous_code_char(source, match_start)
-        next if prev == '.' || prev == '>' || prev == ':'
-
-        open_paren = Noir::CppCalleeExtractor.find_next_code_char(source, '(', match_start)
-        next unless open_paren
-        close_paren = Noir::CppCalleeExtractor.find_matching_delimiter(source, open_paren, '(', ')')
-        next unless close_paren
-
-        body_open = Noir::CppCalleeExtractor.find_next_code_char(source, '{', close_paren + 1)
-        next unless body_open
-        # A `;` before the `{` means this is a declaration/call, not a definition.
-        semicolon = Noir::CppCalleeExtractor.find_next_code_char(source, ';', close_paren + 1)
-        next if semicolon && semicolon < body_open
-
-        body_close = Noir::CppCalleeExtractor.find_matching_delimiter(source, body_open, '{', '}')
-        next unless body_close
-        return {source.byte_slice(body_open + 1, body_close - body_open - 1), Noir::CppCalleeExtractor.line_number_for(source, body_open)}
-      end
-
-      nil
-    end
-
-    private def previous_code_char(source : String, index : Int32) : Char?
-      cursor = index - 1
-      while cursor >= 0
-        char = source.byte_at(cursor).unsafe_chr
-        return char unless char.whitespace?
-        cursor -= 1
-      end
-      nil
+      Noir::CppCalleeExtractor.function_body(source, name.split("::").last)
     end
 
     # Collects identifiers declared with the qualified type (always) and the
