@@ -328,6 +328,9 @@ module Noir
           orphan_class = nil
         when "annotation"
           pending = [] of LibTreeSitter::TSNode unless orphan_class
+        when "line_comment", "multiline_comment"
+          # `@RequestMapping("/users") // base` puts the comment between
+          # the stray annotations and their class; it must not cut them apart.
         when "call_expression"
           if ctx = orphan_class
             class_name, class_prefixes = ctx

@@ -403,10 +403,11 @@ module Noir
             collect_orphan_function_nodes(child, source, class_name, result)
           end
           orphan_class = nil
-        when "annotation"
+        when "annotation", "line_comment", "multiline_comment"
           # Constructor annotations may be parsed as a sibling between
           # the no-body class_declaration and the call_expression that
-          # carries the class body. Keep the orphan class context alive.
+          # carries the class body (and so may a comment). Keep the orphan
+          # class context alive, as `walk_classes` does.
         when "call_expression"
           if class_name = orphan_class
             collect_orphan_function_nodes(child, source, class_name, result)

@@ -654,6 +654,29 @@ describe Noir::TreeSitterKotlinRouteExtractor do
     ])
   end
 
+  it "keeps a class prefix when a comment trails its stray annotations" do
+    source = <<-KT
+      package demo
+
+      @RestController
+      @RequestMapping("/users") // base
+      class A(private val svc: Foo) {
+          @GetMapping("/{id}")
+          fun get(@PathVariable id: String): String = id
+      }
+
+      @RestController
+      @RequestMapping("/orders")
+      /* block */
+      class B(private val svc: Foo) {
+          @GetMapping("/{id}")
+          fun get(@PathVariable id: String): String = id
+      }
+      KT
+    routes = Noir::TreeSitterKotlinRouteExtractor.extract_routes(source)
+    routes.map(&.path).should eq(["/users/{id}", "/orders/{id}"])
+  end
+
   it "does not recover routes from a misparsed @FeignClient class" do
     source = <<-KT
       package com.ex

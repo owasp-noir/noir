@@ -579,6 +579,8 @@ module Noir
             strays = [] of ResourceAnnotation
             each_annotated_class(child, source, depth + 1, &block)
           end
+        when "line_comment", "multiline_comment"
+          # A comment between stray annotations and their class keeps them paired.
         else
           strays = [] of ResourceAnnotation
           each_annotated_class(child, source, depth + 1, &block)
