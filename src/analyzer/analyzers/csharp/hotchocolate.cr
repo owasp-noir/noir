@@ -309,7 +309,6 @@ module Analyzer::CSharp
       method = opener == "("
       if method
         signature, last = build_signature(lines, masked, index)
-        signature = signature.sub(LEADING_ATTRS, "")
         if list = extract_balanced_param_list(signature)
           split_csharp_parameters(list).each do |decl|
             return {nil, last} if decl.matches?(/\A\s*(?:\[[^\]]*\]\s*)*(?:ref|out)\s/)
