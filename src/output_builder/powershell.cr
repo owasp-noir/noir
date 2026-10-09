@@ -20,28 +20,21 @@ class OutputBuilderPowershell < OutputBuilder
         method_flag = ENUM_METHODS.includes?(method) ? "-Method" : "-CustomMethod"
         cmd = "Invoke-WebRequest #{method_flag} \"#{escape_powershell(method)}\" -Uri \"#{escape_powershell(baked[:url])}\""
 
-        # Build headers hash including cookies
-        header_parts = [] of String
-
-        # Add cookies as Cookie header
-        if !baked[:cookie].empty?
-          cookie_header = baked[:cookie].map { |c| escape_powershell(c) }.join("; ")
-          header_parts << "\"Cookie\"=\"#{cookie_header}\""
-        end
-
-        # Add other headers
-        baked[:header].each do |h|
+        headers = baked[:header].map do |h|
           parts = h.split(": ", 2)
-          if parts.size == 2
-            header_parts << "\"#{escape_powershell(parts[0])}\"=\"#{escape_powershell(parts[1])}\""
-          else
-            header_parts << "\"#{escape_powershell(h)}\"=\"\""
-          end
+          {parts[0], parts[1]? || ""}
         end
 
-        # Add headers if present
-        if !header_parts.empty?
-          cmd += " -Headers @{#{header_parts.join("; ")}}"
+        # Cookies go out as one Cookie header, first, folded together with
+        # any header param that is itself named Cookie.
+        unless baked[:cookie].empty?
+          cookies = headers.compact_map { |name, value| value if name.downcase == "cookie" && !value.empty? }
+          headers.reject! { |name, _| name.downcase == "cookie" }
+          headers.unshift({"Cookie", (cookies + baked[:cookie]).join("; ")})
+        end
+
+        unless headers.empty?
+          cmd += " -Headers #{hash_literal(headers.map { |name, value| {name, "\"#{escape_powershell(value)}\""} })}"
         end
 
         # Upload endpoints (`param_type: file`) need `-Form` so PowerShell
@@ -52,15 +45,12 @@ class OutputBuilderPowershell < OutputBuilder
         form_fields, file_fields = CurlCommand.form_fields(endpoint.params)
 
         if !file_fields.empty?
-          form_parts = [] of String
-          form_fields.each do |name, value|
-            form_parts << "\"#{escape_powershell(name)}\"=\"#{escape_powershell(value)}\""
-          end
+          form_parts = form_fields.map { |name, value| {name, "\"#{escape_powershell(value)}\""} }
           file_fields.each do |name, path_hint|
             filename = path_hint.empty? ? name : path_hint
-            form_parts << "\"#{escape_powershell(name)}\"=Get-Item -Path \"#{escape_powershell(filename)}\""
+            form_parts << {name, "Get-Item -Path \"#{escape_powershell(filename)}\""}
           end
-          cmd += " -Form @{#{form_parts.join("; ")}}"
+          cmd += " -Form #{hash_literal(form_parts)}"
         elsif !baked[:body].empty?
           if baked[:body_type] == "json"
             # Escape for PowerShell string
@@ -76,6 +66,18 @@ class OutputBuilderPowershell < OutputBuilder
         ob_puts cmd
       end
     end
+  end
+
+  # `@{"k"=<expr>; ...}` from `{key, rendered value}` pairs. A PowerShell hash
+  # literal's keys are case-insensitive and a repeat is a parse error
+  # ("Duplicate keys 'x-a' are not allowed in hash literals"), so headers
+  # `X-A` and `x-a` broke the whole command; the first spelling wins.
+  private def hash_literal(entries : Array({String, String})) : String
+    seen = Set(String).new
+    parts = entries.compact_map do |key, value|
+      "\"#{escape_powershell(key)}\"=#{value}" if seen.add?(key.downcase)
+    end
+    "@{#{parts.join("; ")}}"
   end
 
   # Escape special PowerShell characters in strings
