@@ -76,6 +76,15 @@ describe "Rust nested route prefixes" do
     ])
   end
 
+  it "bounds composed tide route-variable paths on long let chains" do
+    lets = (1...5000).map { |i| "    let a#{i} = a#{i - 1}.at(\"/segment\");" }.join("\n")
+    source = "fn main() {\n    let mut app = tide::new();\n    let a0 = app.at(\"/segment\");\n#{lets}\n    a4999.get(h);\n    a10.get(h);\n}\n"
+    routes = routes_of(Analyzer::Rust::Tide.new(options), source)
+    routes.should contain("GET #{"/segment" * 11}")
+    routes.size.should eq(2)
+    routes.each(&.bytesize.should(be <= Analyzer::Rust::Tide::MAX_COMPOSED_VAR_PATH_BYTES + 64))
+  end
+
   it "fans tide .all() out to every method" do
     routes_of(Analyzer::Rust::Tide.new(options), <<-RUST).should eq(ANY_ROUTE_HTTP_METHODS.map { |m| "#{m} /any" }.sort!)
       fn main() {

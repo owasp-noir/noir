@@ -37,7 +37,7 @@ module Analyzer::Rust
 
       Noir::TreeSitter.parse_rust(source) do |root|
         function_index = build_function_index(root, source)
-        var_paths = collect_route_variables(root, source)
+        var_paths = collect_route_variables(root, source, path)
         nest_ranges = collect_nest_ranges(root, source)
 
         walk(root) do |node|
@@ -184,9 +184,16 @@ module Analyzer::Rust
     # bindings whose RHS is a `.at("path")` call somewhere. We use
     # the *outermost* `.at` we find on the RHS, mirroring the legacy
     # `(\w+)\s*=\s*\w+\.at(...)` regex.
+    # Every route variable stores its fully composed path, so a long
+    # `let aN = aN-1.at("/s")` chain would hold O(n²) bytes. Past this
+    # length a variable keeps just its own `.at` literal instead.
+    MAX_COMPOSED_VAR_PATH_BYTES = 2048
+
     private def collect_route_variables(root : LibTreeSitter::TSNode,
-                                        source : String) : Hash(String, String)
+                                        source : String,
+                                        file_path : String) : Hash(String, String)
       vars = {} of String => String
+      capped = false
       walk(root) do |node|
         next unless Noir::TreeSitter.node_type(node) == "let_declaration"
         pattern = Noir::TreeSitter.field(node, "pattern")
@@ -195,9 +202,15 @@ module Analyzer::Rust
 
         value = Noir::TreeSitter.field(node, "value")
         next unless value
-        path = resolve_at_path(value, source, vars) || find_at_call_path(value, source)
+        path = resolve_at_path(value, source, vars)
+        if path && path.bytesize > MAX_COMPOSED_VAR_PATH_BYTES
+          path = nil
+          capped = true
+        end
+        path ||= find_at_call_path(value, source)
         vars[name] = path if path
       end
+      logger.debug "tide: route variable paths over #{MAX_COMPOSED_VAR_PATH_BYTES} bytes kept uncomposed in #{file_path}" if capped
       vars
     end
 
