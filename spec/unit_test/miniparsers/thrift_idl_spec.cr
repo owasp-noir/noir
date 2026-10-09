@@ -113,5 +113,21 @@ describe Noir::ThriftIdl do
       functions.map(&.name).should eq(["get", "items", "put"])
       functions[1].return_type.should eq("stream<Item throws (1: Ex e)>")
     end
+
+    it "recovers from unbalanced brackets in linear time" do
+      deep = "a (" * 20_000 + ")" * 20_000
+      document = Noir::ThriftIdl.parse(<<-THRIFT)
+        service U {
+          void f(1: list<list<i32> x, 2: i32 y)
+          void g(#{"list<" * 20_000})
+          void h(#{deep})
+          void ok(1: i32 z)
+        }
+        THRIFT
+
+      functions = document.services.first.functions
+      functions.map(&.name).should eq(["f", "g", "h", "ok"])
+      functions.first.args.map(&.type).should eq(["list<i32>", "i32"])
+    end
   end
 end

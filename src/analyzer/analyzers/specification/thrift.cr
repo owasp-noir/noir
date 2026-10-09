@@ -16,10 +16,6 @@ module Analyzer::Specification
 
     TAGGER = "thrift_analyzer"
 
-    # Guards against a pathological `extends` chain; real ones are a few
-    # levels deep at most.
-    MAX_EXTENDS_DEPTH = 32
-
     alias Document = Noir::ThriftIdl::Document
     alias ThriftService = Noir::ThriftIdl::Service
     alias ThriftFunction = Noir::ThriftIdl::Function
@@ -57,7 +53,7 @@ module Analyzer::Specification
       document = Noir::ThriftIdl.parse(read_file_content(path))
       @documents[key] = {path, document}
       document
-    rescue IO::Error | File::Error
+    rescue IO::Error
       nil
     end
 
@@ -68,7 +64,7 @@ module Analyzer::Specification
         next unless seen.add?(function.name)
         functions << SourcedFunction.new(function, path, nil)
       end
-      collect_inherited(service, path, document, functions, seen, Set{"#{File.expand_path(path)}::#{service.name}"}, 0)
+      collect_inherited(service, path, document, functions, seen, Set{"#{File.expand_path(path)}::#{service.name}"})
 
       functions.each do |sourced|
         @result << build_endpoint(service.name, sourced)
@@ -76,13 +72,13 @@ module Analyzer::Specification
     end
 
     # Appends the functions `service` inherits through `extends`, nearest
-    # base first. A function the derived service already declares wins.
+    # base first. A function the derived service already declares wins;
+    # `visited` stops an `extends` cycle.
     private def collect_inherited(service : ThriftService, path : String, document : Document,
                                   functions : Array(SourcedFunction), seen : Set(String),
-                                  visited : Set(String), depth : Int32)
+                                  visited : Set(String))
       base_name = service.extends
       return unless base_name
-      return if depth >= MAX_EXTENDS_DEPTH
 
       resolved = resolve_service(base_name, path, document)
       return unless resolved
@@ -93,7 +89,7 @@ module Analyzer::Specification
         next unless seen.add?(function.name)
         functions << SourcedFunction.new(function, base_path, base_name)
       end
-      collect_inherited(base, base_path, base_document, functions, seen, visited, depth + 1)
+      collect_inherited(base, base_path, base_document, functions, seen, visited)
     end
 
     # `extends Base` names a service in the same document;

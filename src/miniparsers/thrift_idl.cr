@@ -134,9 +134,42 @@ module Noir
     end
 
     private class Parser
-      @tokens : Array(Token)
+      CLOSERS = {"}" => "{", ")" => "(", "]" => "["}
 
+      @tokens : Array(Token)
+      @match : Array(Int32)
+      @angle = {} of Int32 => Int32
+
+      # Pairs every bracket in one pass up front. Matching on demand rescans
+      # to the closer each time, which is quadratic on deeply nested or
+      # unclosed input (`f(a (a (a ( … )))`, `list<list<list< …`).
       def initialize(@tokens : Array(Token))
+        last = @tokens.size - 1
+        @match = Array(Int32).new(@tokens.size) { |i| i }
+        opens = {"{" => [] of Int32, "(" => [] of Int32, "[" => [] of Int32}
+        # `<` indices per bracket nesting level, so a `>` never pairs with a
+        # `<` across a group boundary.
+        frames = [[] of Int32]
+        @tokens.each_with_index do |token, i|
+          next unless token.kind.punct?
+          case text = token.text
+          when "{", "(", "["
+            @match[i] = last
+            opens[text] << i
+            frames << [] of Int32
+          when "}", ")", "]"
+            if open = opens[CLOSERS[text]].pop?
+              @match[open] = i
+            end
+            frames.pop if frames.size > 1
+          when "<"
+            frames.last << i
+          when ">"
+            if open = frames.last.pop?
+              @angle[open] = i
+            end
+          end
+        end
       end
 
       def parse : Document
@@ -328,48 +361,12 @@ module Noir
       # when the bracket is never closed. String tokens are already whole, so
       # a bracket inside a literal never counts.
       private def matching(pos : Int32) : Int32
-        open = @tokens[pos].text
-        close = case open
-                when "{" then "}"
-                when "(" then ")"
-                when "[" then "]"
-                else          return pos
-                end
-        depth = 0
-        cur = pos
-        while cur < @tokens.size
-          token = @tokens[cur]
-          if token.kind.punct?
-            if token.text == open
-              depth += 1
-            elsif token.text == close
-              depth -= 1
-              return cur if depth == 0
-            end
-          end
-          cur += 1
-        end
-        @tokens.size - 1
+        @match[pos]
       end
 
       private def matching_angle(pos : Int32, limit : Int32) : Int32?
-        depth = 0
-        cur = pos
-        while cur < limit
-          token = @tokens[cur]
-          if token.kind.punct?
-            case token.text
-            when "<" then depth += 1
-            when ">"
-              depth -= 1
-              return cur if depth == 0
-            when "(", "{", "["
-              cur = matching(cur)
-            end
-          end
-          cur += 1
-        end
-        nil
+        close = @angle[pos]?
+        close if close && close < limit
       end
 
       private def word?(token : Token) : Bool
