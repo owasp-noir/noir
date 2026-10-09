@@ -22,16 +22,20 @@ module Detector::Specification
       # on every YAML file of the scan (this detector is non-idempotent, so
       # there is no early-exit). Both checks must pass, so the order is free.
       return false unless route_present?(file_contents)
-      return false unless valid_yaml_documents?(file_contents)
+      return false unless valid_yaml_documents?(filename, file_contents)
 
       CodeLocator.instance.push(Noir::LocatorKeys::K8S_GATEWAY_API_SPEC, filename)
       true
     end
 
-    private def valid_yaml_documents?(content : String) : Bool
-      YAML.parse_all(content)
+    # A Helm template is read through `parse_all_yaml_template`, as the
+    # analyzer reads it. What still fails is recorded rather than dropped:
+    # the markers above already say this is a route manifest.
+    private def valid_yaml_documents?(filename : String, content : String) : Bool
+      parse_all_yaml_template(content)
       true
-    rescue
+    rescue e
+      record_unparsable_document(filename, e)
       false
     end
 
