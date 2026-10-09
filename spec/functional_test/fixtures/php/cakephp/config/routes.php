@@ -48,3 +48,5 @@ return static function (RouteBuilder $routes) {
         $routes->get('/ping', ['controller' => 'Legacy', 'action' => 'ping']);
     });
 };
+// $routes->connect('/dead-line', ['controller' => 'Pages', 'action' => 'x']);
+/* Router::connect('/dead-block', ['controller' => 'Pages']); */

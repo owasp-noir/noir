@@ -58,3 +58,5 @@ add_action('rest_api_init', function () {
         'callback' => 'mtp_comments',
     ));
 });
+// register_rest_route('myplugin/v1', '/dead-line', array('methods' => 'GET'));
+/* register_rest_route('myplugin/v1', '/dead-block', array('methods' => 'POST')); */

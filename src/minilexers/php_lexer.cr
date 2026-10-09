@@ -312,6 +312,32 @@ module Noir
       after == 0 || pos >= @spans[after - 1][2]
     end
 
+    # The source with its comments blanked to spaces and everything else —
+    # string literals, heredocs, inline HTML — left as written. Same length and
+    # line breaks as the source, so offsets and line numbers computed on it
+    # hold for the original. This is what lets a regex-driven adapter skip
+    # `// $app->get('/old')` without losing the route text inside strings.
+    #
+    # Docblocks (`/** … */`) are kept: Doctrine-style `@Route` annotations
+    # live in them, and PHP only reads annotations from that form.
+    def without_comments : String
+      comments = @spans.select { |(kind, s, _)| kind == :comment && !docblock?(s) }
+      return @chars.join if comments.empty?
+
+      chars = @chars.dup
+      comments.each do |(_, s, e)|
+        (s...e).each { |i| chars[i] = ' ' unless chars[i] == '\n' || chars[i] == '\r' }
+      end
+      chars.join
+    end
+
+    # `/**` followed by whitespace — PHP's T_DOC_COMMENT. `/**/` is a plain
+    # empty comment.
+    private def docblock?(start : Int32) : Bool
+      @chars[start + 1]? == '*' && @chars[start + 2]? == '*' &&
+        !!@chars[start + 3]?.try(&.whitespace?)
+    end
+
     # Index of the first top-level expression terminator (`,` `;` or a closing
     # `) ] }` that would pop above the starting level) at or after `start_pos`.
     # Mirrors `find_arrow_expression_end`.

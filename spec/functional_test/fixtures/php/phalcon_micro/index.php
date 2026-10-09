@@ -39,3 +39,5 @@ $invoices->post('/add', 'add');
 $app->mount($invoices);
 
 $app->run();
+// $app->get('/dead-line', function () {});
+/* $app->post('/dead-block', function () {}); */

@@ -28,7 +28,7 @@ module Analyzer::Php
 
       include_callee = callees_needed?
 
-      content = read_file_content(path)
+      content = php_code(read_file_content(path))
 
       # 1. Explicit Route definitions
       if is_route

@@ -149,7 +149,7 @@ module Analyzer::Php
     private def analyze_controller(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
 
-      content = read_file_content(path)
+      content = php_code(read_file_content(path))
       # A real action controller has an execute() method. Anchor the match
       # so `executeInternal()` / `executeAny()` helpers don't slip through,
       # and skip abstract base classes under /Controller/.

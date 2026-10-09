@@ -1,5 +1,6 @@
 require "../../models/analyzer"
 require "../../miniparsers/php_callee_extractor"
+require "../../minilexers/php_lexer"
 require "../../utils/utils.cr"
 
 require "./file_scan_engine"
@@ -54,6 +55,14 @@ module Analyzer::Php
       base = File.basename(relative_path)
       return true if base.ends_with?("Test.php")
       base.ends_with?("Tests.php")
+    end
+
+    # `content` with comments blanked (docblocks kept), offsets and lines
+    # intact — see `Noir::PhpLexer#without_comments`. Adapters that pull
+    # routes out with regexes run them on this so commented-out routes stay
+    # dead. Call it after the adapter's relevance gate: it lexes the file.
+    protected def php_code(content : String) : String
+      Noir::PhpLexer.new(content).without_comments
     end
 
     protected def php_base_path_for(path : String) : String

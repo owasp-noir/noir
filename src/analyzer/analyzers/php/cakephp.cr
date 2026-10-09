@@ -31,7 +31,7 @@ module Analyzer::Php
       endpoints = [] of Endpoint
       include_callee = callees_needed?
       begin
-        content = read_file_content(path)
+        content = php_code(read_file_content(path))
         return endpoints if content.matches?(HYPERF_MARKER_RE)
         endpoints = analyze_routes_content(content, "", path, include_callee)
       rescue e

@@ -45,3 +45,5 @@ $router->addRoute(['GET', 'POST'], '/login', function () {
     $email = $request->input('email');
     return response()->json(['email' => $email]);
 });
+// $router->get('/dead-line', 'A@b');
+/* $router->post('/dead-block', 'A@b'); */

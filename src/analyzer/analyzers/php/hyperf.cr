@@ -23,6 +23,7 @@ module Analyzer::Php
 
       content = read_file_content(path)
       if hyperf_relevant?(content)
+        content = php_code(content)
         endpoints.concat(analyze_annotation_routes(content, path, include_callee))
         endpoints.concat(analyze_procedural_routes(content, "", path, include_callee))
       end

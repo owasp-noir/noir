@@ -22,15 +22,15 @@ module Analyzer::Php
 
       content = read_file_content(path)
 
-      if path.includes?("config") && content.includes?("urlManager")
-        endpoints.concat(analyze_url_manager(path, content))
-      end
+      url_manager = path.includes?("config") && content.includes?("urlManager")
+      controller = path.ends_with?("Controller.php") ||
+                   (content.includes?("Controller") && content.includes?("extends") &&
+                    !!content.match(/class\s+\w+Controller\s+extends/))
+      return endpoints unless url_manager || controller
 
-      if path.ends_with?("Controller.php") ||
-         (content.includes?("Controller") && content.includes?("extends") &&
-         !!content.match(/class\s+\w+Controller\s+extends/))
-        endpoints.concat(analyze_controller(path, content, include_callee))
-      end
+      content = php_code(content)
+      endpoints.concat(analyze_url_manager(path, content)) if url_manager
+      endpoints.concat(analyze_controller(path, content, include_callee)) if controller
 
       endpoints
     end

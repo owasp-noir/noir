@@ -40,3 +40,5 @@ $routes->group('tenant/(:num)', function ($routes) {
 $routes->environment('development', function ($routes) {
     $routes->get('debug', 'Debug::index');
 });
+// $routes->get('dead-line', 'Home::index');
+/* $routes->post('dead-block', 'Home::index'); */
