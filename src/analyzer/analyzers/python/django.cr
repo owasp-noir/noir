@@ -14,7 +14,8 @@ module Analyzer::Python
 
     # Regular expressions for extracting Django URL configurations
     REGEX_ROOT_URLCONF = /\s*ROOT_URLCONF\s*=\s*r?['"]([^'"\\]*)['"]/
-    REGEX_INCLUDE_URLS = /\binclude\s*\(\s*r?['"]([^'"\\]*)['"]/
+    # The optional `(` admits the tuple form `include(("app.urls", "app"))`.
+    REGEX_INCLUDE_URLS = /\binclude\s*\(\s*(?:\(\s*)?r?['"]([^'"\\]*)['"]/
 
     # `def get(...)` / `async def post(...)` method heads in class-based
     # views. Precompiled — an interpolated literal would be recompiled on
@@ -324,23 +325,16 @@ module Analyzer::Python
           route, view = route_mapping
           route = normalize_django_route(route)
           url = "/#{django_urls.prefix}/#{route}".gsub(/\/+/, "/")
-          new_django_urls = nil
-          view.scan(REGEX_INCLUDE_URLS) do |include_pattern_match|
-            # Detect new URL configurations
-            next if include_pattern_match.size != 2
-            new_route_path = "#{@django_base_path}/#{include_pattern_match[1].gsub(".", "/")}.py"
-
-            if File.exists?(new_route_path)
-              new_django_urls = DjangoUrls.new("#{django_urls.prefix}#{route}", new_route_path, django_urls.basepath)
-              unless @visited_url_paths.has_key? new_django_urls.filepath
-                extract_endpoints(new_django_urls).each do |endpoint|
-                  append_code_path(endpoint.details, PathInfo.new(new_route_path))
-                  endpoints << endpoint
-                end
+          if new_route_path = resolve_dotted_include_target(view)
+            new_django_urls = DjangoUrls.new("#{django_urls.prefix}#{route}", new_route_path, django_urls.basepath)
+            unless @visited_url_paths.has_key? new_django_urls.filepath
+              extract_endpoints(new_django_urls).each do |endpoint|
+                append_code_path(endpoint.details, PathInfo.new(new_route_path))
+                endpoints << endpoint
               end
             end
+            next
           end
-          next if new_django_urls
 
           if app_config_path = resolve_django_app_config_include_path(view, app_config_refs)
             extract_endpoints_from_django_app_config(join_url_parts(django_urls.prefix, route).lchop("/"), app_config_path, route_path).each do |endpoint|
@@ -1020,12 +1014,15 @@ module Analyzer::Python
     end
 
     # Resolve `include("app.sub.urls")` — the dotted-module form — against
-    # the project root, returning the urlconf file it names.
+    # the project root, returning the urlconf file it names: a module
+    # (`app/sub/urls.py`) or a package (`app/sub/urls/__init__.py`).
     private def resolve_dotted_include_target(view : ::String) : ::String?
       view.scan(REGEX_INCLUDE_URLS) do |match|
         next if match.size != 2
-        candidate = "#{@django_base_path}/#{match[1].gsub(".", "/")}.py"
-        return candidate if File.exists?(candidate)
+        module_path = "#{@django_base_path}/#{match[1].gsub(".", "/")}"
+        {"#{module_path}.py", "#{module_path}/__init__.py"}.each do |candidate|
+          return candidate if File.file?(candidate)
+        end
       end
 
       nil
