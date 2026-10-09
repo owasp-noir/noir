@@ -1470,6 +1470,7 @@ module Analyzer::Ruby
 
       this_method = ""
       permit_buf : String? = nil
+      permit_mask = ""
       permit_lines = 0
 
       controller_content.each_line.with_index do |raw_line, index|
@@ -1495,15 +1496,19 @@ module Analyzer::Ruby
 
         # `permit(...)` may wrap across lines, so collect lines until its parens
         # balance (bounded: an unbalanced `permit(` must not swallow the file).
+        # Parens and the `permit(` itself are found on a quote-blanked twin of
+        # the buffer, so `"calling permit( now"` neither opens nor closes it.
         if buf = permit_buf
           permit_buf = "#{buf} #{line}"
+          permit_mask = "#{permit_mask} #{blank_quoted(line)}"
           permit_lines += 1
-        elsif line.includes?("permit") && line.matches?(/permit\s*\(/)
+        elsif line.includes?("permit") && (masked = blank_quoted(line)).matches?(/permit\s*\(/)
           permit_buf = line
+          permit_mask = masked
           permit_lines = 1
         end
         if buf = permit_buf
-          if args = permit_args(buf)
+          if args = permit_args(buf, permit_mask)
             permit_buf = nil
             permit_names(args).each do |name|
               next if this_method.empty?
@@ -1555,17 +1560,17 @@ module Analyzer::Ruby
       data
     end
 
-    PERMIT_MAX_LINES = 30
+    PERMIT_MAX_LINES = 200
     PERMIT_SPLIT     = Noir::TopLevelSplit::Rules.new
 
     # Text between the parens of the first `permit(`, or nil while unbalanced.
-    # ponytail: quotes are not tracked, so a ")" inside a permit string literal
-    # closes early; permit lists hold symbols in practice.
-    private def permit_args(text : String) : String?
-      return unless m = text.match(/permit\s*\(/)
+    # `mask` is `text` with string literals blanked (see `blank_quoted`); the
+    # parens are counted on it and the result is sliced from `text`.
+    private def permit_args(text : String, mask : String) : String?
+      return unless m = mask.match(/permit\s*\(/)
       open = m.byte_end(0)
       depth = 0
-      text.to_slice[open..].each_with_index do |b, i|
+      mask.to_slice[open..].each_with_index do |b, i|
         depth += 1 if b == '('.ord
         if b == ')'.ord
           return text.byte_slice(open, i) if depth == 0
@@ -1573,6 +1578,31 @@ module Analyzer::Ruby
         end
       end
       nil
+    end
+
+    # `line` with the inside of '...' / "..." literals blanked byte-for-byte,
+    # so byte offsets still line up with `line`.
+    private def blank_quoted(line : String) : String
+      return line unless line.includes?('"') || line.includes?('\'')
+      bytes = line.to_slice.dup
+      quote = 0_u8
+      escaped = false
+      bytes.each_with_index do |b, i|
+        if quote == 0
+          quote = b if b == '"'.ord || b == '\''.ord
+          next
+        end
+        if escaped
+          escaped = false
+        elsif b == '\\'.ord
+          escaped = true
+        elsif b == quote
+          quote = 0_u8
+          next
+        end
+        bytes[i] = ' '.ord.to_u8
+      end
+      String.new(bytes)
     end
 
     # Param names from a permit argument list: the leading key of each

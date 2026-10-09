@@ -2,7 +2,13 @@ class ArticlesController < ApplicationController
   # permit wrapped across lines
   def create
     @article = Article.create(article_params)
-    logger.info "unbalanced permit( in a string"
+    # a `permit(` inside a string literal must not open a permit list
+    logger.info "calling permit( now"
+    Thing.create(params.require(:thing).permit(:alpha, :beta))
+    # an unclosed `permit(` (heredoc body) must not swallow the next action
+    note = <<~TXT
+      see permit( docs
+    TXT
   end
 
   # nested `key: []` / `key: {}` entries

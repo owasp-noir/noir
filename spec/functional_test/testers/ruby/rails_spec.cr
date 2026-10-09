@@ -47,6 +47,8 @@ expected_endpoints = [
   Endpoint.new("/articles", "POST", [
     Param.new("title", "", "form"),
     Param.new("body", "", "form"),
+    Param.new("alpha", "", "form"),
+    Param.new("beta", "", "form"),
   ]),
   Endpoint.new("/articles/1", "PUT", [
     Param.new("one", "", "form"),
