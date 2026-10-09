@@ -10,6 +10,7 @@ outer = Blueprint("outer", __name__, url_prefix="/outer")
 inner = Blueprint("inner", __name__, url_prefix="/inner")
 emptied = Blueprint("emptied", __name__, url_prefix="/gone")
 kept = Blueprint("kept", __name__, url_prefix="/kept")
+twice = Blueprint("twice", __name__)
 
 
 @override.route("/o")
@@ -37,6 +38,11 @@ async def k():
     return ""
 
 
+@twice.route("/t")
+async def t():
+    return ""
+
+
 parent.register_blueprint(child)
 outer.register_blueprint(inner, url_prefix="/mounted-inner")
 
@@ -46,3 +52,6 @@ app.register_blueprint(parent, url_prefix="/api")
 app.register_blueprint(outer)
 app.register_blueprint(emptied, url_prefix="")
 app.register_blueprint(kept)
+# Registered twice: served under both prefixes.
+app.register_blueprint(twice, url_prefix="/v1")
+app.register_blueprint(twice, url_prefix="/v2")

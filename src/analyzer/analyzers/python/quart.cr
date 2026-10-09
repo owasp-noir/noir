@@ -51,7 +51,7 @@ module Analyzer::Python
       quart_instances["app"] ||= "" # Common Quart instance name
       blueprint_prefixes = Hash(::String, ::String).new
       path_api_instances = Hash(::String, Hash(::String, ::String)).new
-      register_blueprint = Hash(::String, Hash(::String, ::String)).new
+      register_blueprint = Hash(::String, Hash(::String, Array(::String))).new
       blueprint_mounts = Hash(::String, Array(Tuple(::String, ::String, ::String?))).new
 
       python_files = python_source_files
@@ -152,8 +152,7 @@ module Analyzer::Python
                 if parser.@global_variables.has_key?(blueprint_name)
                   gv = parser.@global_variables[blueprint_name]
                   if gv.type == "Blueprint"
-                    register_blueprint[gv.path] ||= Hash(::String, ::String).new
-                    register_blueprint[gv.path][blueprint_name] = url_prefix_match[1]
+                    add_registered_prefix(register_blueprint, gv.path, blueprint_name, url_prefix_match[1])
                     resolved = true
                   end
                 end
@@ -163,8 +162,7 @@ module Analyzer::Python
                   if import_map_cache.has_key?(blueprint_name)
                     source_file, _package_type = import_map_cache[blueprint_name]
                     if !source_file.empty? && File.exists?(source_file)
-                      register_blueprint[source_file] ||= Hash(::String, ::String).new
-                      register_blueprint[source_file][blueprint_name] = url_prefix_match[1]
+                      add_registered_prefix(register_blueprint, source_file, blueprint_name, url_prefix_match[1])
                     end
                   end
                 end
@@ -178,18 +176,18 @@ module Analyzer::Python
       # the file that declared the Blueprint.
       own_api_instances = clone_path_api_instances(path_api_instances)
       register_blueprint.each do |path, blueprint_info|
-        blueprint_info.each do |blueprint_name, blueprint_prefix|
+        blueprint_info.each do |blueprint_name, registered_prefixes|
           if path_api_instances.has_key?(path)
             api_instances = path_api_instances[path]
             if api_instances.has_key?(blueprint_name)
               # The registration's url_prefix replaces the blueprint's
               # own one (Quart reuses Flask's sansio Blueprint).
-              api_instances[blueprint_name] = blueprint_prefix
+              api_instances[blueprint_name] = registered_prefixes.first
             end
           end
         end
       end
-      apply_nested_blueprint_prefixes(path_api_instances, own_api_instances, blueprint_mounts)
+      apply_nested_blueprint_prefixes(path_api_instances, own_api_instances, blueprint_mounts, register_blueprint)
 
       # Iterate through the collected route decorations and extract endpoints
       @routes.each do |router_name, router_info_list|
@@ -199,6 +197,7 @@ module Analyzer::Python
           lines = source.lines
           api_instances = path_api_instances[path]?
           prefix = (api_instances && api_instances.has_key?(router_name)) ? api_instances[router_name] : ""
+          prefixes = route_prefixes(register_blueprint, path, router_name, prefix)
 
           class_def_index = Noir::PythonRouteExtractor.find_def_line(lines, line_index, :down)
           next if class_def_index >= lines.size
@@ -226,18 +225,20 @@ module Analyzer::Python
             # methods array is forced to GET upstream so the filter
             # plumbing doesn't drop it. Skip param extraction — Quart
             # WebSocket handlers don't read `request.<field>`.
-            route_url = "#{prefix}#{route_path}"
-            route_url = "/#{route_url}" unless route_url.starts_with?("/")
-            details = Details.new(PathInfo.new(path, line_index + 1))
-            endpoint = Endpoint.new(route_url.gsub("//", "/"), "GET", details)
-            endpoint.protocol = "ws"
-            handler_callees.each { |c| endpoint.push_callee(c) }
-            result << endpoint
+            prefixes.each do |route_prefix|
+              route_url = "#{route_prefix}#{route_path}"
+              route_url = "/#{route_url}" unless route_url.starts_with?("/")
+              details = Details.new(PathInfo.new(path, line_index + 1))
+              endpoint = Endpoint.new(route_url.gsub("//", "/"), "GET", details)
+              endpoint.protocol = "ws"
+              handler_callees.each { |c| endpoint.push_callee(c) }
+              result << endpoint
+            end
             next
           end
 
           default_method = HTTP_METHODS.find { |http_method| function_name.downcase == http_method.downcase } || "GET"
-          get_endpoints(default_method, route_path, extra_params, codeblock_lines, prefix).each do |route_endpoint|
+          prefixes.flat_map { |p| get_endpoints(default_method, route_path, extra_params, codeblock_lines, p) }.each do |route_endpoint|
             route_endpoint.details = Details.new(PathInfo.new(path, line_index + 1))
             handler_callees.each { |c| route_endpoint.push_callee(c) }
             result << route_endpoint
@@ -252,6 +253,7 @@ module Analyzer::Python
           lines = source.lines
           api_instances = path_api_instances[path]?
           prefix = (api_instances && api_instances.has_key?(router_name)) ? api_instances[router_name] : ""
+          prefixes = route_prefixes(register_blueprint, path, router_name, prefix)
 
           function_path = path
           function_source = source
@@ -285,7 +287,7 @@ module Analyzer::Python
             source: function_source,
           )
 
-          get_endpoints(route_methods.first, route_path, extra_params, codeblock_lines, prefix).each do |route_endpoint|
+          prefixes.flat_map { |p| get_endpoints(route_methods.first, route_path, extra_params, codeblock_lines, p) }.each do |route_endpoint|
             route_endpoint.details = Details.new(PathInfo.new(path, line_index + 1))
             handler_callees.each { |c| route_endpoint.push_callee(c) }
             result << route_endpoint
@@ -300,6 +302,7 @@ module Analyzer::Python
           lines = source.lines
           api_instances = path_api_instances[path]?
           prefix = (api_instances && api_instances.has_key?(router_name)) ? api_instances[router_name] : ""
+          prefixes = route_prefixes(register_blueprint, path, router_name, prefix)
 
           class_def_index = find_python_class_def(lines, class_name)
           next if class_def_index < 0
@@ -326,7 +329,7 @@ module Analyzer::Python
               source: source,
             )
 
-            get_endpoints(http_method, route_path, extra_params, codeblock_lines, prefix).each do |route_endpoint|
+            prefixes.flat_map { |p| get_endpoints(http_method, route_path, extra_params, codeblock_lines, p) }.each do |route_endpoint|
               route_endpoint.details = Details.new(PathInfo.new(path, line_index + 1))
               handler_callees.each { |c| route_endpoint.push_callee(c) }
               result << route_endpoint
