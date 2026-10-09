@@ -88,7 +88,7 @@ module Analyzer::Typescript
     end
 
     private def imported_fields(path : String, name : String, specifier : String) : Array(Noir::EncoreExtractor::TsField)
-      target = Noir::ImportGraph.resolve_relative_import(path, specifier, boundary: @base_path) || return [] of Noir::EncoreExtractor::TsField
+      target = Noir::ImportGraph.resolve_relative_import(path, specifier, boundary: configured_base_for(path)) || return [] of Noir::EncoreExtractor::TsField
       Noir::EncoreExtractor.declared_fields(read_file_content(target), name)
     rescue IO::Error
       [] of Noir::EncoreExtractor::TsField
