@@ -244,6 +244,12 @@ class Deliver
   # `body:` is silently swallowed into `**options` and the request goes out
   # with Content-Length: 0. Combined with `json: true`, `form:` ships the raw
   # String through as the JSON payload (verified against Crest 1.4.x in spec).
+  #
+  # `max_redirects: 0` with Crest's default `handle_errors: true` turns a 3xx
+  # into a recorded delivery failure. Following it was never a delivery:
+  # Crest re-issues every redirect as a body-less GET, and it copies the
+  # request headers, so a `--probe-header` token went to whatever host the
+  # `Location` named.
   protected def post_export(target : String, warn_label : String, gap_label : String, &)
     url, body = yield
 
@@ -261,6 +267,7 @@ class Deliver
       form: body,
       headers: export_headers,
       json: true,
+      max_redirects: 0,
       connect_timeout: EXPORT_CONNECT_TIMEOUT,
       read_timeout: export_read_timeout
     )

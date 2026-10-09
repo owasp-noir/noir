@@ -1,4 +1,5 @@
 require "../../spec_helper"
+require "http/server"
 require "../../../src/deliver/send_req"
 require "../../../src/deliver/send_webhook"
 require "../../../src/deliver/send_elasticsearch"
@@ -58,6 +59,41 @@ describe "undelivered export reporting" do
     gaps = deliver_gaps
     gaps.size.should eq(1)
     gaps.first.message.should contain("probe delivery: 1 request could not be sent")
+  end
+
+  # Crest followed the 307 as a body-less GET carrying the request headers,
+  # so a `--probe-header` token reached whatever host `Location` named and
+  # the catalog reached nobody, all while the export reported success.
+  it "records a redirected export instead of following it to another host" do
+    stolen = [] of String?
+    other = HTTP::Server.new do |ctx|
+      stolen << ctx.request.headers["Authorization"]?
+      ctx.response.print "ok"
+    end
+    other_address = other.bind_tcp("127.0.0.1", 0)
+    spawn { other.listen }
+
+    redirector = HTTP::Server.new do |ctx|
+      ctx.response.status_code = 307
+      ctx.response.headers["Location"] = "http://127.0.0.1:#{other_address.port}/steal"
+    end
+    redirect_address = redirector.bind_tcp("127.0.0.1", 0)
+    spawn { redirector.listen }
+    Fiber.yield
+
+    begin
+      options = create_test_options
+      options["probe_header"] = YAML::Any.new([YAML::Any.new("Authorization: Bearer SECRET")])
+      SendWebhook.new(options).run(endpoints, "http://127.0.0.1:#{redirect_address.port}/hook")
+
+      # `run` is synchronous, so a followed redirect has landed by now.
+      stolen.should be_empty
+      deliver_gaps.size.should eq(1)
+      deliver_gaps.first.message.should contain("webhook delivery")
+    ensure
+      redirector.close
+      other.close
+    end
   end
 
   # A delivery that worked must leave no trace, or every successful export
