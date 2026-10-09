@@ -71,6 +71,7 @@ module Noir::LocatorKeys
     {:RAML_SPEC, "raml-spec", :array, :detect_scoped, "detector/specification/raml"},
     {:SERVERLESS_FRAMEWORK_SPEC, "serverless-framework-spec", :array, :detect_scoped, "detector/specification/serverless_framework"},
     {:SMITHY_SPEC, "smithy-spec", :array, :detect_scoped, "detector/specification/smithy"},
+    {:SPRING_CLOUD_GATEWAY_SPEC, "spring-cloud-gateway-spec", :array, :detect_scoped, "detector/specification/spring_cloud_gateway"},
     {:STRAPI_ROUTES, "strapi-routes", :array, :detect_scoped, "detector/specification/strapi"},
     {:STRAPI_SCHEMA, "strapi-schema", :array, :detect_scoped, "detector/specification/strapi"},
     {:SUPABASE_CONFIG, "supabase-config", :array, :detect_scoped, "detector/specification/supabase"},
