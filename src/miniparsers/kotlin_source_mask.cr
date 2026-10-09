@@ -39,6 +39,9 @@ module Noir
     BACKSLASH    = '\\'.ord.to_u8
     NEWLINE      = '\n'.ord.to_u8
     SPACE        = ' '.ord.to_u8
+    DOLLAR       = '$'.ord.to_u8
+    OPEN_BRACE   = '{'.ord.to_u8
+    CLOSE_BRACE  = '}'.ord.to_u8
 
     # UTF-8 continuation bytes (`10xxxxxx`) carry no character of their
     # own, so they contribute no space to the mask.
@@ -57,6 +60,11 @@ module Noir
       quote = 0_u8
       raw_string = false
       escaped = false
+      # Open `${...}` templates, innermost last: the string each returns to
+      # and the `{` depth inside it. Template code is code, so the `"/*"` in
+      # `"${"/*"}"` is a nested string, not a comment opener.
+      templates = [] of Tuple(UInt8, Bool)
+      template_depths = [] of Int32
       i = 0
 
       String.build(source.bytesize) do |io|
@@ -86,7 +94,15 @@ module Noir
               i += 1
             end
           when :string
-            if raw_string && i + 2 < bytes.size && byte == DOUBLE_QUOTE && bytes[i + 1] == DOUBLE_QUOTE && bytes[i + 2] == DOUBLE_QUOTE
+            if !escaped && (raw_string || quote == DOUBLE_QUOTE) &&
+               i + 1 < bytes.size && byte == DOLLAR && bytes[i + 1] == OPEN_BRACE
+              io.write_byte(mask_strings ? SPACE : DOLLAR)
+              io.write_byte(mask_strings ? SPACE : OPEN_BRACE)
+              i += 2
+              templates << {quote, raw_string}
+              template_depths << 0
+              mode = :code
+            elsif raw_string && i + 2 < bytes.size && byte == DOUBLE_QUOTE && bytes[i + 1] == DOUBLE_QUOTE && bytes[i + 2] == DOUBLE_QUOTE
               3.times { io.write_byte(mask_strings ? SPACE : DOUBLE_QUOTE) }
               i += 3
               mode = :code
@@ -134,8 +150,23 @@ module Noir
               escaped = false
               i += 1
               mode = :string
+            elsif !templates.empty? && byte == CLOSE_BRACE && template_depths.last == 0
+              io.write_byte(mask_strings ? SPACE : byte)
+              i += 1
+              quote, raw_string = templates.pop
+              template_depths.pop
+              escaped = false
+              mode = :string
             else
-              io.write_byte(byte)
+              unless templates.empty?
+                template_depths[-1] += 1 if byte == OPEN_BRACE
+                template_depths[-1] -= 1 if byte == CLOSE_BRACE
+              end
+              if mask_strings && !templates.empty?
+                blank(io, byte)
+              else
+                io.write_byte(byte)
+              end
               i += 1
             end
           end

@@ -59,4 +59,12 @@ describe Noir::KotlinSourceMask do
     source = %(val q = """SELECT * FROM t WHERE a = "b"""" + x)
     Noir::KotlinSourceMask.code_only(source).should eq(source)
   end
+
+  it "treats a string template's body as code, not a comment opener" do
+    # The `"/*"` inside `${...}` used to close the outer string early and
+    # open a block comment that blanked the rest of the file.
+    source = %(val t = "x${f("/*") + "}"}y" // c\nfun k2() = """r${"}"}""")
+    Noir::KotlinSourceMask.code_only(source).should eq(%(val t = "x${f("/*") + "}"}y"#{" " * 5}\nfun k2() = """r${"}"}"""))
+    Noir::KotlinSourceMask.visible(source).should eq(%(val t =#{" " * 26}\nfun k2() =#{" " * 14}))
+  end
 end
