@@ -682,6 +682,41 @@ module Analyzer::Specification
       arr.compact_map(&.as_s?).reject(&.empty?)
     end
 
+    # Line of the first match of `re` for each distinct capture-1 value, in one
+    # pass. `JSON::Any` keeps no positions, so array-shaped configs (Ocelot
+    # `Routes[]`, KrakenD `endpoints[]`) find a route's line by its own value.
+    protected def first_value_lines(content : String, re : Regex) : Hash(String, Int32)
+      lines = {} of String => Int32
+      bytes = content.to_slice
+      line = 1
+      pos = 0
+      content.scan(re) do |m|
+        start = m.byte_begin(0)
+        line += bytes[pos, start - pos].count('\n'.ord.to_u8)
+        pos = start
+        lines[m[1]] ||= line
+      end
+      lines
+    end
+
+    # `details` pointed at `line`, or `details` itself when there is none.
+    protected def details_at(details : Details, line : Int32?) : Details
+      return details unless line && (path_info = details.code_paths.first?)
+      Details.new(PathInfo.new(path_info.path, line))
+    end
+
+    # The non-empty strings of a JSON value that may be one string or an
+    # array of them (gateway configs write `"Methods": "GET"` and
+    # `"Methods": ["GET"]` interchangeably).
+    protected def json_strings(node : JSON::Any?) : Array(String)
+      return [] of String unless node
+      if value = node.as_s?
+        value.empty? ? [] of String : [value]
+      else
+        node.as_a?.try(&.compact_map(&.as_s?.presence)) || [] of String
+      end
+    end
+
     # First element child of `node` named `name` (XML formats: Burp, OData
     # EDMX, WSDL).
     protected def find_child(node : XML::Node, name : String) : XML::Node?

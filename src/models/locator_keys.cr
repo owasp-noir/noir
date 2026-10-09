@@ -61,6 +61,7 @@ module Noir::LocatorKeys
     {:NGINX_SPEC, "nginx-spec", :array, :detect_scoped, "detector/specification/nginx"},
     {:OAS3_JSON, "oas3-json", :array, :detect_scoped, "detector/specification/oas3"},
     {:OAS3_YAML, "oas3-yaml", :array, :detect_scoped, "detector/specification/oas3"},
+    {:OCELOT_SPEC, "ocelot-spec", :array, :detect_scoped, "detector/specification/ocelot"},
     {:ODATA_SPEC, "odata-spec", :array, :detect_scoped, "detector/specification/odata"},
     {:OPENRPC_JSON, "openrpc-json", :array, :detect_scoped, "detector/specification/openrpc"},
     {:PAYLOAD_COLLECTION, "payload-collection", :array, :detect_scoped, "detector/specification/payload_cms"},

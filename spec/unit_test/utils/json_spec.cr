@@ -30,4 +30,17 @@ describe "json" do
       expect_raises(JSON::ParseException) { parse_json_lenient(%({"a": 1)) }
     end
   end
+
+  describe "strip_jsonc" do
+    it "drops comments and trailing commas outside strings" do
+      content = %({\n  // line\n  "a": "http://x/*y*/", /* block\n */ "b": [1, 2,],\n})
+      stripped = strip_jsonc(content)
+      JSON.parse(stripped).should eq(JSON.parse(%({"a": "http://x/*y*/", "b": [1, 2]})))
+      stripped.count('\n').should eq(content.count('\n'))
+    end
+
+    it "keeps a comma inside a string" do
+      JSON.parse(strip_jsonc(%({"a": ",}"}))).should eq(JSON.parse(%({"a": ",}"})))
+    end
+  end
 end
