@@ -221,7 +221,9 @@ module Noir
           function = Noir::TreeSitter.field(node, "function")
           next unless function && Noir::TreeSitter.node_type(function) == "attribute"
           attribute = Noir::TreeSitter.field(function, "attribute")
-          next unless attribute && attributes.includes?(name = Noir::TreeSitter.node_text(attribute, source))
+          next unless attribute
+          name = Noir::TreeSitter.node_text(attribute, source)
+          next unless attributes.includes?(name)
           next unless arguments = Noir::TreeSitter.field(node, "arguments")
 
           args = [] of String
