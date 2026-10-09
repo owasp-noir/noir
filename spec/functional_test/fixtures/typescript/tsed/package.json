@@ -1,0 +1,9 @@
+{
+  "name": "tsed-fixture",
+  "dependencies": {
+    "@tsed/di": "^8.0.0",
+    "@tsed/platform-express": "^8.0.0",
+    "@tsed/platform-params": "^8.0.0",
+    "@tsed/schema": "^8.0.0"
+  }
+}

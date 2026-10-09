@@ -85,6 +85,11 @@ describe "Detect TypeScript NestJS" do
     instance.detect("user.controller.ts", "import { Controller, Get } from '@midwayjs/core';\n@Controller('/api')").should be_false
   end
 
+  it "should_not_detect_routing_controllers_or_tsed_controller" do
+    instance.detect("HealthController.ts", "import { Controller, Get } from 'routing-controllers';\n@Controller()").should be_false
+    instance.detect("CalendarsController.ts", "import { Controller } from \"@tsed/di\";\n@Controller(\"/calendars\")").should be_false
+  end
+
   it "should_not_detect_wrong_file_extension" do
     instance.detect("app.py", "@Controller('users')").should be_false
   end
