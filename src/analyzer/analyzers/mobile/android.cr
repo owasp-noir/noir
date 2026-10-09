@@ -426,7 +426,7 @@ module Analyzer::Mobile
       nav_dir = File.join(File.dirname(manifest_path), "res", "navigation")
       return unless Dir.exists?(nav_dir)
 
-      Dir.glob(File.join(nav_dir, "*.xml")).sort.each do |nav_path|
+      glob_under(nav_dir, "*.xml").sort.each do |nav_path|
         # The walk is its own, so `--exclude-path` has to be applied here:
         # the detector's filter only covers files that reach an analyzer
         # through `CodeLocator`.
@@ -673,7 +673,7 @@ module Analyzer::Mobile
         buildsrc = File.join(dir, "buildSrc")
         if Dir.exists?(buildsrc)
           {"*.kt", "*.kts", "*.gradle"}.each do |pattern|
-            Dir.glob(File.join(buildsrc, "**", pattern)).sort.each do |src|
+            glob_under(buildsrc, "**/#{pattern}").sort.each do |src|
               next if excluded_path?(src)
               begin
                 if m = read_file_content(src).match(def_re)
@@ -779,7 +779,7 @@ module Analyzer::Mobile
       values_dir = File.join(File.dirname(manifest_path), "res", "values")
       return strings unless Dir.exists?(values_dir)
 
-      Dir.glob(File.join(values_dir, "*.xml")).sort.each do |path|
+      glob_under(values_dir, "*.xml").sort.each do |path|
         next if excluded_path?(path)
         begin
           doc = Noir::XmlComments.parse(read_file_content(path))

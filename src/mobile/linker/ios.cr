@@ -159,8 +159,8 @@ module NoirMobileLinker
 
     def self.xcode_project_root(path : String) : String?
       nearest_ancestor(path) do |dir|
-        !Dir.glob(File.join(dir, "*.xcodeproj")).empty? ||
-          !Dir.glob(File.join(dir, "*.xcworkspace")).empty?
+        !glob_under(dir, "*.xcodeproj").empty? ||
+          !glob_under(dir, "*.xcworkspace").empty?
       end
     end
 

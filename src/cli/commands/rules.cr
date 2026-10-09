@@ -147,7 +147,7 @@ module Noir::CLI::RulesCommand
       return
     end
 
-    rule_files = Dir.glob(File.join(path, "**/*.{yml,yaml}"))
+    rule_files = glob_under(path, "**/*.{yml,yaml}")
     if rule_files.empty?
       io.puts "No rule files found under #{path}."
       io.puts "Run `noir rules update` to fetch the latest rules."

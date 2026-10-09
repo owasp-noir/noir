@@ -1,5 +1,6 @@
 require "../utils/text_file"
 require "../utils/path_scope"
+require "../utils/utils"
 require "./extraction_result_cache"
 
 module Noir
@@ -138,7 +139,7 @@ module Noir
         ([source_root] + sibling_roots).each do |root|
           dir = File.join(root, relative)
           next unless directory?(dir)
-          safe_glob("#{dir}/*.#{extension}") { |match| resolved << match }
+          safe_glob(dir, "*.#{extension}") { |match| resolved << match }
         end
       else
         # `File.exists?(root/pkg/Name.ext)` can only be true when
@@ -176,7 +177,7 @@ module Noir
       end
 
       siblings = [] of String
-      safe_glob("#{package_dir}/*.#{extension}") { |sibling| siblings << sibling }
+      safe_glob(package_dir, "*.#{extension}") { |sibling| siblings << sibling }
 
       @@package_siblings_mutex.synchronize do
         Noir::ExtractionResultCache.store_capped(@@package_siblings_cache, cache_key, siblings, PACKAGE_SIBLINGS_MAX_ENTRIES)
@@ -237,7 +238,7 @@ module Noir
         if (lang == "java" || lang == "kotlin") && segments[-2] == "main" && segments[-3] == "src"
           module_root = segments[0, segments.size - 3].join('/')
           workspace_root = File.dirname(module_root)
-          safe_glob(File.join(workspace_root, "*", "src", "main", lang)) do |candidate|
+          safe_glob(workspace_root, "*/src/main/#{lang}") do |candidate|
             next unless Dir.exists?(candidate)
             candidate_expanded = Noir::PathScope.expand(candidate)
             roots << candidate if candidate_expanded != expanded
@@ -251,10 +252,11 @@ module Noir
       roots
     end
 
-    # `Dir.glob` raises on unreadable entries in some edge cases;
-    # swallow those so one bad sibling doesn't sink the whole walk.
-    private def self.safe_glob(pattern : String, &block : String ->) : Nil
-      Dir.glob(pattern) { |p| block.call(p) }
+    # `glob_under(dir, pattern)`, block form. `Dir.glob` raises on
+    # unreadable entries in some edge cases; swallow those so one bad
+    # sibling doesn't sink the whole walk.
+    private def self.safe_glob(dir : String, pattern : String, &block : String ->) : Nil
+      Dir.glob(File.join(escape_glob_path(dir), pattern)) { |p| block.call(p) }
     rescue
     end
 
