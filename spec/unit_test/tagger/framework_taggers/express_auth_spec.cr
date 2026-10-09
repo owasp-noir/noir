@@ -248,6 +248,46 @@ describe "ExpressAuthTagger" do
     FileUtils.rm_rf(tmpdir)
   end
 
+  # Chained `route()` links report their own `.get(` / `.post(` line, which
+  # names no receiver; the `router.route(` head above it does.
+  it "applies router.use() auth to route() chain links reported on their own lines" do
+    tmpdir = File.tempname("express_chain_auth")
+    Dir.mkdir_p(tmpdir)
+    app_js = File.join(tmpdir, "app.js")
+    File.write(app_js, [
+      "const express = require('express');",          # 1
+      "const app = express();",                       # 2
+      "const router = express.Router();",             # 3
+      "router.use(requireAuth);",                     # 4
+      "router.route('/secure')",                      # 5
+      "  .get((req, res) => {",                       # 6
+      "    res.json({});",                            # 7
+      "  })",                                         # 8
+      "  .post((req, res) => res.json({}));",         # 9
+      "app",                                          # 10
+      "  .get('/open', (req, res) => res.json({}));", # 11
+      "app.use('/api', router);",                     # 12
+    ].join("\n"))
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    CodeLocator.instance.register_path(app_js)
+
+    endpoints = [{"GET", "/api/secure", 6}, {"POST", "/api/secure", 9}, {"GET", "/open", 11}].map do |method, url, line|
+      details = Details.new(PathInfo.new(app_js, line))
+      details.technology = "js_express"
+      Endpoint.new(url, method, [] of Param, details)
+    end
+    ExpressAuthTagger.new(noir_options).perform(endpoints)
+
+    endpoints[0].tags.map(&.name).should eq(["auth"])
+    endpoints[1].tags.map(&.name).should eq(["auth"])
+    # `app` alone on the line above is not a route() head: receiver unknown.
+    endpoints[2].tags.should be_empty
+
+    FileUtils.rm_rf(tmpdir)
+  end
+
   it "does not attribute the next route's middleware to the route above it" do
     tmpdir = File.tempname("express_adjacent")
     Dir.mkdir_p(tmpdir)
