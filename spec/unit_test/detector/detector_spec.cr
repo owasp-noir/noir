@@ -339,6 +339,51 @@ describe "detect_techs file walker" do
     end
   end
 
+  it "prunes deploy staging, stale dist and dependency vendor trees without a sibling manifest" do
+    temp_dir = File.tempname("noir_detector_build_evidence")
+
+    begin
+      kept = [
+        File.join(temp_dir, "hello_world", "app.py"),
+        File.join(temp_dir, "server", "src", "app.ts"),
+        File.join(temp_dir, "web", "vendor", "routes.php"),
+      ]
+      pruned = [
+        # `sam build` staging copy (template.yaml is not a build manifest).
+        File.join(temp_dir, ".aws-sam", "build", "HelloWorldFunction", "app.py"),
+        File.join(temp_dir, "cdk.out", "asset.1", "index.js"),
+        # Stale tsc output beside the package's `src/` and `tsconfig.json`.
+        File.join(temp_dir, "server", "dist", "app.js"),
+        # Composer / `go mod vendor` trees, known by their own contents.
+        File.join(temp_dir, "web", "app", "vendor", "autoload.php"),
+        File.join(temp_dir, "svc", "vendor", "modules.txt"),
+      ]
+      Dir.mkdir_p(temp_dir)
+      File.write(File.join(temp_dir, "template.yaml"), "Resources: {}\n")
+      Dir.mkdir_p(File.join(temp_dir, "server"))
+      File.write(File.join(temp_dir, "server", "tsconfig.json"), "{}\n")
+      (kept + pruned).each do |path|
+        Dir.mkdir_p(File.dirname(path))
+        File.write(path, "// x\n")
+      end
+
+      options = create_test_options
+      options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+      logger = NoirLogger.new(false, false, false, true)
+      locator = CodeLocator.instance
+      locator.clear_all
+
+      detect_techs([temp_dir], options, [] of PassiveScan, logger)
+      files = locator.all_files
+
+      kept.each { |path| files.should contain(path) }
+      pruned.each { |path| files.should_not contain(path) }
+    ensure
+      FileUtils.rm_rf(temp_dir) if temp_dir
+      CodeLocator.instance.clear_all
+    end
+  end
+
   it "matches upper-case Windows extensions but keeps Makefile.PL distinct" do
     temp_dir = File.tempname("noir_detector_upper_ext")
     Dir.mkdir_p(temp_dir)
