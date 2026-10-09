@@ -18,6 +18,11 @@ require "../../../src/miniparsers/jvm_lambda_dsl_extractor_ts"
 require "../../../src/miniparsers/kotlin_ktor_route_extractor_ts"
 require "../../../src/miniparsers/go_route_extractor_ts"
 require "../../../src/miniparsers/kotlin_route_extractor_ts"
+require "../../../src/miniparsers/python_callee_extractor"
+require "../../../src/miniparsers/js_callee_extractor"
+require "../../../src/miniparsers/go_callee_extractor"
+require "../../../src/miniparsers/java_callee_extractor"
+require "../../../src/miniparsers/rust_callee_extractor_ts"
 
 private NEST = 3000
 
@@ -130,5 +135,37 @@ describe "extractor recursion depth bounds" do
       routes = Noir::TreeSitterKotlinRouteExtractor.extract_routes(body)
       routes.map(&.path).should contain("/ok")
     end
+  end
+end
+
+# The callee extractors rebuild an `a.b.c` receiver by recursing once per
+# chain link through `field(...)`, outside `each_named_child`'s guard. A
+# generated `x.b.b.b…(1)` chain overflowed the stack under
+# `--include-callee` and aborted the whole scan with no output.
+private CALLEE_CHAIN = "x#{".b" * 100_000}(1)"
+
+describe "callee extractor receiver-chain depth bounds" do
+  it "Python" do
+    Noir::PythonCalleeExtractor.calls_in("def h():\n    return #{CALLEE_CHAIN}\n")
+  end
+
+  it "JavaScript" do
+    Noir::JSCalleeExtractor.callees_for_function_body(" #{CALLEE_CHAIN}; ", "a.js", 1)
+  end
+
+  it "Go" do
+    fn = Noir::GoCalleeExtractor::FunctionBody.new("func h() { #{CALLEE_CHAIN} }", "a.go", 0)
+    Noir::GoCalleeExtractor.callees_in_body(fn)
+  end
+
+  it "Java" do
+    source = "class A { String h() { return #{CALLEE_CHAIN}; } }"
+    Noir::TreeSitter.parse_java(source) do |root|
+      Noir::JavaCalleeExtractor.callees_in_body(root, source, "A.java")
+    end
+  end
+
+  it "Rust" do
+    Noir::RustCalleeExtractorTS.callees_for_body_text("#{CALLEE_CHAIN};", "a.rs", 1)
   end
 end
