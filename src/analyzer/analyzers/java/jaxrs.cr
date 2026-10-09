@@ -4,6 +4,7 @@ require "../../../miniparsers/jaxrs_extractor_ts"
 require "../../../miniparsers/kotlin_route_extractor_ts"
 require "xml"
 require "../../../utils/url_path"
+require "../../../utils/xml_comments"
 
 module Analyzer::Java
   class JaxRs < Analyzer
@@ -258,7 +259,7 @@ module Analyzer::Java
 
     private def parse_web_xml_jaxrs_mappings(content : String) : Array(NamedTuple(pattern: String, application_classes: Array(String), jaxrs_servlet: Bool))
       mappings = [] of NamedTuple(pattern: String, application_classes: Array(String), jaxrs_servlet: Bool)
-      doc = XML.parse(content)
+      doc = Noir::XmlComments.parse(content)
       root = find_xml_child(doc, "web-app") || doc
       servlets = Hash(String, NamedTuple(application_classes: Array(String), jaxrs_servlet: Bool)).new
 

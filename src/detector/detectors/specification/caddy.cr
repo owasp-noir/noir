@@ -23,7 +23,11 @@ module Detector::Specification
         true
       elsif filename.ends_with?(".json")
         return false unless caddy_json?(file_contents)
-        parse_json_lenient(file_contents)
+        # The markers only say both words appear somewhere; an icon list
+        # `[{"name":"apps","kind":"http"}]` was claimed and then failed the
+        # analyzer as a skipped file. Only the real `apps.http` shape counts.
+        apps = parse_json_lenient(file_contents).as_h?.try(&.["apps"]?).try(&.as_h?)
+        return false unless apps && apps.has_key?("http")
         CodeLocator.instance.push(Noir::LocatorKeys::CADDY_SPEC, filename)
         true
       else

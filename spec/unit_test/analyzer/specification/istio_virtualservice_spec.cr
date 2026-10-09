@@ -76,4 +76,35 @@ describe "Istio VirtualService Analyzer" do
     endpoints.size.should eq 1
     endpoints[0].method.should eq "ANY"
   end
+
+  # A Helm chart's manifest is a Go template, not YAML; it used to yield
+  # nothing and no error. Templated values read as unknown and are dropped.
+  it "reads a Helm-templated manifest" do
+    endpoints = analyze_vs <<-YAML
+      {{- if .Values.istio.enabled }}
+      apiVersion: networking.istio.io/v1beta1
+      kind: VirtualService
+      metadata:
+        name: {{ include "app.fullname" . }}
+      spec:
+        hosts:
+          - api.example.com
+          - {{ .Values.extraHost }}
+        http:
+          - match:
+              - uri:
+                  prefix: /api/v1
+                method:
+                  exact: POST
+              - uri:
+                  prefix: {{ .Values.basePath }}/v2
+            route:
+              - destination:
+                  host: {{ .Values.service.name }}
+      {{- end }}
+      YAML
+
+    endpoints.map { |e| {e.url, e.method} }.should eq([{"/api/v1", "POST"}])
+    endpoints.flat_map { |e| tag_descriptions(e, "virtualservice-host") }.should eq(["api.example.com"])
+  end
 end

@@ -1,5 +1,7 @@
 require "../../spec_helper"
+require "http/server"
 require "../../../src/deliver/send_req"
+require "../../../src/deliver/send_proxy"
 require "../../../src/deliver/send_webhook"
 require "../../../src/deliver/send_elasticsearch"
 require "../../../src/models/endpoint"
@@ -58,6 +60,67 @@ describe "undelivered export reporting" do
     gaps = deliver_gaps
     gaps.size.should eq(1)
     gaps.first.message.should contain("probe delivery: 1 request could not be sent")
+  end
+
+  # --probe-via only warned, so `--strict` passed with nothing delivered while
+  # --probe recorded the same failure.
+  it "records proxy probes that could not be sent" do
+    options = create_test_options
+    options["probe_via"] = YAML::Any.new(UNREACHABLE)
+    SendWithProxy.new(options).run(endpoints)
+
+    gaps = deliver_gaps
+    gaps.size.should eq(1)
+    gaps.first.message.should contain("proxy delivery: 1 request could not be sent")
+  end
+
+  it "records a --probe-via value that names no proxy" do
+    options = create_test_options
+    options["probe_via"] = YAML::Any.new("not a proxy")
+    SendWithProxy.new(options).run(endpoints)
+
+    gaps = deliver_gaps
+    gaps.size.should eq(1)
+    gaps.first.message.should contain("does not resolve to a proxy host and port")
+  end
+
+  # Crest followed the 307 as a body-less GET carrying the request headers,
+  # so a `--probe-header` token reached whatever host `Location` named and
+  # the catalog reached nobody, all while the export reported success.
+  it "records a redirected export instead of following it to another host" do
+    stolen = [] of String?
+    other = HTTP::Server.new do |ctx|
+      stolen << ctx.request.headers["Authorization"]?
+      ctx.response.print "ok"
+    end
+    other_address = other.bind_tcp("127.0.0.1", 0)
+    spawn { other.listen }
+
+    redirector = HTTP::Server.new do |ctx|
+      ctx.response.status_code = 307
+      ctx.response.headers["Location"] = "http://127.0.0.1:#{other_address.port}/steal/T0KEN"
+    end
+    redirect_address = redirector.bind_tcp("127.0.0.1", 0)
+    spawn { redirector.listen }
+    Fiber.yield
+
+    begin
+      options = create_test_options
+      options["probe_header"] = YAML::Any.new([YAML::Any.new("Authorization: Bearer SECRET")])
+      SendWebhook.new(options).run(endpoints, "http://127.0.0.1:#{redirect_address.port}/hook")
+
+      # `run` is synchronous, so a followed redirect has landed by now.
+      stolen.should be_empty
+      deliver_gaps.size.should eq(1)
+      deliver_gaps.first.message.should contain("webhook delivery")
+      # The target is named so the user can fix the URL, down to its origin
+      # since a redirect can carry the same path token the webhook did.
+      deliver_gaps.first.message.should contain("redirects to http://127.0.0.1:#{other_address.port}/***")
+      deliver_gaps.first.message.should_not contain("T0KEN")
+    ensure
+      redirector.close
+      other.close
+    end
   end
 
   # A delivery that worked must leave no trace, or every successful export

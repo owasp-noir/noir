@@ -2,6 +2,7 @@ require "base64"
 require "uri"
 require "xml"
 require "../../engines/specification_engine"
+require "../../../utils/xml_comments"
 
 module Analyzer::Specification
   # Parses Burp Suite sitemap XML exports (`Target → Site map → right-click →
@@ -26,7 +27,7 @@ module Analyzer::Specification
       # but layering NONET on top keeps a malicious sitemap from turning the
       # analyzer into an SSRF gadget even if a future option change enables
       # NOENT.
-      doc = XML.parse(content, XML::ParserOptions::NONET)
+      doc = Noir::XmlComments.parse(content, XML::ParserOptions::NONET)
       root = doc.root
       return unless root && root.name == "items"
 

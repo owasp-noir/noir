@@ -83,4 +83,33 @@ describe "Kubernetes Gateway API Analyzer" do
     rewritten = endpoints.find!(&.url.==("/v1"))
     tag_descriptions(rewritten, "gateway-source").should eq ["rewrite"]
   end
+
+  # A Helm chart's manifest is a Go template, not YAML; it used to yield
+  # nothing and no error. Templated values read as unknown and are dropped.
+  it "reads a Helm-templated manifest" do
+    endpoints = analyze_gateway_api <<-YAML
+      {{- if .Values.gateway.enabled }}
+      apiVersion: gateway.networking.k8s.io/v1
+      kind: HTTPRoute
+      metadata:
+        name: {{ include "app.fullname" . }}
+      spec:
+        hostnames:
+          - shop.example.com
+          - {{ .Values.extraHost }}
+        rules:
+          - matches:
+              - path:
+                  type: PathPrefix
+                  value: /cart
+                method: GET
+            backendRefs:
+              - name: {{ .Values.service.name }}
+                port: 80
+      {{- end }}
+      YAML
+
+    endpoints.map { |e| {e.url, e.method} }.should eq([{"/cart", "GET"}])
+    endpoints.flat_map { |e| tag_descriptions(e, "gateway-host") }.should eq(["shop.example.com"])
+  end
 end

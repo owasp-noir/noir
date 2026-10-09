@@ -2,6 +2,7 @@ require "xml"
 require "../../../models/analyzer"
 require "../../../miniparsers/swift_callee_extractor"
 require "../../../mobile/swift_body"
+require "../../../utils/xml_comments"
 
 module Analyzer::Mobile
   # Parses iOS configuration files to surface mobile app entry points:
@@ -71,7 +72,7 @@ module Analyzer::Mobile
     private def parse_safely(path : String, &)
       return unless File.exists?(path)
       content = read_file_content(path)
-      yield XML.parse(content)
+      yield Noir::XmlComments.parse(content)
     rescue e
       # Source repos ship XML plists; compiled/binary plists fail here.
       @logger.debug "Failed to parse iOS plist #{path}: #{e.message}"

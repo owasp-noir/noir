@@ -161,13 +161,16 @@ module Analyzer::Specification
       end
 
       candidates.each do |node|
+        # An empty `environments:` is null, and `[]?` on a non-mapping
+        # raises, which used to cost the whole collection.
+        next unless node.as_h?
         data = node["data"]? || node
         if h = data.as_h?
           collect_yaml_env_values(env, h)
         end
         if sub_envs = node["subEnvironments"]?.try(&.as_a?)
           sub_envs.each do |sub_env|
-            if sub_data = sub_env["data"]?.try(&.as_h?)
+            if sub_data = sub_env.as_h?.try(&.[YAML::Any.new("data")]?).try(&.as_h?)
               collect_yaml_env_values(env, sub_data)
             end
           end

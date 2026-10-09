@@ -299,6 +299,14 @@ module Analyzer::Specification
       end
     end
 
+    # A spec path appended to its base with one `/` at the seam. The base is
+    # `-u` itself when a document has no usable `servers` entry, so plain
+    # concatenation turned `-u http://h/` + `/x` into `http://h//x`, an
+    # absolute URL the optimizer passes through untouched.
+    protected def join_base_path(base : String, path : String) : String
+      base.ends_with?('/') && path.starts_with?('/') ? base + path[1..] : base + path
+    end
+
     # Same-document `$ref` resolution, for the analyzers that have only a
     # document root to resolve against.
     #

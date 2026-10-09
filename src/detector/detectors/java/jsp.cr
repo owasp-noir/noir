@@ -1,4 +1,5 @@
 require "../../../models/detector"
+require "../../../utils/xml_comments"
 
 module Detector::Java
   class Jsp < Detector
@@ -26,7 +27,9 @@ module Detector::Java
 
       if filename.ends_with?(".xml")
         return false unless content_matches?(file_contents, XML_MARKER)
-        xml_without_comments = file_contents.gsub(/<!--.*?-->/m, "")
+        # The same comment stripping the analyzer parses with, so the two
+        # agree on a commented-out or unterminated `<jsp-file>`.
+        xml_without_comments = Noir::XmlComments.strip(file_contents)
         return xml_without_comments.includes?("<jsp-file>") ||
           !!xml_without_comments.match(/<servlet-class>\s*[^<]*\bJspServlet\b[^<]*<\/servlet-class>/)
       end

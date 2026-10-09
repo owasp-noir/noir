@@ -3,6 +3,7 @@ require "../../engines/java_engine"
 require "../../../miniparsers/java_callee_extractor"
 require "../../../miniparsers/java_parameter_extractor_ts"
 require "xml"
+require "../../../utils/xml_comments"
 
 module Analyzer::Java
   class Struts2 < Analyzer
@@ -187,7 +188,7 @@ module Analyzer::Java
       seen << expanded
 
       content = read_file_content(path)
-      doc = XML.parse(content)
+      doc = Noir::XmlComments.parse(content)
       root = find_xml_child(doc, "struts") || doc.first_element_child
       return unless root && root.name == "struts"
 

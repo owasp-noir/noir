@@ -1,5 +1,6 @@
 require "../../engines/php_engine"
 require "xml"
+require "../../../utils/xml_comments"
 
 module Analyzer::Php
   # Magento 2 attack-surface extractor.
@@ -71,7 +72,7 @@ module Analyzer::Php
 
         area = area_for_routes_path(path)
         begin
-          doc = XML.parse(read_file_content(path))
+          doc = Noir::XmlComments.parse(read_file_content(path))
           root = doc.root
           next unless root
 
@@ -108,7 +109,7 @@ module Analyzer::Php
       details = Details.new(PathInfo.new(path))
 
       begin
-        doc = XML.parse(read_file_content(path))
+        doc = Noir::XmlComments.parse(read_file_content(path))
         root = doc.root
         return endpoints unless root
 

@@ -9,7 +9,7 @@ module Analyzer::Specification
     def analyze
       each_spec_file_with_details(Noir::LocatorKeys::ISTIO_VIRTUALSERVICE_SPEC) do |path, details|
         content = read_file_content(path)
-        YAML.parse_all(content).each { |doc| process_doc(doc, details) }
+        parse_all_yaml_template(content).each { |doc| process_doc(doc, details) }
       end
 
       @result

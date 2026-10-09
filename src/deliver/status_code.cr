@@ -88,7 +88,7 @@ class StatusCodeProbe
     is_json = !endpoint_hash["json"].empty?
     body = is_json ? endpoint_hash["json"] : endpoint_hash["form"]
 
-    perform_request(get_symbol(request_method), endpoint.url, endpoint_hash["query"], body, is_json)
+    perform_request(get_symbol(request_method), wire_url(endpoint.url), endpoint_hash["query"], body, is_json)
   end
 
   # A Set dedupes repeated codes (--exclude-codes 404,404,500) for free and

@@ -1,6 +1,7 @@
 require "../../../utils/utils.cr"
 require "../../../models/analyzer"
 require "xml"
+require "../../../utils/xml_comments"
 
 module Analyzer::Java
   class Jsp < Analyzer
@@ -218,7 +219,7 @@ module Analyzer::Java
                                           details : Details,
                                           base_path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
-      doc = XML.parse(content)
+      doc = Noir::XmlComments.parse(content)
       servlet_classes = Hash(String, String).new
       jsp_servlets = Set(String).new
 

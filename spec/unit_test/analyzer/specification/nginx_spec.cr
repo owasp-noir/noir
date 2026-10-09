@@ -109,4 +109,80 @@ describe "Nginx Analyzer" do
       {"/foo", "a.example.com"},
     ])
   end
+
+  # The method endpoint was emitted with no modifier, so a regex location's
+  # anchors survived on it (`^/v1$` next to `/v1`) and it was tagged prefix.
+  it "gives a method block its regex location's path and path-type" do
+    endpoints = analyze_nginx <<-CONF
+      server {
+          location ~ ^/v1/items$ {
+              if ($request_method = PUT) { return 405; }
+          }
+      }
+      CONF
+
+    endpoints.map { |e| {e.url, e.method, tag_descriptions(e, "nginx-path-type").first} }.sort!.should eq([
+      {"/v1/items", "ANY", "regex"},
+      {"/v1/items", "PUT", "regex"},
+    ])
+  end
+
+  # The regex's `{1,2}` was counted as structure, so its `}` popped the
+  # location before its `{` on the next line was ever read.
+  it "keeps a regex location whose block opens on the next line" do
+    endpoints = analyze_nginx <<-'CONF'
+      server {
+          location ~ ^/v\d{1,2}/u$
+          {
+              if ($request_method = POST) { return 200; }
+          }
+          location /after { }
+      }
+      CONF
+
+    endpoints.map { |e| {e.url, e.method} }.sort!.should eq([
+      {"/after", "ANY"},
+      {"/v\\d{1,2}/u", "ANY"},
+      {"/v\\d{1,2}/u", "POST"},
+    ])
+  end
+
+  # Each `}` of a one-line block or of an unpushed `@named` location used to
+  # pop a frame it never pushed, closing /admin and then the server early.
+  it "keeps frames balanced across one-line blocks and named locations" do
+    endpoints = analyze_nginx <<-'CONF'
+      server {
+          listen 443 ssl;
+          server_name a.example.com;
+          location /admin {
+              if ($bad_ua) { return 403; }
+              return 200 '{"ok":true}';
+              if ($request_method = POST) {
+                  return 405;
+              }
+          }
+          location @fallback {
+              proxy_pass http://fallback;
+          }
+          location ~ ^/v\d{1,2}/items$ {
+              deny all;
+          }
+          location /api
+          {
+              proxy_pass http://api;
+          }
+      }
+      CONF
+
+    endpoints.map { |e| {e.url, e.method} }.sort!.should eq([
+      {"/admin", "ANY"},
+      {"/admin", "POST"},
+      {"/api", "ANY"},
+      {"/v\\d{1,2}/items", "ANY"},
+    ])
+    endpoints.each do |endpoint|
+      endpoint.protocol.should eq("https")
+      tag_descriptions(endpoint, "nginx-host").should eq(["a.example.com"])
+    end
+  end
 end

@@ -1,6 +1,7 @@
 require "xml"
 require "uri"
 require "../../engines/specification_engine"
+require "../../../utils/xml_comments"
 
 module Analyzer::Specification
   class WSDL < SpecificationEngine
@@ -26,7 +27,7 @@ module Analyzer::Specification
     end
 
     private def parse_wsdl(content : String, source : String)
-      doc = XML.parse(content)
+      doc = Noir::XmlComments.parse(content)
       definitions = find_child(doc, "definitions")
       return unless definitions
 
@@ -74,7 +75,7 @@ module Analyzer::Specification
         next unless File.exists?(path)
 
         begin
-          sub_doc = XML.parse(read_file_content(path))
+          sub_doc = Noir::XmlComments.parse(read_file_content(path))
           sub_def = find_child(sub_doc, "definitions")
           next unless sub_def
           docs << sub_doc
