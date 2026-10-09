@@ -16,7 +16,7 @@ module Detector::Typescript
       /NestFactory\.create\s*\(/,
     )
 
-    FOREIGN_CONTROLLER_RE = /@midwayjs\/|(?:\bfrom|\brequire\s*\()\s*['"](?:routing-controllers['"]|@tsed\/)/
+    FOREIGN_CONTROLLER_RE = /@midwayjs\/|(?:\bfrom|\brequire\s*\()\s*['"](?:routing-controllers['"]|@tsed\/(?:common|schema|di|platform-))/
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".ts") || filename.ends_with?(".tsx") ||

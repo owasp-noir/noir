@@ -8,7 +8,7 @@ module Analyzer::Typescript
   class Tsed < DecoratorController
     analyzer_for "ts_tsed"
 
-    IMPORT_RE = /(?:\bfrom|\brequire\s*\()\s*['"]@tsed\//
+    IMPORT_RE = /(?:\bfrom|\brequire\s*\()\s*['"]@tsed\/(?:common|schema|di|platform-)/
     PARAMS    = {
       "PathParams"     => {"path", nil},
       "RawPathParams"  => {"path", nil},

@@ -90,6 +90,10 @@ describe "Detect TypeScript NestJS" do
     instance.detect("CalendarsController.ts", "import { Controller } from \"@tsed/di\";\n@Controller(\"/calendars\")").should be_false
   end
 
+  it "still_detects_nestjs_using_a_non_routing_tsed_package" do
+    instance.detect("users.controller.ts", "import { Controller } from '@nestjs/common';\nimport { Logger } from '@tsed/logger';\n@Controller('users')").should be_true
+  end
+
   it "should_not_detect_wrong_file_extension" do
     instance.detect("app.py", "@Controller('users')").should be_false
   end

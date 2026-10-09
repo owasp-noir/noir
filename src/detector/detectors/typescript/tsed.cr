@@ -8,8 +8,8 @@ module Detector::Typescript
 
     # The routing packages, not every `@tsed/*` (a plain Express app can
     # pull in `@tsed/logger` alone).
-    PACKAGE_RE = /"@tsed\/(?:common|schema|di|platform-express|platform-koa|platform-http)"\s*:/
-    IMPORT_RE  = /(?:\bfrom|\brequire\s*\()\s*['"]@tsed\/(?:common|schema|di|platform-express|platform-koa|platform-http|platform-params)['"]/
+    PACKAGE_RE = /"@tsed\/(?:common|schema|di|platform-[\w-]+)"\s*:/
+    IMPORT_RE  = /(?:\bfrom|\brequire\s*\()\s*['"]@tsed\/(?:common|schema|di|platform-[\w-]+)['"]/
 
     def detect(filename : String, file_contents : String) : Bool
       if File.basename(filename) == "package.json"

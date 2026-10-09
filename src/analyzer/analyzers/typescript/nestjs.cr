@@ -6,7 +6,7 @@ module Analyzer::Typescript
 
     # Midway, routing-controllers and Ts.ED spell their decorators
     # `@Controller` / `@Get` too; their own analyzers claim those files.
-    FOREIGN_CONTROLLER_RE = /@midwayjs\/|(?:\bfrom|\brequire\s*\()\s*['"](?:routing-controllers['"]|@tsed\/)/
+    FOREIGN_CONTROLLER_RE = /@midwayjs\/|(?:\bfrom|\brequire\s*\()\s*['"](?:routing-controllers['"]|@tsed\/(?:common|schema|di|platform-))/
 
     def analyze
       analyze_with_extensions([".ts", ".tsx"])
