@@ -46,7 +46,9 @@ module Analyzer::Java
     # Scan by CHARACTER (not byte): `open_idx` is a char index from
     # `String#index` and callers char-slice with — or range-compare — the
     # returned index. A byte scan corrupts both on multi-byte UTF-8.
-    # ASCII-identical to the previous byte loop.
+    # ASCII-identical to the previous byte loop. The walk starts at
+    # `open_idx` rather than skipping up to it from the file head, which
+    # made one call per route quadratic over a large file.
     def self.find_matching_delimiter(code : String,
                                      open_idx : Int32,
                                      open_char : Char,
@@ -56,8 +58,7 @@ module Analyzer::Java
       quote = '\0'
       escape = false
 
-      code.each_char_with_index do |ch, i|
-        next if i <= open_idx
+      each_char_after(code, open_idx) do |ch, i|
         if in_string
           if escape
             escape = false
@@ -80,6 +81,18 @@ module Analyzer::Java
       end
 
       nil
+    end
+
+    # Yields each char after char index `index` with its char index.
+    def self.each_char_after(code : String, index : Int32, &)
+      return unless byte_index = code.char_index_to_byte_index(index + 1)
+      reader = Char::Reader.new(code, byte_index)
+      i = index + 1
+      while reader.pos < code.bytesize
+        yield reader.current_char, i
+        reader.next_char
+        i += 1
+      end
     end
 
     # Replaces `//` line comments and `/* */` block comments with spaces

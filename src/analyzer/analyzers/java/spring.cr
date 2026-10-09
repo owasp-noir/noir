@@ -193,21 +193,25 @@ module Analyzer::Java
             # callees are requested) and reuse it across every route in
             # the file rather than rebuilding it per route.
             file_decl_index = include_callee ? Noir::JavaCalleeExtractor.build_method_decl_index(root, content) : nil
+            # Same for the handler-method lookups below (built on the first route).
+            param_index = nil.as(Noir::TreeSitterJavaParameterExtractor::FileIndex?)
 
             Noir::TreeSitterJavaRouteExtractor.extract_routes_from(root, content, visible_meta_mappings).each do |route|
               is_feign_client = feign_clients.includes?(route.class_name)
               is_http_exchange_client = http_exchange_clients.includes?(route.class_name)
               is_internal_client = is_feign_client || is_http_exchange_client
 
+              param_index ||= Noir::TreeSitterJavaParameterExtractor.build_file_index(root, content)
               parameter_format = Noir::TreeSitterJavaParameterExtractor.extract_consumes_from(
-                root, content, route.class_name, route.method_name
+                root, content, route.class_name, route.method_name, param_index
               )
               # The POST form-binding default is applied per-parameter in
               # the extractor so an explicit `@RequestBody` resolves to
               # "json" rather than inheriting "form".
 
               parameters = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters_from(
-                root, content, route.class_name, route.method_name, route.verb, parameter_format, dto_index, route.line, constants: file_constants
+                root, content, route.class_name, route.method_name, route.verb, parameter_format, dto_index, route.line,
+                constants: file_constants, index: param_index
               )
               merge_route_condition_params(parameters, route.params)
 
@@ -239,32 +243,21 @@ module Analyzer::Java
 
             Noir::TreeSitterJavaRouteExtractor.extract_controller_interface_implementations_from(root, content, visible_meta_mappings).each do |implementation|
               implementation.interface_names.each do |interface_name|
-                visible_interface_routes(interface_route_index, path, package_name, imports, interface_name).each do |entry|
+                next if implementation.paths.empty?
+                # Concrete @Override that re-declares its own mapping
+                # annotation shadows the interface's method-level
+                # mapping (Spring closest-annotation-wins). The direct
+                # scan already emitted that route — skip the duplicate.
+                entries = visible_interface_routes(interface_route_index, path, package_name, imports, interface_name).reject do |entry|
+                  implementation.annotated_method_names.includes?(entry.route.method_name)
+                end
+                entry_params = interface_route_params(entries, dto_builder)
+                entries.each_with_index do |entry, entry_index|
                   entry_route = entry.route
-                  # Concrete @Override that re-declares its own mapping
-                  # annotation shadows the interface's method-level
-                  # mapping (Spring closest-annotation-wins). The direct
-                  # scan already emitted that route — skip the duplicate.
-                  next if implementation.annotated_method_names.includes?(entry_route.method_name)
                   implementation.paths.each do |implementation_path|
                     inherited_path = Noir::URLPath.join_rooted(implementation_path, entry_route.path)
-                    parameter_format = nil
-                    parameters = [] of Param
-
-                    Noir::TreeSitter.parse_java(entry.source) do |interface_root|
-                      interface_dto_index = dto_builder.build_for_with_root(entry.path, entry.source, interface_root)
-                      parameter_format = Noir::TreeSitterJavaParameterExtractor.extract_consumes_from(
-                        interface_root, entry.source, entry_route.class_name, entry_route.method_name
-                      )
-                      # POST form-binding default applied per-parameter in
-                      # the extractor (keeps `@RequestBody` as "json").
-
-                      parameters = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters_from(
-                        interface_root, entry.source, entry_route.class_name, entry_route.method_name,
-                        entry_route.verb, parameter_format, interface_dto_index, entry_route.line
-                      )
-                      merge_route_condition_params(parameters, implementation.params + entry_route.params)
-                    end
+                    parameters = entry_params[entry_index].dup
+                    merge_route_condition_params(parameters, implementation.params + entry_route.params)
 
                     details = Details.new(PathInfo.new(entry.path, entry_route.line + 1))
                     endpoint = Endpoint.new(
@@ -544,6 +537,39 @@ module Analyzer::Java
       end
 
       routes
+    end
+
+    # Handler parameters of each inherited interface route, aligned with
+    # `entries`. Each interface file is parsed (and DTO/method-indexed)
+    # once, not once per route: a 500-method `*Api` interface used to be
+    # re-parsed 500 times.
+    private def interface_route_params(entries : Array(SpringInterfaceRouteEntry),
+                                       dto_builder : Noir::TreeSitterJavaDtoIndex) : Array(Array(Param))
+      result = Array(Array(Param)).new(entries.size) { [] of Param }
+      indexes_by_path = Hash(String, Array(Int32)).new { |hash, key| hash[key] = [] of Int32 }
+      entries.each_with_index { |entry, i| indexes_by_path[entry.path] << i }
+
+      indexes_by_path.each do |entry_path, indexes|
+        source = entries[indexes.first].source
+        Noir::TreeSitter.parse_java(source) do |interface_root|
+          dto_index = dto_builder.build_for_with_root(entry_path, source, interface_root)
+          param_index = Noir::TreeSitterJavaParameterExtractor.build_file_index(interface_root, source)
+          constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants_from(interface_root, source)
+          indexes.each do |i|
+            route = entries[i].route
+            # POST form-binding default applied per-parameter in the
+            # extractor (keeps `@RequestBody` as "json").
+            parameter_format = Noir::TreeSitterJavaParameterExtractor.extract_consumes_from(
+              interface_root, source, route.class_name, route.method_name, param_index
+            )
+            result[i] = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters_from(
+              interface_root, source, route.class_name, route.method_name,
+              route.verb, parameter_format, dto_index, route.line, constants: constants, index: param_index
+            )
+          end
+        end
+      end
+      result
     end
 
     private def merge_route_condition_params(parameters : Array(Param), condition_params : Array(Param))
@@ -1140,8 +1166,7 @@ module Analyzer::Java
       depth = 1
       in_string = false
       escape = false
-      code.each_char_with_index do |c, i|
-        next if i <= open_idx
+      JavaEngine.each_char_after(code, open_idx) do |c, i|
         if in_string
           if escape
             escape = false

@@ -236,24 +236,53 @@ module Noir
                                        parameter_format : String?,
                                        class_fields : Hash(String, Array(FieldInfo)),
                                        target_line : Int32? = nil,
-                                       constants : Hash(String, String)? = nil) : Array(Param)
-      method = find_method(root, source, class_name, method_name, target_line)
+                                       constants : Hash(String, String)? = nil,
+                                       index : FileIndex? = nil) : Array(Param)
+      index ||= build_file_index(root, source)
+      method = find_method(index, class_name, method_name, target_line)
       return [] of Param unless method
       # `constants` is file-scoped and identical for every route in a
       # file. Callers that emit many routes per file (spring.cr) build it
       # once and pass it in; the nil default keeps every other analyzer's
       # call site working by recomputing it here.
       resolved_constants = constants || TreeSitterJavaRouteExtractor.extract_string_constants_from(root, source)
-      model_attributes = model_attribute_suppliers(root, source, class_name)
+      model_attributes = index.suppliers[class_name] ||= model_attribute_suppliers(root, source, class_name)
       collect_method_params(method, source, verb, parameter_format, class_fields, resolved_constants, class_name, model_attributes)
+    end
+
+    # Per-file memo for callers that look up many routes in one parsed
+    # file (spring.cr). Without it every route re-walked the whole tree
+    # to find its method and re-scanned every method of its class for
+    # `@ModelAttribute` suppliers: quadratic in a controller's size.
+    class FileIndex
+      # "Class#method" -> every same-named method, in tree order.
+      getter methods = Hash(String, Array(LibTreeSitter::TSNode)).new { |hash, key| hash[key] = [] of LibTreeSitter::TSNode }
+      getter suppliers = Hash(String, Array(ModelAttributeSupplier)).new
+    end
+
+    def build_file_index(root : LibTreeSitter::TSNode, source : String) : FileIndex
+      index = FileIndex.new
+      walk_class_containers(root) do |decl|
+        name_node = Noir::TreeSitter.field(decl, "name")
+        body = Noir::TreeSitter.field(decl, "body")
+        next unless name_node && body
+        class_name = Noir::TreeSitter.node_text(name_node, source)
+        Noir::TreeSitter.each_named_child(body) do |member|
+          next unless Noir::TreeSitter.node_type(member) == "method_declaration"
+          next unless mn = Noir::TreeSitter.field(member, "name")
+          index.methods["#{class_name}##{Noir::TreeSitter.node_text(mn, source)}"] << member
+        end
+      end
+      index
     end
 
     # Find `@*Mapping` annotation on (class_name, method_name) and
     # read its `consumes = ...` attribute. Returns "form" / "json" /
     # nil — matches `spring.cr`'s legacy helper semantics so the
     # analyzer can swap this in without behaviour drift.
-    def extract_consumes_from(root : LibTreeSitter::TSNode, source : String, class_name : String, method_name : String) : String?
-      method = find_method(root, source, class_name, method_name)
+    def extract_consumes_from(root : LibTreeSitter::TSNode, source : String, class_name : String, method_name : String,
+                              index : FileIndex? = nil) : String?
+      method = find_method(index || build_file_index(root, source), class_name, method_name)
       return unless method
       ann = mapping_annotation_on(method, source)
       return unless ann
@@ -407,35 +436,18 @@ module Noir
     # method whose `[start_row, end_row]` range contains `target_line`
     # wins. Without a line hint — or when no overload contains it — the
     # first same-named method is returned, preserving prior behaviour.
-    private def find_method(root : LibTreeSitter::TSNode,
-                            source : String,
+    private def find_method(index : FileIndex,
                             class_name : String,
                             method_name : String,
                             target_line : Int32? = nil) : LibTreeSitter::TSNode?
-      first : LibTreeSitter::TSNode? = nil
-      matched : LibTreeSitter::TSNode? = nil
-      walk_class_containers(root) do |decl|
-        next if matched
-        name_node = Noir::TreeSitter.field(decl, "name")
-        next unless name_node
-        next unless Noir::TreeSitter.node_text(name_node, source) == class_name
-        body = Noir::TreeSitter.field(decl, "body")
-        next unless body
-        Noir::TreeSitter.each_named_child(body) do |member|
-          next if matched
-          next unless Noir::TreeSitter.node_type(member) == "method_declaration"
-          mn = Noir::TreeSitter.field(member, "name")
-          next unless mn
-          next unless Noir::TreeSitter.node_text(mn, source) == method_name
-          first ||= member
-          if line = target_line
-            start_row = Noir::TreeSitter.node_start_row(member)
-            end_row = Noir::TreeSitter.node_end_row(member)
-            matched = member if line >= start_row && line <= end_row
-          end
+      candidates = index.methods["#{class_name}##{method_name}"]?
+      return unless candidates
+      if line = target_line
+        candidates.each do |member|
+          return member if line >= Noir::TreeSitter.node_start_row(member) && line <= Noir::TreeSitter.node_end_row(member)
         end
       end
-      matched || first
+      candidates.first
     end
 
     private def find_class(root : LibTreeSitter::TSNode,
