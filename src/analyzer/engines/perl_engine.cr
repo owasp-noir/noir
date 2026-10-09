@@ -136,33 +136,129 @@ module Analyzer::Perl
       end
     end
 
-    # `line` cut at its `#` comment. Quoted text is skipped; `$#array` is
-    # the last-index sigil and `s#a#b#` / `qw#...#` put the `#` right after
-    # a word character, so only a `#` at line start or after any other
-    # character opens a comment.
+    # `line` cut at its `#` comment. A `#` is code inside a quoted string,
+    # in `$#array` / `$#{...}`, and anywhere inside a quote-like operator or
+    # regex: `s#a#b#`, `tr###`, `m#x#`, `qr#x#`, `q{#}`, `/[^#]/` are read
+    # through their full delimiter count before comments are looked for.
     def self.strip_line_comment(line : String) : String
       return line unless line.byte_index('#'.ord)
 
-      quote = 0_u8
-      escaped = false
-      prev = 0_u8
-      line.to_slice.each_with_index do |byte, i|
-        if quote != 0
-          if escaped
-            escaped = false
-          elsif byte == '\\'.ord
-            escaped = true
-          elsif byte == quote
-            quote = 0_u8
+      size = line.bytesize
+      i = 0
+      while i < size
+        byte = line.byte_at(i)
+        if byte == '"'.ord || byte == '\''.ord
+          i = skip_perl_delimited(line, i + 1, byte, 0_u8, 1)
+          next
+        elsif byte == '/'.ord && perl_regex_start?(line, i)
+          i = skip_perl_delimited(line, i + 1, byte, 0_u8, 1)
+          next
+        elsif perl_word_start?(line, i)
+          k = i
+          while k < size && (line.byte_at(k).unsafe_chr.ascii_alphanumeric? || line.byte_at(k) == '_'.ord)
+            k += 1
           end
-        elsif byte == '"'.ord || byte == '\''.ord
-          quote = byte
-        elsif byte == '#'.ord && prev != '$'.ord && !(prev.unsafe_chr.ascii_alphanumeric? || prev == '_'.ord)
+          if (parts = PERL_QUOTE_LIKE_PARTS[line.byte_slice(i, k - i)]?) && (d = perl_quote_delimiter(line, k))
+            delimiter = line.byte_at(d)
+            closer = PERL_DELIMITER_CLOSERS[delimiter]? || delimiter
+            i = skip_perl_delimited(line, d + 1, closer, closer == delimiter ? 0_u8 : delimiter, parts)
+          else
+            i = k
+          end
+          next
+        elsif byte == '#'.ord && !(i > 0 && line.byte_at(i - 1) == '$'.ord)
           return line.byte_slice(0, i)
         end
-        prev = byte
+        i += 1
       end
       line
+    end
+
+    # Quote-like operators and how many delimited parts follow them.
+    PERL_QUOTE_LIKE_PARTS = {
+      "q" => 1, "qq" => 1, "qw" => 1, "qr" => 1, "qx" => 1, "m" => 1,
+      "s" => 2, "tr" => 2, "y" => 2,
+    }
+    PERL_DELIMITER_CLOSERS = {'('.ord.to_u8 => ')'.ord.to_u8, '['.ord.to_u8 => ']'.ord.to_u8,
+                              '{'.ord.to_u8 => '}'.ord.to_u8, '<'.ord.to_u8 => '>'.ord.to_u8}
+
+    # A bareword, not part of a name, a variable (`$s`, `@m`) or a method
+    # (`->s(...)`, `Foo::q`).
+    private def self.perl_word_start?(line : String, index : Int32) : Bool
+      return false unless line.byte_at(index).unsafe_chr.ascii_letter?
+      return true if index == 0
+      prev = line.byte_at(index - 1).unsafe_chr
+      return false if prev.ascii_alphanumeric? || {'_', '$', '@', '%', '&', ':', '>'}.includes?(prev)
+      true
+    end
+
+    # Offset of the opening delimiter after a quote-like word ending at
+    # `index`, or nil when the word is a plain name (`s => 1`, `y;`). A `#`
+    # delimiter must follow immediately; brackets and `/` may follow spaces.
+    private def self.perl_quote_delimiter(line : String, index : Int32) : Int32?
+      return if index >= line.bytesize
+      char = line.byte_at(index).unsafe_chr
+      if char.ascii_whitespace?
+        k = index
+        while k < line.bytesize && line.byte_at(k).unsafe_chr.ascii_whitespace?
+          k += 1
+        end
+        return if k >= line.bytesize
+        return {'(', '[', '{', '<', '/'}.includes?(line.byte_at(k).unsafe_chr) ? k : nil
+      end
+      return if char.ascii_alphanumeric? || line.byte_at(index) >= 0x80 ||
+                {'_', '=', ',', ';', ')', ']', '}', '>'}.includes?(char)
+      index
+    end
+
+    # A `/` opens a match when the previous non-blank byte cannot end an
+    # operand (`=~ /re/`, `(/re/`, `split /,/` is left as division).
+    private def self.perl_regex_start?(line : String, index : Int32) : Bool
+      k = index - 1
+      while k >= 0 && line.byte_at(k).unsafe_chr.ascii_whitespace?
+        k -= 1
+      end
+      k < 0 || {'(', ',', '=', '~', '!', ';', '{', '[', '|', '&', '?', ':'}.includes?(line.byte_at(k).unsafe_chr)
+    end
+
+    # Offset just past `parts` delimited sections starting at `index` (just
+    # inside the first one). Bracket delimiters nest; for `s{a}{b}` the next
+    # section opens with its own bracket after optional blanks, while
+    # `s#a#b#` reuses the closer as the next opener. An unclosed section runs
+    # to the end of the line.
+    private def self.skip_perl_delimited(line : String, index : Int32, closer : UInt8, opener : UInt8, parts : Int32) : Int32
+      size = line.bytesize
+      depth = 0
+      i = index
+      while i < size
+        byte = line.byte_at(i)
+        if byte == '\\'.ord
+          i += 2
+          next
+        elsif opener != 0 && byte == opener
+          depth += 1
+        elsif byte == closer
+          if depth > 0
+            depth -= 1
+          else
+            parts -= 1
+            return i + 1 if parts == 0
+            if opener != 0
+              k = i + 1
+              while k < size && line.byte_at(k).unsafe_chr.ascii_whitespace?
+                k += 1
+              end
+              return k if k >= size
+              opener = line.byte_at(k)
+              closer = PERL_DELIMITER_CLOSERS[opener]? || opener
+              opener = 0_u8 if closer == opener
+              i = k
+            end
+          end
+        end
+        i += 1
+      end
+      size
     end
   end
 end
