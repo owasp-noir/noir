@@ -211,34 +211,38 @@ class NoirRunner
       @endpoints = StatusCodeProbe.new(@options, @logger).apply(@endpoints)
     end
 
-    # Run tagger
-    if any_to_bool(@options["all_taggers"])
-      @logger.success "Running all taggers."
-      NoirTaggers.run_tagger @endpoints, @options, "all"
-      if @is_debug
-        NoirTaggers::PLAIN_ENTRIES.each do |tagger|
-          @logger.debug "Tagger: #{tagger.key} (#{tagger.name})"
+    # Taggers and the AI-context builder match route text; see
+    # `with_route_paths`.
+    with_route_paths do
+      # Run tagger
+      if any_to_bool(@options["all_taggers"])
+        @logger.success "Running all taggers."
+        NoirTaggers.run_tagger @endpoints, @options, "all"
+        if @is_debug
+          NoirTaggers::PLAIN_ENTRIES.each do |tagger|
+            @logger.debug "Tagger: #{tagger.key} (#{tagger.name})"
+          end
         end
+      elsif !@options["use_taggers"].to_s.empty?
+        @logger.success "Running #{@options["use_taggers"]} taggers."
+        NoirTaggers.run_tagger @endpoints, @options, @options["use_taggers"].to_s
+      elsif ai_context_enabled?
+        @logger.success "Running AI-context taggers."
+        NoirTaggers.run_tagger @endpoints, @options, "all"
+      elsif @options["format"].to_s == "only-tag"
+        # `-f only-tag` has nothing to print unless a tagger populated tags.
+        # Without this, the format silently produced empty output unless the
+        # user also passed -T/--use-taggers — an easy trap. Imply all taggers
+        # when no explicit tagger option was given.
+        @logger.success "Running all taggers (implied by -f only-tag)."
+        NoirTaggers.run_tagger @endpoints, @options, "all"
       end
-    elsif !@options["use_taggers"].to_s.empty?
-      @logger.success "Running #{@options["use_taggers"]} taggers."
-      NoirTaggers.run_tagger @endpoints, @options, @options["use_taggers"].to_s
-    elsif ai_context_enabled?
-      @logger.success "Running AI-context taggers."
-      NoirTaggers.run_tagger @endpoints, @options, "all"
-    elsif @options["format"].to_s == "only-tag"
-      # `-f only-tag` has nothing to print unless a tagger populated tags.
-      # Without this, the format silently produced empty output unless the
-      # user also passed -T/--use-taggers — an easy trap. Imply all taggers
-      # when no explicit tagger option was given.
-      @logger.success "Running all taggers (implied by -f only-tag)."
-      NoirTaggers.run_tagger @endpoints, @options, "all"
-    end
 
-    if ai_context_enabled?
-      @logger.success "Building aggregated AI context."
-      NoirAIContext.apply(@endpoints)
-      apply_ai_context_feature_filter
+      if ai_context_enabled?
+        @logger.success "Building aggregated AI context."
+        NoirAIContext.apply(@endpoints)
+        apply_ai_context_feature_filter
+      end
     end
 
     # Run deliver
@@ -253,6 +257,40 @@ class NoirRunner
 
   private def ai_context_enabled? : Bool
     any_to_bool(@options["ai_context"]?)
+  end
+
+  # The optimizer has already joined `-u` onto every endpoint URL, but
+  # taggers and the AI-context builder match route text: tokenised path
+  # words, Ant patterns, group prefixes, auth/admin namespaces. Fed
+  # `http://admin.example.com/a` they tagged every endpoint `admin`, a
+  # `/api/public/**` permitAll rule stopped matching, and `-u http://h/auth`
+  # made every route look like an auth route. Show them the route path for
+  # the block, then put the URL back.
+  private def with_route_paths(&)
+    target = @options["url"]?.to_s
+    return yield if target.empty?
+
+    originals = @endpoints.map(&.url)
+    @endpoints.each_with_index do |endpoint, idx|
+      next unless endpoint.url.starts_with?(target)
+      rest = endpoint.url[target.size..]
+      # `combine_url_and_endpoints` leaves `/` at the seam unless the target
+      # ends in one, so anything else is an absolute URL whose host merely
+      # starts with the target's text (`http://h` vs `http://host2/x`).
+      next unless rest.empty? || rest.starts_with?('/') || target.ends_with?('/')
+      endpoint.url = rest.starts_with?('/') ? rest : "/#{rest}"
+      @endpoints[idx] = endpoint
+    end
+
+    begin
+      yield
+    ensure
+      @endpoints.each_with_index do |endpoint, idx|
+        next unless original = originals[idx]?
+        endpoint.url = original
+        @endpoints[idx] = endpoint
+      end
+    end
   end
 
   # `--ai-context=guards,sinks` narrows the user's view. The

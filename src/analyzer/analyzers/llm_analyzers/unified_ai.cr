@@ -67,6 +67,8 @@ module Analyzer::AI
     @agent_tool_cache : Hash(String, String)
     @agent_tool_cache_order : Array(String)
     @symlinked_dir_cache = {} of String => Bool
+    # Bundle prompt label => walked path, filled before any bundle is sent.
+    @bundle_labels = {} of String => String
 
     def initialize(options : Hash(String, YAML::Any))
       super(options)
@@ -164,9 +166,13 @@ module Analyzer::AI
       paths.each do |path|
         next if File.directory?(path) || File.symlink?(path) || ignore_extensions.includes?(File.extname(path))
 
-        relative_path = get_relative_path(base_path, path)
+        # The label is what the model echoes back as `file`, so it has to name
+        # one file unambiguously. Base-relative is fine for one base; with
+        # several, `app.js` could be in any of them, so use the walked path.
+        label = @base_paths.size > 1 ? path : get_relative_path(base_path, path)
+        @bundle_labels[label] = path
         content = Noir::TextFile.read(path)
-        files << {relative_path, content}
+        files << {label, content}
       end
       files
     end
@@ -256,7 +262,11 @@ module Analyzer::AI
       if response.empty?
         record_llm_failure(bundle.paths, LLM_NO_RESPONSE_REASON)
       else
-        parse_and_store_endpoints(response, "#{base_path}/ai_detected")
+        # An endpoint whose `file` does not resolve falls back to the
+        # bundle's file only when there is exactly one; in a multi-file
+        # bundle any pick would be a guess, so it gets no code path.
+        fallback = bundle.paths.size == 1 ? resolve_reported_file(bundle.paths[0]) : nil
+        parse_and_store_endpoints(response, fallback)
       end
     end
 
@@ -289,10 +299,16 @@ module Analyzer::AI
         filtered = JSON.parse(response.to_s)
         selected = filtered["files"].as_a.map(&.as_s)
 
+        # Keep only files that were in the listing the model was shown.
+        # The listing is the detector-built file set, so it already honours
+        # --exclude-path and subtree pruning; a reply naming any other path
+        # (an excluded secret, a hallucination) must never reach the
+        # provider. The listed form is returned, not the model's echo.
+        selected = selected.compact_map { |path| resolve_reported_file(path) }.uniq!
+
         # Keep only real, in-scope source files. The model sometimes
-        # echoes directories, hallucinated paths, or ignorable assets;
-        # analyzing those is wasted work and can mask the recall guard
-        # below.
+        # echoes directories or ignorable assets; analyzing those is
+        # wasted work and can mask the recall guard below.
         selected = selected.select do |path|
           File.file?(path) &&
             !ignore_extensions.includes?(File.extname(path)) &&
@@ -378,7 +394,7 @@ module Analyzer::AI
       paths.each { |path| Noir::SkippedFiles.record("ai", path, reason) }
     end
 
-    private def parse_and_store_endpoints(response : String, default_path : String)
+    private def parse_and_store_endpoints(response : String, default_path : String?)
       response_json = JSON.parse(response.to_s)
       response_json["endpoints"].as_a.each do |ep|
         if endpoint = create_endpoint_from_json(ep, default_path)
@@ -389,7 +405,7 @@ module Analyzer::AI
       logger.debug "Error parsing response: #{e.message}"
     end
 
-    private def create_endpoint_from_json(ep : JSON::Any, default_path : String) : Endpoint?
+    private def create_endpoint_from_json(ep : JSON::Any, default_path : String?) : Endpoint?
       url = extract_endpoint_url(ep)
       return unless plausible_endpoint_url?(url)
 
@@ -621,7 +637,9 @@ module Analyzer::AI
 
       added = 0
       endpoint_json.as_a.each do |ep|
-        if endpoint = create_endpoint_from_json(ep, "#{base_path}/ai_detected")
+        # No file the agent read is known here, so an unresolved `file`
+        # leaves the endpoint without a code path rather than a fake one.
+        if endpoint = create_endpoint_from_json(ep, nil)
           @result << endpoint
           added += 1
         end
@@ -928,14 +946,35 @@ module Analyzer::AI
       end
     end
 
-    private def build_path_info(ep : JSON::Any, default_path : String) : PathInfo
-      path = safe_json_string(ep, "file", default_path).strip
-      path = default_path if path.empty?
-      line = safe_json_int_or_nil(ep, "line")
-      PathInfo.new(path, line)
+    private def build_path_info(ep : JSON::Any, default_path : String?) : PathInfo?
+      path = resolve_reported_file(safe_json_string(ep, "file", "")) || default_path
+      return unless path
+      PathInfo.new(path, safe_json_int_or_nil(ep, "line"))
     rescue e : Exception
       logger.debug "Failed to build path info from LLM response: #{e.message}"
-      PathInfo.new(default_path)
+      default_path.try { |fallback| PathInfo.new(fallback) }
+    end
+
+    # The model's `file` is untrusted — it names whatever the scanned code
+    # steered it to, and `--ai-context` later reads that path into the
+    # report. Accept it only as a file the detector registered (inside a
+    # base, past --exclude-path), and return the as-walked spelling the
+    # static analyzers report. A bundle label maps straight to its file;
+    # any other relative name is resolved against each base and rejected
+    # when it names a file in more than one.
+    private def resolve_reported_file(file : String) : String?
+      file = file.strip
+      return if file.empty?
+      if labelled = @bundle_labels[file]?
+        return labelled
+      end
+
+      matches = @expanded_base_paths.compact_map do |base|
+        walked = walked_path?(Noir::PathScope.expand(File.expand_path(file, base)))
+        walked if walked && path_within_base?(walked)
+      end
+      matches.uniq!
+      matches.size == 1 ? matches[0] : nil
     end
 
     private def extract_params(params_json : JSON::Any?) : Array(Param)
