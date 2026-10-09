@@ -1,3 +1,4 @@
+require "file_utils"
 require "../../spec_helper"
 require "../../../src/models/code_locator"
 require "../../../src/analyzer/analyzers/mobile/android.cr"
@@ -336,5 +337,40 @@ describe "Analyzer::Mobile::Android (gradle GString applicationId)" do
   it "uses the GString-resolved applicationId as the intent:// package" do
     find.call("intent:///.GStringService").should be_nil
     find.call("intent://com.example.gstringapp/.GStringService").not_nil!.protocol.should eq("android-intent")
+  end
+end
+
+# A filter with thousands of hosts and paths used to build the full
+# scheme x host x path product (and dedup with Array#includes?) before
+# applying the cap: seconds and GBs for one manifest.
+describe "Analyzer::Mobile::Android (huge intent-filter)" do
+  it "caps without materialising the full product" do
+    dir = File.tempname("noir-android-huge-filter")
+    Dir.mkdir_p(dir)
+    manifest = File.join(dir, "AndroidManifest.xml")
+    hosts = (0...3000).map { |i| %(<data android:host="h#{i}.example.com"/>) }.join("\n")
+    paths = (0...3000).map { |i| %(<data android:pathPrefix="/p#{i}"/>) }.join("\n")
+    File.write(manifest, <<-XML)
+      <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.x">
+      <application><activity android:name=".Main" android:exported="true"><intent-filter>
+      <action android:name="android.intent.action.VIEW"/>
+      <category android:name="android.intent.category.BROWSABLE"/>
+      <data android:scheme="https"/><data android:scheme="http"/>
+      #{hosts}
+      #{paths}
+      </intent-filter></activity></application></manifest>
+      XML
+
+    CodeLocator.instance.clear(Noir::LocatorKeys::ANDROID_MANIFEST)
+    CodeLocator.instance.push(Noir::LocatorKeys::ANDROID_MANIFEST, manifest)
+    endpoints = [] of Endpoint
+    elapsed = Time.measure { endpoints = Analyzer::Mobile::Android.new(create_test_options).analyze }
+
+    endpoints.size.should eq(Analyzer::Mobile::Android::MAX_FILTER_COMBOS)
+    endpoints.first.url.should eq("https://h0.example.com")
+    elapsed.should be < 3.seconds
+  ensure
+    CodeLocator.instance.clear(Noir::LocatorKeys::ANDROID_MANIFEST)
+    FileUtils.rm_rf(dir) if dir
   end
 end

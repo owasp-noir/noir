@@ -204,24 +204,26 @@ module Analyzer::Mobile
                                       package : String, strings : Hash(String, String),
                                       placeholders : Hash(String, String), path : String,
                                       auto_verify : Bool, via : String, seen_urls : Set(String))
-      schemes = [] of String
-      hosts = [] of String
-      paths = [] of String
+      # Insertion-ordered sets: `Array#includes?` dedup was O(n^2) on a
+      # filter with thousands of `<data>` elements.
+      schemes = Set(String).new
+      hosts = Set(String).new
+      paths = Set(String).new
       has_mime_type = false
 
       data_nodes.each do |data|
         has_mime_type = true unless attr(data, "mimeType").nil?
         if scheme = resolve(attr(data, "scheme"), strings, placeholders)
-          schemes << scheme unless scheme.empty? || schemes.includes?(scheme)
+          schemes << scheme unless scheme.empty?
         end
         if host = resolve(attr(data, "host"), strings, placeholders)
           # A bare `*` host matches any authority — it carries no specific
           # target, so treat it as host-less (`scheme://*` == `scheme://`).
           # A wildcard *subdomain* (`*.example.com`) is kept as-is.
-          hosts << host unless host.empty? || host == "*" || hosts.includes?(host)
+          hosts << host unless host.empty? || host == "*"
         end
         norm = normalize_path(data, strings, placeholders)
-        paths << norm unless norm.empty? || paths.includes?(norm)
+        paths << norm unless norm.empty?
       end
       return if schemes.empty?
 
@@ -242,38 +244,45 @@ module Analyzer::Mobile
     # Cross-products the scheme/host/path sets of one filter into
     # (scheme, host, path) triples, applying the host-less generic-scheme
     # suppression and the per-filter cap.
-    private def data_filter_combos(schemes : Array(String), hosts : Array(String),
-                                   paths : Array(String), has_mime_type : Bool) : Array({String, String, String})
+    private def data_filter_combos(schemes : Set(String), hosts : Set(String),
+                                   paths : Set(String), has_mime_type : Bool) : Array({String, String, String})
       combos = [] of {String, String, String}
-      effective_paths = paths.empty? ? [""] : paths
+      effective_paths = paths.empty? ? [""] : paths.to_a
 
-      schemes.each do |scheme|
+      eligible = schemes.reject do |scheme|
         # Local-content and system-broadcast schemes never describe a
-        # remotely addressable deep link.
-        next if LOCAL_SCHEMES.includes?(scheme) || SYSTEM_BROADCAST_SCHEMES.includes?(scheme)
-        if hosts.empty?
-          # Host-less: keep only custom schemes. A generic scheme with no
-          # host — and any scheme in a content-type (mimeType) filter — is a
-          # file/content qualifier, not a remotely reachable deep link.
-          next if has_mime_type || GENERIC_SCHEMES.includes?(scheme)
-          combos << {scheme, "", ""}
-        else
-          hosts.each do |host|
+        # remotely addressable deep link. Host-less: keep only custom
+        # schemes. A generic scheme with no host — and any scheme in a
+        # content-type (mimeType) filter — is a file/content qualifier, not
+        # a remotely reachable deep link.
+        LOCAL_SCHEMES.includes?(scheme) || SYSTEM_BROADCAST_SCHEMES.includes?(scheme) ||
+          (hosts.empty? && (has_mime_type || GENERIC_SCHEMES.includes?(scheme)))
+      end
+      # A host-less filter yields bare `scheme://` (paths need an authority).
+      host_list = hosts.empty? ? [""] : hosts.to_a
+      effective_paths = [""] if hosts.empty?
+
+      # Size the product before building it: a filter with thousands of
+      # hosts and paths must not materialise millions of triples first.
+      total = eligible.size.to_i64 * host_list.size * effective_paths.size
+      if total <= MAX_FILTER_COMBOS
+        eligible.each do |scheme|
+          host_list.each do |host|
             effective_paths.each { |norm_path| combos << {scheme, host, norm_path} }
           end
         end
+        return combos
       end
-
-      return combos if combos.size <= MAX_FILTER_COMBOS
 
       # Over the cap: drop path granularity (scheme × host), then truncate.
-      @logger.debug "Capping intent-filter deep links (#{combos.size} combinations) at #{MAX_FILTER_COMBOS}"
-      collapsed = [] of {String, String, String}
-      seen = Set(String).new
-      combos.each do |scheme, host, _|
-        collapsed << {scheme, host, ""} if seen.add?("#{scheme}://#{host}")
+      @logger.debug "Capping intent-filter deep links (#{total} combinations) at #{MAX_FILTER_COMBOS}"
+      eligible.each do |scheme|
+        host_list.each do |host|
+          return combos if combos.size >= MAX_FILTER_COMBOS
+          combos << {scheme, host, ""}
+        end
       end
-      collapsed.first(MAX_FILTER_COMBOS)
+      combos
     end
 
     # Emits an android-intent endpoint for an exported, data-less component,
