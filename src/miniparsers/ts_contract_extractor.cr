@@ -84,9 +84,8 @@ module Noir
       "get" => "GET", "post" => "POST", "put" => "PUT", "patch" => "PATCH",
       "del" => "DELETE", "delete" => "DELETE", "head" => "HEAD", "options" => "OPTIONS",
     }
-    EFFECT_FIELDS        = {"setPayload" => "payload", "setUrlParams" => "query", "setHeaders" => "header"}
-    EFFECT_OPTION_FIELDS = {"payload" => "payload", "urlParams" => "query", "headers" => "header"}
-    TS_REST_FIELDS       = {"body" => "json", "query" => "query", "headers" => "header"}
+    EFFECT_FIELDS  = {"setPayload" => "payload", "setUrlParams" => "query", "setHeaders" => "header"}
+    TS_REST_FIELDS = {"body" => "json", "query" => "query", "headers" => "header"}
 
     # --- ts-rest -----------------------------------------------------------
 
@@ -228,26 +227,19 @@ module Noir
 
       if method = effect_verb(node, ctx)
         path = second_arg(node).try { |arg| string_value(arg, ctx) }
-        return [] of Route unless path
-        route = Route.new(method, path, TreeSitter.call_name_row(node) + 1)
-        # The options-object form: get("name", "/path", { payload, urlParams, headers }).
-        if (options = args.try { |a| nth_arg(a, 2) }) && TreeSitter.node_type(options) == "object"
-          each_pair(options, ctx) do |key, value|
-            type = EFFECT_OPTION_FIELDS[key]?
-            effect_fields(route, type, value, ctx) if type
-          end
-        end
-        return [route]
+        return path ? [Route.new(method, path, TreeSitter.call_name_row(node) + 1)] : [] of Route
       end
 
       property = call_property(node, ctx)
       return descend(node) { |child| effect_routes(child, ctx) } unless property
 
-      routes = effect_routes(TreeSitter.field(function, "object").not_nil!, ctx)
-      added = [] of Route
-      each_arg(node) do |arg|
-        added.concat(property == "add" && TreeSitter.node_type(arg) == "identifier" ? ctx.resolve(text(arg, ctx)) { |decl| effect_routes(decl, ctx) } : effect_routes(arg, ctx))
+      # A group named elsewhere in the file: `.add(UsersGroup)`, `AdminGroup.prefix("/admin")`.
+      resolve = ->(n : LibTreeSitter::TSNode) do
+        TreeSitter.node_type(n) == "identifier" ? ctx.resolve(text(n, ctx)) { |decl| effect_routes(decl, ctx) } : effect_routes(n, ctx)
       end
+      routes = resolve.call(TreeSitter.field(function, "object").not_nil!)
+      added = [] of Route
+      each_arg(node) { |arg| added.concat(property == "add" ? resolve.call(arg) : effect_routes(arg, ctx)) }
 
       if property == "prefix" && (prefix = first_arg(node).try { |arg| string_value(arg, ctx) })
         routes.each { |route| route.path = URLPath.join(prefix, route.path) }
