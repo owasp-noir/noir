@@ -412,9 +412,9 @@ module Analyzer::Specification
 
           op_details = operation_details(details, line_index, ["paths", path, method])
           if params.size > 0
-            @result << Endpoint.new(base_path + path, method.upcase, params, op_details)
+            @result << Endpoint.new(join_base_path(base_path, path), method.upcase, params, op_details)
           else
-            @result << Endpoint.new(base_path + path, method.upcase, op_details)
+            @result << Endpoint.new(join_base_path(base_path, path), method.upcase, op_details)
           end
         rescue e
           record_skipped_entry(doc.path, "#{method.to_s.upcase} #{path}", e)
@@ -477,9 +477,9 @@ module Analyzer::Specification
 
           op_details = operation_details(details, line_index, ["paths", path.to_s, method.to_s])
           if params.size > 0
-            @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, params, op_details)
+            @result << Endpoint.new(join_base_path(base_path, path.to_s), method.to_s.upcase, params, op_details)
           else
-            @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, op_details)
+            @result << Endpoint.new(join_base_path(base_path, path.to_s), method.to_s.upcase, op_details)
           end
         rescue e
           record_skipped_entry(doc.path, "#{method.to_s.upcase} #{path}", e)
