@@ -10,6 +10,11 @@ expected_endpoints = [
   Endpoint.new("/Articles/{id}", "PUT", [Param.new("id", "", "path")]),
   Endpoint.new("/Articles/{id}", "PATCH", [Param.new("id", "", "path")]),
   Endpoint.new("/Articles/{id}", "DELETE", [Param.new("id", "", "path")]),
+  # resources() honours only (RouteBuilder map keys)
+  Endpoint.new("/Comments", "GET"),
+  Endpoint.new("/Comments/{id}", "GET", [Param.new("id", "", "path")]),
+  # legacy _method in the options argument
+  Endpoint.new("/legacy-post", "POST"),
   Endpoint.new("/admin/dashboard", "GET"),
   Endpoint.new("/admin/users", "GET"),
   Endpoint.new("/login", "POST"),
@@ -29,5 +34,5 @@ expected_endpoints = [
 
 FunctionalTester.new("fixtures/php/cakephp/", {
   :techs     => 2,  # Detection still sees php_cakephp and php_pure
-  :endpoints => 18, # Analysis suppresses redundant php_pure file endpoints
+  :endpoints => 21, # Analysis suppresses redundant php_pure file endpoints
 }, expected_endpoints).perform_tests

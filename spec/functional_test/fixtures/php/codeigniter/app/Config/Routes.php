@@ -18,6 +18,8 @@ $routes->add('webhook', 'WebhookController::any');
 
 $routes->resource('photos');
 $routes->presenter('articles');
+$routes->resource('tags', ['only' => ['index', 'show']]);
+$routes->presenter('albums', ['except' => 'show,new,create,edit,update,remove,delete', 'placeholder' => '(:num)']);
 
 $routes->group('admin', function ($routes) {
     $routes->get('dashboard', 'AdminController::dashboard');

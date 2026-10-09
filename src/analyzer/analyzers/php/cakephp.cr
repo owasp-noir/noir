@@ -73,7 +73,7 @@ module Analyzer::Php
 
         full_path = build_full_path(prefix, route_path)
         target = extract_controller_action_target(options_str)
-        methods = extract_connect_methods(statement, options_str)
+        methods = extract_connect_methods(statement)
 
         methods.each do |method|
           params = extract_route_params(full_path)
@@ -114,7 +114,8 @@ module Analyzer::Php
 
         resource_name = route_match[2]
         full_resource_path = build_full_path(prefix, resource_name)
-        endpoints.concat(create_resource_endpoints(full_resource_path, file_path, include_callee, resource_name))
+        args = route_match[3]
+        endpoints.concat(create_resource_endpoints(full_resource_path, file_path, include_callee, resource_name, args))
         pos = route_match.end(0)
       end
 
@@ -133,7 +134,7 @@ module Analyzer::Php
     # variable name (`$routes`, `$builder`, `$routeBuilder`, ...) or the static
     # `Router` facade used by older apps and plugin route files (croogo).
     CONNECT_REGEX    = /(\$\w+|Router)(?:->|::)connect\s*\(\s*['"]([^'"]+)['"](.*?);/mi
-    RESOURCE_REGEX   = /(\$\w+|Router)(?:->|::)resources\s*\(\s*['"]([^'"]+)['"]/mi
+    RESOURCE_REGEX   = /(\$\w+|Router)(?:->|::)resources\s*\(\s*['"]([^'"]+)['"](#{CALL_ARGS_TAIL})/mi
     SCOPE_OPEN_REGEX = /(?:\$\w+|Router)(?:->|::)(scope|prefix|plugin)\s*\(/mi
     VERB_REGEXES     = {
       "GET"     => /(\$\w+|Router)(?:->|::)get\s*\(\s*['"]([^'"]+)['"](?:\s*,\s*\[(.*?)\])?/mi,
@@ -219,14 +220,17 @@ module Analyzer::Php
     # legacy `'_method' => '...'` option, and default to GET when neither
     # is present (an unrestricted `connect()` is most commonly reached via
     # GET in these apps).
-    private def extract_connect_methods(statement : String, options_str : String?) : Array(String)
+    private def extract_connect_methods(statement : String) : Array(String)
       if set_methods = statement.match(/->\s*setMethods\s*\(\s*\[([^\]]*)\]/i)
         methods = extract_methods_from_array(set_methods[1])
         return methods unless methods.empty?
       end
 
-      if options_str && (legacy = options_str.match(/['"]_method['"]\s*=>\s*['"]([^'"]+)['"]/i))
-        return [legacy[1].upcase]
+      # `_method` sits in the defaults (2nd argument) or the options (3rd),
+      # as one verb or a list.
+      if legacy = statement.match(/['"]_method['"]\s*=>\s*(?:['"]([^'"]+)['"]|(?:\[|array\s*\()([^\])]*))/i)
+        methods = legacy[1]? ? [legacy[1].upcase] : extract_methods_from_array(legacy[2])
+        return methods unless methods.empty?
       end
 
       ["GET"]
@@ -260,22 +264,25 @@ module Analyzer::Php
     private def create_resource_endpoints(resource_path : String,
                                           file_path : String,
                                           include_callee : Bool,
-                                          controller_name : String) : Array(Endpoint)
+                                          controller_name : String,
+                                          args : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       details = Details.new(PathInfo.new(file_path))
 
-      # Standard REST resource routes
+      # RouteBuilder's resource map: {path, verb, controller action, map key}.
+      # `only` names the map keys (`create`/`update`), not the actions.
       resource_routes = [
-        {resource_path, "GET", "index"},
-        {resource_path, "POST", "add"},
-        {"#{resource_path}/{id}", "GET", "view"},
-        {"#{resource_path}/{id}", "PUT", "edit"},
-        {"#{resource_path}/{id}", "PATCH", "edit"},
-        {"#{resource_path}/{id}", "DELETE", "delete"},
+        {resource_path, "GET", "index", "index"},
+        {resource_path, "POST", "add", "create"},
+        {"#{resource_path}/{id}", "GET", "view", "view"},
+        {"#{resource_path}/{id}", "PUT", "edit", "update"},
+        {"#{resource_path}/{id}", "PATCH", "edit", "update"},
+        {"#{resource_path}/{id}", "DELETE", "delete", "delete"},
       ]
 
       resource_routes.each do |route_info|
-        path, method, action = route_info
+        path, method, action, key = route_info
+        next unless resource_action_allowed?(args, key)
         params = extract_route_params(path)
         endpoint = Endpoint.new(path, method, params, details.dup)
         attach_route_target_callees(endpoint, {controller_name, action}, file_path) if include_callee

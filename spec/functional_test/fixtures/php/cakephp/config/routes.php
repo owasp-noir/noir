@@ -13,6 +13,8 @@ return static function (RouteBuilder $routes) {
         $builder->get('/about', ['controller' => 'Pages', 'action' => 'about']);
 
         $builder->resources('Articles');
+        $builder->resources('Comments', ['only' => ['index', 'view']]);
+        $builder->connect('/legacy-post', ['controller' => 'Posts', 'action' => 'add'], ['_method' => 'POST']);
 
         $builder->scope('/admin', function (RouteBuilder $builder) {
             $builder->connect('/dashboard', ['controller' => 'Admin', 'action' => 'index']);
