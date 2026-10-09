@@ -923,6 +923,35 @@ describe "EndpointOptimizer" do
         result[0].details.technologies.should eq(["kotlin_spring", "postman"])
       end
 
+      it "folds a concrete example into the first matching template only" do
+        optimizer = EndpointOptimizer.new(logger, options)
+
+        result = optimizer.optimize_endpoints([
+          tech_endpoint("/api/users/{id}", "GET", "go_gin", "a.go"),
+          tech_endpoint("/api/users/{uid}", "GET", "go_echo", "b.go"),
+          tech_endpoint("/api/users/42", "POST", "postman", "c.json"),
+          tech_endpoint("/api/users/7", "GET", "postman", "c.json"),
+        ])
+
+        result.map(&.url).should eq(["/api/users/{id}", "/api/users/{uid}", "/api/users/42"])
+        result[0].details.code_paths.map(&.path).should eq(["a.go", "c.json"])
+        result[1].details.code_paths.map(&.path).should eq(["b.go"])
+      end
+
+      # Every concrete request used to re-test every endpoint as a template:
+      # 4000 Postman requests took 13s.
+      it "merges a large collection in linear time" do
+        optimizer = EndpointOptimizer.new(logger, options)
+        endpoints = (0...8000).map { |i| tech_endpoint("/items#{i}/#{i}", "GET", "postman", "c.json") }
+        endpoints << tech_endpoint("/items0/{id}", "GET", "go_gin", "a.go")
+
+        result = [] of Endpoint
+        elapsed = Time.measure { result = optimizer.optimize_endpoints(endpoints) }
+
+        result.size.should eq(8000)
+        elapsed.should be < 5.seconds
+      end
+
       it "orders the list the same way whichever duplicate sorts first" do
         optimizer = EndpointOptimizer.new(logger, options)
 

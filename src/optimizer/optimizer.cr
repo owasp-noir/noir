@@ -230,21 +230,34 @@ class EndpointOptimizer
     end
   end
 
+  # Folds each concrete collection request (`/users/42`) into the first
+  # templated endpoint (`/users/{id}`) it instantiates.
+  #
+  # Candidate templates are bucketed once by method and segment count — the
+  # only ones `template_matches_concrete_example?` can accept — in endpoint
+  # order, so the first match is the same one a scan of every endpoint found.
+  # That scan re-tested every endpoint per concrete request: O(n²), 13s for
+  # a 4000-request Postman collection. A template is never a concrete source
+  # and a merge keeps its URL, so the buckets stay valid while merging.
   private def merge_concrete_example_endpoints(endpoints : Array(Endpoint)) : Array(Endpoint)
+    templates = Hash(Tuple(String, Int32), Array(Tuple(Int32, Array(String)))).new
+    endpoints.each_with_index do |endpoint, idx|
+      next unless templated_endpoint?(endpoint)
+      segments = comparable_path_segments(endpoint.url)
+      (templates[{endpoint.method, segments.size}] ||= [] of Tuple(Int32, Array(String))) << {idx, segments}
+    end
+    return endpoints if templates.empty?
+
     removed = Set(Int32).new
-
     endpoints.each_with_index do |source, source_idx|
-      next if removed.includes?(source_idx)
       next unless concrete_example_source?(source)
+      concrete_segments = comparable_path_segments(source.url)
+      next unless candidates = templates[{source.method, concrete_segments.size}]?
 
-      endpoints.each_with_index do |target, target_idx|
-        next if source_idx == target_idx || removed.includes?(target_idx)
-        next unless source.method == target.method
-        next unless templated_endpoint?(target)
-        next unless template_matches_concrete_example?(target.url, source.url)
+      candidates.each do |target_idx, template_segments|
+        next unless template_matches_concrete_example?(template_segments, concrete_segments)
 
-        target = merge_endpoint_context(target, source)
-        endpoints[target_idx] = target
+        endpoints[target_idx] = merge_endpoint_context(endpoints[target_idx], source)
         removed << source_idx
         break
       end
@@ -304,9 +317,7 @@ class EndpointOptimizer
     COLLECTION_NOISE_HEADERS.includes?(param.name.downcase)
   end
 
-  private def template_matches_concrete_example?(template_url : String, concrete_url : String) : Bool
-    template_segments = comparable_path_segments(template_url)
-    concrete_segments = comparable_path_segments(concrete_url)
+  private def template_matches_concrete_example?(template_segments : Array(String), concrete_segments : Array(String)) : Bool
     return false unless template_segments.size == concrete_segments.size
 
     matched_placeholder = false
