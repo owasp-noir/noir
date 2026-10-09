@@ -238,7 +238,11 @@ module Analyzer::Python
             parent_name, child_name, mount_prefix = mount
             next unless api_instances.has_key?(child_name)
 
-            parent_prefixes = resolved[parent_name]? || [api_instances[parent_name]? || ""]
+            # A parent registered more than once from another file mounts
+            # the child under each of its registrations.
+            parent_prefixes = resolved[parent_name]? ||
+                              registered[path]?.try(&.[parent_name]?) ||
+                              [api_instances[parent_name]? || ""]
             # A url_prefix given at registration replaces the child's own
             # url_prefix; the own prefix applies only when it is omitted
             # (nil). An explicit empty url_prefix still drops it.

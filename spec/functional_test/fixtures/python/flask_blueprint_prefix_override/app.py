@@ -3,6 +3,8 @@
 # does the blueprint's own url_prefix apply.
 from flask import Flask, Blueprint
 
+from views.parent import shared
+
 override = Blueprint("override", __name__, url_prefix="/own")
 parent = Blueprint("parent", __name__, url_prefix="/parent")
 child = Blueprint("child", __name__, url_prefix="/child")
@@ -55,3 +57,5 @@ app.register_blueprint(kept)
 # Registered twice: served under both prefixes.
 app.register_blueprint(twice, url_prefix="/v1")
 app.register_blueprint(twice, url_prefix="/v2")
+app.register_blueprint(shared, url_prefix="/s1")
+app.register_blueprint(shared, url_prefix="/s2", name="shared2")
