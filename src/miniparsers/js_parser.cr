@@ -65,10 +65,12 @@ module Noir
       token.type == :http_method || (token.type == :keyword && token.value == "delete")
     end
 
-    # A route verb: an HTTP method, or Restify's `opts` (OPTIONS) in a
-    # Restify file — elsewhere `opts` is far too common a name to read as one.
-    private def route_verb?(token : JSToken) : Bool
-      http_method?(token) || (@framework == :restify && token.value == "opts")
+    # A route verb: an HTTP method, or Restify's `opts` (OPTIONS) called on
+    # a server or router in a Restify file — `opts` is far too common a name
+    # to read as one anywhere else.
+    private def route_verb?(token : JSToken, receiver : String) : Bool
+      http_method?(token) ||
+        (@framework == :restify && token.value == "opts" && routing_receiver?(receiver))
     end
 
     def initialize(source : String)
@@ -944,7 +946,7 @@ module Noir
         # Pattern 1: identifier . http_method ( 'path' | `tpl` | identifier/concat )
         if @tokens[idx].type == :identifier &&
            @tokens[idx + 1].type == :dot &&
-           route_verb?(@tokens[idx + 2]) &&
+           route_verb?(@tokens[idx + 2], @tokens[idx].value) &&
            @tokens[idx + 3].type == :lparen
           if !route_handler_arg?(idx + 3) || http_client_receiver?(@tokens[idx].value)
             idx += 1
@@ -1147,7 +1149,9 @@ module Noir
       nil
     end
 
-    HTTP_CLIENT_OPTION_KEYS = Set{"host", "hostname", "port", "protocol", "agent"}
+    # Keys a Restify route spec may carry. Anything else (`headers`,
+    # `socketPath`, `host`, `bucket`, ...) is an options bag for some client.
+    RESTIFY_ROUTE_SPEC_KEYS = Set{"path", "url", "name", "version", "versions", "contentType", "urlParamPattern", "flags"}
 
     private def parse_restify_route : JSRoutePattern?
       # Similar to Express but handle restify specific patterns like .del()
@@ -1162,7 +1166,7 @@ module Noir
          !http_client_receiver?(@tokens[idx].value) &&
          idx + 2 < @tokens.size &&
          @tokens[idx + 1].type == :dot &&
-         route_verb?(@tokens[idx + 2])
+         route_verb?(@tokens[idx + 2], @tokens[idx].value)
         method = normalize_verb(@tokens[idx + 2].value)
 
         # Look for the path string in parentheses
@@ -1179,15 +1183,17 @@ module Noir
           elsif @tokens[path_idx + 1].type == :lbrace
             # Look for the path property in the object. Restify accepts
             # both `{ path: '/x' }` and `{ url: '/x', name: '...' }` —
-            # treat `url` as an alias for `path`.
-            # A `host`/`port`/... key makes it Node's `http.get({ host, path },
-            # cb)` client call rather than a route spec.
+            # treat `url` as an alias for `path`. A route spec is only read
+            # off a server or router (`store.get({ path }, cb)` and
+            # `http.get({ socketPath, path }, cb)` have the same shape) and
+            # only when every key is a route-spec key.
             obj_idx = path_idx + 1
-            client_options = false
-            while obj_idx + 2 < @tokens.size && @tokens[obj_idx].type != :rbrace
-              if @tokens[obj_idx + 1].type == :colon
+            spec = routing_receiver?(@tokens[idx].value)
+            while spec && obj_idx + 2 < @tokens.size && @tokens[obj_idx].type != :rbrace
+              if @tokens[obj_idx + 1].type == :colon &&
+                 (@tokens[obj_idx - 1].type == :lbrace || @tokens[obj_idx - 1].type == :comma)
                 key = @tokens[obj_idx].value
-                client_options = true if HTTP_CLIENT_OPTION_KEYS.includes?(key)
+                spec = false unless RESTIFY_ROUTE_SPEC_KEYS.includes?(key)
                 if path.nil? && (key == "path" || key == "url") && @tokens[obj_idx + 2].type == :string
                   path = @tokens[obj_idx + 2].value
                   @position = obj_idx + 3
@@ -1195,7 +1201,7 @@ module Noir
               end
               obj_idx += 1
             end
-            path = nil if client_options
+            path = nil unless spec
           end
 
           # If we found a path, create a route object

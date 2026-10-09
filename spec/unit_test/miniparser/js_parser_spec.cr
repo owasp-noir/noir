@@ -388,16 +388,21 @@ describe Noir::JSParser do
       routes.should contain("OPTIONS /o")
     end
 
-    it "reads { path } specs on any receiver but not Node http client options" do
+    it "reads { path } specs and opts on servers only, not on client option bags" do
       code = <<-JS
         const restify = require('restify');
         const http = require('http');
         const api = restify.createServer();
         api.get({ path: '/spec', version: '1.0.0' }, (req, res, next) => next());
+        api.opts('/cors', (req, res, next) => next());
         http.get({ host: 'upstream', path: '/remote' }, (res) => res.resume());
+        http.get({ socketPath: '/var/run/docker.sock', path: '/containers/json' }, (res) => {});
+        upstream.get({ path: '/upstream/users', headers: { a: 1 } }, function (err, req, res, obj) {});
+        store.get({ path: '/files/a.txt' }, (err, data) => {});
+        cfg.opts('/x', handler);
         JS
-      routes = Noir::JSParser.new(code).parse_routes.map { |r| "#{r.method} #{r.path}" }.uniq!
-      routes.should eq(["GET /spec"])
+      routes = Noir::JSParser.new(code).parse_routes.map { |r| "#{r.method} #{r.path}" }.uniq!.sort!
+      routes.should eq(["GET /spec", "OPTIONS /cors"])
     end
 
     it "reads { path } routes past the first 10k tokens" do
