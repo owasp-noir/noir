@@ -40,6 +40,7 @@ module Noir::LocatorKeys
     {:GRAPHQL_OPERATION, "graphql-operation", :array, :detect_scoped, "detector/specification/graphql_operation"},
     {:GRAPHQL_SDL, "graphql-sdl", :array, :detect_scoped, "detector/specification/graphql_sdl"},
     {:GRPC_PROTO, "grpc-proto", :array, :detect_scoped, "detector/specification/grpc"},
+    {:HAPROXY_SPEC, "haproxy-spec", :array, :detect_scoped, "detector/specification/haproxy"},
     {:HAR_PATH, "har-path", :array, :detect_scoped, "detector/specification/har"},
     {:HASURA_REST_ENDPOINTS, "hasura-rest-endpoints", :array, :detect_scoped, "detector/specification/hasura"},
     {:HASURA_TABLES, "hasura-tables", :array, :detect_scoped, "detector/specification/hasura"},
