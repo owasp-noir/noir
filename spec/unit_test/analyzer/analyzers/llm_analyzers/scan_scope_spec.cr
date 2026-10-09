@@ -23,6 +23,20 @@ class Analyzer::AI::Unified
   def __test_filter_paths(all_paths : Array(String), adapter : LLM::Adapter) : Array(String)
     filter_paths_with_llm(all_paths, adapter)
   end
+
+  def __test_bundle_paths(labels : Array(String), reply : String) : Array(Array(String))
+    process_bundle(LLM::Bundle.new("bundle", 10, labels), ScriptedAdapter.new(reply))
+    @result.map(&.details.code_paths.map(&.path))
+  end
+
+  def __test_agent_paths(reply : String) : Array(Array(String))
+    apply_agent_finalize(JSON.parse(reply))
+    @result.map(&.details.code_paths.map(&.path))
+  end
+end
+
+private def endpoint_reply(file : String) : String
+  {endpoints: [{url: "/x", method: "GET", file: file, line: 1}]}.to_json
 end
 
 private def scope_analyzer(base : String) : Analyzer::AI::Unified
@@ -77,6 +91,46 @@ describe Analyzer::AI::Unified do
         selected = scope_analyzer(root).__test_filter_paths(CodeLocator.instance.all_files, ScriptedAdapter.new(reply))
         selected.size.should eq(12)
         selected.none?(&.includes?("vault")).should be_true
+      end
+    end
+  end
+
+  describe "an endpoint's reported file" do
+    it "resolves a base-relative name to the scanned path" do
+      with_scoped_project do |root|
+        paths = scope_analyzer(root).__test_bundle_paths(["f0.js"], endpoint_reply("f3.js"))
+        paths.should eq([[File.join(root, "f3.js")]])
+      end
+    end
+
+    it "is replaced by the bundle's own file when it escapes the scan" do
+      with_scoped_project do |root|
+        outside = File.tempname("noir-ai-outside")
+        File.write(outside, "AWS_SECRET_ACCESS_KEY=top-secret")
+        link = File.join(root, "link.js")
+        File.symlink(outside, link)
+        CodeLocator.instance.register_path(link)
+        begin
+          fallback = [[File.join(root, "f0.js")]]
+          [
+            "../#{File.basename(outside)}", # parent traversal
+            outside,                        # absolute, outside the base
+            "vault/keys.py",                # in the base, but excluded
+            "link.js",                      # in the base, links outside
+            "missing.js",                   # hallucinated
+          ].each do |file|
+            scope_analyzer(root).__test_bundle_paths(["f0.js"], endpoint_reply(file)).should eq(fallback)
+          end
+        ensure
+          File.delete(outside)
+        end
+      end
+    end
+
+    it "leaves an agent endpoint without a code path rather than a fake one" do
+      with_scoped_project do |root|
+        reply = {endpoints: [{url: "/x", method: "GET", file: "../etc/passwd"}]}.to_json
+        scope_analyzer(root).__test_agent_paths(reply).should eq([[] of String])
       end
     end
   end

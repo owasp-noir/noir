@@ -256,7 +256,9 @@ module Analyzer::AI
       if response.empty?
         record_llm_failure(bundle.paths, LLM_NO_RESPONSE_REASON)
       else
-        parse_and_store_endpoints(response, "#{base_path}/ai_detected")
+        # An endpoint whose `file` does not resolve is attributed to the
+        # bundle's first file: a real path, never a made-up one.
+        parse_and_store_endpoints(response, bundle.paths.first?.try { |label| resolve_reported_file(label) })
       end
     end
 
@@ -384,7 +386,7 @@ module Analyzer::AI
       paths.each { |path| Noir::SkippedFiles.record("ai", path, reason) }
     end
 
-    private def parse_and_store_endpoints(response : String, default_path : String)
+    private def parse_and_store_endpoints(response : String, default_path : String?)
       response_json = JSON.parse(response.to_s)
       response_json["endpoints"].as_a.each do |ep|
         if endpoint = create_endpoint_from_json(ep, default_path)
@@ -395,7 +397,7 @@ module Analyzer::AI
       logger.debug "Error parsing response: #{e.message}"
     end
 
-    private def create_endpoint_from_json(ep : JSON::Any, default_path : String) : Endpoint?
+    private def create_endpoint_from_json(ep : JSON::Any, default_path : String?) : Endpoint?
       url = extract_endpoint_url(ep)
       return unless plausible_endpoint_url?(url)
 
@@ -627,7 +629,9 @@ module Analyzer::AI
 
       added = 0
       endpoint_json.as_a.each do |ep|
-        if endpoint = create_endpoint_from_json(ep, "#{base_path}/ai_detected")
+        # No file the agent read is known here, so an unresolved `file`
+        # leaves the endpoint without a code path rather than a fake one.
+        if endpoint = create_endpoint_from_json(ep, nil)
           @result << endpoint
           added += 1
         end
@@ -934,14 +938,30 @@ module Analyzer::AI
       end
     end
 
-    private def build_path_info(ep : JSON::Any, default_path : String) : PathInfo
-      path = safe_json_string(ep, "file", default_path).strip
-      path = default_path if path.empty?
-      line = safe_json_int_or_nil(ep, "line")
-      PathInfo.new(path, line)
+    private def build_path_info(ep : JSON::Any, default_path : String?) : PathInfo?
+      path = resolve_reported_file(safe_json_string(ep, "file", "")) || default_path
+      return unless path
+      PathInfo.new(path, safe_json_int_or_nil(ep, "line"))
     rescue e : Exception
       logger.debug "Failed to build path info from LLM response: #{e.message}"
-      PathInfo.new(default_path)
+      default_path.try { |fallback| PathInfo.new(fallback) }
+    end
+
+    # The model's `file` is untrusted — it names whatever the scanned code
+    # steered it to, and `--ai-context` later reads that path into the
+    # report. Accept it only as a file the detector registered (inside a
+    # base, past --exclude-path), resolving a relative name against each
+    # base the way bundle prompts label files, and return the as-walked
+    # spelling the static analyzers report.
+    private def resolve_reported_file(file : String) : String?
+      file = file.strip
+      return if file.empty?
+
+      @expanded_base_paths.each do |base|
+        walked = walked_path?(Noir::PathScope.expand(File.expand_path(file, base)))
+        return walked if walked && path_within_base?(walked)
+      end
+      nil
     end
 
     private def extract_params(params_json : JSON::Any?) : Array(Param)
