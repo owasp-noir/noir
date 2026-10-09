@@ -133,7 +133,26 @@ private def route_view(target : String) : Array(String)
   end.sort!
 end
 
+class NoirRunner
+  def __test_route_paths : Array(String)
+    seen = [] of String
+    with_route_paths { seen = @endpoints.map(&.url) }
+    seen
+  end
+end
+
 describe "NoirRunner with -u" do
+  it "strips only a real -u prefix, never a longer host that starts with it" do
+    options = create_test_options
+    options["url"] = YAML::Any.new("http://admin.example.com")
+    runner = NoirRunner.new(options)
+    urls = ["http://admin.example.com/a", "http://admin.example.community/x", "http://admin.example.com"]
+    runner.endpoints = urls.map { |url| Endpoint.new(url, "GET") }
+
+    runner.__test_route_paths.should eq(["/a", "http://admin.example.community/x", "/"])
+    runner.endpoints.map(&.url).should eq(urls)
+  end
+
   it "tags and builds AI context from the route path, not the target URL" do
     plain = route_view("")
     plain.join.should contain("guard_absence")
