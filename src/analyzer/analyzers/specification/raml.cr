@@ -12,9 +12,13 @@ module Analyzer::Specification
     # namespace each was bound to. Reset per spec; the analyze loop is
     # sequential so a single shared map is safe.
     @libraries = {} of String => ResolvedNode
+    # The root spec being walked, which unread `!include`s are reported
+    # against. Same per-spec reset as `@libraries`.
+    @spec_path = ""
 
     def analyze
       each_spec_file(Noir::LocatorKeys::RAML_SPEC) do |raml_spec|
+        @spec_path = raml_spec
         content = read_file_content(raml_spec)
 
         # Only root API documents (`#%RAML 1.0` / `#%RAML 0.8`) describe
@@ -60,7 +64,8 @@ module Analyzer::Specification
               raml_spec,
               source_dir,
               source_dir,
-              [] of Param
+              [] of Param,
+              [] of String
             )
           end
         end
@@ -158,7 +163,18 @@ module Analyzer::Specification
       source_dir : String,
       definitions_dir : String,
       inherited_uri_params : Array(Param),
+      includes : Array(String),
     )
+      # `includes` is the chain of resource files (and resource types, below)
+      # this walk is already inside. A resource that includes a file on its
+      # own chain would recurse until the stack overflows, so the cycle is
+      # reported and cut.
+      if (include_path = node.as_s?) && include_candidate?(include_path)
+        target = File.expand_path(include_path, source_dir)
+        return record_ref_gap(@spec_path, include_path, "include cycle") if includes.includes?(target)
+        includes += [target]
+      end
+
       resolved = resolve_include(node, source_dir)
       node = resolved[:node]
       return unless h = node.as_h?
@@ -193,9 +209,16 @@ module Analyzer::Specification
       collect_child_resource_keys(type_h, child_keys, allow_templates: false)
       collect_child_resource_keys(h, child_keys, allow_templates: true)
 
+      # A child supplied by the resource type joins the same chain under the
+      # type's name: a type whose own child is of that type expands forever.
+      type_key = "resourceType #{h[YAML::Any.new("type")]?.try { |ref| named_ref_name(ref) }}"
       child_keys.each do |key_s|
-        child = h[YAML::Any.new(key_s)]? || type_h.try(&.[YAML::Any.new(key_s)]?)
-        next unless child
+        child_includes = includes
+        unless child = h[YAML::Any.new(key_s)]?
+          next unless child = type_h.try(&.[YAML::Any.new(key_s)]?)
+          next if includes.includes?(type_key)
+          child_includes = includes + [type_key]
+        end
         walk_resource(
           child,
           path + key_s,
@@ -208,7 +231,8 @@ module Analyzer::Specification
           source,
           source_dir,
           definitions_dir,
-          resource_uri_params
+          resource_uri_params,
+          child_includes
         )
       end
     rescue e
@@ -555,11 +579,15 @@ module Analyzer::Specification
       return {node: node, source_dir: source_dir} unless include_path
       return {node: node, source_dir: source_dir} unless include_candidate?(include_path)
 
-      expanded = File.expand_path(include_path, source_dir)
-      return {node: node, source_dir: source_dir} unless File.exists?(expanded)
+      # A plain string that merely looks like a file name is not an include,
+      # so a missing target stays silent; one that exists goes through the
+      # same containment and read rules as an OpenAPI `$ref`.
+      return {node: node, source_dir: source_dir} unless File.exists?(File.expand_path(include_path, source_dir))
+      return {node: node, source_dir: source_dir} unless expanded = external_ref_path(@spec_path, include_path, source_dir)
+      return {node: node, source_dir: source_dir} unless content = read_ref_file(@spec_path, expanded, include_path)
 
       {
-        node:       YAML.parse(read_file_content(expanded)),
+        node:       YAML.parse(content),
         source_dir: File.dirname(expanded),
       }
     rescue
