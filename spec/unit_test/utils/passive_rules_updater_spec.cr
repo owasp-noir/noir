@@ -83,6 +83,33 @@ describe "PassiveRulesUpdater" do
     end
   end
 
+  {% unless flag?(:windows) %}
+    describe ".run_git" do
+      it "terminates a git call that overruns git_timeout instead of blocking" do
+        # A fake `git` that hangs like a fetch against a blackholed remote.
+        bin = File.join(Dir.tempdir, "noir-fake-git-#{Random.new.hex(4)}")
+        Dir.mkdir_p(bin)
+        File.write(File.join(bin, "git"), "#!/bin/sh\nsleep 30\n")
+        File.chmod(File.join(bin, "git"), 0o755)
+        prev_path = ENV["PATH"]?
+        prev_timeout = PassiveRulesUpdater.git_timeout
+        ENV["PATH"] = "#{bin}:#{prev_path}"
+        PassiveRulesUpdater.git_timeout = 300.milliseconds
+        begin
+          logger = NoirLogger.new(debug: false, verbose: false, colorize: false, no_log: true)
+          elapsed = Time.measure do
+            PassiveRulesUpdater.run_git(["fetch", "--quiet"], logger).should be_false
+          end
+          elapsed.should be < 10.seconds
+        ensure
+          PassiveRulesUpdater.git_timeout = prev_timeout
+          prev_path ? (ENV["PATH"] = prev_path) : ENV.delete("PATH")
+          FileUtils.rm_rf(bin)
+        end
+      end
+    end
+  {% end %}
+
   describe ".effective_rules_path" do
     it "prefers the user path when it has rules" do
       with_isolated_rules_env(seed_bundled: true) do |home, _|

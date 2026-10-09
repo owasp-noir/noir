@@ -11,6 +11,36 @@ module PassiveRulesUpdater
   # blocks forever (CI, automation). git exits with an error instead.
   GIT_ENV = {"GIT_TERMINAL_PROMPT" => "0", "GCM_INTERACTIVE" => "never"}
 
+  # Upper bound on any single git call. A blackholed remote otherwise
+  # blocks `git fetch` / `clone` for the whole TCP connect timeout, and
+  # `noir scan -P` runs the fetch before it does anything else.
+  # Override with NOIR_RULES_GIT_TIMEOUT (seconds).
+  DEFAULT_GIT_TIMEOUT = 20.seconds
+  class_property git_timeout : Time::Span = ENV["NOIR_RULES_GIT_TIMEOUT"]?.try(&.to_i?).try { |sec| sec.seconds if sec > 0 } || DEFAULT_GIT_TIMEOUT
+
+  # Runs git with GIT_ENV, bounded by `git_timeout`. A call that overruns
+  # is terminated and reported as a warning, so callers fall back to the
+  # cached rules (or fail `noir rules update`) instead of hanging.
+  def self.run_git(args : Array(String), logger : NoirLogger, chdir : String? = nil,
+                   output : Process::Stdio = Process::Redirect::Close) : Bool
+    process = Process.new("git", args: args, chdir: chdir, env: GIT_ENV,
+      output: output, error: Process::Redirect::Close)
+    done = Channel(Process::Status).new(1)
+    spawn { done.send(process.wait) }
+    select
+    when status = done.receive
+      status.success?
+    when timeout(git_timeout)
+      begin
+        process.terminate
+      rescue RuntimeError
+        # already exited between the timeout firing and the signal
+      end
+      logger.warning "git #{args.first} timed out after #{git_timeout.total_seconds.to_i}s; continuing with the cached passive rules."
+      false
+    end
+  end
+
   # Default location for the image-baked ruleset. Resolves via
   # `bundled_rules_path` so specs (and adventurous packagers) can
   # point at a different prefix with NOIR_BUNDLED_RULES_PATH.
@@ -103,20 +133,14 @@ module PassiveRulesUpdater
 
     begin
       # Fetch latest updates from remote
-      result = Process.run("git", args: ["fetch", "--quiet"], chdir: rules_path,
-        env: GIT_ENV, output: Process::Redirect::Close, error: Process::Redirect::Close)
-
-      unless result.success?
+      unless run_git(["fetch", "--quiet"], logger, rules_path)
         logger.debug "Failed to fetch updates for passive rules"
         return false
       end
 
       # Check if local is behind remote
       output = IO::Memory.new
-      result = Process.run("git", args: ["rev-list", "--count", "HEAD..origin/main"],
-        chdir: rules_path, env: GIT_ENV, output: output, error: Process::Redirect::Close)
-
-      if result.success?
+      if run_git(["rev-list", "--count", "HEAD..origin/main"], logger, rules_path, output)
         behind_count = output.to_s.strip.to_i? || 0
 
         if behind_count > 0
@@ -150,9 +174,7 @@ module PassiveRulesUpdater
 
   # Update the passive rules repository
   private def self.update_rules(rules_path : String, logger : NoirLogger) : Bool
-    result = Process.run("git", args: ["pull", "--quiet"], chdir: rules_path,
-      env: GIT_ENV, output: Process::Redirect::Close, error: Process::Redirect::Close)
-    result.success?
+    run_git(["pull", "--quiet"], logger, rules_path)
   rescue ex : Exception
     logger.debug "Error updating passive rules: #{ex.message}"
     false
@@ -209,10 +231,7 @@ module PassiveRulesUpdater
       Dir.mkdir_p(File.dirname(rules_path))
 
       # Clone the repository
-      result = Process.run("git", args: ["clone", "--quiet", REPO_URL, rules_path],
-        env: GIT_ENV, output: Process::Redirect::Close, error: Process::Redirect::Close)
-
-      if result.success?
+      if run_git(["clone", "--quiet", REPO_URL, rules_path], logger)
         logger.success "Passive rules initialized successfully."
         true
       else
