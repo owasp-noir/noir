@@ -59,6 +59,9 @@ expected_endpoints = [
     Param.new("note", "", "form"),
   ]),
   Endpoint.new("/admin", "GET"),
+  Endpoint.new("/files/*", "GET", [
+    Param.new("name", "", "query"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/java/jsp/", {

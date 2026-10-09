@@ -192,7 +192,7 @@ module Analyzer::Java
       # Work on comment-stripped content so match offsets align with the
       # class-body slice we feed to extract_servlet_http_methods. Multiple
       # @WebServlet classes in one file each get their own method/params set.
-      cleaned = content_without_comments(content)
+      cleaned = JavaEngine.strip_comments(content)
       cleaned.scan(/@WebServlet\s*(?:\((.*?)\))?\s*(?:public\s+|protected\s+|private\s+)?(?:final\s+|abstract\s+)?class\s+\w+/m) do |match|
         annotation_body = match[1]? || ""
         class_end = match.end(0) || 0
@@ -453,12 +453,6 @@ module Analyzer::Java
       if match = content.match(/\bpackage\s+([A-Za-z_][A-Za-z0-9_.]*)\s*;/)
         match[1]
       end
-    end
-
-    private def content_without_comments(content : String) : String
-      content
-        .gsub(/\/\*.*?\*\//m, "")
-        .gsub(/\/\/.*$/, "")
     end
 
     private def extract_balanced_block(content : String, open_index : Int32) : String
