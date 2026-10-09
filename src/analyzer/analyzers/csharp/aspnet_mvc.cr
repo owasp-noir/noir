@@ -16,48 +16,50 @@ module Analyzer::CSharp
 
     def analyze
       include_callee = callees_needed?
-      # Static Analysis
-      locator = CodeLocator.instance
-      # `get` returns `String?` now; the interpolation below used to be the
-      # workaround for its `(String | Array(String))` union.
-      route_config_path = locator.get(Noir::LocatorKeys::CS_APINET_MVC_ROUTECONFIG) || ""
-      if File.exists?(route_config_path)
-        maproute_check = false
-        maproute_buffer = ""
-
-        read_file_content(route_config_path).each_line.with_index do |line, index|
-          if line.includes? ".MapRoute("
-            maproute_check = true
-            maproute_buffer = line
-          end
-
-          if line.includes? ");"
-            maproute_check = false
-            unless maproute_buffer.empty?
-              buffer = maproute_buffer.gsub(/[\r\n]/, "")
-              buffer = buffer.gsub(/\s+/, "")
-              buffer.split(",").each do |item|
-                if item.includes? "url:"
-                  url = item.gsub(/url:/, "").gsub(/"/, "")
-                  details = Details.new(PathInfo.new(route_config_path, index + 1))
-                  @result << Endpoint.new("/#{url}", "GET", details)
-                end
-              end
-
-              maproute_buffer = ""
-            end
-          end
-
-          if maproute_check
-            maproute_buffer += line
-          end
-        end
+      # Every project in the scan can carry its own App_Start/RouteConfig.cs.
+      CodeLocator.instance.all(Noir::LocatorKeys::CS_APINET_MVC_ROUTECONFIG).uniq.each do |route_config_path|
+        analyze_route_config(route_config_path) if File.exists?(route_config_path)
       end
 
       # Analyze controller files for action methods and parameters
       analyze_controllers(include_callee)
 
       @result
+    end
+
+    private def analyze_route_config(route_config_path : String)
+      maproute_check = false
+      maproute_buffer = ""
+      maproute_line = 0
+
+      read_file_content(route_config_path).each_line.with_index do |line, index|
+        if line.includes? ".MapRoute("
+          maproute_check = true
+          maproute_buffer = line
+          maproute_line = index + 1
+        end
+
+        if line.includes? ");"
+          maproute_check = false
+          unless maproute_buffer.empty?
+            buffer = maproute_buffer.gsub(/[\r\n]/, "")
+            buffer = buffer.gsub(/\s+/, "")
+            buffer.split(",").each do |item|
+              if item.includes? "url:"
+                url = item.gsub(/url:/, "").gsub(/"/, "")
+                details = Details.new(PathInfo.new(route_config_path, maproute_line))
+                @result << Endpoint.new("/#{url}", "GET", details)
+              end
+            end
+
+            maproute_buffer = ""
+          end
+        end
+
+        if maproute_check
+          maproute_buffer += line
+        end
+      end
     end
 
     private def analyze_controllers(include_callee : Bool)
