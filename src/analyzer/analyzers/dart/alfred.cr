@@ -80,7 +80,7 @@ module Analyzer::Dart
     # registration often happens in a controller that receives the
     # instance as a constructor field — these files import a barrel that
     # re-exports `package:alfred/`, not the package directly). The real
-    # gate is `router_prefixes`: nothing is emitted without an `Alfred`
+    # gate is `router_bindings`: nothing is emitted without an `Alfred`
     # instance/typed variable and a verb call.
     private def alfred_file?(content : String) : Bool
       content.includes?("package:alfred/") || content.matches?(/\bAlfred\b/)
@@ -92,8 +92,8 @@ module Analyzer::Dart
     # line up byte-for-byte.
     private def scan_file(content : String, path : String, include_callee : Bool) : Array(Endpoint)
       cleaned = Noir::CComments.strip(content)
-      prefixes = router_prefixes(cleaned)
-      return [] of Endpoint if prefixes.empty?
+      bindings = router_bindings(cleaned)
+      return [] of Endpoint if bindings.empty?
 
       endpoints = [] of Endpoint
       seen = Set({String, String}).new # (verb, path) within this file
@@ -101,12 +101,12 @@ module Analyzer::Dart
       # Direct verb calls on a router variable (`app.get('/x', h)`); the
       # variable's prefix is empty for the top-level `Alfred` instance and
       # the composed base for a `route()`-assigned child router.
-      prefixes.each do |var_name, prefix|
-        scan_calls(cleaned, var_name, prefix, content, path, include_callee, endpoints, seen)
+      bindings.each_key do |var_name|
+        scan_calls(cleaned, var_name, bindings, content, path, include_callee, endpoints, seen)
       end
 
       # Cascade-nested routes: `app.route('/base')..get('sub', h)..post(...)`.
-      scan_route_cascades(cleaned, prefixes, content, path, include_callee, endpoints, seen)
+      scan_route_cascades(cleaned, bindings, content, path, include_callee, endpoints, seen)
 
       endpoints
     end
@@ -123,27 +123,33 @@ module Analyzer::Dart
     # variable. Capture 1 is the new variable, capture 2 its receiver.
     ROUTE_ASSIGN_REGEX = /(?:^|[;{}=(,\s])(?:final|var|const|late)\s+(?:[A-Za-z_][\w<>,\s?]*\s+)?([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*)\s*\.\s*route\s*\(/
 
-    # Router variable → raw base prefix. Top-level `Alfred` instances and
-    # `Alfred`-typed parameters map to "" (root); a `route()`-assigned child
-    # maps to its composed base path.
-    private def router_prefixes(cleaned : String) : Hash(String, String)
-      prefixes = {} of String => String
+    # Router variable → every binding of it, as {offset, raw base prefix}.
+    # Top-level `Alfred` instances and `Alfred`-typed parameters bind ""
+    # (root); a `route()`-assigned child binds its composed base path. The
+    # same name may be rebound in several functions (`final r = app.route(..)`
+    # in each), so a use resolves against its nearest preceding binding.
+    alias Bindings = Hash(String, Array({Int32, String}))
+
+    private def router_bindings(cleaned : String) : Bindings
+      bindings = Bindings.new
       cleaned.scan(ALFRED_ASSIGN_REGEX) do |m|
-        prefixes[m[1]] = "" unless m[1].empty?
+        bind(bindings, m[1], m.begin(0), "")
       end
       cleaned.scan(ALFRED_TYPED_REGEX) do |m|
-        prefixes[m[1]] = "" unless m[1].empty?
+        bind(bindings, m[1], m.begin(0), "")
       end
 
       # Resolve `var r = <router>.route('/base')` assignments. A few passes
       # settle chained assignments (`r2 = r.route('/x')`).
+      resolved = Set(Int32).new
       3.times do
         added = false
         cleaned.scan(ROUTE_ASSIGN_REGEX) do |m|
           name = m[1]
           recv = m[2]
-          next if prefixes.has_key?(name)
-          base = prefixes[recv]?
+          pos = m.begin(0)
+          next if resolved.includes?(pos)
+          base = prefix_at(bindings, recv, pos)
           next unless base
           open_paren = (m.end(0) || 0) - 1
           close_paren = Helper.find_matching_paren(cleaned, open_paren)
@@ -152,20 +158,35 @@ module Analyzer::Dart
           next if args.empty?
           sub = Helper.extract_string_literal(args[0])
           next unless sub
-          prefixes[name] = alfred_compose(base, sub)
+          bind(bindings, name, pos, alfred_compose(base, sub))
+          resolved << pos
           added = true
         end
         break unless added
       end
 
-      prefixes
+      bindings
+    end
+
+    private def bind(bindings : Bindings, name : String, pos : Int32, prefix : String)
+      return if name.empty?
+      (bindings[name] ||= [] of {Int32, String}) << {pos, prefix}
+    end
+
+    # Prefix of the binding of `name` nearest before `pos`; a use that
+    # precedes every binding (a field declared below its use) takes the first.
+    private def prefix_at(bindings : Bindings, name : String, pos : Int32) : String?
+      list = bindings[name]?
+      return unless list
+      before = list.select { |b| b[0] <= pos }
+      (before.max_by?(&.[0]) || list.min_by(&.[0]))[1]
     end
 
     # Direct `app.get('/x', h)` verb calls on the router variable. `route`
     # and other non-verb members are filtered by `relevant_method?`.
     private def scan_calls(cleaned : String,
                            var_name : String,
-                           prefix : String,
+                           bindings : Bindings,
                            content : String,
                            path : String,
                            include_callee : Bool,
@@ -175,6 +196,8 @@ module Analyzer::Dart
       cleaned.scan(pattern) do |m|
         method = m[1]
         next unless relevant_method?(method)
+        prefix = prefix_at(bindings, var_name, m.begin(0))
+        next unless prefix
         match_end = m.end(0)
         next unless match_end
         open_paren = match_end - 1
@@ -189,7 +212,7 @@ module Analyzer::Dart
     ROUTE_CALL_REGEX = /(?<![\w$.])([A-Za-z_]\w*)\s*\.\s*route\s*\(/
 
     private def scan_route_cascades(cleaned : String,
-                                    prefixes : Hash(String, String),
+                                    bindings : Bindings,
                                     content : String,
                                     path : String,
                                     include_callee : Bool,
@@ -197,7 +220,7 @@ module Analyzer::Dart
                                     seen : Set({String, String}))
       cleaned.scan(ROUTE_CALL_REGEX) do |m|
         rvar = m[1]
-        base = prefixes[rvar]?
+        base = prefix_at(bindings, rvar, m.begin(0))
         next unless base
         open_paren = (m.end(0) || 0) - 1
         close_paren = Helper.find_matching_paren(cleaned, open_paren)

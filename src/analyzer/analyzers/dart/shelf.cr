@@ -129,12 +129,18 @@ module Analyzer::Dart
       cleaned = strip_dart_comments(content)
       classes = class_ranges(cleaned)
 
+      decls = [] of RouterDecl
       cleaned.scan(/(?:^|[;{}=(,\s])(?:final|var|const|late)\s+(?:[A-Za-z_][\w<>,\s\?]*\s+)?([A-Za-z_]\w*)\s*=\s*Router\s*\(\s*\)/) do |match|
         var_name = match[1]
         next if var_name.empty?
         end_idx = match.end(0)
         next unless end_idx
+        decls << {name: var_name, pos: end_idx, owner: enclosing_class(classes, end_idx)}
+      end
 
+      decls.each do |decl|
+        var_name = decl[:name]
+        end_idx = decl[:pos]
         cascade_end = find_statement_end(cleaned, end_idx)
 
         routes = [] of Route
@@ -146,7 +152,7 @@ module Analyzer::Dart
         # Direct method calls referencing the router variable elsewhere
         # in the file. We scan the cleaned source so refs inside
         # strings or comments are ignored.
-        scan_direct_calls(cleaned, var_name, content, path, include_callee, routes, mounts)
+        scan_direct_calls(cleaned, decl, decls, classes, content, path, include_callee, routes, mounts)
 
         # A router built inside a class (e.g. a `Router get router =>`
         # getter) is reached from the outside as `ClassName().router`,
@@ -155,7 +161,7 @@ module Analyzer::Dart
         # internal local name (`app`, `router`, ...) is only meaningful
         # within the class and would otherwise be emitted, unmounted, as
         # a duplicate root with no prefix.
-        key = enclosing_class(classes, end_idx) || var_name
+        key = decl[:owner] || var_name
 
         existing = result[key]?
         if existing
@@ -379,24 +385,46 @@ module Analyzer::Dart
       end
     end
 
+    # A `Router()` bound to a variable: its name, the offset just past the
+    # declaration, and the class it is declared in (nil at top level).
+    alias RouterDecl = NamedTuple(name: String, pos: Int32, owner: String?)
+
     private def scan_direct_calls(cleaned : String,
-                                  var_name : String,
+                                  decl : RouterDecl,
+                                  decls : Array(RouterDecl),
+                                  classes : Array(ClassRange),
                                   file_content : String,
                                   path : String,
                                   include_callee : Bool,
                                   routes : Array(Route),
                                   mounts : Array(Mount))
+      var_name = decl[:name]
       pattern = @direct_call_regexes[var_name] ||= /(?<![\w$])#{Regex.escape(var_name)}\s*\.\s*([a-zA-Z_]\w*)\s*\(/
       cleaned.scan(pattern) do |m|
         method = m[1]
         next unless relevant_method?(method)
         match_end = m.end(0)
         next unless match_end
+        # Two classes (or a class and main()) may each name a local router
+        # `router`/`app`; a call belongs only to the declaration in its scope.
+        next unless owning_decl(decls, var_name, match_end, classes) == decl
         open_paren = match_end - 1
         close_paren = Helper.find_matching_paren(cleaned, open_paren)
         next unless close_paren
         handle_call(method, cleaned, open_paren, close_paren, file_content, path, include_callee, routes, mounts)
       end
+    end
+
+    # The declaration a `var_name.x(...)` call at `offset` refers to: one in
+    # the call's own class (or top level), else a top-level one, else any;
+    # among those, the nearest preceding declaration, else the first.
+    private def owning_decl(decls : Array(RouterDecl), var_name : String, offset : Int32, classes : Array(ClassRange)) : RouterDecl?
+      named = decls.select { |d| d[:name] == var_name }
+      scope = enclosing_class(classes, offset)
+      candidates = named.select { |d| d[:owner] == scope }
+      candidates = named.select { |d| d[:owner].nil? } if candidates.empty?
+      candidates = named if candidates.empty?
+      candidates.reverse.find { |d| d[:pos] <= offset } || candidates.first?
     end
 
     private def relevant_method?(name : String) : Bool
