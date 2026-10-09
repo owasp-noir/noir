@@ -83,8 +83,11 @@ module Analyzer::Go
         external_fns = ts_function_bodies_for_directory(package_function_bodies, File.dirname(path))
         callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns)
         controller_method_bodies = ts_controller_method_bodies_for_directory(package_controller_method_bodies, File.dirname(path))
+        named = Noir::GoNamedHandler.new(content, path, verb_routes)
 
         lines.each_with_index do |line, index|
+          next if named.claim?(index, line)
+
           details = Details.new(PathInfo.new(path, index + 1))
 
           if ts_hits = routes_by_line[index]?
@@ -110,42 +113,47 @@ module Analyzer::Go
                   end
                 end
                 result << new_endpoint
+                named.bind(route, new_endpoint) unless beego_router_lines.includes?(route.line)
                 last_endpoint = new_endpoint
               end
             end
           end
 
-          CONTEXT_GETTER_PATTERNS.each do |pattern, getter_regex|
-            # Quote-bounded + scan so two accessor calls on one line
-            # each yield their own param (greedy `(.*)` captured across
-            # both, producing one garbage name).
-            next unless line.includes?(pattern)
-            line.scan(getter_regex) do |m|
-              last_endpoint.params << Param.new(m[1], "", "query")
-            end
-          end
-
-          if line.includes?("GetCookie(")
-            match = line.match(/GetCookie\(\"([^"]*)\"\)/)
-            if match
-              cookie_name = match[1]
-              last_endpoint.params << Param.new(cookie_name, "", "cookie")
-            end
-          end
-
-          if line.includes?("GetSecureCookie(")
-            match = line.match(/GetSecureCookie\(\"([^"]*)\"\)/)
-            if match
-              cookie_name = match[1]
-              last_endpoint.params << Param.new(cookie_name, "", "cookie")
-            end
-          end
+          add_beego_params(line, last_endpoint)
         end
+
+        named.each_attribution { |line, ep| add_beego_params(line, ep) }
       end
 
       resolve_public_dirs_with_glob(public_dirs)
 
       result
+    end
+
+    private def add_beego_params(line : String, endpoint : Endpoint)
+      CONTEXT_GETTER_PATTERNS.each do |pattern, getter_regex|
+        # Quote-bounded + scan so two accessor calls on one line
+        # each yield their own param (greedy `(.*)` captured across
+        # both, producing one garbage name).
+        next unless line.includes?(pattern)
+        line.scan(getter_regex) do |m|
+          endpoint.params << Param.new(m[1], "", "query")
+        end
+      end
+
+      if line.includes?("GetCookie(")
+        match = line.match(/GetCookie\(\"([^"]*)\"\)/)
+        if match
+          endpoint.params << Param.new(match[1], "", "cookie")
+        end
+      end
+
+      if line.includes?("GetSecureCookie(")
+        match = line.match(/GetSecureCookie\(\"([^"]*)\"\)/)
+        if match
+          endpoint.params << Param.new(match[1], "", "cookie")
+        end
+      end
     end
   end
 end

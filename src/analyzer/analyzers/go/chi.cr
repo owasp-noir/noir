@@ -1,6 +1,7 @@
 require "../../../models/analyzer"
 require "../../../miniparsers/go_callee_extractor"
 require "../../../miniparsers/go_route_extractor_ts"
+require "../../../miniparsers/go_named_handler"
 
 module Analyzer::Go
   private class ChiRouteState
@@ -206,8 +207,13 @@ module Analyzer::Go
         last_endpoint = Endpoint.new("", "")
         in_mounted_func = false
         mounted_func_brace_count = 0
+        # Named handlers (`r.Get("/a", listA)`): their bodies sit outside any
+        # inline closure, so they are attributed to the route that names them.
+        named = Noir::GoNamedHandler.new(content, path, ts_routes)
 
         lines.each_with_index do |line, index|
+          next if named.claim?(index, line)
+
           # Skip bodies of mounted router functions so parameter
           # extraction only attributes them to the Mount-expanded
           # endpoints, not the free-floating verb calls we now
@@ -276,6 +282,7 @@ module Analyzer::Go
                   end
                 end
                 result << endpoint
+                named.bind(route, endpoint)
                 last_endpoint = endpoint
               end
             end
@@ -300,13 +307,19 @@ module Analyzer::Go
 
           extract_params(line, state, last_endpoint)
         end
+
+        named.each_attribution { |line, ep| extract_handler_params(line, ep) }
       end
       result
     end
 
     private def extract_params(line : String, state : ChiRouteState, last_endpoint : Endpoint)
-      return if last_endpoint.url.empty?
       return unless state.in_inline_handler?
+      extract_handler_params(line, last_endpoint)
+    end
+
+    private def extract_handler_params(line : String, last_endpoint : Endpoint)
+      return if last_endpoint.url.empty?
 
       # Parameter extraction patterns (order matters - check more specific patterns first)
       pattern = if line.includes?("chi.URLParam(")

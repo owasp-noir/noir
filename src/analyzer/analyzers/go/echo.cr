@@ -5,6 +5,7 @@ module Analyzer::Go
     analyzer_for "go_echo"
 
     IMPORT_MARKER = "github.com/labstack/echo"
+    BUILDER_TYPE  = "*echo.Group"
 
     def analyze
       # Source Analysis
@@ -16,6 +17,9 @@ module Analyzer::Go
       # walking every sibling source file.
       package_function_bodies = collect_package_function_bodies(file_contents)
       import_path_function_bodies = collect_import_path_function_bodies(package_function_bodies)
+      # `RegisterUsers(e.Group("/api/v1"))` + `func RegisterUsers(g *echo.Group)`:
+      # the prefix lives at the call site (see `resolve_router_builder_prefixes`).
+      builder_prefixes_by_dir = resolve_router_builder_prefixes(file_contents, package_groups, BUILDER_TYPE)
       framework_dirs = framework_package_dirs(file_contents, IMPORT_MARKER)
       parallel_analyze(get_files_by_extension(".go")) do |path|
         next if GoEngine.go_test_file?(base_relative_path(path))
@@ -40,6 +44,10 @@ module Analyzer::Go
           routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route
           routes_by_line[r.line] << r
         end
+
+        named = Noir::GoNamedHandler.new(content, path, ts_routes)
+        expand_builders = router_builder_expansions(content, BUILDER_TYPE, builder_prefixes_by_dir[dir]?, cross_file_groups)
+        suppress_ranges = expand_builders.map { |_, rb, _| rb.start_row..rb.end_row }
 
         # Resolve 1-hop callees for every route in this file.
         # Inline-closure handlers walk in place; bare
@@ -68,6 +76,11 @@ module Analyzer::Go
         end
 
         lines.each_with_index do |line, index|
+          # Expanded router-builder bodies are emitted below with their
+          # call-site prefix.
+          next if suppress_ranges.any?(&.includes?(index))
+          next if named.claim?(index, line)
+
           details = Details.new(PathInfo.new(path, index + 1))
 
           if ts_hits = routes_by_line[index]?
@@ -85,51 +98,58 @@ module Analyzer::Go
                   end
                 end
                 result << new_endpoint
+                named.bind(route, new_endpoint)
                 last_endpoints << new_endpoint
               end
             end
           end
 
-          if line.includes?("Param(") || line.includes?("FormValue(")
-            param = get_param(line)
-            last_endpoints.each { |ep| add_param_to_endpoint(param, ep) }
-          end
-
-          # `c.Bind(&v)` / `c.BindBody(...)` populate the
-          # request body. Echo also exposes `BindJSON`-style
-          # helpers via the echo-contrib package. Emit a
-          # single "body" indicator without trying to decode
-          # the bound struct's shape (would need static-type
-          # resolution we don't have).
-          if line.matches?(/\.Bind(?:Body|JSON|XML|YAML|Headers|Query|Path)?\s*\(/) &&
-             !line.includes?("// ")
-            body_param = Param.new("body", "", "json")
-            last_endpoints.each { |ep| add_param_to_endpoint(body_param, ep) }
-          end
-
-          if line.includes?("Request().Header.Get(")
-            match = line.match(/Request\(\)\.Header\.Get\(\"(.*)\"\)/)
-            if match
-              header_param = Param.new(match[1], "", "header")
-              last_endpoints.each { |ep| ep.params << header_param }
-            end
-          end
-
-          if line.includes?("Cookie(") &&
-             !line.includes?("Header.Get") && !line.includes?("Query().Get") &&
-             !line.includes?("Request().Header.Get")
-            match = line.match(/Cookie\(\"(.*)\"\)/)
-            if match
-              cookie_param = Param.new(match[1], "", "cookie")
-              last_endpoints.each { |ep| ep.params << cookie_param }
-            end
-          end
+          last_endpoints.each { |ep| add_echo_param_patterns(line, ep) }
         end
+
+        expand_router_builders(content, lines, path, expand_builders, callees_by_route, named, "Add") do |line, ep|
+          add_echo_param_patterns(line, ep)
+        end
+
+        named.each_attribution { |line, ep| add_echo_param_patterns(line, ep) }
       end
 
       resolve_public_dirs(public_dirs)
 
       result
+    end
+
+    private def add_echo_param_patterns(line : String, ep : Endpoint)
+      if line.includes?("Param(") || line.includes?("FormValue(")
+        add_param_to_endpoint(get_param(line), ep)
+      end
+
+      # `c.Bind(&v)` / `c.BindBody(...)` populate the
+      # request body. Echo also exposes `BindJSON`-style
+      # helpers via the echo-contrib package. Emit a
+      # single "body" indicator without trying to decode
+      # the bound struct's shape (would need static-type
+      # resolution we don't have).
+      if line.matches?(/\.Bind(?:Body|JSON|XML|YAML|Headers|Query|Path)?\s*\(/) &&
+         !line.includes?("// ")
+        add_param_to_endpoint(Param.new("body", "", "json"), ep)
+      end
+
+      if line.includes?("Request().Header.Get(")
+        match = line.match(/Request\(\)\.Header\.Get\(\"(.*)\"\)/)
+        if match
+          ep.params << Param.new(match[1], "", "header")
+        end
+      end
+
+      if line.includes?("Cookie(") &&
+         !line.includes?("Header.Get") && !line.includes?("Query().Get") &&
+         !line.includes?("Request().Header.Get")
+        match = line.match(/Cookie\(\"(.*)\"\)/)
+        if match
+          ep.params << Param.new(match[1], "", "cookie")
+        end
+      end
     end
 
     def get_param(line : String) : Param

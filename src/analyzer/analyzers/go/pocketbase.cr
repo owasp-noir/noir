@@ -6,11 +6,13 @@ module Analyzer::Go
   # Echo/Gin (`rg.GET("/x", handler)`, `rg.Group("/api")`), so the
   # shared `TreeSitterGoRouteExtractor` already handles the call
   # shapes — this analyzer just wires the import marker so noir
-  # opts the framework's source files into the same pipeline.
+  # opts the framework's source files into the same pipeline. The marker
+  # is the module root: a stock app imports only `pocketbase` and `core`
+  # and registers on `se.Router` inside `app.OnServe().BindFunc(...)`.
   class Pocketbase < GoEngine
     analyzer_for "go_pocketbase"
 
-    IMPORT_MARKER = "pocketbase/tools/router"
+    IMPORT_MARKER = "github.com/pocketbase/pocketbase"
 
     def analyze
       public_dirs = [] of Hash(String, String)

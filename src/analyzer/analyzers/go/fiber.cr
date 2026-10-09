@@ -5,6 +5,7 @@ module Analyzer::Go
     analyzer_for "go_fiber"
 
     IMPORT_MARKER = "github.com/gofiber/fiber"
+    BUILDER_TYPE  = "fiber.Router"
 
     def analyze
       # Source Analysis
@@ -15,6 +16,9 @@ module Analyzer::Go
       package_method_bodies = collect_package_controller_method_bodies(file_contents)
       import_path_function_bodies = collect_import_path_function_bodies(package_function_bodies)
       import_path_method_bodies = collect_import_path_method_bodies(package_method_bodies)
+      # `RegisterUsers(app.Group("/api"))` + `func RegisterUsers(r fiber.Router)`:
+      # the prefix lives at the call site (see `resolve_router_builder_prefixes`).
+      builder_prefixes_by_dir = resolve_router_builder_prefixes(file_contents, package_groups, BUILDER_TYPE)
       framework_dirs = framework_package_dirs(file_contents, IMPORT_MARKER)
       parallel_analyze(get_files_by_extension(".go")) do |path|
         next if GoEngine.go_test_file?(base_relative_path(path))
@@ -30,12 +34,20 @@ module Analyzer::Go
         # because it's a sibling expression, not part of the route
         # argument list.
         cross_file_groups = ts_groups_for_directory(package_groups, dir)
-        ts_routes = Noir::TreeSitterGoRouteExtractor.extract_routes(content, cross_file_groups, handle_method: "Add")
+        # `app.Route("/r", func(r fiber.Router){...})` scopes a prefix to
+        # the closure; `app.Mount("/mnt", micro)` prefixes a sub-app.
+        ts_routes = Noir::TreeSitterGoRouteExtractor.extract_routes(
+          content, cross_file_groups, handle_method: "Add",
+          closure_group_methods: ["Route"], mount_methods: ["Mount"])
         routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
         ts_routes.each do |r|
           routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route
           routes_by_line[r.line] << r
         end
+
+        named = Noir::GoNamedHandler.new(content, path, ts_routes)
+        expand_builders = router_builder_expansions(content, BUILDER_TYPE, builder_prefixes_by_dir[dir]?, cross_file_groups)
+        suppress_ranges = expand_builders.map { |_, rb, _| rb.start_row..rb.end_row }
 
         # Resolve 1-hop callees for every route (see Gin).
         route_rows = Set(Int32).new
@@ -59,6 +71,11 @@ module Analyzer::Go
         end
 
         lines.each_with_index do |line, index|
+          # Expanded router-builder bodies are emitted below with their
+          # call-site prefix.
+          next if suppress_ranges.any?(&.includes?(index))
+          next if named.claim?(index, line)
+
           details = Details.new(PathInfo.new(path, index + 1))
 
           if ts_hits = routes_by_line[index]?
@@ -73,57 +90,65 @@ module Analyzer::Go
                   end
                 end
                 result << new_endpoint
+                named.bind(route, new_endpoint)
                 last_endpoint = new_endpoint
               end
             end
           end
 
-          if line.includes?(".Query(") || line.includes?(".FormValue(") ||
-             line.includes?(".Params(") || line.includes?(".ParamsInt(")
-            add_param_to_endpoint(get_param(line), last_endpoint)
-          end
-
-          # Fiber's body-binding helpers: `c.BodyParser(&v)`
-          # for arbitrary content negotiation, plus the
-          # explicit `c.QueryParser` / `c.ReqHeaderParser`
-          # /`c.CookieParser` /`c.ParamsParser` variants that
-          # parse into a struct. `BodyParser` is the one
-          # that signals a request body is expected; the
-          # others duplicate accessors we already surface.
-          if line.includes?(".BodyParser(")
-            add_param_to_endpoint(Param.new("body", "", "json"), last_endpoint)
-          end
-
-          if line.includes?("GetRespHeader(")
-            match = line.match(/GetRespHeader\(\"(.*)\"\)/)
-            if match
-              header_name = match[1]
-              last_endpoint.params << Param.new(header_name, "", "header")
-            end
-          end
-
-          if line.includes?("Vary(")
-            match = line.match(/Vary\(\"(.*)\"\)/)
-            if match
-              header_value = match[1]
-              last_endpoint.params << Param.new("Vary", header_value, "header")
-            end
-          end
-
-          if line.includes?("Cookies(") &&
-             !line.includes?("Header.Get") && !line.includes?("Cookie.Get")
-            match = line.match(/Cookies\(\"(.*)\"\)/)
-            if match
-              cookie_name = match[1]
-              last_endpoint.params << Param.new(cookie_name, "", "cookie")
-            end
-          end
+          add_fiber_param_patterns(line, last_endpoint)
         end
+
+        expand_router_builders(content, lines, path, expand_builders, callees_by_route, named, "Add") do |line, ep|
+          add_fiber_param_patterns(line, ep)
+        end
+
+        named.each_attribution { |line, ep| add_fiber_param_patterns(line, ep) }
       end
 
       resolve_public_dirs(public_dirs)
 
       result
+    end
+
+    private def add_fiber_param_patterns(line : String, ep : Endpoint)
+      if line.includes?(".Query(") || line.includes?(".FormValue(") ||
+         line.includes?(".Params(") || line.includes?(".ParamsInt(")
+        add_param_to_endpoint(get_param(line), ep)
+      end
+
+      # Fiber's body-binding helpers: `c.BodyParser(&v)`
+      # for arbitrary content negotiation, plus the
+      # explicit `c.QueryParser` / `c.ReqHeaderParser`
+      # /`c.CookieParser` /`c.ParamsParser` variants that
+      # parse into a struct. `BodyParser` is the one
+      # that signals a request body is expected; the
+      # others duplicate accessors we already surface.
+      if line.includes?(".BodyParser(")
+        add_param_to_endpoint(Param.new("body", "", "json"), ep)
+      end
+
+      if line.includes?("GetRespHeader(")
+        match = line.match(/GetRespHeader\(\"(.*)\"\)/)
+        if match
+          ep.params << Param.new(match[1], "", "header")
+        end
+      end
+
+      if line.includes?("Vary(")
+        match = line.match(/Vary\(\"(.*)\"\)/)
+        if match
+          ep.params << Param.new("Vary", match[1], "header")
+        end
+      end
+
+      if line.includes?("Cookies(") &&
+         !line.includes?("Header.Get") && !line.includes?("Cookie.Get")
+        match = line.match(/Cookies\(\"(.*)\"\)/)
+        if match
+          ep.params << Param.new(match[1], "", "cookie")
+        end
+      end
     end
 
     def get_param(line : String) : Param

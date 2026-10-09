@@ -70,6 +70,8 @@ module Analyzer::Go
           routes_by_line[r.line] << r
         end
 
+        named = Noir::GoNamedHandler.new(content, path, ts_routes)
+
         # Resolve 1-hop callees for every route (see Gin).
         route_rows = Set(Int32).new
         routes_by_line.each_key { |row| route_rows << row }
@@ -77,6 +79,8 @@ module Analyzer::Go
         callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns)
 
         lines.each_with_index do |line, index|
+          next if named.claim?(index, line)
+
           details = Details.new(PathInfo.new(path, index + 1))
 
           if ts_hits = routes_by_line[index]?
@@ -92,29 +96,35 @@ module Analyzer::Go
                 end
               end
               result << new_endpoint
+              named.bind(route, new_endpoint)
               last_endpoint = new_endpoint
             end
           end
 
-          ["Get", "GetQuery", "GetForm", "GetHeader", "GetUploadFile"].each do |pattern|
-            if line.includes?("#{pattern}(") && !line.includes?("Cookie.Get")
-              add_param_to_endpoint(get_param(line), last_endpoint)
-            end
-          end
-
-          if line.includes?("Cookie.Get(")
-            match = line.match(/Cookie\.Get\(\"(.*)\"\)/)
-            if match
-              cookie_name = match[1]
-              last_endpoint.params << Param.new(cookie_name, "", "cookie")
-            end
-          end
+          add_gf_param_patterns(line, last_endpoint)
         end
+
+        named.each_attribution { |line, ep| add_gf_param_patterns(line, ep) }
       end
 
       resolve_public_dirs(public_dirs)
 
       result
+    end
+
+    private def add_gf_param_patterns(line : String, ep : Endpoint)
+      ["Get", "GetQuery", "GetForm", "GetHeader", "GetUploadFile"].each do |pattern|
+        if line.includes?("#{pattern}(") && !line.includes?("Cookie.Get")
+          add_param_to_endpoint(get_param(line), ep)
+        end
+      end
+
+      if line.includes?("Cookie.Get(")
+        match = line.match(/Cookie\.Get\(\"(.*)\"\)/)
+        if match
+          ep.params << Param.new(match[1], "", "cookie")
+        end
+      end
     end
 
     def get_param(line : String) : Param

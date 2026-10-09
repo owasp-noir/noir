@@ -173,8 +173,34 @@ module Noir
       getter query_params : Array(String) # query-param constraints extracted from e.g. mux's `.Queries(...)`
 
       def initialize(@router_name, @verb, @path, @raw_path, @handler, @line,
-                     @query_params : Array(String) = [] of String)
+                     @query_params : Array(String) = [] of String,
+                     @handler_args : Array(String) = [] of String)
       end
+
+      # Text of every handler argument after the path, middleware included
+      # (`r.GET("/x", RateLimit(), listX)` -> `["RateLimit()", "listX"]`),
+      # with `append(mw, h)...` spreads flattened. Decoders that don't
+      # record them fall back to the single `handler`.
+      def handler_args : Array(String)
+        @handler_args.empty? ? [@handler] : @handler_args
+      end
+    end
+
+    # Appends the text of a handler argument to `sink`, flattening the
+    # `append(mws, h)...` spread Hertz/Gin apps use for middleware chains.
+    private def collect_handler_arg_texts(arg : LibTreeSitter::TSNode, source : String, sink : Array(String))
+      case Noir::TreeSitter.node_type(arg)
+      when "variadic_argument"
+        Noir::TreeSitter.each_named_child(arg) { |child| collect_handler_arg_texts(child, source, sink) }
+        return
+      when "call_expression"
+        function = Noir::TreeSitter.field(arg, "function")
+        if function && Noir::TreeSitter.node_text(function, source) == "append" && (args = Noir::TreeSitter.field(arg, "arguments"))
+          Noir::TreeSitter.each_named_child(args) { |child| collect_handler_arg_texts(child, source, sink) }
+          return
+        end
+      end
+      sink << Noir::TreeSitter.node_text(arg, source)
     end
 
     # Parses `source` and returns every verb route it can resolve.
@@ -203,7 +229,8 @@ module Noir
                        extra_verbs : Array(String) = [] of String,
                        handle_many_method : String? = nil,
                        handle_many_methods : Array(String) = [] of String,
-                       closure_group_methods : Array(String) = [] of String) : Array(Route)
+                       closure_group_methods : Array(String) = [] of String,
+                       mount_methods : Array(String) = [] of String) : Array(Route)
       routes = [] of Route
       group_prefixes = external_groups.dup
       all_handle_many = handle_many_methods.dup
@@ -211,6 +238,11 @@ module Noir
       Noir::TreeSitter.parse_go(source) do |root|
         string_values = collect_string_values(root, source)
         mux_chained_operands = Set(String).new
+
+        # Sub-app mounts (Fiber `app.Mount("/mnt", micro)`) bind the mounted
+        # app's variable to the prefix. Collected before the group walk so
+        # groups derived from the mounted app inherit it.
+        collect_mounts(root, source, group_prefixes, mount_methods, string_values) unless mount_methods.empty?
 
         Noir::TreeSitter.walk(root) do |node|
           next unless group_assignment_node?(node)
@@ -257,6 +289,37 @@ module Noir
       dedupe_routes(routes)
     end
 
+    # `<parent>.<mount>("/prefix", <app>)` -> `groups[app] = parent prefix + "/prefix"`.
+    private def collect_mounts(root : LibTreeSitter::TSNode,
+                               source : String,
+                               groups : Hash(String, String),
+                               mount_methods : Array(String),
+                               string_values : Hash(String, String))
+      Noir::TreeSitter.walk(root) do |node|
+        next unless Noir::TreeSitter.node_type(node) == "call_expression"
+        function = Noir::TreeSitter.field(node, "function")
+        next unless function && Noir::TreeSitter.node_type(function) == "selector_expression"
+        operand = Noir::TreeSitter.field(function, "operand")
+        field = Noir::TreeSitter.field(function, "field")
+        next unless operand && field && mount_methods.includes?(Noir::TreeSitter.node_text(field, source))
+        args = Noir::TreeSitter.field(node, "arguments")
+        next unless args
+        prefix = nil
+        app = nil
+        Noir::TreeSitter.each_named_child(args) do |arg|
+          if prefix.nil?
+            prefix = string_expr_text(arg, source, string_values)
+            break if prefix.nil?
+          elsif app.nil? && Noir::TreeSitter.node_type(arg) == "identifier"
+            app = Noir::TreeSitter.node_text(arg, source)
+          end
+        end
+        next unless (p = prefix) && (a = app) && p.starts_with?('/')
+        parent = groups[Noir::TreeSitter.node_text(operand, source)]? || ""
+        groups[a] = parent.empty? ? p : group_join(parent, p)
+      end
+    end
+
     # Extracts only `<name> := <parent>.<group_method>("/prefix")`
     # declarations. Used by the Go engine to run a cross-file fixpoint
     # so group names defined in one file but referenced in another are
@@ -299,8 +362,9 @@ module Noir
     # routes need that prefix grafted on (see `extract_routes_from_function`).
     # Returns `{func_name => RouterBuilder}`; only functions with exactly
     # one `*gin.RouterGroup` parameter qualify (an ambiguous count can't be
-    # bound to a single prefix).
-    def collect_router_group_builders(source : String) : Hash(String, RouterBuilder)
+    # bound to a single prefix). `type_name` is the group type's final
+    # identifier: `RouterGroup` for Gin/Hertz, `Group` for Echo.
+    def collect_router_group_builders(source : String, type_name : String = "RouterGroup") : Hash(String, RouterBuilder)
       result = Hash(String, RouterBuilder).new
       Noir::TreeSitter.parse_go(source) do |root|
         Noir::TreeSitter.walk(root) do |node|
@@ -308,7 +372,7 @@ module Noir
           name_node = Noir::TreeSitter.field(node, "name")
           params = Noir::TreeSitter.field(node, "parameters")
           next unless name_node && params
-          param = router_group_param_name(params, source)
+          param = router_group_param_name(params, source, type_name)
           next unless param
           result[Noir::TreeSitter.node_text(name_node, source)] =
             RouterBuilder.new(param, Noir::TreeSitter.node_start_row(node), Noir::TreeSitter.node_end_row(node))
@@ -319,7 +383,7 @@ module Noir
 
     # Returns the sole `*gin.RouterGroup` parameter's name, or nil when
     # the function has zero or more than one such parameter.
-    private def router_group_param_name(params : LibTreeSitter::TSNode, source : String) : String?
+    private def router_group_param_name(params : LibTreeSitter::TSNode, source : String, type_name : String) : String?
       found = nil
       count = 0
       Noir::TreeSitter.each_named_child(params) do |decl|
@@ -328,7 +392,7 @@ module Noir
         name_node = Noir::TreeSitter.field(decl, "name")
         next unless type_node && name_node
         final = Noir::TreeSitter.node_text(type_node, source).lchop('*').split('.').last
-        next unless final == "RouterGroup"
+        next unless final == type_name
         count += 1
         found = Noir::TreeSitter.node_text(name_node, source)
       end
@@ -643,7 +707,7 @@ module Noir
         # path is a constant resolves to its literal value.
         string_values = external_string_values.dup
         collect_string_values(root, source).each { |k, v| string_values[k] = v }
-        helpers = collect_route_helpers(root, source)
+        helpers = collect_route_helpers(root, source, config.prefix_method)
         walk_chi(root, source, [] of String, local_groups, routes, skip_functions, config, string_values, helpers)
       end
       routes
@@ -958,6 +1022,7 @@ module Noir
 
       raw_path = nil
       handler_text = ""
+      handler_args = [] of String
       arg_index = 0
       Noir::TreeSitter.each_named_child(args) do |arg|
         if arg_index == 0
@@ -971,12 +1036,12 @@ module Noir
           # latched onto a later string literal, surfacing phantom routes
           # like `PUT /key` (observed across beego cache examples).
           raw_path = string_expr_text(arg, source, string_values)
-        elsif handler_text.empty?
+        elsif Noir::TreeSitter.node_type(arg) != "interpreted_string_literal" &&
+              Noir::TreeSitter.node_type(arg) != "raw_string_literal"
           # First non-string positional arg after the path is treated as
           # the handler — matches Gin/Echo/Fiber calling conventions.
-          next if Noir::TreeSitter.node_type(arg) == "interpreted_string_literal" ||
-                  Noir::TreeSitter.node_type(arg) == "raw_string_literal"
-          handler_text = Noir::TreeSitter.node_text(arg, source)
+          handler_text = Noir::TreeSitter.node_text(arg, source) if handler_text.empty?
+          collect_handler_arg_texts(arg, source, handler_args)
         end
         arg_index += 1
       end
@@ -1022,6 +1087,7 @@ module Noir
         raw_path,
         handler_text,
         Noir::TreeSitter.node_start_row(call),
+        handler_args: handler_args,
       )
     end
 
@@ -1034,6 +1100,14 @@ module Noir
       case Noir::TreeSitter.node_type(operand)
       when "identifier"
         {Noir::TreeSitter.node_text(operand, source), ""}
+      when "selector_expression"
+        # A router held in a `Router` field — PocketBase's
+        # `se.Router.GET(...)` inside `OnServe().BindFunc`. Only that field
+        # name, so `c.Request.Get(...)`-style value lookups stay out.
+        field = Noir::TreeSitter.field(operand, "field")
+        if field && Noir::TreeSitter.node_text(field, source) == "Router"
+          {Noir::TreeSitter.node_text(operand, source), ""}
+        end
       when "call_expression"
         group_chain_operand_info(operand, source, groups, group_method, group_aliases, string_values)
       end
@@ -1114,6 +1188,7 @@ module Noir
       method_lit = nil
       path_lit = nil
       handler_text = ""
+      handler_args = [] of String
       Noir::TreeSitter.each_named_child(args) do |arg|
         case Noir::TreeSitter.node_type(arg)
         when "interpreted_string_literal", "raw_string_literal"
@@ -1129,12 +1204,16 @@ module Noir
             candidate = decode_method_token(arg, source)
             method_lit = candidate unless candidate.empty?
           end
+          collect_handler_arg_texts(arg, source, handler_args) unless path_lit.nil?
         else
           if method_lit.nil?
             candidate = decode_method_token(arg, source)
             method_lit = candidate unless candidate.empty?
           end
-          handler_text = Noir::TreeSitter.node_text(arg, source) if handler_text.empty? && !path_lit.nil?
+          unless path_lit.nil?
+            handler_text = Noir::TreeSitter.node_text(arg, source) if handler_text.empty?
+            collect_handler_arg_texts(arg, source, handler_args)
+          end
         end
       end
 
@@ -1152,6 +1231,7 @@ module Noir
         path_lit,
         handler_text,
         Noir::TreeSitter.node_start_row(call),
+        handler_args: handler_args,
       )
     end
 

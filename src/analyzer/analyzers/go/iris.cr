@@ -46,6 +46,8 @@ module Analyzer::Go
           routes_by_line[r.line] << r
         end
 
+        named = Noir::GoNamedHandler.new(content, path, ts_routes)
+
         # Resolve 1-hop callees for every route (see Gin).
         route_rows = Set(Int32).new
         routes_by_line.each_key { |row| route_rows << row }
@@ -53,6 +55,8 @@ module Analyzer::Go
         callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns)
 
         lines.each_with_index do |line, index|
+          next if named.claim?(index, line)
+
           details = Details.new(PathInfo.new(path, index + 1))
 
           if ts_hits = routes_by_line[index]?
@@ -73,30 +77,37 @@ module Analyzer::Go
                 end
                 new_endpoint.add_tag(Tag.new("subdomain", subdomain, "iris_analyzer")) if subdomain
                 result << new_endpoint
+                named.bind(route, new_endpoint)
                 last_endpoint = new_endpoint
               end
             end
           end
 
-          ["URLParam", "URLParamDefault", "URLParamTrim",
-           "PostValue", "FormValue",
-           "GetHeader", "GetCookie"].each do |pattern|
-            if line.includes?("#{pattern}(")
-              add_param_to_endpoint(get_param(line, pattern), last_endpoint)
-            end
-          end
-
-          # Iris exposes a family of body readers — JSON is
-          # most common, but the framework also accepts XML,
-          # YAML, MsgPack, Protobuf, plain Body, and Form
-          # readers. All consume the request body.
-          if line.matches?(/\.Read(?:JSON|XML|YAML|MsgPack|Protobuf|Body|Form)\s*\(/)
-            add_param_to_endpoint(Param.new("body", "", "json"), last_endpoint)
-          end
+          add_iris_param_patterns(line, last_endpoint)
         end
+
+        named.each_attribution { |line, ep| add_iris_param_patterns(line, ep) }
       end
 
       result
+    end
+
+    private def add_iris_param_patterns(line : String, ep : Endpoint)
+      ["URLParam", "URLParamDefault", "URLParamTrim",
+       "PostValue", "FormValue",
+       "GetHeader", "GetCookie"].each do |pattern|
+        if line.includes?("#{pattern}(")
+          add_param_to_endpoint(get_param(line, pattern), ep)
+        end
+      end
+
+      # Iris exposes a family of body readers — JSON is
+      # most common, but the framework also accepts XML,
+      # YAML, MsgPack, Protobuf, plain Body, and Form
+      # readers. All consume the request body.
+      if line.matches?(/\.Read(?:JSON|XML|YAML|MsgPack|Protobuf|Body|Form)\s*\(/)
+        add_param_to_endpoint(Param.new("body", "", "json"), ep)
+      end
     end
 
     # Strip Iris type annotations from path params: `{id:uint64}` → `{id}`,

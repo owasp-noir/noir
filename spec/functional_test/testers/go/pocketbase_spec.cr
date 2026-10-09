@@ -20,3 +20,15 @@ FunctionalTester.new("fixtures/go/pocketbase/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
 }, expected_endpoints).perform_tests
+
+# A stock app imports only `pocketbase` + `core` (never `tools/router`) and
+# registers on the `se.Router` field inside the OnServe hook.
+stock_endpoints = [
+  Endpoint.new("/hello/{name}", "GET", [Param.new("name", "", "path")]),
+  Endpoint.new("/api/custom/items", "POST"),
+]
+
+FunctionalTester.new("fixtures/go/pocketbase_stock/", {
+  :techs     => 1,
+  :endpoints => stock_endpoints.size,
+}, stock_endpoints).perform_tests

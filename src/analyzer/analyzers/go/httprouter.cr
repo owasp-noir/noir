@@ -1,6 +1,7 @@
 require "../../../models/analyzer"
 require "../../../miniparsers/go_callee_extractor"
 require "../../../miniparsers/go_route_extractor_ts"
+require "../../../miniparsers/go_named_handler"
 
 module Analyzer::Go
   class Httprouter < Analyzer
@@ -69,13 +70,17 @@ module Analyzer::Go
         routes_by_line.each_key { |row| route_rows << row }
         external_fns = Noir::GoCalleeExtractor.function_bodies_for_directory(package_function_bodies, File.dirname(path))
         callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns)
+        named = Noir::GoNamedHandler.new(content, path, ts_routes)
 
         lines.each_with_index do |line, index|
+          next if named.claim?(index, line)
+
           details = Details.new(PathInfo.new(path, index + 1))
 
           if ts_hits = routes_by_line[index]?
             ts_hits.each do |route|
               last_endpoint = add_endpoint(route.path, route.verb, details)
+              named.bind(route, last_endpoint)
               if entries = callees_by_route[route.line]?
                 entries.each do |entry|
                   name, callee_path, callee_line = entry
@@ -85,30 +90,36 @@ module Analyzer::Go
             end
           end
 
-          # FormValue must be checked separately to avoid matching PostFormValue
-          if line.includes?("FormValue(") && !line.includes?("PostFormValue(")
-            extract_param(line, /(?<!Post)FormValue\s*\(\s*[\"']([^\"']+)[\"']\s*\)/, "query", last_endpoint)
-          end
-
-          PARAM_PATTERNS.each do |includes_check, regex, param_type|
-            if line.includes?(includes_check)
-              extract_param(line, regex, param_type, last_endpoint)
-            end
-          end
-
-          # Stdlib body-decoding idioms used by raw httprouter
-          # handlers. Captures both the JSON-decoder pattern
-          # and `io.ReadAll(r.Body)` raw-byte access.
-          if !last_endpoint.url.empty? &&
-             (line.matches?(/json\.NewDecoder\([^)]*\.Body\)\s*\.\s*Decode/) ||
-             line.matches?(/(?:io|ioutil)\.ReadAll\([^)]*\.Body\)/))
-            body_param = Param.new("body", "", "json")
-            last_endpoint.params << body_param unless last_endpoint.params.includes?(body_param)
-          end
+          add_httprouter_param_patterns(line, last_endpoint)
         end
+
+        named.each_attribution { |line, ep| add_httprouter_param_patterns(line, ep) }
       end
 
       result
+    end
+
+    private def add_httprouter_param_patterns(line : String, ep : Endpoint)
+      # FormValue must be checked separately to avoid matching PostFormValue
+      if line.includes?("FormValue(") && !line.includes?("PostFormValue(")
+        extract_param(line, /(?<!Post)FormValue\s*\(\s*[\"']([^\"']+)[\"']\s*\)/, "query", ep)
+      end
+
+      PARAM_PATTERNS.each do |includes_check, regex, param_type|
+        if line.includes?(includes_check)
+          extract_param(line, regex, param_type, ep)
+        end
+      end
+
+      # Stdlib body-decoding idioms used by raw httprouter
+      # handlers. Captures both the JSON-decoder pattern
+      # and `io.ReadAll(r.Body)` raw-byte access.
+      if !ep.url.empty? &&
+         (line.matches?(/json\.NewDecoder\([^)]*\.Body\)\s*\.\s*Decode/) ||
+         line.matches?(/(?:io|ioutil)\.ReadAll\([^)]*\.Body\)/))
+        body_param = Param.new("body", "", "json")
+        ep.params << body_param unless ep.params.includes?(body_param)
+      end
     end
 
     private def add_endpoint(route_path : String, method : String, details : Details) : Endpoint

@@ -66,6 +66,8 @@ module Analyzer::Go
           routes_by_line[r.line] << r
         end
 
+        named = Noir::GoNamedHandler.new(content, path, ts_routes)
+
         # Resolve 1-hop callees for every route (see Gin).
         route_rows = Set(Int32).new
         routes_by_line.each_key { |row| route_rows << row }
@@ -79,6 +81,8 @@ module Analyzer::Go
         end
 
         lines.each_with_index do |line, index|
+          next if named.claim?(index, line)
+
           details = Details.new(PathInfo.new(path, index + 1))
 
           if ts_hits = routes_by_line[index]?
@@ -97,43 +101,50 @@ module Analyzer::Go
                   end
                 end
                 result << new_endpoint
+                named.bind(route, new_endpoint)
                 last_endpoint = new_endpoint
               end
             end
           end
 
-          # Handle parameter extraction patterns in Go (order matters - check more specific patterns first)
-          if line.includes?("Vars(")
-            add_param_to_endpoint(get_param(line, "Vars"), last_endpoint)
-          elsif line.includes?("Query().Get(")
-            add_param_to_endpoint(get_param(line, "Query"), last_endpoint)
-          elsif line.includes?("PostFormValue(")
-            add_param_to_endpoint(get_param(line, "PostFormValue", last_endpoint), last_endpoint)
-          elsif line.includes?("FormValue(")
-            add_param_to_endpoint(get_param(line, "FormValue", last_endpoint), last_endpoint)
-          elsif line.includes?("Header.Get(")
-            add_param_to_endpoint(get_param(line, "Header"), last_endpoint)
-          elsif line.includes?("Cookie(")
-            add_param_to_endpoint(get_param(line, "Cookie"), last_endpoint)
-          end
-
-          # Stdlib-style body reads. Gorilla/mux apps almost
-          # always use `json.NewDecoder(r.Body).Decode(&v)`
-          # or `io.ReadAll(r.Body)` (the modern replacement
-          # for `ioutil.ReadAll`) to parse request bodies —
-          # neither was previously surfaced.
-          if !last_endpoint.url.empty? &&
-             (line.matches?(/json\.NewDecoder\([^)]*\.Body\)\s*\.\s*Decode/) ||
-             line.matches?(/(?:io|ioutil)\.ReadAll\([^)]*\.Body\)/))
-            body_param = Param.new("body", "", "json")
-            last_endpoint.params << body_param unless last_endpoint.params.includes?(body_param)
-          end
+          add_mux_param_patterns(line, last_endpoint)
         end
+
+        named.each_attribution { |line, ep| add_mux_param_patterns(line, ep) }
       end
 
       resolve_public_dirs(public_dirs)
 
       result
+    end
+
+    private def add_mux_param_patterns(line : String, ep : Endpoint)
+      # Handle parameter extraction patterns in Go (order matters - check more specific patterns first)
+      if line.includes?("Vars(")
+        add_param_to_endpoint(get_param(line, "Vars"), ep)
+      elsif line.includes?("Query().Get(")
+        add_param_to_endpoint(get_param(line, "Query"), ep)
+      elsif line.includes?("PostFormValue(")
+        add_param_to_endpoint(get_param(line, "PostFormValue", ep), ep)
+      elsif line.includes?("FormValue(")
+        add_param_to_endpoint(get_param(line, "FormValue", ep), ep)
+      elsif line.includes?("Header.Get(")
+        add_param_to_endpoint(get_param(line, "Header"), ep)
+      elsif line.includes?("Cookie(")
+        add_param_to_endpoint(get_param(line, "Cookie"), ep)
+      end
+
+      # Stdlib-style body reads. Gorilla/mux apps almost
+      # always use `json.NewDecoder(r.Body).Decode(&v)`
+      # or `io.ReadAll(r.Body)` (the modern replacement
+      # for `ioutil.ReadAll`) to parse request bodies —
+      # neither was previously surfaced.
+      if !ep.url.empty? &&
+         (line.matches?(/json\.NewDecoder\([^)]*\.Body\)\s*\.\s*Decode/) ||
+         line.matches?(/(?:io|ioutil)\.ReadAll\([^)]*\.Body\)/))
+        body_param = Param.new("body", "", "json")
+        ep.params << body_param unless ep.params.includes?(body_param)
+      end
     end
 
     def get_param(line : String, pattern : String, endpoint : Endpoint? = nil) : Param
