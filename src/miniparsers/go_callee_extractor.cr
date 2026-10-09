@@ -898,7 +898,7 @@ module Noir::GoCalleeExtractor
       when "identifier"
         "#{Noir::TreeSitter.node_text(operand, source)}.#{Noir::TreeSitter.node_text(field, source)}"
       when "selector_expression"
-        inner = callee_text(operand, source)
+        inner = Noir::TreeSitter.descend { callee_text(operand, source) } || ""
         inner.empty? ? "" : "#{inner}.#{Noir::TreeSitter.node_text(field, source)}"
       else
         # operand is a call/index/literal — chained on a result, skip.

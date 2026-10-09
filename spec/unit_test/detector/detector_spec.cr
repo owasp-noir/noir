@@ -297,6 +297,119 @@ describe "detect_techs file walker" do
       CodeLocator.instance.clear_all
     end
   end
+
+  it "prunes build-output names only next to a project manifest" do
+    temp_dir = File.tempname("noir_detector_manifest_scoped")
+
+    begin
+      kept = [
+        File.join(temp_dir, "routes", "vendor", "products.js"),
+        File.join(temp_dir, "src", "main", "java", "com", "acme", "build", "Ctl.java"),
+        File.join(temp_dir, "src", "main", "java", "com", "acme", "target", "Ctl.java"),
+        File.join(temp_dir, "src", "main", "java", "com", "acme", "out", "Ctl.java"),
+      ]
+      pruned = [
+        File.join(temp_dir, "vendor", "lib.js"),
+        File.join(temp_dir, "build", "Gen.java"),
+        File.join(temp_dir, "target", "Gen.java"),
+        File.join(temp_dir, "node_modules", "x", "index.js"),
+        File.join(temp_dir, "src", "node_modules", "y", "index.js"),
+      ]
+      Dir.mkdir_p(temp_dir)
+      File.write(File.join(temp_dir, "package.json"), %({"name": "x"}))
+      (kept + pruned).each do |path|
+        Dir.mkdir_p(File.dirname(path))
+        File.write(path, "// x\n")
+      end
+
+      options = create_test_options
+      options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+      logger = NoirLogger.new(false, false, false, true)
+      locator = CodeLocator.instance
+      locator.clear_all
+
+      detect_techs([temp_dir], options, [] of PassiveScan, logger)
+      files = locator.all_files
+
+      kept.each { |path| files.should contain(path) }
+      pruned.each { |path| files.should_not contain(path) }
+    ensure
+      FileUtils.rm_rf(temp_dir) if temp_dir
+      CodeLocator.instance.clear_all
+    end
+  end
+
+  it "prunes deploy staging, stale dist and dependency vendor trees without a sibling manifest" do
+    temp_dir = File.tempname("noir_detector_build_evidence")
+
+    begin
+      kept = [
+        File.join(temp_dir, "hello_world", "app.py"),
+        File.join(temp_dir, "server", "src", "app.ts"),
+        File.join(temp_dir, "web", "vendor", "routes.php"),
+      ]
+      pruned = [
+        # `sam build` staging copy (template.yaml is not a build manifest).
+        File.join(temp_dir, ".aws-sam", "build", "HelloWorldFunction", "app.py"),
+        File.join(temp_dir, "cdk.out", "asset.1", "index.js"),
+        # Stale tsc output beside the package's `src/` and `tsconfig.json`.
+        File.join(temp_dir, "server", "dist", "app.js"),
+        # Composer / `go mod vendor` trees, known by their own contents.
+        File.join(temp_dir, "web", "app", "vendor", "autoload.php"),
+        File.join(temp_dir, "svc", "vendor", "modules.txt"),
+      ]
+      Dir.mkdir_p(temp_dir)
+      File.write(File.join(temp_dir, "template.yaml"), "Resources: {}\n")
+      Dir.mkdir_p(File.join(temp_dir, "server"))
+      File.write(File.join(temp_dir, "server", "tsconfig.json"), "{}\n")
+      (kept + pruned).each do |path|
+        Dir.mkdir_p(File.dirname(path))
+        File.write(path, "// x\n")
+      end
+
+      options = create_test_options
+      options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+      logger = NoirLogger.new(false, false, false, true)
+      locator = CodeLocator.instance
+      locator.clear_all
+
+      detect_techs([temp_dir], options, [] of PassiveScan, logger)
+      files = locator.all_files
+
+      kept.each { |path| files.should contain(path) }
+      pruned.each { |path| files.should_not contain(path) }
+    ensure
+      FileUtils.rm_rf(temp_dir) if temp_dir
+      CodeLocator.instance.clear_all
+    end
+  end
+
+  it "matches upper-case Windows extensions but keeps Makefile.PL distinct" do
+    temp_dir = File.tempname("noir_detector_upper_ext")
+    Dir.mkdir_p(temp_dir)
+
+    begin
+      page = File.join(temp_dir, "LOGIN.ASP")
+      File.write(page, %(<%@ Language="VBScript" %>\n<% Response.Write Request.QueryString("next") %>\n))
+      makefile = File.join(temp_dir, "Makefile.PL")
+      File.write(makefile, "use ExtUtils::MakeMaker;\nWriteMakefile(PREREQ_PM => { 'Mojolicious' => '9.0' });\n")
+
+      options = create_test_options
+      options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+      logger = NoirLogger.new(false, false, false, true)
+      locator = CodeLocator.instance
+      locator.clear_all
+
+      techs = detect_techs([temp_dir], options, [] of PassiveScan, logger)[0]
+      techs.should contain("asp_classic")
+      techs.should contain("perl_mojolicious")
+      locator.files_by_extension(".asp").should eq([page])
+      locator.files_by_extension(".pl").should be_empty
+    ensure
+      FileUtils.rm_rf(temp_dir) if temp_dir
+      CodeLocator.instance.clear_all
+    end
+  end
 end
 
 describe "detect_techs passive results" do

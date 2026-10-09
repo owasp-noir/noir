@@ -680,45 +680,49 @@ module Noir::JSCalleeExtractor
   end
 
   private def expression_text(node : LibTreeSitter::TSNode, source : String) : String
-    case Noir::TreeSitter.node_type(node)
-    when "identifier", "property_identifier"
-      Noir::TreeSitter.node_text(node, source)
-    when "member_expression"
-      object = Noir::TreeSitter.field(node, "object")
-      property = Noir::TreeSitter.field(node, "property")
-      return "" unless object && property
+    Noir::TreeSitter.descend do
+      case Noir::TreeSitter.node_type(node)
+      when "identifier", "property_identifier"
+        Noir::TreeSitter.node_text(node, source)
+      when "member_expression"
+        object = Noir::TreeSitter.field(node, "object")
+        property = Noir::TreeSitter.field(node, "property")
+        return "" unless object && property
 
-      receiver = receiver_text(object, source)
-      return "" if receiver.empty?
+        receiver = receiver_text(object, source)
+        return "" if receiver.empty?
 
-      property_name = expression_text(property, source)
-      property_name.empty? ? "" : "#{receiver}.#{property_name}"
-    when "parenthesized_expression"
-      inner = Noir::TreeSitter.first_named_child(node)
-      inner ? expression_text(inner, source) : ""
-    when "sequence_expression"
-      last = last_named_child(node)
-      last ? expression_text(last, source) : ""
-    else
-      ""
-    end
+        property_name = expression_text(property, source)
+        property_name.empty? ? "" : "#{receiver}.#{property_name}"
+      when "parenthesized_expression"
+        inner = Noir::TreeSitter.first_named_child(node)
+        inner ? expression_text(inner, source) : ""
+      when "sequence_expression"
+        last = last_named_child(node)
+        last ? expression_text(last, source) : ""
+      else
+        ""
+      end
+    end || ""
   end
 
   private def receiver_text(node : LibTreeSitter::TSNode, source : String) : String
-    case Noir::TreeSitter.node_type(node)
-    when "identifier", "property_identifier", "this", "super"
-      Noir::TreeSitter.node_text(node, source)
-    when "member_expression"
-      expression_text(node, source)
-    when "call_expression"
-      name = callee_text(node, source)
-      name.empty? ? "" : "#{name}()"
-    when "parenthesized_expression"
-      inner = Noir::TreeSitter.first_named_child(node)
-      inner ? receiver_text(inner, source) : ""
-    else
-      ""
-    end
+    Noir::TreeSitter.descend do
+      case Noir::TreeSitter.node_type(node)
+      when "identifier", "property_identifier", "this", "super"
+        Noir::TreeSitter.node_text(node, source)
+      when "member_expression"
+        expression_text(node, source)
+      when "call_expression"
+        name = callee_text(node, source)
+        name.empty? ? "" : "#{name}()"
+      when "parenthesized_expression"
+        inner = Noir::TreeSitter.first_named_child(node)
+        inner ? receiver_text(inner, source) : ""
+      else
+        ""
+      end
+    end || ""
   end
 
   private def call_method_name(call : LibTreeSitter::TSNode, source : String) : String

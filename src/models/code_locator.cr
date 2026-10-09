@@ -1,3 +1,4 @@
+require "../utils/file_extension"
 require "../utils/path_scope"
 require "../utils/utils"
 require "./logger"
@@ -269,14 +270,15 @@ class CodeLocator
     return if @extension_index_built
     @lock.synchronize do
       return if @extension_index_built
-      @extension_index_built = rebuild_path_index(@extension_index) { |file| File.extname(file) }
+      # `LOGIN.ASP` is indexed as `.asp`; see `Noir::FileExtension`.
+      @extension_index_built = rebuild_path_index(@extension_index) { |file| Noir::FileExtension.index_key(File.extname(file)) }
     end
   end
 
   # Get files by extension using the index (O(1) lookup)
   def files_by_extension(extension : String) : Array(String)
     build_extension_index
-    @extension_index[extension]? || Array(String).new
+    @extension_index[Noir::FileExtension.index_key(extension)]? || Array(String).new
   end
 
   # Build a `basename => paths` index from file_map.

@@ -158,7 +158,7 @@ module Noir::JavaCalleeExtractor
       object = Noir::TreeSitter.field(node, "object")
       field = Noir::TreeSitter.field(node, "field")
       return "" unless object && field
-      inner = receiver_text(object, source)
+      inner = Noir::TreeSitter.descend { receiver_text(object, source) } || ""
       inner.empty? ? "" : "#{inner}.#{Noir::TreeSitter.node_text(field, source)}"
     else
       ""

@@ -14,13 +14,13 @@ module Detector::CSharp
     CARTER_MODULE = /\bI?CarterModule\b/
 
     def detect(filename : String, file_contents : String) : Bool
-      if filename.ends_with?(".csproj") || filename.ends_with?(".props") || filename.ends_with?(".targets")
+      if Noir::FileExtension.fold(filename).ends_with?(".csproj") || filename.ends_with?(".props") || filename.ends_with?(".targets")
         return true if file_contents.includes?("Include=\"Carter\"") ||
                        file_contents.includes?("Include='Carter'") ||
                        file_contents.includes?("\"Carter.")
       end
 
-      return false unless filename.ends_with?(".cs")
+      return false unless Noir::FileExtension.fold(filename).ends_with?(".cs")
       # `CarterModule` is Carter's abstract base class (base path + filters);
       # `ICarterModule` the bare interface. Both declare a Carter module, and
       # a module deriving from the base never has to name the interface.

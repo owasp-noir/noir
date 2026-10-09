@@ -17,7 +17,7 @@ module Detector::CSharp
     GET_ARGS  = /\bEnvironment\.GetCommandLineArgs\s*\(/
 
     def detect(filename : String, file_contents : String) : Bool
-      return false unless filename.ends_with?(".cs")
+      return false unless Noir::FileExtension.fold(filename).ends_with?(".cs")
       return true if content_matches?(file_contents, CLI_LIB) || content_matches?(file_contents, LIB_USAGE)
       return false if content_matches?(file_contents, WEB_HOST)
       content_matches?(file_contents, MAIN_ARGS) || content_matches?(file_contents, GET_ARGS)

@@ -50,7 +50,7 @@ module Noir::Detection
     # Source control / IDE / agent state
     ".git", ".idea", ".vscode", ".claude",
     # Language-specific dependency / build caches
-    "node_modules", "vendor", "__pycache__", ".venv", "venv",
+    "node_modules", "__pycache__", ".venv", "venv",
     ".pytest_cache", ".tox", ".gradle", ".bundle", ".dart_tool",
     ".cargo", ".terraform",
     # Zig build outputs / fetched-dependency cache. Vendored deps under
@@ -58,13 +58,44 @@ module Noir::Detection
     # otherwise make every Zig project look like it uses every framework.
     ".zig-cache", "zig-cache", ".zig-out", "zig-out",
     # Common build / dist / cache outputs
-    "dist", "build", "target", "out", "tmp", ".cache",
+    ".cache",
     ".next", ".nuxt", ".svelte-kit", ".turbo", ".parcel-cache",
     ".serverless", ".expo",
+    # Deploy-tool staging copies of the app plus its installed
+    # dependencies (`sam build`, `cdk synth`, `vercel build`, Netlify,
+    # Nitro/Nuxt `.output`, `wrangler dev`). Scanning them reports every
+    # route twice and every bundled library's routes once.
+    ".aws-sam", "cdk.out", ".vercel", ".netlify", ".output", ".wrangler",
     # Test coverage / reports
-    "coverage", ".coverage",
+    ".coverage",
     # iOS / macOS noise
     "Pods", "__MACOSX",
+  }
+
+  # Names that are build output or a dependency cache only when they sit
+  # next to the project manifest that produces them (`vendor/` beside
+  # `composer.json` / `go.mod` / `Gemfile`, `target/` beside `pom.xml`,
+  # `build/` beside `build.gradle`). Anywhere else they are ordinary
+  # source directories — an Express `routes/vendor/` module or a Java
+  # `com.acme.build` package — and pruning them by bare name dropped
+  # their endpoints with `"errors": []`.
+  MANIFEST_SCOPED_DIR_NAMES = Set{"vendor", "dist", "build", "target", "out", "tmp", "coverage"}
+
+  # The build-output subset, also pruned next to a `src/` directory or a
+  # `tsconfig.json`: a Gradle subproject configured from the root
+  # `subprojects {}` block has no build file of its own, and a TypeScript
+  # package's manifest often sits one level above its stale `dist/`.
+  BUILD_OUTPUT_DIR_NAMES = Set{"dist", "build", "target", "out"}
+  NO_DIR_NAMES           = Set(String).new
+
+  BUILD_MANIFESTS = Set{
+    "package.json", "composer.json", "go.mod", "Gemfile", "pom.xml",
+    "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts",
+    "build.sbt", "build.xml", "Cargo.toml", "shard.yml", "mix.exs", "pubspec.yaml",
+    "Package.swift", "setup.py", "setup.cfg", "pyproject.toml", "requirements.txt",
+    "Pipfile", "deno.json", "deno.jsonc", "build.zig", "CMakeLists.txt",
+    "meson.build", "Makefile", "project.clj", "deps.edn", "stack.yaml",
+    "rebar.config", "gleam.toml", "cpanfile", "Makefile.PL", "dune-project",
   }
 
   IGNORED_DIR_SUFFIXES = Set{
@@ -153,17 +184,41 @@ module Noir::Detection
   end
 
   # Whether a directory entry names a subtree the walk prunes on purpose
-  # (dependency cache, build output, Crystal's `lib/` next to a `shard.yml`).
+  # (dependency cache, build output next to its manifest, Crystal's `lib/`
+  # next to a `shard.yml`).
   #
   # Extracted from the directory branch of the walk so the symlink branch can
   # ask the same question: a symlink is not a directory to `File.info?` with
   # `follow_symlinks: false`, so a `node_modules` or `.venv` symlink lands
   # there instead — and reporting *that* as lost coverage would fire on
   # every pnpm workspace, which is the opposite of the point.
-  def ignored_dir_entry?(entry : String, dir_has_shard : Bool) : Bool
+  #
+  # `scoped_names` is what `scoped_dir_names` returned for the parent.
+  def ignored_dir_entry?(entry : String, full_path : String, dir_has_shard : Bool, scoped_names : Set(String)) : Bool
     return true if IGNORED_DIR_NAMES.includes?(entry)
     return true if IGNORED_DIR_SUFFIXES.any? { |suffix| entry.ends_with?(suffix) }
+    return true if scoped_names.includes?(entry)
+    return true if entry == "vendor" && dependency_vendor_dir?(full_path)
     entry == "lib" && dir_has_shard
+  end
+
+  # Which `MANIFEST_SCOPED_DIR_NAMES` a directory's listing licenses the
+  # walk to prune among its children.
+  def scoped_dir_names(entries : Array(Noir::DirListing::Entry)) : Set(String)
+    source_root = false
+    entries.each do |listed|
+      return MANIFEST_SCOPED_DIR_NAMES if BUILD_MANIFESTS.includes?(listed.name)
+      source_root ||= listed.name == "tsconfig.json" || (listed.name == "src" && !!listed.info.try(&.directory?))
+    end
+    source_root ? BUILD_OUTPUT_DIR_NAMES : NO_DIR_NAMES
+  end
+
+  # A Composer or `go mod vendor` tree, recognised by its own contents
+  # wherever it sits (a nested app whose `composer.json` lives elsewhere).
+  def dependency_vendor_dir?(path : String) : Bool
+    File.exists?(File.join(path, "autoload.php")) ||
+      File.exists?(File.join(path, "composer")) ||
+      File.exists?(File.join(path, "modules.txt"))
   end
 
   # Filenames that detectors match by exact basename (often with path
@@ -603,6 +658,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
         # for source. Resolve the ambiguity contextually: skip `lib/`
         # only when a sibling `shard.yml` is present.
         dir_has_shard = listing.has_shard
+        scoped_names = Noir::Detection.scoped_dir_names(listing.entries)
         if android_source_scope_active
           Noir::Detection.add_android_source_prefixes_from_dir(dir, android_source_prefixes)
         end
@@ -636,7 +692,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
             if info.directory?
               # Subtree prune happens here. Entry name (not full path)
               # so the base-as-node_modules case from #912 is safe.
-              if Noir::Detection.ignored_dir_entry?(entry, dir_has_shard)
+              if Noir::Detection.ignored_dir_entry?(entry, full_path, dir_has_shard, scoped_names)
                 skipped_ignored_dirs += 1
                 next
               end
@@ -663,7 +719,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
             # the walk prunes on purpose, and media files it would have
             # filtered a step later anyway, are not coverage the user lost.
             unless info.file?
-              unless Noir::Detection.ignored_dir_entry?(entry, dir_has_shard) || MediaFilter.media_file?(full_path)
+              unless Noir::Detection.ignored_dir_entry?(entry, full_path, dir_has_shard, scoped_names) || MediaFilter.media_file?(full_path)
                 skipped_entries += 1
                 reason = info.type.symlink? ? "symbolic link (not followed)" : "not a regular file (#{info.type})"
                 logger.debug "Skipping #{full_path}: #{reason}"

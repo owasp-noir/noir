@@ -1,6 +1,7 @@
 require "./logger"
 require "./code_locator"
 require "./skipped_files"
+require "../utils/file_extension"
 require "../utils/text_file"
 require "../utils/utils"
 require "json"
@@ -107,6 +108,16 @@ class Detector
           {% for name in basenames %}
             return true if base == {{ name }}
           {% end %}
+        {% end %}
+        {% if extensions %}
+          # `LOGIN.ASP`: see `Noir::FileExtension`. Same object (no
+          # allocation) unless the extension needed folding.
+          folded = Noir::FileExtension.fold(filename)
+          unless folded.same?(filename)
+            {% for ext in extensions %}
+              return true if folded.ends_with?({{ ext }})
+            {% end %}
+          end
         {% end %}
         false
       end

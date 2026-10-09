@@ -28,7 +28,7 @@ module Detector::Php
     # non-matching PHP content — each pattern's distinctive literal keeps
     # PCRE2's fast scan, which the wide alternation defeats.
     def detect(filename : String, file_contents : String) : Bool
-      return false unless filename.ends_with?(".php")
+      return false unless Noir::FileExtension.fold(filename).ends_with?(".php")
       content_matches?(file_contents, USE_SF_CONSOLE) || content_matches?(file_contents, SF_COMMAND) ||
         content_matches?(file_contents, AS_COMMAND) || content_matches?(file_contents, LARAVEL_ZERO) ||
         content_matches?(file_contents, CLIMATE) || content_matches?(file_contents, MINICLI) ||

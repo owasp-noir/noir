@@ -42,7 +42,7 @@ module Detector::Php
       end
 
       # Check for Laravel namespaces in PHP files
-      if filename.ends_with?(".php") && (file_contents.includes?("use Illuminate\\") ||
+      if Noir::FileExtension.fold(filename).ends_with?(".php") && (file_contents.includes?("use Illuminate\\") ||
          file_contents.includes?("namespace Illuminate\\") ||
          file_contents.includes?("use Laravel\\") ||
          file_contents.includes?("namespace Laravel\\"))
@@ -51,7 +51,7 @@ module Detector::Php
 
       # Check for Laravel controller structure. Base-relative for the same
       # reason as the route files above.
-      if base_relative_path(filename).includes?("/app/Http/Controllers/") && filename.ends_with?(".php")
+      if base_relative_path(filename).includes?("/app/Http/Controllers/") && Noir::FileExtension.fold(filename).ends_with?(".php")
         if file_contents.includes?("use Illuminate\\") || file_contents.includes?("Controller")
           return true
         end

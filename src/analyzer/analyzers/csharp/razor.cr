@@ -43,7 +43,9 @@ module Analyzer::CSharp
     NAME_ARGUMENT = /\bName\s*=\s*"([^"]+)"/
 
     def analyze
-      code_files = get_files_by_extension(".cs").to_set
+      # Keyed case-folded: `Index.CSHTML` pairs with `Index.cshtml.cs` on the
+      # case-insensitive filesystems Razor projects are written on.
+      code_files = get_files_by_extension(".cs").index_by(&.downcase)
 
       get_files_by_extensions([".cshtml", ".razor"]).each do |file|
         relative = base_relative_path(file)
@@ -53,10 +55,10 @@ module Analyzer::CSharp
         next unless content.includes?("@page") || content.includes?("@attribute")
         content = strip_comments(content)
         # Code-behind: `Index.cshtml.cs` page model, `Counter.razor.cs` partial.
-        code_behind = "#{file}.cs"
-        code = code_files.includes?(code_behind) ? "#{content}\n#{strip_comments(read_file_content(code_behind))}" : content
+        code_behind = code_files["#{file}.cs".downcase]?
+        code = code_behind ? "#{content}\n#{strip_comments(read_file_content(code_behind))}" : content
 
-        if file.ends_with?(".razor")
+        if File.extname(file).downcase == ".razor"
           analyze_component(file, content, code)
         else
           analyze_page(file, relative, content, code)
@@ -141,7 +143,7 @@ module Analyzer::CSharp
     # → `Admin`. ASP.NET only routes pages under the `Pages` root, so a file
     # outside one gets no default route.
     private def default_route(relative : String) : String?
-      segments = relative.rchop(".cshtml").split('/').reject(&.empty?)
+      segments = relative.rchop(File.extname(relative)).split('/').reject(&.empty?)
       return unless root = segments.index("Pages")
       area = segments[root - 1] if root >= 2 && segments[root - 2] == "Areas"
       segments = [area].compact + segments[(root + 1)..]

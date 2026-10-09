@@ -22,7 +22,7 @@ module Detector::Php
       end
 
       # Check for Symfony namespaces in PHP files (real imports only)
-      if filename.ends_with?(".php") && file_contents.match(/(?:^|\n|<\?php\s+)\s*use\s+Symfony\\[^;\n]*;/)
+      if Noir::FileExtension.fold(filename).ends_with?(".php") && file_contents.match(/(?:^|\n|<\?php\s+)\s*use\s+Symfony\\[^;\n]*;/)
         return true
       end
 

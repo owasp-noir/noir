@@ -16,7 +16,7 @@ module Detector::Fsharp
 
       # MSBuild project files (.fsproj/.csproj — Giraffe can be referenced
       # from a hybrid solution) referencing the Giraffe package.
-      if (filename.ends_with?(".fsproj") || filename.ends_with?(".csproj")) &&
+      if (filename.ends_with?(".fsproj") || Noir::FileExtension.fold(filename).ends_with?(".csproj")) &&
          file_contents.match(/<PackageReference\s+Include="Giraffe"/)
         return true
       end

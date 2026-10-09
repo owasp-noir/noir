@@ -137,7 +137,7 @@ module Noir::RustCalleeExtractorTS
       value = Noir::TreeSitter.field(node, "value")
       field = Noir::TreeSitter.field(node, "field")
       return unless value && field
-      inner = receiver_chain(value, source)
+      inner = Noir::TreeSitter.descend { receiver_chain(value, source) }
       return unless inner
       "#{inner}.#{Noir::TreeSitter.node_text(field, source)}"
     end

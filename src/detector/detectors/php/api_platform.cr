@@ -14,7 +14,7 @@ module Detector::Php
         return PACKAGES.any? { |package| file_contents.includes?(package) }
       end
 
-      filename.ends_with?(".php") && file_contents.matches?(/^\s*use\s+ApiPlatform\\Metadata\\/m)
+      Noir::FileExtension.fold(filename).ends_with?(".php") && file_contents.matches?(/^\s*use\s+ApiPlatform\\Metadata\\/m)
     end
   end
 end

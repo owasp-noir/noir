@@ -43,7 +43,7 @@ module Detector::Php
       end
 
       # PHP source in the Magento namespace.
-      if filename.ends_with?(".php") &&
+      if Noir::FileExtension.fold(filename).ends_with?(".php") &&
          (file_contents.includes?("use Magento\\") || file_contents.includes?("namespace Magento\\"))
         return true
       end

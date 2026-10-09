@@ -400,6 +400,23 @@ module Noir::TreeSitter
     end
   end
 
+  # Runs the block one level deeper on the same budget as
+  # `each_named_child`, or returns nil without running it once that budget
+  # is spent. For recursion that descends through `field(...)` instead —
+  # the callee extractors' `a.b.c` receiver builders recurse once per
+  # chain link, and a generated `x.b.b.b…(1)` chain of 100k links
+  # overflowed the stack and aborted the whole scan.
+  def self.descend(&)
+    depth = @@walk_depth
+    return if depth >= MAX_AST_DEPTH
+    @@walk_depth = depth + 1
+    begin
+      yield
+    ensure
+      @@walk_depth = depth
+    end
+  end
+
   # Pre-order walk: yields `node`, then every named descendant. Depth is
   # bounded by `each_named_child`.
   def self.walk(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
