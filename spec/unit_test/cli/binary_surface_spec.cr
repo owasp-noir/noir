@@ -219,6 +219,58 @@ describe "noir CLI surface (built binary)" do
       result.stderr.should contain("Unknown option: --bogus-flag")
       result.exit_code.should eq(1)
     end
+
+    it "reports a bad $EDITOR in one line instead of a backtrace" do
+      home = File.join(Dir.tempdir, "noir-cfg-editor-#{Random.new.hex(4)}")
+      Dir.mkdir_p(home)
+      begin
+        {"/no/such/ed" => "could not be started", %(vi ") => "Cannot parse editor command"}.each do |editor, message|
+          result = run_noir(["config", "edit"], env: {"NOIR_HOME" => home, "VISUAL" => editor})
+          result.stderr.should_not contain("Unhandled exception")
+          result.stderr.should contain(message)
+          result.exit_code.should eq(1)
+        end
+      ensure
+        FileUtils.rm_rf(home)
+      end
+    end
+
+    it "rejects a directory at the default config path for show and init" do
+      home = File.join(Dir.tempdir, "noir-cfg-dir-#{Random.new.hex(4)}")
+      Dir.mkdir_p(File.join(home, "config.yaml"))
+      begin
+        %w[show init].each do |action|
+          result = run_noir(["config", action], env: {"NOIR_HOME" => home})
+          result.stdout.should be_empty
+          result.stderr.should_not contain("Unhandled exception")
+          result.stderr.should contain("is a directory, not a file")
+          result.exit_code.should eq(1)
+        end
+      ensure
+        FileUtils.rm_rf(home)
+      end
+    end
+
+    {% unless flag?(:windows) %}
+      it "reports an unreadable config file instead of crashing" do
+        home = File.join(Dir.tempdir, "noir-cfg-unreadable-#{Random.new.hex(4)}")
+        path = File.join(home, "config.yaml")
+        Dir.mkdir_p(home)
+        File.write(path, "base: .\n")
+        File.chmod(path, 0o000)
+        begin
+          # root reads through mode 000; nothing to assert there.
+          next if File.readable?(path)
+          result = run_noir(["config", "show"], env: {"NOIR_HOME" => home})
+          result.stderr.should_not contain("Unhandled exception")
+          result.stderr.should contain("Cannot read config file")
+          result.exit_code.should eq(1)
+        ensure
+          File.chmod(path, 0o600)
+          FileUtils.rm_rf(home)
+        end
+      end
+    {% end %}
   end
 
   describe "completion" do

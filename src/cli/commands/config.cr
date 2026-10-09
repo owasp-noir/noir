@@ -163,12 +163,16 @@ module Noir::CLI::ConfigCommand
       # path. Reading a directory would also crash `File.read` with a
       # raw backtrace, so reject it explicitly.
       Noir::CLI.die("Config file does not exist: #{path}") unless File.exists?(path)
-      Noir::CLI.die("--config-file is not a file: #{path}") if File.directory?(path)
     elsif !File.exists?(path)
       Noir::CLI.die("Config file does not exist: #{path}\nRun `noir config init` to create it.")
     end
+    die_if_directory(path, override_path)
 
-    content = File.read(path)
+    content = begin
+      File.read(path)
+    rescue ex : IO::Error
+      Noir::CLI.die("Cannot read config file #{path}: #{ex.os_error.try(&.message) || ex.message}")
+    end
     puts content
     warn_about_legacy_keys(content)
   end
@@ -201,6 +205,7 @@ module Noir::CLI::ConfigCommand
   def self.init
     config_init = ConfigInitializer.new
     path = config_path
+    die_if_directory(path)
     if File.exists?(path)
       puts "Config file already exists at: #{path}"
       return
@@ -217,11 +222,30 @@ module Noir::CLI::ConfigCommand
   def self.edit(override_path : String? = nil)
     path = config_path(override_path)
 
-    # A custom --config-file pointing at a directory would otherwise be
-    # handed straight to the editor (or crash on the create path). Reject
-    # it up front, matching `show` and the scan-path validator.
-    if override_path && !override_path.empty? && File.directory?(path)
-      Noir::CLI.die("--config-file is not a file: #{path}")
+    # A directory at the config path would otherwise be handed straight to
+    # the editor (or crash on the create path). Reject it up front,
+    # matching `show` and the scan-path validator.
+    die_if_directory(path, override_path)
+
+    # Resolve the editor before the TTY check so a broken $VISUAL/$EDITOR
+    # is reported as such everywhere. Split it into argv WITHOUT a shell so
+    # a poisoned value can't inject commands: `EDITOR="rm -rf /; vi"` used
+    # to run under `shell: true` and execute `rm -rf /`. Parsing to argv
+    # means metacharacters (`;`, `|`, `$()`) are passed literally, never
+    # evaluated, while still supporting editors carrying flags (e.g.
+    # `code --wait`).
+    editor = pick_editor
+    editor_argv = begin
+      Process.parse_arguments(editor)
+    rescue ex : ArgumentError
+      Noir::CLI.die("Cannot parse editor command '#{editor}': #{ex.message}")
+    end
+    if editor_argv.empty?
+      Noir::CLI.die("No editor configured. Set $VISUAL or $EDITOR (or install vi).")
+    end
+    command = editor_argv.first
+    unless Process.find_executable(command)
+      Noir::CLI.die("Editor '#{command}' could not be started: command not found. Set $VISUAL or $EDITOR.")
     end
 
     # `edit` launches an interactive terminal editor. In a non-interactive
@@ -248,17 +272,6 @@ module Noir::CLI::ConfigCommand
       end
     end
 
-    editor = pick_editor
-    # Split the editor string into argv WITHOUT a shell so a poisoned
-    # $EDITOR/$VISUAL can't inject commands: `EDITOR="rm -rf /; vi"` used to
-    # run under `shell: true` and execute `rm -rf /`. Parsing to argv means
-    # metacharacters (`;`, `|`, `$()`) are passed literally, never evaluated,
-    # while still supporting editors carrying flags (e.g. `code --wait`).
-    editor_argv = Process.parse_arguments(editor)
-    if editor_argv.empty?
-      Noir::CLI.die("No editor configured. Set $VISUAL or $EDITOR (or install vi).")
-    end
-    command = editor_argv.first
     args = editor_argv[1..] + [path]
     status = Process.run(
       command,
@@ -271,6 +284,16 @@ module Noir::CLI::ConfigCommand
     unless status.success?
       Noir::CLI.die("Editor '#{editor}' exited with status #{status.exit_code}.")
     end
+  end
+
+  # `File.exists?` is true for a directory, so without this `show` crashed
+  # in `File.read` and `init` claimed the file already existed.
+  private def self.die_if_directory(path : String, override_path : String? = nil)
+    return unless File.directory?(path)
+    if override_path && !override_path.empty?
+      Noir::CLI.die("--config-file is not a file: #{path}")
+    end
+    Noir::CLI.die("Config path is a directory, not a file: #{path}")
   end
 
   # `home: true` for the same reason `Noir::Home.path` uses it: a leading
