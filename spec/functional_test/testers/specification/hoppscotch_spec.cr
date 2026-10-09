@@ -22,6 +22,11 @@ expected_endpoints = [
     Param.new("status", "open", "form"),
     Param.new("sort", "date", "form"),
   ]),
+  # A child folder's header overrides the parent's (`acme` would fail the
+  # value check). Its inactive auth block suppresses the inherited bearer.
+  Endpoint.new("/v2/catalog", "GET", [
+    Param.new("X-Tenant", "public", "header"),
+  ]),
   Endpoint.new("/v2/orders/receipt", "PUT", [
     Param.new("file", "", "form"),
   ]),

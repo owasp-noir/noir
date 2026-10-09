@@ -14,10 +14,9 @@ module Analyzer::Specification
   class Hoppscotch < SpecificationEngine
     analyzer_for "hoppscotch"
 
-    # Matched after `<<var>>` has been rewritten to `{{var}}`, so the shared
-    # URL helpers recognise a templated host.
-    TEMPLATE_VAR = /\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}/
-    HOPP_VAR     = /<<\s*([A-Za-z0-9_.-]+)\s*>>/
+    # Unresolved ones are rewritten to `{{var}}`, so the shared URL helpers
+    # recognise a templated host.
+    HOPP_VAR = /<<\s*([A-Za-z0-9_.-]+)\s*>>/
 
     AUTH_HEADER_TYPES = {"basic", "bearer", "oauth-2", "digest", "hawk", "jwt", "aws-signature", "akamai-eg"}
 
@@ -28,6 +27,7 @@ module Analyzer::Specification
       each_spec_file(Noir::LocatorKeys::HOPPSCOTCH_JSON, sorted: true) do |path|
         doc = parse_json_lenient(read_file_content(path))
         (doc.as_a? || [doc]).each do |node|
+          next unless node.as_h?
           # Environment exports and (newer) collection-level variables.
           node["variables"]?.try(&.as_a?).try { |variables| collect_env(variables, env) }
           collections << {node, path} if node["requests"]?
@@ -36,6 +36,9 @@ module Analyzer::Specification
 
       collections.each do |node, path|
         walk(node, env, path, nil, [] of Param)
+      rescue e
+        @logger.debug "Exception processing Hoppscotch collection #{path}"
+        @logger.debug_sub e
       end
 
       @result
@@ -44,17 +47,20 @@ module Analyzer::Specification
     # First file wins per key — environments are read in sorted path order.
     private def collect_env(variables : Array(JSON::Any), env : Hash(String, String))
       variables.each do |var|
-        next unless key = var["key"]?.try(&.as_s?)
-        value = var["value"]?.try(&.as_s?) || var["currentValue"]?.try(&.as_s?).presence || var["initialValue"]?.try(&.as_s?)
+        next unless var.as_h? && (key = var["key"]?.try(&.as_s?))
+        # Secrets export blank; a blank value leaves the placeholder in place.
+        value = var["value"]?.try(&.as_s?).presence ||
+                var["currentValue"]?.try(&.as_s?).presence ||
+                var["initialValue"]?.try(&.as_s?).presence
         env[key] = value if value && !env.has_key?(key)
       end
     end
 
     # A folder's `auth: {authType: "inherit"}` keeps the parent's, and its
-    # `headers` add to the parent's.
+    # `headers` add to (and take precedence over) the parent's.
     private def walk(node : JSON::Any, env : Hash(String, String), path : String, inherited_auth : JSON::Any?, inherited_headers : Array(Param))
       auth = own_auth(node["auth"]?) || inherited_auth
-      headers = inherited_headers + key_value_params(node["headers"]?, env, "header")
+      headers = key_value_params(node["headers"]?, env, "header") + inherited_headers
 
       node["requests"]?.try(&.as_a?).try &.each do |request|
         process_request(request, env, path, auth, headers)
@@ -74,7 +80,7 @@ module Analyzer::Specification
       return unless endpoint = request["endpoint"]?.try(&.as_s?)
 
       url = resolve(endpoint, env)
-      url_path = template_url_path(url, TEMPLATE_VAR)
+      url_path = template_url_path(url, MUSTACHE_VAR)
       return if url_path.empty?
 
       params = [] of Param
@@ -89,17 +95,17 @@ module Analyzer::Specification
       @result << Endpoint.new(url_path, method, params, Details.new(PathInfo.new(path)))
     end
 
-    # Nil for an absent, inactive or `inherit` auth block, so the caller
-    # falls back to the parent's.
+    # Nil for an absent or `inherit` auth block, so the caller falls back to
+    # the parent's. An inactive block is kept: Hoppscotch then sends no auth.
     private def own_auth(auth : JSON::Any?) : JSON::Any?
       return unless auth && auth.as_h?
-      return if auth["authActive"]?.try(&.as_bool?) == false
       return if auth["authType"]?.try(&.as_s?) == "inherit"
       auth
     end
 
     private def apply_auth(auth : JSON::Any?, env : Hash(String, String), params : Array(Param))
       return unless auth
+      return if auth["authActive"]?.try(&.as_bool?) == false
       type = auth["authType"]?.try(&.as_s?) || ""
       if type == "api-key"
         return unless key = auth["key"]?.try(&.as_s?).presence
@@ -118,7 +124,7 @@ module Analyzer::Specification
 
       if content_type.includes?("json")
         if text = raw.try(&.as_s?)
-          json_body_pairs(resolve(text, env), TEMPLATE_VAR).each { |name, value| params << Param.new(name, value, "json") }
+          json_body_pairs(resolve(text, env), MUSTACHE_VAR).each { |name, value| params << Param.new(name, value, "json") }
         end
       elsif content_type.includes?("x-www-form-urlencoded")
         # Stored as Hoppscotch's raw key-value text: `key: value` per line,
@@ -127,7 +133,7 @@ module Analyzer::Specification
           stripped = line.strip
           next if stripped.empty? || stripped.starts_with?('#')
           name, _, value = stripped.partition(':')
-          params << Param.new(name.strip, value.strip, "form") unless name.strip.empty?
+          params << Param.new(name.strip, resolve(value.strip, env), "form") unless name.strip.empty?
         end
       elsif content_type.includes?("multipart/form-data")
         params.concat(key_value_params(raw, env, "form"))
@@ -139,6 +145,7 @@ module Analyzer::Specification
     private def key_value_params(list : JSON::Any?, env : Hash(String, String), param_type : String) : Array(Param)
       params = [] of Param
       list.try(&.as_a?).try &.each do |entry|
+        next unless entry.as_h?
         next unless name = entry["key"]?.try(&.as_s?).presence
         next if entry["active"]?.try(&.as_bool?) == false
         next if param_type == "header" && skipped_request_header?(name)

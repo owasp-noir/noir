@@ -19,7 +19,6 @@ module Analyzer::Specification
     HTTP_METHODS = ALLOWED_HTTP_METHODS
 
     # A `{{ var }}` placeholder.
-    TEMPLATE_VAR = /\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}/
 
     def analyze
       each_spec_file(Noir::LocatorKeys::HTTP_FILE) do |http_file|
@@ -132,7 +131,7 @@ module Analyzer::Specification
       end
       extract_body_params(body_lines.join('\n'), env).each { |p| params << p }
 
-      url_path = template_url_path(url_raw, TEMPLATE_VAR)
+      url_path = template_url_path(url_raw, MUSTACHE_VAR)
       return if url_path.empty?
 
       request_query_pairs(url_raw).each do |query_name, query_value|
@@ -232,7 +231,7 @@ module Analyzer::Specification
       resolved = input
       3.times do
         previous = resolved
-        resolved = resolved.gsub(TEMPLATE_VAR) do |match|
+        resolved = resolved.gsub(MUSTACHE_VAR) do |match|
           env.fetch($1, match)
         end
         break if resolved == previous

@@ -10,8 +10,12 @@ module Detector::Specification
     detector_for "hoppscotch", extensions: %w[.json], idempotent: false
 
     # Every `.json` in the tree reaches these guards.
+    # `"requests"` and `"variables"` alone are common (k8s, GraphQL), so
+    # each pairs with the key that is specific to its Hoppscotch shape.
     REQUESTS_MARKER  = /"requests"\s*:/
+    ENDPOINT_MARKER  = /"endpoint"\s*:/
     VARIABLES_MARKER = /"variables"\s*:/
+    SECRET_MARKER    = /"secret"\s*:/
 
     # A collection export (one object, or an array of them for an
     # all-collections export) reports the tech. An environment export is
@@ -19,8 +23,9 @@ module Detector::Specification
     # so a stray `{name, variables}` file can never surface the tech.
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".json")
-      has_requests = content_matches?(file_contents, REQUESTS_MARKER)
-      return false unless has_requests || content_matches?(file_contents, VARIABLES_MARKER)
+      has_requests = content_matches?(file_contents, REQUESTS_MARKER) && content_matches?(file_contents, ENDPOINT_MARKER)
+      return false unless has_requests ||
+                          (content_matches?(file_contents, VARIABLES_MARKER) && content_matches?(file_contents, SECRET_MARKER))
 
       doc = json_any?(file_contents)
       return false unless doc

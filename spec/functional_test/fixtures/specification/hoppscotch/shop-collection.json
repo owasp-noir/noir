@@ -38,6 +38,22 @@
         ],
         "folders": [
           {
+            "name": "Public",
+            "headers": [{"key": "X-Tenant", "value": "public", "active": true}],
+            "requests": [
+              {
+                "v": "11",
+                "method": "GET",
+                "endpoint": "<<shopUrl>>/catalog",
+                "params": [],
+                "headers": [],
+                "auth": {"authType": "bearer", "authActive": false, "token": ""},
+                "body": {"contentType": null, "body": null}
+              }
+            ],
+            "folders": []
+          },
+          {
             "name": "Uploads",
             "requests": [
               {

@@ -14,10 +14,12 @@ module Analyzer::Specification
   class Hurl < SpecificationEngine
     analyzer_for "hurl"
 
-    TEMPLATE_VAR  = /\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}/
     REQUEST_LINE  = /^(#{ALLOWED_HTTP_METHODS.join('|')})[ \t]+(\S+)/
     RESPONSE_LINE = /^HTTP(?:\/[\d.]+)?[ \t]+(?:\d{3}|\*)/
     SECTION_LINE  = /^\[([A-Za-z]+)\]$/
+    # JSON, XML, a oneline `` `string` `` or a `file,` / `base64,` / `hex,`
+    # body. Anything else before the body is a `key: value` line.
+    BODY_START = /^(?:[{\[<`]|(?:file|base64|hex),)/
 
     def analyze
       each_spec_file(Noir::LocatorKeys::HURL_FILE) do |path|
@@ -67,6 +69,13 @@ module Analyzer::Specification
         next if line.empty? || line.starts_with?('#')
         next unless entry
 
+        # Tracked in the response half too, so a request-looking line inside
+        # a multiline response body is never read as a new entry.
+        if line.starts_with?("```")
+          in_fence = !(line.size > 3 && line.ends_with?("```"))
+          next
+        end
+
         if line.matches?(RESPONSE_LINE)
           in_response = true
           next
@@ -78,11 +87,7 @@ module Analyzer::Specification
           next
         end
 
-        if !entry.body.empty?
-          entry.body << raw
-        elsif line.starts_with?("```")
-          in_fence = !(line.size > 3 && line.ends_with?("```"))
-        elsif line.starts_with?('{') || line.starts_with?('[')
+        if !entry.body.empty? || line.matches?(BODY_START)
           entry.body << raw
         else
           add_key_value(entry.params, section, line)
@@ -113,7 +118,7 @@ module Analyzer::Specification
     end
 
     private def emit(entry : Entry, path : String)
-      url_path = template_url_path(entry.url, TEMPLATE_VAR)
+      url_path = template_url_path(entry.url, MUSTACHE_VAR)
       return if url_path.empty?
 
       params = entry.params
@@ -123,7 +128,7 @@ module Analyzer::Specification
       request_path_vars(url_path).each do |name|
         push_param_once(params, Param.new(name, "", "path"))
       end
-      json_body_pairs(entry.body.join('\n'), TEMPLATE_VAR).each do |name, value|
+      json_body_pairs(entry.body.join('\n'), MUSTACHE_VAR).each do |name, value|
         push_param_once(params, Param.new(name, value, "json"))
       end
 

@@ -204,11 +204,15 @@ module Analyzer::Specification
       template_path(path, template_var)
     end
 
+    # A `{{ var }}` placeholder, the template syntax of `.http`, Hurl and
+    # Thunder Client files (Hoppscotch's `<<var>>` is rewritten to it).
+    MUSTACHE_VAR = /\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}/
+
     # Name *and* value of each query pair in a request URL, as written in an
     # API-client file (`.http`, Hurl, Hoppscotch, Thunder Client). Such a
     # file records a concrete request, so the value is real data — except a
-    # value still carrying `{{...}}` / `<<...>>`, which is a placeholder the
-    # caller's environment never resolved and is left empty.
+    # value still carrying `{{...}}`, which is a placeholder the caller's
+    # environment never resolved and is left empty.
     protected def request_query_pairs(url_string : String) : Array(Tuple(String, String))
       query = ""
       begin
@@ -230,7 +234,7 @@ module Analyzer::Specification
         name = name.strip
         next if name.empty?
         value = raw_value.strip
-        value = "" if value.includes?("{{") || value.includes?("<<")
+        value = "" if value.includes?("{{")
         value = URI.decode_www_form(value) rescue value
         pairs << {name, value}
       end

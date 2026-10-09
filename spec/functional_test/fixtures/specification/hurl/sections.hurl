@@ -32,3 +32,6 @@ POST https://example.org/api/notes
 GET this is not a request
 ```
 HTTP 201
+```
+GET https://example.org/phantom-from-response-body
+```
