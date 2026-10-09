@@ -506,7 +506,9 @@ module Analyzer::Python
     # `x = [path(.., include(x))]` includes the *previous* binding of x, not
     # itself: inline it so the include resolves instead of recursing forever.
     private def inline_previous_binding(text : ::String, name : ::String, previous : ::String?) : ::String
-      return text unless previous
+      # ponytail: size cap, since a rebind that includes itself twice doubles
+      # per binding (2^n); past the cap the `seen` guard just cuts the cycle.
+      return text if previous.nil? || previous.bytesize > 65_536
       text.gsub(/\binclude\s*\(\s*#{Regex.escape(name)}\s*\)/) { "include(#{previous})" }
     end
 
