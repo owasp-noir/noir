@@ -23,11 +23,11 @@ module Detector::Php
 
       # Check for use yii\... or use Yii; imports in PHP files
       if Noir::FileExtension.fold(filename).ends_with?(".php")
-        if file_contents.match(/(?:^|\n|<\?php\s+)\s*use\s+yii\\[^;\n]*;/)
+        if file_contents.match(/(?:^|\n|<\?php\s)[ \t]*use\s+yii\\[^;\n]*;/)
           return true
         end
 
-        if file_contents.match(/(?:^|\n|<\?php\s+)\s*use\s+Yii\s*;/)
+        if file_contents.match(/(?:^|\n|<\?php\s)[ \t]*use\s+Yii\s*;/)
           return true
         end
 

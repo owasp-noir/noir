@@ -13,7 +13,7 @@ module Detector::Php
         return true
       end
 
-      if Noir::FileExtension.fold(filename).ends_with?(".php") && file_contents.match(/(?:^|\n|<\?php\s+)\s*use\s+Hyperf\\[^;\n]*;/)
+      if Noir::FileExtension.fold(filename).ends_with?(".php") && file_contents.match(/(?:^|\n|<\?php\s)[ \t]*use\s+Hyperf\\[^;\n]*;/)
         return true
       end
 

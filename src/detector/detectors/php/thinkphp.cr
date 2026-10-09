@@ -24,7 +24,7 @@ module Detector::Php
 
       # Check for use think\... imports in PHP files
       if Noir::FileExtension.fold(filename).ends_with?(".php")
-        if file_contents.match(/(?:^|\n|<\?php\s+)\s*use\s+think\\[^;\n]*;/)
+        if file_contents.match(/(?:^|\n|<\?php\s)[ \t]*use\s+think\\[^;\n]*;/)
           return true
         end
 
