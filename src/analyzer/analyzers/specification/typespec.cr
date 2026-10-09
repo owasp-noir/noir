@@ -37,7 +37,9 @@ module Analyzer::Specification
 
     # Removes `//` line comments and `/* */` block comments. String literals are
     # preserved as-is so `//` inside a string isn't treated as a comment.
-    private def strip_comments(s : String) : String
+    private def strip_comments(source : String) : String
+      # Indexed as chars: `String#[](Int)` is O(index) on non-ASCII content.
+      s = source.chars
       io = String::Builder.new
       i = 0
       size = s.size
@@ -102,7 +104,19 @@ module Analyzer::Specification
       end
 
       def walk
-        parse_block(0, @text.size, in_interface: false)
+        parse_block(0, @text.bytesize, in_interface: false)
+      end
+
+      # The walker indexes by byte: `String#[](Int)` is O(index) once the
+      # file holds a single non-ASCII character, which made every walk
+      # quadratic. Every delimiter it looks for is ASCII, so a byte read as a
+      # Char matches the same tokens, and slices start and end on them.
+      private def char_at(pos : Int32) : Char
+        @text.byte_at(pos).unsafe_chr
+      end
+
+      private def slice(from : Int32, to : Int32) : String
+        @text.byte_slice(from, Math.max(to - from, 0))
       end
 
       # Parses a sequence of statements between [pos, stop). Statements at this
@@ -114,7 +128,7 @@ module Analyzer::Specification
         while pos < stop
           pos = skip_ws(pos, stop)
           break if pos >= stop
-          c = @text[pos]
+          c = char_at(pos)
 
           case c
           when '@'
@@ -130,10 +144,10 @@ module Analyzer::Specification
           end
 
           ident_start = pos
-          while pos < stop && (@text[pos].ascii_alphanumeric? || @text[pos] == '_')
+          while pos < stop && (char_at(pos).ascii_alphanumeric? || char_at(pos) == '_')
             pos += 1
           end
-          ident = @text[ident_start...pos]
+          ident = slice(ident_start, pos)
 
           if ident.empty?
             pos += 1
@@ -172,7 +186,7 @@ module Analyzer::Specification
 
       private def parse_namespace(pos : Int32, stop : Int32, decorators : Array(Decorator)) : Int32
         pos = skip_ws(pos, stop)
-        while pos < stop && (@text[pos].ascii_alphanumeric? || @text[pos] == '_' || @text[pos] == '.')
+        while pos < stop && (char_at(pos).ascii_alphanumeric? || char_at(pos) == '_' || char_at(pos) == '.')
           pos += 1
         end
         pos = skip_ws(pos, stop)
@@ -180,12 +194,12 @@ module Analyzer::Specification
         route_extra = route_from(decorators)
         @route_stack << join_route(@route_stack.last, route_extra)
 
-        if pos < stop && @text[pos] == '{'
+        if pos < stop && char_at(pos) == '{'
           body_end = find_matching(pos, stop, '{', '}')
           parse_block(pos + 1, body_end - 1, in_interface: false)
           @route_stack.pop
           body_end
-        elsif pos < stop && @text[pos] == ';'
+        elsif pos < stop && char_at(pos) == ';'
           # file-scoped namespace: everything after stays under this route, so
           # we intentionally do not pop @route_stack.
           pos + 1
@@ -197,11 +211,11 @@ module Analyzer::Specification
 
       private def parse_interface(pos : Int32, stop : Int32, decorators : Array(Decorator)) : Int32
         pos = skip_ws(pos, stop)
-        while pos < stop && (@text[pos].ascii_alphanumeric? || @text[pos] == '_')
+        while pos < stop && (char_at(pos).ascii_alphanumeric? || char_at(pos) == '_')
           pos += 1
         end
         # Skip optional generics, `extends ...` clauses, etc.
-        while pos < stop && @text[pos] != '{' && @text[pos] != ';'
+        while pos < stop && char_at(pos) != '{' && char_at(pos) != ';'
           pos += 1
         end
 
@@ -210,7 +224,7 @@ module Analyzer::Specification
         prior_method = @interface_method
         @interface_method = method_from(decorators)
 
-        if pos < stop && @text[pos] == '{'
+        if pos < stop && char_at(pos) == '{'
           body_end = find_matching(pos, stop, '{', '}')
           parse_block(pos + 1, body_end - 1, in_interface: true)
           @route_stack.pop
@@ -226,10 +240,10 @@ module Analyzer::Specification
       private def parse_op_with_keyword(pos : Int32, stop : Int32, decorators : Array(Decorator)) : Int32
         pos = skip_ws(pos, stop)
         name_start = pos
-        while pos < stop && (@text[pos].ascii_alphanumeric? || @text[pos] == '_')
+        while pos < stop && (char_at(pos).ascii_alphanumeric? || char_at(pos) == '_')
           pos += 1
         end
-        name = @text[name_start...pos]
+        name = slice(name_start, pos)
         return pos if name.empty?
         consume_op_signature(pos, stop, name, decorators)
       end
@@ -242,19 +256,19 @@ module Analyzer::Specification
       private def consume_op_signature(pos : Int32, stop : Int32, name : String, decorators : Array(Decorator)) : Int32
         pos = skip_ws(pos, stop)
         # Skip generics: op create<T>(...)
-        if pos < stop && @text[pos] == '<'
+        if pos < stop && char_at(pos) == '<'
           pos = find_matching(pos, stop, '<', '>')
           pos = skip_ws(pos, stop)
         end
 
-        unless pos < stop && @text[pos] == '('
+        unless pos < stop && char_at(pos) == '('
           # `op X is Y;` and similar — skip without emitting.
           return skip_to_semicolon(pos, stop) + 1
         end
 
         args_start = pos + 1
         args_end = find_matching(pos, stop, '(', ')')
-        args = @text[args_start...(args_end - 1)]
+        args = slice(args_start, args_end - 1)
         pos = args_end
 
         pos = skip_to_semicolon(pos, stop)
@@ -408,22 +422,22 @@ module Analyzer::Specification
 
       private def read_decorator(pos : Int32, stop : Int32) : {Int32, Decorator}
         name_start = pos
-        while pos < stop && (@text[pos].ascii_alphanumeric? || @text[pos] == '_' || @text[pos] == '.')
+        while pos < stop && (char_at(pos).ascii_alphanumeric? || char_at(pos) == '_' || char_at(pos) == '.')
           pos += 1
         end
-        name = @text[name_start...pos]
+        name = slice(name_start, pos)
         args = nil.as(String?)
         pos = skip_ws(pos, stop)
-        if pos < stop && @text[pos] == '('
+        if pos < stop && char_at(pos) == '('
           args_start = pos + 1
           pos = find_matching(pos, stop, '(', ')')
-          args = @text[args_start...(pos - 1)]
+          args = slice(args_start, pos - 1)
         end
         {pos, {name, args}}
       end
 
       private def skip_ws(pos : Int32, stop : Int32) : Int32
-        while pos < stop && @text[pos].ascii_whitespace?
+        while pos < stop && char_at(pos).ascii_whitespace?
           pos += 1
         end
         pos
@@ -433,7 +447,7 @@ module Analyzer::Specification
         depth = 0
         in_string = false
         while pos < stop
-          c = @text[pos]
+          c = char_at(pos)
           if in_string
             if c == '\\' && pos + 1 < stop
               pos += 2
@@ -487,7 +501,7 @@ module Analyzer::Specification
         depth = 0
         in_string = false
         while pos < stop
-          c = @text[pos]
+          c = char_at(pos)
           if in_string
             if c == '\\' && pos + 1 < stop
               pos += 2
@@ -520,7 +534,7 @@ module Analyzer::Specification
         depth = 0
         in_string = false
         while pos < stop
-          c = @text[pos]
+          c = char_at(pos)
           if in_string
             if c == '\\' && pos + 1 < stop
               pos += 2
