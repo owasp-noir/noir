@@ -1,3 +1,5 @@
+require "../utils/control_chars"
+
 # Escaping for text that goes into a GitHub-flavored Markdown table cell.
 # Shared by `-f markdown-table` and the markdown diff report, which both put
 # repo-derived strings (routes, param names) into table rows.
@@ -32,20 +34,24 @@ module OutputBuilderMarkdownCell
   # recognize HTML entity references or backslash escapes inside code spans
   # (§6.1/§6.3), so `<`, `>`, and `\` must remain literal. Only table column
   # delimiters (`|`) and line breaks (`\r`, `\n`) are escaped/normalized.
+  #
+  # Any other control character is shown as `\xNN` (`ControlChars`), here
+  # and in `sanitize_markdown_cell`: the table is printed to a terminal as
+  # often as it is pasted into a PR.
   private def sanitize_code_span_cell(content : String) : String
-    content.to_s
+    ControlChars.escape(content.to_s
       .gsub('|', "\\|") # Escape pipes
       .gsub("\r", "")   # Remove carriage returns
-      .gsub("\n", " ")  # Replace newlines with space
+      .gsub("\n", " ")) # Replace newlines with space
   end
 
   private def sanitize_markdown_cell(content : String) : String
-    content.to_s
+    ControlChars.escape(content.to_s
       .gsub('\\', "\\\\") # Escape backslashes first
       .gsub('|', "\\|")   # Escape pipes
       .gsub('<', "&lt;")  # Escape HTML start tag
       .gsub('>', "&gt;")  # Escape HTML end tag
       .gsub("\r", "")     # Remove carriage returns
-      .gsub("\n", " ")    # Replace newlines with space
+      .gsub("\n", " "))   # Replace newlines with space
   end
 end

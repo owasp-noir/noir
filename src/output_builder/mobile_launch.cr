@@ -1,4 +1,5 @@
 require "../models/endpoint"
+require "../utils/control_chars"
 
 # Helpers shared by the mobile launch-command builders (adb, simctl). A mobile
 # entry point's launcher depends on the platform that declared it: Android
@@ -34,8 +35,10 @@ module MobileLaunch
     !url.starts_with?("/")
   end
 
+  # Control characters become `\xNN` text (`ControlChars`) so a manifest
+  # carrying `\e]8;;…` cannot drive the terminal the command is printed to.
   def shell_quote(str : String) : String
-    "'#{str.gsub("'", "'\\''")}'"
+    "'#{ControlChars.escape(str).gsub("'", "'\\''")}'"
   end
 
   # Characters the on-device shell would interpret (word-splitting, control
@@ -49,6 +52,8 @@ module MobileLaunch
   # both shells strip a layer and the device receives the literal value.
   # Metachar-free values (the common case) keep a single clean quote layer.
   def device_shell_quote(str : String) : String
+    # Escaped first: the `\` that escaping adds is itself a device metachar.
+    str = ControlChars.escape(str)
     return shell_quote(str) unless str.matches?(DEVICE_SHELL_METACHARS)
     shell_quote(shell_quote(str))
   end

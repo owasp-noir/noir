@@ -89,5 +89,10 @@ class OutputBuilderPowershell < OutputBuilder
       .gsub("\"", "`\"") # Escape double quotes
       .gsub("\r", "`r")  # Escape carriage return
       .gsub("\n", "`n")  # Escape newline
+      .gsub("\t", "`t")  # Escape tab
+    # Any other control character (a route carrying `\e]8;;…` would drive
+    # the terminal the command is printed to) as a subexpression that
+    # yields the same character, in every PowerShell version.
+      .gsub(/[\x00-\x1f\x7f-\x9f]/) { |char| "$([char]0x#{char[0].ord.to_s(16).upcase.rjust(2, '0')})" }
   end
 end

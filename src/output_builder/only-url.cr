@@ -16,7 +16,7 @@ class OutputBuilderOnlyUrl < OutputBuilder
       next if printed_urls.includes?(plain_url)
       printed_urls.add(plain_url)
 
-      r_url = plain_url.colorize(:light_yellow).toggle(@is_color)
+      r_url = escape_control_chars(plain_url).colorize(:light_yellow).toggle(@is_color)
       if show_status
         code = endpoint.details.status_code || "error"
         ob_puts "#{r_url} [#{code}]"

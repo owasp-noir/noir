@@ -1,8 +1,13 @@
+require "./control_chars"
+
 # Shared curl command construction used by the curl output builder and the
 # HTML report's copy-as-curl feature.
 module CurlCommand
+  # Line breaks become `\r`/`\n` text so a command stays on one line, and any
+  # other control character `\xNN` (`ControlChars`), so a route carrying
+  # `\e]8;;…` cannot drive the terminal the command is printed to.
   def self.shell_quote(str : String) : String
-    "'#{str.gsub("'", "'\\''").gsub("\r", "\\r").gsub("\n", "\\n")}'"
+    "'#{ControlChars.escape(str.gsub("\r", "\\r").gsub("\n", "\\n")).gsub("'", "'\\''")}'"
   end
 
   # An endpoint's multipart `(name, value)` text and file fields. No file
