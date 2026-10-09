@@ -88,6 +88,27 @@ module Analyzer::Php
       true
     end
 
+    # Find `'<key>' => [` within `[from, to)` and return the index of the `[`,
+    # verified to be real code (not a comment / heredoc). Mautic's
+    # `Config/config.php` and Nextcloud's `appinfo/routes.php` both declare
+    # routes as keyed array literals.
+    protected def find_key_array_open(content : String, lexer : Noir::PhpLexer, key : String, from : Int32, to : Int32) : Int32?
+      regex = Regex.new("['\"]#{Regex.escape(key)}['\"]\\s*=>\\s*\\[")
+      pos = from
+      while match = content.match(regex, pos)
+        match_text = match[0]
+        start = content.index(match_text, pos)
+        break unless start && start < to
+        bracket_pos = start + match_text.size - 1
+        # Validate the `[` (a code char) rather than the key's opening quote,
+        # which the lexer masks as string content — so a real `'routes' => [`
+        # passes while one buried in a heredoc/comment (masked `[`) is rejected.
+        return bracket_pos if lexer.in_code?(bracket_pos)
+        pos = start + match_text.size
+      end
+      nil
+    end
+
     protected def php_base_path_for(path : String) : String
       configured_base_for(path)
     end

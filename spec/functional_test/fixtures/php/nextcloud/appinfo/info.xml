@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<info xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:noNamespaceSchemaLocation="https://apps.nextcloud.com/schema/apps/info.xsd">
+    <id>notes</id>
+    <name>Notes</name>
+    <namespace>Notes</namespace>
+    <version>4.11.0</version>
+    <licence>agpl</licence>
+    <dependencies>
+        <nextcloud min-version="28" max-version="31"/>
+    </dependencies>
+</info>
