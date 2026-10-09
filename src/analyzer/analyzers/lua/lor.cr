@@ -54,7 +54,8 @@ module Analyzer::Lua
       content : String,
       cleaned : String,
       requires : Hash(String, String),
-      route_vars : Set(String)
+      route_vars : Set(String),
+      mounts : Array(Tuple(String, String)) # {prefix, mounted var} per `:use("/p", var(`
 
     def analyze
       include_callee = callees_needed?
@@ -62,14 +63,17 @@ module Analyzer::Lua
       files = collect_files
       return @result if files.empty?
 
-      infos = files.map { |path| build_file_info(path) }
+      infos = [] of FileInfo
+      files.each { |path| isolating_file_errors(path) { infos << build_file_info(path) } }
       basename_index = build_basename_index(infos)
 
       file_prefixes = resolve_file_prefixes(infos, basename_index)
       local_mounts = resolve_local_mounts(infos, basename_index)
 
       infos.each do |info|
-        emit_routes(info, include_callee, file_prefixes[info.path]? || "", local_mounts[info.path]? || {} of String => String)
+        isolating_file_errors(info.path) do
+          emit_routes(info, include_callee, file_prefixes[info.path]? || "", local_mounts[info.path]? || {} of String => String)
+        end
       end
 
       @result
@@ -116,7 +120,17 @@ module Analyzer::Lua
       cleaned = Noir::LuaCalleeExtractor.strip_comments(content)
       requires = detect_requires(cleaned)
       route_vars = detect_route_vars(cleaned)
-      FileInfo.new(path, content, cleaned, requires, route_vars)
+      FileInfo.new(path, content, cleaned, requires, route_vars, detect_mounts(cleaned))
+    end
+
+    # Scanned here, per file, so a file whose content blows the regex match
+    # limit is skipped alone (see `isolating_file_errors`) instead of raising
+    # out of the cross-file prefix resolution.
+    private def detect_mounts(cleaned : String) : Array(Tuple(String, String))
+      mounts = [] of Tuple(String, String)
+      return mounts unless cleaned.includes?("use")
+      cleaned.scan(USE_MOUNT_RE) { |match| mounts << {match[3], match[4]} }
+      mounts
     end
 
     # `local x = require("a.b.c")` → { "x" => "a.b.c" }.
@@ -193,9 +207,7 @@ module Analyzer::Lua
     private def resolve_file_prefixes(infos : Array(FileInfo), basename_index : Hash(String, Array(String))) : Hash(String, String)
       edges = [] of {String, String, String} # {src_file, prefix, dst_file}
       infos.each do |info|
-        info.cleaned.scan(USE_MOUNT_RE) do |match|
-          prefix = match[3]
-          mount_var = match[4]
+        info.mounts.each do |prefix, mount_var|
           mod = info.requires[mount_var]?
           next unless mod
           dst = resolve_module(mod, basename_index)
@@ -227,9 +239,7 @@ module Analyzer::Lua
     private def resolve_local_mounts(infos : Array(FileInfo), basename_index : Hash(String, Array(String))) : Hash(String, Hash(String, String))
       result = {} of String => Hash(String, String)
       infos.each do |info|
-        info.cleaned.scan(USE_MOUNT_RE) do |match|
-          prefix = match[3]
-          mount_var = match[4]
+        info.mounts.each do |prefix, mount_var|
           next if info.requires.has_key?(mount_var) # cross-file: handled above
           map = result[info.path] ||= {} of String => String
           map[mount_var] = prefix unless map.has_key?(mount_var)

@@ -129,10 +129,12 @@ module Analyzer::Python
           next unless path_under_root?(path, current_base_path)
           @logger.debug "Analyzing #{path}"
 
-          file_content = fetch_file_content(path)
-          next unless flask_relevant_source?(file_content)
-          collect_flask_appbuilder_classes(path, current_base_path, file_content, fab)
-          analyze_flask_source(path, current_base_path, file_content, state)
+          isolating_file_errors(path) do
+            file_content = fetch_file_content(path)
+            next unless flask_relevant_source?(file_content)
+            collect_flask_appbuilder_classes(path, current_base_path, file_content, fab)
+            analyze_flask_source(path, current_base_path, file_content, state)
+          end
         end
       end
 

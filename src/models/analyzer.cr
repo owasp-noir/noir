@@ -369,15 +369,22 @@ class Analyzer
   protected def scan_files(files : Array(String), &block : String -> Nil) : Nil
     parallel_analyze(files) do |path|
       next unless scan_accepts?(path)
-      begin
-        block.call(path)
-      rescue e
-        logger.debug "Error analyzing #{path}: #{e}"
-        Noir::SkippedFiles.record(tech, path, e.message.presence || e.class.name)
-      end
+      isolating_file_errors(path) { block.call(path) }
     end
   rescue e
     logger.debug e
+  end
+
+  # Runs the work for one file so that a file which raises (a PCRE2 match
+  # limit blown by one multi-megabyte line, say) costs only itself and is
+  # reported in `errors`, instead of unwinding to the tech-level rescue and
+  # discarding every endpoint. For analyzers that walk their files
+  # sequentially and so cannot use `scan_files`.
+  protected def isolating_file_errors(path : String, &) : Nil
+    yield
+  rescue e
+    logger.debug "Error analyzing #{path}: #{e}"
+    Noir::SkippedFiles.record(tech, path, e.message.presence || e.class.name)
   end
 
   # Per-path veto consulted by `scan_files`. Engines override this with
