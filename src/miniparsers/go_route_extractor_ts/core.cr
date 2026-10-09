@@ -347,39 +347,60 @@ module Noir
     end
 
     # `r = r.Group("/a")` stacks onto whatever r held on entry. Returns
-    # `{self, other}`: names rebound that way, and names the file also
-    # binds from something else (`r := app.Group("/x")`).
+    # `{local, package_level, other}`: names rebound that way inside a
+    # function that itself declares them (param or local var), names
+    # rebound that way anywhere else (package-level vars), and names the
+    # file also binds from something else (`r := app.Group("/x")`).
+    # Scoped per function, so `func h(w, r *http.Request)` elsewhere in the
+    # file doesn't make a package-level `r` look local.
     # (Zero-arg alias calls bind with `||=` and are already idempotent.)
     private def self_regroups(root : LibTreeSitter::TSNode,
                               source : String,
-                              group_method : String) : Tuple(Set(String), Set(String))
-      rebound = Set(String).new
+                              group_method : String) : Tuple(Set(String), Set(String), Set(String))
+      local = Set(String).new
+      package_level = Set(String).new
       others = Set(String).new
-      Noir::TreeSitter.walk(root) do |node|
-        next unless group_assignment_node?(node)
-        var_spec = Noir::TreeSitter.node_type(node) == "var_spec"
-        left = Noir::TreeSitter.field(node, var_spec ? "name" : "left")
-        right = Noir::TreeSitter.field(node, var_spec ? "value" : "right")
-        next unless left && right
-        name_node = identifier_or_first_child(left)
-        current = Noir::TreeSitter.first_named_child(right)
-        next unless name_node && current && Noir::TreeSitter.node_type(name_node) == "identifier"
-        grouped = false
-        while Noir::TreeSitter.node_type(current) == "call_expression"
-          function = Noir::TreeSitter.field(current, "function")
-          break unless function && Noir::TreeSitter.node_type(function) == "selector_expression"
-          field = Noir::TreeSitter.field(function, "field")
-          operand = Noir::TreeSitter.field(function, "operand")
-          break unless field && operand
-          grouped ||= Noir::TreeSitter.node_text(field, source) == group_method
-          current = operand
+      Noir::TreeSitter.each_named_child(root) do |decl|
+        in_function = {"function_declaration", "method_declaration"}.includes?(Noir::TreeSitter.node_type(decl))
+        declared = nil.as(Set(String)?)
+        Noir::TreeSitter.walk(decl) do |node|
+          next unless binding = regroup_binding(node, source, group_method)
+          name, self_bound = binding
+          if !self_bound
+            others << name
+            next
+          end
+          names = declared || (declared = declared_names(decl, source)) if in_function
+          (names && names.includes?(name) ? local : package_level) << name
         end
-        next unless grouped
-        name = Noir::TreeSitter.node_text(name_node, source)
-        self_bound = Noir::TreeSitter.node_type(current) == "identifier" && Noir::TreeSitter.node_text(current, source) == name
-        (self_bound ? rebound : others) << name
       end
-      {rebound, others}
+      {local, package_level, others}
+    end
+
+    # `{name, self_bound}` for a `<name> = <chain>.<group_method>(...)`
+    # binding; `self_bound` when the chain is rooted at `<name>` itself.
+    private def regroup_binding(node : LibTreeSitter::TSNode, source : String, group_method : String) : Tuple(String, Bool)?
+      return unless group_assignment_node?(node)
+      var_spec = Noir::TreeSitter.node_type(node) == "var_spec"
+      left = Noir::TreeSitter.field(node, var_spec ? "name" : "left")
+      right = Noir::TreeSitter.field(node, var_spec ? "value" : "right")
+      return unless left && right
+      name_node = identifier_or_first_child(left)
+      current = Noir::TreeSitter.first_named_child(right)
+      return unless name_node && current && Noir::TreeSitter.node_type(name_node) == "identifier"
+      grouped = false
+      while Noir::TreeSitter.node_type(current) == "call_expression"
+        function = Noir::TreeSitter.field(current, "function")
+        break unless function && Noir::TreeSitter.node_type(function) == "selector_expression"
+        field = Noir::TreeSitter.field(function, "field")
+        operand = Noir::TreeSitter.field(function, "operand")
+        break unless field && operand
+        grouped ||= Noir::TreeSitter.node_text(field, source) == group_method
+        current = operand
+      end
+      return unless grouped
+      name = Noir::TreeSitter.node_text(name_node, source)
+      {name, Noir::TreeSitter.node_type(current) == "identifier" && Noir::TreeSitter.node_text(current, source) == name}
     end
 
     # Package-level names the file only ever rebinds from themselves
@@ -390,44 +411,38 @@ module Noir
     # which is what lets the package map flag a reused local name as
     # ambiguous; their seed is dropped by `drop_local_self_regroups`.
     private def unexported_self_regroups(root : LibTreeSitter::TSNode, source : String, group_method : String) : Set(String)
-      rebound, others = self_regroups(root, source, group_method)
-      rebound.subtract(others)
-      return rebound if rebound.empty?
-      rebound - function_local_names(root, source)
+      local, package_level, others = self_regroups(root, source, group_method)
+      package_level - others - local
     end
 
-    # A self-regrouped name the file binds locally (`func f(r fiber.Router)
-    # { r = r.Group("/a") }`) starts from that local binding, not from a
-    # same-named package group, so its seed is dropped. A package-level
-    # var (`var r fiber.Router` set in a sibling file) keeps its seed.
+    # A self-regrouped name its function binds locally (`func f(r
+    # fiber.Router) { r = r.Group("/a") }`) starts from that local binding,
+    # not from a same-named package group, so its seed is dropped. A
+    # package-level var (`var r fiber.Router` set in a sibling file) keeps
+    # its seed.
     private def drop_local_self_regroups(root : LibTreeSitter::TSNode,
                                          source : String,
                                          groups : Hash(String, String),
                                          group_method : String)
       return if groups.empty?
-      rebound, _ = self_regroups(root, source, group_method)
-      rebound.select! { |name| groups.has_key?(name) }
-      return if rebound.empty?
-      locals = function_local_names(root, source)
-      rebound.each { |name| groups.delete(name) if locals.includes?(name) }
+      local, package_level, _ = self_regroups(root, source, group_method)
+      local.each { |name| groups.delete(name) unless package_level.includes?(name) }
     end
 
-    # Parameter and variable names declared inside functions.
-    private def function_local_names(root : LibTreeSitter::TSNode, source : String) : Set(String)
+    # Parameter and variable names declared in one function (closures
+    # included).
+    private def declared_names(decl : LibTreeSitter::TSNode, source : String) : Set(String)
       names = Set(String).new
-      Noir::TreeSitter.each_named_child(root) do |decl|
-        next unless {"function_declaration", "method_declaration"}.includes?(Noir::TreeSitter.node_type(decl))
-        Noir::TreeSitter.walk(decl) do |node|
-          case Noir::TreeSitter.node_type(node)
-          when "parameter_declaration", "var_spec"
-            Noir::TreeSitter.each_named_child(node) do |child|
+      Noir::TreeSitter.walk(decl) do |node|
+        case Noir::TreeSitter.node_type(node)
+        when "parameter_declaration", "var_spec"
+          Noir::TreeSitter.each_named_child(node) do |child|
+            names << Noir::TreeSitter.node_text(child, source) if Noir::TreeSitter.node_type(child) == "identifier"
+          end
+        when "short_var_declaration"
+          if left = Noir::TreeSitter.field(node, "left")
+            Noir::TreeSitter.each_named_child(left) do |child|
               names << Noir::TreeSitter.node_text(child, source) if Noir::TreeSitter.node_type(child) == "identifier"
-            end
-          when "short_var_declaration"
-            if left = Noir::TreeSitter.field(node, "left")
-              Noir::TreeSitter.each_named_child(left) do |child|
-                names << Noir::TreeSitter.node_text(child, source) if Noir::TreeSitter.node_type(child) == "identifier"
-              end
             end
           end
         end

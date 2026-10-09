@@ -305,6 +305,9 @@ describe Noir::TreeSitterGoRouteExtractor do
           r = r.Group("/v1")
           r.Get("/x", handler)
       }
+
+      // A same-named param in another function doesn't make `r` local.
+      func handler(w http.ResponseWriter, r *http.Request) {}
       GO
 
     # Not exported (it would feed back as this file's own seed) ...
