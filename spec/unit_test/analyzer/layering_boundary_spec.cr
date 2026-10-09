@@ -40,8 +40,9 @@ private def offending_lines(pattern : Regex, allowed : Array(String)) : Array(St
   end
 end
 
-# Directory enumeration: the walk belongs to layer L0.
-DIRECTORY_WALK_RE = /\bDir\.(?:glob|each_child|children|entries)\b/
+# Directory enumeration: the walk belongs to layer L0. `glob_under` is
+# `Dir.glob` with the directory escaped, so it is the same walk.
+DIRECTORY_WALK_RE = /\b(?:Dir\.(?:glob|each_child|children|entries)|glob_under)\b/
 
 # Raw `File.*` I/O. The negative lookbehind is what keeps `Noir::TextFile.read`
 # — the sanctioned reader, and the fallback inside `read_file_content` itself —

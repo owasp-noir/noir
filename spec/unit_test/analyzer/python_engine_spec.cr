@@ -138,4 +138,29 @@ describe Analyzer::Python::PythonEngine do
 
     harness.def_line_after(lines, 0).should eq(5)
   end
+
+  it "does not let a paren in a trailing comment keep a call open" do
+    harness = PythonEngineSpecHarness.new(create_test_options)
+    lines = ["@get(\"/a\")  # old (remove", "async def a(qa: str):", "    pass"]
+    harness.join_until_python_call_closes(lines, 0, lines[0]).should eq(lines[0])
+    harness.def_line_after(lines, 0).should eq(1)
+
+    # `#` inside a string, single-line or triple-quoted, is not a comment.
+    lines = ["@get(\"/#(\",", "  description=\"\"\"", "  Returns things (see issue #12)", "  \"\"\", x=1)", "def b():"]
+    harness.join_until_python_call_closes(lines, 0, lines[0]).should eq(lines[0..3].join(' '))
+    harness.def_line_after(lines, 0).should eq(4)
+  end
+
+  it "parses a long non-ASCII parameter default in linear time" do
+    harness = PythonEngineSpecHarness.new(create_test_options)
+    default = "가" * 60_000
+    lines = ["def x(a: str = \"#{default}\", b: int = 1):", "    return {}"]
+
+    started = Time.instant
+    definition = harness.parse_function_def(lines, 0).not_nil!
+    (Time.instant - started).should be < 2.seconds
+
+    definition.params.map(&.name).should eq(["a", "b"])
+    definition.params[0].default.should eq("\"#{default}\"")
+  end
 end

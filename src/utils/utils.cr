@@ -40,6 +40,13 @@ def escape_glob_path(path : String) : String
   path.gsub(/([{}\[\]*?\\])/) { |match| "\\#{match}" }
 end
 
+# `Dir.glob(File.join(dir, pattern))` with `dir` taken literally: a project
+# under `proj [old]/` or `br[1]/` must not have its own path read as a glob
+# character class and silently match nothing.
+def glob_under(dir : String, pattern : String) : Array(String)
+  Dir.glob(File.join(escape_glob_path(dir), pattern))
+end
+
 # Matches `regex` against `input`, treating a backtracking blow-up as "no
 # match" rather than an exception.
 #

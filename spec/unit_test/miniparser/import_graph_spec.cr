@@ -401,6 +401,23 @@ describe Noir::ImportGraph::Python do
       end
     end
 
+    it "ignores parentheses in comments and survives CRLF line endings" do
+      with_tmpdir do |root|
+        Dir.mkdir_p(File.join(root, "models"))
+        %w[a b c d].each { |n| File.write(File.join(root, "models", "#{n}.py"), "") }
+        from_file = File.join(root, "app.py")
+        [
+          "from models import a, b  # noqa (legacy)\nimport os\n",
+          "# one\r\n# two\r\n# three\r\nfrom models import (\r\n  c,\r\n  d,\r\n)\r\n",
+          "from models import (  # see (x)\n  c,  # used by (y)\n  d,\n)\n",
+        ].each_with_index do |content, index|
+          result = Noir::ImportGraph::Python.find_imported_modules(root, from_file, content)
+          expected = index == 0 ? %w[a b] : %w[c d]
+          expected.each { |name| result[name]?.try(&.[0]).should eq(File.join(root, "models", "#{name}.py")) }
+        end
+      end
+    end
+
     it "returns an empty map when no imports resolve to files" do
       with_tmpdir do |root|
         from_file = File.join(root, "app.py")

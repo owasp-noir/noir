@@ -270,7 +270,7 @@ module Analyzer::Java
       # the images and fonts the media filter keeps out of the index. That
       # also means `--exclude-path` never reached this walk, so it is
       # applied per file here.
-      Dir.glob(File.join(resources_root, "**", "*")).sort.each do |file|
+      glob_under(resources_root, "**/*").sort.each do |file|
         next if File.directory?(file)
         next if excluded_path?(file)
 

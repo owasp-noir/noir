@@ -36,6 +36,12 @@ module Analyzer::Python
     PYTHON_VAR_NAME_REGEX = /[a-zA-Z_][a-zA-Z0-9_]*/
     # Regex for valid Python module names
     DOT_NATION = /[a-zA-Z_][a-zA-Z0-9_.]*/
+    # A call's argument text up to (not including) its closing `)`: quoted
+    # strings are skipped whole and one level of nested parentheses is
+    # allowed, so `http_method=("GET", "POST")` or `title="x (y)"` does not
+    # end it early. Possessive, so an unclosed call fails fast instead of
+    # backtracking.
+    PYTHON_CALL_ARGS = /(?:[^()'"]++|'[^']*+'|"[^"]*+"|\((?:[^()'"]++|'[^']*+'|"[^"]*+")*+\))*+/
 
     # Standard Python/pytest/unittest test-file conventions. A file
     # under any of these patterns ships with `python -m pytest` or
@@ -193,7 +199,9 @@ module Analyzer::Python
 
       # Extract the function name and parameter line
       name = def_line.split("def ", 2)[1].split("(", 2)[0].strip
-      param_line = def_line.split("(", 2)[1]
+      # Indexed as a Char array: `String#[]` is O(index) on non-ASCII text,
+      # which made a long non-ASCII default quadratic.
+      param_line = def_line.split("(", 2)[1].chars
 
       index = 0
       # Accumulate field text in builders rather than `String += Char`: a single
@@ -307,7 +315,7 @@ module Analyzer::Python
 
         line_index += 1
         if line_index < source_lines.size
-          param_line = source_lines[line_index]
+          param_line = source_lines[line_index].chars
           index = 0
           # An unterminated quote is a same-line artefact (a `#` comment, a
           # triple-quoted opener), not a run that should swallow the rest of
@@ -456,15 +464,11 @@ module Analyzer::Python
 
     # Parses a function or class definition from a string or an array of strings
     def parse_code_block(data : ::String | Array(::String), after : Regex? = nil) : ::String?
-      content = ""
-      lines = [] of ::String
-      if data.is_a?(::String)
-        lines = data.split("\n")
-        content = data
-      else
-        lines = data
-        content = data.join("\n")
-      end
+      # The block is returned as its own lines re-joined, never as a slice
+      # of `data` joined whole: callers pass the rest of the file, and
+      # joining all of it once per handler made a file with many routes
+      # quadratic.
+      lines = data.is_a?(::String) ? data.split("\n") : data
 
       # Remove lines before the "after" line if provided
       unless after.nil?
@@ -472,7 +476,6 @@ module Analyzer::Python
         lines.each_with_index do |line, index|
           if line.starts_with?(after)
             lines = lines[index..]
-            content = lines.join("\n")
             break
           end
         end
@@ -496,7 +499,7 @@ module Analyzer::Python
       if indent_size > 0
         double_quote_open, single_quote_open = [false, false]
         double_comment_open, single_comment_open = [false, false]
-        end_index = lines[0].size + 1
+        kept = 1
         # A `def`/`class` signature frequently wraps across lines, with
         # the closing `)` and a `-> T:` return annotation sitting at
         # column 0 — at or below the body's indent. Those header lines
@@ -505,7 +508,9 @@ module Analyzer::Python
         # handlers (`def read_items(\n  session: Dep,\n) -> Any:`) hit
         # this on nearly every endpoint.
         header_span = python_signature_line_span(lines)
-        lines[1..].each_with_index do |line, body_idx|
+        (1...lines.size).each do |line_number|
+          line = lines[line_number]
+          body_idx = line_number - 1
           line_index = 0
           clear_line = line
           # `String#[](Int)` walks from the start of the string on every call
@@ -583,17 +588,14 @@ module Analyzer::Python
           # `body_idx` is 0-based within `lines[1..]`, so absolute line
           # `body_idx + 1`. While that is still inside the multi-line
           # signature, keep the line unconditionally.
-          if body_idx + 1 < header_span
-            end_index += line.size + 1
-          elsif clear_line[0..(indent_size - 1)].strip.empty? || open_status
-            end_index += line.size + 1
+          if body_idx + 1 < header_span || clear_line[0..(indent_size - 1)].strip.empty? || open_status
+            kept += 1
           else
             break
           end
         end
 
-        end_index -= 1
-        return content[..end_index].strip
+        return lines[0, kept].join("\n").strip
       end
 
       nil
@@ -760,10 +762,11 @@ module Analyzer::Python
         end
 
         if stripped.starts_with?('@')
-          paren_delta = python_paren_delta(lines[i])
+          paren_delta, triple = python_call_line_delta(lines[i], nil)
           i += 1
           while i < lines.size && paren_delta > 0
-            paren_delta += python_paren_delta(lines[i])
+            line_delta, triple = python_call_line_delta(lines[i], triple)
+            paren_delta += line_delta
             i += 1
           end
           next
@@ -1077,16 +1080,63 @@ module Analyzer::Python
                                       index : Int32,
                                       line : ::String) : ::String
       pieces = [line]
-      delta = python_paren_delta(line)
+      delta, triple = python_call_line_delta(line, nil)
       i = index + 1
       while i < lines.size && delta > 0
         nxt = lines[i]
         pieces << nxt
-        delta += python_paren_delta(nxt)
-        break if delta <= 0
+        line_delta, triple = python_call_line_delta(nxt, triple)
+        delta += line_delta
         i += 1
       end
       pieces.join(' ')
+    end
+
+    # `(` − `)` on one physical line of a call that may span lines, plus
+    # the triple-quote delimiter (`"` / `'`) still open at its end. Unlike
+    # `python_paren_delta` this carries a `"""` / `'''` run across lines,
+    # so it can tell a `#` comment (`@get("/a")  # old (remove`, which must
+    # not keep the call open) from a `#` inside a multi-line string
+    # (`Returns things (see issue #12)`, which is text).
+    private def python_call_line_delta(line : ::String, triple : Char?) : Tuple(Int32, Char?)
+      depth = 0
+      in_quote : Char? = nil
+      escaped = false
+      # Bytes, not chars: every delimiter here is ASCII and a UTF-8
+      # continuation byte never equals one, so this needs no allocation
+      # and keeps O(1) lookahead.
+      bytes = line.to_slice
+      i = 0
+      while i < bytes.size
+        ch = bytes[i].unsafe_chr
+        if escaped
+          escaped = false
+        elsif (triple || in_quote) && ch == '\\'
+          escaped = true
+        elsif triple
+          if ch == triple && bytes[i + 1]? == bytes[i] && bytes[i + 2]? == bytes[i]
+            triple = nil
+            i += 2
+          end
+        elsif in_quote
+          in_quote = nil if ch == in_quote
+        elsif ch == '"' || ch == '\''
+          if bytes[i + 1]? == bytes[i] && bytes[i + 2]? == bytes[i]
+            triple = ch
+            i += 2
+          else
+            in_quote = ch
+          end
+        elsif ch == '#'
+          break
+        elsif ch == '('
+          depth += 1
+        elsif ch == ')'
+          depth -= 1
+        end
+        i += 1
+      end
+      {depth, triple}
     end
 
     # `line` up to its first `#` outside a single-line quoted string.

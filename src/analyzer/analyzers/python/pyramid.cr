@@ -53,11 +53,15 @@ module Analyzer::Python
       end
     end
 
+    # `.add_route(...)` and its argument text, tuples included.
+    ADD_ROUTE_RE = /\.add_route\s*\((#{PYTHON_CALL_ARGS})\)/
+
     alias RouteNameKey = Tuple(String, String)
-    alias RouteMap = Hash(RouteNameKey, Tuple(String, String))
+    # {base_path, name} => {path, decl_file, add_route request_method verbs}
+    alias RouteMap = Hash(RouteNameKey, Tuple(String, String, Array(String)))
 
     def analyze
-      route_map = RouteMap.new # {base_path, name} => {path, decl_file}
+      route_map = RouteMap.new
 
       python_files = python_source_files
       base_paths.each do |current_base_path|
@@ -91,7 +95,9 @@ module Analyzer::Python
               next if route_name.nil?
               route_key = {current_base_path, route_name}
               next unless route_map.has_key?(route_key)
-              route_path, _ = route_map[route_key]
+              route_path, _, route_methods = route_map[route_key]
+              methods = route_methods if methods.empty?
+              methods = ["GET"] if methods.empty?
 
               def_index = find_def_line(lines, line_index)
               next if def_index.nil?
@@ -118,9 +124,10 @@ module Analyzer::Python
               route_name = rn_match[1]
               route_key = {current_base_path, route_name}
               next unless route_map.has_key?(route_key)
-              route_path, _ = route_map[route_key]
+              route_path, _, route_methods = route_map[route_key]
 
               methods = extract_methods_from_args(args)
+              methods = route_methods if methods.empty?
               methods = ["GET"] if methods.empty?
 
               view_func_name = extract_view_func(args)
@@ -165,7 +172,7 @@ module Analyzer::Python
     # config.add_route("name", "/path") plus keyword variants like
     # name="x", pattern="/y" in either order.
     private def extract_route_declarations(content : String, path : String, route_map : RouteMap, base_path : String)
-      content.scan(/\.add_route\s*\((.*?)\)/m) do |m|
+      content.scan(ADD_ROUTE_RE) do |m|
         args = m[1]
         name = nil
         pattern = nil
@@ -186,7 +193,7 @@ module Analyzer::Python
           pattern ||= literals[1]?
         end
 
-        route_map[{base_path, name}] = {pattern, path} if name && pattern
+        route_map[{base_path, name}] = {pattern, path, extract_methods_from_args(args)} if name && pattern
       end
     end
 
@@ -215,9 +222,7 @@ module Analyzer::Python
       rn_match = decorator.match(/route_name\s*=\s*[rf]?['"]([^'"]+)['"]/)
       route_name = rn_match ? rn_match[1] : nil
 
-      methods = extract_methods_from_args(decorator)
-      methods = ["GET"] if methods.empty?
-      {route_name, methods}
+      {route_name, extract_methods_from_args(decorator)}
     end
 
     private def class_view_defaults_route_name(lines : Array(String), decorator_index : Int32) : String?

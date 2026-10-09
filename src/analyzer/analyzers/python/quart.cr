@@ -61,8 +61,8 @@ module Analyzer::Python
           @logger.debug "Analyzing #{path}"
 
           file_content = fetch_file_content(path)
-          lines = file_content.lines
-          next unless lines.any?(&.includes?("quart"))
+          next unless file_content.includes?("quart")
+          lines = fetch_file_lines(path)
 
           api_instances = Hash(::String, ::String).new
           path_api_instances[path] = api_instances
@@ -194,7 +194,7 @@ module Analyzer::Python
         router_info_list.each do |router_info|
           line_index, path, route_path, extra_params, is_ws = router_info
           source = fetch_file_content(path)
-          lines = source.lines
+          lines = fetch_file_lines(path)
           api_instances = path_api_instances[path]?
           prefix = (api_instances && api_instances.has_key?(router_name)) ? api_instances[router_name] : ""
           prefixes = route_prefixes(register_blueprint, path, router_name, prefix)
@@ -250,7 +250,7 @@ module Analyzer::Python
         route_infos.each do |route_info|
           line_index, path, route_path, function_name, methods = route_info
           source = fetch_file_content(path)
-          lines = source.lines
+          lines = fetch_file_lines(path)
           api_instances = path_api_instances[path]?
           prefix = (api_instances && api_instances.has_key?(router_name)) ? api_instances[router_name] : ""
           prefixes = route_prefixes(register_blueprint, path, router_name, prefix)
@@ -268,7 +268,7 @@ module Analyzer::Python
             next unless File.exists?(function_path)
 
             function_source = fetch_file_content(function_path)
-            function_lines = function_source.lines
+            function_lines = fetch_file_lines(function_path)
             function_def_index = find_function_def(function_lines, resolved_name)
             next unless function_def_index
           end
@@ -299,7 +299,7 @@ module Analyzer::Python
         route_infos.each do |route_info|
           line_index, path, route_path, class_name, methods = route_info
           source = fetch_file_content(path)
-          lines = source.lines
+          lines = fetch_file_lines(path)
           api_instances = path_api_instances[path]?
           prefix = (api_instances && api_instances.has_key?(router_name)) ? api_instances[router_name] : ""
           prefixes = route_prefixes(register_blueprint, path, router_name, prefix)

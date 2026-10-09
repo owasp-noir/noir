@@ -46,10 +46,8 @@ module Detector::Java
     DERIVATIVE_MANIFEST_GLOBS = %w[pom.xml build.gradle build.gradle.kts]
 
     private def compute_derivative_project(root : String) : Bool
-      source_globs = %w[src/main/java/**/*.java src/main/kotlin/**/*.kt].map { |glob| File.join(root, glob) }
-      fallback_globs = %w[**/*.java **/*.kt].map { |glob| File.join(root, glob) }
-      candidates = Dir.glob(source_globs)
-      candidates = Dir.glob(fallback_globs) if candidates.empty?
+      candidates = %w[src/main/java/**/*.java src/main/kotlin/**/*.kt].flat_map { |glob| glob_under(root, glob) }
+      candidates = %w[**/*.java **/*.kt].flat_map { |glob| glob_under(root, glob) } if candidates.empty?
       candidates += DERIVATIVE_MANIFEST_GLOBS.map { |name| File.join(root, name) }
 
       locator = CodeLocator.instance

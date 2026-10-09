@@ -129,10 +129,12 @@ module Analyzer::Python
           next unless path_under_root?(path, current_base_path)
           @logger.debug "Analyzing #{path}"
 
-          file_content = fetch_file_content(path)
-          next unless flask_relevant_source?(file_content)
-          collect_flask_appbuilder_classes(path, current_base_path, file_content, fab)
-          analyze_flask_source(path, current_base_path, file_content, state)
+          isolating_file_errors(path) do
+            file_content = fetch_file_content(path)
+            next unless flask_relevant_source?(file_content)
+            collect_flask_appbuilder_classes(path, current_base_path, file_content, fab)
+            analyze_flask_source(path, current_base_path, file_content, state)
+          end
         end
       end
 
@@ -175,7 +177,7 @@ module Analyzer::Python
     # sequentially.
     private def analyze_flask_source(path : ::String, current_base_path : ::String,
                                      file_content : ::String, state : ScanState) : Nil
-      lines = file_content.lines
+      lines = fetch_file_lines(path)
       # `@expose` routes are resolved in a second pass (the class that
       # pins `route_base`/`resource_name` can live in any file); a source
       # that carries nothing else has no work left here.
@@ -639,7 +641,7 @@ module Analyzer::Python
           fn_path, resolved_name = resolved
           if File.exists?(fn_path)
             fn_source = fetch_file_content(fn_path)
-            fn_lines = fn_source.lines
+            fn_lines = fetch_file_lines(fn_path)
             fn_def_index = find_function_def(fn_lines, resolved_name)
           end
         end
@@ -768,7 +770,7 @@ module Analyzer::Python
       @routes.each do |router_name, router_info_list|
         router_info_list.each do |router_info|
           line_index, path, route_path, extra_params = router_info
-          lines = fetch_file_content(path).lines
+          lines = fetch_file_lines(path)
           expect_params, class_def_index = extract_params_from_decorator(path, lines, line_index)
           api_instances = state.path_api_instances[path]
           route_base_path = python_base_path_for(path)
@@ -907,7 +909,7 @@ module Analyzer::Python
             class_file = gv.path
           end
 
-          class_lines = fetch_file_content(class_file).lines
+          class_lines = fetch_file_lines(class_file)
           class_def_index = find_python_class_def(class_lines, class_name)
 
           # Parser globals only track assignments (not `class`/`def`
@@ -919,7 +921,7 @@ module Analyzer::Python
             import_map = import_map_by_path[path] ||= find_imported_modules(python_base_path_for(path), path)
             if (import_info = import_map[class_name]?) && !import_info[0].empty? && File.exists?(import_info[0])
               class_file = import_info[0]
-              class_lines = fetch_file_content(class_file).lines
+              class_lines = fetch_file_lines(class_file)
               class_def_index = find_python_class_def(class_lines, class_name)
             end
           end
@@ -1718,7 +1720,13 @@ module Analyzer::Python
       # this, `@app.route(` ate everything up to the matching `)`
       # was treated as "not a decorator and not a def", skipping
       # the whole route. `find_def_line` got the same fix earlier.
-      paren_depth = direction == :down && (deco_line = lines[line_index]?) ? python_paren_delta(deco_line) : 0
+      # Counted with the comment- and docstring-aware call delta, so a
+      # `(` in a trailing `# comment` does not hold the decorator open.
+      paren_depth = 0
+      triple : Char? = nil
+      if direction == :down && (deco_line = lines[line_index]?)
+        paren_depth, triple = python_call_line_delta(deco_line, nil)
+      end
 
       # Iterate through the lines until the decorator ends
       while (direction == :down && codeline_index < lines.size) || (direction == :up && codeline_index >= 0)
@@ -1732,14 +1740,16 @@ module Analyzer::Python
         # the line as decorator content and keep walking without
         # checking the `\s*@` prefix.
         if direction == :down && paren_depth > 0
-          paren_depth += python_paren_delta(current_line)
+          line_delta, triple = python_call_line_delta(current_line, triple)
+          paren_depth += line_delta
           codeline_index += 1
           next
         end
         decorator_match = current_line.match /\s*@/
         break if decorator_match.nil?
         if direction == :down
-          paren_depth += python_paren_delta(current_line)
+          line_delta, triple = python_call_line_delta(current_line, triple)
+          paren_depth += line_delta
         end
 
         # Extract parameters from the expect decorator

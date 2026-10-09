@@ -199,8 +199,8 @@ module Analyzer::Mobile
         # branch runs *instead of* — so it has to be re-applied by hand or
         # the fallback reads build settings out of a file the user
         # excluded. The index branch below inherits the filter.
-        xcconfigs = Dir.glob(File.join(root, "**", "*.xcconfig")).reject { |path| excluded_path?(path) }
-        pbxprojs = Dir.glob(File.join(root, "**", "project.pbxproj")).reject { |path| excluded_path?(path) }
+        xcconfigs = glob_under(root, "**/*.xcconfig").reject { |path| excluded_path?(path) }
+        pbxprojs = glob_under(root, "**/project.pbxproj").reject { |path| excluded_path?(path) }
       else
         xcconfigs = get_files_by_prefix_and_extension(root, ".xcconfig")
         pbxprojs = get_files_by_relative_path("project.pbxproj", root)
@@ -236,7 +236,7 @@ module Analyzer::Mobile
     # this is not here", and letting it still anchor the build-settings
     # search would read the very tree the user carved out.
     private def xcode_project_bundle?(dir : String, pattern : String) : Bool
-      Dir.glob(File.join(dir, pattern)).any? { |path| !excluded_path?(path) }
+      glob_under(dir, pattern).any? { |path| !excluded_path?(path) }
     end
 
     private def parse_xcconfig(path : String, vars : Hash(String, Array(String)))
