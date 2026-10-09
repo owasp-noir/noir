@@ -167,8 +167,9 @@ module Noir::CLI::ScanCommand
     # path after them produces a malformed URL
     # (`http://x?foo=bar/sign`). The user almost never meant to put
     # them on the base; warn and drop them.
-    if (q = url.index('?')) || (f = url.index('#'))
-      cut = [q, f].compact.min
+    # Both indexes up front: `||` would skip the `#` lookup whenever a `?`
+    # exists, so `/#frag?x=1` cut at the later `?` and kept `#frag`.
+    if cut = [url.index('?'), url.index('#')].compact.min?
       stripped = url[0...cut]
       dropped = url[cut..]
       STDERR.puts "WARNING: -u/--url should be a base URL — query string / fragment '#{dropped}' would corrupt the per-endpoint URL. Stripping.".colorize(WARNING_COLOR)
