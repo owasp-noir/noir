@@ -354,6 +354,34 @@ describe Noir::TreeSitterGoRouteExtractor do
     ])
   end
 
+  it "keeps the gorilla mux subrouter prefix through matcher and setter calls" do
+    source = <<-GO
+      package main
+      func main() {
+          r := mux.NewRouter()
+          api := r.PathPrefix("/api").Subrouter().StrictSlash(true)
+          api.HandleFunc("/a", h).Methods("GET")
+          d := r.PathPrefix("/d").Methods("GET").Subrouter()
+          d.HandleFunc("/e", h).Methods("GET")
+          hp := r.Host("x.test").PathPrefix("/h").Subrouter()
+          hp.HandleFunc("/f", h).Methods("GET")
+          m := api.Methods("POST").Subrouter()
+          m.HandleFunc("/g", h).Methods("POST")
+          root := mux.NewRouter().PathPrefix("/root").Subrouter()
+          root.HandleFunc("/i", h).Methods("GET")
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source, group_method: "Subrouter", handlefunc_methods: true)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"GET", "/api/a"},
+      {"GET", "/d/e"},
+      {"GET", "/h/f"},
+      {"GET", "/root/i"},
+      {"POST", "/api/g"},
+    ].sort)
+  end
+
   it "preserves wildcard methods for unconstrained gorilla mux routes" do
     source = <<-GO
       package main

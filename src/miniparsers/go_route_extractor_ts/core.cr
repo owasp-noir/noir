@@ -127,6 +127,8 @@ module Noir
       # across handler files, so one file's `/health` leaked onto every
       # other file's routes.
       "Bind", "Unbind", "BindFunc", "UnbindFunc",
+      # gorilla/mux `*Router` setters: `r.PathPrefix("/api").Subrouter().StrictSlash(true)`.
+      "StrictSlash", "SkipClean", "UseEncodedPath",
     }
 
     # Beego registers controllers with `web.Router("/path", &Ctrl{},
@@ -938,31 +940,43 @@ module Noir
       # takes the prefix as its own argument, which falls through to the
       # default path-extraction branch below.
       if group_method == "Subrouter" && Noir::TreeSitter.node_type(parent_node) == "call_expression"
-        inner_function = Noir::TreeSitter.field(parent_node, "function")
-        if inner_function && Noir::TreeSitter.node_type(inner_function) == "selector_expression"
+        # Walk the whole route-builder chain under `.Subrouter()`:
+        # matchers (`.Methods("GET")`, `.Host(...)`) may sit on either side
+        # of `.PathPrefix(...)`, so `r.PathPrefix("/d").Methods("GET")` and
+        # `r.Host("h").PathPrefix("/d")` both scope the subrouter to `/d`.
+        segments = [] of String
+        current = parent_node
+        while Noir::TreeSitter.node_type(current) == "call_expression"
+          inner_function = Noir::TreeSitter.field(current, "function")
+          return unless inner_function && Noir::TreeSitter.node_type(inner_function) == "selector_expression"
           inner_field = Noir::TreeSitter.field(inner_function, "field")
-          if inner_field && Noir::TreeSitter.node_text(inner_field, source) == "PathPrefix"
-            inner_args = Noir::TreeSitter.field(parent_node, "arguments")
-            if inner_args
-              prefix = nil
-              Noir::TreeSitter.each_named_child(inner_args) do |arg|
-                prefix = string_expr_text(arg, source, string_values)
-                next unless prefix
-                break
-              end
-              return unless prefix
-              new_parent = Noir::TreeSitter.field(inner_function, "operand")
-              if new_parent && Noir::TreeSitter.node_type(new_parent) == "identifier"
-                parent_name = Noir::TreeSitter.node_text(new_parent, source)
-                if parent_prefix = groups[parent_name]?
-                  prefix = group_join(parent_prefix, prefix)
-                end
-              end
-              groups[Noir::TreeSitter.node_text(var_name_node, source)] = prefix
-              return
+          inner_operand = Noir::TreeSitter.field(inner_function, "operand")
+          return unless inner_field && inner_operand
+          case Noir::TreeSitter.node_text(inner_field, source)
+          when "PathPrefix", "Path"
+            inner_args = Noir::TreeSitter.field(current, "arguments")
+            return unless inner_args
+            segment = nil
+            Noir::TreeSitter.each_named_child(inner_args) do |arg|
+              segment = string_expr_text(arg, source, string_values)
+              break if segment
             end
+            return unless segment
+            segments.unshift(segment)
+          when "Methods", "Host", "Schemes", "Headers", "HeadersRegexp", "Queries", "MatcherFunc", "Name"
+            # Matcher only; no path segment.
+          else
+            break # chain root, e.g. `mux.NewRouter()`
           end
+          current = inner_operand
         end
+
+        parent_prefix = if Noir::TreeSitter.node_type(current) == "identifier"
+                          groups[Noir::TreeSitter.node_text(current, source)]?
+                        end
+        return if segments.empty? && parent_prefix.nil?
+        groups[Noir::TreeSitter.node_text(var_name_node, source)] =
+          segments.reduce(parent_prefix) { |acc, seg| acc ? group_join(acc, seg) : seg }.as(String)
         return
       end
 
