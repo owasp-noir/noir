@@ -135,14 +135,8 @@ class LLMEndpointOptimizer < EndpointOptimizer
     # An empty or unparsable response means the request failed; caching it
     # would replay the failure on every later scan until the cache was
     # cleared by hand.
-    LLM::Cache.store(key, response) if json_object?(response)
+    LLM::Cache.store(key, response) if LLM.json_reply(response, "optimized_url")
     response
-  end
-
-  private def json_object?(text : String) : Bool
-    !JSON.parse(LLM.strip_json_fences(text)).as_h?.nil?
-  rescue JSON::ParseException
-    false
   end
 
   # The part of an endpoint URL a rewrite may not change: the -u target
@@ -175,7 +169,8 @@ class LLMEndpointOptimizer < EndpointOptimizer
 
   # Apply LLM optimization suggestions to an endpoint
   private def apply_llm_optimizations(endpoint : Endpoint, response : String) : Endpoint
-    optimization_data = JSON.parse(LLM.strip_json_fences(response)).as_h
+    optimization_data = LLM.json_reply(response, "optimized_url")
+    return endpoint if optimization_data.nil?
 
     optimized_endpoint = endpoint
 

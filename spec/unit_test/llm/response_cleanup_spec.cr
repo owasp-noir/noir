@@ -41,50 +41,66 @@ describe LLM do
       input = %({"snippet": "trailing ```"})
       LLM.strip_json_fences(input).should eq(input)
     end
+  end
+
+  describe ".json_reply" do
+    endpoints = ->(text : String) { LLM.json_reply(text, "endpoints").try(&.to_json) }
 
     it "pulls a fenced JSON block out of surrounding prose" do
-      input = "Here are the endpoints:\n```json\n{\"endpoints\": []}\n```\nHope this helps."
-      LLM.strip_json_fences(input).should eq(%({"endpoints": []}))
+      endpoints.call("Here are the endpoints:\n```json\n{\"endpoints\": []}\n```\nHope this helps.").should eq(%({"endpoints":[]}))
     end
 
     it "pulls an unfenced JSON object out of surrounding prose" do
-      input = "Sure! {\"endpoints\": [{\"url\": \"/a\"}]} Let me know."
-      LLM.strip_json_fences(input).should eq(%({"endpoints": [{"url": "/a"}]}))
+      endpoints.call(%(Sure! {"endpoints": [{"url": "/a"}]} Let me know.)).should eq(%({"endpoints":[{"url":"/a"}]}))
     end
 
     it "ignores braces in prose after a fenced reply" do
-      input = "```json\n{\"endpoints\": []}\n```\nNote /users/{id} too."
-      LLM.strip_json_fences(input).should eq(%({"endpoints": []}))
+      endpoints.call("```json\n{\"endpoints\": []}\n```\nNote /users/{id} too.").should eq(%({"endpoints":[]}))
     end
 
     it "ignores braces in prose after an unfenced reply" do
-      input = %({"endpoints": [{"url": "/users/{id}"}]} Note /users/{id} too.)
-      LLM.strip_json_fences(input).should eq(%({"endpoints": [{"url": "/users/{id}"}]}))
+      endpoints.call(%({"endpoints": [{"url": "/users/{id}"}]} Note /users/{id} too.))
+        .should eq(%({"endpoints":[{"url":"/users/{id}"}]}))
     end
 
     it "prefers a json block over a code block before it" do
       input = "The route:\n```python\n@app.get('/a')\ndef a(): return {}\n```\nResult:\n```json\n{\"endpoints\": []}\n```"
-      LLM.strip_json_fences(input).should eq(%({"endpoints": []}))
+      endpoints.call(input).should eq(%({"endpoints":[]}))
     end
 
     it "skips a brace in prose before the object" do
-      input = %(Route /users/{id} found: {"endpoints": [{"url": "/users/{id}", "note": "a } in a string"}]})
-      LLM.strip_json_fences(input).should eq(%({"endpoints": [{"url": "/users/{id}", "note": "a } in a string"}]}))
+      endpoints.call(%(Route /users/{id} found: {"endpoints": [{"url": "/users/{id}", "note": "a } in a string"}]}))
+        .should eq(%({"endpoints":[{"url":"/users/{id}","note":"a } in a string"}]}))
     end
 
     it "slices on character boundaries around non-ASCII prose" do
-      input = %(엔드포인트입니다: {"endpoints": [{"url": "/사용자"}]} 감사합니다)
-      LLM.strip_json_fences(input).should eq(%({"endpoints": [{"url": "/사용자"}]}))
+      endpoints.call(%(엔드포인트입니다: {"endpoints": [{"url": "/사용자"}]} 감사합니다)).should eq(%({"endpoints":[{"url":"/사용자"}]}))
     end
 
-    it "returns a truncated reply unparsed rather than a fragment of it" do
-      input = %({"endpoints":[{"url":"/users","method":"GET"},{"url":"/ord)
-      LLM.strip_json_fences(input).should eq(input)
+    it "skips a complete object without the key before the answer" do
+      endpoints.call(%({"thought":"scanning"} {"endpoints":[{"url":"/a"}]})).should eq(%({"endpoints":[{"url":"/a"}]}))
     end
 
-    it "leaves a reply with no JSON object in it alone" do
-      LLM.strip_json_fences("null").should eq("null")
-      LLM.strip_json_fences("no endpoints found").should eq("no endpoints found")
+    # Each of these used to read as "no endpoints", get cached, and pass
+    # --strict.
+    {
+      "a provider error object"             => %({"error":"context length exceeded"}),
+      "an object under another key"         => %({"result":[]}),
+      "routes under another name"           => %({"routes":[{"url":"/a"}]}),
+      "a bare array of endpoint objects"    => %(Answer: [{"url":"/a"}]),
+      "a preamble before a truncated reply" => %({"thought":"scanning"} {"endpoints":[{"url":"/a"},{"url":"/b),
+      "a truncated reply"                   => %({"endpoints":[{"url":"/users","method":"GET"},{"url":"/ord),
+      "null"                                => "null",
+      "prose"                               => "no endpoints found",
+    }.each do |label, reply|
+      it "finds no answer in #{label}" do
+        LLM.json_reply(reply, "endpoints").should be_nil
+      end
+    end
+
+    it "returns an empty object as the model's empty answer" do
+      LLM.json_reply("{}", "endpoints").should eq({} of String => JSON::Any)
+      LLM.json_reply("```json\n{}\n```", "endpoints").should eq({} of String => JSON::Any)
     end
   end
 end

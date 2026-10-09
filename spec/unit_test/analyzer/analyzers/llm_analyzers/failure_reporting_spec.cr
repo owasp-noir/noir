@@ -161,6 +161,11 @@ describe Analyzer::AI::Unified do
       "truncated"         => %({"endpoints":[{"url":"/users","method":"GET"},{"url":"/ord),
       "null"              => "null",
       "a string list"     => %({"endpoints":"none"}),
+      "an error object"   => %({"error":"context length exceeded"}),
+      "another key"       => %({"result":[]}),
+      "a renamed list"    => %({"routes":[{"url":"/a","method":"GET"}]}),
+      "a bare array"      => %(Answer: [{"url":"/a","method":"GET"}]),
+      "a preamble+cutoff" => %({"thought":"scanning"} {"endpoints":[{"url":"/a"},{"url":"/b),
       "prose without one" => "I could not find any endpoints.",
     }.each do |label, reply|
       it "is reported as lost coverage when it is #{label}" do
@@ -174,12 +179,25 @@ describe Analyzer::AI::Unified do
     end
 
     it "is not cached, so the next scan asks again" do
-      with_isolated_llm_cache do
+      [%({"endpoints":[{"url":"/a"), %({"error":"context length exceeded"})].each do |reply|
+        with_isolated_llm_cache do
+          bundle = LLM::Bundle.new("- File: \"a.rb\"\n```\nget '/a'\n```\n", 300, ["a.rb"])
+          adapter = FixedReplyAdapter.new(reply)
+          ai_analyzer.__test_process_bundle(bundle, adapter)
+          ai_analyzer.__test_process_bundle(bundle, adapter)
+          adapter.calls.should eq(2)
+        end
+      end
+    end
+
+    it "finds the answer after a complete preamble object" do
+      without_llm_cache do
+        analyzer = ai_analyzer
         bundle = LLM::Bundle.new("- File: \"a.rb\"\n```\nget '/a'\n```\n", 300, ["a.rb"])
-        adapter = FixedReplyAdapter.new(%({"endpoints":[{"url":"/a"))
-        ai_analyzer.__test_process_bundle(bundle, adapter)
-        ai_analyzer.__test_process_bundle(bundle, adapter)
-        adapter.calls.should eq(2)
+        analyzer.__test_process_bundle(bundle, FixedReplyAdapter.new(%({"thought":"scanning"} {"endpoints":[{"url":"/a","method":"GET"}]})))
+
+        analyzer.__test_result.map(&.url).should eq(["/a"])
+        Noir::SkippedFiles.failures.should be_empty
       end
     end
 

@@ -524,7 +524,8 @@ module Analyzer::AI
     end
 
     private def parse_agent_action(response : String) : AgentAction?
-      parsed = JSON.parse(response)
+      parsed = LLM.json_reply(response, "action")
+      return if parsed.nil?
       action = parsed["action"].as_s
       args = parsed["args"]? || JSON.parse("{}")
       {action: action, args: args}
@@ -1082,16 +1083,15 @@ module Analyzer::AI
       items
     end
 
-    # A JSON object without the list, or with it null, is the model saying
-    # "nothing here" (`{}`), not a failed reply.
+    # `{}` or a null list is the model saying "nothing here". Any other
+    # object without the list (`{"error": ...}`, `{"routes": [...]}`) is not
+    # an answer, and is reported rather than cached as zero endpoints.
     private def reply_list(response : String, key : String) : Array(JSON::Any)?
-      object = JSON.parse(LLM.strip_json_fences(response)).as_h?
+      object = LLM.json_reply(response, key)
       return if object.nil?
       list = object[key]?
       return [] of JSON::Any if list.nil? || list.raw.nil?
       list.as_a?
-    rescue JSON::ParseException
-      nil
     end
 
     def ignore_extensions
