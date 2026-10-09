@@ -147,16 +147,24 @@ module Noir::CLI::ListCommand
 
   private def self.print_techs_text(io : IO)
     io.puts "Available technologies:"
-    NoirTechs.techs.each do |tech, info|
-      io.puts " #{tech.to_s.colorize(:green)}"
-      info.each do |k, v|
-        if v.is_a?(Hash)
-          io.puts "   #{k.to_s.colorize(:blue)}:"
-          v.each { |sk, sv| io.puts "     #{sk.to_s.colorize(:cyan)}: #{sv}" }
-          print_context_support(tech.to_s, io) if k.to_s == "supported"
-        else
-          io.puts "   #{k.to_s.colorize(:blue)}: #{v}"
-        end
+    techs_document.as_h.each do |tech, info|
+      io.puts " #{tech.colorize(:green)}"
+      print_tech_fields(info, io, 3)
+    end
+  end
+
+  # Rendered from `techs_document`, so the text view nests exactly like the
+  # JSON/YAML ones instead of printing a nested Hash or Array via `inspect`.
+  private def self.print_tech_fields(node : JSON::Any, io : IO, indent : Int32)
+    node.as_h.each do |key, value|
+      label = "#{" " * indent}#{key.colorize(indent == 3 ? :blue : :cyan)}:"
+      if value.as_h?
+        io.puts label
+        print_tech_fields(value, io, indent + 2)
+      elsif list = value.as_a?
+        io.puts "#{label} #{list.join(", ")}"
+      else
+        io.puts "#{label} #{value}"
       end
     end
   end
@@ -217,14 +225,6 @@ module Noir::CLI::ListCommand
   private def self.serialize_taggers(source : Array(NoirTaggers::Entry)) : Array(Hash(String, String))
     source.map do |entry|
       {"id" => entry.key, "name" => entry.name, "desc" => entry.desc}
-    end
-  end
-
-  private def self.print_context_support(tech : String, io : IO)
-    io.puts "     #{"callee".colorize(:cyan)}: #{NoirTechs.context_supported?(tech, "callee")}"
-    io.puts "     #{"ai_context".colorize(:cyan)}:"
-    AI_CONTEXT_KINDS.each do |feature|
-      io.puts "       #{feature.colorize(:cyan)}: #{NoirTechs.context_supported?(tech, feature)}"
     end
   end
 end

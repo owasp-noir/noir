@@ -94,6 +94,17 @@ describe Noir::CLI::ListCommand do
       doc = YAML.parse(io.to_s)
       doc["js_express"]["supported"]["callee"].as_bool.should be_true
     end
+
+    it "renders nested params and lists in the text view, not Crystal inspect" do
+      io = IO::Memory.new
+      Noir::CLI::ListCommand.print_techs("text", io)
+      out = io.to_s.gsub(/\e\[[0-9;]*m/, "")
+      out.should_not contain("=>")
+      out.should_not contain("[\"")
+      out.should contain("similar: asp, classic-asp")
+      out.should match(/^     params:\n       query: true$/m)
+      out.should match(/^       guards: (true|false)$/m)
+    end
   end
 
   describe ".print_taggers" do
