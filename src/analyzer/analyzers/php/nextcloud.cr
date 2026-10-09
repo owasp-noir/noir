@@ -22,6 +22,9 @@ module Analyzer::Php
 
     TAGGER = "nextcloud_analyzer"
     OCS    = "/ocs/v2.php"
+    # RouteParser honours a frontpage route's `root` only for these apps; OCS
+    # routes may always set one.
+    ROOT_URL_APPS = %w[cloud_federation_api core files files_sharing profile settings spreed]
 
     # group key => OCS?
     ROUTE_GROUPS    = {"routes" => false, "ocs" => true}
@@ -58,7 +61,9 @@ module Analyzer::Php
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       app = @apps.select { |root, _| path.starts_with?(root + "/") }.max_by? { |root, _| root.size }
-      if app && path == File.join(app[0], "appinfo", "routes.php")
+      # `appinfo/routes.php`, plus the files apps split it into and
+      # `include` from it (Talk's `appinfo/routes/routesXController.php`).
+      if app && (path == File.join(app[0], "appinfo", "routes.php") || path.starts_with?(File.join(app[0], "appinfo", "routes") + "/"))
         routes_file(endpoints, path, app[0], app[1])
       else
         content = read_file_content(path)
@@ -159,6 +164,7 @@ module Analyzer::Php
     # `url` under the app's prefix; Nextcloud keeps the trailing slash, so
     # `'/'` is `/apps/<id>/`.
     private def route_url(id : String, ocs : Bool, root : String?, url : String) : String
+      root = nil unless ocs || ROOT_URL_APPS.includes?(id)
       "#{ocs ? OCS : ""}#{(root || "/apps/#{id}").rstrip('/')}/#{url.lchop('/')}"
     end
 
@@ -192,7 +198,9 @@ module Analyzer::Php
       return if controller.empty? || action.empty?
       name = camel(controller)
       file = "#{name[0].upcase}#{name[1..]}Controller.php"
-      path = get_files_by_basename(file).find(&.starts_with?(root + "/")) || return
+      # `OCA\<App>\Controller\<Name>Controller` autoloads from `lib/Controller/`.
+      expected = File.join(root, "lib", "Controller", file)
+      path = get_files_by_basename(file).find(&.==(expected)) || return
       methods = cache[path] ||= begin
         found = Methods.new
         each_method(read_file_content(path)) { |member| found[member.name.downcase] = member }

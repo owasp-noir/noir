@@ -2,17 +2,19 @@ require "../../func_spec.cr"
 
 # Livewire actions and writable properties all go through `POST
 # /livewire/update`; the fragment names `<component>.<action>`. Lifecycle
-# hooks, `#[Computed]` methods, `#[Locked]` / static properties and Blade
-# view components (`Illuminate\View\Component`) are not endpoints.
+# hooks, `#[Computed]` methods, `#[Locked]` / static members, abstract base
+# components and Blade view components (`Illuminate\View\Component`) are
+# not endpoints; a commented-out `#[Locked]` does not lock.
 FunctionalTester.new("fixtures/php/livewire/", {
   :techs     => 3,
   :endpoints => 4,
 }, [
   Endpoint.new("/livewire/update#edit-post.save", "POST", [
-    Param.new("title", "", "json"), Param.new("body", "", "json"),
+    Param.new("title", "", "json"), Param.new("body", "", "json"), Param.new("draftId", "", "json"),
   ]),
   Endpoint.new("/livewire/update#edit-post.delete", "POST", [
-    Param.new("title", "", "json"), Param.new("body", "", "json"), Param.new("confirm", "", "json"),
+    Param.new("title", "", "json"), Param.new("body", "", "json"), Param.new("draftId", "", "json"),
+    Param.new("confirm", "", "json"),
   ]),
   Endpoint.new("/livewire/update#posts.search-posts", "POST", [Param.new("query", "", "json")]),
   Endpoint.new("/livewire/update#counter.increment", "POST", [

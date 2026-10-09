@@ -24,6 +24,11 @@ class EditPost extends Component
 
     // public $commentedOut;
 
+    // #[Locked]
+    public $draftId;
+
+    static public function make() {}
+
     public function mount(Post $post)
     {
         $this->postId = $post->id;

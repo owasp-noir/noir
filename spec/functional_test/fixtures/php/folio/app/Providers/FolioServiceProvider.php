@@ -13,7 +13,9 @@ class FolioServiceProvider extends ServiceProvider
             'admin/*' => ['auth', 'can:admin'],
         ]);
 
-        Folio::path(resource_path('views/docs'))->uri('/docs');
+        Folio::path(resource_path('views/docs'))->uri('/docs')->middleware([
+            '*' => 'throttle:docs',
+        ]);
 
         // Folio::path(resource_path('views/old'));
     }

@@ -24,12 +24,13 @@ module Analyzer::Php
     DEFAULT_UPDATE_PATH = "/livewire/update"
 
     IMPORT_RE       = /Livewire\\(?:Volt\\)?Component\b/
-    CLASS_RE        = /(?<!::)\bclass\s+([A-Za-z_]\w*)\s+extends\s+\\?(?:Livewire\\(?:Volt\\)?)?Component\b[^{;]*\{/
+    CLASS_RE        = /(?<!::)\b(abstract\s+)?(?:(?:final|readonly)\s+)*class\s+([A-Za-z_]\w*)\s+extends\s+\\?(?:Livewire\\(?:Volt\\)?)?Component\b[^{;]*\{/
     VOLT_RE         = /\bnew\s+class\b[^{;]*?\bextends\s+\\?(?:Livewire\\(?:Volt\\)?)?Component\b[^{;]*\{/
     NAMESPACE_RE    = /\bnamespace\s+([\w\\]+)\s*;/
     UPDATE_ROUTE_RE = /setUpdateRoute\s*\([^;]*?Route::post\s*\(\s*['"]([^'"]+)['"]/
-    # Lifecycle hooks and the config hooks Livewire itself calls.
-    LIFECYCLE_RE = /\A(?:render|exception|placeholder|getListeners|rules|messages|validationAttributes|queryString|(?:mount|boot|hydrate|dehydrate|updating|updated|rendering|rendered)\w*|__\w+)\z/
+    # Names Livewire refuses to call from the client: lifecycle hooks, their
+    # per-trait variants (`mountWithTabs`) and the hydrate/update wildcards.
+    LIFECYCLE_RE = /\A(?:render|placeholder|exception|rendering|rendered|(?:mount|boot|booted)(?:[A-Z]\w*)?|(?:hydrate|dehydrate|updating|updated)\w*|__\w+)\z/
     LOCKED_RE    = /#\[[^\]]*\b(?:Locked|Reactive)\b/
     COMPUTED_RE  = /#\[[^\]]*\bComputed\b/
     VIEW_DIRS    = ["views/livewire/", "views/"]
@@ -67,7 +68,8 @@ module Analyzer::Php
         prefix = component_prefix(masked)
         pos = 0
         while m = CLASS_RE.match(masked, pos)
-          emit(endpoints, lexer, masked, m, prefix + kebab(m[1]), path)
+          # Abstract base components are never mounted.
+          emit(endpoints, lexer, masked, m, prefix + kebab(m[2]), path) unless m[1]?
           pos = m.end(0)
         end
       end

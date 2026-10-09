@@ -20,14 +20,17 @@ module Analyzer::Php
 
     TAGGER = "folio_analyzer"
 
-    record Mount, dir : String, uri : String, middleware : Array(Tuple(Regex, Array(String)))
+    # `root` is the project (`composer.json` directory) the mount belongs
+    # to, so one app's mount cannot claim another app's views; empty when the
+    # scan has no `composer.json` to anchor on.
+    record Mount, root : String, dir : String, uri : String, middleware : Array(Tuple(Regex, Array(String)))
 
-    DEFAULT_MOUNT        = Mount.new("resources/views/pages", "/", [] of Tuple(Regex, Array(String)))
+    DEFAULT_DIR          = "resources/views/pages"
     PATH_CALL_RE         = /\bFolio::path\s*\(\s*(resource_path|base_path|app_path)\s*\(\s*['"]([^'"]*)['"]\s*\)/
     URI_RE               = /->\s*uri\s*\(\s*['"]([^'"]*)['"]/
     MOUNT_MIDDLEWARE_RE  = /->\s*middleware\s*\(\s*\[/
-    PATTERN_ENTRY_RE     = /['"]([^'"]+)['"]\s*=>\s*\[([^\]]*)\]/
-    PAGE_MIDDLEWARE_RE   = /(?<![\w>:$\\])middleware\s*\(\s*(\[[^\]]*\]|'[^']*'|"[^"]*")/
+    PATTERN_ENTRY_RE     = /['"]([^'"]+)['"]\s*=>\s*(\[[^\]]*\]|'[^']*'|"[^"]*")/
+    PAGE_MIDDLEWARE_RE   = /(?<![\w>:$])middleware\s*\(\s*(\[[^\]]*\]|'[^']*'|"[^"]*")/
     STRING_RE            = /'([^']*)'|"([^"]*)"/
     DYNAMIC_SEGMENT_RE   = /\A\[(?:\.\.\.)?([^\]:]+)(?::[^\]]*)?\]\z/
     PATH_HELPER_PREFIXES = {"resource_path" => "resources", "base_path" => "", "app_path" => "app"}
@@ -40,7 +43,12 @@ module Analyzer::Php
         content = read_file_content(path)
         mounts_in(path, content) if content.includes?("Folio::path")
       end.flatten
-      @mounts = found.empty? ? [DEFAULT_MOUNT] : found.sort_by { |mount| -mount.dir.size }
+      if found.empty?
+        roots = get_files_by_basename("composer.json").select { |f| read_file_content(f).includes?(%("laravel/folio")) }.map { |f| Noir::PathScope.normalize_root(File.dirname(f)) }
+        roots = [""] if roots.empty?
+        found = roots.map { |root| Mount.new(root, DEFAULT_DIR, "/", [] of Tuple(Regex, Array(String))) }
+      end
+      @mounts = found.sort_by { |mount| -(mount.root.size + mount.dir.size) }
       super
     end
 
@@ -50,12 +58,19 @@ module Analyzer::Php
 
       rel = "/" + base_relative_path(path)
       @mounts.each do |mount|
-        idx = rel.index("/#{mount.dir}/")
-        next unless idx
+        if mount.root.empty?
+          idx = rel.index("/#{mount.dir}/") || next
+          view = rel[(idx + mount.dir.size + 2)..]
+        else
+          expanded = Noir::PathScope.expand(path)
+          prefix = "#{mount.root}/#{mount.dir}/"
+          next unless expanded.starts_with?(prefix)
+          view = expanded[prefix.size..]
+        end
 
-        page = rel[(idx + mount.dir.size + 2)..].rchop(".blade.php")
+        page = view.rchop(".blade.php")
         url = page_url(mount.uri, page)
-        middleware = mount_middleware(mount, url.lchop('/'))
+        middleware = mount_middleware(mount, view, page)
         middleware.concat(page_middleware(read_file_content(path)))
         middleware.uniq!
 
@@ -92,13 +107,22 @@ module Analyzer::Php
             patterns << {pattern, strings(entry[2])}
           end
         end
-        mounts << Mount.new(dir, uri, patterns)
+        mounts << Mount.new(project_root(path), dir, uri, patterns)
       end
       mounts
     end
 
-    private def mount_middleware(mount : Mount, uri : String) : Array(String)
-      mount.middleware.select { |(pattern, _)| uri.matches?(pattern) }.flat_map(&.[1])
+    # Folio matches the patterns (`Str::is`) against the view path inside
+    # the mount (`admin/index.blade.php`).
+    private def mount_middleware(mount : Mount, view : String, page : String) : Array(String)
+      mount.middleware.select { |(pattern, _)| view.matches?(pattern) || page.matches?(pattern) }.flat_map(&.[1])
+    end
+
+    # Directory (normalized) of the nearest `composer.json` above `path`, or "".
+    private def project_root(path : String) : String
+      expanded = Noir::PathScope.expand(path)
+      get_files_by_basename("composer.json").map { |f| Noir::PathScope.normalize_root(File.dirname(f)) }
+        .select { |dir| Noir::PathScope.under_normalized_root?(expanded, dir) }.max_by?(&.size) || ""
     end
 
     # `middleware(['auth', 'verified'])` inside the page's PHP block.
