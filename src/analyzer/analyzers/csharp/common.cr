@@ -85,6 +85,10 @@ module Analyzer::CSharp::Common
     end
   end
 
+  # A public auto-property (`public string Name { get; set; }`), its name in
+  # group 1 — how request DTOs declare their bindable fields.
+  AUTO_PROPERTY_RE = /public\s+(?:required\s+|virtual\s+|override\s+|static\s+|readonly\s+)*[\w\?<>\[\],\s\.]+?\s+(\w+)\s*\{\s*get;/
+
   # `[FromRoute(Name = "organizationId")] Guid sponsoringOrgId` binds the
   # *route* value `organizationId`; the C# identifier is only the local name.
   # Reporting the identifier invents a parameter the client cannot send and

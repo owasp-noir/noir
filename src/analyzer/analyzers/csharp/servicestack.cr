@@ -276,7 +276,7 @@ module Analyzer::CSharp
         next if line.starts_with?("//")
         next if line.starts_with?("[")
 
-        if match = line.match(/public\s+(?:required\s+|virtual\s+|override\s+|static\s+|readonly\s+)*[\w\?<>\[\],\s\.]+?\s+(\w+)\s*\{\s*get;/)
+        if match = line.match(Common::AUTO_PROPERTY_RE)
           params << Param.new(match[1], "", "")
           next
         end

@@ -436,7 +436,7 @@ module Analyzer::CSharp
           next
         end
 
-        if match = line.match(/public\s+(?:required\s+|virtual\s+|override\s+|static\s+)*[\w\?<>\[\],\s\.]+?\s+(\w+)\s*\{\s*get;/)
+        if match = line.match(Common::AUTO_PROPERTY_RE)
           name = match[1]
           unless pending_skip
             params << Param.new(name, "", pending_type || "")

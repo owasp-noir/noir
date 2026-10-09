@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <PackageReference Include="Volo.Abp.Ddd.Application" Version="8.3.0" />
+    <ProjectReference Include="..\Acme.BookStore.Application.Contracts\Acme.BookStore.Application.Contracts.csproj" />
+  </ItemGroup>
+</Project>

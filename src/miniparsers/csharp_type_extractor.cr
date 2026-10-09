@@ -12,7 +12,8 @@ module Noir
     modifiers : Array(String),
     generic : Bool,
     start_line : Int32,
-    end_line : Int32
+    end_line : Int32,
+    header : String = "" # masked attribute list + declaration, up to the `{`
 
   module CSharpTypeExtractor
     HEADER = /((?:\[[^\]]*\]\s*)*)((?:(?:public|internal|private|protected|abstract|sealed|static|partial|new)\s+)*)(class|struct|interface|record)\s+(\w+)([^{};]*)\{/m
@@ -58,7 +59,7 @@ module Noir
         types << CSharpType.new(
           match[4], base.try(&.split('.').last.sub(/^global::/, "")),
           attributes, match[2].split, tail.lstrip.starts_with?('<'),
-          start_line, line_at.call(closing)
+          start_line, line_at.call(closing), match[0]
         )
       end
       types
