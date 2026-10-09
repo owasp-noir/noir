@@ -32,6 +32,21 @@ describe "Analyzer::Php::Yii urlManager rules" do
       PHP
   end
 
+  it "reads an array rule declared under a string key" do
+    yii_rule_routes(<<-'PHP').should eq(["GET /kg/in", "PUT /keyed/{id}"])
+      'keyed-group' => ['class' => 'yii\web\GroupUrlRule', 'prefix' => 'kg', 'rules' => ['in' => 'a/in']],
+      'keyed' => ['pattern' => 'keyed/<id>', 'route' => 'k/view', 'verb' => 'PUT'],
+      PHP
+  end
+
+  it "replaces the REST defaults with a rule's own patterns" do
+    yii_rule_routes(<<-'PHP').should eq(["GET /users/search", "GET /users/{id}", "POST /users"])
+      ['class' => 'yii\rest\UrlRule', 'controller' => 'user',
+       'patterns' => ['GET {id}' => 'view', 'POST' => 'create'],
+       'extraPatterns' => ['GET search' => 'search']],
+      PHP
+  end
+
   it "honours pluralize, only, except and extraPatterns on a REST rule" do
     yii_rule_routes(<<-'PHP').should eq([
       ['class' => 'yii\rest\UrlRule', 'controller' => 'person', 'pluralize' => false, 'only' => ['index', 'view']],

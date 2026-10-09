@@ -96,7 +96,9 @@ module Analyzer::Php
           next if route.empty?
           methods, pattern = split_rule_key(key)
           endpoints.concat(rule_endpoints(methods, join_rule_path(prefix, pattern), details))
-        elsif entry.key.nil? && (inner = entry.inner)
+        elsif inner = entry.inner
+          # An array value is a rule config whatever its key: UrlManager
+          # only reads a string key as the pattern of a string rule.
           endpoints.concat(array_rule_endpoints(lexer, inner, prefix, details, depth))
         end
       end
@@ -146,14 +148,19 @@ module Analyzer::Php
                     [] of String
                   end
 
+      # `extraPatterns + patterns`, PHP array union: an extra pattern wins a
+      # shared key. A rule's own `patterns` replaces the defaults.
       patterns = {} of String => String
-      if extra = options["extraPatterns"]?.try(&.inner)
-        array_entries(lexer, extra).each do |entry|
+      {"extraPatterns", "patterns"}.each do |option|
+        next unless inner = options[option]?.try(&.inner)
+        array_entries(lexer, inner).each do |entry|
           key, action = entry.key, entry.string
           patterns[key] = action if key && action && !patterns.has_key?(key)
         end
       end
-      REST_RULE_PATTERNS.each { |key, action| patterns[key] = action unless patterns.has_key?(key) }
+      unless options.has_key?("patterns")
+        REST_RULE_PATTERNS.each { |key, action| patterns[key] = action unless patterns.has_key?(key) }
+      end
 
       rule_text = lexer.source(range)
       prefix = options["prefix"]?.try(&.string) || ""
