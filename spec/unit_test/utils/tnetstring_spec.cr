@@ -76,4 +76,20 @@ describe Tnetstring do
       Tnetstring.parse(bytes)
     end
   end
+
+  it "raises ParseError (not a stack overflow) on absurdly deep nesting" do
+    depth = 20_000
+    nested = "0:]"
+    # Build iteratively: each level wraps the previous in a list.
+    depth.times { nested = "#{nested.bytesize}:#{nested}]" }
+    expect_raises(Tnetstring::ParseError, /nesting too deep/) do
+      Tnetstring.parse(nested.to_slice)
+    end
+  end
+
+  it "raises ParseError (not OverflowError) when length + offset overflows Int32" do
+    expect_raises(Tnetstring::ParseError, /out of bounds/) do
+      Tnetstring.parse("2147483647:abc,".to_slice)
+    end
+  end
 end

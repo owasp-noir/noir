@@ -71,3 +71,16 @@ describe "Noir::TreeSitter parse-failure memo" do
     end
   end
 end
+
+describe "Noir::TreeSitter.timeout_micros_from_env" do
+  it "converts milliseconds to microseconds and defaults to 10 s" do
+    Noir::TreeSitter.timeout_micros_from_env("250").should eq 250_000_u64
+    Noir::TreeSitter.timeout_micros_from_env(nil).should eq 10_000_000_u64
+    Noir::TreeSitter.timeout_micros_from_env("0").should eq 10_000_000_u64
+  end
+
+  it "clamps a value that would overflow UInt64 when scaled" do
+    Noir::TreeSitter.timeout_micros_from_env("18446744073709552").should eq 18_446_744_073_709_551_000_u64
+    Noir::TreeSitter.timeout_micros_from_env(UInt64::MAX.to_s).should eq 18_446_744_073_709_551_000_u64
+  end
+end

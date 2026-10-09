@@ -399,7 +399,10 @@ module Analyzer::Specification
     # just past the closing quote. `${...}` / `%{...}` interpolations are
     # consumed whole (including nested quotes and braces) so the terminating
     # quote is found correctly.
-    private def read_string(chars : Array(Char), i : Int32, len : Int32) : Tuple(String, Int32)
+    private def read_string(chars : Array(Char), i : Int32, len : Int32, depth : Int32 = 0) : Tuple(String, Int32)
+      # Nested `${"..."}` recurses per level; bail out on absurd nesting
+      # instead of overflowing the stack.
+      return {"", len} if depth > 64
       i += 1
       start = i
       interp = 0
@@ -423,7 +426,7 @@ module Analyzer::Specification
           if c == '\\'
             i += 2
           elsif c == '"'
-            _, i = read_string(chars, i, len)
+            _, i = read_string(chars, i, len, depth + 1)
           elsif c == '{'
             interp += 1
             i += 1

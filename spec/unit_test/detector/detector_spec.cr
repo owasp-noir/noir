@@ -273,6 +273,30 @@ describe "detect_techs file walker" do
       CodeLocator.instance.clear_all
     end
   end
+
+  it "survives a directory named AndroidManifest.xml" do
+    temp_dir = File.tempname("noir_detector_manifest_dir")
+    Dir.mkdir_p(File.join(temp_dir, "AndroidManifest.xml"))
+
+    begin
+      File.write(File.join(temp_dir, "Info.plist"), <<-XML)
+        <?xml version="1.0" encoding="UTF-8"?>
+        <plist version="1.0"><dict><key>CFBundleURLTypes</key><array><dict>
+        <key>CFBundleURLSchemes</key><array><string>sample</string></array>
+        </dict></array></dict></plist>
+        XML
+
+      options = create_test_options
+      options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+      logger = NoirLogger.new(false, false, false, true)
+      CodeLocator.instance.clear_all
+
+      detect_techs([temp_dir], options, [] of PassiveScan, logger)[0].should contain("ios")
+    ensure
+      FileUtils.rm_rf(temp_dir) if temp_dir
+      CodeLocator.instance.clear_all
+    end
+  end
 end
 
 describe "detect_techs passive results" do

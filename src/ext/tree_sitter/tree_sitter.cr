@@ -168,9 +168,13 @@ module Noir::TreeSitter
   # reproducing a real 10 s timeout would need a pathological fixture and
   # ten seconds of suite time. Nothing in a scan writes it: the value is
   # read once per parse and comes from `NOIR_PARSE_TIMEOUT_MS`.
-  class_property parse_timeout_micros : UInt64 = begin
-    ms = ENV["NOIR_PARSE_TIMEOUT_MS"]?.try(&.strip.to_u64?)
-    (ms && ms > 0 ? ms : 10_000_u64) * 1000_u64
+  class_property parse_timeout_micros : UInt64 = timeout_micros_from_env(ENV["NOIR_PARSE_TIMEOUT_MS"]?)
+
+  # Milliseconds to microseconds, clamped so an absurd value means "effectively
+  # no limit" instead of an OverflowError that aborts every command at startup.
+  def self.timeout_micros_from_env(raw : String?) : UInt64
+    ms = raw.try(&.strip.to_u64?)
+    Math.min(ms && ms > 0 ? ms : 10_000_u64, UInt64::MAX // 1000_u64) * 1000_u64
   end
 
   # Sources that already failed to parse, keyed by content fingerprint and
