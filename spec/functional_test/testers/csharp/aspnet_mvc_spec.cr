@@ -69,6 +69,20 @@ expected_endpoints = [
     Param.new("preferences", "", "cookie"),
   ]),
   Endpoint.new("/rooted/ping", "GET"),
+  # Several controllers in one file, each on a local base class.
+  Endpoint.new("/First/Index", "GET"),
+  Endpoint.new("/First/Data", "GET", [
+    Param.new("id", "", "query"),
+  ]),
+  Endpoint.new("/First/Download", "GET", [
+    Param.new("name", "", "query"),
+  ]),
+  Endpoint.new("/second/other", "GET", [
+    Param.new("x", "", "query"),
+  ]),
+  Endpoint.new("/Third/Third", "GET", [
+    Param.new("x", "", "query"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/csharp/aspnet_mvc/", {

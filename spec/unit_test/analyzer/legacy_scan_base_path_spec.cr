@@ -70,4 +70,34 @@ describe "legacy analyzers and the scan base path" do
       FileUtils.rm_rf(root) if Dir.exists?(root)
     end
   end
+
+  it "reports ASP.NET MVC controllers from a base path that contains `RouteConfig`" do
+    root = File.tempname("noir-mvc-base")
+    app = File.join(root, "x_RouteConfig_demo")
+
+    begin
+      write_file(File.join(app, "App_Start", "RouteConfig.cs"), <<-CS)
+        using System.Web.Mvc;
+        using System.Web.Routing;
+        public class RouteConfig {
+          public static void RegisterRoutes(RouteCollection routes) {
+            routes.MapRoute(name: "Default", url: "{controller}/{action}/{id}");
+          }
+        }
+        CS
+      write_file(File.join(app, "Controllers", "HomeController.cs"), <<-CS)
+        using System.Web.Mvc;
+        public class HomeController : Controller {
+          public ActionResult Index() { return View(); }
+        }
+        CS
+
+      endpoints = scan_tree(app)
+      urls = endpoints.select { |endpoint| endpoint.details.technology == "cs_aspnet_mvc" }.map(&.url)
+
+      urls.should contain("/Home/Index")
+    ensure
+      FileUtils.rm_rf(root) if Dir.exists?(root)
+    end
+  end
 end

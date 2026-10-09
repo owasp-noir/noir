@@ -65,7 +65,7 @@ module Analyzer::CSharp
     private def analyze_controllers(include_callee : Bool)
       controller_files = get_files_by_extension(".cs").select do |file|
         next false if Common.csharp_test_path?(base_relative_path(file))
-        file.includes?("Controller") && !file.includes?("RouteConfig")
+        file.includes?("Controller") && !File.basename(file).includes?("RouteConfig")
       end
 
       controller_files.each do |file|
@@ -77,23 +77,25 @@ module Analyzer::CSharp
       return unless File.exists?(file)
 
       content = read_file_content(file)
-      return unless content.includes?("Controller") && content.includes?("ActionResult")
+      return unless content.includes?("Controller") && content.includes?("Result")
       return if Common.aspnet_core_source?(content)
 
       lines = content.lines
       masked_lines = Noir::CSharpLexer.new(content).masked_lines
-      controller_name = extract_controller_name(content)
-      return if controller_name.empty?
-
-      # Extract controller-level route prefix
-      controller_route_prefix = extract_controller_route(content)
 
       i = 0
       http_method = "GET" # Default method for tracking across lines
       action_route = ""   # Track action-level route
       explicit_endpoint_attribute = false
+      # Open class bodies, innermost last: {body depth, controller name or nil
+      # for a non-controller class, route prefix}. A file can declare several
+      # controllers, and each action belongs to the class it sits in.
+      scopes = [] of Tuple(Int32, String?, String)
+      pending_class : Tuple(Int32, String?, String)? = nil
+      depth = 0
 
       while i < lines.size
+        start_index = i
         line = lines[i]
 
         # Look for HTTP method attributes (with optional route)
@@ -122,15 +124,35 @@ module Analyzer::CSharp
           explicit_endpoint_attribute = true
         end
 
+        if class_match = CLASS_DECL_RE.match(masked_lines[i])
+          base = class_match[2]? || masked_lines[i + 1]?.try { |next_line| BASE_LIST_LINE_RE.match(next_line).try(&.[1]) }
+          before = class_match.pre_match
+          body_depth = depth + before.count('{') - before.count('}') + 1
+          scope = {body_depth, controller_class_name(class_match[1], base), controller_route_prefix(lines, masked_lines, i)}
+          # A body opened on the class line can hold an action on that line.
+          if class_match.post_match.includes?('{')
+            scopes << scope
+            pending_class = nil
+          else
+            pending_class = scope
+          end
+          # Attributes above the class (`[RoutePrefix]`) are not an action's.
+          http_method = "GET"
+          action_route = ""
+          explicit_endpoint_attribute = false
+        end
+
         # Check for action method definition
-        if line.includes?("public") && line.includes?("(") && (line.includes?("ActionResult") || explicit_endpoint_attribute)
+        _, controller_name, controller_prefix = scopes.last? || {0, nil, ""}
+        if controller_name && line.includes?("public") && line.includes?("(") &&
+           (line.matches?(ACTION_RESULT_RE) || explicit_endpoint_attribute)
           signature, end_index = build_signature(lines, masked_lines, i)
           action_name = extract_action_name(signature)
           parameters = extract_parameters(signature, http_method)
 
           unless action_name.empty?
             # Build URL from controller route, action route, and action name
-            url = build_url(controller_route_prefix, action_route, controller_name, action_name)
+            url = build_url(controller_prefix, action_route, controller_name, action_name)
             details = Details.new(PathInfo.new(file, i + 1))
             endpoint = Endpoint.new(url, http_method, details)
 
@@ -157,15 +179,58 @@ module Analyzer::CSharp
           i = end_index
         end
 
+        (start_index..i).each do |index|
+          depth += masked_lines[index].count('{') - masked_lines[index].count('}')
+        end
+        if (pending = pending_class) && depth >= pending[0]
+          scopes << pending
+          pending_class = nil
+        end
+        while (open = scopes.last?) && depth < open[0]
+          scopes.pop
+        end
+
         i += 1
       end
     end
 
-    private def extract_controller_name(content : String) : String
-      # Extract controller class name
-      match = content.match(/class\s+(\w+)Controller\s*:\s*Controller/)
-      return "" unless match
-      match[1]
+    CLASS_DECL_RE = /\bclass\s+(\w+)(?:\s*<[^>]*>)?\s*(?::\s*([\w.]+))?/
+    # The return type ends in `Result` right before the action name:
+    # `ActionResult`, `JsonResult`, `FileResult`, `Task<ViewResult>`, ...
+    ACTION_RESULT_RE = /Result\s*>?\s+\w+\s*\(/
+    # A base list wrapped onto the line after the class name.
+    BASE_LIST_LINE_RE = /\A\s*:\s*([\w.]+)/
+
+    # MVC 5 takes any `*Controller` class with a base list (`: Controller`,
+    # `: BaseController`, ...). Web API 2's `ApiController` routes by verb
+    # convention, which this analyzer does not model.
+    private def controller_class_name(name : String, base : String?) : String?
+      return unless base && name.ends_with?("Controller") && name != "Controller"
+      return if base.split('.').last == "ApiController"
+      name.rchop("Controller")
+    end
+
+    ROUTE_PREFIX_ATTR_RE = /\[\s*RoutePrefix\s*\(\s*"([^"]+)"/
+    ROUTE_ATTR_RE        = /\[\s*Route\s*\(\s*"([^"]+)"/
+
+    # `[RoutePrefix("x")]` (else a class-level `[Route("x")]`) on the class
+    # line or the attribute lines directly above it.
+    private def controller_route_prefix(lines : Array(String), masked_lines : Array(String), index : Int32) : String
+      route = nil
+      j = index
+      while j >= 0 && (j == index || attribute_only_line?(masked_lines[j]))
+        if match = ROUTE_PREFIX_ATTR_RE.match(lines[j])
+          return match[1]
+        end
+        route ||= ROUTE_ATTR_RE.match(lines[j]).try(&.[1])
+        j -= 1
+      end
+      route || ""
+    end
+
+    private def attribute_only_line?(masked : String) : Bool
+      stripped = masked.strip
+      stripped.starts_with?('[') && stripped.ends_with?(']')
     end
 
     private def extract_action_name(line : String) : String
@@ -239,13 +304,6 @@ module Analyzer::CSharp
       end
 
       parameters
-    end
-
-    private def extract_controller_route(content : String) : String
-      # Extract [Route("...")] attribute from controller class
-      match = content.match(/\[(?:Route|RoutePrefix)\s*\(\s*"([^"]+)"\s*\)\s*\]\s*\n?\s*public\s+class\s+\w+Controller/)
-      return "" unless match
-      match[1]
     end
 
     private def extract_attribute_route(line : String, attribute : String) : String
