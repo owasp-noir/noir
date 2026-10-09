@@ -1,0 +1,7 @@
+{
+  "name": "tsoa-fixture",
+  "dependencies": {
+    "@tsoa/runtime": "^6.4.0",
+    "tsoa": "^6.4.0"
+  }
+}

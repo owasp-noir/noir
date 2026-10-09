@@ -235,6 +235,42 @@ module Analyzer::Javascript
       true
     end
 
+    # Class decorators that open a controller and carry its path prefix.
+    # The other decorator-controller frameworks
+    # (`Analyzer::Typescript::DecoratorController`) name their own.
+    CONTROLLER_DECORATORS = ["Controller"]
+
+    protected def controller_decorators : Array(String)
+      CONTROLLER_DECORATORS
+    end
+
+    ROUTE_DECORATOR_METHODS = {
+      "Get"         => ["GET"],
+      "Post"        => ["POST"],
+      "Put"         => ["PUT"],
+      "Delete"      => ["DELETE"],
+      "Del"         => ["DELETE"], # Midway's spelling
+      "Patch"       => ["PATCH"],
+      "Options"     => ["OPTIONS"],
+      "Head"        => ["HEAD"],
+      "QueryMethod" => ["QUERY"],
+      # `@Sse` opens a Server-Sent Events stream — HTTP GET under
+      # the hood, so it counts as a real route.
+      "Sse" => ["GET"],
+      "All" => ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
+    }
+    ROUTE_DECORATOR_RE = /@(Get|Post|Put|Delete|Del|Patch|Options|Head|QueryMethod|Sse|All)\s*\(/
+
+    # Method decorator name => verbs, and the regex that finds them (group 1
+    # is the name). Overridden together.
+    protected def route_decorator_methods : Hash(String, Array(String))
+      ROUTE_DECORATOR_METHODS
+    end
+
+    protected def route_decorator_re : Regex
+      ROUTE_DECORATOR_RE
+    end
+
     private def analyze_nestjs_file(path : String, result : Array(Endpoint), static_dirs : Array(Hash(String, String)), include_callee : Bool, global_prefix_holder : Array(Tuple(String, GlobalPrefixConfig)), global_prefix_mutex : Mutex)
       content = read_file_content(path)
 
@@ -436,6 +472,8 @@ module Analyzer::Javascript
       in_class = false
       skip_until = -1
 
+      markers = controller_decorators.map { |name| {name, "@#{name}"} }
+
       lines.each_with_index do |line, index|
         next if index <= skip_until
 
@@ -444,9 +482,9 @@ module Analyzer::Javascript
         # `@Controller({\n  path: '...',\n  version: ...\n})`),
         # so coalesce continuation lines until the parens close
         # before parsing.
-        if line.includes?("@Controller")
+        if decorator = markers.find { |(_, marker)| line.includes?(marker) }
           joined = join_decorator_header(lines, index)
-          base_paths = parse_controller_decorator(joined[:text], literal_values)
+          base_paths = parse_controller_decorator(joined[:text], literal_values, decorator[0])
           unless base_paths.nil?
             current_base_paths = base_paths
             current_versions = parse_controller_versions(joined[:text])
@@ -556,11 +594,10 @@ module Analyzer::Javascript
     #     than miss every route inside it.)
     #
     # Returns nil when `text` isn't a `@Controller(...)` decorator.
-    private def parse_controller_decorator(text : String, literal_values : Hash(String, Array(String))) : Array(String)?
-      return unless text.includes?("@Controller")
+    private def parse_controller_decorator(text : String, literal_values : Hash(String, Array(String)), name : String) : Array(String)?
       # Allow `(...)` to span newlines; the caller (`extract_controllers`)
       # already joined the multi-line header for us.
-      inner = decorator_inner(text, "Controller")
+      inner = decorator_inner(text, name)
       return unless inner
       literal_paths_from_expression(first_decorator_arg(inner), literal_values) || [""]
     end
@@ -664,21 +701,7 @@ module Analyzer::Javascript
     end
 
     private def process_http_methods(class_content : String, base_paths : Array(String), controller_versions : Array(String), file_path : String, result : Array(Endpoint), include_callee : Bool, controller_start_line : Int32, literal_values : Hash(String, Array(String)))
-      method_map = {
-        "Get"         => ["GET"],
-        "Post"        => ["POST"],
-        "Put"         => ["PUT"],
-        "Delete"      => ["DELETE"],
-        "Del"         => ["DELETE"], # Midway's spelling
-        "Patch"       => ["PATCH"],
-        "Options"     => ["OPTIONS"],
-        "Head"        => ["HEAD"],
-        "QueryMethod" => ["QUERY"],
-        # `@Sse` opens a Server-Sent Events stream — HTTP GET under
-        # the hood, so it counts as a real route.
-        "Sse" => ["GET"],
-        "All" => ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
-      }
+      method_map = route_decorator_methods
 
       # Materialised once per class: the back-walk and line count below index
       # it per route decorator, which `class_content[i]` would make O(n) each
@@ -687,7 +710,7 @@ module Analyzer::Javascript
       previous_body_end = 0
       line_pos = 0
       line_count = 0
-      class_content.scan(/@(Get|Post|Put|Delete|Del|Patch|Options|Head|QueryMethod|Sse|All)\s*\(/) do |match|
+      class_content.scan(route_decorator_re) do |match|
         decorator_start = match.begin(0)
         next unless decorator_start
 
