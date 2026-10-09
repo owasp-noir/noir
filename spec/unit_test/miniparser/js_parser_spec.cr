@@ -428,6 +428,30 @@ describe Noir::JSParser do
       routes.map(&.path).uniq!.should eq(["/a/b/c/leaf"])
     end
 
+    it "does not memoize a router resolved mid-cycle with its parent cut" do
+      code = <<-JS
+        const p = express.Router();
+        const q = express.Router();
+        app.use("/root", q);
+        p.use('/p', q);
+        q.use('/q', p);
+        p.get('/pp', (req, res) => res.end());
+        JS
+      Noir::JSParser.new(code).parse_routes.map(&.path).should contain("/root/q/pp")
+    end
+
+    it "stays bounded on a densely cyclic mount graph" do
+      names = (0...14).map { |i| "r#{i}" }
+      lines = names.map { |n| "const #{n} = express.Router();" }
+      lines << "app.use('/root', r0);"
+      names.each { |a| names.each { |b| lines << "#{a}.use('/#{b}', #{b});" unless a == b } }
+      lines << "r13.get('/leaf', (req, res) => res.end());"
+      routes = [] of Noir::JSRoutePattern
+      elapsed = Time.measure { routes = Noir::JSParser.new(lines.join("\n")).parse_routes }
+      elapsed.should be < 5.seconds
+      routes.should_not be_empty
+    end
+
     it "resolves a deep diamond lattice in bounded time and caps the prefixes" do
       depth = 16
       lines = [] of String

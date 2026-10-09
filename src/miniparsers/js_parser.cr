@@ -189,7 +189,7 @@ module Noir
       declared_prefixes = router_prefixes.transform_values(&.dup)
       resolved = {} of String => Array(String)
       router_prefixes.keys.each do |router_name|
-        router_prefixes[router_name] = resolve_full_prefixes(router_name, declared_prefixes, router_parents, resolved, Set(String).new)
+        router_prefixes[router_name] = resolve_full_prefixes(router_name, declared_prefixes, router_parents, resolved, Set(String).new)[0]
       end
 
       @router_prefixes = router_prefixes
@@ -279,31 +279,44 @@ module Noir
     # router mounted under many paths stays well below it.
     MAX_MOUNT_PREFIXES = 1024
 
+    # Ceiling on resolver calls per file. Results cut short by a cycle are
+    # not memoized, so a densely cyclic mount graph could otherwise enumerate
+    # every path; past this budget they are memoized anyway.
+    MAX_PREFIX_RESOLUTIONS = 100_000
+
     getter? mount_prefixes_capped : Bool = false
+    @prefix_resolutions = 0
 
     # Resolve full prefix for a router by walking up all parent chains
     # Supports multiple parents (router mounted under different parent routers).
     # Memoized per router in `resolved` — re-walking every parent chain for
     # every router enumerated each path of a diamond lattice again and again.
+    # Returns the prefixes and whether a cycle cut the walk short: such a
+    # result is only right for the current path, so it is not memoized (a
+    # mid-cycle `p` resolved as `/q` alone lost `/root/q/pp` for good).
     private def resolve_full_prefixes(router : String, router_prefixes : Hash(String, Array(String)),
                                       router_parents : Hash(String, Array(String)),
-                                      resolved : Hash(String, Array(String)), on_path : Set(String)) : Array(String)
+                                      resolved : Hash(String, Array(String)), on_path : Set(String)) : Tuple(Array(String), Bool)
       if memo = resolved[router]?
-        return memo
+        return {memo, false}
       end
       prefixes = router_prefixes[router]? || [] of String
-      return prefixes if prefixes.empty?
+      return {prefixes, false} if prefixes.empty?
 
+      @prefix_resolutions += 1
       on_path.add(router)
       # A parent already on this chain is a self-mount or a cycle; walking
       # it again joined the cycle's prefixes onto themselves (`/v1/v1`).
-      parents = (router_parents[router]? || [] of String).reject { |parent| on_path.includes?(parent) }
+      all_parents = router_parents[router]? || [] of String
+      parents = all_parents.reject { |parent| on_path.includes?(parent) }
+      cut = parents.size < all_parents.size
 
       # Combine with all parent chains
       result = [] of String
       seen = Set(String).new
       parents.each do |parent|
-        parent_full_prefixes = resolve_full_prefixes(parent, router_prefixes, router_parents, resolved, on_path)
+        parent_full_prefixes, parent_cut = resolve_full_prefixes(parent, router_prefixes, router_parents, resolved, on_path)
+        cut ||= parent_cut
         # No parent prefix: our own prefixes stand alone.
         parent_full_prefixes = [""] if parent_full_prefixes.empty?
         # Cartesian product: combine each parent prefix with each of our prefixes
@@ -321,7 +334,13 @@ module Noir
       end
       on_path.delete(router)
 
-      resolved[router] = result.empty? ? prefixes.dup : result
+      result = prefixes.dup if result.empty?
+      if cut && @prefix_resolutions >= MAX_PREFIX_RESOLUTIONS
+        @mount_prefixes_capped = true
+        cut = false
+      end
+      resolved[router] = result unless cut
+      {result, cut}
     end
 
     # Koa/@koa-router commonly attaches route prefixes in the constructor:
