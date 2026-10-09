@@ -1,5 +1,6 @@
 require "../../engines/perl_engine"
 require "./perl_helper"
+require "../../../miniparsers/perl_callee_extractor"
 
 module Analyzer::Perl
   class Catalyst < PerlEngine
@@ -7,6 +8,7 @@ module Analyzer::Perl
 
     HTTP_VERBS        = %w[get post put delete patch options head]
     BARE_ATTR_VALUE   = "__NOIR_BARE_ATTR__"
+    MAX_ARG_SEGMENTS  = 32
     HTTP_METHOD_ATTRS = {
       "get"     => "GET",
       "post"    => "POST",
@@ -586,7 +588,10 @@ module Analyzer::Perl
       return path if values.empty?
 
       count = count_from_arg_spec(values.first)
-      if count.nil?
+      # A hostile `:Args(2000000000)` would otherwise build the path one
+      # segment at a time; past MAX_ARG_SEGMENTS collapse to one wildcard,
+      # the same shape an unbounded `:Args` gets.
+      if count.nil? || count > MAX_ARG_SEGMENTS
         return join_url(path, ":#{name}")
       end
 
