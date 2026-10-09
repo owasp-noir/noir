@@ -193,7 +193,9 @@ module Analyzer::Python
 
       # Extract the function name and parameter line
       name = def_line.split("def ", 2)[1].split("(", 2)[0].strip
-      param_line = def_line.split("(", 2)[1]
+      # Indexed as a Char array: `String#[]` is O(index) on non-ASCII text,
+      # which made a long non-ASCII default quadratic.
+      param_line = def_line.split("(", 2)[1].chars
 
       index = 0
       # Accumulate field text in builders rather than `String += Char`: a single
@@ -307,7 +309,7 @@ module Analyzer::Python
 
         line_index += 1
         if line_index < source_lines.size
-          param_line = source_lines[line_index]
+          param_line = source_lines[line_index].chars
           index = 0
           # An unterminated quote is a same-line artefact (a `#` comment, a
           # triple-quoted opener), not a run that should swallow the rest of

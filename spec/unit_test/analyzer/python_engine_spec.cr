@@ -138,4 +138,17 @@ describe Analyzer::Python::PythonEngine do
 
     harness.def_line_after(lines, 0).should eq(5)
   end
+
+  it "parses a long non-ASCII parameter default in linear time" do
+    harness = PythonEngineSpecHarness.new(create_test_options)
+    default = "가" * 60_000
+    lines = ["def x(a: str = \"#{default}\", b: int = 1):", "    return {}"]
+
+    started = Time.instant
+    definition = harness.parse_function_def(lines, 0).not_nil!
+    (Time.instant - started).should be < 2.seconds
+
+    definition.params.map(&.name).should eq(["a", "b"])
+    definition.params[0].default.should eq("\"#{default}\"")
+  end
 end
