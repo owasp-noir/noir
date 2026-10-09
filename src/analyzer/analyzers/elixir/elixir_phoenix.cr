@@ -307,39 +307,6 @@ module Analyzer::Elixir
       opens > closes
     end
 
-    # Drop an Elixir line comment while preserving the string literals
-    # (and their quotes) the `resources` regex depends on — unlike the
-    # callee extractor's `strip_comment`, which discards quotes. A `#`
-    # only opens a comment outside a string, so a `#` inside a quoted
-    # path won't truncate the statement.
-    #
-    # No `#` → return the original slice (zero allocation). The common
-    # path for route / controller lines.
-    private def strip_trailing_comment(line : String) : String
-      return line unless line.includes?('#')
-
-      in_string = false
-      escaped = false
-      quote = '\0'
-      line.each_char_with_index do |char, i|
-        if in_string
-          if escaped
-            escaped = false
-          elsif char == '\\'
-            escaped = true
-          elsif char == quote
-            in_string = false
-          end
-        elsif char == '"' || char == '\''
-          in_string = true
-          quote = char
-        elsif char == '#'
-          return line[0, i]
-        end
-      end
-      line
-    end
-
     def extract_controller_params
       # Find all controller files and extract parameters. Pulls from the
       # detector-built file_map so subtree pruning and --exclude-path
