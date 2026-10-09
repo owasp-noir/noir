@@ -164,8 +164,9 @@ module Analyzer::Swift
 
     private def route_handler_name(route_line : String) : String?
       stripped, _, _ = Noir::SwiftCalleeExtractor.strip_non_code_with_state(route_line, 0, false)
-      if match = stripped.match(/handler:\s*([A-Za-z_]\w*)/)
-        return match[1]
+      # `self.create` / `TodoController.index` name the method `create` / `index`.
+      if match = stripped.match(/\bhandler:\s*(?:self\.)?([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)/)
+        return match[1].split('.').last
       end
 
       nil

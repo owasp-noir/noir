@@ -146,7 +146,7 @@ describe "swift vapor analyzer" do
       struct TodoController: RouteCollection {
           func boot(routes: RoutesBuilder) throws {
               let todos = routes.grouped("todos")
-              todos.post(use: create)
+              todos.post(use: self.create)
               todos.group(":todoID") { todo in
                   todo.delete(use: delete)
               }

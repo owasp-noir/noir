@@ -61,11 +61,15 @@ describe "swift kitura analyzer" do
           let q = request.queryParameters["leak"]
           next()
       }
+      router.post("/self", handler: self.unrelated)
+      router.post("/qualified", handler: Handlers.unrelated)
       SWIFT
 
     params = instance.analyze_file(temp_file).to_h { |e| {e.url, e.params.map(&.name)} }
     params["/ping"].should eq([] of String)
     params["/live"].should eq(["live"])
+    params["/self"].should eq(["leak"])
+    params["/qualified"].should eq(["leak"])
   ensure
     File.delete(temp_file) if temp_file && File.exists?(temp_file)
     Dir.delete(temp_dir) if temp_dir && Dir.exists?(temp_dir)
