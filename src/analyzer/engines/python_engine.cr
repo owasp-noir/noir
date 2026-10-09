@@ -1113,5 +1113,43 @@ module Analyzer::Python
       end
       line
     end
+
+    # Push mount prefixes from every node that already has some along the
+    # `{parent, mount_prefix, child}` edges, one prefix per simple path: a
+    # cycle is entered at most once instead of growing a prefix every lap.
+    # Memoised on (node, prefix), so a diamond-shaped graph stays linear in
+    # the number of distinct prefixes.
+    def propagate_mount_prefixes(prefixes : Hash(::String, Array(::String)),
+                                 edges : Array(Tuple(::String, ::String, ::String)),
+                                 &join : ::String, ::String -> ::String) : Nil
+      children = Hash(::String, Array(Tuple(::String, ::String))).new
+      edges.each do |parent, mount_prefix, child|
+        (children[parent] ||= [] of Tuple(::String, ::String)) << {mount_prefix, child}
+      end
+      seen = Set(Tuple(::String, ::String)).new
+      on_path = Set(::String).new
+      seeds = [] of Tuple(::String, ::String)
+      prefixes.each { |node, list| list.each { |prefix| seeds << {node, prefix} } }
+      seeds.each do |node, prefix|
+        visit_mount_prefix(node, prefix, children, prefixes, seen, on_path, join)
+      end
+    end
+
+    private def visit_mount_prefix(node : ::String, prefix : ::String,
+                                   children : Hash(::String, Array(Tuple(::String, ::String))),
+                                   prefixes : Hash(::String, Array(::String)),
+                                   seen : Set(Tuple(::String, ::String)),
+                                   on_path : Set(::String),
+                                   join : ::String, ::String -> ::String) : Nil
+      return unless seen.add?({node, prefix})
+      list = prefixes[node]? || (prefixes[node] = [] of ::String)
+      list << prefix unless list.includes?(prefix)
+      on_path << node
+      children[node]?.try &.each do |mount_prefix, child|
+        next if on_path.includes?(child)
+        visit_mount_prefix(child, join.call(prefix, mount_prefix), children, prefixes, seen, on_path, join)
+      end
+      on_path.delete(node)
+    end
   end
 end

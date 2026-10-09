@@ -701,25 +701,11 @@ module Analyzer::Python
         prefixes[child].try(&.delete(""))
       end
 
-      # Cap the fixpoint: an acyclic mount graph settles within one pass
-      # per mount, while an `a -> b -> a` cycle would grow prefixes forever.
-      changed = true
-      iterations = 0
-      while changed && iterations <= mounts.size
-        changed = false
-        iterations += 1
-        mounts.each do |parent, mount_prefix, child|
-          parent_prefixes = prefixes[parent]? || [""]
-          prefixes[child] ||= [] of ::String
-          parent_prefixes.each do |parent_prefix|
-            child_prefix = Helper.normalized_join(parent_prefix, mount_prefix)
-            unless prefixes[child].includes?(child_prefix)
-              prefixes[child] << child_prefix
-              changed = true
-            end
-          end
-        end
-      end
+      # A parent never seen as `Application()` (imported, say) is a root.
+      mounts.each { |parent, _, _| prefixes[parent] ||= [""] }
+      # One prefix per simple mount path; a cycle is walked once instead of
+      # growing a prefix every lap.
+      propagate_mount_prefixes(prefixes, mounts) { |parent_prefix, mount_prefix| Helper.normalized_join(parent_prefix, mount_prefix) }
 
       # A mount cycle with no unmounted root (`app` mounts `sub` and `sub`
       # mounts `app`) leaves every app with no prefix, which silently

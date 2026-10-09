@@ -390,37 +390,19 @@ module Analyzer::Python
         end
       end
 
-      # A list mounted into itself (`routes = [Mount('/v1', routes=routes)]`
-      # rebinding the name) is not a nesting edge; drop it.
-      mount_edges.reject! { |parent_route_list, route_list, _| parent_route_list == route_list }
-
+      nested_edges = [] of Tuple(::String, ::String, ::String)
       mount_edges.each do |parent_route_list, route_list, mount_prefix|
-        next if parent_route_list
-        add_route_list_prefix(prefixes, route_list, mount_prefix)
-      end
-
-      # Cap the fixpoint: an acyclic edge set settles within one pass per
-      # edge, and an `a -> b -> a` cycle would otherwise grow prefixes forever.
-      changed = true
-      iterations = 0
-      while changed && iterations <= mount_edges.size
-        changed = false
-        iterations += 1
-        mount_edges.each do |parent_route_list, route_list, mount_prefix|
-          next unless parent_route_list
-
-          parent_prefixes = prefixes[parent_route_list]?
-          next unless parent_prefixes
-
-          parent_prefixes.each do |parent_prefix|
-            composed_prefix = normalize_route_prefix(parent_prefix, mount_prefix)
-            next if prefixes[route_list].includes?(composed_prefix)
-
-            prefixes[route_list] << composed_prefix
-            changed = true
-          end
+        if parent_route_list
+          nested_edges << {parent_route_list, mount_prefix, route_list}
+        else
+          add_route_list_prefix(prefixes, route_list, mount_prefix)
         end
       end
+
+      # A list mounted into itself (`routes = [Mount('/v1', routes=routes)]`
+      # rebinding the name) or an `a -> b -> a` cycle is walked once, not
+      # composed forever.
+      propagate_mount_prefixes(prefixes, nested_edges) { |parent_prefix, mount_prefix| normalize_route_prefix(parent_prefix, mount_prefix) }
 
       prefixes
     end
