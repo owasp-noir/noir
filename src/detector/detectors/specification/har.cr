@@ -2,7 +2,7 @@ require "../../../models/detector"
 require "../../../utils/json"
 require "../../../utils/yaml"
 require "../../../models/code_locator"
-require "har"
+require "../../../utils/har"
 
 module Detector::Specification
   class Har < Detector
@@ -18,7 +18,7 @@ module Detector::Specification
       if (filename.ends_with? ".har") || (filename.ends_with? ".json")
         if filename.ends_with?(".har") || har_json_candidate?(file_contents)
           begin
-            data = HAR.from_string(file_contents)
+            data = Noir::HarDocument.parse(file_contents)
             if data.version.to_s.includes? "1."
               locator = CodeLocator.instance
               locator.push(Noir::LocatorKeys::HAR_PATH, filename)
