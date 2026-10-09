@@ -69,6 +69,14 @@ expected_endpoints = [
   Endpoint.new("/api/method-branch", "PUT"),
   Endpoint.new("/api/method-branch", "DELETE"),
   Endpoint.new("/api/method-branch", "PATCH"),
+  # ---- Pages Router: a 400 from a nested `if` in the write branch is not a guard ----
+  Endpoint.new("/api/method-validate", "GET", [Param.new("id", "", "body")]),
+  Endpoint.new("/api/method-validate", "POST", [Param.new("id", "", "body")]),
+  Endpoint.new("/api/method-validate", "PUT", [Param.new("id", "", "body")]),
+  Endpoint.new("/api/method-validate", "DELETE", [Param.new("id", "", "body")]),
+  Endpoint.new("/api/method-validate", "PATCH", [Param.new("id", "", "body")]),
+  # ---- Pages Router: METHOD_NOT_ALLOWED constant + nested destructuring ----
+  Endpoint.new("/api/method-status-const", "DELETE"),
   # ---- Pages Router: unrelated HTTP-like switch cases should not suppress fallback methods ----
   Endpoint.new("/api/unrelated-switch", "GET", [
     Param.new("type", "", "query"),

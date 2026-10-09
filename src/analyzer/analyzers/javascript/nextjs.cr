@@ -26,21 +26,27 @@ module Analyzer::Javascript
     # Pages Router method checks. The receiver is `req.method` /
     # `request.method`, or a bare `method` once the file binds it from the
     # request (`const { method } = req`, `const method = req.method`).
-    BARE_METHOD_BINDING  = /\{[^{}]*(?<![\w$.:])method\b(?!\s*:)[^{}]*\}\s*=\s*(?:req|request)\b|(?<![\w$.])method\s*=\s*(?:req|request)\.method\b/
-    METHOD_EQ            = /\b(?:req|request)\.method\s*===?\s*['"]([A-Z]+)['"]/
-    METHOD_EQ_BARE       = /(?:\b(?:req|request)\.|(?<![\w$.]))method\s*===?\s*['"]([A-Z]+)['"]/
-    METHOD_NE            = /\b(?:req|request)\.method\s*!==?\s*['"]([A-Z]+)['"]/
-    METHOD_NE_BARE       = /(?:\b(?:req|request)\.|(?<![\w$.]))method\s*!==?\s*['"]([A-Z]+)['"]/
-    METHOD_SWITCH        = /switch\s*\(\s*(?:req|request)\.method\s*\)/
-    METHOD_SWITCH_BARE   = /switch\s*\(\s*(?:(?:req|request)\.)?method\s*\)/
-    METHOD_INCLUDES      = /\[\s*([^\]]+)\]\s*\.includes\s*\(\s*(?:req|request)\.method/
-    METHOD_INCLUDES_BARE = /\[\s*([^\]]+)\]\s*\.includes\s*\(\s*(?:(?:req|request)\.)?method\b/
-    # An `if (<cond>)` whose consequent rejects the request: a `throw`, or a
-    # 4xx / "Not Allowed" in the returned statement or before the block's
-    # first brace. `return handlePost()` is a branch, not a guard. The
-    # condition allows one level of parens; each repetition starts on a
-    # distinct char class, so the scan stays linear on hostile input.
-    METHOD_GUARD = /\bif\s*\(((?:[^(){};]|\([^()]*\))*)\)\s*(?:throw\b|\{[^{}]*?(?:\bthrow\b|\b4\d\d\b|(?i:not allowed))|return\b[^{};\n]*?(?:\b4\d\d\b|(?i:not allowed)))/
+    METHOD_FROM_REQUEST      = /(?<![\w$.])method\s*=\s*(?:req|request)\.method\b/
+    DESTRUCTURE_FROM_REQUEST = /\{((?:[^{}]++|\{[^{}]*+\})*+)\}\s*=\s*(?:req|request)\b(?!\s*[.\[])/
+    BARE_METHOD_KEY          = /(?<![\w$.:])method\b(?!\s*:)/
+    METHOD_EQ                = /\b(?:req|request)\.method\s*===?\s*['"]([A-Z]+)['"]/
+    METHOD_EQ_BARE           = /(?:\b(?:req|request)\.|(?<![\w$.]))method\s*===?\s*['"]([A-Z]+)['"]/
+    METHOD_NE                = /\b(?:req|request)\.method\s*!==?\s*['"]([A-Z]+)['"]/
+    METHOD_NE_BARE           = /(?:\b(?:req|request)\.|(?<![\w$.]))method\s*!==?\s*['"]([A-Z]+)['"]/
+    METHOD_SWITCH            = /switch\s*\(\s*(?:req|request)\.method\s*\)/
+    METHOD_SWITCH_BARE       = /switch\s*\(\s*(?:(?:req|request)\.)?method\s*\)/
+    METHOD_INCLUDES          = /\[\s*([^\]]+)\]\s*\.includes\s*\(\s*(?:req|request)\.method/
+    METHOD_INCLUDES_BARE     = /\[\s*([^\]]+)\]\s*\.includes\s*\(\s*(?:(?:req|request)\.)?method\b/
+    # `if (<cond>)` followed by its consequent: an immediate `throw`, the
+    # block up to its first brace (captured in a lookahead, so a guard
+    # nested in that block is still scanned), or a `return` statement.
+    # Every repetition is possessive or a single char class: grouped
+    # repetition overflowed the PCRE2 JIT stack on long hostile input.
+    METHOD_GUARD = /\bif\s*\(((?:[^(){};]++|\([^()]*+\))*+)\)\s*(?:(throw)\b|(?=\{([^{}]*))|return\b([^{};\n]*))/
+    # What makes a consequent a rejection, and what makes it conditional
+    # (a nested `if`, ternary or `&&`/`||` ahead of the rejection).
+    GUARD_REJECTS     = /\bthrow\b|\b4\d\d\b|\bMETHOD_NOT_ALLOWED\b|(?i:not allowed)/
+    GUARD_CONDITIONAL = /\bif\b|\?|&&|\|\|/
 
     def analyze
       result = [] of Endpoint
@@ -376,7 +382,7 @@ module Analyzer::Javascript
       return explicit unless explicit.empty?
 
       # Heuristic: look for req.method checks to infer declared methods.
-      bare = content.matches?(BARE_METHOD_BINDING)
+      bare = binds_bare_method?(content)
       inferred = [] of String
       content.scan(bare ? METHOD_EQ_BARE : METHOD_EQ) do |m|
         method = m[1]
@@ -391,6 +397,7 @@ module Analyzer::Javascript
       if content.includes?("!=")
         ne = bare ? METHOD_NE_BARE : METHOD_NE
         content.scan(METHOD_GUARD) do |guard|
+          next unless guard[2]? || rejecting_consequent?(guard[3]? || guard[4]? || "")
           guard[1].split("||").each do |arm|
             next unless arm.gsub(ne, "").gsub(/[\s()&]/, "").empty?
             arm.scan(ne) do |m|
@@ -416,6 +423,27 @@ module Analyzer::Javascript
 
       # Default-export handler — applies to ALL methods.
       ["GET", "POST", "PUT", "DELETE", "PATCH"]
+    end
+
+    # A block or `return` statement that rejects the request outright, with
+    # no nested condition ahead of the rejection: the write branch of
+    # `if (req.method !== 'GET') { if (!id) return res.status(400) ... }`
+    # validates, it does not reject non-GET methods.
+    private def rejecting_consequent?(text : String) : Bool
+      return false unless reject = text =~ GUARD_REJECTS
+      conditional = text =~ GUARD_CONDITIONAL
+      conditional.nil? || reject < conditional
+    end
+
+    # `const method = req.method`, or `method` among the top-level keys of
+    # an object pattern destructured from the request — nested patterns
+    # (`{ query: { id }, method }`) are dropped before looking.
+    private def binds_bare_method?(content : String) : Bool
+      return true if content.matches?(METHOD_FROM_REQUEST)
+      content.scan(DESTRUCTURE_FROM_REQUEST) do |m|
+        return true if m[1].gsub(/\{[^{}]*\}/, "").matches?(BARE_METHOD_KEY)
+      end
+      false
     end
 
     private def infer_switch_method_cases(content : String, bare : Bool) : Array(String)
