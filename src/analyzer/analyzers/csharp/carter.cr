@@ -124,17 +124,11 @@ module Analyzer::CSharp
       body_text = lines[body_start..Math.min(body_end, lines.size - 1)].join('\n')
       group_prefixes = extract_map_group_prefixes(body_text)
 
-      idx = body_start
-      while idx <= body_end && idx < lines.size
-        line = lines[idx]
-        if route_builder_line?(line)
-          block = extract_map_block(lines, idx)
-          extract_endpoints_from_map_block(block, group_prefixes, file, idx + 1,
-            lines, masked_lines, include_callee, prefix).each do |endpoint|
-            @result << endpoint
-          end
+      each_map_block(lines, masked_lines, body_start..Math.min(body_end, lines.size - 1), group_prefixes) do |block, idx, chain_prefix|
+        extract_endpoints_from_map_block(block, group_prefixes, file, idx + 1,
+          lines, masked_lines, include_callee, prefix, chain_prefix).each do |endpoint|
+          @result << endpoint
         end
-        idx += 1
       end
     end
 

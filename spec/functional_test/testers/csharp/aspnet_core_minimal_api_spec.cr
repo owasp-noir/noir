@@ -1,6 +1,19 @@
 require "../../func_spec.cr"
 
 expected_endpoints = [
+  Endpoint.new("/one", "GET", [
+    Param.new("y", "", "query"),
+  ]),
+  Endpoint.new("/two", "POST", [
+    Param.new("z", "", "query"),
+  ]),
+  Endpoint.new("/chain/tail", "GET"),
+  Endpoint.new("/smile-(", "GET", [
+    Param.new("a", "", "query"),
+  ]),
+  Endpoint.new("/after-smile", "PUT", [
+    Param.new("q", "", "query"),
+  ]),
   Endpoint.new("/users", "GET"),
   Endpoint.new("/users/{id}", "GET", [
     Param.new("id", "", "path"),
@@ -78,6 +91,13 @@ describe "ASP.NET Core Minimal API analyzer edge cases", tags: "functional" do
     search.params.first.param_type.should eq "json"
 
     tester.app.endpoints.any? { |e| e.url == "/search-legacy" && e.method == "QUERY" }.should be_true
+  end
+
+  it "keeps each registration's params to itself" do
+    one = tester.app.endpoints.find! { |e| e.url == "/one" && e.method == "GET" }
+    one.params.map(&.name).should eq ["y"]
+    after = tester.app.endpoints.find! { |e| e.url == "/after-smile" && e.method == "PUT" }
+    after.params.map(&.name).should eq ["q"]
   end
 
   it "keeps QUERY alongside another verb in the same MapMethods array" do

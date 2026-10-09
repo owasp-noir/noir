@@ -48,6 +48,14 @@ app.MapGroup("/inline").MapPost("/submit", (CreateUserRequest req) => Results.Ok
 // overload, i.e. it is the HttpContext — never a query value.
 app.MapGet("/raw", async context => await context.Response.WriteAsync("ok"));
 
+// Two registrations on one line, a group chain continued on a leading-dot
+// line, and a `(` inside a route string.
+app.MapGet("/one", (string y) => y); app.MapPost("/two", (string z) => z);
+app.MapGroup("/chain")
+   .MapGet("/tail", () => "c");
+app.MapGet("/smile-(", (string a) => a);
+app.MapMethods("/after-smile", new[] { "PUT" }, (string q) => q);
+
 app.Run();
 
 record CreateUserRequest(string Name);
