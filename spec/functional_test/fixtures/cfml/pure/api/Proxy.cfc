@@ -14,6 +14,11 @@ component extends="framework.Proxy" {
 		return arrayNew(1);
 	}
 
+	// remote function lineCommented( a ) { return a; }
+	/*
+	remote function blockCommented( b ) { return b; }
+	*/
+
 	private function helper( hidden ) {
 		return hidden;
 	}
