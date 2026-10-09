@@ -131,4 +131,40 @@ describe Noir::TreeSitterElysiaExtractor do
       {"POST", "/api/v1/users/{id}"},
     ].sort)
   end
+
+  it "puts each chained route on its own verb's line" do
+    source = <<-TS
+      new Elysia()
+        .get('/a', () => 'a')
+        .get('/b', () => 'b')
+        .post('/c', () => 'c')
+      TS
+
+    routes = Noir::TreeSitterElysiaExtractor.extract_routes(source)
+    routes.map { |r| {r.path, r.line} }.sort!.should eq([{"/a", 1}, {"/b", 2}, {"/c", 3}])
+  end
+
+  it "applies the constructor prefix once across the whole chain" do
+    source = <<-TS
+      new Elysia({ prefix: '/v1' })
+        .get('/a', () => 'a')
+        .onError(() => 'err')
+        .group('/g', (app) => app.get('/x', () => 'x'))
+        .use(new Elysia({ prefix: `/admin` }).get('/stats', () => 's'))
+        .post('/c', () => 'c')
+        .listen(3000)
+      const plain = new Elysia({ name: 'svc' }).get('/plain', () => 'p')
+      const other = new Router({ prefix: '/no' }).get('/router', () => 'r')
+      TS
+
+    routes = Noir::TreeSitterElysiaExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"GET", "/plain"},
+      {"GET", "/router"},
+      {"GET", "/v1/a"},
+      {"GET", "/v1/admin/stats"},
+      {"GET", "/v1/g/x"},
+      {"POST", "/v1/c"},
+    ])
+  end
 end

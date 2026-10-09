@@ -27,6 +27,11 @@ expected_endpoints = [
   Endpoint.new("/health", "PUT"),
   Endpoint.new("/health", "DELETE"),
   Endpoint.new("/health", "PATCH"),
+  # `new Elysia({ prefix })` — on the chain and on an inline `.use()` plugin.
+  Endpoint.new("/admin/stats", "GET", [
+    Param.new("range", "", "query"),
+  ]),
+  Endpoint.new("/admin/audit/log", "GET"),
 ]
 
 FunctionalTester.new("fixtures/javascript/elysia/", {
