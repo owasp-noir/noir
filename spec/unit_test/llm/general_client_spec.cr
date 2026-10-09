@@ -161,6 +161,15 @@ describe LLM::General do
       client.__test_api.should eq("http://custom-server.com/api/v1/chat/completions")
     end
 
+    it "keeps a query string after the path instead of appending to it" do
+      azure = "https://r.openai.azure.com/openai/deployments/gpt4/chat/completions?api-version=2024-02-01"
+      LLM::General.new(azure, "m", nil).__test_api.should eq(azure)
+      LLM::General.new("https://r.openai.azure.com/openai/deployments/gpt4?api-version=2024-02-01", "m", nil).__test_api
+        .should eq(azure)
+      LLM::General.new("http://127.0.0.1:8080/?key=1", "m", nil).__test_api
+        .should eq("http://127.0.0.1:8080/v1/chat/completions?key=1")
+    end
+
     it "resolves prefix 'openai' to full endpoint URL" do
       client = LLM::General.new("openai", "test-model", "test-key")
       client.__test_api.should eq("https://api.openai.com/v1/chat/completions")

@@ -15,7 +15,7 @@ module LLM
     def initialize(url : String, model : String, api_key : String?)
       @url = url
       @api = if url.includes?("://")
-               ensure_chat_completions_path(url)
+               self.class.chat_completions_url(url)
              else
                case url.downcase
                when "openai"
@@ -168,17 +168,17 @@ module LLM
       JSON.parse(%({"raw":#{raw.to_json}}))
     end
 
-    private def ensure_chat_completions_path(url : String) : String
-      normalized = url.chomp("/")
-      return normalized if normalized.ends_with?("/chat/completions")
-
-      uri = URI.parse(normalized)
-      path = uri.path || ""
-      if path.empty? || path == "/"
-        "#{normalized}/v1/chat/completions"
-      else
-        "#{normalized}/chat/completions"
+    # Decided on the URI path, not the whole string: an Azure-style
+    # `...?api-version=2024-02-01` query used to get `/chat/completions`
+    # appended after it.
+    def self.chat_completions_url(url : String) : String
+      uri = URI.parse(url)
+      path = uri.path.chomp("/")
+      unless path.ends_with?("/chat/completions")
+        path = path.empty? ? "/v1/chat/completions" : "#{path}/chat/completions"
       end
+      uri.path = path
+      uri.to_s
     end
 
     def self.parse_tools_cached(tools : String) : JSON::Any
