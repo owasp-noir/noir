@@ -112,3 +112,31 @@ describe "HTTP method validation" do
     end
   end
 end
+
+# `-u` is joined onto every URL before taggers and the AI-context builder
+# run, but both match route text. A host or base path must not change what
+# they conclude: `-u http://admin.h/auth` used to tag every route `admin`
+# and make every route look like an auth route, dropping all guard_absence.
+private def route_view(target : String) : Array(String)
+  options = create_test_options
+  options["base"] = YAML::Any.new([YAML::Any.new(File.expand_path("../../functional_test/fixtures/javascript/express", __DIR__))])
+  options["ai_context"] = YAML::Any.new(true)
+  options["all_taggers"] = YAML::Any.new(true)
+  options["url"] = YAML::Any.new(target)
+  runner = NoirRunner.new(options)
+  runner.detect
+  runner.analyze
+  CodeLocator.instance.reset_files
+  runner.endpoints.map do |endpoint|
+    endpoint.url.should start_with(target)
+    {endpoint.method, endpoint.url[target.size..], endpoint.tags.map(&.name).sort!, endpoint.ai_context.to_json}.to_s
+  end.sort!
+end
+
+describe "NoirRunner with -u" do
+  it "tags and builds AI context from the route path, not the target URL" do
+    plain = route_view("")
+    plain.join.should contain("guard_absence")
+    route_view("http://admin.h/auth").should eq(plain)
+  end
+end
