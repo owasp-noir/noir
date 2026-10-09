@@ -410,4 +410,30 @@ describe "OutputBuilderOas2" do
     operation["parameters"].as_a
       .none? { |p| p["in"].as_s == "query" && p["name"].as_s == "body" }.should be_true
   end
+
+  it "renders an operation with thousands of parameters in linear time" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+      "url"     => YAML::Any.new(""),
+    }
+    builder = OutputBuilderOas2.new(options)
+    builder.io = IO::Memory.new
+
+    n = 20_000
+    params = Array.new(n) { |i| Param.new("p#{i}", "", "query") }
+    params << Param.new("p0", "", "query") # a repeat still folds into one
+    endpoint = Endpoint.new("/big", "GET", params)
+
+    # A scan of the operation's parameters per append took ~45s here.
+    elapsed = Time.measure { builder.print([endpoint]) }
+    elapsed.should be < 5.seconds
+
+    names = JSON.parse(builder.io.to_s)["paths"]["/big"]["get"]["parameters"].as_a.map(&.["name"].as_s)
+    names.size.should eq(n)
+    names.first(2).should eq(["p0", "p1"])
+  end
 end

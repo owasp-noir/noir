@@ -64,7 +64,7 @@ class OutputBuilderSarif < OutputBuilder
               rb.rule_id("endpoint-discovery")
               rb.level(Sarif::Level::Note)
               endpoint.details.code_paths.each do |code_path|
-                rb.location(uri: code_path.path, start_line: code_path.line)
+                rb.location(uri: sarif_uri(code_path.path), start_line: code_path.line)
               end
             end
           else
@@ -79,7 +79,7 @@ class OutputBuilderSarif < OutputBuilder
           r.result(result.extract,
             rule_id: result.id,
             level: map_severity_to_sarif_level(result.info.severity),
-            uri: result.file_path,
+            uri: sarif_uri(result.file_path),
             start_line: result.line_number)
         end
       end

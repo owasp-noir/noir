@@ -140,4 +140,57 @@ describe "OutputBuilderPowershell" do
     line.should_not contain("-Body ")
     line.should_not contain("application/x-www-form-urlencoded")
   end
+
+  it "emits each hash-literal key once, case-insensitively" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderPowershell.new(options)
+    builder.io = IO::Memory.new
+
+    # PowerShell rejects `@{"Cookie"=...; "Cookie"=...}` and `@{"X-A"=...;
+    # "x-a"=...}` outright: "Duplicate keys ... are not allowed in hash
+    # literals".
+    endpoint = Endpoint.new("/c", "GET")
+    endpoint.push_param(Param.new("cookie", "theme=dark", "header"))
+    endpoint.push_param(Param.new("sid", "1", "cookie"))
+    endpoint.push_param(Param.new("X-A", "1", "header"))
+    endpoint.push_param(Param.new("x-a", "2", "header"))
+
+    upload = Endpoint.new("/up", "POST")
+    upload.push_param(Param.new("doc", "", "form"))
+    upload.push_param(Param.new("Doc", "", "file"))
+
+    builder.print([endpoint, upload])
+    lines = builder.io.to_s.split("\n").reject(&.empty?)
+
+    lines[0].should eq(%(Invoke-WebRequest -Method "GET" -Uri "/c" -Headers @{"Cookie"="theme=dark; sid=1"; "X-A"="1"}))
+    lines[1].should eq(%(Invoke-WebRequest -Method "POST" -Uri "/up" -Form @{"doc"=""}))
+  end
+
+  it "backticks typographic double quotes so a route cannot close the string" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderPowershell.new(options)
+    builder.io = IO::Memory.new
+
+    # PowerShell ends a "..." string on U+201C/U+201D/U+201E as well as on
+    # `"`, so this route used to run `Start-Process calc`.
+    endpoint = Endpoint.new("/a\u201C;Start-Process calc;\u201D\u201E", "GET")
+    endpoint.push_param(Param.new("h\u201C", "v\u201E", "header"))
+
+    builder.print([endpoint])
+    line = builder.io.to_s.strip
+
+    line.should eq(%(Invoke-WebRequest -Method "GET" -Uri "/a`\u201C;Start-Process calc;`\u201D`\u201E" -Headers @{"h`\u201C"="v`\u201E"}))
+  end
 end

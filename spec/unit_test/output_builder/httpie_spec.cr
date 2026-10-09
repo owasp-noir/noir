@@ -190,4 +190,40 @@ describe "OutputBuilderHttpie" do
     line.should contain("'name='")
     line.should contain("'avatar@avatar'")
   end
+
+  it "backslash-escapes request-item separators inside field names" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderHttpie.new(options)
+    builder.io = IO::Memory.new
+
+    # Unescaped, HTTPie read `@type=` as a file upload, `a:b=` as a header
+    # `a: b=` and `c=d=` as field `c` with value `d=`.
+    json = Endpoint.new("/ld", "POST")
+    json.push_param(Param.new("@type", "", "json"))
+    json.push_param(Param.new("a:b", "", "json"))
+    json.push_param(Param.new("c=d", "", "json"))
+    json.push_param(Param.new("e;f", "", "json"))
+    json.push_param(Param.new("x[y]", "", "json"))
+
+    form = Endpoint.new("/ld", "PUT")
+    form.push_param(Param.new("@f", "", "form"))
+    form.push_param(Param.new("g:h[i]", "", "form"))
+
+    upload = Endpoint.new("/up", "POST")
+    upload.push_param(Param.new("a@b", "", "file"))
+
+    builder.print([json, form, upload])
+    lines = builder.io.to_s.split("\n").reject(&.empty?)
+
+    lines[0].should eq("http 'POST' '/ld' '\\@type=' 'a\\:b=' 'c\\=d=' 'e\\;f=' 'x\\[y\\]='")
+    # Under --form HTTPie keeps a backslash before `[`, so brackets stay bare.
+    lines[1].should eq("http --form 'PUT' '/ld' '\\@f=' 'g\\:h[i]='")
+    lines[2].should eq("http --form 'POST' '/up' 'a\\@b@a@b'")
+  end
 end

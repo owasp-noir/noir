@@ -26,7 +26,11 @@ class OutputBuilderMarkdownTable < OutputBuilder
                       end
                     end
 
-      ob_puts "| #{sanitize_text_cell(endpoint.method)} #{sanitize_text_cell(endpoint.url)} | #{sanitize_text_cell(endpoint.protocol)} | #{params_text} |"
+      # A code span, like the diff report's endpoint column: nothing in a
+      # route (`[x](…)`, `*`, `_`) can render as Markdown inside one, and the
+      # route reads exactly as written.
+      endpoint_cell = markdown_code_span(sanitize_code_span_cell("#{endpoint.method} #{endpoint.url}"))
+      ob_puts "| #{endpoint_cell} | #{sanitize_text_cell(endpoint.protocol)} | #{params_text} |"
     end
   end
 end

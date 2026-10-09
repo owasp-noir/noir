@@ -60,6 +60,20 @@ describe OutputBuilderOasCommon do
       helper.test_normalize_oas_path("/docs/:slug.json").should eq("/docs/{slug}.json")
     end
 
+    it "ends a colon placeholder at a hyphen that no word follows" do
+      # Express `/flights/:from-:to` used to emit `{from-}{to}`, an undeclared
+      # `from-` variable and an unmapped `from`.
+      helper.test_normalize_oas_path("/flights/:from-:to", ["from", "to"]).should eq("/flights/{from}-{to}")
+      helper.test_normalize_oas_path("/a/:x.:y", ["x", "y"]).should eq("/a/{x}.{y}")
+    end
+
+    it "keeps AIP custom verbs that are not declared path params" do
+      helper.test_normalize_oas_path("/v1/things/{id}:cancel", ["id"]).should eq("/v1/things/{id}:cancel")
+      helper.test_normalize_oas_path("/v1/things:batchGet").should eq("/v1/things:batchGet")
+      # A glued placeholder the endpoint does declare still converts.
+      helper.test_normalize_oas_path("/user:id", ["id"]).should eq("/user{id}")
+    end
+
     it "names each bare wildcard distinctly" do
       # A path template variable may not repeat, so `/api/*/v1/*` cannot emit
       # `{wildcard}` twice.

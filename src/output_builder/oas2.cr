@@ -33,7 +33,7 @@ class OutputBuilderOas2 < OutputBuilder
       url_parts = split_route_url(endpoint.url)
       route_query = route_query_parameters(url_parts[:query], endpoint)
       route_query.each do |name, values|
-        append_unique_parameter(parameters, swagger_parameter(name, "query", false, values))
+        parameters << swagger_parameter(name, "query", false, values)
       end
 
       endpoint.params.each do |param|
@@ -48,7 +48,7 @@ class OutputBuilderOas2 < OutputBuilder
         when "form"
           # Form data parameters
           has_form = true
-          append_unique_parameter(parameters, swagger_parameter(param.name, "formData", false))
+          parameters << swagger_parameter(param.name, "formData", false)
           # Prefer multipart once a file field is present; otherwise urlencoded.
           unless has_file || consumes.includes?("application/x-www-form-urlencoded") || consumes.includes?("multipart/form-data")
             consumes << "application/x-www-form-urlencoded"
@@ -58,7 +58,7 @@ class OutputBuilderOas2 < OutputBuilder
           # represents them as `formData` with `type: file` under multipart.
           has_file = true
           has_form = true
-          append_unique_parameter(parameters, json_any({"name" => param.name, "in" => "formData", "type" => "file", "required" => false}).as_h)
+          parameters << json_any({"name" => param.name, "in" => "formData", "type" => "file", "required" => false}).as_h
           consumes.reject! { |c| c == "application/x-www-form-urlencoded" }
           consumes << "multipart/form-data" unless consumes.includes?("multipart/form-data")
         when "xml"
@@ -71,29 +71,28 @@ class OutputBuilderOas2 < OutputBuilder
           consumes << "application/xml" unless consumes.includes?("application/xml")
         when "header"
           # Header parameters
-          append_unique_parameter(parameters, swagger_parameter(param.name, "header", false))
+          parameters << swagger_parameter(param.name, "header", false)
         when "path"
           # Path parameters
-          append_unique_parameter(parameters, swagger_parameter(param.name, "path", true))
+          parameters << swagger_parameter(param.name, "path", true)
         when "cookie"
           # Collect cookie names for later
           cookie_names << param.name
         else
           # Default to query parameter
-          append_unique_parameter(parameters, swagger_parameter(param.name, "query", false))
+          parameters << swagger_parameter(param.name, "query", false)
         end
       end
 
       oas_path, path_variant = resolve_oas_path(endpoint, url_parts[:route], parameters, canonical_paths)
       template_names = path_template_names(oas_path)
-      template_names.each do |name|
-        # A path template variable wins over a same-named query/header
-        # parameter, as it does in the OAS3 builder. `formData` and `body` are
-        # left alone: they are request-payload fields, not another spelling of
-        # the same path segment.
-        parameters.reject! { |p| p["name"].as_s == name && {"query", "header"}.includes?(p["in"].as_s) }
-        append_unique_parameter(parameters, swagger_parameter(name, "path", true))
-      end
+      # A path template variable wins over a same-named query/header
+      # parameter, as it does in the OAS3 builder. `formData` and `body` are
+      # left alone: they are request-payload fields, not another spelling of
+      # the same path segment.
+      template_name_set = template_names.to_set
+      parameters.reject! { |p| {"query", "header"}.includes?(p["in"].as_s) && template_name_set.includes?(p["name"].as_s) }
+      template_names.each { |name| parameters << swagger_parameter(name, "path", true) }
 
       # Add single Cookie header parameter if cookies exist
       # Cookies are not directly supported in OAS2, typically sent as Cookie header
@@ -116,19 +115,19 @@ class OutputBuilderOas2 < OutputBuilder
       # concrete field names as request parameters.
       body_properties = json_properties.merge(xml_properties)
       if !body_properties.empty? && !has_form
-        append_unique_parameter(parameters, json_any({
+        parameters << json_any({
           "name"     => "body",
           "in"       => "body",
           "required" => false,
           "schema"   => {"type" => "object", "properties" => body_properties},
-        }).as_h)
+        }).as_h
       elsif !body_properties.empty? && has_form
         # OAS2 forbids `body` and `formData` in the same operation, so the
         # JSON/XML body is dropped in favor of the concrete formData fields.
         # Rather than losing the field names entirely, surface each as a query
         # parameter (query + formData are allowed together) so they survive.
         body_properties.each_key do |name|
-          append_unique_parameter(parameters, swagger_parameter(name, "query", false))
+          parameters << swagger_parameter(name, "query", false)
         end
       end
 
@@ -136,6 +135,7 @@ class OutputBuilderOas2 < OutputBuilder
         consumes.reject! { |content_type| {"application/json", "application/xml"}.includes?(content_type) }
       end
 
+      parameters = unique_parameters(parameters)
       unmapped_path_params = extract_unmapped_path_parameters(parameters, template_names)
 
       # Build operation object

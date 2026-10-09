@@ -368,7 +368,7 @@ class OutputBuilderDiff < OutputBuilder
       rb.rule_id(rule_id)
       rb.level(level)
       endpoint.details.code_paths.each do |code_path|
-        rb.location(uri: code_path.path, start_line: code_path.line)
+        rb.location(uri: sarif_uri(code_path.path), start_line: code_path.line)
       end
     end
   end

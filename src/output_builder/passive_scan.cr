@@ -20,17 +20,20 @@ class OutputBuilderPassiveScan < OutputBuilder
   #     the `-o` file finish, instead of `exit(0)`-ing mid-report.
   def print(passive_results : Array(PassiveScanResult))
     passive_results.each do |result|
-      severity = severity_color(result.info.severity)
-      id = result.id.colorize(:light_blue).toggle(@is_color)
-      category = result.category.colorize(:light_yellow).toggle(@is_color)
-      name = result.info.name.colorize(:light_green).toggle(@is_color)
+      # The extract and the file path come from the scanned repo, and the
+      # rule text from a rule directory that need not be Noir's own; all of
+      # it is escaped the way the endpoint report above it is.
+      severity = severity_color(escape_control_chars(result.info.severity))
+      id = escape_control_chars(result.id).colorize(:light_blue).toggle(@is_color)
+      category = escape_control_chars(result.category).colorize(:light_yellow).toggle(@is_color)
+      name = escape_control_chars(result.info.name).colorize(:light_green).toggle(@is_color)
 
       ob_puts "[#{severity}][#{id}][#{category}] #{name}"
       # Indented to match `NoirLogger#sub`. These two lines are part of
       # the finding — the extract, and the file:line that says where the
       # secret is — not progress logging, so they share the report stream.
-      ob_puts "  ├── extract: #{result.extract}"
-      ob_puts "  └── file: #{result.file_path}:#{result.line_number}"
+      ob_puts "  ├── extract: #{escape_control_chars(result.extract)}"
+      ob_puts "  └── file: #{escape_control_chars(result.file_path)}:#{result.line_number}"
       ob_puts ""
     end
   end

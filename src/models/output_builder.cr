@@ -215,7 +215,7 @@ class OutputBuilder
       return
     end
     unique.each do |name|
-      ob_puts name.colorize(:light_green).toggle(@is_color)
+      ob_puts escape_control_chars(name).colorize(:light_green).toggle(@is_color)
     end
   end
 
@@ -530,51 +530,32 @@ class OutputBuilder
     nil
   end
 
-  # Renders C0/C1 control characters — the escape sequences a terminal
-  # acts on — as visible `\xNN` text.
-  #
-  # Everything a report prints comes out of the repo being scanned, which is
-  # the one thing Noir never trusts: a route literal
-  # `"/x\e]8;;http://evil.example\aclick\e]8;;\a"` was replayed verbatim into
-  # the terminal, where it rendered as a clickable link to the attacker's
-  # host instead of as the string the source actually contains. `\e[2J`,
-  # `\ec` and a bare newline in a param name are the same problem with a
-  # different payload: the report stops describing the code and starts
-  # obeying it.
-  #
-  # Escaped rather than stripped so the report still says what is there —
-  # `-f json` shows the byte as `\u001b`, and this is that fact in plain
-  # text. Only the control blocks are touched, so a CJK route or a `£` in a
-  # param value passes through unchanged.
+  # Repo text on its way to a terminal: see `ControlChars.escape`.
   protected def escape_control_chars(text : String) : String
-    return text unless may_contain_control_char?(text)
+    ControlChars.escape(text)
+  end
 
+  # A SARIF `artifactLocation.uri` is a URI reference, not a file path, so a
+  # file named `a b.go`, `x#frag?q.go` or `a%20b.go` read back as a broken
+  # URI, a fragment, a query or a different file. Everything outside RFC
+  # 3986's path characters is percent-encoded (`:` too, which would otherwise
+  # read as a scheme in a first segment). Windows separators become `/` and
+  # a drive-lettered path becomes `file:///C:/…`, since `C:` would itself
+  # parse as a scheme.
+  protected def sarif_uri(path : String) : String
+    path = Path.new(path).to_posix.to_s
     String.build do |io|
-      text.each_char do |char|
-        if control_char?(char)
-          io << "\\x" << char.ord.to_s(16).rjust(2, '0')
-        else
-          io << char
-        end
+      if path.size >= 3 && path[0].ascii_letter? && path[1] == ':' && path[2] == '/'
+        io << "file:///" << path[0, 2]
+        path = path[2..]
       end
+      URI.encode(path, io) { |byte| URI.unreserved?(byte) || SARIF_URI_KEPT.includes?(byte.unsafe_chr) }
     end
   end
 
-  # Byte-level prefilter so the common (clean) string never pays for a
-  # char-by-char walk. C1 controls are two bytes in UTF-8 and always start
-  # with 0xC2, which also introduces `\u00a0`-`\u00bf`; those fall through to
-  # `control_char?` and are left alone.
-  private def may_contain_control_char?(text : String) : Bool
-    text.each_byte do |byte|
-      return true if byte < 0x20 || byte == 0x7f || byte == 0xc2
-    end
-    false
-  end
-
-  private def control_char?(char : Char) : Bool
-    ord = char.ord
-    ord < 0x20 || ord == 0x7f || (0x80 <= ord <= 0x9f)
-  end
+  # Path characters `sarif_uri` leaves as they are: RFC 3986's sub-delims,
+  # `@` and the `/` separator.
+  SARIF_URI_KEPT = Set{'!', '$', '&', '\'', '(', ')', '*', '+', ',', ';', '=', '@', '/'}
 
   private def format_noir_callee(callee : Callee) : String
     location = format_location(callee.path, callee.line)
