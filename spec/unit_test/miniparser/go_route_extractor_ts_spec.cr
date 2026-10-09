@@ -297,6 +297,24 @@ describe Noir::TreeSitterGoRouteExtractor do
     routes.map { |r| {r.verb, r.path} }.should eq([{"GET", "/a/b/x"}])
   end
 
+  it "stacks a package-level self-regroup onto the sibling file's binding" do
+    source = <<-GO
+      package main
+
+      func setup() {
+          r = r.Group("/v1")
+          r.Get("/x", handler)
+      }
+      GO
+
+    # Not exported (it would feed back as this file's own seed) ...
+    Noir::TreeSitterGoRouteExtractor.extract_groups(source).has_key?("r").should be_false
+    Noir::TreeSitterGoRouteExtractor.extract_engine_names_and_groups(source)[1].has_key?("r").should be_false
+    # ... but the sibling's `r = app.Group("/api")` seed is kept.
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source, {"r" => "/api"})
+    routes.map { |r| {r.verb, r.path} }.should eq([{"GET", "/api/v1/x"}])
+  end
+
   it "does not loop on reassigned string identifiers" do
     source = <<-GO
       package main
@@ -391,6 +409,10 @@ describe Noir::TreeSitterGoRouteExtractor do
           m.HandleFunc("/g", h).Methods("POST")
           root := mux.NewRouter().PathPrefix("/root").Subrouter()
           root.HandleFunc("/i", h).Methods("GET")
+          helper := newRouter().PathPrefix("/helper").Subrouter()
+          helper.HandleFunc("/j", h).Methods("GET")
+          nr := api.NewRoute().PathPrefix("/nr").Subrouter()
+          nr.HandleFunc("/k", h).Methods("GET")
       }
       GO
 
@@ -398,7 +420,9 @@ describe Noir::TreeSitterGoRouteExtractor do
     routes.map { |r| {r.verb, r.path} }.sort!.should eq([
       {"GET", "/api/a"},
       {"GET", "/d/e"},
+      {"GET", "/api/nr/k"},
       {"GET", "/h/f"},
+      {"GET", "/helper/j"},
       {"GET", "/root/i"},
       {"POST", "/api/g"},
     ].sort)

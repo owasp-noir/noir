@@ -241,7 +241,7 @@ module Noir
         string_values = collect_string_values(root, source)
         mux_chained_operands = Set(String).new
 
-        drop_self_regrouped(root, source, group_prefixes, group_method)
+        drop_local_self_regroups(root, source, group_prefixes, group_method)
 
         # Sub-app mounts (Fiber `app.Mount("/mnt", micro)`) bind the mounted
         # app's variable to the prefix. Collected before the group walk so
@@ -336,35 +336,34 @@ module Noir
       Noir::TreeSitter.parse_go(source) do |root|
         string_values = collect_string_values(root, source)
 
-        drop_self_regrouped(root, source, group_prefixes, group_method)
+        drop_local_self_regroups(root, source, group_prefixes, group_method)
         Noir::TreeSitter.walk(root) do |node|
           next unless group_assignment_node?(node)
           collect_group(node, source, group_prefixes, group_method, group_aliases, string_values)
         end
+        unexported_self_regroups(root, source, group_method).each { |name| group_prefixes.delete(name) }
       end
       group_prefixes
     end
 
-    # `r = r.Group("/a")` stacks onto r's current prefix, so re-running it
-    # on a seed that already holds this file's result (the package map
-    # includes the file's own groups) doubles the prefix: `/a/a`. Drop such
-    # names from the seed so the walk rebuilds them from this file alone.
+    # `r = r.Group("/a")` stacks onto whatever r held on entry. Returns
+    # `{self, other}`: names rebound that way, and names the file also
+    # binds from something else (`r := app.Group("/x")`).
     # (Zero-arg alias calls bind with `||=` and are already idempotent.)
-    private def drop_self_regrouped(root : LibTreeSitter::TSNode,
-                                    source : String,
-                                    groups : Hash(String, String),
-                                    group_method : String)
-      return if groups.empty?
+    private def self_regroups(root : LibTreeSitter::TSNode,
+                              source : String,
+                              group_method : String) : Tuple(Set(String), Set(String))
+      selfs = Set(String).new
+      others = Set(String).new
       Noir::TreeSitter.walk(root) do |node|
-        next unless Noir::TreeSitter.node_type(node) == "assignment_statement"
-        left = Noir::TreeSitter.field(node, "left")
-        right = Noir::TreeSitter.field(node, "right")
+        next unless group_assignment_node?(node)
+        var_spec = Noir::TreeSitter.node_type(node) == "var_spec"
+        left = Noir::TreeSitter.field(node, var_spec ? "name" : "left")
+        right = Noir::TreeSitter.field(node, var_spec ? "value" : "right")
         next unless left && right
         name_node = identifier_or_first_child(left)
         current = Noir::TreeSitter.first_named_child(right)
         next unless name_node && current && Noir::TreeSitter.node_type(name_node) == "identifier"
-        name = Noir::TreeSitter.node_text(name_node, source)
-        next unless groups.has_key?(name)
         grouped = false
         while Noir::TreeSitter.node_type(current) == "call_expression"
           function = Noir::TreeSitter.field(current, "function")
@@ -372,13 +371,68 @@ module Noir
           field = Noir::TreeSitter.field(function, "field")
           operand = Noir::TreeSitter.field(function, "operand")
           break unless field && operand
-          method = Noir::TreeSitter.node_text(field, source)
-          grouped ||= method == group_method
+          grouped ||= Noir::TreeSitter.node_text(field, source) == group_method
           current = operand
         end
-        next unless grouped && Noir::TreeSitter.node_type(current) == "identifier"
-        groups.delete(name) if Noir::TreeSitter.node_text(current, source) == name
+        next unless grouped
+        name = Noir::TreeSitter.node_text(name_node, source)
+        self_bound = Noir::TreeSitter.node_type(current) == "identifier" && Noir::TreeSitter.node_text(current, source) == name
+        (self_bound ? selfs : others) << name
       end
+      {selfs, others}
+    end
+
+    # Package-level names the file only ever rebinds from themselves
+    # (`var r fiber.Router` set in a sibling file). Their value already
+    # includes whatever the name held on entry, so exporting it would feed
+    # it back as this file's seed (`/a/a`) and clash with the sibling's
+    # real binding. Locally bound names keep exporting their own value,
+    # which is what lets the package map flag a reused local name as
+    # ambiguous; their seed is dropped by `drop_local_self_regroups`.
+    private def unexported_self_regroups(root : LibTreeSitter::TSNode, source : String, group_method : String) : Set(String)
+      selfs, others = self_regroups(root, source, group_method)
+      selfs.subtract(others)
+      return selfs if selfs.empty?
+      selfs - function_local_names(root, source)
+    end
+
+    # A self-regrouped name the file binds locally (`func f(r fiber.Router)
+    # { r = r.Group("/a") }`) starts from that local binding, not from a
+    # same-named package group, so its seed is dropped. A package-level
+    # var (`var r fiber.Router` set in a sibling file) keeps its seed.
+    private def drop_local_self_regroups(root : LibTreeSitter::TSNode,
+                                         source : String,
+                                         groups : Hash(String, String),
+                                         group_method : String)
+      return if groups.empty?
+      selfs, _ = self_regroups(root, source, group_method)
+      selfs.select! { |name| groups.has_key?(name) }
+      return if selfs.empty?
+      locals = function_local_names(root, source)
+      selfs.each { |name| groups.delete(name) if locals.includes?(name) }
+    end
+
+    # Parameter and variable names declared inside functions.
+    private def function_local_names(root : LibTreeSitter::TSNode, source : String) : Set(String)
+      names = Set(String).new
+      Noir::TreeSitter.each_named_child(root) do |decl|
+        next unless {"function_declaration", "method_declaration"}.includes?(Noir::TreeSitter.node_type(decl))
+        Noir::TreeSitter.walk(decl) do |node|
+          case Noir::TreeSitter.node_type(node)
+          when "parameter_declaration", "var_spec"
+            Noir::TreeSitter.each_named_child(node) do |child|
+              names << Noir::TreeSitter.node_text(child, source) if Noir::TreeSitter.node_type(child) == "identifier"
+            end
+          when "short_var_declaration"
+            if left = Noir::TreeSitter.field(node, "left")
+              Noir::TreeSitter.each_named_child(left) do |child|
+                names << Noir::TreeSitter.node_text(child, source) if Noir::TreeSitter.node_type(child) == "identifier"
+              end
+            end
+          end
+        end
+      end
+      names
     end
 
     # A Gin "router-builder" helper — `func F(rg *gin.RouterGroup) {...}`
@@ -633,6 +687,7 @@ module Noir
             collect_engine_param(node, source, names)
           end
         end
+        unexported_self_regroups(root, source, group_method).each { |name| group_prefixes.delete(name) }
       end
       {names, group_prefixes}
     end
@@ -987,10 +1042,11 @@ module Noir
         current = parent_node
         while Noir::TreeSitter.node_type(current) == "call_expression"
           inner_function = Noir::TreeSitter.field(current, "function")
-          return unless inner_function && Noir::TreeSitter.node_type(inner_function) == "selector_expression"
+          # A plain call (`newRouter()`) is the chain root.
+          break unless inner_function && Noir::TreeSitter.node_type(inner_function) == "selector_expression"
           inner_field = Noir::TreeSitter.field(inner_function, "field")
           inner_operand = Noir::TreeSitter.field(inner_function, "operand")
-          return unless inner_field && inner_operand
+          break unless inner_field && inner_operand
           case Noir::TreeSitter.node_text(inner_field, source)
           when "PathPrefix", "Path"
             inner_args = Noir::TreeSitter.field(current, "arguments")
@@ -1002,7 +1058,7 @@ module Noir
             end
             return unless segment
             segments.unshift(segment)
-          when "Methods", "Host", "Schemes", "Headers", "HeadersRegexp", "Queries", "MatcherFunc", "Name"
+          when "Methods", "Host", "Schemes", "Headers", "HeadersRegexp", "Queries", "MatcherFunc", "Name", "NewRoute"
             # Matcher only; no path segment.
           else
             break # chain root, e.g. `mux.NewRouter()`
