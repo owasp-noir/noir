@@ -68,9 +68,51 @@ expected_endpoints = [
     Param.new("sessionId", "", "cookie"),
     Param.new("preferences", "", "cookie"),
   ]),
+  Endpoint.new("/rooted/ping", "GET"),
+  # Several controllers in one file, each on a local base class.
+  Endpoint.new("/First/Index", "GET"),
+  Endpoint.new("/First/Data", "GET", [
+    Param.new("id", "", "query"),
+  ]),
+  Endpoint.new("/First/Download", "GET", [
+    Param.new("name", "", "query"),
+  ]),
+  Endpoint.new("/First/Save", "POST", [
+    Param.new("id", "", "form"),
+    Param.new("continueEditing", "", "form"),
+  ]),
+  Endpoint.new("/Fourth/Visible", "GET"),
+  Endpoint.new("/second/other", "GET", [
+    Param.new("x", "", "query"),
+  ]),
+  Endpoint.new("/Third/Third", "GET", [
+    Param.new("x", "", "query"),
+  ]),
 ]
 
-FunctionalTester.new("fixtures/csharp/aspnet_mvc/", {
+tester = FunctionalTester.new("fixtures/csharp/aspnet_mvc/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
-}, expected_endpoints).perform_tests
+}, expected_endpoints)
+
+tester.perform_tests
+
+describe "ASP.NET MVC controller discovery", tags: "functional" do
+  it "names a parameter, not its default value or a trailing comment" do
+    save = tester.app.endpoints.find! { |e| e.url == "/First/Save" }
+    save.params.map(&.name).should eq ["id", "continueEditing"]
+  end
+
+  it "leaves Web API / OData controllers alone" do
+    tester.app.endpoints.any?(&.url.starts_with?("/Items")).should be_false
+    tester.app.endpoints.any?(&.url.starts_with?("/LegacyApi")).should be_false
+  end
+
+  it "skips non-routable classes and non-action methods" do
+    urls = tester.app.endpoints.map(&.url)
+    %w[/SharedBase/Shared /Generic/List /Cache/Bogus /Fourth/Helper /Fourth/Menu
+      /Fourth/Stat /Fourth/Priv /Fourth/Raw].each do |url|
+      urls.should_not contain(url)
+    end
+  end
+end

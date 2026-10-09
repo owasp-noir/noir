@@ -33,6 +33,10 @@ expected_endpoints = [
   Endpoint.new("/admin/notify", "POST", [
     Param.new("subject", "", "form"),
   ]),
+  # Two registrations on one line, and a leading-dot group chain.
+  Endpoint.new("/api/reports/daily", "GET"),
+  Endpoint.new("/api/reports/weekly", "GET"),
+  Endpoint.new("/archive/latest", "GET"),
   # `class DirectorsModule : CarterModule` with `: base("/directors")` — every
   # route in the module hangs off the constructor base path.
   Endpoint.new("/directors", "GET"),

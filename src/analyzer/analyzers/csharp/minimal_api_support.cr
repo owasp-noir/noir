@@ -60,14 +60,69 @@ module Analyzer::CSharp::MinimalApiSupport
     masked_lines = lexer.masked_lines
     group_prefixes = extract_map_group_prefixes(lexer.code_source)
 
-    lines.each_with_index do |line, index|
-      next unless route_builder_line?(line)
-
-      block = extract_map_block(lines, index)
-      extract_endpoints_from_map_block(block, group_prefixes, file, index + 1, lines, masked_lines, include_callee).each do |endpoint|
+    each_map_block(lines, masked_lines, 0...lines.size, group_prefixes) do |block, index, chain_prefix|
+      extract_endpoints_from_map_block(block, group_prefixes, file, index + 1, lines, masked_lines,
+        include_callee, chain_prefix: chain_prefix).each do |endpoint|
         @result << endpoint
       end
     end
+  end
+
+  # Yields `{block, line_index, chain_prefix}` for every `Map*` registration
+  # on the lines in `range`, one per statement, so two registrations on one
+  # line are both seen. `chain_prefix` carries the `MapGroup` prefix of a
+  # chain whose `.Map*` call continues on a leading-dot line:
+  #
+  #   app.MapGroup("/api")
+  #      .MapGet("/items", ...);
+  private def each_map_block(lines : Array(String), masked_lines : Array(String), range : Range(Int32, Int32),
+                             group_prefixes : Hash(String, String), &)
+    chain_prefix = ""
+    range.each do |index|
+      line = lines[index]
+      masked = masked_lines[index]? || line
+      # A comment or blank line inside a chain does not end it.
+      next if masked.blank?
+      continuation = masked.lstrip.starts_with?('.')
+      chain_prefix = "" unless continuation
+      if route_builder_line?(line)
+        starts = map_statement_starts(masked)
+        start_chars = {line.chars, masked.chars} if starts.size > 1
+        starts.each do |column|
+          prefix = column == 0 && continuation ? chain_prefix : ""
+          yield extract_map_block(lines, masked_lines, index, column, start_chars), index, prefix
+        end
+      end
+      next unless line.includes?("MapGroup")
+      # Both sides are already normalized (`/a`, `/a/b`), so a plain append
+      # joins them without re-normalizing the whole chain on every line.
+      line_prefix = group_chain_prefix(line, group_prefixes).rchop("/")
+      chain_prefix = continuation ? chain_prefix + line_prefix : line_prefix
+    end
+  end
+
+  # Start column of each statement on `masked` that holds a `Map*` call. A
+  # statement ends at a `;` outside the line's parens and braces.
+  private def map_statement_starts(masked : String) : Array(Int32)
+    starts = [] of Int32
+    start = 0
+    depth = 0
+    segment = String::Builder.new
+    masked.each_char_with_index do |char, column|
+      segment << char
+      case char
+      when '(', '{' then depth += 1
+      when ')', '}' then depth -= 1
+      when ';'
+        next if depth > 0
+        starts << start if route_builder_line?(segment.to_s)
+        segment = String::Builder.new
+        start = column + 1
+        depth = 0
+      end
+    end
+    starts << start if start < masked.size && route_builder_line?(segment.to_s)
+    starts
   end
 
   private def route_builder_line?(line : String) : Bool
@@ -83,8 +138,9 @@ module Analyzer::CSharp::MinimalApiSupport
                                                file_lines : Array(String),
                                                masked_lines : Array(String),
                                                include_callee : Bool,
-                                               route_prefix : String = "") : Array(Endpoint)
-    route, methods = extract_route_and_methods(block, group_prefixes)
+                                               route_prefix : String = "",
+                                               chain_prefix : String = "") : Array(Endpoint)
+    route, methods = extract_route_and_methods(block, group_prefixes, chain_prefix)
     return [] of Endpoint unless route && methods.size > 0
 
     route = join_route_parts(route_prefix, route) unless route_prefix.empty?
@@ -119,13 +175,13 @@ module Analyzer::CSharp::MinimalApiSupport
     endpoints
   end
 
-  private def extract_route_and_methods(block : String, group_prefixes : Hash(String, String)) : Tuple(String?, Array(String))
+  private def extract_route_and_methods(block : String, group_prefixes : Hash(String, String), chain_prefix : String = "") : Tuple(String?, Array(String))
     if block.includes?("MapMethods")
-      route, methods = extract_map_methods_route(block, group_prefixes)
+      route, methods = extract_map_methods_route(block, group_prefixes, chain_prefix)
       return {route, methods}
     end
 
-    inline_prefix = extract_inline_group_prefix(block, group_prefixes)
+    inline_prefix = extract_inline_group_prefix(block, group_prefixes, chain_prefix)
     if match = block.match(MAP_VERB_ROUTE_RE)
       receiver = match[1]?
       route = apply_group_prefix(match[3], receiver, group_prefixes)
@@ -143,8 +199,8 @@ module Analyzer::CSharp::MinimalApiSupport
     {nil, [] of String}
   end
 
-  private def extract_map_methods_route(block : String, group_prefixes : Hash(String, String)) : Tuple(String?, Array(String))
-    inline_prefix = extract_inline_group_prefix(block, group_prefixes)
+  private def extract_map_methods_route(block : String, group_prefixes : Hash(String, String), chain_prefix : String) : Tuple(String?, Array(String))
+    inline_prefix = extract_inline_group_prefix(block, group_prefixes, chain_prefix)
 
     if match = block.match(MAP_METHODS_RE)
       receiver = match[1]?
@@ -168,11 +224,19 @@ module Analyzer::CSharp::MinimalApiSupport
     methods.uniq
   end
 
-  private def extract_inline_group_prefix(block : String, group_prefixes : Hash(String, String)) : String
+  private def extract_inline_group_prefix(block : String, group_prefixes : Hash(String, String), chain_prefix : String = "") : String
     map_index = block.index(MAP_ANY_PREFIX_RE)
     return "" unless map_index
 
-    prefix_source = block[0...map_index]
+    own_prefix = group_chain_prefix(block[0...map_index], group_prefixes)
+    return own_prefix if chain_prefix.empty?
+    return chain_prefix if own_prefix.empty?
+    join_route_parts(chain_prefix, own_prefix)
+  end
+
+  # The joined `MapGroup("...")` prefixes in `prefix_source`, led by the
+  # prefix of the receiver variable the chain starts from; "" when none.
+  private def group_chain_prefix(prefix_source : String, group_prefixes : Hash(String, String)) : String
     parts = prefix_source.scan(/MapGroup\s*\(\s*@?"([^"]+)"/).map(&.[1]?.to_s)
     return "" if parts.empty?
 
@@ -232,7 +296,16 @@ module Analyzer::CSharp::MinimalApiSupport
     "/" + clean_parts.join("/")
   end
 
-  private def extract_map_block(lines : Array(String), start_index : Int32) : String
+  # The registration statement starting at `start_column` of
+  # `lines[start_index]`, up to the `;` that ends it. Depth is counted over
+  # `masked_lines` so a `(` inside a route string (`"/smile-("`) can't hold
+  # the statement open and swallow the registrations after it.
+  #
+  # `start_chars` is `{line.chars, masked.chars}` of the start line, built once
+  # by a caller that extracts several statements from it.
+  private def extract_map_block(lines : Array(String), masked_lines : Array(String), start_index : Int32,
+                                start_column : Int32 = 0,
+                                start_chars : Tuple(Array(Char), Array(Char))? = nil) : String
     io = String::Builder.new
     paren_depth = 0
     brace_depth = 0
@@ -240,15 +313,29 @@ module Analyzer::CSharp::MinimalApiSupport
 
     while i < lines.size
       line = lines[i]
-      paren_depth += line.count('(') - line.count(')')
-      brace_depth += line.count('{') - line.count('}')
-      io << line
-      io << '\n'
-
-      if paren_depth <= 0 && brace_depth <= 0 && line.includes?(";")
-        break
+      masked = masked_lines[i]? || line
+      from = i == start_index ? start_column : 0
+      if from == 0 && !masked.includes?(';')
+        paren_depth += masked.count('(') - masked.count(')')
+        brace_depth += masked.count('{') - masked.count('}')
+        io << line
+      else
+        # Char arrays index in O(1); `String#[]` is O(n) on multi-byte text.
+        line_chars, masked_chars = (start_chars if i == start_index) || {line.chars, masked.chars}
+        (from...masked_chars.size).each do |column|
+          char = masked_chars[column]
+          io << (line_chars[column]? || ' ')
+          case char
+          when '(' then paren_depth += 1
+          when ')' then paren_depth -= 1
+          when '{' then brace_depth += 1
+          when '}' then brace_depth -= 1
+          when ';'
+            return io.to_s if paren_depth <= 0 && brace_depth <= 0
+          end
+        end
       end
-
+      io << '\n'
       i += 1
     end
 
@@ -506,16 +593,19 @@ module Analyzer::CSharp::MinimalApiSupport
   # split on commas while respecting nested parens/brackets/braces/generics
   # and string literals.
   private def map_call_arguments(block : String) : Array(String)
-    m = block.match(MAP_CALL_RE)
+    # Find the call and its parens on the masked block so a `(` or `)`
+    # inside a string argument can't unbalance them.
+    masked = Noir::CSharpLexer.new(block).masked_source
+    m = masked.match(MAP_CALL_RE)
     return [] of String unless m
 
-    open = block.index('(', m.begin)
+    open = masked.index('(', m.begin)
     return [] of String unless open
 
     # Index over `Array(Char)` (O(1)) rather than `String#[](Int)`, which is
     # O(n) per access on multi-byte source and turns this paren-depth walk
     # O(n^2) across a large inline lambda handler with non-ASCII content.
-    chars = block.chars
+    chars = masked.chars
     depth = 0
     i = open
     close = -1

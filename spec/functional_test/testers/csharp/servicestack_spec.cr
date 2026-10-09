@@ -48,6 +48,27 @@ expected_endpoints = [
     Param.new("ContactId", "", "query"),
   ]),
 
+  Endpoint.new("/contacts/named", "DELETE", [
+    Param.new("ContactId", "", "query"),
+  ]),
+
+  # Attribute list shapes (ServiceModel/AttributeShapes.cs).
+  Endpoint.new("/same", "ANY", [
+    Param.new("A", "", "json"),
+  ]),
+  Endpoint.new("/verbs", "GET", [
+    Param.new("B", "", "query"),
+  ]),
+  Endpoint.new("/two1", "ANY", [
+    Param.new("C", "", "json"),
+  ]),
+  Endpoint.new("/two2", "PUT", [
+    Param.new("C", "", "json"),
+  ]),
+  Endpoint.new("/multi", "POST", [
+    Param.new("D", "", "json"),
+  ]),
+
   # A plain ASP.NET Core MVC controller that happens to live in a project
   # that also references ServiceStack. Owned by cs_aspnet_core_mvc — see the
   # "project scoping" describe block below.

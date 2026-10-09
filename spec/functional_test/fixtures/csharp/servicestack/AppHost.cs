@@ -17,6 +17,9 @@ namespace ServiceStackDemo
 
             // Single-statement fluent registration with an explicit verb.
             Routes.Add<GetContact>("/contacts", "GET");
+
+            // The verb list passed as a named argument.
+            Routes.Add<GetContact>("/contacts/named", verbs: "DELETE");
         }
     }
 }
