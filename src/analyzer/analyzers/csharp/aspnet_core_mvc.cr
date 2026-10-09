@@ -10,6 +10,27 @@ module Analyzer::CSharp
 
     DEFAULT_ROUTE = "{controller=Home}/{action=Index}/{id?}"
 
+    CONTROLLER_PLACEHOLDER_RE = /\{controller[=:?}]/
+    ACTION_PLACEHOLDER_RE     = /\{action[=:?}]/
+    CONTROLLER_DEFAULT_RE     = /\bcontroller\s*=\s*@?"(\w+)"/i
+    ACTION_DEFAULT_RE         = /\baction\s*=\s*@?"(\w+)"/i
+
+    # A conventional route template plus the `controller`/`action` its
+    # `defaults` pin. A template without a `{controller}`/`{action}`
+    # placeholder (`blog/{slug}` + `new { controller = "Blog", action =
+    # "Show" }`) reaches only the pinned action, never every action.
+    record ConventionalRoute, pattern : String, controller : String? = nil, action : String? = nil do
+      def applies_to?(controller_name : String, action_name : String) : Bool
+        reaches?(CONTROLLER_PLACEHOLDER_RE, controller, controller_name) &&
+          reaches?(ACTION_PLACEHOLDER_RE, action, action_name)
+      end
+
+      private def reaches?(placeholder : Regex, pinned : String?, name : String) : Bool
+        return true if pattern.matches?(placeholder)
+        !pinned.nil? && pinned.compare(name, case_insensitive: true) == 0
+      end
+    end
+
     # Crystal recompiles an interpolated regex literal on every evaluation
     # (a full PCRE2 JIT compile). The `[FromX]` attribute set is fixed, so
     # precompile its markers and strippers once at load time; the
@@ -83,9 +104,9 @@ module Analyzer::CSharp
       params.uniq(&.name)
     end
 
-    private def load_route_patterns_by_scope(project_roots : Array(String)) : Hash(String, Array(String))
-      patterns_by_scope = Hash(String, Array(String)).new do |hash, key|
-        hash[key] = [] of String
+    private def load_route_patterns_by_scope(project_roots : Array(String)) : Hash(String, Array(ConventionalRoute))
+      patterns_by_scope = Hash(String, Array(ConventionalRoute)).new do |hash, key|
+        hash[key] = [] of ConventionalRoute
       end
       files = get_files_by_extension(".cs").select do |file|
         base = File.basename(file).downcase
@@ -100,19 +121,19 @@ module Analyzer::CSharp
       end
 
       @base_paths.each do |base_path|
-        patterns_by_scope[base_path] << DEFAULT_ROUTE if patterns_by_scope[base_path].empty?
+        patterns_by_scope[base_path] << ConventionalRoute.new(DEFAULT_ROUTE) if patterns_by_scope[base_path].empty?
       end
 
       patterns_by_scope.each do |scope, patterns|
-        patterns << DEFAULT_ROUTE if patterns.empty?
+        patterns << ConventionalRoute.new(DEFAULT_ROUTE) if patterns.empty?
         patterns_by_scope[scope] = patterns.uniq
       end
 
       patterns_by_scope
     end
 
-    private def extract_route_patterns(content : String) : Array(String)
-      patterns = [] of String
+    private def extract_route_patterns(content : String) : Array(ConventionalRoute)
+      patterns = [] of ConventionalRoute
 
       route_regex = /Map[A-Za-z]*ControllerRoute\s*\((.*?)\)/m
       pattern_regex = /pattern\s*:\s*"([^"]+)"/m
@@ -120,11 +141,13 @@ module Analyzer::CSharp
 
       content.scan(route_regex) do |match|
         call_content = match[1]? || ""
+        controller = CONTROLLER_DEFAULT_RE.match(call_content).try(&.[1])
+        action = ACTION_DEFAULT_RE.match(call_content).try(&.[1])
 
         found_pattern = false
         call_content.scan(pattern_regex) do |pattern_match|
           value = pattern_match[1]?
-          patterns << value if value
+          patterns << ConventionalRoute.new(value, controller, action) if value
           found_pattern = true
         end
 
@@ -132,13 +155,13 @@ module Analyzer::CSharp
         unless found_pattern
           call_content.scan(literal_regex) do |literal_match|
             candidate = literal_match[1]?
-            patterns << candidate if candidate && !candidate.empty?
+            patterns << ConventionalRoute.new(candidate, controller, action) if candidate && !candidate.empty?
           end
         end
       end
 
       if content.includes?("MapDefaultControllerRoute")
-        patterns << DEFAULT_ROUTE
+        patterns << ConventionalRoute.new(DEFAULT_ROUTE)
       end
 
       patterns
@@ -165,7 +188,7 @@ module Analyzer::CSharp
     # Only a class with a base list can inherit a marker it does not declare.
     DERIVED_CLASS_RE = /\bclass\s+\w+[^{};]*+:/
 
-    private def analyze_controllers(route_patterns_by_scope : Hash(String, Array(String)),
+    private def analyze_controllers(route_patterns_by_scope : Hash(String, Array(ConventionalRoute)),
                                     project_roots : Array(String), include_callee : Bool)
       queue = [] of String  # declares an intrinsic marker — lex now
       marked = [] of String # mentions `Controller`; may derive from a marked type
@@ -215,13 +238,13 @@ module Analyzer::CSharp
 
       # Selected controllers grouped by file so a file holding several of them
       # is lexed once, not once per class.
-      selected = Hash(String, Array(Tuple(Noir::CSharpType, Array(String)))).new do |hash, key|
-        hash[key] = [] of Tuple(Noir::CSharpType, Array(String))
+      selected = Hash(String, Array(Tuple(Noir::CSharpType, Array(ConventionalRoute)))).new do |hash, key|
+        hash[key] = [] of Tuple(Noir::CSharpType, Array(ConventionalRoute))
       end
       types_by_scope.each do |scope, entries|
         index = Hash(String, Array(Noir::CSharpType)).new
         entries.each { |_, type| (index[type.name] ||= [] of Noir::CSharpType) << type }
-        route_patterns = route_patterns_by_scope[scope]? || [DEFAULT_ROUTE]
+        route_patterns = route_patterns_by_scope[scope]? || [ConventionalRoute.new(DEFAULT_ROUTE)]
         entries.each do |file, type|
           # A `partial` controller splits its modifiers, base list and
           # attributes across files: only one part carries `public class
@@ -339,7 +362,7 @@ module Analyzer::CSharp
     end
 
     private def analyze_controller(file : String, lexer : Noir::CSharpLexer, type : Noir::CSharpType,
-                                   route_patterns : Array(String), include_callee : Bool)
+                                   route_patterns : Array(ConventionalRoute), include_callee : Bool)
       controller_name = type.name.sub(CONTROLLER_SUFFIX_RE, "")
       # Slice the file's already-lexed views down to this class. `line_offset`
       # puts the reported line back in file coordinates.
@@ -713,12 +736,13 @@ module Analyzer::CSharp
       current_route
     end
 
-    private def resolve_routes(controller_route : String, action_route : String, controller_name : String, action_name : String, parameters : Array(Param), route_patterns : Array(String)) : Array(String)
+    private def resolve_routes(controller_route : String, action_route : String, controller_name : String, action_name : String, parameters : Array(Param), route_patterns : Array(ConventionalRoute)) : Array(String)
       routes = build_attribute_routes(controller_route, action_route, controller_name, action_name, parameters)
 
       if routes.empty?
         route_patterns.each do |pattern|
-          raw_route = replace_tokens(pattern, controller_name, action_name)
+          next unless pattern.applies_to?(controller_name, action_name)
+          raw_route = replace_tokens(pattern.pattern, controller_name, action_name)
           raw_route = prune_optional_placeholders(raw_route, parameters)
           routes << normalize_route(raw_route)
         end

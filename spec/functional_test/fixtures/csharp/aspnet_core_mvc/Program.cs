@@ -17,6 +17,9 @@ app.MapControllerRoute(
     name: "default",
     pattern: "{controller=Home}/{action=Index}/{id?}");
 
+// No {controller}/{action} placeholders: only Blog.Show is reachable here.
+app.MapControllerRoute("blog", "blog/{year:int}/{slug}", new { controller = "Blog", action = "Show" });
+
 var api = app.MapGroup("/api");
 var v1 = api.MapGroup("/v1");
 
