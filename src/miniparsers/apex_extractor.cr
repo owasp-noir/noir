@@ -85,7 +85,7 @@ module Noir
 
     # `List<String> ids, Map<String, Object> opts` -> ["ids", "opts"].
     private def arg_names(args : String) : Array(String)
-      TopLevelSplit.split(args, ',', ARGS).compact_map { |part| part.split.last? }
+      TopLevelSplit.split(args, ',', ARGS).compact_map(&.split.last?)
     end
 
     private def next_open(bytes : Bytes, from : Int32) : Int32?

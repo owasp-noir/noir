@@ -49,7 +49,6 @@ module Analyzer::Apex
       if klass.annotations.includes?("restresource") && (mapping = klass.header.match(URL_MAPPING_RE))
         rest_base = "/services/apexrest/#{mapping[1].lchop('/')}"
       end
-      without_sharing = klass.header.matches?(WITHOUT_SHARING_RE)
 
       endpoints = [] of Endpoint
       klass.members.each do |member|
@@ -75,7 +74,7 @@ module Analyzer::Apex
         end
       end
 
-      if without_sharing
+      if klass.header.matches?(WITHOUT_SHARING_RE)
         tag = Tag.new("apex-without-sharing", "Apex class runs without sharing: record-level access is not enforced", TAGGER)
         endpoints.map! { |endpoint| endpoint.add_tag(tag); endpoint }
       end
