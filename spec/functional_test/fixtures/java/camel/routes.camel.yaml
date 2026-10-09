@@ -1,0 +1,23 @@
+- rest:
+    path: /yaml/books
+    get:
+      - path: /{isbn}
+        to: direct:getBook
+    post:
+      - type: com.example.Book
+        param:
+          - name: X-Trace
+            type: header
+        to: direct:addBook
+- route:
+    from:
+      uri: platform-http:/yaml/status
+      parameters:
+        httpMethodRestrict: GET
+      steps:
+        - setBody:
+            constant: ok
+- from:
+    uri: "netty-http:http://0.0.0.0:9090/yaml/raw"
+    steps:
+      - to: direct:raw
