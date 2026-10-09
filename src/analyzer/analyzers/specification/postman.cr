@@ -8,7 +8,7 @@ module Analyzer::Specification
     def analyze
       each_spec_file(Noir::LocatorKeys::POSTMAN_JSON) do |postman_file|
         content = read_file_content(postman_file)
-        json_obj = JSON.parse(content)
+        json_obj = parse_json_lenient(content)
 
         # Process items (requests) in the collection
         if json_obj["item"]?
@@ -100,7 +100,7 @@ module Analyzer::Specification
           if body["raw"]?
             raw_content = scalar_to_s(body["raw"]?) || ""
             begin
-              json_body = JSON.parse(raw_content)
+              json_body = parse_json_lenient(raw_content)
               if json_body.as_h?
                 json_body.as_h.each do |key, value|
                   push_param_once(params, Param.new(key, value.to_s, "json"))
@@ -140,7 +140,7 @@ module Analyzer::Specification
 
             if variables_raw = scalar_to_s(graphql["variables"]?)
               begin
-                parsed_variables = JSON.parse(variables_raw)
+                parsed_variables = parse_json_lenient(variables_raw)
                 if variables_hash = parsed_variables.as_h?
                   variables_hash.each do |key, value|
                     push_param_once(params, Param.new(key, value.to_s, "json"))

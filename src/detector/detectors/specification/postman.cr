@@ -16,7 +16,7 @@ module Detector::Specification
       check = false
       if filename.ends_with?(".json") && postman_json_candidate?(file_contents)
         begin
-          data = JSON.parse(file_contents)
+          data = parse_json_lenient(file_contents)
           # Check for Postman Collection v2.1.0 or v2.0.0 schema
           if data["info"]? && data["info"]["schema"]?
             schema = data["info"]["schema"].as_s

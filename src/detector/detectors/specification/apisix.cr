@@ -12,7 +12,7 @@ module Detector::Specification
       if filename.ends_with?(".json")
         return false unless apisix_candidate?(file_contents)
 
-        data = JSON.parse(file_contents)
+        data = parse_json_lenient(file_contents)
         if apisix_routes_json?(data)
           CodeLocator.instance.push(Noir::LocatorKeys::APISIX_JSON, filename)
           return true

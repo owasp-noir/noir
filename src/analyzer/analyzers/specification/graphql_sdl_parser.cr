@@ -140,7 +140,10 @@ module Analyzer::Specification
         break if pos >= body_chars.size
 
         field_match = body.match(/\G([A-Za-z_][A-Za-z0-9_]*)/, pos)
-        break if field_match.nil?
+        if field_match.nil?
+          pos = advance_to_next_field(body_chars, pos)
+          next
+        end
         field_name = field_match[1]
         field_line = line_number_at(sanitized, body_offset + pos)
         field_line = field_line.try { |ln| ln + line_offset }
@@ -177,8 +180,10 @@ module Analyzer::Specification
         return_type, after_type = read_type_reference(body, body_chars, cursor)
         cursor = after_type
         directives, after_directives = read_directives(body, body_chars, cursor)
-        cursor = after_directives
-        pos = advance_to_next_field(body_chars, cursor)
+        # Commas and newlines are optional separators in SDL, so the next
+        # field may start right here on the same line; skipping to the next
+        # ','/newline dropped `users: [User] user(id: ID!): User`'s `user`.
+        pos = after_directives
 
         emit_endpoint(file_path, field_line, field_name, args, return_type, directives,
           operation_keyword, type_name, root_kind, default_path, tag_source, input_types, endpoints)
@@ -466,7 +471,10 @@ module Analyzer::Specification
         break if pos >= chars.size
 
         name_match = block.match(/\G([A-Za-z_][A-Za-z0-9_]*)/, pos)
-        break if name_match.nil?
+        if name_match.nil?
+          pos = advance_past_arg(chars, pos)
+          next
+        end
         name = name_match[1]
         cursor = pos + name_match[0].size
 
@@ -487,10 +495,11 @@ module Analyzer::Specification
         end
 
         _, after_directives = read_directives(block, chars, cursor)
-        cursor = after_directives
 
         args << {name: name, type: type_str}
-        pos = advance_past_arg(chars, cursor)
+        # Separators are optional: a newline-separated argument list has no
+        # depth-0 comma, so `advance_past_arg` would swallow every later arg.
+        pos = after_directives
       end
       args
     end

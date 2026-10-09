@@ -56,7 +56,7 @@ module Analyzer::Specification
     end
 
     private def parse_schema(content : String, source : String)
-      root = JSON.parse(content).as_h?
+      root = parse_json_lenient(content).as_h?
       return unless root
 
       kind = root["kind"]?.try(&.as_s?)

@@ -11,12 +11,14 @@ module Analyzer::Specification
     # declaring it must not have the operation silently skipped.
     HTTP_METHODS = {"get", "post", "put", "delete", "patch", "options", "head", "trace", "query"}
 
+    # A server entry that is not a mapping (`servers: ["bad", {url: /api}]`)
+    # contributes nothing; it must not cost the entries after it.
     def get_base_path(servers : JSON::Any)
-      server_base_path(servers.as_a.map { |server_obj| server_url_json(server_obj) })
+      server_base_path(servers.as_a.compact_map { |server_obj| server_url_json(server_obj) if server_obj.as_h? })
     end
 
     def get_base_path(servers : YAML::Any)
-      server_base_path(servers.as_a.map { |server_obj| server_url_yaml(server_obj) })
+      server_base_path(servers.as_a.compact_map { |server_obj| server_url_yaml(server_obj) if server_obj.as_h? })
     end
 
     # Maps an OAS3 request-body content type to a Noir param type.
@@ -149,6 +151,8 @@ module Analyzer::Specification
     # a parameter that is itself a `$ref`, and two documents that name each
     # other would otherwise recurse until the stack ran out.
     private def extract_param_json(doc : SpecDoc(JSON::Any), param_obj : JSON::Any, params : Array(Param), seen : Set(String) = Set(String).new)
+      # A `null` or scalar entry in a `parameters` list costs only itself.
+      return unless param_obj.as_h?
       if ref = param_obj["$ref"]?.try(&.as_s?)
         return unless seen.add?(ref_key(doc, ref))
         if resolved = resolve_ref_json(doc, ref)
@@ -172,6 +176,7 @@ module Analyzer::Specification
     end
 
     private def extract_param_yaml(doc : SpecDoc(YAML::Any), param_obj : YAML::Any, params : Array(Param), seen : Set(String) = Set(String).new)
+      return unless param_obj.as_h?
       if ref_node = param_obj[YAML::Any.new("$ref")]?
         if ref = ref_node.as_s?
           return unless seen.add?(ref_key(doc, ref))
@@ -278,6 +283,7 @@ module Analyzer::Specification
     end
 
     private def extract_request_body_json(doc : SpecDoc(JSON::Any), request_body : JSON::Any, params : Array(Param), seen : Set(String) = Set(String).new)
+      return unless request_body.as_h?
       # The requestBody object itself can be $ref'd to components.requestBodies.
       if ref = request_body["$ref"]?.try(&.as_s?)
         return unless seen.add?(ref_key(doc, ref))
@@ -290,6 +296,8 @@ module Analyzer::Specification
       return unless content = request_body["content"]?.try(&.as_h?)
       content.each do |content_type, content_obj|
         next unless param_type = param_type_for_content(content_type.to_s)
+        # `application/json:` left empty declares the media type, no schema.
+        next unless content_obj.as_h?
         if schema = content_obj["schema"]?
           collect_schema_props_json(doc, schema, param_type, params)
         end
@@ -297,6 +305,7 @@ module Analyzer::Specification
     end
 
     private def extract_request_body_yaml(doc : SpecDoc(YAML::Any), request_body : YAML::Any, params : Array(Param), seen : Set(String) = Set(String).new)
+      return unless request_body.as_h?
       if ref_node = request_body[YAML::Any.new("$ref")]?
         if ref = ref_node.as_s?
           return unless seen.add?(ref_key(doc, ref))
@@ -311,6 +320,8 @@ module Analyzer::Specification
       return unless content = content_node.as_h?
       content.each do |content_type, content_obj|
         next unless param_type = param_type_for_content(content_type.to_s)
+        # `application/json:` left empty declares the media type, no schema.
+        next unless content_obj.as_h?
         if schema_node = content_obj[YAML::Any.new("schema")]?
           collect_schema_props_yaml(doc, schema_node, param_type, params)
         end
@@ -320,7 +331,7 @@ module Analyzer::Specification
     def analyze
       each_spec_file_with_details(Noir::LocatorKeys::OAS3_JSON) do |oas3_json, details|
         content = read_file_content(oas3_json)
-        json_obj = JSON.parse(content)
+        json_obj = parse_json_lenient(content)
 
         base_path = @url
         begin
@@ -394,8 +405,7 @@ module Analyzer::Specification
               effective_security = method_obj_h["security"] if method_obj_h.has_key?("security")
             end
           rescue e
-            @logger.debug "Exception of #{item_doc.path}/paths/method/parameters"
-            @logger.debug_sub e
+            record_skipped_entry(item_doc.path, "parameters of #{method.to_s.upcase} #{path}", e)
           end
 
           apply_security(effective_security, schemes, params)
@@ -407,9 +417,11 @@ module Analyzer::Specification
             @result << Endpoint.new(base_path + path, method.upcase, op_details)
           end
         rescue e
-          @logger.debug "Exception of #{doc.path}/paths/endpoint"
-          @logger.debug_sub e
+          record_skipped_entry(doc.path, "#{method.to_s.upcase} #{path}", e)
         end
+      rescue e
+        # One path item that raised costs itself, not every path after it.
+        record_skipped_entry(doc.path, "path item #{path}", e)
       end
     rescue e
       @logger.debug "Exception of #{doc.path}/paths"
@@ -458,8 +470,7 @@ module Analyzer::Specification
               effective_security = method_obj_h[YAML::Any.new("security")] if method_obj_h.has_key?(YAML::Any.new("security"))
             end
           rescue e
-            @logger.debug "Exception of #{item_doc.path}/paths/method/parameters"
-            @logger.debug_sub e
+            record_skipped_entry(item_doc.path, "parameters of #{method.to_s.upcase} #{path}", e)
           end
 
           apply_security(effective_security, schemes, params)
@@ -471,9 +482,11 @@ module Analyzer::Specification
             @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, op_details)
           end
         rescue e
-          @logger.debug "Exception of #{doc.path}/paths/endpoint"
-          @logger.debug_sub e
+          record_skipped_entry(doc.path, "#{method.to_s.upcase} #{path}", e)
         end
+      rescue e
+        # One path item that raised costs itself, not every path after it.
+        record_skipped_entry(doc.path, "path item #{path}", e)
       end
     rescue e
       @logger.debug "Exception of #{doc.path}/paths"

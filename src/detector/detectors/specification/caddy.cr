@@ -23,7 +23,7 @@ module Detector::Specification
         true
       elsif filename.ends_with?(".json")
         return false unless caddy_json?(file_contents)
-        JSON.parse(file_contents)
+        parse_json_lenient(file_contents)
         CodeLocator.instance.push(Noir::LocatorKeys::CADDY_SPEC, filename)
         true
       else

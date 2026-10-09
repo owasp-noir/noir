@@ -144,6 +144,35 @@ describe "GraphQL SDL Analyzer" do
     with_args.params.reject(&.name.starts_with?("graphql_")).map(&.name).should eq ["oldArg", "newArg"]
   end
 
+  it "keeps every argument and field when the optional commas are left out" do
+    # Regression: after each argument/field the cursor skipped to the next
+    # depth-0 `,` (args) or `,`/newline (fields), so a newline-separated
+    # argument list kept only its first argument and fields sharing a line
+    # were dropped.
+    endpoints = analyze_sdl <<-SDL
+      type Query {
+        search(
+          term: String!
+          limit: Int = 10
+          offset: Int @deprecated(reason: "x")
+        ): [String]
+        inline(a: Int b: Int c: [Int] = [1, 2]): Int
+      }
+      type Mutation { createUser(name: String): ID deleteUser(id: ID!): Boolean }
+      SDL
+
+    endpoints.map(&.url).should eq [
+      "/graphql#Query.search",
+      "/graphql#Query.inline",
+      "/graphql#Mutation.createUser",
+      "/graphql#Mutation.deleteUser",
+    ]
+    args = ->(suffix : String) { endpoints.find!(&.url.ends_with?(suffix)).params.reject(&.name.starts_with?("graphql_")).map(&.name) }
+    args.call("search").should eq ["term", "limit", "offset"]
+    args.call("inline").should eq ["a", "b", "c"]
+    args.call("deleteUser").should eq ["id"]
+  end
+
   it "preserves trailing non-null marker on list types" do
     endpoints = analyze_sdl <<-SDL
       type Query {

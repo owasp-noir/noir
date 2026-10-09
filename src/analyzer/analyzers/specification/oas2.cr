@@ -9,6 +9,8 @@ module Analyzer::Specification
 
     # Walks a body schema and emits a Param per top-level property.
     private def collect_body_props_json(doc : SpecDoc(JSON::Any), schema : JSON::Any, param_type : String, params : Array(Param), seen : Set(String) = Set(String).new)
+      # `schema: null`, a boolean `items`: nothing to read, nothing to raise.
+      return unless schema.as_h?
       if ref = schema["$ref"]?.try(&.as_s?)
         return unless seen.add?(ref_key(doc, ref))
         if resolved = resolve_ref_json(doc, ref)
@@ -42,6 +44,7 @@ module Analyzer::Specification
     end
 
     private def collect_body_props_yaml(doc : SpecDoc(YAML::Any), schema : YAML::Any, param_type : String, params : Array(Param), seen : Set(String) = Set(String).new)
+      return unless schema.as_h?
       if ref_node = schema[YAML::Any.new("$ref")]?
         if ref = ref_node.as_s?
           return unless seen.add?(ref_key(doc, ref))
@@ -98,6 +101,8 @@ module Analyzer::Specification
     # `seen` breaks a ref that leads back to itself, directly or through
     # another document.
     private def extract_param_json(doc : SpecDoc(JSON::Any), param_obj : JSON::Any, consumes : Array(String), params : Array(Param), seen : Set(String) = Set(String).new)
+      # A `null` or scalar entry in a `parameters` list costs only itself.
+      return unless param_obj.as_h?
       # Parameters can themselves be $ref'd.
       if ref = param_obj["$ref"]?.try(&.as_s?)
         return unless seen.add?(ref_key(doc, ref))
@@ -129,6 +134,7 @@ module Analyzer::Specification
     end
 
     private def extract_param_yaml(doc : SpecDoc(YAML::Any), param_obj : YAML::Any, consumes : Array(String), params : Array(Param), seen : Set(String) = Set(String).new)
+      return unless param_obj.as_h?
       if ref_node = param_obj[YAML::Any.new("$ref")]?
         if ref = ref_node.as_s?
           return unless seen.add?(ref_key(doc, ref))
@@ -256,7 +262,7 @@ module Analyzer::Specification
       return unless File.exists?(swagger_json)
       details = Details.new(PathInfo.new(swagger_json))
       content = read_file_content(swagger_json)
-      json_obj = JSON.parse(content)
+      json_obj = parse_json_lenient(content)
       line_index = Noir::SpecLineIndex.json(content, "paths")
       base_path = ""
       begin
@@ -291,6 +297,9 @@ module Analyzer::Specification
 
           path_item_h.each do |method, method_obj|
             next unless HTTP_METHODS.includes?(method.to_s.downcase)
+            # `get: null` declares no operation; it was always dropped, and
+            # recording it as a skip would fail `--strict` for nothing.
+            next unless method_obj.as_h?
             params = [] of Param
             consumes = consumes_json(json_obj, method_obj)
             path_level_params.each do |param_obj|
@@ -316,12 +325,10 @@ module Analyzer::Specification
               @result << Endpoint.new(base_path + path, method.upcase, op_details)
             end
           rescue e
-            @logger.debug "Exception of #{swagger_json}/paths/path/method"
-            @logger.debug_sub e
+            record_skipped_entry(swagger_json, "#{method.to_s.upcase} #{path}", e)
           end
         rescue e
-          @logger.debug "Exception of #{swagger_json}/paths/path"
-          @logger.debug_sub e
+          record_skipped_entry(swagger_json, "path item #{path}", e)
         end
       rescue e
         @logger.debug "Exception of #{swagger_json}/paths"
@@ -367,6 +374,9 @@ module Analyzer::Specification
 
           path_item_h.each do |method, method_obj|
             next unless HTTP_METHODS.includes?(method.to_s.downcase)
+            # `get: null` declares no operation; it was always dropped, and
+            # recording it as a skip would fail `--strict` for nothing.
+            next unless method_obj.as_h?
             params = [] of Param
             consumes = consumes_yaml(yaml_obj, method_obj)
             path_level_params.each do |param_obj|
@@ -394,12 +404,10 @@ module Analyzer::Specification
               @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, op_details)
             end
           rescue e
-            @logger.debug "Exception of #{swagger_yaml}/paths/path/method"
-            @logger.debug_sub e
+            record_skipped_entry(swagger_yaml, "#{method.to_s.upcase} #{path}", e)
           end
         rescue e
-          @logger.debug "Exception of #{swagger_yaml}/paths/path"
-          @logger.debug_sub e
+          record_skipped_entry(swagger_yaml, "path item #{path}", e)
         end
       rescue e
         @logger.debug "Exception of #{swagger_yaml}/paths"

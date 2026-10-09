@@ -21,7 +21,7 @@ module Detector::Specification
       return false unless caido_json_candidate?(file_contents)
 
       begin
-        data = JSON.parse(file_contents)
+        data = parse_json_lenient(file_contents)
         array = data.as_a?
         return false unless array
         return false if array.empty?

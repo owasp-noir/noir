@@ -2,7 +2,7 @@ require "../../models/analyzer"
 require "../../models/code_locator"
 require "../../models/skipped_files"
 require "uri"
-require "json"
+require "../../utils/json"
 require "yaml"
 require "xml"
 require "../../models/locator_keys"
@@ -432,7 +432,7 @@ module Analyzer::Specification
       # JSON, so a YAML document may ref a `.json` file and get it parsed.
       @external_json_docs[path] = begin
         if content = read_ref_file(from_path, path, file_ref)
-          SpecDoc.new(JSON.parse(content), path)
+          SpecDoc.new(parse_json_lenient(content), path)
         end
       rescue e
         record_ref_gap(from_path, file_ref, e.message.presence || e.class.name)
@@ -460,6 +460,12 @@ module Analyzer::Specification
         # its operations off an `https://` ref is reported as unread rather
         # than fetched behind the user's back.
         return record_ref_gap(from_path, file_ref, "remote target is not fetched")
+      end
+
+      # `p%00.yaml` decodes to a NUL byte, which the file APIs below raise
+      # on — outside the per-ref rescue, so it took the rest of the document.
+      if file_ref.includes?('\0')
+        return record_ref_gap(from_path, file_ref.gsub('\0', "%00"), "target contains a NUL byte")
       end
 
       target = File.expand_path(file_ref, File.dirname(File.expand_path(from_path)))
@@ -536,6 +542,15 @@ module Analyzer::Specification
       return unless @reported_refs.add?("#{from_path}\u0000#{message}")
       logger.debug "#{from_path}: #{message}"
       Noir::SkippedFiles.record(tech, from_path, message, noun: "referenced file")
+    end
+
+    # OAS2/OAS3: one path item or operation that raised and was skipped. The
+    # rest of the document is still read, but the loss belongs in `errors` —
+    # and `--strict` — like any other skipped document.
+    protected def record_skipped_entry(doc_path : String, entry : String, e : Exception) : Nil
+      logger.debug "#{doc_path}: skipped #{entry}"
+      logger.debug_sub e
+      Noir::SkippedFiles.record(tech, doc_path, "#{entry}: #{e.message.presence || e.class.name}", noun: "spec entry")
     end
 
     # OAS2/OAS3: adds params for the effective security requirement. Per the

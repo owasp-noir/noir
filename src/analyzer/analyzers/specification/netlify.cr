@@ -12,6 +12,12 @@ module Analyzer::Specification
     # (`https://old.example.com/*  https://new.example.com/:splat  301!`).
     ABSOLUTE_SOURCE_RE = /\A[a-z][a-z0-9+.-]*:\/\/([^\/]+)(\/.*)?\z/i
 
+    # Line shapes `parse_toml_fallback` reads. Any `[...]` / `[[...]]` line is
+    # a header, quoted keys (`[context."deploy-preview"]`) included, so a
+    # table the scan does not read always ends the one before it.
+    TOML_TABLE_HEADER_RE      = /\A\s*\[\[?([^\]]*)\]/
+    TOML_STRING_ASSIGNMENT_RE = /\A\s*([A-Za-z_]+)\s*=\s*"([^"]*)"/
+
     def analyze
       each_spec_file(Noir::LocatorKeys::NETLIFY_REDIRECTS) do |path|
         parse_redirects_file(path)
@@ -42,7 +48,20 @@ module Analyzer::Specification
     end
 
     private def parse_toml_file(path : String)
-      doc = TOML.parse_file(path)
+      # `read_file_content`, not `TOML.parse_file`: a BOM or UTF-16 file is
+      # only decoded on noir's read path, and re-reading the raw bytes lost
+      # every rule in it without a trace.
+      content = read_file_content(path)
+      doc = begin
+        TOML.parse(content)
+      rescue e
+        # The bundled TOML shard predates TOML 1.0 and refuses e.g. `0xFF`
+        # or an integer beyond Int64 anywhere in the file. Recover the rules
+        # by a line scan rather than losing all of them.
+        @logger.debug "Netlify TOML parse failed for #{path}, falling back to a line scan: #{e}"
+        parse_toml_fallback(content, path)
+        return
+      end
 
       collect_redirects(doc["redirects"]?, path)
       collect_edge_functions(doc["edge_functions"]?, path)
@@ -57,15 +76,28 @@ module Analyzer::Specification
           collect_edge_functions(ctx_h["edge_functions"]?, path)
         end
       end
-    rescue e
-      @logger.debug "Netlify analyzer failed to parse TOML file #{path}"
-      @logger.debug_sub e
+    end
+
+    # `from = "..."` under a `[[…redirects]]` table and `path = "..."` under
+    # a `[[…edge_functions]]` table, top-level or in a context override.
+    private def parse_toml_fallback(content : String, path : String)
+      key = nil
+      content.each_line do |line|
+        if header = line.match(TOML_TABLE_HEADER_RE)
+          key = case header[1].delete(%("')).split('.').last?.try(&.strip)
+                when "redirects"      then "from"
+                when "edge_functions" then "path"
+                end
+        elsif key && (assignment = line.match(TOML_STRING_ASSIGNMENT_RE)) && assignment[1] == key
+          add_endpoint(assignment[2], path, nil) unless assignment[2].empty?
+        end
+      end
     end
 
     private def collect_redirects(node : TOML::Any?, path : String)
       node.try(&.as_a?).try do |items|
         items.each do |item|
-          if from = item["from"]?.try(&.as_s?)
+          if from = item.as_h?.try(&.["from"]?).try(&.as_s?)
             add_endpoint(from, path, nil) unless from.empty?
           end
         end
@@ -75,7 +107,7 @@ module Analyzer::Specification
     private def collect_edge_functions(node : TOML::Any?, path : String)
       node.try(&.as_a?).try do |items|
         items.each do |item|
-          if route_path = item["path"]?.try(&.as_s?)
+          if route_path = item.as_h?.try(&.["path"]?).try(&.as_s?)
             add_endpoint(route_path, path, nil) unless route_path.empty?
           end
         end

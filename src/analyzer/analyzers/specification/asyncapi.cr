@@ -24,7 +24,7 @@ module Analyzer::Specification
     def analyze
       each_spec_file_with_details(Noir::LocatorKeys::ASYNCAPI_JSON) do |path, details|
         content = read_file_content(path)
-        process_json(JSON.parse(content), details, path)
+        process_json(parse_json_lenient(content), details, path)
       end
 
       each_spec_file_with_details(Noir::LocatorKeys::ASYNCAPI_YAML) do |path, details|

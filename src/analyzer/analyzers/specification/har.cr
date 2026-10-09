@@ -1,5 +1,5 @@
 require "../../engines/specification_engine"
-require "json"
+require "../../../utils/har"
 require "uri"
 
 module Analyzer::Specification
@@ -37,7 +37,7 @@ module Analyzer::Specification
 
     def analyze
       each_spec_file(Noir::LocatorKeys::HAR_PATH) do |har_file|
-        data = HAR.from_file(har_file)
+        data = Noir::HarDocument.parse(read_file_content(har_file))
         logger.debug "Open #{har_file} file"
         data.entries.each do |entry|
           request_uri = parse_absolute_url(entry.request.url)
@@ -263,7 +263,7 @@ module Analyzer::Specification
 
     private def collect_json_params(text : String) : Array(String)
       names = [] of String
-      value = JSON.parse(text)
+      value = parse_json_lenient(text)
       collect_json_names(value, names)
       names.uniq
     rescue

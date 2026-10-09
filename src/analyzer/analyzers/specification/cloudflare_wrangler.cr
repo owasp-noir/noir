@@ -68,7 +68,7 @@ module Analyzer::Specification
 
     private def process_json(content : String, details : Details)
       # `wrangler.jsonc` allows comments; strip them before parsing.
-      doc = JSON.parse(strip_jsonc_comments(content))
+      doc = parse_json_lenient(strip_jsonc_comments(content))
       routes = doc["routes"]?
       return unless routes
       arr = routes.as_a?

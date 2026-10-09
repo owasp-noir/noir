@@ -1,5 +1,6 @@
 require "../../../models/detector"
 require "../../../utils/yaml"
+require "../../../utils/json"
 require "../../../models/code_locator"
 
 module Detector::Specification

@@ -231,7 +231,7 @@ module Analyzer::Specification
     private def parse_json_body(endpoint : Endpoint, body : String)
       return if body.strip.empty?
       begin
-        parsed = JSON.parse(body)
+        parsed = parse_json_lenient(body)
         if hash = parsed.as_h?
           hash.each_key do |key|
             endpoint.push_param(Param.new(key, "", "json"))

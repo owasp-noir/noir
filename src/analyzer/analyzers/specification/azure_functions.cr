@@ -24,7 +24,7 @@ module Analyzer::Specification
         base = configured_base_for(path)
         prefix = route_prefix_for(File.dirname(path), base.empty? ? nil : Noir::PathScope.normalize_root(base))
         if File.basename(path) == "function.json"
-          process_doc(JSON.parse(content), path, prefix, details)
+          process_doc(parse_json_lenient(content), path, prefix, details)
         else
           process_code(path, content, prefix)
         end
@@ -54,7 +54,7 @@ module Analyzer::Specification
     # Reads `extensions.http.routePrefix` (Functions v2+) or the v1 `http.routePrefix`
     # from the app's `host.json`. An unreadable or absent key leaves the host default.
     private def host_route_prefix(host_json : String) : String
-      doc = JSON.parse(read_file_content(host_json))
+      doc = parse_json_lenient(read_file_content(host_json))
       http = doc["extensions"]?.try(&.as_h?).try(&.["http"]?) || doc["http"]?
       value = http.try(&.as_h?).try(&.["routePrefix"]?).try(&.as_s?)
       return DEFAULT_ROUTE_PREFIX if value.nil?

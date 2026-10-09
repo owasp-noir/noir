@@ -10,7 +10,7 @@ module Analyzer::Specification
       each_spec_file_with_details(Noir::LocatorKeys::SERVERLESS_FRAMEWORK_SPEC) do |path, details|
         content = read_file_content(path)
         if path.ends_with?(".json")
-          process_doc(JSON.parse(content), details)
+          process_doc(parse_json_lenient(content), details)
         else
           process_doc(YAML.parse(content), details)
         end

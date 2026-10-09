@@ -338,4 +338,144 @@ describe "OpenAPI external $ref resolution" do
       endpoints[0].params.map(&.name).should contain("fields")
     end
   end
+
+  it "records a ref whose file name decodes to a NUL byte and keeps later paths" do
+    with_temp_dir("noir_oas_nul") do |dir|
+      entry = File.join(dir, "openapi.yaml")
+      File.write(entry, <<-YAML)
+        openapi: 3.0.1
+        info: {title: Nul, version: '1'}
+        paths:
+          /a:
+            get: {}
+          /b:
+            $ref: 'p%00.yaml'
+          /c:
+            get: {}
+        YAML
+
+      analyze_oas3(dir, entry).map(&.url).should eq(["/a", "/c"])
+      skip_messages.join("\n").should contain("target contains a NUL byte")
+    end
+  end
+end
+
+# One malformed entry in an otherwise readable document — a `null` parameter,
+# a non-mapping server, a `null` body schema — used to raise past the loop
+# over `paths` and silently drop every path after it.
+describe "OpenAPI malformed entries" do
+  before_each { Noir::SkippedFiles.clear }
+  after_each do
+    Noir::SkippedFiles.clear
+    CodeLocator.instance.clear_all
+  end
+
+  it "skips only a null path-level or operation parameter" do
+    with_temp_dir("noir_oas3_null_param") do |dir|
+      entry = File.join(dir, "openapi.yaml")
+      File.write(entry, <<-YAML)
+        openapi: 3.0.1
+        info: {title: Null, version: '1'}
+        paths:
+          /gems:
+            parameters: [null, {name: q, in: query}]
+            get: {}
+            post: {}
+          /d:
+            get:
+              parameters: [null, {name: z, in: query}]
+              requestBody: null
+          /last:
+            get: {}
+        YAML
+
+      endpoints = analyze_oas3(dir, entry)
+      endpoints.map { |e| "#{e.method} #{e.url} #{e.params.map(&.name)}" }.should eq([
+        %(GET /gems ["q"]), %(POST /gems ["q"]), %(GET /d ["z"]), %(GET /last []),
+      ])
+    end
+  end
+
+  it "applies the first usable server when an earlier entry is not a mapping" do
+    with_temp_dir("noir_oas3_servers") do |dir|
+      entry = File.join(dir, "openapi.yaml")
+      File.write(entry, <<-YAML)
+        openapi: 3.0.1
+        info: {title: Servers, version: '1'}
+        servers: ["bad", {url: /api}]
+        paths:
+          /a:
+            get: {}
+        YAML
+
+      analyze_oas3(dir, entry).map(&.url).should eq(["/api/a"])
+    end
+  end
+
+  it "treats a media type with no object as declaring no schema" do
+    # `application/json:` left empty is not a skipped entry: recording it
+    # failed `--strict` on a document whose endpoints all came out.
+    with_temp_dir("noir_oas3_empty_media") do |dir|
+      entry = File.join(dir, "openapi.yaml")
+      File.write(entry, <<-YAML)
+        openapi: 3.0.1
+        info: {title: Body, version: '1'}
+        paths:
+          /x:
+            post:
+              requestBody:
+                content:
+                  application/json:
+        YAML
+
+      analyze_oas3(dir, entry).map(&.url).should eq(["/x"])
+      skip_messages.should be_empty
+    end
+  end
+
+  it "records a path item that raised and keeps the paths after it" do
+    # `%FF` decodes to a byte that is not UTF-8, which the ref's regex gate
+    # raises on outside the per-ref rescue.
+    with_temp_dir("noir_oas3_bad_ref") do |dir|
+      entry = File.join(dir, "openapi.yaml")
+      File.write(entry, <<-YAML)
+        openapi: 3.0.1
+        info: {title: Ref, version: '1'}
+        paths:
+          /bad:
+            $ref: '%FF.yaml'
+          /after:
+            get: {}
+        YAML
+
+      analyze_oas3(dir, entry).map(&.url).should eq(["/after"])
+      skip_messages.join("\n").should contain("path item /bad")
+    end
+  end
+
+  it "keeps a Swagger 2.0 operation whose body schema is null" do
+    with_temp_dir("noir_oas2_null_schema") do |dir|
+      entry = File.join(dir, "swagger.yaml")
+      File.write(entry, <<-YAML)
+        swagger: '2.0'
+        info: {title: Null, version: '1'}
+        paths:
+          /ok:
+            get: {}
+            put: null
+          /x:
+            parameters: [null]
+            post:
+              parameters:
+                - {name: body, in: body, schema: null}
+                - {name: q, in: query}
+        YAML
+
+      endpoints = analyze_oas2(dir, entry)
+      endpoints.map { |e| "#{e.method} #{e.url} #{e.params.map(&.name)}" }.should eq([
+        %(GET /ok []), %(POST /x ["q"]),
+      ])
+      skip_messages.should be_empty
+    end
+  end
 end

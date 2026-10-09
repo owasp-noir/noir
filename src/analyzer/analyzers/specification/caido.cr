@@ -10,7 +10,7 @@ module Analyzer::Specification
       each_spec_file_with_details(Noir::LocatorKeys::CAIDO_JSON) do |path, details|
         content = read_file_content(path)
 
-        data = JSON.parse(content)
+        data = parse_json_lenient(content)
         entries = data.as_a?
         next unless entries
 
@@ -150,7 +150,7 @@ module Analyzer::Specification
       when content_type.includes?("application/json")
         begin
           body_str = String.new(body_bytes, encoding: "UTF-8", invalid: :skip)
-          parsed = JSON.parse(body_str)
+          parsed = parse_json_lenient(body_str)
           if h = parsed.as_h?
             h.each { |k, _| params << Param.new(k, "", "json") }
           end
