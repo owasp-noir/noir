@@ -112,6 +112,43 @@ module NoirTaggers
 
     logger = NoirLogger.from_options(options)
 
+    with_route_paths(endpoints, options["url"]?.to_s) do
+      run_selected(endpoints, options, use_taggers_arr, is_all, logger)
+    end
+  end
+
+  # The optimizer has already joined `-u` onto every endpoint URL by the time
+  # taggers run, but taggers match route text: tokenised path words, Ant
+  # patterns, group prefixes. Fed `http://admin.example.com/a` they tagged
+  # every endpoint `admin`, and a `/api/public/**` permitAll rule stopped
+  # matching. Show them the route path for the pass, then put the URL back.
+  private def self.with_route_paths(endpoints : Array(Endpoint), target : String, &)
+    return yield if target.empty?
+
+    originals = endpoints.map(&.url)
+    endpoints.each_with_index do |endpoint, idx|
+      next unless endpoint.url.starts_with?(target)
+      rest = endpoint.url[target.size..]
+      # `combine_url_and_endpoints` leaves `/` at the seam unless the target
+      # ends in one, so anything else is an absolute URL whose host merely
+      # starts with the target's text (`http://h` vs `http://host2/x`).
+      next unless rest.empty? || rest.starts_with?('/') || target.ends_with?('/')
+      endpoint.url = rest.starts_with?('/') ? rest : "/#{rest}"
+      endpoints[idx] = endpoint
+    end
+
+    begin
+      yield
+    ensure
+      endpoints.each_with_index do |endpoint, idx|
+        endpoint.url = originals[idx]
+        endpoints[idx] = endpoint
+      end
+    end
+  end
+
+  private def self.run_selected(endpoints : Array(Endpoint), options : Hash(String, YAML::Any),
+                                use_taggers_arr : Array(String), is_all : Bool, logger : NoirLogger)
     # The registry key IS the tagger's `name` (`Tagger#initialize` reads it
     # back off the class), so an unselected tagger can be skipped without
     # constructing it — each `new` builds a logger and resolves options. Run

@@ -21,6 +21,27 @@ describe "Tagger" do
     end
   end
 
+  # The optimizer joins `-u` onto each URL before taggers run; the host and
+  # base path are not route text and must not produce tags.
+  it "tags the route path, not the -u prefix, and leaves the URL intact" do
+    noir_options = create_test_options
+    noir_options["url"] = YAML::Any.new("http://admin.example.com/payment-api")
+    endpoints = [
+      Endpoint.new("http://admin.example.com/payment-api/a", "GET"),
+      Endpoint.new("http://admin.example.com/payment-api/admin/users", "GET"),
+      Endpoint.new("http://admin.example.community/x", "GET"),
+    ]
+    NoirTaggers.run_tagger(endpoints, noir_options, "admin,payment")
+
+    endpoints[0].tags.should be_empty
+    endpoints[1].tags.map(&.name).should eq(["admin"])
+    endpoints.map(&.url).should eq([
+      "http://admin.example.com/payment-api/a",
+      "http://admin.example.com/payment-api/admin/users",
+      "http://admin.example.community/x",
+    ])
+  end
+
   # `--fail-on auth-removed` adds `AUTH_ENTRIES` when `--use-taggers` names
   # none of them, and that list is read off the `_auth` key suffix. A tagger
   # that emits the auth tag under another key would silently fall out of
