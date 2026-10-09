@@ -243,13 +243,8 @@ module Analyzer::CSharp
 
     private def emit_service(service : Service, root_path : String, dtos : Hash(String, DtoDef), include_callee : Bool)
       type = service.type
-      controller = type.name
-      CONTROLLER_POSTFIXES.each do |postfix|
-        if controller.ends_with?(postfix) && controller.size > postfix.size
-          controller = controller.rchop(postfix)
-          break
-        end
-      end
+      postfix = CONTROLLER_POSTFIXES.find { |p| type.name.ends_with?(p) && type.name.size > p.size }
+      controller = postfix ? type.name.rchop(postfix) : type.name
       base_url = "/api/#{root_path.strip('/')}/#{kebab(controller)}".gsub(%r{/+}, "/")
 
       emitted = Set(Tuple(String, String)).new
