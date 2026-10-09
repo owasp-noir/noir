@@ -132,7 +132,10 @@ module Analyzer::Python
         # collects one mounted prefix per inclusion path.
         prefix_visited = Set(::String).new
         # An app another app mounts is served only under the mount path,
-        # so it is reached through that mount instead of seeded as a root.
+        # so it is reached through that mount instead of seeded as a root —
+        # unless the mount is a route-less wrapper in another file
+        # (`wrapper = FastAPI(); wrapper.mount("/x", app)` in a dev script):
+        # the real app is then likely served on its own too, so keep both.
         mounted_apps = Set(Tuple(::String, ::String)).new
         fastapi_app_instances.each do |app_file, app_instance|
           source = read_file_content(app_file)
@@ -140,7 +143,9 @@ module Analyzer::Python
           extract_app_mount_calls(source, app_instance).each do |args|
             next unless mount = parse_app_mount(args, source, import_modules)
             target = resolve_router_reference(app_file, source, import_modules, include_router_map, mount[1])
-            mounted_apps << target if target && target != {app_file, app_instance}
+            next unless target && target != {app_file, app_instance}
+            next if target[0] != app_file && !declares_own_routes?(source, app_instance)
+            mounted_apps << target
           end
         end
         fastapi_app_instances.each do |app_file, app_instance|
@@ -539,6 +544,16 @@ module Analyzer::Python
     private def extract_app_mount_calls(source : ::String, instance_name : ::String) : Array(::String)
       res = instance_regexes(instance_name)
       extract_instance_calls(source, ".mount", res.mount_guard, res.static_mount).reject(&.includes?("StaticFiles"))
+    end
+
+    # Whether `instance` serves anything itself: a route decorator, an
+    # `include_router` or an `add_api_route` in `source` (middleware and
+    # event hooks do not count).
+    private def declares_own_routes?(source : ::String, instance_name : ::String) : Bool
+      res = instance_regexes(instance_name)
+      e = Regex.escape(instance_name)
+      source.matches?(/^\s*@\s*#{e}\s*\.\s*(?:get|post|put|patch|delete|head|options|trace|query|api_route|websocket)\s*\(/m) ||
+        source.matches?(res.include_router_guard) || source.matches?(res.programmatic_guard)
     end
 
     private def extract_instance_calls(source : ::String, needle : ::String, guard : Regex, call : Regex) : Array(::String)
