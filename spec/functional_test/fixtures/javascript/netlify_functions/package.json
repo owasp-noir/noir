@@ -1,0 +1,7 @@
+{
+  "name": "netlify-functions-app",
+  "private": true,
+  "dependencies": {
+    "@netlify/functions": "^2.8.0"
+  }
+}
