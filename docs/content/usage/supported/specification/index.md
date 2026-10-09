@@ -18,6 +18,7 @@ Beyond source code analysis, Noir can parse API and data specification formats s
 | AWS SAM / CloudFormation | YAML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | AWS SAM / CloudFormation | JSON | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Android (Manifest) | XML | ☑️ | ✗ | ☑️ | ☑️ | ✗ | ✗ | ✗ |
+| Apache Thrift | THRIFT | ☑️ | ☑️ | ✗ | ✗ | ☑️ | ✗ | ✗ |
 | Apache httpd | CONF | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Apisix | JSON | ☑️ | ☑️ | ✗ | ✗ | ✗ | ☑️ | ✗ |
 | Apisix | YAML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ☑️ | ✗ |

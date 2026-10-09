@@ -837,10 +837,11 @@ module NoirAIContext
     # example, chat or room-join events), so only a privileged WebSocket
     # surface is promoted to the same review path as POST/PUT/PATCH/DELETE.
     private def state_changing_endpoint?(endpoint : Endpoint) : Bool
-      # Pure gRPC RPCs are represented as POST for transport purposes, but
-      # that does not make them HTTP state-changing endpoints. Gateway routes
-      # keep protocol="http" and still receive the HTTP method signal.
-      return false if endpoint.protocol == "grpc"
+      # Pure gRPC and Thrift RPCs are represented as POST for transport
+      # purposes, but that does not make them HTTP state-changing endpoints.
+      # Gateway routes keep protocol="http" and still receive the HTTP method
+      # signal.
+      return false if endpoint.protocol.in?("grpc", "thrift")
       return false if soap_read_endpoint?(endpoint)
 
       method = endpoint.method.upcase

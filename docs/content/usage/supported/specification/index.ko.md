@@ -18,6 +18,7 @@ sort_by = "weight"
 | AWS SAM / CloudFormation | YAML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | AWS SAM / CloudFormation | JSON | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Android (Manifest) | XML | ☑️ | ✗ | ☑️ | ☑️ | ✗ | ✗ | ✗ |
+| Apache Thrift | THRIFT | ☑️ | ☑️ | ✗ | ✗ | ☑️ | ✗ | ✗ |
 | Apache httpd | CONF | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Apisix | JSON | ☑️ | ☑️ | ✗ | ✗ | ✗ | ☑️ | ✗ |
 | Apisix | YAML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ☑️ | ✗ |

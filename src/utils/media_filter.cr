@@ -98,7 +98,7 @@ module MediaFilter
     ".json", ".yaml", ".yml", ".xml", ".toml", ".tf",
 
     # Format-specific extensions.
-    ".har", ".raml", ".wsdl", ".smithy", ".tsp", ".proto", ".bru",
+    ".har", ".raml", ".wsdl", ".smithy", ".tsp", ".proto", ".thrift", ".bru",
     ".graphql", ".gql", ".graphqls", ".http", ".rest",
   ]
 
