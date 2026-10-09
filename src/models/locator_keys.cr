@@ -42,6 +42,7 @@ module Noir::LocatorKeys
     {:HAR_PATH, "har-path", :array, :detect_scoped, "detector/specification/har"},
     {:HASURA_REST_ENDPOINTS, "hasura-rest-endpoints", :array, :detect_scoped, "detector/specification/hasura"},
     {:HASURA_TABLES, "hasura-tables", :array, :detect_scoped, "detector/specification/hasura"},
+    {:HOPPSCOTCH_JSON, "hoppscotch-json", :array, :detect_scoped, "detector/specification/hoppscotch"},
     {:HTTP_FILE, "http-file", :array, :detect_scoped, "detector/specification/http_file"},
     {:HURL_FILE, "hurl-file", :array, :detect_scoped, "detector/specification/hurl"},
     {:INSOMNIA_JSON, "insomnia-json", :array, :detect_scoped, "detector/specification/insomnia"},

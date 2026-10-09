@@ -1,6 +1,5 @@
 require "../../engines/specification_engine"
 require "../../../utils/http_symbols"
-require "../../../utils/json"
 
 module Analyzer::Specification
   # Parses Hurl (`.hurl`) request files.
@@ -124,23 +123,11 @@ module Analyzer::Specification
       request_path_vars(url_path).each do |name|
         push_param_once(params, Param.new(name, "", "path"))
       end
-      json_body_keys(entry.body.join('\n')).each do |name, value|
+      json_body_pairs(entry.body.join('\n'), TEMPLATE_VAR).each do |name, value|
         push_param_once(params, Param.new(name, value, "json"))
       end
 
       @result << Endpoint.new(url_path, entry.method, params, Details.new(PathInfo.new(path, entry.line)))
-    end
-
-    # Top-level keys of a JSON object body. Hurl allows an unquoted
-    # `{{var}}` as a JSON value, which is invalid JSON, so a failed parse is
-    # retried with every placeholder nulled out.
-    private def json_body_keys(text : String) : Array(Tuple(String, String))
-      stripped = text.strip
-      return [] of Tuple(String, String) unless stripped.starts_with?('{')
-      parsed = json_any?(stripped) || json_any?(stripped.gsub(TEMPLATE_VAR, "null"))
-      hash = parsed.try(&.as_h?)
-      return [] of Tuple(String, String) unless hash
-      hash.map { |k, v| {k, v.to_s} }
     end
   end
 end

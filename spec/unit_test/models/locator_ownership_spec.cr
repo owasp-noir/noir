@@ -150,7 +150,7 @@ describe "locator key ownership" do
   # Guards the guards. Every example above is a source scan, so a broken glob or
   # a mis-derived constant name would make all of them pass vacuously.
   it "resolves every declared key to a constant that exists" do
-    declared_keys.size.should eq 66
+    declared_keys.size.should eq 67
     source_files.size.should be > 500
 
     # The regex used above must actually match something for a key known to be

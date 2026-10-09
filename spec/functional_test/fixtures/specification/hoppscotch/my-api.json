@@ -1,0 +1,4 @@
+{"v": 2, "name": "My API", "folders": [], "requests": [
+  {"v": "4", "method": "GET", "endpoint": "https://api.example.com/users/1", "params": [{"key": "q", "value": "x", "active": true}], "headers": []},
+  {"v": "4", "method": "POST", "endpoint": "<<baseUrl>>/users", "body": {"contentType": "application/json", "body": "{\"name\":\"a\"}"}}
+]}

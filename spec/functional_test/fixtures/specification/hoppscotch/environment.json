@@ -1,0 +1,9 @@
+{
+  "v": 1,
+  "id": "env-1",
+  "name": "Dev",
+  "variables": [
+    {"key": "shopUrl", "initialValue": "https://shop.example.com/v2", "currentValue": "", "secret": false},
+    {"key": "apiKey", "initialValue": "", "currentValue": "", "secret": true}
+  ]
+}
