@@ -31,6 +31,16 @@ module Noir::PhpCalleeExtractor
     entries.uniq
   end
 
+  # `content` with `//`, `#` and `/* */` comments blanked, string literals
+  # and `#[Attribute]`s kept, and every line in place.
+  def strip_comments(content : String) : String
+    in_block_comment = false
+    content.split('\n').join('\n') do |line|
+      sanitized, in_block_comment = sanitize_line(line, in_block_comment, keep_strings: true)
+      sanitized
+    end
+  end
+
   private def scan_line(line : String, file_path : String, line_number : Int32, entries : Array(Entry))
     # All four call patterns require `(` after the callee name. Pure
     # assignment / property lines cannot produce a callee.
@@ -98,6 +108,7 @@ module Noir::PhpCalleeExtractor
   private BYTE_BACKSLASH = '\\'.ord.to_u8
   private BYTE_DQUOTE    = '"'.ord.to_u8
   private BYTE_SQUOTE    = '\''.ord.to_u8
+  private BYTE_LBRACKET  = '['.ord.to_u8
   private BYTE_SPACE     = ' '.ord.to_u8
 
   # Blank out string literals and comments so the call-pattern regexes only
@@ -107,7 +118,10 @@ module Noir::PhpCalleeExtractor
   # literal) cost O(n^2). String/comment bytes are replaced with spaces;
   # code bytes (including any multi-byte ones outside strings) are copied
   # verbatim so the result stays valid UTF-8.
-  private def sanitize_line(line : String, in_block_comment : Bool) : Tuple(String, Bool)
+  #
+  # With `keep_strings` only comments are blanked: string bytes are copied
+  # verbatim and a PHP 8 `#[Attribute]` is code, not a `#` comment.
+  private def sanitize_line(line : String, in_block_comment : Bool, keep_strings : Bool = false) : Tuple(String, Bool)
     bytes = line.to_slice
     size = bytes.size
     sanitized = String.build do |io|
@@ -130,7 +144,7 @@ module Noir::PhpCalleeExtractor
             index += 1
           end
         elsif in_string
-          io << ' '
+          keep_strings ? io.write_byte(char) : io << ' '
           if escaped
             escaped = false
           elsif char == BYTE_BACKSLASH
@@ -143,11 +157,12 @@ module Noir::PhpCalleeExtractor
           io << "  "
           in_block_comment = true
           index += 2
-        elsif (char == BYTE_SLASH && next_char == BYTE_SLASH) || char == BYTE_HASH
+        elsif (char == BYTE_SLASH && next_char == BYTE_SLASH) ||
+              (char == BYTE_HASH && !(keep_strings && next_char == BYTE_LBRACKET))
           (size - index).times { io.write_byte(BYTE_SPACE) }
           index = size
         elsif char == BYTE_DQUOTE || char == BYTE_SQUOTE
-          io << ' '
+          keep_strings ? io.write_byte(char) : io << ' '
           in_string = true
           quote = char
           index += 1

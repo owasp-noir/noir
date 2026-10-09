@@ -1,5 +1,6 @@
 require "../../../models/analyzer"
 require "../../engines/cli_endpoint_support"
+require "../../engines/perl_engine"
 
 module Analyzer::Perl
   # Surfaces the command-line attack surface of Perl programs as `cli://`
@@ -16,7 +17,9 @@ module Analyzer::Perl
     GETOPT_KEY = /["']([a-zA-Z][\w-]*)[^"']*["']\s*=>\s*\\/
     GETOPTS    = /\bgetopts?\s*\(\s*['"]([^'"]*)['"]/
     ARGV_IDX   = /\$ARGV\s*\[\s*(\d+)\s*\]/
-    ENV_READ   = /\$ENV\{\s*['"]?([A-Za-z_]\w*)['"]?\s*\}/
+    # `$ENV{X} = v` (plain assignment) sets the variable for children; it is
+    # not input. `==`, `=~`, `||=` and `//=` still read it.
+    ENV_READ = /\$ENV\{\s*['"]?([A-Za-z_]\w*)['"]?\s*\}(?!\s*=(?![=~>]))/
     # describe_options('%c %o', ['verbose|v' => 'be verbose'], ...) — each
     # array-ref's leading quoted spec string. Only the leading identifier is
     # captured so Getopt::Long::Descriptive suffix modifiers (|alias, =s,
@@ -48,6 +51,11 @@ module Analyzer::Perl
           begin
             content = read_file_content(path)
             next unless content.matches?(MARKERS)
+            # POD, `__END__` data and `#` comments are not code: a
+            # commented-out GetOptions or a `$ENV{X}` in the docs is no input.
+            lines = PerlEngine.sanitize_lines(content.lines).map { |line| PerlEngine.strip_line_comment(line) }
+            content = lines.join('\n')
+            next unless content.matches?(MARKERS)
             root_url = "cli://#{cli_binary_name(path)}"
             emit_env = !content.matches?(WEB_RE)
             uses_moox_options = content.matches?(MOOX_MARKER)
@@ -55,7 +63,7 @@ module Analyzer::Perl
             go_depth = 0
             in_describe_options = false
             do_depth = 0
-            content.each_line.with_index do |line, index|
+            lines.each_with_index do |line, index|
               line_no = index + 1
               # Only treat `"key" => \ref` pairs as flags inside the
               # GetOptions(...) call, so unrelated reference hashes elsewhere

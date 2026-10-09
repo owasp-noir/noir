@@ -45,8 +45,10 @@ module Analyzer::Ruby
 
     # builtin argv / env.
     ARGV_INDEX = /\bARGV\s*\[\s*(\d+)\s*\]/
-    ENV_INDEX  = /\bENV\s*\[\s*["']([^"']+)["']\s*\]/
-    ENV_FETCH  = /\bENV\.fetch\s*\(\s*["']([^"']+)["']/
+    # A plain `ENV["X"] = v` sets the variable for children; it is not
+    # input. `==`, `=~` and `||=` (default-if-unset) still read it.
+    ENV_INDEX = /\bENV\s*\[\s*["']([^"']+)["']\s*\](?!\s*=(?![=~>]))/
+    ENV_FETCH = /\bENV\.fetch\s*\(\s*["']([^"']+)["']/
 
     # Optimist: `opt :name, "desc", type: :string` — a flat parser (no
     # subcommand DSL), gated on the block-opening call so a bare local
@@ -115,9 +117,14 @@ module Analyzer::Ruby
             content = ruby_source(path)
             next unless cli_evidence?(content)
 
+            # Commented-out options (`# opts.on("--old")`) and env reads are
+            # not part of the program; read code only.
+            lines = content.lines.map { |line| Noir::RubyCalleeExtractor.strip_comment(line, preserve_strings: true) }
+            content = lines.join('\n')
+            next unless cli_evidence?(content)
+
             binary = ruby_binary_name(content, path)
             root_url = "cli://#{binary}"
-            lines = content.lines
             thor = content_matches?(content, THOR_SUBCLASS)
             clamp = content_matches?(content, CLAMP_SUBCLASS)
             dry_cli = content_matches?(content, DRY_CLI_MARKER)

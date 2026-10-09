@@ -26,9 +26,11 @@ module Analyzer::Php
     GET_OPTION   = /\$input->getOption\s*\(\s*['"]([^'"]+)['"]/
     GET_ARGUMENT = /\$input->getArgument\s*\(\s*['"]([^'"]+)['"]/
 
-    GETOPT      = /\bgetopt\s*\(\s*(['"])([^'"]*)\1\s*(?:,\s*\[([^\]]*)\])?/
-    ARGV_INDEX  = /\$argv\s*\[\s*(\d+)\s*\]/
-    ENV_BRACKET = /\$_ENV\s*\[\s*['"]([^'"]+)['"]\s*\]/
+    GETOPT     = /\bgetopt\s*\(\s*(['"])([^'"]*)\1\s*(?:,\s*\[([^\]]*)\])?/
+    ARGV_INDEX = /\$argv\s*\[\s*(\d+)\s*\]/
+    # `$_ENV['X'] = v` (plain assignment) is a write, not input; `==`,
+    # `??=` and `.=` still read or keep it.
+    ENV_BRACKET = /\$_ENV\s*\[\s*['"]([^'"]+)['"]\s*\](?!\s*=(?![=>]))/
     GETENV      = /\bgetenv\s*\(\s*['"]([^'"]+)['"]/
 
     WEB_FRAMEWORK_RE = /\buse\s+(?:Illuminate\\(?:Foundation|Http|Routing)|Symfony\\Bundle\\FrameworkBundle|Symfony\\Component\\HttpFoundation|Symfony\\Component\\HttpKernel|Slim\\(?:App|Factory)|Laminas\\(?:Mvc|Mezzio)|Mezzio\\|Cake\\(?:Routing|Http)|Hyperf\\HttpServer)\b|extends\s+AbstractController\b/
@@ -83,8 +85,11 @@ module Analyzer::Php
         next if PhpEngine.test_path?(base_relative_path(path))
 
         begin
-          content = read_file_content(path)
-          next unless content.matches?(CLI_HINT_RE)
+          raw = read_file_content(path)
+          next unless raw.matches?(CLI_HINT_RE)
+          # Commented-out options and env reads are not code. Robo's
+          # `@command` tag lives in a docblock, so it alone reads the raw text.
+          content = Noir::PhpCalleeExtractor.strip_comments(raw)
           next unless cli_evidence?(content)
 
           binary = php_binary_name(path)
@@ -97,7 +102,7 @@ module Analyzer::Php
 
           scan(lines, path, root_url, endpoints, emit_env)
           scan_artisan(lines, path, root_url, endpoints) if has_artisan
-          scan_robo(lines, path, root_url, endpoints) if has_robo
+          scan_robo(raw.lines, path, root_url, endpoints) if has_robo
           scan_wp_cli(lines, path, root_url, endpoints) if has_wp
         rescue e
           logger.debug "Error analyzing #{path}: #{e}"

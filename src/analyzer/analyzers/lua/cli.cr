@@ -1,5 +1,6 @@
 require "../../../models/analyzer"
 require "../../engines/cli_endpoint_support"
+require "../../../miniparsers/lua_callee_extractor"
 
 module Analyzer::Lua
   # Surfaces the command-line attack surface of Lua programs as `cli://`
@@ -39,6 +40,9 @@ module Analyzer::Lua
         next unless File.exists?(path)
         begin
           content = read_file_content(path)
+          next unless content.matches?(MARKERS)
+          # `--` / `--[[ ]]` comments and long-bracket strings are not code.
+          content = Noir::LuaCalleeExtractor.strip_comments(content)
           next unless content.matches?(MARKERS)
 
           # Pre-scan: variables actually bound to `require("cliargs")`.

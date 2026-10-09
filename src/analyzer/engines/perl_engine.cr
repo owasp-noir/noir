@@ -108,6 +108,10 @@ module Analyzer::Perl
     # line/brace bookkeeping stays correct. Analyzers with bespoke
     # sanitization may override this.
     protected def sanitize_perl_lines(lines : Array(String)) : Array(String)
+      PerlEngine.sanitize_lines(lines)
+    end
+
+    def self.sanitize_lines(lines : Array(String)) : Array(String)
       in_pod = false
       ended = false
       lines.map do |line|
@@ -130,6 +134,35 @@ module Analyzer::Perl
           line
         end
       end
+    end
+
+    # `line` cut at its `#` comment. Quoted text is skipped; `$#array` is
+    # the last-index sigil and `s#a#b#` / `qw#...#` put the `#` right after
+    # a word character, so only a `#` at line start or after any other
+    # character opens a comment.
+    def self.strip_line_comment(line : String) : String
+      return line unless line.byte_index('#'.ord)
+
+      quote = 0_u8
+      escaped = false
+      prev = 0_u8
+      line.to_slice.each_with_index do |byte, i|
+        if quote != 0
+          if escaped
+            escaped = false
+          elsif byte == '\\'.ord
+            escaped = true
+          elsif byte == quote
+            quote = 0_u8
+          end
+        elsif byte == '"'.ord || byte == '\''.ord
+          quote = byte
+        elsif byte == '#'.ord && prev != '$'.ord && !(prev.unsafe_chr.ascii_alphanumeric? || prev == '_'.ord)
+          return line.byte_slice(0, i)
+        end
+        prev = byte
+      end
+      line
     end
   end
 end
