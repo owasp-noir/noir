@@ -1177,7 +1177,12 @@ module Noir
       idx = nil
       found_declaration = ""
       start_byte = pattern.start_pos >= 0 ? offsets.byte(pattern.start_pos) : nil
-      if start_byte
+      if start_byte && chain_link_at?(content, start_byte, method_variations)
+        # A `route('/x').verb(...)` chain link starts at its own verb (see
+        # JSRoutePattern#start_pos), and its arguments carry no path.
+        idx = start_byte
+        found_declaration = "direct"
+      elsif start_byte
         search_window = offsets.window(start_byte, 500)
         method_alternation = method_variations.map { |method| Regex.escape(method) }.join("|")
         # Memoized — method_alternation has ~8 distinct values, and an
@@ -1260,13 +1265,12 @@ module Noir
       # functions in order, skipping each one's body: `rindex` over the
       # whole slice picked an arrow *inside* the handler
       # (`items.map(i => …)`) and scoped the param scan to that.
-      anchor_idx = nil
-      anchor_kind = :function
+      handler = nil.as(Tuple(Int32, Int32)?) # {start, end} in args_slice
       search = 0
       while anchor = HANDLER_ANCHOR_RE.match_at_byte_index(args_slice, search)
         anchor_idx = anchor.byte_begin(0)
-        anchor_kind = anchor[0] == "=>" ? :arrow : :function
-        body_open = if anchor_kind == :arrow
+        arrow = anchor[0] == "=>"
+        body_open = if arrow
                       ws_end = anchor.byte_end(0)
                       while ws_end < args_bytes.size && args_bytes[ws_end].unsafe_chr.ascii_whitespace?
                         ws_end += 1
@@ -1277,32 +1281,25 @@ module Noir
                       args_slice.byte_index('{', params_close)
                     end
         body_close = body_open && JSLiteralScanner.find_matching_brace_at_byte(args_slice, body_open)
-        # A concise arrow has no body to skip; keep walking past `=>`.
-        search = body_close ? body_close + 1 : anchor.byte_end(0)
-      end
-
-      return unless anchor_idx
-
-      anchor_abs = args_start + anchor_idx
-      open_brace_idx = content.byte_index('{', anchor_abs)
-      return unless open_brace_idx && open_brace_idx < close_paren_idx
-
-      # Avoid treating concise arrow returning object literals as a block body.
-      if anchor_kind == :arrow
-        bytes = content.to_slice
-        prev = open_brace_idx - 1
-        while prev > anchor_abs && bytes[prev].unsafe_chr.ascii_whitespace?
-          prev -= 1
+        if body_open && body_close
+          handler = {body_open, body_close + 1}
+          search = body_close + 1
+        elsif arrow
+          # Concise arrow (`(req, res) => res.json(req.query)`): the body is
+          # the expression up to the end of this argument, skipped whole so
+          # an arrow nested in it is not taken for the handler.
+          expr_end = argument_end(args_bytes, anchor.byte_end(0))
+          handler = {anchor.byte_end(0), expr_end}
+          search = expr_end
+        else
+          handler = nil
+          search = anchor.byte_end(0)
         end
-        return if prev >= anchor_abs && bytes[prev] == '('.ord
       end
 
-      # Extract the handler function body
-      # (This is a simplified approach - a more robust approach would count braces)
-      close_brace_idx = JSLiteralScanner.find_matching_brace_at_byte(content, open_brace_idx)
-      return unless close_brace_idx && close_brace_idx < close_paren_idx
+      return unless handler
 
-      handler_body = content.byte_slice(open_brace_idx, close_brace_idx - open_brace_idx + 1)
+      handler_body = args_slice.byte_slice(handler[0], handler[1] - handler[0])
 
       # Now analyze the handler body for req.body, req.query, etc.
       extract_body_params(handler_body, endpoint)
@@ -1310,6 +1307,57 @@ module Noir
       extract_header_params(handler_body, endpoint)
       extract_cookie_params(handler_body, endpoint)
       extract_path_params(handler_body, endpoint)
+    end
+
+    # True when `start` is a chained `.verb(` call's verb: one of `methods`
+    # preceded by a `.` and followed by `(`.
+    private def self.chain_link_at?(content : String, start : Int32, methods : Array(String)) : Bool
+      bytes = content.to_slice
+      prev = start - 1
+      while prev >= 0 && bytes[prev].unsafe_chr.ascii_whitespace?
+        prev -= 1
+      end
+      return false unless prev >= 0 && bytes[prev] == '.'.ord
+
+      methods.any? do |method|
+        stop = start + method.bytesize
+        next false unless stop <= bytes.size && content.byte_slice(start, method.bytesize).compare(method, case_insensitive: true) == 0
+        while stop < bytes.size && bytes[stop].unsafe_chr.ascii_whitespace?
+          stop += 1
+        end
+        stop < bytes.size && bytes[stop] == '('.ord
+      end
+    end
+
+    # End (exclusive) of the argument starting at byte `from` of an
+    # argument list: its first top-level `,`, or the end of the list.
+    private def self.argument_end(bytes : Bytes, from : Int32) : Int32
+      depth = 0
+      quote = 0_u8
+      i = from
+      while i < bytes.size
+        byte = bytes[i]
+        if quote != 0
+          if byte == '\\'.ord
+            i += 1
+          elsif byte == quote
+            quote = 0_u8
+          end
+        else
+          case byte
+          when '\''.ord, '"'.ord, '`'.ord
+            quote = byte
+          when '('.ord, '['.ord, '{'.ord
+            depth += 1
+          when ')'.ord, ']'.ord, '}'.ord
+            depth -= 1 if depth > 0
+          when ','.ord
+            return i if depth == 0
+          end
+        end
+        i += 1
+      end
+      bytes.size
     end
 
     # Delegate to JSLiteralScanner for literal-aware brace matching

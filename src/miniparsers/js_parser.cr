@@ -9,6 +9,9 @@ module Noir
     getter method : String
     property path : String
     getter raw_path : String
+    # CHAR index of the route's receiver token — or, for a link of a
+    # `route('/x').get(...).post(...)` chain, of that link's own verb, so
+    # each verb reports its own line and handler.
     getter start_pos : Int32
     getter params : Array(Param)
 
@@ -32,7 +35,6 @@ module Noir
     @current_route_paths : Array(String)? = nil # For multi-prefix support in route chains
     @current_route_start_idx : Int32? = nil
     @current_route_raw_path : String? = nil
-    @current_route_start_pos : Int32? = nil
     @router_prefixes : Hash(String, Array(String)) = Hash(String, Array(String)).new { |h, k| h[k] = [] of String }
     @named_route_receivers = Set(String).new
     # Receivers this file explicitly builds a router from (`x =
@@ -983,7 +985,6 @@ module Noir
             paths = route_path_entries_from_args(idx + 4, receiver: router_var)
           end
 
-          start_pos = @tokens[idx].position
           route_rparen = skip_matching_paren(idx + 3)
           if route_rparen
             each_prefixed_path(paths, router_var, router_prefixes) do |path_entry, prefixed_path|
@@ -1005,8 +1006,9 @@ module Noir
                 break unless method_rparen
                 # Non-verb links (`.all(...)`-style middleware) keep the
                 # chain alive without emitting a route.
+                # Each link is located at its own verb (see start_pos).
                 if http_method?(@tokens[j + 1])
-                  results << create_route_with_params(@tokens[j + 1].value, prefixed_path, path_entry.path, start_pos, path_entry.is_regex?)
+                  results << create_route_with_params(@tokens[j + 1].value, prefixed_path, path_entry.path, @tokens[j + 1].position, path_entry.is_regex?)
                 end
                 j = method_rparen + 1
                 steps += 1
@@ -1285,10 +1287,9 @@ module Noir
           # Create routes for all prefixed paths
           paths = @current_route_paths || [@current_route_path.as(String)]
           raw_path = @current_route_raw_path || paths.first
-          start_pos = @current_route_start_pos || @tokens[@current_route_start_idx.as(Int32)].position
 
           paths.each do |path|
-            route = JSRoutePattern.new(method, path, raw_path, start_pos)
+            route = JSRoutePattern.new(method, path, raw_path, @tokens[method_idx + 1].position)
             extract_path_params(path).each do |param|
               route.push_param(param)
             end
@@ -1305,7 +1306,6 @@ module Noir
         @current_route_paths = nil
         @current_route_start_idx = nil
         @current_route_raw_path = nil
-        @current_route_start_pos = nil
       end
 
       # Look for a new route() declaration - only at the current position
@@ -1331,7 +1331,6 @@ module Noir
         base_path = @tokens[idx + 4].value
         router_var = @tokens[idx].value
         raw_path = base_path
-        start_pos = @tokens[idx].position
 
         # Get all prefixes for multi-mount support
         prefixes_to_apply = if @router_prefixes.has_key?(router_var)
@@ -1362,7 +1361,7 @@ module Noir
 
           # Create routes for all prefixed paths
           paths.each do |path|
-            route = JSRoutePattern.new(method, path, raw_path, start_pos)
+            route = JSRoutePattern.new(method, path, raw_path, @tokens[method_idx + 1].position)
             extract_path_params(path).each do |param|
               route.push_param(param)
             end
@@ -1374,7 +1373,6 @@ module Noir
           @current_route_paths = paths
           @current_route_start_idx = idx
           @current_route_raw_path = raw_path
-          @current_route_start_pos = start_pos
           @position = method_idx + 2 # Move past dot and method
           return results
         end

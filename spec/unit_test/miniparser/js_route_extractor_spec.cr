@@ -934,6 +934,57 @@ describe Noir::JSRouteExtractor do
     end
   end
 
+  describe "handler params" do
+    it "reads each chained route() verb's own handler and line" do
+      filler = "x" * 300
+      content = <<-JS
+        app.route('/products')
+          .get(function (req, res) {
+            const category = req.query.category;
+            res.json({ category, pad: '#{filler}' });
+          })
+          .post(function (req, res) {
+            const title = req.body.title;
+            const auth = req.headers['authorization'];
+            res.json({ title, auth });
+          });
+        JS
+      file = File.tempfile("noir_js_chain", ".js")
+      begin
+        File.write(file.path, content)
+        endpoints = Noir::JSRouteExtractor.extract_routes(file.path, content)
+        get = endpoints.find! { |e| e.method == "GET" }
+        post = endpoints.find! { |e| e.method == "POST" }
+        get.details.code_paths.first.line.should eq(2)
+        get.params.map(&.name).should eq(["category"])
+        post.details.code_paths.first.line.should eq(6)
+        post.params.map { |p| {p.name, p.param_type} }.should eq([{"title", "json"}, {"authorization", "header"}])
+      ensure
+        file.delete
+      end
+    end
+
+    it "reads expression-bodied arrow handlers without taking a nested arrow" do
+      content = <<-JS
+        app.get('/concise', (req, res) => res.json({ q: req.query.q }));
+        app.get('/nested', (req, res) => res.json(req.query.ids.map((id) => id + req.query.sep)));
+        app.get('/mw', (req, res, next) => next(), (req, res) => res.send(req.body.name));
+        JS
+      file = File.tempfile("noir_js_concise", ".js")
+      begin
+        File.write(file.path, content)
+        params = Noir::JSRouteExtractor.extract_routes(file.path, content).to_h do |e|
+          {e.url, e.params.map(&.name)}
+        end
+        params["/concise"].should eq(["q"])
+        params["/nested"].should eq(["ids", "sep"])
+        params["/mw"].should eq(["name"])
+      ensure
+        file.delete
+      end
+    end
+  end
+
   describe "large files" do
     # Every route used to index the file by CHAR offset (`content[i, n]`,
     # `index(str, offset)`, `.chars` per brace match), which walks from byte 0
