@@ -195,10 +195,12 @@ module Noir
                              outer_prefix : String,
                              routes : Array(Route),
                              string_constants : Hash(String, String),
-                             local_string_constants : Hash(String, String))
+                             local_string_constants : Hash(String, String),
+                             depth : Int32 = 0)
+      return if depth > Noir::TreeSitter::MAX_AST_DEPTH
       ty = Noir::TreeSitter.node_type(node)
       if ty == "class_declaration" || ty == "object_declaration" || ty == "interface_declaration"
-        process_class(node, source, outer_prefix, [] of LibTreeSitter::TSNode, routes, string_constants, local_string_constants)
+        process_class(node, source, outer_prefix, [] of LibTreeSitter::TSNode, routes, string_constants, local_string_constants, depth)
         return
       end
 
@@ -217,7 +219,7 @@ module Noir
         child = LibTreeSitter.ts_node_named_child(node, i.to_u32)
         case Noir::TreeSitter.node_type(child)
         when "class_declaration", "object_declaration", "interface_declaration"
-          process_class(child, source, outer_prefix, pending, routes, string_constants, local_string_constants)
+          process_class(child, source, outer_prefix, pending, routes, string_constants, local_string_constants, depth + 1)
           orphan_class = recoverable_orphan_class(child, source, outer_prefix, pending, string_constants, local_string_constants)
           pending = [] of LibTreeSitter::TSNode
         when "prefix_expression"
@@ -233,7 +235,7 @@ module Noir
             class_name, class_prefix = ctx
             collect_recovered_function_routes(child, source, class_name, class_prefix, routes, string_constants, local_string_constants)
           else
-            walk_classes(child, source, outer_prefix, routes, string_constants, local_string_constants)
+            walk_classes(child, source, outer_prefix, routes, string_constants, local_string_constants, depth + 1)
           end
           pending = [] of LibTreeSitter::TSNode
           orphan_class = nil
@@ -244,14 +246,14 @@ module Noir
             class_name, class_prefix = ctx
             collect_recovered_function_routes(child, source, class_name, class_prefix, routes, string_constants, local_string_constants)
           else
-            walk_classes(child, source, outer_prefix, routes, string_constants, local_string_constants)
+            walk_classes(child, source, outer_prefix, routes, string_constants, local_string_constants, depth + 1)
           end
           pending = [] of LibTreeSitter::TSNode
           orphan_class = nil
         else
           pending = [] of LibTreeSitter::TSNode
           orphan_class = nil
-          walk_classes(child, source, outer_prefix, routes, string_constants, local_string_constants)
+          walk_classes(child, source, outer_prefix, routes, string_constants, local_string_constants, depth + 1)
         end
       end
     end
@@ -343,13 +345,14 @@ module Noir
 
     # The `infix_expression` at the end of a `prefix_expression` chain
     # when it reads as `class Name { ... }`.
-    private def infix_class_expression(node : LibTreeSitter::TSNode, source : String) : LibTreeSitter::TSNode?
+    private def infix_class_expression(node : LibTreeSitter::TSNode, source : String, depth : Int32 = 0) : LibTreeSitter::TSNode?
+      return if depth > Noir::TreeSitter::MAX_AST_DEPTH
       count = LibTreeSitter.ts_node_named_child_count(node)
       count.times do |i|
         child = LibTreeSitter.ts_node_named_child(node, i.to_u32)
         case Noir::TreeSitter.node_type(child)
         when "prefix_expression"
-          return infix_class_expression(child, source)
+          return infix_class_expression(child, source, depth + 1)
         when "infix_expression"
           return child if class_infix?(child, source)
         end
@@ -393,7 +396,8 @@ module Noir
                               pending : Array(LibTreeSitter::TSNode),
                               routes : Array(Route),
                               string_constants : Hash(String, String),
-                              local_string_constants : Hash(String, String))
+                              local_string_constants : Hash(String, String),
+                              depth : Int32 = 0)
       class_name = type_identifier_text(node, source)
 
       # `@FeignClient` (Spring Cloud) interfaces declare OUTBOUND remote
@@ -411,7 +415,7 @@ module Noir
           when "function_declaration"
             collect_function_routes(member, source, class_name, prefix, routes, string_constants, local_string_constants)
           when "class_declaration", "object_declaration", "interface_declaration"
-            walk_classes(member, source, prefix, routes, string_constants, local_string_constants)
+            walk_classes(member, source, prefix, routes, string_constants, local_string_constants, depth + 1)
           end
         end
       end
@@ -506,14 +510,16 @@ module Noir
                                                   class_prefix : String,
                                                   routes : Array(Route),
                                                   string_constants : Hash(String, String),
-                                                  local_string_constants : Hash(String, String))
+                                                  local_string_constants : Hash(String, String),
+                                                  depth : Int32 = 0)
+      return if depth > Noir::TreeSitter::MAX_AST_DEPTH
       if Noir::TreeSitter.node_type(node) == "function_declaration"
         collect_function_routes(node, source, class_name, class_prefix, routes, string_constants, local_string_constants)
         return
       end
 
       Noir::TreeSitter.each_named_child(node) do |child|
-        collect_recovered_function_routes(child, source, class_name, class_prefix, routes, string_constants, local_string_constants)
+        collect_recovered_function_routes(child, source, class_name, class_prefix, routes, string_constants, local_string_constants, depth + 1)
       end
     end
 
