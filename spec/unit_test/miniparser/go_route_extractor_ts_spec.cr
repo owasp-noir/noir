@@ -275,6 +275,76 @@ describe Noir::TreeSitterGoRouteExtractor do
     routes.map { |r| {r.verb, r.path} }.should eq([{"GET", "/api/v1/users"}])
   end
 
+  it "does not re-stack self-reassigned groups onto the file's own seeded prefix" do
+    source = <<-GO
+      package main
+
+      func main() {
+          app := fiber.New()
+          var r fiber.Router = app
+          r = r.Group("/a")
+          r = r.Group("/b")
+          r.Get("/x", handler)
+      }
+      GO
+
+    # The engine seeds each file with the package map, which already holds
+    # this file's own result for `r`.
+    seed = Noir::TreeSitterGoRouteExtractor.extract_groups(source)
+    seed["r"].should eq("/a/b")
+    Noir::TreeSitterGoRouteExtractor.extract_groups(source, seed)["r"].should eq("/a/b")
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source, seed)
+    routes.map { |r| {r.verb, r.path} }.should eq([{"GET", "/a/b/x"}])
+  end
+
+  it "scopes a package-level func literal's params as locals, not its var block" do
+    closure = <<-GO
+      package main
+
+      var setup = func(g *gin.RouterGroup) {
+          g = g.Group("/v1")
+          g.GET("/x", h)
+      }
+      GO
+    Noir::TreeSitterGoRouteExtractor.extract_routes(closure, {"g" => "/api"})
+      .map { |r| {r.verb, r.path} }.should eq([{"GET", "/v1/x"}])
+
+    block = <<-GO
+      package main
+
+      var (
+          g     *gin.RouterGroup
+          setup = func() {
+              g = g.Group("/v1")
+              g.GET("/x", h)
+          }
+      )
+      GO
+    Noir::TreeSitterGoRouteExtractor.extract_routes(block, {"g" => "/api"})
+      .map { |r| {r.verb, r.path} }.should eq([{"GET", "/api/v1/x"}])
+  end
+
+  it "stacks a package-level self-regroup onto the sibling file's binding" do
+    source = <<-GO
+      package main
+
+      func setup() {
+          r = r.Group("/v1")
+          r.Get("/x", handler)
+      }
+
+      // A same-named param in another function doesn't make `r` local.
+      func handler(w http.ResponseWriter, r *http.Request) {}
+      GO
+
+    # Not exported (it would feed back as this file's own seed) ...
+    Noir::TreeSitterGoRouteExtractor.extract_groups(source).has_key?("r").should be_false
+    Noir::TreeSitterGoRouteExtractor.extract_engine_names_and_groups(source)[1].has_key?("r").should be_false
+    # ... but the sibling's `r = app.Group("/api")` seed is kept.
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source, {"r" => "/api"})
+    routes.map { |r| {r.verb, r.path} }.should eq([{"GET", "/api/v1/x"}])
+  end
+
   it "does not loop on reassigned string identifiers" do
     source = <<-GO
       package main
@@ -352,6 +422,40 @@ describe Noir::TreeSitterGoRouteExtractor do
       {"GET", "/builder", [] of String},
       {"GET", "/filtered", ["type", "page"]},
     ])
+  end
+
+  it "keeps the gorilla mux subrouter prefix through matcher and setter calls" do
+    source = <<-GO
+      package main
+      func main() {
+          r := mux.NewRouter()
+          api := r.PathPrefix("/api").Subrouter().StrictSlash(true)
+          api.HandleFunc("/a", h).Methods("GET")
+          d := r.PathPrefix("/d").Methods("GET").Subrouter()
+          d.HandleFunc("/e", h).Methods("GET")
+          hp := r.Host("x.test").PathPrefix("/h").Subrouter()
+          hp.HandleFunc("/f", h).Methods("GET")
+          m := api.Methods("POST").Subrouter()
+          m.HandleFunc("/g", h).Methods("POST")
+          root := mux.NewRouter().PathPrefix("/root").Subrouter()
+          root.HandleFunc("/i", h).Methods("GET")
+          helper := newRouter().PathPrefix("/helper").Subrouter()
+          helper.HandleFunc("/j", h).Methods("GET")
+          nr := api.NewRoute().PathPrefix("/nr").Subrouter()
+          nr.HandleFunc("/k", h).Methods("GET")
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source, group_method: "Subrouter", handlefunc_methods: true)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"GET", "/api/a"},
+      {"GET", "/d/e"},
+      {"GET", "/api/nr/k"},
+      {"GET", "/h/f"},
+      {"GET", "/helper/j"},
+      {"GET", "/root/i"},
+      {"POST", "/api/g"},
+    ].sort)
   end
 
   it "preserves wildcard methods for unconstrained gorilla mux routes" do

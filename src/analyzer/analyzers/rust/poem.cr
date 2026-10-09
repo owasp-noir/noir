@@ -34,16 +34,36 @@ module Analyzer::Rust
 
       Noir::TreeSitter.parse_rust(source) do |root|
         function_index = build_function_index(root, source)
+        nest_ranges = collect_route_nest_ranges(root, source, function_index)
+        # Enclosing nest ranges, innermost last, as `{end, composed prefix}`.
+        # `walk` is pre-order, so node start bytes never decrease and a
+        # stack over the start-sorted ranges stays linear.
+        nest_stack = [] of Tuple(Int32, String)
+        nest_index = 0
 
         walk(root) do |node|
+          start = LibTreeSitter.ts_node_start_byte(node).to_i
+          while nest_index < nest_ranges.size && nest_ranges[nest_index][0] <= start
+            s, e, p = nest_ranges[nest_index]
+            nest_index += 1
+            while (top = nest_stack.last?) && top[0] <= s
+              nest_stack.pop
+            end
+            nest_stack << {e, top ? join_nest_path(top[1], p) : p}
+          end
+          while (top = nest_stack.last?) && top[0] <= start
+            nest_stack.pop
+          end
+
           next unless Noir::TreeSitter.node_type(node) == "call_expression"
           next if RustEngine.inside_test_region?(node, test_regions)
           at_call = decode_at_call(node, source)
           next unless at_call
           route_path, method_handler_pairs = at_call
+          route_path = join_nest_path(top[1], route_path) if top = nest_stack.last?
 
           method_handler_pairs.each do |method, handler_name|
-            details = Details.new(PathInfo.new(path, Noir::TreeSitter.node_start_row(node) + 1))
+            details = Details.new(PathInfo.new(path, call_line(node)))
             normalized = normalize_path(route_path)
             endpoint = Endpoint.new(normalized, method, details)
             extract_path_params(route_path, endpoint)
@@ -304,6 +324,64 @@ module Analyzer::Rust
       return unless named.size == 1
       return unless Noir::TreeSitter.node_type(named[0]) == "string_literal"
       string_content(named[0], source)
+    end
+
+    # `.nest("/api", <endpoint>)` mounts as `{start, end, prefix}` byte
+    # ranges, start-sorted with outer ranges first. The range is the
+    # inline argument (`Route::new().at(...)`), or the body of a same-file
+    # `fn` it calls (`.nest("/api", api())`) — unless that fn is nested
+    # under more than one prefix. `nest_no_strip` hands the inner endpoint
+    # the unstripped request path, so its routes already spell out the
+    # prefix and none is added.
+    private def collect_route_nest_ranges(root : LibTreeSitter::TSNode,
+                                          source : String,
+                                          function_index : Hash(String, LibTreeSitter::TSNode)) : Array(Tuple(Int32, Int32, String))
+      ranges = [] of Tuple(Int32, Int32, String)
+      fn_prefixes = {} of String => Set(String)
+      walk(root) do |n|
+        next unless Noir::TreeSitter.node_type(n) == "call_expression"
+        fnf = Noir::TreeSitter.field(n, "function")
+        next unless fnf && Noir::TreeSitter.node_type(fnf) == "field_expression"
+        fld = Noir::TreeSitter.field(fnf, "field")
+        next unless fld && Noir::TreeSitter.node_text(fld, source) == "nest"
+        args = Noir::TreeSitter.field(n, "arguments")
+        next unless args
+        named = [] of LibTreeSitter::TSNode
+        Noir::TreeSitter.each_named_child(args) { |c| named << c }
+        next if named.size < 2
+        prefix = string_content_from_string_literal(named[0], source)
+        next unless prefix
+        arg = named[1]
+        if name = local_fn_callee(arg, source)
+          function = function_index[name]?
+          next unless function
+          # A fn mounting itself would prefix its own top-level routes.
+          next if LibTreeSitter.ts_node_start_byte(function) <= LibTreeSitter.ts_node_start_byte(n) &&
+                  LibTreeSitter.ts_node_end_byte(n) <= LibTreeSitter.ts_node_end_byte(function)
+          (fn_prefixes[name] ||= Set(String).new) << prefix
+        else
+          ranges << {LibTreeSitter.ts_node_start_byte(arg).to_i, LibTreeSitter.ts_node_end_byte(arg).to_i, prefix}
+        end
+      end
+      fn_prefixes.each do |name, prefixes|
+        next unless prefixes.size == 1
+        function = function_index[name]
+        ranges << {LibTreeSitter.ts_node_start_byte(function).to_i, LibTreeSitter.ts_node_end_byte(function).to_i, prefixes.first}
+      end
+      ranges.sort_by! { |s, e, _| {s, -e} }
+    end
+
+    # `api()` / `self::api()` -> "api". A module path (`admin::routes()`)
+    # names another file's fn, never a same-named one in this file.
+    private def local_fn_callee(arg : LibTreeSitter::TSNode, source : String) : String?
+      return unless Noir::TreeSitter.node_type(arg) == "call_expression"
+      callee = Noir::TreeSitter.field(arg, "function")
+      return unless callee
+      text = Noir::TreeSitter.node_text(callee, source)
+      case Noir::TreeSitter.node_type(callee)
+      when "identifier"        then text
+      when "scoped_identifier" then text.lchop?("self::")
+      end
     end
 
     # ── poem-openapi nest prefix composition ─────────────────────────

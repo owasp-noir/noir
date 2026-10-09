@@ -37,7 +37,7 @@ module Analyzer::Rust
 
       Noir::TreeSitter.parse_rust(source) do |root|
         function_index = build_function_index(root, source)
-        var_paths = collect_route_variables(root, source)
+        var_paths = collect_route_variables(root, source, path)
         nest_ranges = collect_nest_ranges(root, source)
 
         walk(root) do |node|
@@ -48,15 +48,17 @@ module Analyzer::Rust
           route_path, method, handler_arg = route
           full_path = apply_nest_prefix(node, route_path, nest_ranges)
 
-          details = Details.new(PathInfo.new(path, Noir::TreeSitter.node_start_row(node) + 1))
-          endpoint = Endpoint.new(full_path, method, details)
-          extract_path_params(full_path, endpoint)
+          details = Details.new(PathInfo.new(path, call_line(node)))
+          RustEngine.fan_out_verbs(method).each do |verb|
+            endpoint = Endpoint.new(full_path, verb, details)
+            extract_path_params(full_path, endpoint)
 
-          if handler_arg
-            apply_handler(handler_arg, function_index, source, path, endpoint, include_callee)
+            if handler_arg
+              apply_handler(handler_arg, function_index, source, path, endpoint, include_callee)
+            end
+
+            endpoints << endpoint
           end
-
-          endpoints << endpoint
         end
       end
 
@@ -83,6 +85,8 @@ module Analyzer::Rust
           name.upcase
         elsif STATIC_VERBS.includes?(name)
           "GET"
+        elsif name == "all"
+          "ANY"
         end
       return unless method
 
@@ -102,30 +106,41 @@ module Analyzer::Rust
     # Walk a verb call's receiver chain to the `.at("path")` that defines
     # its path (skipping chained verbs), or resolve a route-variable
     # identifier. Returns the path string or `nil`.
+    # Each `.at()` nests under its receiver's path (`api.at("/c")` with
+    # `api = app.at("/api")` is `/api/c`), so every `.at` segment in the
+    # chain is joined, rooted at a route variable when there is one.
     private def resolve_at_path(node : LibTreeSitter::TSNode,
                                 source : String,
                                 var_paths : Hash(String, String)) : String?
       cursor = node
+      path = nil.as(String?)
       256.times do
+        base = nil.as(String?)
         case Noir::TreeSitter.node_type(cursor)
         when "identifier"
-          return var_paths[Noir::TreeSitter.node_text(cursor, source)]?
+          base = var_paths[Noir::TreeSitter.node_text(cursor, source)]?
         when "call_expression"
           cfn = Noir::TreeSitter.field(cursor, "function")
-          return unless cfn && Noir::TreeSitter.node_type(cfn) == "field_expression"
-          cfield = Noir::TreeSitter.field(cfn, "field")
-          fname = cfield ? Noir::TreeSitter.node_text(cfield, source) : ""
-          if fname == "at"
-            return first_string_literal_text(Noir::TreeSitter.field(cursor, "arguments"), source)
+          if cfn && Noir::TreeSitter.node_type(cfn) == "field_expression" && (receiver = Noir::TreeSitter.field(cfn, "value"))
+            cfield = Noir::TreeSitter.field(cfn, "field")
+            if cfield && Noir::TreeSitter.node_text(cfield, source) == "at"
+              segment = first_string_literal_text(Noir::TreeSitter.field(cursor, "arguments"), source)
+              return path unless segment
+              path = path ? join_at(segment, path) : segment
+            end
+            cursor = receiver
+            next
           end
-          receiver = Noir::TreeSitter.field(cfn, "value")
-          return unless receiver
-          cursor = receiver
-        else
-          return
         end
+        return base && path ? join_at(base, path) : base || path
       end
-      nil
+      path
+    end
+
+    # Tide's `Route::at` leaves the path unchanged for `"/"`.
+    private def join_at(prefix : String, path : String) : String
+      return prefix if path.empty? || path == "/"
+      "#{prefix.rstrip('/')}/#{path.lstrip('/')}"
     end
 
     # Collect `app.at("/pre").nest(arg)` mounts as `{arg_byte_range,
@@ -169,9 +184,16 @@ module Analyzer::Rust
     # bindings whose RHS is a `.at("path")` call somewhere. We use
     # the *outermost* `.at` we find on the RHS, mirroring the legacy
     # `(\w+)\s*=\s*\w+\.at(...)` regex.
+    # Every route variable stores its fully composed path, so a long
+    # `let aN = aN-1.at("/s")` chain would hold O(n²) bytes. Past this
+    # length a variable keeps just its own `.at` literal instead.
+    MAX_COMPOSED_VAR_PATH_BYTES = 2048
+
     private def collect_route_variables(root : LibTreeSitter::TSNode,
-                                        source : String) : Hash(String, String)
+                                        source : String,
+                                        file_path : String) : Hash(String, String)
       vars = {} of String => String
+      capped = false
       walk(root) do |node|
         next unless Noir::TreeSitter.node_type(node) == "let_declaration"
         pattern = Noir::TreeSitter.field(node, "pattern")
@@ -180,9 +202,15 @@ module Analyzer::Rust
 
         value = Noir::TreeSitter.field(node, "value")
         next unless value
-        path = find_at_call_path(value, source)
+        path = resolve_at_path(value, source, vars)
+        if path && path.bytesize > MAX_COMPOSED_VAR_PATH_BYTES
+          path = nil
+          capped = true
+        end
+        path ||= find_at_call_path(value, source)
         vars[name] = path if path
       end
+      logger.debug "tide: route variable paths over #{MAX_COMPOSED_VAR_PATH_BYTES} bytes kept uncomposed in #{file_path}" if capped
       vars
     end
 

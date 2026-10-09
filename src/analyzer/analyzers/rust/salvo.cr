@@ -194,7 +194,7 @@ module Analyzer::Rust
         next unless chain
         route_path, method, handler_name = chain
 
-        row = Noir::TreeSitter.node_start_row(node) + 1 + row_offset
+        row = call_line(node) + row_offset
 
         # If this route sits inside a builder fn mounted cross-file via
         # `.push(builder())`, prepend the fn's external mount prefix(es).

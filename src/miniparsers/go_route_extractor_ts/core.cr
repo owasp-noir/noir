@@ -127,6 +127,8 @@ module Noir
       # across handler files, so one file's `/health` leaked onto every
       # other file's routes.
       "Bind", "Unbind", "BindFunc", "UnbindFunc",
+      # gorilla/mux `*Router` setters: `r.PathPrefix("/api").Subrouter().StrictSlash(true)`.
+      "StrictSlash", "SkipClean", "UseEncodedPath",
     }
 
     # Beego registers controllers with `web.Router("/path", &Ctrl{},
@@ -239,6 +241,8 @@ module Noir
         string_values = collect_string_values(root, source)
         mux_chained_operands = Set(String).new
 
+        drop_local_self_regroups(group_prefixes, self_regroups(root, source, group_method)) unless group_prefixes.empty?
+
         # Sub-app mounts (Fiber `app.Mount("/mnt", micro)`) bind the mounted
         # app's variable to the prefix. Collected before the group walk so
         # groups derived from the mounted app inherit it.
@@ -332,12 +336,154 @@ module Noir
       Noir::TreeSitter.parse_go(source) do |root|
         string_values = collect_string_values(root, source)
 
+        regroups = self_regroups(root, source, group_method)
+        drop_local_self_regroups(group_prefixes, regroups)
         Noir::TreeSitter.walk(root) do |node|
           next unless group_assignment_node?(node)
           collect_group(node, source, group_prefixes, group_method, group_aliases, string_values)
         end
+        unexported_self_regroups(regroups).each { |name| group_prefixes.delete(name) }
       end
       group_prefixes
+    end
+
+    # `r = r.Group("/a")` stacks onto whatever r held on entry. Returns
+    # `{local, package_level, other}`: names rebound that way inside a
+    # function that itself declares them (param or local var), names
+    # rebound that way anywhere else (package-level vars), and names the
+    # file also binds from something else (`r := app.Group("/x")`).
+    # Scoped per function, so `func h(w, r *http.Request)` elsewhere in the
+    # file doesn't make a package-level `r` look local.
+    # (Zero-arg alias calls bind with `||=` and are already idempotent.)
+    private def self_regroups(root : LibTreeSitter::TSNode,
+                              source : String,
+                              group_method : String) : Tuple(Set(String), Set(String), Set(String))
+      local = Set(String).new
+      package_level = Set(String).new
+      others = Set(String).new
+      Noir::TreeSitter.each_named_child(root) do |decl|
+        # Function scopes in this declaration, disjoint and in source order:
+        # the function itself, or each `var f = func(...) {...}` literal.
+        scopes = if {"function_declaration", "method_declaration"}.includes?(Noir::TreeSitter.node_type(decl))
+                   [decl]
+                 else
+                   var_func_literals(decl)
+                 end
+        declared = Hash(Int32, Set(String)).new
+        scope_index = 0
+        Noir::TreeSitter.walk(decl) do |node|
+          next unless binding = regroup_binding(node, source, group_method)
+          name, self_bound = binding
+          if !self_bound
+            others << name
+            next
+          end
+          # `walk` is pre-order, so binding start bytes never decrease.
+          start = LibTreeSitter.ts_node_start_byte(node)
+          while scope_index < scopes.size && LibTreeSitter.ts_node_end_byte(scopes[scope_index]) <= start
+            scope_index += 1
+          end
+          scope = scopes[scope_index]?
+          names = (declared[scope_index] ||= declared_names(scope, source)) if scope && LibTreeSitter.ts_node_start_byte(scope) <= start
+          (names && names.includes?(name) ? local : package_level) << name
+        end
+      end
+      {local, package_level, others}
+    end
+
+    # `func` literals bound directly by a top-level `var` (`var setup =
+    # func(g *gin.RouterGroup) {...}`), each its own function scope. The
+    # surrounding `var (...)` block stays package level.
+    private def var_func_literals(decl : LibTreeSitter::TSNode) : Array(LibTreeSitter::TSNode)
+      literals = [] of LibTreeSitter::TSNode
+      return literals unless Noir::TreeSitter.node_type(decl) == "var_declaration"
+      specs = [] of LibTreeSitter::TSNode
+      Noir::TreeSitter.each_named_child(decl) do |child|
+        case Noir::TreeSitter.node_type(child)
+        when "var_spec"      then specs << child
+        when "var_spec_list" then Noir::TreeSitter.each_named_child(child) { |s| specs << s if Noir::TreeSitter.node_type(s) == "var_spec" }
+        end
+      end
+      specs.each do |spec|
+        next unless value = Noir::TreeSitter.field(spec, "value")
+        if Noir::TreeSitter.node_type(value) == "func_literal"
+          literals << value
+        else
+          Noir::TreeSitter.each_named_child(value) { |v| literals << v if Noir::TreeSitter.node_type(v) == "func_literal" }
+        end
+      end
+      literals
+    end
+
+    # `{name, self_bound}` for a `<name> = <chain>.<group_method>(...)`
+    # binding; `self_bound` when the chain is rooted at `<name>` itself.
+    private def regroup_binding(node : LibTreeSitter::TSNode, source : String, group_method : String) : Tuple(String, Bool)?
+      return unless group_assignment_node?(node)
+      var_spec = Noir::TreeSitter.node_type(node) == "var_spec"
+      left = Noir::TreeSitter.field(node, var_spec ? "name" : "left")
+      right = Noir::TreeSitter.field(node, var_spec ? "value" : "right")
+      return unless left && right
+      name_node = identifier_or_first_child(left)
+      current = Noir::TreeSitter.first_named_child(right)
+      return unless name_node && current && Noir::TreeSitter.node_type(name_node) == "identifier"
+      grouped = false
+      while Noir::TreeSitter.node_type(current) == "call_expression"
+        function = Noir::TreeSitter.field(current, "function")
+        break unless function && Noir::TreeSitter.node_type(function) == "selector_expression"
+        field = Noir::TreeSitter.field(function, "field")
+        operand = Noir::TreeSitter.field(function, "operand")
+        break unless field && operand
+        grouped ||= Noir::TreeSitter.node_text(field, source) == group_method
+        current = operand
+      end
+      return unless grouped
+      name = Noir::TreeSitter.node_text(name_node, source)
+      {name, Noir::TreeSitter.node_type(current) == "identifier" && Noir::TreeSitter.node_text(current, source) == name}
+    end
+
+    # Package-level names the file only ever rebinds from themselves
+    # (`var r fiber.Router` set in a sibling file). Their value already
+    # includes whatever the name held on entry, so exporting it would feed
+    # it back as this file's seed (`/a/a`) and clash with the sibling's
+    # real binding. Locally bound names keep exporting their own value,
+    # which is what lets the package map flag a reused local name as
+    # ambiguous; their seed is dropped by `drop_local_self_regroups`.
+    private def unexported_self_regroups(regroups : Tuple(Set(String), Set(String), Set(String))) : Set(String)
+      local, package_level, others = regroups
+      package_level - others - local
+    end
+
+    # A self-regrouped name its function binds locally (`func f(r
+    # fiber.Router) { r = r.Group("/a") }`) starts from that local binding,
+    # not from a same-named package group, so its seed is dropped. A
+    # package-level var (`var r fiber.Router` set in a sibling file) keeps
+    # its seed.
+    private def drop_local_self_regroups(groups : Hash(String, String),
+                                         regroups : Tuple(Set(String), Set(String), Set(String)))
+      return if groups.empty?
+      local, package_level, _ = regroups
+      local.each { |name| groups.delete(name) unless package_level.includes?(name) }
+    end
+
+    # Parameter and variable names declared in one function (closures
+    # included).
+    private def declared_names(decl : LibTreeSitter::TSNode, source : String) : Set(String)
+      names = Set(String).new
+      Noir::TreeSitter.walk(decl) do |node|
+        case Noir::TreeSitter.node_type(node)
+        when "parameter_declaration", "var_spec"
+          Noir::TreeSitter.each_named_child(node) do |child|
+            names << Noir::TreeSitter.node_text(child, source) if Noir::TreeSitter.node_type(child) == "identifier"
+          end
+        when "short_var_declaration"
+          if left = Noir::TreeSitter.field(node, "left")
+            Noir::TreeSitter.each_named_child(left) do |child|
+              names << Noir::TreeSitter.node_text(child, source) if Noir::TreeSitter.node_type(child) == "identifier"
+            end
+          end
+        end
+      end
+      names
     end
 
     # A Gin "router-builder" helper — `func F(rg *gin.RouterGroup) {...}`
@@ -592,6 +738,7 @@ module Noir
             collect_engine_param(node, source, names)
           end
         end
+        unexported_self_regroups(self_regroups(root, source, group_method)).each { |name| group_prefixes.delete(name) }
       end
       {names, group_prefixes}
     end
@@ -938,31 +1085,44 @@ module Noir
       # takes the prefix as its own argument, which falls through to the
       # default path-extraction branch below.
       if group_method == "Subrouter" && Noir::TreeSitter.node_type(parent_node) == "call_expression"
-        inner_function = Noir::TreeSitter.field(parent_node, "function")
-        if inner_function && Noir::TreeSitter.node_type(inner_function) == "selector_expression"
+        # Walk the whole route-builder chain under `.Subrouter()`:
+        # matchers (`.Methods("GET")`, `.Host(...)`) may sit on either side
+        # of `.PathPrefix(...)`, so `r.PathPrefix("/d").Methods("GET")` and
+        # `r.Host("h").PathPrefix("/d")` both scope the subrouter to `/d`.
+        segments = [] of String
+        current = parent_node
+        while Noir::TreeSitter.node_type(current) == "call_expression"
+          inner_function = Noir::TreeSitter.field(current, "function")
+          # A plain call (`newRouter()`) is the chain root.
+          break unless inner_function && Noir::TreeSitter.node_type(inner_function) == "selector_expression"
           inner_field = Noir::TreeSitter.field(inner_function, "field")
-          if inner_field && Noir::TreeSitter.node_text(inner_field, source) == "PathPrefix"
-            inner_args = Noir::TreeSitter.field(parent_node, "arguments")
-            if inner_args
-              prefix = nil
-              Noir::TreeSitter.each_named_child(inner_args) do |arg|
-                prefix = string_expr_text(arg, source, string_values)
-                next unless prefix
-                break
-              end
-              return unless prefix
-              new_parent = Noir::TreeSitter.field(inner_function, "operand")
-              if new_parent && Noir::TreeSitter.node_type(new_parent) == "identifier"
-                parent_name = Noir::TreeSitter.node_text(new_parent, source)
-                if parent_prefix = groups[parent_name]?
-                  prefix = group_join(parent_prefix, prefix)
-                end
-              end
-              groups[Noir::TreeSitter.node_text(var_name_node, source)] = prefix
-              return
+          inner_operand = Noir::TreeSitter.field(inner_function, "operand")
+          break unless inner_field && inner_operand
+          case Noir::TreeSitter.node_text(inner_field, source)
+          when "PathPrefix", "Path"
+            inner_args = Noir::TreeSitter.field(current, "arguments")
+            return unless inner_args
+            segment = nil
+            Noir::TreeSitter.each_named_child(inner_args) do |arg|
+              segment = string_expr_text(arg, source, string_values)
+              break if segment
             end
+            return unless segment
+            segments.unshift(segment)
+          when "Methods", "Host", "Schemes", "Headers", "HeadersRegexp", "Queries", "MatcherFunc", "Name", "NewRoute"
+            # Matcher only; no path segment.
+          else
+            break # chain root, e.g. `mux.NewRouter()`
           end
+          current = inner_operand
         end
+
+        parent_prefix = if Noir::TreeSitter.node_type(current) == "identifier"
+                          groups[Noir::TreeSitter.node_text(current, source)]?
+                        end
+        return if segments.empty? && parent_prefix.nil?
+        groups[Noir::TreeSitter.node_text(var_name_node, source)] =
+          segments.reduce(parent_prefix) { |acc, seg| acc ? group_join(acc, seg) : seg }.as(String)
         return
       end
 

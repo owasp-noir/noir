@@ -128,7 +128,7 @@ module Analyzer::Rust
 
         prefix = find_chain_prefix(node, source)
         full_path = absolute_scope_join(prefix, route_path)
-        row = Noir::TreeSitter.node_start_row(node) + 1
+        row = call_line(node)
 
         verb_handlers.each do |verb, handler_name|
           details = Details.new(PathInfo.new(path, row))

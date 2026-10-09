@@ -129,7 +129,7 @@ module Analyzer::Rust
 
             if builder_route = extract_builder_route(call, source, scope_prefixes)
               route_path, methods, handler_name = builder_route
-              details = Details.new(PathInfo.new(path, Noir::TreeSitter.node_start_row(call) + 1))
+              details = Details.new(PathInfo.new(path, call_line(call)))
               configure_route_paths(route_path, call, configure_ranges, path).each do |rp|
                 canonical = canonicalize_actix_path(rp)
                 methods.each do |raw_verb|
@@ -152,7 +152,7 @@ module Analyzer::Rust
             # surfaces without fanning out seven near-duplicate endpoints.
             if resource_to = extract_resource_to(call, source, scope_prefixes)
               route_path, handler_name = resource_to
-              details = Details.new(PathInfo.new(path, Noir::TreeSitter.node_start_row(call) + 1))
+              details = Details.new(PathInfo.new(path, call_line(call)))
               configure_route_paths(route_path, call, configure_ranges, path).each do |rp|
                 endpoint = Endpoint.new(canonicalize_actix_path(rp), "GET", details)
                 extract_path_params(rp, endpoint)
