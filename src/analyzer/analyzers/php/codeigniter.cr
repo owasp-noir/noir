@@ -18,6 +18,8 @@ module Analyzer::Php
 
     CI3_VERBS = %w[get post put patch delete options head cli]
 
+    MAX_GROUP_DEPTH = 32
+
     RESOURCE_CALL_RE = /\$routes->(resource|presenter)\s*\(\s*['"]([^'"]+)['"](#{CALL_ARGS_TAIL})/mi
 
     def analyze_file(path : String) : Array(Endpoint)
@@ -51,7 +53,11 @@ module Analyzer::Php
                                        prefix : String,
                                        file_path : String,
                                        include_callee : Bool,
-                                       controller_namespace : String) : Array(Endpoint)
+                                       controller_namespace : String,
+                                       depth : Int32 = 0) : Array(Endpoint)
+      # One recursion per nested group()/environment() callback; a hostile
+      # nesting depth would otherwise overflow the stack and kill the process.
+      raise "route groups nested deeper than #{MAX_GROUP_DEPTH} levels" if depth > MAX_GROUP_DEPTH
       endpoints = [] of Endpoint
       details = Details.new(PathInfo.new(file_path))
 
@@ -78,7 +84,7 @@ module Analyzer::Php
         group_content = working_content[(brace_pos + 1)...close]
         group_namespace = extract_group_namespace(group_options) || controller_namespace
         new_prefix = build_full_path(prefix, group_prefix)
-        endpoints.concat(analyze_routes_content(group_content, new_prefix, file_path, include_callee, group_namespace))
+        endpoints.concat(analyze_routes_content(group_content, new_prefix, file_path, include_callee, group_namespace, depth + 1))
         # Strip the entire group call (through its closing brace) so step 3+ never re-scans it.
         working_content = working_content[0...start] + working_content[(close + 1)..]
       end
@@ -96,7 +102,7 @@ module Analyzer::Php
           next
         end
         env_content = working_content[(brace_pos + 1)...close]
-        endpoints.concat(analyze_routes_content(env_content, prefix, file_path, include_callee, controller_namespace))
+        endpoints.concat(analyze_routes_content(env_content, prefix, file_path, include_callee, controller_namespace, depth + 1))
         working_content = working_content[0...start] + working_content[(close + 1)..]
       end
 
