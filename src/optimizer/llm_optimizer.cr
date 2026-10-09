@@ -63,8 +63,18 @@ class LLMEndpointOptimizer < EndpointOptimizer
     @logger.debug_sub "Found #{candidate_indexes.size} endpoints that may benefit from LLM optimization."
 
     final_endpoints = endpoints.dup
+    # The dedup pass already ran, so a rewrite onto another endpoint's
+    # (method, url) — a model answering `/api/items` for every route —
+    # would replace distinct routes with duplicates. Keep the original URL.
+    taken = endpoints.map { |endpoint| {endpoint.method, endpoint.url} }.to_set
     candidate_indexes.each do |idx|
-      final_endpoints[idx] = llm_optimize_single_endpoint(final_endpoints[idx])
+      original = final_endpoints[idx]
+      optimized = llm_optimize_single_endpoint(original)
+      if optimized.url != original.url && !taken.add?({optimized.method, optimized.url})
+        @logger.debug_sub "  - URL rewrite #{original.url} → #{optimized.url} rejected: collides with another endpoint"
+        optimized.url = original.url
+      end
+      final_endpoints[idx] = optimized
     end
 
     final_endpoints
@@ -156,14 +166,19 @@ class LLMEndpointOptimizer < EndpointOptimizer
     # Apply URL optimizations if suggested
     if optimization_data.has_key?("optimized_url")
       new_url = optimization_data["optimized_url"].as_s
+      # With -u the URL is already absolute. Rewrite only its path and keep
+      # the origin: a path-only answer used to drop scheme and host, and a
+      # same-origin full URL was rejected outright.
+      origin = endpoint.url[URL_ORIGIN_RE]? || ""
+      new_url = new_url[origin.size..] if !origin.empty? && new_url.starts_with?(origin)
       # Only accept a rewrite that is a real path. Without this guard a
       # model that returns prose, a code fragment, or a "/GET /x"-style
       # string (anything that merely starts with "/") would clobber a
       # correct URL — corrupting the endpoint (a false positive) and
       # losing the original (a false negative) in one step.
-      if new_url != endpoint.url && !new_url.empty? && new_url.starts_with?("/") && plausible_rewrite_url?(new_url)
-        @logger.debug_sub "  - URL optimized: #{endpoint.url} → #{new_url}"
-        optimized_endpoint.url = new_url
+      if new_url.starts_with?("/") && plausible_rewrite_url?(new_url) && (rewritten = "#{origin}#{new_url}") != endpoint.url
+        @logger.debug_sub "  - URL optimized: #{endpoint.url} → #{rewritten}"
+        optimized_endpoint.url = rewritten
       end
     end
 
@@ -238,6 +253,7 @@ class LLMEndpointOptimizer < EndpointOptimizer
   VALID_PARAM_TYPES        = %w[query json form header cookie path]
   MAX_REWRITE_URL_LENGTH   = 2048
   MAX_OPTIMIZED_PARAM_NAME =  128
+  URL_ORIGIN_RE            = /\A[a-zA-Z][a-zA-Z0-9+.\-]*:\/\/[^\/?#]*/
 
   # Coerce an LLM-supplied param_type string to one of the canonical
   # values; anything outside the list falls back to "query".

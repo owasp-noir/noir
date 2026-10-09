@@ -11,6 +11,10 @@ class LLMEndpointOptimizer
     apply_llm_optimizations(endpoint, response)
   end
 
+  def __test_llm_optimize(endpoints : Array(Endpoint)) : Array(Endpoint)
+    llm_optimize_endpoints(endpoints)
+  end
+
   def __test_adapter : LLM::Adapter?
     @adapter
   end
@@ -216,6 +220,39 @@ describe "LLMEndpointOptimizer" do
 
       result = optimizer.__test_apply(endpoint, response)
       result.url.should eq("/users/{id}")
+    end
+
+    it "keeps the -u origin when rewriting an absolute URL" do
+      # combine_url_and_endpoints has already prefixed -u by now; a
+      # path-only answer used to drop the host, and a same-origin full URL
+      # was rejected.
+      optimizer = LLMEndpointOptimizer.new(guard_logger, create_test_options)
+      endpoint = Endpoint.new("http://target.example:8080/api/files/*", "GET")
+
+      optimizer.__test_apply(endpoint, %({"optimized_url":"/api/files/{path}","optimized_params":[]})).url
+        .should eq("http://target.example:8080/api/files/{path}")
+      optimizer.__test_apply(endpoint, %({"optimized_url":"http://target.example:8080/api/files/{path}","optimized_params":[]})).url
+        .should eq("http://target.example:8080/api/files/{path}")
+      optimizer.__test_apply(endpoint, %({"optimized_url":"http://evil.example/x","optimized_params":[]})).url
+        .should eq(endpoint.url)
+      optimizer.__test_apply(endpoint, %({"optimized_url":"http://target.example:8080.evil/x","optimized_params":[]})).url
+        .should eq(endpoint.url)
+    end
+
+    it "rejects a rewrite that collides with another endpoint" do
+      prev_disable = ENV["NOIR_CACHE_DISABLE"]?
+      ENV["NOIR_CACHE_DISABLE"] = "1"
+      begin
+        optimizer = LLMEndpointOptimizer.new(guard_logger, create_test_options)
+        optimizer.__test_install_adapter(CountingAdapter.new(%({"optimized_url":"/api/items","optimized_params":[]})), "openai", "gpt-4o")
+        endpoints = [Endpoint.new("/API/users", "GET"), Endpoint.new("/API/orders", "GET")]
+
+        urls = optimizer.__test_llm_optimize(endpoints).map(&.url)
+        urls.uniq.size.should eq(2)
+        urls.should contain("/api/items")
+      ensure
+        prev_disable ? (ENV["NOIR_CACHE_DISABLE"] = prev_disable) : ENV.delete("NOIR_CACHE_DISABLE")
+      end
     end
   end
 
