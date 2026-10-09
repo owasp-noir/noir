@@ -83,7 +83,7 @@ module Analyzer::Specification
         # `add_tag` keeps one tag per name: an ACL behind two `use_backend`
         # rules names both backends in one tag.
         rec.tags.group_by(&.name).each do |name, group|
-          endpoint.add_tag(Tag.new(name, group.map(&.description).uniq.join(", "), "haproxy_analyzer"))
+          endpoint.add_tag(Tag.new(name, group.map(&.description).uniq!.join(", "), "haproxy_analyzer"))
         end
         @result << endpoint
       end
