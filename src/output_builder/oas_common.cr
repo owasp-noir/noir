@@ -116,8 +116,21 @@ module OutputBuilderOasCommon
     # at `-` and turned `/items/:item-id` into `/items/{item}-id` with the
     # declared `item-id` path param left unmapped (`x-noir-unmapped-path-params`).
     # Leading digit is rejected so a host port (`:8080`) is never a placeholder
-    # if a full URL ever reaches this helper.
-    path = path.gsub(/:([A-Za-z_][A-Za-z0-9_-]*)/, "{\\1}")
+    # if a full URL ever reaches this helper. A hyphen only continues a name
+    # when a word follows it, so Express's `/flights/:from-:to` is
+    # `{from}-{to}` rather than `{from-}{to}`.
+    #
+    # A `:` glued to a word or a `}` is usually not a placeholder at all but
+    # a Google AIP custom verb (`/things/{id}:cancel`, `/things:batchGet`), so
+    # there it only counts when the endpoint declares that name as a path
+    # param.
+    path = path.gsub(/(?<![\w}]):([A-Za-z_]\w*(?:-\w+)*)|(?<=[\w}]):([A-Za-z_]\w*(?:-\w+)*)/) do |whole, match|
+      if name = match[1]?
+        "{#{name}}"
+      else
+        declared_path_params.includes?(match[2]) ? "{#{match[2]}}" : whole
+      end
+    end
 
     # Bare wildcard segments (`/api/*`, `/files/**`) have no name and are not
     # a valid OAS path template char; collapse a run of `*` to a named var.
