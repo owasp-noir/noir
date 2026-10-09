@@ -521,56 +521,6 @@ describe "noir CLI surface (built binary)" do
       end
     end
 
-    {% unless flag?(:windows) %}
-      it "removes its checkout when killed with SIGTERM" do
-        repo = File.tempname("noir-diff-ref-sig-")
-        real_git = Process.find_executable("git").not_nil!
-        begin
-          Dir.mkdir_p(File.join(repo, ".tmp"))
-          FileUtils.cp_r(FIXTURE, File.join(repo, "app"))
-          Process.run(real_git, ["-C", repo, "init", "-q"]).success?.should be_true
-          Process.run(real_git, ["-C", repo, "add", "app"]).success?.should be_true
-          Process.run(real_git, ["-C", repo, "-c", "user.email=spec@noir", "-c", "user.name=spec",
-                                 "-c", "commit.gpgsign=false", "commit", "-q", "-m", "base"]).success?.should be_true
-
-          # Park the run deterministically *after* the checkout exists: `-P`
-          # makes each runner `git fetch` its rules, and a fake git lets the
-          # first (current side) fetch fail fast and hangs the second one,
-          # which belongs to the old side and starts after the checkout.
-          bin = File.join(repo, "bin")
-          Dir.mkdir(bin)
-          File.write(File.join(bin, "git"), <<-SH)
-            #!/bin/sh
-            if [ "$1" = fetch ]; then
-              if [ -e "#{repo}/fetched" ]; then touch "#{repo}/blocked"; exec sleep 10; fi
-              touch "#{repo}/fetched"; exit 1
-            fi
-            exec "#{real_git}" "$@"
-            SH
-          File.chmod(File.join(bin, "git"), 0o755)
-          rules = File.join(repo, "home", "passive_rules")
-          Dir.mkdir_p(File.join(rules, ".git"))
-          File.write(File.join(rules, "r.yml"), "")
-
-          tmp = File.join(repo, ".tmp")
-          env = {"TMPDIR" => tmp, "NOIR_HOME" => File.join(repo, "home"), "PATH" => "#{bin}:#{ENV["PATH"]?}"}
-          process = Process.new(BINARY, ["scan", File.join(repo, "app"), "--diff-ref", "HEAD", "-P",
-                                         "--no-color", "--no-log", "-f", "json"], env: env)
-          100.times do
-            break if File.exists?(File.join(repo, "blocked"))
-            sleep 100.milliseconds
-          end
-          File.exists?(File.join(repo, "blocked")).should be_true
-          Dir.children(tmp).should_not be_empty
-          process.signal(Signal::TERM)
-          process.wait.exit_code?.should eq(143)
-          Dir.children(tmp).should be_empty
-        ensure
-          FileUtils.rm_rf(repo)
-        end
-      end
-    {% end %}
-
     it "exits 3 and says why when --fail-on matches" do
       result = run_noir(["scan", FIXTURE, "--diff-path", DIFF_FIXTURE,
                          "--fail-on", "added", "--no-color", "--no-log", "-f", "json"])

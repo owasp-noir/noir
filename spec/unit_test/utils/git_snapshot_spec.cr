@@ -56,6 +56,14 @@ describe Noir::GitSnapshot do
     end
   end
 
+  it "names its checkout with a noir-diff-ref- prefix so a leaked one can be found" do
+    with_repo do |repo|
+      with_snapshot("HEAD", [repo]) do |snapshot|
+        File.basename(snapshot.root).should start_with("noir-diff-ref-")
+      end
+    end
+  end
+
   it "keeps a leading space in a base directory's name" do
     with_repo do |repo|
       spaced = File.join(repo, " app")

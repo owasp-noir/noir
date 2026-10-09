@@ -94,7 +94,7 @@ module Noir
       commit = resolve_commit(toplevel, ref)
       relatives = base_paths.map { |base| relative_to_root(base, toplevel) }
 
-      # Prefix, not suffix (the one-arg form), so a SIGKILLed run's leftover
+      # Prefix, not suffix (the one-arg form), so a signal-killed run's leftover
       # is still findable as `noir-diff-ref-*`.
       root = File.tempname("noir-diff-ref", nil)
       Dir.mkdir(root, 0o700)
