@@ -17,10 +17,7 @@ module Analyzer::Typescript
     def analyze
       # Midway joins prefix and path with `joinURLPath`, which drops the
       # trailing slash: `@Controller('/users')` + `@Get('/')` is `/users`.
-      analyze_with_extensions([".ts"]).map do |endpoint|
-        endpoint.url = endpoint.url.rstrip('/') if endpoint.url.size > 1
-        endpoint
-      end
+      strip_trailing_slashes(analyze_with_extensions([".ts"]))
     end
 
     protected def owns_source?(content : String) : Bool

@@ -117,4 +117,41 @@ describe "NestjsAuthTagger" do
 
     FileUtils.rm_rf(tmpdir)
   end
+
+  it "tags tsoa @Security without leaking it into the next non-async handler" do
+    tmpdir = File.tempname("tsoa_security")
+    Dir.mkdir_p(tmpdir)
+    path = File.join(tmpdir, "usersController.ts")
+    File.write(path, [
+      "@Route(\"users\")",                 # 1
+      "export class UsersController {",    # 2
+      "  @Security(\"jwt\")",              # 3
+      "  @Post()",                         # 4
+      "  createUser(@Body() body: any) {", # 5
+      "    return body;",                  # 6
+      "  }",                               # 7
+      "",                                  # 8
+      "  @Get(\"{id}\")",                  # 9
+      "  getUser(@Path() id: number) {",   # 10
+      "    return id;",                    # 11
+      "  }",                               # 12
+      "}",                                 # 13
+    ].join("\n"))
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+
+    secured = Endpoint.new("/users", "POST", [] of Param, Details.new(PathInfo.new(path, 4)))
+    secured.details.technology = "ts_tsoa"
+    open = Endpoint.new("/users/{id}", "GET", [] of Param, Details.new(PathInfo.new(path, 9)))
+    open.details.technology = "ts_tsoa"
+
+    NestjsAuthTagger.new(noir_options).perform([secured, open])
+
+    secured.tags.map(&.name).should eq(["auth"])
+    secured.tags.first.description.should contain("@Security")
+    open.tags.should be_empty
+
+    FileUtils.rm_rf(tmpdir)
+  end
 end
