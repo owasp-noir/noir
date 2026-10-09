@@ -231,7 +231,7 @@ module Analyzer::Javascript
         fn_name = m[1]
         prefix = m[2]
 
-        pattern = /(?:const|let|var)\s+#{Regex.escape(fn_name)}\s*=\s*(?:async\s*)?(?:\([^)]*\)|\w+)\s*=>\s*\{|(?:function\s+#{Regex.escape(fn_name)}|(?:const|let|var)\s+#{Regex.escape(fn_name)}\s*=\s*(?:async\s+)?function\b[^{]*)\s*\{/
+        pattern = /(?:const|let|var)\s+#{Regex.escape(fn_name)}\s*=\s*(?:async\s*)?(?:\([^)]*\)|\w+)\s*=>\s*\{|(?:function\s+#{Regex.escape(fn_name)}\s*\([^)]*\)|(?:const|let|var)\s+#{Regex.escape(fn_name)}\s*=\s*(?:async\s+)?function\b[^{]*)\s*\{/
         if (fn_match = content.match(pattern)) &&
            (open_brace = content.byte_index('{', fn_match.byte_begin(0))) &&
            (close_brace = Noir::JSLiteralScanner.find_matching_brace_at_byte(content, open_brace))
@@ -252,7 +252,38 @@ module Analyzer::Javascript
     # the per-call work below never runs for `db.query(sql)` or Express's
     # `router.route('/x')`.
     ROUTE_CONFIG_CALL_RE = /(?<![\w$])[A-Za-z_$][\w$]*\s*\.\s*route\s*\(\s*\{/
-    QUERY_CALL_RE        = /(?<![\w$])[A-Za-z_$][\w$]*\s*\.\s*query\s*\(\s*[`'"][\/*]/
+    # A `handler` key: `handler: fn`, `handler(req) {…}` or shorthand `{ handler }`.
+    ROUTE_CONFIG_HANDLER_KEY = /(?<![\w$.])handler\s*(?:[:(,}]|$)/m
+    QUERY_CALL_RE            = /(?<![\w$])([A-Za-z_$][\w$]*)\s*\.\s*query\s*\(\s*[`'"][\/*]/
+
+    # `.query(` is every database and search client's method, so unlike
+    # `route({ …, handler })` the call shape cannot vouch for the receiver.
+    # It has to be a Fastify instance: conventionally named, or the first
+    # parameter of a plugin function (inline in `register(…)`, a function
+    # handed to `register(name, …)`, or a module's default export).
+    FASTIFY_INSTANCE_NAME  = /\A(?:fastify|app|server|instance)\z|(?:App|Server)\z/
+    INLINE_PLUGIN_PARAM    = /\.register\s*\(\s*(?:async\s+)?(?:function\s*[\w$]*\s*\(\s*([A-Za-z_$][\w$]*)|\(\s*([A-Za-z_$][\w$]*)|([A-Za-z_$][\w$]*)\s*=>)/
+    REGISTERED_PLUGIN_NAME = /\.register\s*\(\s*([A-Za-z_$][\w$]*)\s*[,)]/
+    FUNCTION_FIRST_PARAM   = /function\s+([A-Za-z_$][\w$]*)\s*\(\s*([A-Za-z_$][\w$]*)|(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s+)?(?:function\s*[\w$]*\s*\(\s*([A-Za-z_$][\w$]*)|\(\s*([A-Za-z_$][\w$]*)|([A-Za-z_$][\w$]*)\s*=>)/
+    EXPORTED_PLUGIN_PARAM  = /(?:export\s+default|module\.exports\s*=)\s*(?:async\s+)?(?:function\s*[\w$]*\s*\(\s*([A-Za-z_$][\w$]*)|\(\s*([A-Za-z_$][\w$]*)|([A-Za-z_$][\w$]*)\s*=>)/
+
+    private def fastify_instance_names(content : String) : Set(String)
+      names = Set(String).new
+      {INLINE_PLUGIN_PARAM, EXPORTED_PLUGIN_PARAM}.each do |re|
+        content.scan(re) { |m| (m[1]? || m[2]? || m[3]?).try { |n| names << n } }
+      end
+      registered = Set(String).new
+      content.scan(REGISTERED_PLUGIN_NAME) { |m| registered << m[1] }
+      return names if registered.empty?
+
+      # One pass over the file's function declarations, not a regex per
+      # registered name.
+      content.scan(FUNCTION_FIRST_PARAM) do |m|
+        next unless registered.includes?(m[1]? || m[3]? || "")
+        (m[2]? || m[4]? || m[5]? || m[6]?).try { |n| names << n }
+      end
+      names
+    end
 
     # Scans for `fastify.query('/url', ...)` route shorthand calls.
     # Fastify only provides this method when registered via
@@ -260,7 +291,12 @@ module Analyzer::Javascript
     private def extract_query_shorthand_routes(path : String, content : String, result : Array(Endpoint), recorded : Set(String), include_callee : Bool, autoload_prefix : String = "")
       ranges = nil
       offsets = nil
+      instances = nil
       content.scan(QUERY_CALL_RE) do |m|
+        receiver = m[1]
+        unless receiver.matches?(FASTIFY_INSTANCE_NAME)
+          next unless (instances ||= fastify_instance_names(content)).includes?(receiver)
+        end
         # Byte offsets throughout: a char offset costs O(offset) per call.
         call_start = m.byte_begin(0)
 
@@ -347,6 +383,9 @@ module Analyzer::Javascript
         # references like `route(handler)` aren't config objects and
         # would just produce noise.
         next unless config.lstrip.starts_with?("{")
+        # Fastify requires a handler; `nock.route({ method, url, reply })` or
+        # Cypress's `cy.route({ method, url, response })` has none.
+        next unless config.matches?(ROUTE_CONFIG_HANDLER_KEY)
 
         methods = [] of String
         url = ""

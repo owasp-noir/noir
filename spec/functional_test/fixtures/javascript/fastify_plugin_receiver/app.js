@@ -15,9 +15,14 @@ async function plugin(api, opts) {
   api.query('/q1', async (request) => request.query.term);
 }
 
-// Not routes: a database call and a handler-less helper call.
+// Not routes: a mock route config with no handler, a database call and a
+// handler-less helper call.
+const mock = { route: (spec) => spec };
+mock.route({ method: 'GET', url: '/mocked', reply: 200 });
 const db = { query: (sql) => sql };
 db.query('SELECT * FROM users', () => {});
+const es = { query: (p, b, cb) => cb };
+es.query('/index/_search', {}, (err, r) => {});
 const helper = { query: (path) => path };
 helper.query('/not-a-route');
 
