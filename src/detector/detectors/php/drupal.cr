@@ -44,7 +44,7 @@ module Detector::Php
       end
 
       # PHP source using the Drupal namespace.
-      if filename.ends_with?(".php") &&
+      if Noir::FileExtension.fold(filename).ends_with?(".php") &&
          (file_contents.includes?("use Drupal\\") ||
          file_contents.includes?("namespace Drupal\\") ||
          file_contents.includes?("extends ControllerBase"))

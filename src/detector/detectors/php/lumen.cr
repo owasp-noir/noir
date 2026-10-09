@@ -19,7 +19,7 @@ module Detector::Php
       end
 
       # Any PHP file pulling in the Lumen namespace.
-      if filename.ends_with?(".php") && (file_contents.includes?("use Laravel\\Lumen\\") ||
+      if Noir::FileExtension.fold(filename).ends_with?(".php") && (file_contents.includes?("use Laravel\\Lumen\\") ||
          file_contents.includes?("namespace Laravel\\Lumen\\"))
         return true
       end

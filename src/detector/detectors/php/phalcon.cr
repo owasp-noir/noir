@@ -54,7 +54,7 @@ module Detector::Php
         return true if file_contents.matches?(PHP_INI_EXTENSION_RE)
       end
 
-      if filename.ends_with?(".php") || filename.ends_with?(".phtml")
+      if Noir::FileExtension.fold(filename).ends_with?(".php") || filename.ends_with?(".phtml")
         return true if file_contents.match(/(?:^|\n|<\?php\s+)\s*use\s+Phalcon\\[^;\n]*;/)
         return true if PHALCON_NAMESPACE_MARKERS.any? { |marker| file_contents.includes?(marker) }
       end

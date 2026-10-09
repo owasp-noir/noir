@@ -45,7 +45,7 @@ module Analyzer::Php
 
       roots = [] of Tuple(String, String)
       get_files_by_extension(".php").each do |file|
-        next unless File.basename(file) == "index.php"
+        next unless File.basename(file).compare("index.php", case_insensitive: true) == 0
 
         dir = File.dirname(file)
         next unless WEBROOT_DIR_NAMES.includes?(File.basename(dir).downcase)

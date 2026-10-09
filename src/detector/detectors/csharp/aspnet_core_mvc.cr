@@ -6,9 +6,10 @@ module Detector::CSharp
       extensions: %w[.cs .csproj .vbproj .sln .config]
 
     def detect(filename : String, file_contents : String) : Bool
-      is_csproj = filename.ends_with?(".csproj")
-      is_program_file = filename.ends_with?("Program.cs") || filename.ends_with?("Startup.cs")
-      is_controller = filename.ends_with?(".cs") && filename.includes?("Controller")
+      name = Noir::FileExtension.fold(filename) # `Program.CS`
+      is_csproj = name.ends_with?(".csproj")
+      is_program_file = name.ends_with?("Program.cs") || name.ends_with?("Startup.cs")
+      is_controller = name.ends_with?(".cs") && name.includes?("Controller")
 
       uses_aspnetcore = file_contents.includes?("AspNetCore.Mvc") || # also matches "Microsoft.AspNetCore.Mvc"
                         file_contents.includes?("Microsoft.AspNetCore.App")

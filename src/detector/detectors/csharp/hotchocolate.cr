@@ -12,7 +12,7 @@ module Detector::CSharp
     PACKAGE_MARKER = /Include\s*=\s*["']HotChocolate\b/
 
     def detect(filename : String, file_contents : String) : Bool
-      return content_matches?(file_contents, SOURCE_MARKER) if filename.ends_with?(".cs")
+      return content_matches?(file_contents, SOURCE_MARKER) if Noir::FileExtension.fold(filename).ends_with?(".cs")
       content_matches?(file_contents, PACKAGE_MARKER)
     end
   end

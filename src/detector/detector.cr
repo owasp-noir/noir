@@ -171,24 +171,6 @@ module Noir::Detection
     MOBILE_DETECTOR_NAMES.includes?(name)
   end
 
-  # `path` with its extension lower-cased, or `path` itself when the
-  # extension has no ASCII upper-case letter. Detector gates spell
-  # extensions in lower case, so `LOGIN.ASP` / `P.ASPX` (routine on
-  # case-insensitive Windows/IIS checkouts) used to match no detector at
-  # all. Only the extension is folded: basenames (`Gemfile`) stay exact.
-  def fold_extension_case(path : String) : String
-    i = path.bytesize - 1
-    upper = false
-    while i >= 0
-      char = path.to_unsafe[i].unsafe_chr
-      break if char == '.' || char == '/' || char == '\\'
-      upper ||= char.ascii_uppercase?
-      i -= 1
-    end
-    return path unless upper && i > 0 && path.to_unsafe[i] == '.'.ord
-    path.byte_slice(0, i) + path.byte_slice(i).downcase
-  end
-
   # Whether a directory entry names a subtree the walk prunes on purpose
   # (dependency cache, build output next to its manifest, Crystal's `lib/`
   # next to a `shard.yml`).
@@ -741,7 +723,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
               next
             end
 
-            candidate_detector_indices = applicable_lookup.call(Noir::Detection.fold_extension_case(full_path))
+            candidate_detector_indices = applicable_lookup.call(full_path)
 
             # An Android source-set file is normally narrowed to the
             # mobile detectors only (see Noir::Detection::ANDROID_EMBEDDED_SERVER_MARKER /
@@ -873,7 +855,6 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
         break if file_content.nil?
         file, content, candidate_detector_indices = file_content
         logger.debug "Detecting: #{file}"
-        folded_file = Noir::Detection.fold_extension_case(file)
 
         candidate_detector_indices.each do |idx|
           detector = detector_list[idx]
@@ -882,10 +863,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
           # `detect` (`idempotent? == false`) — see
           # `Detector#idempotent?` for the contract.
           next if detector.idempotent? && detected_flags[idx].get
-          # A presence-only detector just answers yes/no, so it may see the
-          # case-folded name; one with side effects records `file` in the
-          # locator and must keep the real path.
-          if detector.detect(detector.idempotent? ? folded_file : file, content)
+          if detector.detect(file, content)
             detected_flags[idx].set
             newly_added = false
             mutex.synchronize do

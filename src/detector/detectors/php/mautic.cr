@@ -15,7 +15,7 @@ module Detector::Php
 
       # A bundle route config: `.../Config/config.php` carrying a `'routes'`
       # array of `Mautic\…Controller` handlers.
-      if filename.includes?("Config/config.php") && filename.ends_with?(".php")
+      if filename.includes?("Config/config.php") && Noir::FileExtension.fold(filename).ends_with?(".php")
         return true if file_contents.includes?("'routes'") && file_contents.includes?("Mautic\\")
       end
 

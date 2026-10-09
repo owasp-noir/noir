@@ -28,7 +28,7 @@ module Detector::Php
         return true if LAMINAS_PACKAGES.any? { |package| file_contents.includes?(%("#{package}")) }
       end
 
-      if filename.ends_with?(".php")
+      if Noir::FileExtension.fold(filename).ends_with?(".php")
         return true if file_contents.match(/(?:^|\n|<\?php\s+)\s*use\s+(?:Laminas|Zend)\\(?:Mvc|Router)\\[^;\n]*;/)
         return true if file_contents.match(/(?:^|\n|<\?php\s+)\s*use\s+Mezzio\\[^;\n]*;/)
         return true if file_contents.includes?("Laminas\\Router\\RouteStackInterface")

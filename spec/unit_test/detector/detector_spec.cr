@@ -339,13 +339,15 @@ describe "detect_techs file walker" do
     end
   end
 
-  it "matches upper-case extensions like LOGIN.ASP" do
+  it "matches upper-case Windows extensions but keeps Makefile.PL distinct" do
     temp_dir = File.tempname("noir_detector_upper_ext")
     Dir.mkdir_p(temp_dir)
 
     begin
       page = File.join(temp_dir, "LOGIN.ASP")
       File.write(page, %(<%@ Language="VBScript" %>\n<% Response.Write Request.QueryString("next") %>\n))
+      makefile = File.join(temp_dir, "Makefile.PL")
+      File.write(makefile, "use ExtUtils::MakeMaker;\nWriteMakefile(PREREQ_PM => { 'Mojolicious' => '9.0' });\n")
 
       options = create_test_options
       options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
@@ -353,20 +355,15 @@ describe "detect_techs file walker" do
       locator = CodeLocator.instance
       locator.clear_all
 
-      detect_techs([temp_dir], options, [] of PassiveScan, logger)[0].should contain("asp_classic")
+      techs = detect_techs([temp_dir], options, [] of PassiveScan, logger)[0]
+      techs.should contain("asp_classic")
+      techs.should contain("perl_mojolicious")
       locator.files_by_extension(".asp").should eq([page])
+      locator.files_by_extension(".pl").should be_empty
     ensure
       FileUtils.rm_rf(temp_dir) if temp_dir
       CodeLocator.instance.clear_all
     end
-  end
-
-  it "folds only the extension's case" do
-    Noir::Detection.fold_extension_case("a/B/P.ASPX").should eq("a/B/P.aspx")
-    Noir::Detection.fold_extension_case("a/Gemfile").should eq("a/Gemfile")
-    Noir::Detection.fold_extension_case("A.B/Makefile").should eq("A.B/Makefile")
-    path = "a/login.asp"
-    Noir::Detection.fold_extension_case(path).should be(path)
   end
 end
 

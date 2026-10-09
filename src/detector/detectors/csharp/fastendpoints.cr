@@ -5,8 +5,8 @@ module Detector::CSharp
     detector_for "cs_fastendpoints", extensions: %w[.cs .csproj]
 
     def detect(filename : String, file_contents : String) : Bool
-      is_csproj = filename.ends_with?(".csproj")
-      is_cs = filename.ends_with?(".cs")
+      is_csproj = Noir::FileExtension.fold(filename).ends_with?(".csproj")
+      is_cs = Noir::FileExtension.fold(filename).ends_with?(".cs")
 
       if is_csproj
         return true if file_contents.includes?("FastEndpoints")

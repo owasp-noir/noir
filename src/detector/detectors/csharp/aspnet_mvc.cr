@@ -21,12 +21,12 @@ module Detector::CSharp
         return true if file_contents.includes?("Microsoft.AspNet.Mvc")
       end
 
-      if filename.ends_with?(".csproj")
+      if Noir::FileExtension.fold(filename).ends_with?(".csproj")
         return true if file_contents.includes?("Microsoft.AspNet.Mvc") ||
                        file_contents.includes?("<Reference Include=\"System.Web.Mvc")
       end
 
-      if filename.ends_with?(".cs")
+      if Noir::FileExtension.fold(filename).ends_with?(".cs")
         return false if content_matches?(file_contents, CONTROLLER_BASE_INHERITANCE)
 
         has_namespace = file_contents.includes?("using System.Web.Mvc;")

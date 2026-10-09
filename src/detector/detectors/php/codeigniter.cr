@@ -39,7 +39,7 @@ module Detector::Php
       end
 
       # PHP files with CodeIgniter namespaces
-      if filename.ends_with?(".php") &&
+      if Noir::FileExtension.fold(filename).ends_with?(".php") &&
          (file_contents.includes?("use CodeIgniter\\") ||
          file_contents.includes?("namespace CodeIgniter\\") ||
          file_contents.includes?("extends \\CodeIgniter\\Controller") ||

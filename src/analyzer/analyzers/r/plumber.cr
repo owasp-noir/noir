@@ -42,7 +42,7 @@ module Analyzer::R
     PROGRAMMATIC_DOLLAR_HANDLE = /\$handle\s*\(\s*["'](GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)["']\s*,\s*["']([^"']+)["']/i
 
     def analyze
-      r_files = get_files_by_extension(".r")
+      r_files = get_files_by_extension(".R") + get_files_by_extension(".r")
       r_files = r_files.uniq
       return @result if r_files.empty?
 

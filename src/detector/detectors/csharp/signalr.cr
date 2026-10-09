@@ -11,7 +11,7 @@ module Detector::CSharp
     SIGNALR_MARKER = /Microsoft\.AspNetCore\.SignalR\b|\bMapHub\s*</
 
     def detect(filename : String, file_contents : String) : Bool
-      return false unless filename.ends_with?(".cs")
+      return false unless Noir::FileExtension.fold(filename).ends_with?(".cs")
       content_matches?(file_contents, SIGNALR_MARKER)
     end
   end

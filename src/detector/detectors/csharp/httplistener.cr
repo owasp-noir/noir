@@ -5,7 +5,7 @@ module Detector::CSharp
     detector_for "cs_httplistener", extensions: %w[.cs]
 
     def detect(filename : String, file_contents : String) : Bool
-      return false unless filename.ends_with?(".cs")
+      return false unless Noir::FileExtension.fold(filename).ends_with?(".cs")
       return false unless file_contents.includes?("HttpListener")
 
       content_matches?(file_contents, /\bnew\s+HttpListener\s*\(/) ||

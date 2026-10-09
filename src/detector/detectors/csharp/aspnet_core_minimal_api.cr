@@ -8,7 +8,7 @@ module Detector::CSharp
     MAP_VERB      = /\.\s*Map(?:Get|Post|Put|Delete|Patch|Head|Options|Methods)\s*(?:<[^<>()]*>\s*)?\(/
 
     def detect(filename : String, file_contents : String) : Bool
-      return false unless filename.ends_with?(".cs")
+      return false unless Noir::FileExtension.fold(filename).ends_with?(".cs")
       # Carter modules (`: ICarterModule` / `: CarterModule`) register
       # minimal-API routes under a module base path — `cs_carter` owns them.
       return false if content_matches?(file_contents, CARTER_MODULE)

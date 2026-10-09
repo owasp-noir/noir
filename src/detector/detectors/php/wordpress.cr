@@ -55,7 +55,7 @@ module Detector::Php
       # the leading `/` covers a repo-root `wp-content/` too. On the
       # absolute path a checkout that merely lived under a `wp-content/`
       # directory made every `.php` file in it look like WordPress.
-      if filename.ends_with?(".php")
+      if Noir::FileExtension.fold(filename).ends_with?(".php")
         relative = base_relative_path(filename)
         if relative.includes?("/wp-content/") ||
            relative.includes?("/wp-includes/") ||
@@ -66,13 +66,13 @@ module Detector::Php
 
       # Plugin / theme file headers (`Plugin Name:` / `Theme Name:` in the
       # leading docblock) are the canonical WordPress metadata markers.
-      if filename.ends_with?(".php") &&
+      if Noir::FileExtension.fold(filename).ends_with?(".php") &&
          (file_contents.includes?("Plugin Name:") || file_contents.includes?("Theme Name:"))
         return true
       end
 
       # Strong WordPress source markers inside PHP files.
-      if filename.ends_with?(".php")
+      if Noir::FileExtension.fold(filename).ends_with?(".php")
         return true if WP_SOURCE_MARKERS.any? { |marker| file_contents.includes?(marker) }
 
         # Hook-name prefixes (`wp_ajax_`, `admin_post_`) are only
