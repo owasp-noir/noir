@@ -13,11 +13,16 @@ module Analyzer::Python
     ROUTE_REGEX = /\b(WebSocketRoute|Route)\s*\(\s*[rf]?['"]([^'"]*)['"]([^)]*)/
     # Mount('/prefix', routes=[...]) — only the prefix literal is needed;
     # the routes list is scanned via the ongoing line loop while the mount
-    # is on the paren stack. A Mount of an app (`app=sub` or a positional
-    # `sub`) holds no routes of its own; its routes are prefixed through
-    # the app's route list instead, so it must not prefix routes that
-    # merely share its line (`routes=[Route("/h", h), Mount("/v2", app=sub)]`).
-    MOUNT_REGEX = /Mount\s*\(\s*[rf]?['"]([^'"]*)['"](?!\s*,\s*(?:app\s*=|[A-Za-z_][\w.]*\s*[,)]))/
+    # is on the paren stack. A Mount whose second argument is an app —
+    # `app=sub`, a positional `sub` (both wired through MOUNT_APP_RE) or a
+    # positional call such as `StaticFiles(...)` — holds no routes of its
+    # own, so it must not prefix routes that merely share its line
+    # (`routes=[Route("/h", h), Mount("/v2", app=sub)]`).
+    MOUNT_REGEX = /Mount\s*\(\s*[rf]?['"]([^'"]*)['"](?!\s*,\s*(?:app\s*=|[A-Za-z_][\w.]*\s*[,)(]))/
+    # `Mount('/p', app=sub)` or `Mount('/p', sub)`: the prefix and the
+    # mounted app's name. A call (`app=StaticFiles(...)`) or a keyword in
+    # the second slot (`routes=[...]`) is not an app name.
+    MOUNT_APP_RE = /Mount\s*\(\s*[rf]?['"]([^'"]*)['"](?:[^)]*\bapp\s*=\s*|\s*,\s*)([a-zA-Z_][a-zA-Z0-9_]*)\b(?!\s*[(.=])/m
     # `X = Starlette(` / `X = Router(` whose `routes=[...]` list is inline.
     INLINE_APP_RE        = /^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(?:Starlette|Router)\s*\(/
     INLINE_ROUTES_SUFFIX = ".routes"
@@ -337,7 +342,7 @@ module Analyzer::Python
     private def parse_staticfiles_mount_path(line : ::String) : ::String?
       return unless line.includes?("Mount") && line.includes?("StaticFiles")
 
-      if match = line.match(/Mount\s*\(\s*[rf]?['"]([^'"]*)['"]/m)
+      if match = line.match(/Mount\s*\(\s*[rf]?['"]([^'"]*)['"][^)]*?\bStaticFiles\b/m)
         return match[1]
       end
 
@@ -372,7 +377,7 @@ module Analyzer::Python
       end
 
       lines.each_with_index do |line, line_index|
-        next unless line.includes?("Mount") && (line.includes?("routes") || line.includes?("app"))
+        next unless line.includes?("Mount")
 
         effective_line = if line.includes?("Mount") && python_paren_delta(line) > 0
                            join_until_python_call_closes(lines, line_index, line)
@@ -386,7 +391,7 @@ module Analyzer::Python
           mount_edges << {parent_route_list, match[2], match[1]}
         end
 
-        effective_line.scan(/Mount\s*\(\s*[rf]?['"]([^'"]*)['"][^)]*\bapp\s*=\s*([a-zA-Z_][a-zA-Z0-9_]*)/m) do |match|
+        effective_line.scan(MOUNT_APP_RE) do |match|
           next if match.size < 3
           mount_prefix = match[1]
           app_name = match[2]
@@ -470,7 +475,7 @@ module Analyzer::Python
           prefixes[app_match[1]] << "" unless prefixes[app_match[1]].includes?("")
         end
 
-        next unless line.includes?("Mount") && line.includes?("app")
+        next unless line.includes?("Mount")
 
         effective_line = if line.includes?("Mount") && python_paren_delta(line) > 0
                            join_until_python_call_closes(lines, line_index, line)
@@ -478,7 +483,7 @@ module Analyzer::Python
                            line
                          end
 
-        effective_line.scan(/Mount\s*\(\s*[rf]?['"]([^'"]*)['"][^)]*\bapp\s*=\s*([a-zA-Z_][a-zA-Z0-9_]*)/m) do |match|
+        effective_line.scan(MOUNT_APP_RE) do |match|
           next if match.size < 3
           mount_prefix = match[1]
           app_name = match[2]
