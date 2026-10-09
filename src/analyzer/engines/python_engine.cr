@@ -762,10 +762,11 @@ module Analyzer::Python
         end
 
         if stripped.starts_with?('@')
-          paren_delta = python_paren_delta(lines[i])
+          paren_delta, triple = python_call_line_delta(lines[i], nil)
           i += 1
           while i < lines.size && paren_delta > 0
-            paren_delta += python_paren_delta(lines[i])
+            line_delta, triple = python_call_line_delta(lines[i], triple)
+            paren_delta += line_delta
             i += 1
           end
           next
@@ -1079,16 +1080,63 @@ module Analyzer::Python
                                       index : Int32,
                                       line : ::String) : ::String
       pieces = [line]
-      delta = python_paren_delta(line)
+      delta, triple = python_call_line_delta(line, nil)
       i = index + 1
       while i < lines.size && delta > 0
         nxt = lines[i]
         pieces << nxt
-        delta += python_paren_delta(nxt)
-        break if delta <= 0
+        line_delta, triple = python_call_line_delta(nxt, triple)
+        delta += line_delta
         i += 1
       end
       pieces.join(' ')
+    end
+
+    # `(` − `)` on one physical line of a call that may span lines, plus
+    # the triple-quote delimiter (`"` / `'`) still open at its end. Unlike
+    # `python_paren_delta` this carries a `"""` / `'''` run across lines,
+    # so it can tell a `#` comment (`@get("/a")  # old (remove`, which must
+    # not keep the call open) from a `#` inside a multi-line string
+    # (`Returns things (see issue #12)`, which is text).
+    private def python_call_line_delta(line : ::String, triple : Char?) : Tuple(Int32, Char?)
+      depth = 0
+      in_quote : Char? = nil
+      escaped = false
+      # Bytes, not chars: every delimiter here is ASCII and a UTF-8
+      # continuation byte never equals one, so this needs no allocation
+      # and keeps O(1) lookahead.
+      bytes = line.to_slice
+      i = 0
+      while i < bytes.size
+        ch = bytes[i].unsafe_chr
+        if escaped
+          escaped = false
+        elsif (triple || in_quote) && ch == '\\'
+          escaped = true
+        elsif triple
+          if ch == triple && bytes[i + 1]? == bytes[i] && bytes[i + 2]? == bytes[i]
+            triple = nil
+            i += 2
+          end
+        elsif in_quote
+          in_quote = nil if ch == in_quote
+        elsif ch == '"' || ch == '\''
+          if bytes[i + 1]? == bytes[i] && bytes[i + 2]? == bytes[i]
+            triple = ch
+            i += 2
+          else
+            in_quote = ch
+          end
+        elsif ch == '#'
+          break
+        elsif ch == '('
+          depth += 1
+        elsif ch == ')'
+          depth -= 1
+        end
+        i += 1
+      end
+      {depth, triple}
     end
 
     # `line` up to its first `#` outside a single-line quoted string.

@@ -1718,7 +1718,13 @@ module Analyzer::Python
       # this, `@app.route(` ate everything up to the matching `)`
       # was treated as "not a decorator and not a def", skipping
       # the whole route. `find_def_line` got the same fix earlier.
-      paren_depth = direction == :down && (deco_line = lines[line_index]?) ? python_paren_delta(deco_line) : 0
+      # Counted with the comment- and docstring-aware call delta, so a
+      # `(` in a trailing `# comment` does not hold the decorator open.
+      paren_depth = 0
+      triple : Char? = nil
+      if direction == :down && (deco_line = lines[line_index]?)
+        paren_depth, triple = python_call_line_delta(deco_line, nil)
+      end
 
       # Iterate through the lines until the decorator ends
       while (direction == :down && codeline_index < lines.size) || (direction == :up && codeline_index >= 0)
@@ -1732,14 +1738,16 @@ module Analyzer::Python
         # the line as decorator content and keep walking without
         # checking the `\s*@` prefix.
         if direction == :down && paren_depth > 0
-          paren_depth += python_paren_delta(current_line)
+          line_delta, triple = python_call_line_delta(current_line, triple)
+          paren_depth += line_delta
           codeline_index += 1
           next
         end
         decorator_match = current_line.match /\s*@/
         break if decorator_match.nil?
         if direction == :down
-          paren_depth += python_paren_delta(current_line)
+          line_delta, triple = python_call_line_delta(current_line, triple)
+          paren_depth += line_delta
         end
 
         # Extract parameters from the expect decorator
