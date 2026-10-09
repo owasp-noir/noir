@@ -11,6 +11,7 @@ require "../../diff_gate"
 require "../../techs/techs"
 require "../../llm/cache"
 require "../../llm/prompt_overrides"
+require "../../utils/redact"
 
 # `noir scan [paths...] [flags]`
 #
@@ -592,12 +593,12 @@ module Noir::CLI::ScanCommand
     app.logger.debug("Noir version: #{Noir::VERSION}")
     app.logger.debug("Noir options from arguments:")
     noir_options.each do |k, v|
-      app.logger.debug_sub("#{k}: #{v}")
+      app.logger.debug_sub("#{k}: #{Noir::Redact.option(k, v)}")
     end
 
     app.logger.debug "Initialized Options:"
     app.options.each do |k, v|
-      app.logger.debug_sub "#{k}: #{v}"
+      app.logger.debug_sub "#{k}: #{Noir::Redact.option(k, v)}"
     end
 
     app_diff = nil

@@ -31,7 +31,7 @@ class SendWithProxy < Deliver
   def run(endpoints : Array(Endpoint))
     resolved = SendWithProxy.resolve_proxy_target(@proxy)
     if resolved.nil?
-      @logger.error "--probe-via '#{@proxy}' does not resolve to a proxy host and port — expected e.g. http://127.0.0.1:8080. Skipping proxy delivery rather than sending probes directly to the target."
+      @logger.error "--probe-via '#{Noir::Redact.url(@proxy)}' does not resolve to a proxy host and port — expected e.g. http://127.0.0.1:8080. Skipping proxy delivery rather than sending probes directly to the target."
       return
     end
     proxy_host, proxy_port = resolved

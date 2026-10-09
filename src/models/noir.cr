@@ -307,7 +307,7 @@ class NoirRunner
 
   def deliver
     unless @probe_via.empty?
-      @logger.info "Probing endpoints through proxy #{@probe_via}."
+      @logger.info "Probing endpoints through proxy #{Noir::Redact.url(@probe_via)}."
       deliver = SendWithProxy.new(@options)
       deliver.run(@endpoints)
     end
@@ -325,7 +325,7 @@ class NoirRunner
     end
 
     unless @export_webhook.empty?
-      @logger.info "Exporting endpoints to webhook #{@export_webhook}."
+      @logger.info "Exporting endpoints to webhook #{Noir::Redact.webhook(@export_webhook)}."
       deliver = SendWebhook.new(@options)
       deliver.run(@endpoints, @export_webhook)
     end

@@ -33,7 +33,10 @@ describe "undelivered export reporting" do
     gaps = deliver_gaps
     gaps.size.should eq(1)
     gaps.first.message.should contain("webhook delivery")
-    gaps.first.message.should contain("#{UNREACHABLE}/hook")
+    # Named by origin only: webhook URLs carry their token in the path, and
+    # this message lands in the report's `errors` list.
+    gaps.first.message.should contain("#{UNREACHABLE}/***")
+    gaps.first.message.should_not contain("/hook")
   end
 
   it "records an Elasticsearch export that never landed" do

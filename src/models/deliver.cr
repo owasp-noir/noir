@@ -7,6 +7,7 @@ require "./skipped_files"
 require "../utils/utils"
 require "../utils/http_symbols"
 require "../utils/url_origin"
+require "../utils/redact"
 
 # Max concurrent in-flight probe requests and the outbound TLS context, shared
 # by every class that fires requests at discovered endpoints. Bounds the
