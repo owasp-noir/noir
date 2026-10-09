@@ -333,7 +333,7 @@ module Noir
 
     # Field names of a `z.object({...})` / `Schema.Struct({...})` schema,
     # looking through modifier chains (`.strict()`, `.optional()`),
-    # `.extend({...})` and same-file schema constants.
+    # `.extend` / `.omit` / `.pick({...})` and same-file schema constants.
     private def schema_fields(node : LibTreeSitter::TSNode, ctx : Context, depth : Int32 = 0) : Array(String)
       fields = [] of String
       return fields if depth > 8
@@ -350,7 +350,13 @@ module Noir
           fields = schema_fields(arg, ctx, depth + 1) if arg && TreeSitter.node_type(arg) == "object"
         elsif property
           fields = schema_fields(TreeSitter.field(TreeSitter.field(node, "function").not_nil!, "object").not_nil!, ctx, depth + 1)
-          fields.concat(schema_fields(arg, ctx, depth + 1)) if property == "extend" && arg
+          if arg && TreeSitter.node_type(arg) == "object"
+            case property
+            when "extend" then fields.concat(schema_fields(arg, ctx, depth + 1))
+            when "omit"   then fields -= schema_fields(arg, ctx, depth + 1)
+            when "pick"   then fields &= schema_fields(arg, ctx, depth + 1)
+            end
+          end
         end
       end
       fields
