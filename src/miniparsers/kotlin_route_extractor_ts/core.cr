@@ -164,7 +164,7 @@ module Noir
                             local_string_constants : Hash(String, String)? = nil) : Array(Route)
       routes = [] of Route
       file_constants = local_string_constants || extract_string_constants(source)
-      walk_classes(root, source, "", routes, string_constants, file_constants)
+      walk_classes(root, source, [""], routes, string_constants, file_constants)
       collect_gateway_routes(source, string_constants, routes)
       collect_webflux_functional_routes(source, routes)
       routes
@@ -192,7 +192,7 @@ module Noir
 
     private def walk_classes(node : LibTreeSitter::TSNode,
                              source : String,
-                             outer_prefix : String,
+                             outer_prefixes : Array(String),
                              routes : Array(Route),
                              string_constants : Hash(String, String),
                              local_string_constants : Hash(String, String),
@@ -200,7 +200,7 @@ module Noir
       return if depth > Noir::TreeSitter::MAX_AST_DEPTH
       ty = Noir::TreeSitter.node_type(node)
       if ty == "class_declaration" || ty == "object_declaration" || ty == "interface_declaration"
-        process_class(node, source, outer_prefix, [] of LibTreeSitter::TSNode, routes, string_constants, local_string_constants, depth)
+        process_class(node, source, outer_prefixes, [] of LibTreeSitter::TSNode, routes, string_constants, local_string_constants, depth)
         return
       end
 
@@ -219,12 +219,12 @@ module Noir
         child = LibTreeSitter.ts_node_named_child(node, i.to_u32)
         case Noir::TreeSitter.node_type(child)
         when "class_declaration", "object_declaration", "interface_declaration"
-          process_class(child, source, outer_prefix, pending, routes, string_constants, local_string_constants, depth + 1)
-          orphan_class = recoverable_orphan_class(child, source, outer_prefix, pending, string_constants, local_string_constants)
+          process_class(child, source, outer_prefixes, pending, routes, string_constants, local_string_constants, depth + 1)
+          orphan_class = recoverable_orphan_class(child, source, outer_prefixes, pending, string_constants, local_string_constants)
           pending = [] of LibTreeSitter::TSNode
         when "prefix_expression"
-          if recover_split_constructor_prefix(child, source, outer_prefix, routes, string_constants, local_string_constants) ||
-             recover_infix_class_prefix(child, source, outer_prefix, routes, string_constants, local_string_constants)
+          if recover_split_constructor_prefix(child, source, outer_prefixes, routes, string_constants, local_string_constants) ||
+             recover_infix_class_prefix(child, source, outer_prefixes, routes, string_constants, local_string_constants)
             pending = [] of LibTreeSitter::TSNode
           else
             pending << child if prefix_expression_has_annotation?(child)
@@ -235,7 +235,7 @@ module Noir
             class_name, class_prefixes = ctx
             collect_recovered_function_routes(child, source, class_name, class_prefixes, routes, string_constants, local_string_constants)
           else
-            walk_classes(child, source, outer_prefix, routes, string_constants, local_string_constants, depth + 1)
+            walk_classes(child, source, outer_prefixes, routes, string_constants, local_string_constants, depth + 1)
           end
           pending = [] of LibTreeSitter::TSNode
           orphan_class = nil
@@ -246,21 +246,21 @@ module Noir
             class_name, class_prefixes = ctx
             collect_recovered_function_routes(child, source, class_name, class_prefixes, routes, string_constants, local_string_constants)
           else
-            walk_classes(child, source, outer_prefix, routes, string_constants, local_string_constants, depth + 1)
+            walk_classes(child, source, outer_prefixes, routes, string_constants, local_string_constants, depth + 1)
           end
           pending = [] of LibTreeSitter::TSNode
           orphan_class = nil
         else
           pending = [] of LibTreeSitter::TSNode
           orphan_class = nil
-          walk_classes(child, source, outer_prefix, routes, string_constants, local_string_constants, depth + 1)
+          walk_classes(child, source, outer_prefixes, routes, string_constants, local_string_constants, depth + 1)
         end
       end
     end
 
     private def recoverable_orphan_class(node : LibTreeSitter::TSNode,
                                          source : String,
-                                         outer_prefix : String,
+                                         outer_prefixes : Array(String),
                                          pending : Array(LibTreeSitter::TSNode),
                                          string_constants : Hash(String, String),
                                          local_string_constants : Hash(String, String)) : Tuple(String, Array(String))?
@@ -271,7 +271,7 @@ module Noir
       class_name = type_identifier_text(node, source)
       return if class_name.empty?
 
-      {class_name, join_prefixes(outer_prefix, class_mapping_prefixes(node, source, pending, string_constants, local_string_constants))}
+      {class_name, join_prefixes(outer_prefixes, class_mapping_prefixes(node, source, pending, string_constants, local_string_constants))}
     end
 
     private def abstract_type?(decl : LibTreeSitter::TSNode, source : String) : Bool
@@ -285,7 +285,7 @@ module Noir
 
     private def recover_split_constructor_prefix(node : LibTreeSitter::TSNode,
                                                  source : String,
-                                                 outer_prefix : String,
+                                                 outer_prefixes : Array(String),
                                                  routes : Array(Route),
                                                  string_constants : Hash(String, String),
                                                  local_string_constants : Hash(String, String)) : Bool
@@ -296,7 +296,7 @@ module Noir
       match = text.match(/\bclass\s+([A-Za-z_][A-Za-z0-9_]*)\b/)
       return false unless match
 
-      class_prefixes = join_prefixes(outer_prefix, split_constructor_prefixes(node, source, string_constants, local_string_constants))
+      class_prefixes = join_prefixes(outer_prefixes, split_constructor_prefixes(node, source, string_constants, local_string_constants))
       collect_recovered_function_routes(node, source, match[1], class_prefixes, routes, string_constants, local_string_constants)
       true
     end
@@ -308,7 +308,7 @@ module Noir
     # are not lost.
     private def recover_infix_class_prefix(node : LibTreeSitter::TSNode,
                                            source : String,
-                                           outer_prefix : String,
+                                           outer_prefixes : Array(String),
                                            routes : Array(Route),
                                            string_constants : Hash(String, String),
                                            local_string_constants : Hash(String, String)) : Bool
@@ -317,7 +317,7 @@ module Noir
       return true if collect_stray_annotations(node, source).any? { |entry| entry[0] == "FeignClient" }
 
       class_name = Noir::TreeSitter.node_text(LibTreeSitter.ts_node_named_child(infix, 1_u32), source)
-      class_prefixes = join_prefixes(outer_prefix, infix_class_mapping_prefixes(node, source, string_constants, local_string_constants))
+      class_prefixes = join_prefixes(outer_prefixes, infix_class_mapping_prefixes(node, source, string_constants, local_string_constants))
       collect_recovered_function_routes(
         LibTreeSitter.ts_node_named_child(infix, 2_u32), source, class_name,
         class_prefixes, routes, string_constants, local_string_constants
@@ -389,7 +389,7 @@ module Noir
 
     private def process_class(node : LibTreeSitter::TSNode,
                               source : String,
-                              outer_prefix : String,
+                              outer_prefixes : Array(String),
                               pending : Array(LibTreeSitter::TSNode),
                               routes : Array(Route),
                               string_constants : Hash(String, String),
@@ -403,7 +403,7 @@ module Noir
       # to avoid emitting phantom inbound endpoints.
       return if feign_client?(node, source)
 
-      prefixes = join_prefixes(outer_prefix, class_mapping_prefixes(node, source, pending, string_constants, local_string_constants))
+      prefixes = join_prefixes(outer_prefixes, class_mapping_prefixes(node, source, pending, string_constants, local_string_constants))
 
       if body = class_body(node)
         Noir::TreeSitter.each_named_child(body) do |member|
@@ -411,9 +411,7 @@ module Noir
           when "function_declaration"
             collect_function_routes(member, source, class_name, prefixes, routes, string_constants, local_string_constants)
           when "class_declaration", "object_declaration", "interface_declaration"
-            prefixes.each do |prefix|
-              walk_classes(member, source, prefix, routes, string_constants, local_string_constants, depth + 1)
-            end
+            walk_classes(member, source, prefixes, routes, string_constants, local_string_constants, depth + 1)
           end
         end
       end
@@ -598,7 +596,7 @@ module Noir
       each_annotation(class_decl, source) do |name, args|
         next unless ANNOTATION_VERBS.has_key?(name)
         paths = annotation_paths(args, source, string_constants, local_string_constants)
-        return paths unless paths.empty?
+        return paths.uniq unless paths.empty?
       end
 
       # Fall back to stray-annotation chunks (top-level
@@ -614,14 +612,27 @@ module Noir
           next unless args
           buf = [] of String
           collect_string_values(args, source, buf, string_constants, local_string_constants)
-          return buf unless buf.empty?
+          return buf.uniq unless buf.empty?
         end
       end
       [""]
     end
 
-    private def join_prefixes(outer_prefix : String, prefixes : Array(String)) : Array(String)
-      prefixes.map { |prefix| Noir::URLPath.join_absorbing(outer_prefix, prefix) }.uniq!
+    # ponytail: nested multi-path mappings multiply, so the product is cut
+    # at MAX_CLASS_PREFIXES; raise it if a real app ever needs more.
+    MAX_CLASS_PREFIXES = 64
+
+    # Every outer prefix joined with every class path, deduplicated.
+    private def join_prefixes(outer_prefixes : Array(String), prefixes : Array(String)) : Array(String)
+      joined = [] of String
+      outer_prefixes.each do |outer|
+        prefixes.each do |prefix|
+          path = Noir::URLPath.join_absorbing(outer, prefix)
+          joined << path unless joined.includes?(path)
+          return joined if joined.size >= MAX_CLASS_PREFIXES
+        end
+      end
+      joined
     end
 
     # Walk annotations buried under nested `prefix_expression`

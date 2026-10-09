@@ -60,6 +60,24 @@ describe Noir::TreeSitterKotlinRouteExtractor do
     end
   end
 
+  it "walks nested multi-path classes once and caps the prefix product" do
+    # Each level doubles the prefixes. Re-walking a nested class once per
+    # outer prefix made this 2^40 walks; it must finish at once with the
+    # product capped.
+    source = String.build do |io|
+      40.times { io << "@RequestMapping([\"/a\", \"/b\"])\nclass O {\n" }
+      io << "@GetMapping(\"/x\")\nfun x() = 1\n"
+      40.times { io << "}\n" }
+    end
+
+    elapsed = Time.measure do
+      routes = Noir::TreeSitterKotlinRouteExtractor.extract_routes(source)
+      routes.size.should eq(Noir::TreeSitterKotlinRouteExtractor::MAX_CLASS_PREFIXES)
+      routes.first.path.should eq("#{"/a" * 40}/x")
+    end
+    elapsed.should be < 5.seconds
+  end
+
   it "handles value = / path = keyword arguments" do
     source = <<-KT
       class K {
