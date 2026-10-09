@@ -412,6 +412,78 @@ describe Noir::TreeSitterKotlinRouteExtractor do
     expanded["PROP"].should eq("${spring.config}")
   end
 
+  it "resolves template and + concatenation constants within one file" do
+    source = <<-KT
+      package demo
+
+      object Routes {
+          const val BASE = "/base"
+          const val ITEM = "$BASE/item"
+          const val ITEM2 = BASE + "/item2" // trailing comment
+          const val ITEM3 = "${BASE}/item3"
+          const val ITEM4 = Routes.ITEM2 + "/x" + BASE;
+      }
+
+      @RestController
+      class C {
+          @GetMapping(Routes.ITEM)
+          fun a(): String = ""
+          @GetMapping(Routes.ITEM2)
+          fun b(): String = ""
+          @GetMapping(Routes.ITEM3)
+          fun c(): String = ""
+          @GetMapping(Routes.ITEM4)
+          fun d(): String = ""
+      }
+      KT
+    constants = Noir::TreeSitterKotlinRouteExtractor.extract_string_constants(source)
+    routes = Noir::TreeSitterKotlinRouteExtractor.extract_routes(source, constants)
+    routes.map(&.path).should eq(["/base/item", "/base/item2", "/base/item3", "/base/item2/x/base"])
+  end
+
+  it "resolves a Type.NAME mapping constant from the cross-file index" do
+    source = <<-KT
+      @RestController
+      class C {
+          @GetMapping(Routes.ITEM)
+          fun a(): String = ""
+      }
+      KT
+    routes = Noir::TreeSitterKotlinRouteExtractor.extract_routes(source, {"Routes.ITEM" => "/base/item"})
+    routes.map(&.path).should eq(["/base/item"])
+  end
+
+  it "expands a file's constants against another file's through the fallback" do
+    local = Noir::TreeSitterKotlinRouteExtractor.extract_string_constants(<<-KT)
+      const val ITEM = "$BASE/item"
+      const val ITEM2 = Paths.BASE + "/item2"
+      KT
+    local["ITEM2"].should eq("${Paths.BASE}/item2")
+    expanded = Noir::TreeSitterKotlinRouteExtractor.expand_constant_interpolations(
+      local, {"BASE" => "/base", "Paths.BASE" => "/base"})
+    expanded["ITEM"].should eq("/base/item")
+    expanded["ITEM2"].should eq("/base/item2")
+  end
+
+  it "keeps non-constant concatenations and plain vals out of the table" do
+    constants = Noir::TreeSitterKotlinRouteExtractor.extract_string_constants(<<-KT)
+      val dynamic = prefix + "/x"
+      const val CALL = BASE + build("/y")
+      const val ONE = BASE
+      KT
+    constants.has_key?("dynamic").should be_false
+    constants.has_key?("CALL").should be_false
+    constants.has_key?("ONE").should be_false
+  end
+
+  it "leaves a self-doubling template chain unexpanded instead of growing it" do
+    lines = ["const val K0 = \"/aaaaaaaaaaaaaaaa\""]
+    (1...60).each { |i| lines << "const val K#{i} = \"$K#{i - 1}$K#{i - 1}\"" }
+    constants = Noir::TreeSitterKotlinRouteExtractor.extract_string_constants(lines.join("\n"))
+    constants.each_value { |value| value.size.should be <= Noir::TreeSitterKotlinRouteExtractor::MAX_EXPANDED_CONSTANT_SIZE }
+    constants["K2"].should eq("/aaaaaaaaaaaaaaaa" * 4)
+  end
+
   it "composes a class-level @RequestMapping prefix from a cross-file bare const" do
     source = <<-KT
       @RestController

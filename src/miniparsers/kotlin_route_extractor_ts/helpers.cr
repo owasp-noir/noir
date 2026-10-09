@@ -210,8 +210,11 @@ module Noir
       end
     end
 
+    # `Paths.ITEM` or `com.example.Paths.ITEM` from the cross-file index.
+    # A bare `ITEM` is not looked up here: simple names collide across
+    # files far more often than type-qualified ones.
     private def fully_qualified_constant(text : String, string_constants : Hash(String, String)) : String?
-      return unless text.count('.') >= 2
+      return unless text.includes?('.')
       string_constants[text]?
     end
 

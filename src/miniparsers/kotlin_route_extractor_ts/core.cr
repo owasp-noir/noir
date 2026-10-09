@@ -96,9 +96,14 @@ module Noir
           current_depth = 0
         end
 
-        if match = line.match(/\b(?:const\s+)?val\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?::\s*String)?\s*=\s*"([^"]*)"/)
-          name = match[1]
-          value = match[2]
+        name = value = nil
+        if (match = line.match(CONST_DECL_RE)) && (template = concat_as_template(line.byte_slice(match.byte_end(0))))
+          name, value = match[1], template
+        elsif match = line.match(/\b(?:const\s+)?val\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?::\s*String)?\s*=\s*"([^"]*)"/)
+          name, value = match[1], match[2]
+        end
+
+        if name && value
           constants[name] ||= value
           unless current_type.empty?
             constants["#{current_type}.#{name}"] ||= value
@@ -117,8 +122,72 @@ module Noir
         end
       end
 
-      constants
+      # Same-file references resolve here; cross-file ones stay as `$REF`
+      # for the analyzer's second pass over every file's constants.
+      expand_constant_interpolations(constants)
     end
+
+    # `const val X = A + "/b" + Paths.C`: string literals and (dotted)
+    # constant names joined by `+`. Only `const` — annotation arguments
+    # must be compile-time constants, so a plain `val` concatenation can
+    # never reach a mapping path. The literal-only regex below would
+    # otherwise keep just the first literal of such a line.
+    CONST_DECL_RE = /\bconst\s+val\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?::\s*String)?\s*=\s*/
+
+    # `A + "/b"` means exactly `"${A}/b"` in Kotlin, so return it in
+    # template form for the interpolation pass to resolve. Nil unless
+    # `expression` is two or more such terms and nothing else. A byte
+    # walk, not a regex: one repeated-group regex runs out of PCRE2 JIT
+    # stack on a line of thousands of terms, and per-term anchored
+    # matches re-validate the whole line each time (quadratic).
+    private def concat_as_template(expression : String) : String?
+      return unless expression.includes?('+')
+      bytes = expression.to_slice
+      i = 0
+      terms = 0
+      template = String.build do |io|
+        loop do
+          i = skip_ascii_space(bytes, i)
+          return if i >= bytes.size
+          start = i
+          if bytes[i] === '"'
+            close = expression.byte_index('"'.ord.to_u8, i + 1)
+            return unless close
+            io.write(bytes[(start + 1)...close])
+            i = close + 1
+          elsif bytes[i].unsafe_chr.ascii_letter? || bytes[i] === '_'
+            while i < bytes.size && (bytes[i].unsafe_chr.ascii_alphanumeric? || bytes[i] === '_' || bytes[i] === '.')
+              i += 1
+            end
+            io << "${"
+            io.write(bytes[start...i])
+            io << '}'
+          else
+            return
+          end
+          terms += 1
+          i = skip_ascii_space(bytes, i)
+          i = skip_ascii_space(bytes, i + 1) if i < bytes.size && bytes[i] === ';'
+          break if i >= bytes.size
+          return unless bytes[i] === '+'
+          i += 1
+        end
+      end
+      terms > 1 ? template : nil
+    end
+
+    private def skip_ascii_space(bytes : Bytes, i : Int32) : Int32
+      while i < bytes.size && bytes[i].unsafe_chr.ascii_whitespace?
+        i += 1
+      end
+      i
+    end
+
+    # A resolved route constant is a URL path; anything longer is a
+    # template chain doubling itself (`B = "$A$A"`, `C = "$B$B"`, ...),
+    # which used to grow until the analyzer failed. Such a value is left
+    # unexpanded.
+    MAX_EXPANDED_CONSTANT_SIZE = 4096
 
     # Resolve Kotlin string-template interpolations inside collected
     # constant values, e.g. `const val STATIC_URL = "$PUBLIC_URL/static"`
@@ -128,15 +197,17 @@ module Noir
     # literal `$VAR` (or, as an inline annotation literal, mis-parses it
     # as a `{VAR}` path placeholder). Unresolved references (e.g. Spring
     # `${config.property}` placeholders) are left untouched. Bounded
-    # iterations resolve transitive chains.
-    def expand_constant_interpolations(constants : Hash(String, String)) : Hash(String, String)
+    # iterations resolve transitive chains. Names missing from
+    # `constants` are looked up in `fallback` (another file's constants).
+    def expand_constant_interpolations(constants : Hash(String, String),
+                                       fallback : Hash(String, String)? = nil) : Hash(String, String)
       return constants unless constants.any? { |_, v| v.includes?('$') }
       result = constants.dup
       3.times do
         changed = false
         result.each do |name, value|
           next unless value.includes?('$')
-          expanded = expand_interpolation(value, result)
+          expanded = expand_interpolation(value, result, fallback)
           if expanded != value
             result[name] = expanded
             changed = true
@@ -147,10 +218,25 @@ module Noir
       result
     end
 
-    private def expand_interpolation(value : String, constants : Hash(String, String)) : String
-      value.gsub(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/) do
-        ident = $~[1]? || $~[2]?
-        (ident && constants[ident]?) || $~[0]
+    TEMPLATE_REF_RE = /\$\{([A-Za-z_][A-Za-z0-9_.]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/
+
+    private def expand_interpolation(value : String, constants : Hash(String, String),
+                                     fallback : Hash(String, String)? = nil) : String
+      # Size the result before building it: a value of many refs to
+      # near-cap values would otherwise allocate megabytes per pass only
+      # to be thrown away.
+      size = value.size
+      value.scan(TEMPLATE_REF_RE) do |match|
+        ident = match[1]? || match[2]
+        if resolved = constants[ident]? || fallback.try(&.[ident]?)
+          size += resolved.size - match[0].size
+          return value if size > MAX_EXPANDED_CONSTANT_SIZE
+        end
+      end
+
+      value.gsub(TEMPLATE_REF_RE) do
+        ident = $~[1]? || $~[2]
+        constants[ident]? || fallback.try(&.[ident]?) || $~[0]
       end
     end
 

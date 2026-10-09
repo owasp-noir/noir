@@ -184,6 +184,14 @@ module Analyzer::Kotlin
       string_constants_by_base.each do |base, constants|
         string_constants_by_base[base] = Noir::TreeSitterKotlinRouteExtractor.expand_constant_interpolations(constants)
       end
+      # Each file's own map is consulted first, so it needs the cross-file
+      # values too: `const val ITEM = "$BASE/item"` with `BASE` declared in
+      # another file is still `$BASE/item` there.
+      local_string_constants = local_string_constants.to_h do |path, constants|
+        {path, Noir::TreeSitterKotlinRouteExtractor.expand_constant_interpolations(
+          constants, string_constants_by_base[configured_base_for(path)]
+        )}
+      end
 
       # Cross-module indexes (interface inheritance, STOMP destinations)
       # legitimately span build modules, so they resolve against the merged
