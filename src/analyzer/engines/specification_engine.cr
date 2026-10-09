@@ -462,6 +462,12 @@ module Analyzer::Specification
         return record_ref_gap(from_path, file_ref, "remote target is not fetched")
       end
 
+      # `p%00.yaml` decodes to a NUL byte, which the file APIs below raise
+      # on — outside the per-ref rescue, so it took the rest of the document.
+      if file_ref.includes?('\0')
+        return record_ref_gap(from_path, file_ref.gsub('\0', "%00"), "target contains a NUL byte")
+      end
+
       target = File.expand_path(file_ref, File.dirname(File.expand_path(from_path)))
 
       # Containment rule: a ref target must resolve inside one of the scan
@@ -536,6 +542,15 @@ module Analyzer::Specification
       return unless @reported_refs.add?("#{from_path}\u0000#{message}")
       logger.debug "#{from_path}: #{message}"
       Noir::SkippedFiles.record(tech, from_path, message, noun: "referenced file")
+    end
+
+    # OAS2/OAS3: one path item or operation that raised and was skipped. The
+    # rest of the document is still read, but the loss belongs in `errors` —
+    # and `--strict` — like any other skipped document.
+    protected def record_skipped_entry(doc_path : String, entry : String, e : Exception) : Nil
+      logger.debug "#{doc_path}: skipped #{entry}"
+      logger.debug_sub e
+      Noir::SkippedFiles.record(tech, doc_path, "#{entry}: #{e.message.presence || e.class.name}", noun: "spec entry")
     end
 
     # OAS2/OAS3: adds params for the effective security requirement. Per the

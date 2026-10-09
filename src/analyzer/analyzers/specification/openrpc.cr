@@ -120,7 +120,7 @@ module Analyzer::Specification
     # and with `--url` supplied only the matching host contributes at all.
     private def base_path_for(root : JSON::Any) : String
       if servers = root["servers"]?.try(&.as_a?)
-        base = server_base_path(servers.map { |server_obj| server_obj["url"]?.try(&.as_s?) || "" })
+        base = server_base_path(servers.map { |server_obj| server_obj.as_h?.try(&.["url"]?).try(&.as_s?) || "" })
         return base unless base == @url
       end
 
