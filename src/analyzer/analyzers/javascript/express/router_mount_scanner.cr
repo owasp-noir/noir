@@ -965,7 +965,14 @@ module Analyzer::Javascript
         break unless resolved_any
       end
 
-      place_unplaced_mounts(remaining, file_contexts, locator)
+      # Pass 3 is Express's alone. Its "no other mount reached this child"
+      # guard reads the shared prefix table, so it is only sound for a
+      # scanner that saw every mount. Hono's scanner skips Express files: it
+      # missed `app.use('/legacy', groups())`, placed the unplaced
+      # `router.use('/api/v3/groups', …)` at the root, and whether Express
+      # then reported a phantom `/api/v3/groups/:gid` depended on which
+      # analyzer started first. (A `.use()` is never a Hono sub-app mount.)
+      place_unplaced_mounts(remaining, file_contexts, locator) if @framework == :express
     end
 
     # PASS 3: mounts whose parent router was never located.
