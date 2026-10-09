@@ -22,7 +22,7 @@ module Analyzer::Specification
       @result
     end
 
-    private record Frame, kind : String, value : String, line : Int32
+    private record Frame, kind : String, value : String, line : Int32, modifier : String = ""
 
     private def process_content(content : String, details : Details)
       stack = [] of Frame
@@ -62,13 +62,13 @@ module Analyzer::Specification
           raw_location = m[2]
           location = normalize_location_path(raw_location)
           unless location.empty? || internal_location?(raw_location) || internal_location?(location)
-            stack << Frame.new("location", location, idx + 1)
+            stack << Frame.new("location", location, idx + 1, modifier)
             emit_location(details, location, modifier, METHOD_ANY, server_names, server_tls, idx + 1)
           end
         elsif m = METHOD_BLOCK_RE.match(balanced)
           method = m[1].upcase
           if loc = current_location(stack)
-            emit_location(details, loc.value, "", method, server_names, server_tls, idx + 1)
+            emit_location(details, loc.value, loc.modifier, method, server_names, server_tls, idx + 1)
           end
         end
 

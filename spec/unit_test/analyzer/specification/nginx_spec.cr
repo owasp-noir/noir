@@ -110,6 +110,23 @@ describe "Nginx Analyzer" do
     ])
   end
 
+  # The method endpoint was emitted with no modifier, so a regex location's
+  # anchors survived on it (`^/v1$` next to `/v1`) and it was tagged prefix.
+  it "gives a method block its regex location's path and path-type" do
+    endpoints = analyze_nginx <<-CONF
+      server {
+          location ~ ^/v1/items$ {
+              if ($request_method = PUT) { return 405; }
+          }
+      }
+      CONF
+
+    endpoints.map { |e| {e.url, e.method, tag_descriptions(e, "nginx-path-type").first} }.sort!.should eq([
+      {"/v1/items", "ANY", "regex"},
+      {"/v1/items", "PUT", "regex"},
+    ])
+  end
+
   # Each `}` of a one-line block or of an unpushed `@named` location used to
   # pop a frame it never pushed, closing /admin and then the server early.
   it "keeps frames balanced across one-line blocks and named locations" do
