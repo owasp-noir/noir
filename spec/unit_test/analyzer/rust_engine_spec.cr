@@ -88,5 +88,45 @@ describe Analyzer::Rust::RustEngine do
       after_byte = source.byte_index("fn after").not_nil!
       (after_byte >= end_byte).should be_true
     end
+
+    it "opens no region for a brace-less item ending in ';'" do
+      source = <<-RUST
+        #[cfg(test)]
+        mod tests;
+        #[cfg(test)]
+        use crate::helpers::*;
+        #[cfg(test)]
+        const SIZES: [u8; 2] = [1, 2];
+
+        #[get("/victim")]
+        async fn victim() -> impl Responder {
+            HttpResponse::Ok()
+        }
+        RUST
+
+      Analyzer::Rust::RustEngine.collect_cfg_test_regions(source).should be_empty
+    end
+
+    it "opens no region for a cfg(test) struct field or enum variant" do
+      source = <<-RUST
+        struct Config {
+            a: u8,
+            #[cfg(test)]
+            b: u8
+        }
+        enum Mode {
+            Prod,
+            #[cfg(test)]
+            Mock
+        }
+
+        #[get("/after_struct_field")]
+        async fn after() -> impl Responder {
+            HttpResponse::Ok()
+        }
+        RUST
+
+      Analyzer::Rust::RustEngine.collect_cfg_test_regions(source).should be_empty
+    end
   end
 end
