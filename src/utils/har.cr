@@ -16,9 +16,15 @@ module Noir::HarDocument
   def parse(content : String) : HAR::Log
     HAR.from_string(content)
   rescue ex : JSON::ParseException
-    tree = parse_json_lenient(content)
-    raise ex unless clamp_sizes(tree)
-    HAR.from_string(tree.to_json)
+    # The retry's own failure would point at the reserialized text, not the
+    # file, so the original error is the one reported.
+    begin
+      tree = parse_json_lenient(content)
+      raise ex unless clamp_sizes(tree)
+      HAR.from_string(tree.to_json)
+    rescue
+      raise ex
+    end
   end
 
   private def clamp_sizes(node : JSON::Any) : Bool

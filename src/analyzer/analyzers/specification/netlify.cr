@@ -12,8 +12,10 @@ module Analyzer::Specification
     # (`https://old.example.com/*  https://new.example.com/:splat  301!`).
     ABSOLUTE_SOURCE_RE = /\A[a-z][a-z0-9+.-]*:\/\/([^\/]+)(\/.*)?\z/i
 
-    # Line shapes `parse_toml_fallback` reads.
-    TOML_TABLE_HEADER_RE      = /\A\s*\[\[?\s*([A-Za-z0-9_.\-]+)\s*\]\]?/
+    # Line shapes `parse_toml_fallback` reads. Any `[...]` / `[[...]]` line is
+    # a header, quoted keys (`[context."deploy-preview"]`) included, so a
+    # table the scan does not read always ends the one before it.
+    TOML_TABLE_HEADER_RE      = /\A\s*\[\[?([^\]]*)\]/
     TOML_STRING_ASSIGNMENT_RE = /\A\s*([A-Za-z_]+)\s*=\s*"([^"]*)"/
 
     def analyze
@@ -82,9 +84,9 @@ module Analyzer::Specification
       key = nil
       content.each_line do |line|
         if header = line.match(TOML_TABLE_HEADER_RE)
-          key = case header[1]
-                when .ends_with?("redirects")      then "from"
-                when .ends_with?("edge_functions") then "path"
+          key = case header[1].delete(%("')).split('.').last?.try(&.strip)
+                when "redirects"      then "from"
+                when "edge_functions" then "path"
                 end
         elsif key && (assignment = line.match(TOML_STRING_ASSIGNMENT_RE)) && assignment[1] == key
           add_endpoint(assignment[2], path, nil) unless assignment[2].empty?
@@ -95,7 +97,7 @@ module Analyzer::Specification
     private def collect_redirects(node : TOML::Any?, path : String)
       node.try(&.as_a?).try do |items|
         items.each do |item|
-          if from = item["from"]?.try(&.as_s?)
+          if from = item.as_h?.try(&.["from"]?).try(&.as_s?)
             add_endpoint(from, path, nil) unless from.empty?
           end
         end
@@ -105,7 +107,7 @@ module Analyzer::Specification
     private def collect_edge_functions(node : TOML::Any?, path : String)
       node.try(&.as_a?).try do |items|
         items.each do |item|
-          if route_path = item["path"]?.try(&.as_s?)
+          if route_path = item.as_h?.try(&.["path"]?).try(&.as_s?)
             add_endpoint(route_path, path, nil) unless route_path.empty?
           end
         end

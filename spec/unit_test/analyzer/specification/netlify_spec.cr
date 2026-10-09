@@ -86,9 +86,29 @@ describe "Netlify Analyzer" do
       [[context.production.edge_functions]]
         path = "/edge/*"
         function = "hello"
+
+      [[redirects]]
+        from = "/before-quoted"
+
+      [context."deploy-preview".environment]
+        from = "/env-var-named-from"
+
+      [[context."deploy-preview".redirects]]
+        from = "/quoted-ctx"
       TOML
 
-    endpoints.map(&.url).should eq ["/api/*", "/edge/*"]
+    endpoints.map(&.url).should eq ["/api/*", "/edge/*", "/before-quoted", "/quoted-ctx"]
+  end
+
+  it "skips a redirects entry that is not a table and keeps its siblings" do
+    endpoints = analyze_netlify nil, <<-TOML
+      redirects = ["x"]
+
+      [[edge_functions]]
+        path = "/edge"
+      TOML
+
+    endpoints.map(&.url).should eq ["/edge"]
   end
 
   it "combines routes from both files" do
