@@ -75,7 +75,9 @@ module Noir::TextFile
   end
 
   # Decode UTF-16 (after its BOM, which `utf16_bom?` confirmed) to UTF-8.
-  # A lone surrogate and an odd trailing byte are dropped.
+  # A lone surrogate and an odd trailing byte are dropped, and so are any
+  # further U+FEFF directly after the BOM (a doubled BOM from concatenating
+  # tools); an interior U+FEFF is kept, as on the UTF-8 path.
   #
   # This used to go through iconv with `invalid: :skip`, which on a lone
   # surrogate skips one *byte*: every later code unit was then read across
@@ -84,20 +86,24 @@ module Noir::TextFile
   def self.transcode_utf16(content : String) : String
     bytes = content.to_slice
     little = bytes[0, 2] == UTF16_LE_BOM
-    units = Slice(Int32).new((bytes.size - 2) // 2) do |i|
+    count = (bytes.size - 2) // 2
+    unit_at = ->(i : Int32) do
       first, second = bytes[2 + 2 * i].to_i32, bytes[3 + 2 * i].to_i32
       little ? (second << 8) | first : (first << 8) | second
     end
 
-    String.build(units.size) do |io|
+    String.build(count) do |io|
       i = 0
-      while i < units.size
-        unit = units[i]
+      while i < count && unit_at.call(i) == 0xFEFF
+        i += 1
+      end
+      while i < count
+        unit = unit_at.call(i)
         i += 1
         if !(0xD800 <= unit <= 0xDFFF)
           io << unit.unsafe_chr
-        elsif unit <= 0xDBFF && i < units.size && 0xDC00 <= units[i] <= 0xDFFF
-          io << (0x10000 + ((unit - 0xD800) << 10) + (units[i] - 0xDC00)).unsafe_chr
+        elsif unit <= 0xDBFF && i < count && 0xDC00 <= (low = unit_at.call(i)) <= 0xDFFF
+          io << (0x10000 + ((unit - 0xD800) << 10) + (low - 0xDC00)).unsafe_chr
           i += 1
         end
       end

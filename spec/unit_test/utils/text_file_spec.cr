@@ -86,6 +86,10 @@ describe Noir::TextFile do
       big_endian = Bytes[0xFE, 0xFF, 0xDC, 0x00, 0x00, 0x61, 0xD8, 0x3D, 0xDE, 0x00]
       File.write(path, big_endian)
       Noir::TextFile.read(path).should eq("a😀")
+
+      # A doubled BOM drops both; a U+FEFF past the first character stays.
+      File.write(path, Bytes[0xFF, 0xFE, 0xFF, 0xFE, 0x61, 0x00, 0xFF, 0xFE, 0x62, 0x00])
+      Noir::TextFile.read(path).should eq("a﻿b")
     ensure
       FileUtils.rm_rf(dir)
     end
