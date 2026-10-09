@@ -76,12 +76,12 @@ describe "OutputBuilderMarkdownTable" do
     lines = output.split("\n")
 
     # Verify content is escaped
-    # Line 2: | GET\|POST /test\|url | http\|https | `param\|name (query\|type)`  |
-    expected_line_1 = "| GET\\|POST /test\\|url | http\\|https | `param\\|name (query\\|type)`  |"
+    # Line 2: | `GET\|POST /test\|url` | http\|https | `param\|name (query\|type)`  |
+    expected_line_1 = "| `GET\\|POST /test\\|url` | http\\|https | `param\\|name (query\\|type)`  |"
     lines[2].should eq(expected_line_1)
 
-    # Line 3: Endpoint outside code span is HTML/backslash escaped; param inside code span keeps literal HTML/backslashes
-    expected_line_2 = "| GET\\\\POST /&lt;script&gt;alert(1)&lt;/script&gt; | http | `<i>html</i> (query)`  |"
+    # Line 3: endpoint and param are both code spans, which keep literal HTML/backslashes
+    expected_line_2 = "| `GET\\POST /<script>alert(1)</script>` | http | `<i>html</i> (query)`  |"
     lines[3].should eq(expected_line_2)
   end
 
@@ -137,7 +137,7 @@ describe "OutputBuilderMarkdownTable" do
     cell.should contain("`` `edge (query) ``")
   end
 
-  it "escapes a backtick in a text cell so it cannot open a span" do
+  it "fences an endpoint containing a backtick so its code span stays intact" do
     options = {
       "debug"   => YAML::Any.new(false),
       "verbose" => YAML::Any.new(false),
@@ -151,10 +151,10 @@ describe "OutputBuilderMarkdownTable" do
     builder.print([Endpoint.new("/a`b`c", "GET")])
     cell = builder.io.to_s.split("\n")[2]
 
-    cell.should eq("| GET /a\\`b\\`c | http | - |")
+    cell.should eq("| ``GET /a`b`c`` | http | - |")
   end
 
-  it "escapes link, image and emphasis syntax in a text cell" do
+  it "keeps link, image and emphasis syntax in a route inert" do
     options = {
       "debug"   => YAML::Any.new(false),
       "verbose" => YAML::Any.new(false),
@@ -174,9 +174,9 @@ describe "OutputBuilderMarkdownTable" do
     ])
     lines = builder.io.to_s.split("\n")
 
-    lines[2].should eq("| GET /a/\\[Approve\\](https://evil.example/login) | http | - |")
-    lines[3].should eq("| GET /b/!\\[x\\](https://evil.example/p.png) | http | - |")
-    lines[4].should eq("| GET /c/\\*bold\\*\\_it\\_\\~\\~s\\~\\~ | http | - |")
+    lines[2].should eq("| `GET /a/[Approve](https://evil.example/login)` | http | - |")
+    lines[3].should eq("| `GET /b/![x](https://evil.example/p.png)` | http | - |")
+    lines[4].should eq("| `GET /c/*bold*_it_~~s~~` | http | - |")
   end
 
   it "renders a placeholder for an endpoint with no params" do
@@ -194,6 +194,6 @@ describe "OutputBuilderMarkdownTable" do
     # true, so this rendered as an empty cell.
     builder.print([Endpoint.new("/no-params", "GET")])
 
-    builder.io.to_s.split("\n")[2].should eq("| GET /no-params | http | - |")
+    builder.io.to_s.split("\n")[2].should eq("| `GET /no-params` | http | - |")
   end
 end

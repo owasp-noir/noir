@@ -19,13 +19,14 @@ module OutputBuilderMarkdownCell
     "#{fence}#{pad}#{content}#{pad}#{fence}"
   end
 
-  # Cells rendered as inline text rather than inside a code span. A backtick
-  # here would open a span of its own and swallow part of a URL, and a route
-  # `/a/[Approve](https://evil.example/login)` rendered in a PR comment as a
-  # link (`![x](…)` as an embedded image), so inline-syntax characters are
-  # backslash-escaped — which only works outside a code span, hence the
-  # split from `sanitize_markdown_cell`. With `[`/`]` escaped no link or
-  # image can open, so `(`, `)` and `!` stay as they are.
+  # Cells rendered as inline text rather than inside a code span (the
+  # protocol column, the diff report's file location). Prefer a code span for
+  # anything route-like; where a cell stays text, a backtick would open a span
+  # of its own, and a value like `[Approve](https://evil.example/login)`
+  # rendered in a PR comment as a link (`![x](…)` as an embedded image), so
+  # inline-syntax characters are backslash-escaped — which only works outside
+  # a code span, hence the split from `sanitize_markdown_cell`. With `[`/`]`
+  # escaped no link or image can open, so `(`, `)` and `!` stay as they are.
   private def sanitize_text_cell(content : String) : String
     sanitize_markdown_cell(content).gsub(/[`\[\]*_~]/) { |char| "\\#{char}" }
   end
