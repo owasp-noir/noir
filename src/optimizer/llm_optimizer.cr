@@ -249,7 +249,12 @@ class LLMEndpointOptimizer < EndpointOptimizer
       @use_llm = true
       @provider = provider
       @model = model
-      @adapter = LLM::AdapterFactory.for(provider, model, api_key)
+      # The same `num_ctx` the analyzer's Ollama client sent: a different
+      # one makes Ollama reload the model between the two phases.
+      context_tokens = if LLM::AdapterFactory.ollama_native?(provider)
+                         LLM.effective_max_tokens(provider, model, @options["ai_max_token"]?.try(&.as_i?) || 0)
+                       end
+      @adapter = LLM::AdapterFactory.for(provider, model, api_key, context_tokens: context_tokens)
       @logger.debug_sub "LLM optimization enabled with #{Noir::Redact.url(provider)}: #{model}"
     else
       @use_llm = false

@@ -31,6 +31,12 @@ class LLMEndpointOptimizer
   end
 end
 
+class LLM::Ollama
+  def __test_body(prompt : String, format : String, context : Array(Int32)? = nil) : String
+    build_body(prompt, format, context)
+  end
+end
+
 class LLM::General
   def __test_api_key : String?
     @api_key
@@ -268,6 +274,16 @@ describe "LLMEndpointOptimizer" do
         adapter = optimizer.__test_adapter.as(LLM::GeneralAdapter)
         adapter.client.__test_api_key.should eq("env-key")
       end
+    end
+
+    it "asks Ollama for the same num_ctx the analyzer did" do
+      # A different num_ctx between the two phases reloads the model.
+      llm_options = create_test_options
+      llm_options["ai_provider"] = YAML::Any.new("ollama")
+      llm_options["ai_model"] = YAML::Any.new("llama3")
+      llm_options["ai_max_token"] = YAML::Any.new(8192)
+      client = LLMEndpointOptimizer.new(logger, llm_options).__test_adapter.as(LLM::OllamaAdapter).client
+      JSON.parse(client.__test_body("hi", "json"))["options"]["num_ctx"].as_i.should eq(8192)
     end
 
     it "stays disabled without an AI provider" do

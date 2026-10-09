@@ -415,6 +415,15 @@ describe LLM do
     end
   end
 
+  describe ".model_token_limit" do
+    it "looks an Ollama tagged model up by its base name" do
+      ollama = LLM::MODEL_TOKEN_LIMITS["ollama"].as(Hash(String, Int32))
+      LLM.model_token_limit(ollama, "llama3.1:8b").should eq(ollama["llama3.1"])
+      LLM.model_token_limit(ollama, "llama3.1").should eq(ollama["llama3.1"])
+      LLM.model_token_limit(ollama, "no-such-model:7b").should be_nil
+    end
+  end
+
   describe "MODEL_TOKEN_LIMITS fallback behavior" do
     # Note: get_max_tokens is monkeypatched by llm_analyzers specs,
     # so we test fallback logic through the constant structure directly.

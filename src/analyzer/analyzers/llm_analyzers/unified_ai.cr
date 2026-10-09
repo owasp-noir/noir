@@ -89,12 +89,7 @@ module Analyzer::AI
         @api_key = nil
       end
 
-      user_max = options["ai_max_token"]?.try(&.as_i) || 0
-      if user_max > 0
-        @max_tokens = user_max
-      else
-        @max_tokens = LLM.get_max_tokens(@provider, @model)
-      end
+      @max_tokens = LLM.effective_max_tokens(@provider, @model, options["ai_max_token"]?.try(&.as_i) || 0)
 
       @expanded_base_paths = @base_paths.map { |path| normalized_agent_root(path) }
       @expanded_base_paths.uniq!

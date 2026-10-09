@@ -10,8 +10,23 @@ require "./general/client"
 require "./ollama/ollama"
 require "./acp/client"
 require "./native_tool_calling"
+require "./prompt"
 
 module LLM
+  # Ceiling on an Ollama-native budget the user did not set. The budget is
+  # sent as `num_ctx`, which Ollama allocates up front as KV cache: the
+  # 128k-256k table values need ~16 GiB or more for an 8B model, and a load
+  # failure loses the whole scan rather than degrading it.
+  OLLAMA_DEFAULT_MAX_TOKENS = 32_768
+
+  # The token budget a run sizes its prompts for — and, for Ollama, the
+  # context it asks the server to allocate. An explicit --ai-max-token wins.
+  def self.effective_max_tokens(provider : String, model : String, user_max : Int32) : Int32
+    return user_max if user_max > 0
+    budget = get_max_tokens(provider, model)
+    AdapterFactory.ollama_native?(provider) ? Math.min(budget, OLLAMA_DEFAULT_MAX_TOKENS) : budget
+  end
+
   # A normalized adapter interface for LLM clients.
   #
   # Implementations should return a String response (JSON text after any provider-specific cleanup).
