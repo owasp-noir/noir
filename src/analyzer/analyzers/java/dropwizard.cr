@@ -66,7 +66,8 @@ module Analyzer::Java
 
         path_config = path_configs[project_root]? || DropwizardPathConfig.new
         if content.includes?("AssetsBundle")
-          extract_asset_bundle_endpoints(content, path_config.application_context_path, path).each do |endpoint|
+          # Comment-free (offsets kept): a commented-out `new AssetsBundle(...)` serves nothing.
+          extract_asset_bundle_endpoints(JavaEngine.strip_comments(content), path_config.application_context_path, path).each do |endpoint|
             @result << endpoint
           end
         end

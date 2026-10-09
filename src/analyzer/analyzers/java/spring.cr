@@ -340,6 +340,10 @@ module Analyzer::Java
           # own offset is what turns a call position into a file line.
           route_blocks = [] of Tuple(Array(Tuple(Int32, String, String, String, Int32)), Array(Tuple(Int32, Int32, String)), Int32)
           reactive_callees = {} of String => Array(Callee)
+          # The block and verb-call scans are regexes: on the raw source a
+          # commented-out `.andRoute(GET(...))` was a route. Offsets and
+          # line numbers are kept.
+          content = JavaEngine.strip_comments(content)
 
           # Single tree-sitter parse for the whole reactive file: the
           # constant table and the `this::handler` callee resolution both

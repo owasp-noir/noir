@@ -2,6 +2,7 @@ require "../../../utils/url_path"
 require "../../engines/play_route_support"
 require "../../../models/analyzer"
 require "../../../miniparsers/scala_callee_extractor"
+require "../../../minilexers/scala_lexer"
 
 module Analyzer::Scala
   class Play < Analyzer
@@ -632,7 +633,10 @@ module Analyzer::Scala
     private def process_sird_router(router : NamedTuple(path: String, content: String, class_name: String), prefix : String)
       source = router[:content]
       structure = blank_non_code(source)
-      block = extract_router_routes_block(structure, source)
+      # Cases are read from a comment-free copy (string literals kept,
+      # offsets aligned with `source`), so `// case GET(p"/old")` is not
+      # a route.
+      block = extract_router_routes_block(structure, Noir::ScalaLexer.new(source).code.join)
       return unless block
 
       body = block[:body]

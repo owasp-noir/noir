@@ -20,4 +20,6 @@ public class HelloApplication extends Application<HelloConfiguration> {
     public void run(HelloConfiguration configuration, Environment environment) {
         environment.jersey().register(new HelloResource());
     }
+
+    // Retired: bootstrap.addBundle(new AssetsBundle("/legacy-ui", "/legacy"));
 }
