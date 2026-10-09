@@ -269,14 +269,16 @@ class CodeLocator
     return if @extension_index_built
     @lock.synchronize do
       return if @extension_index_built
-      @extension_index_built = rebuild_path_index(@extension_index) { |file| File.extname(file) }
+      # Case-folded: `LOGIN.ASP` is an `.asp` page on the case-insensitive
+      # filesystems those projects come from.
+      @extension_index_built = rebuild_path_index(@extension_index) { |file| File.extname(file).downcase }
     end
   end
 
   # Get files by extension using the index (O(1) lookup)
   def files_by_extension(extension : String) : Array(String)
     build_extension_index
-    @extension_index[extension]? || Array(String).new
+    @extension_index[extension.downcase]? || Array(String).new
   end
 
   # Build a `basename => paths` index from file_map.

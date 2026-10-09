@@ -88,8 +88,8 @@ module Analyzer::CSharp
         hash[key] = [] of String
       end
       files = get_files_by_extension(".cs").select do |file|
-        base = File.basename(file)
-        base == "Program.cs" || base == "Startup.cs"
+        base = File.basename(file).downcase
+        base == "program.cs" || base == "startup.cs"
       end
 
       files.each do |file|

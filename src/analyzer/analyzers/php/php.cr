@@ -115,7 +115,7 @@ module Analyzer::Php
     end
 
     def analyze_file(path : String) : Array(Endpoint)
-      return [] of Endpoint unless File.extname(path) == ".php"
+      return [] of Endpoint unless File.extname(path).downcase == ".php"
 
       resolved = php_url_base_for(path)
       return [] of Endpoint unless resolved
