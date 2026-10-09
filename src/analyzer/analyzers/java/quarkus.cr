@@ -324,8 +324,9 @@ module Analyzer::Java
       # The text scans below run on a comment-blanked copy (same char
       # offsets), so `@Route(...) // note` still reaches its method and a
       # commented-out `// @Route` is not a route. Callee spans stay on the
-      # raw text they were parsed from.
-      visible = JavaEngine.strip_comments(content)
+      # raw text they were parsed from. Kotlin needs its own mask: the C
+      # stripper reads the `/*` in `"${"/*"}"` as a comment opener.
+      visible = path.ends_with?(".kt") ? Noir::KotlinSourceMask.code_only(content) : JavaEngine.strip_comments(content)
       route_bases = reactive_route_bases(visible)
 
       each_reactive_route_annotation(visible) do |offset, end_offset, body|
