@@ -156,6 +156,8 @@ module Analyzer::Rust
     # Returns nil when the item ends at a top-level `;` before any `{`
     # (`mod tests;`, `use …;`, `const X: [u8; 4] = …;`): that item has
     # no block, and the next `{` belongs to the following production item.
+    # Likewise at a `}` before any `{`: the attribute was on a struct field
+    # or enum variant and the enclosing block just closed.
     private def self.find_block_open_brace(bytes : Slice(UInt8), from : Int32) : Int32?
       i = from
       nesting = 0
@@ -178,6 +180,7 @@ module Analyzer::Rust
             i += 1
           end
         when '{'.ord then return i
+        when '}'.ord then return # left the enclosing block: a field or variant
         when '('.ord, '['.ord
           nesting += 1
           i += 1

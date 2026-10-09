@@ -106,5 +106,27 @@ describe Analyzer::Rust::RustEngine do
 
       Analyzer::Rust::RustEngine.collect_cfg_test_regions(source).should be_empty
     end
+
+    it "opens no region for a cfg(test) struct field or enum variant" do
+      source = <<-RUST
+        struct Config {
+            a: u8,
+            #[cfg(test)]
+            b: u8
+        }
+        enum Mode {
+            Prod,
+            #[cfg(test)]
+            Mock
+        }
+
+        #[get("/after_struct_field")]
+        async fn after() -> impl Responder {
+            HttpResponse::Ok()
+        }
+        RUST
+
+      Analyzer::Rust::RustEngine.collect_cfg_test_regions(source).should be_empty
+    end
   end
 end
