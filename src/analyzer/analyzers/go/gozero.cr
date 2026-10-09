@@ -175,10 +175,23 @@ module Analyzer::Go
       # gozero's canonical body-binding entrypoint is
       # `httpx.Parse(r, &req)` / `httpx.ParseJsonBody`;
       # both populate the request body. `json.NewDecoder`
-      # is also common in raw handlers.
-      if line.includes?("httpx.Parse(") || line.includes?("httpx.ParseJsonBody(") ||
-         line.includes?("httpx.ParseForm(") || line.matches?(/json\.NewDecoder\(.+\.Body\)/)
+      # is also common in raw handlers. `httpx.Parse` binds a GET's
+      # `form:` fields from the query string, so a GET gets no JSON body.
+      bodyless = endpoint.method == "GET" || endpoint.method == "HEAD"
+      if line.includes?("httpx.ParseJsonBody(") || line.matches?(/json\.NewDecoder\(.+\.Body\)/) ||
+         (line.includes?("httpx.Parse(") && !bodyless)
         add_param_to_endpoint(Param.new("body", "", "json"), endpoint)
+      end
+
+      # `httpx.ParseForm` binds form fields: the query string on a GET,
+      # the form body otherwise.
+      if line.includes?("httpx.ParseForm(")
+        form_type = bodyless ? "query" : "form"
+        if match = line.match(/httpx\.ParseForm\(\s*[^,]+,\s*"([^"]+)"/)
+          add_param_to_endpoint(Param.new(match[1], "", form_type), endpoint)
+        elsif !bodyless
+          add_param_to_endpoint(Param.new("body", "", form_type), endpoint)
+        end
       end
     end
 
