@@ -1,0 +1,23 @@
+{
+  // Ocelot allows .NET JSON-with-comments
+  "Routes": [
+    {
+      "UpstreamPathTemplate": "/posts/{postId}",
+      "UpstreamHttpMethod": [ "Get", "Put" ],
+      "DownstreamPathTemplate": "/api/posts/{postId}",
+      "DownstreamScheme": "https",
+      "DownstreamHostAndPorts": [ { "Host": "posts", "Port": 443 } ]
+    },
+    {
+      "UpstreamPathTemplate": "/health",
+      "DownstreamPathTemplate": "/healthz",
+    }
+  ],
+  "Aggregates": [
+    {
+      "RouteKeys": [ "posts", "comments" ],
+      "UpstreamPathTemplate": "/feed"
+    }
+  ],
+  "GlobalConfiguration": { "BaseUrl": "https://gateway.example.com" }
+}

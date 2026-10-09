@@ -20,6 +20,7 @@ sort_by = "weight"
 | Android (Manifest) | XML | ☑️ | ✗ | ☑️ | ☑️ | ✗ | ✗ | ✗ |
 | Apache Thrift | THRIFT | ☑️ | ☑️ | ✗ | ✗ | ☑️ | ✗ | ✗ |
 | Apache httpd | CONF | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| Apigee (proxy bundle) | XML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Apisix | JSON | ☑️ | ☑️ | ✗ | ✗ | ✗ | ☑️ | ✗ |
 | Apisix | YAML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ☑️ | ✗ |
 | App Links / Universal Links (server-side) | JSON | ☑️ | ✗ | ☑️ | ✗ | ✗ | ✗ | ✗ |
@@ -45,6 +46,7 @@ sort_by = "weight"
 | GraphQL Operations | GRAPHQL | ☑️ | ☑️ | ✗ | ✗ | ☑️ | ✗ | ✗ |
 | GraphQL SDL | GRAPHQL_SDL | ☑️ | ☑️ | ✗ | ✗ | ☑️ | ✗ | ✗ |
 | Grpc | PROTOBUF | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ | ✗ |
+| HAProxy | CFG | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | HAR | JSON | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ |
 | HTTP / REST Client (.http/.rest) | HTTP | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ |
 | HTTP / REST Client (.http/.rest) | REST | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ |
@@ -56,11 +58,13 @@ sort_by = "weight"
 | Istio VirtualService | YAML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Kamal | YAML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Kong | YAML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| KrakenD | JSON | ☑️ | ☑️ | ☑️ | ☑️ | ✗ | ☑️ | ✗ |
 | Kubernetes Gateway API (HTTPRoute) | YAML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Kubernetes Ingress | YAML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Netlify | TXT | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Netlify | TOML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Nginx | CONF | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| Ocelot | JSON | ☑️ | ☑️ | ✗ | ☑️ | ✗ | ✗ | ✗ |
 | Odata | XML | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ | ✗ |
 | OpenAPI 2.0 (Swagger) | JSON | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ |
 | OpenAPI 2.0 (Swagger) | YAML | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ |
@@ -74,6 +78,8 @@ sort_by = "weight"
 | Serverless Framework | YAML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Serverless Framework | JSON | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Smithy | SMITHY | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ |
+| Spring Cloud Gateway (config) | YAML | ☑️ | ☑️ | ✗ | ☑️ | ✗ | ✗ | ✗ |
+| Spring Cloud Gateway (config) | PROPERTIES | ☑️ | ☑️ | ✗ | ☑️ | ✗ | ✗ | ✗ |
 | Strapi (content-type schema) | JSON | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ | ✗ |
 | Strapi (content-type schema) | TS | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ | ✗ |
 | Strapi (content-type schema) | JS | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ | ✗ |
@@ -83,9 +89,13 @@ sort_by = "weight"
 | Thunder Client | JSON | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ |
 | Traefik Dynamic Config | YAML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Traefik Dynamic Config | TOML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| Tyk (API definition) | JSON | ☑️ | ☑️ | ✗ | ☑️ | ✗ | ✗ | ✗ |
+| Tyk (API definition) | YAML | ☑️ | ☑️ | ✗ | ☑️ | ✗ | ✗ | ✗ |
 | TypeSpec | TYPESPEC | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ |
 | Vercel | JSON | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Wsdl | XML | ☑️ | ☑️ | ✗ | ✗ | ☑️ | ☑️ | ✗ |
+| YARP | JSON | ☑️ | ☑️ | ☑️ | ☑️ | ✗ | ☑️ | ✗ |
+| YARP | C# | ☑️ | ☑️ | ☑️ | ☑️ | ✗ | ☑️ | ✗ |
 | Zap Sites Tree | YAML | ☑️ | ☑️ | ✗ | ✗ | ☑️ | ✗ | ✗ |
 | iOS (Info.plist) | PLIST | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | mitmproxy Flow | TNETSTRING | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ |

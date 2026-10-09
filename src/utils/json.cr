@@ -75,3 +75,80 @@ private def out_of_range_json_number?(token : String) : Bool
     token.to_i64?.nil?
   end
 end
+
+# JSON-with-comments (`appsettings.json`, `wrangler.jsonc`, …) made parseable
+# by `JSON.parse`: `//` and `/* */` comments outside strings are dropped and a
+# trailing comma before `}` / `]` is removed. Newlines inside a block comment
+# are kept so line numbers still match the original.
+def strip_jsonc(content : String) : String
+  remove_json_trailing_commas(strip_json_comments(content))
+end
+
+private def strip_json_comments(content : String) : String
+  return content unless content.includes?('/')
+  bytes = content.to_slice
+  String.build(bytes.size) do |io|
+    i = 0
+    in_string = false
+    while i < bytes.size
+      byte = bytes[i]
+      if in_string
+        io.write_byte(byte)
+        if byte == '\\'.ord && i + 1 < bytes.size
+          io.write_byte(bytes[i + 1])
+          i += 1
+        elsif byte == '"'.ord
+          in_string = false
+        end
+        i += 1
+      elsif byte == '"'.ord
+        in_string = true
+        io.write_byte(byte)
+        i += 1
+      elsif byte == '/'.ord && i + 1 < bytes.size && bytes[i + 1] == '/'.ord
+        while i < bytes.size && bytes[i] != '\n'.ord
+          i += 1
+        end
+      elsif byte == '/'.ord && i + 1 < bytes.size && bytes[i + 1] == '*'.ord
+        i += 2
+        while i < bytes.size && !(bytes[i] == '*'.ord && i + 1 < bytes.size && bytes[i + 1] == '/'.ord)
+          io.write_byte('\n'.ord.to_u8) if bytes[i] == '\n'.ord
+          i += 1
+        end
+        i += 2
+      else
+        io.write_byte(byte)
+        i += 1
+      end
+    end
+  end
+end
+
+private def remove_json_trailing_commas(content : String) : String
+  return content unless content.includes?(',')
+  bytes = content.to_slice
+  String.build(bytes.size) do |io|
+    in_string = false
+    escaped = false
+    bytes.each_with_index do |byte, i|
+      if in_string
+        if escaped
+          escaped = false
+        elsif byte == '\\'.ord
+          escaped = true
+        elsif byte == '"'.ord
+          in_string = false
+        end
+      elsif byte == '"'.ord
+        in_string = true
+      elsif byte == ','.ord
+        j = i + 1
+        while j < bytes.size && bytes[j].unsafe_chr.ascii_whitespace?
+          j += 1
+        end
+        next if j < bytes.size && (bytes[j] == '}'.ord || bytes[j] == ']'.ord)
+      end
+      io.write_byte(byte)
+    end
+  end
+end

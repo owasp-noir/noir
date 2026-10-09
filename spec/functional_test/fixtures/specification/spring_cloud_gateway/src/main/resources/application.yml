@@ -1,0 +1,30 @@
+server:
+  port: 8080
+spring.cloud.gateway.routes:
+  - id: users
+    uri: http://users:8080
+    predicates: [ "Path=/api/users/**", "Method=GET,POST" ]
+  - id: host-only
+    uri: http://landing:8080
+    predicates:
+      - Host=**.example.com
+---
+spring:
+  config:
+    activate:
+      on-profile: prod
+  cloud:
+    gateway:
+      server:
+        webflux:
+          routes:
+            - id: orders
+              uri: lb://orders
+              predicates:
+                - name: Path
+                  args:
+                    patterns: [ "/api/orders/{id}", "/api/carts/**" ]
+                    matchTrailingSlash: false
+                - name: Method
+                  args:
+                    methods: DELETE

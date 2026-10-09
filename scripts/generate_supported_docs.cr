@@ -67,6 +67,13 @@ SPEC_FRIENDLY_NAMES = {
   "thrift"               => "Apache Thrift",
   "traefik"              => "Traefik Dynamic Config",
   "typespec"             => "TypeSpec",
+  "apigee"               => "Apigee (proxy bundle)",
+  "haproxy"              => "HAProxy",
+  "krakend"              => "KrakenD",
+  "ocelot"               => "Ocelot",
+  "spring_cloud_gateway" => "Spring Cloud Gateway (config)",
+  "tyk"                  => "Tyk (API definition)",
+  "yarp"                 => "YARP",
 }
 
 def check(b : Bool) : String

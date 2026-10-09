@@ -682,6 +682,49 @@ module Analyzer::Specification
       arr.compact_map(&.as_s?).reject(&.empty?)
     end
 
+    # Lines of every match of `re`, by capture-1 value, in document order, in
+    # one pass. `JSON::Any` keeps no positions, so array-shaped configs (Ocelot
+    # `Routes[]`, KrakenD `endpoints[]`) find a route's line by its own value;
+    # `take_line` hands out repeats of one value in order.
+    protected def value_lines(content : String, re : Regex) : Hash(String, Array(Int32))
+      lines = {} of String => Array(Int32)
+      bytes = content.to_slice
+      line = 1
+      pos = 0
+      content.scan(re) do |m|
+        start = m.byte_begin(0)
+        line += bytes[pos, start - pos].count('\n'.ord.to_u8)
+        pos = start
+        (lines[m[1]] ||= [] of Int32) << line
+      end
+      lines
+    end
+
+    # The next line recorded for `value`; the last one repeats once the
+    # entries run out.
+    protected def take_line(lines : Hash(String, Array(Int32)), value : String) : Int32?
+      return unless list = lines[value]?
+      list.size > 1 ? list.shift : list.first?
+    end
+
+    # `details` pointed at `line`, or `details` itself when there is none.
+    protected def details_at(details : Details, line : Int32?) : Details
+      return details unless line && (path_info = details.code_paths.first?)
+      Details.new(PathInfo.new(path_info.path, line))
+    end
+
+    # The non-empty strings of a JSON value that may be one string or an
+    # array of them (gateway configs write `"Methods": "GET"` and
+    # `"Methods": ["GET"]` interchangeably).
+    protected def json_strings(node : JSON::Any?) : Array(String)
+      return [] of String unless node
+      if value = node.as_s?
+        value.empty? ? [] of String : [value]
+      else
+        node.as_a?.try(&.compact_map(&.as_s?.presence)) || [] of String
+      end
+    end
+
     # First element child of `node` named `name` (XML formats: Burp, OData
     # EDMX, WSDL).
     protected def find_child(node : XML::Node, name : String) : XML::Node?
