@@ -50,12 +50,12 @@ module Analyzer::CSharp
     # a non-word char, so `\b` still lands right after "IReturn").
     SERVICESTACK_SOURCE_RE = /\bIReturn(?:Void)?\b|using\s+ServiceStack\b|\bRoutes\.Add\b/
 
-    # `[Route("/path")]`, `[Route("/path", "GET")]`, `[Route("/path", "GET,POST")]`,
-    # or with other attributes stacked on the same line
-    # (`[Route("/x", "POST"),SystemJson(...)]`). Deliberately does not match
-    # `[FallbackRoute(...)]` — "Route" must immediately follow `[` and
-    # optional whitespace.
-    ROUTE_ATTR_REGEX = /\[\s*Route\s*\(\s*"([^"]*)"(?:\s*,\s*"([^"]*)")?/
+    # One `Route(...)` call inside an attribute list, its argument text in
+    # group 1. String literals are skipped whole, so a `(`/`)` inside one
+    # can't end the call. Deliberately does not match `FallbackRoute(...)`.
+    ROUTE_CALL_REGEX = /(?<![\w.])Route(?:Attribute)?\s*\(((?:@?"(?:[^"\\]|\\.)*+"|[^"()])*+)\)/
+    # A positional (`"/x"`) or named (`Verbs = "GET"`, `verbs: "GET"`) literal.
+    ROUTE_ARG_REGEX = /(?:\b(\w+)\s*[=:]\s*)?@?"((?:[^"\\]|\\.)*+)"/
 
     # `class Hello`, `record Hello(string Name)`, `record struct Hello`,
     # `struct Hello` — an optional generic parameter list, an optional
@@ -68,7 +68,7 @@ module Analyzer::CSharp
     # `Routes.Add<Hello>("/hello/{Name}")`, possibly chained
     # (`Routes.Add<A>("/a").Add<B>("/b")`) or spread across a fluent call
     # chain starting from a bare `Routes` on its own line.
-    FLUENT_CALL_RE = /\.Add<(\w+)>\s*\(\s*"([^"]*)"(?:\s*,\s*"([^"]*)")?\s*\)/
+    FLUENT_CALL_RE = /\.Add<(\w+)>\s*\(\s*"([^"]*)"(?:\s*,\s*(?:verbs\s*:\s*)?"([^"]*)")?\s*\)/
 
     private record FluentRegistration,
       file : String,
@@ -126,19 +126,31 @@ module Analyzer::CSharp
       pending_routes = [] of Tuple(String, String?)
       i = 0
       while i < lines.size
-        line = lines[i]
-        trimmed = line.strip
+        # Structure is read off the masked line so a `[`, `]` or `class`
+        # inside a string can't steer it.
+        code = masked_lines[i]
+        attribute_columns = 0
 
-        if trimmed.starts_with?("[") && (m = ROUTE_ATTR_REGEX.match(line))
-          pending_routes << {m[1], m[2]?}
-          i += 1
-          next
+        if code.lstrip.starts_with?('[')
+          # An attribute list may span lines (`[Route(\n "/x",\n "POST")]`)
+          # and the DTO can follow it on the same line.
+          last, column = attribute_section_end(masked_lines, i)
+          text = (i..last).join(' ') { |index| index == last ? lines[index][0, column] : lines[index] }
+          collect_route_attributes(text, pending_routes)
+          code = masked_lines[last][column..]
+          attribute_columns = column
+          i = last
+          if code.blank?
+            i += 1
+            next
+          end
         end
 
         unless pending_routes.empty?
-          if class_match = CLASS_DECL_REGEX.match(line)
+          if class_match = CLASS_DECL_REGEX.match(code)
             base_list = class_match[2]? || ""
             block, end_index = extract_type_block(lines, masked_lines, i)
+            block = block[attribute_columns..] if attribute_columns > 0
             unless base_list.matches?(CONTROLLER_BASE_RE)
               params = extract_props_from_block(block)
               pending_routes.each do |(raw_path, verbs_raw)|
@@ -151,10 +163,9 @@ module Analyzer::CSharp
             end
             pending_routes = [] of Tuple(String, String?)
             i = end_index
-          elsif trimmed.empty? || trimmed.starts_with?("[") || trimmed.starts_with?("//") || trimmed.starts_with?("*")
-            # Doc-comment lines, blank separators, and other stacked
-            # attributes between the [Route] attribute(s) and the DTO
-            # declaration — keep accumulating.
+          elsif code.blank?
+            # Comment lines (masked blank) and blank separators between the
+            # [Route] attribute(s) and the DTO declaration: keep accumulating.
           else
             # Some other statement appeared before a class/record/struct
             # declaration — most likely a method-level [Route] (legacy
@@ -166,6 +177,48 @@ module Analyzer::CSharp
         end
 
         i += 1
+      end
+    end
+
+    # `{line, column}` just past the attribute list that opens on
+    # `masked_lines[start]`: stacked `[A][B]` groups are consumed, and an
+    # unclosed `[` carries the list onto the following lines.
+    private def attribute_section_end(masked_lines : Array(String), start : Int32) : Tuple(Int32, Int32)
+      depth = 0
+      index = start
+      while index < masked_lines.size
+        masked = masked_lines[index]
+        masked.each_char_with_index do |char, column|
+          case char
+          when '[' then depth += 1
+          when ']' then depth -= 1
+          else
+            return {index, column} if depth <= 0 && !char.ascii_whitespace?
+          end
+        end
+        return {index, masked.size} if depth <= 0
+        index += 1
+      end
+      {masked_lines.size - 1, masked_lines.last.size}
+    end
+
+    # Every `Route(...)` in an attribute list: `[Route("/a"), Route("/b", "PUT")]`,
+    # `[Route("/x", Verbs = "GET")]`, `[Route(path: "/y", verbs: "POST")]`.
+    # Named properties other than `Verbs` (`Summary`, `Notes`) are not verbs.
+    private def collect_route_attributes(text : String, pending_routes : Array(Tuple(String, String?)))
+      text.scan(ROUTE_CALL_REGEX) do |call|
+        positional = [] of String
+        path = nil
+        verbs = nil
+        call[1].scan(ROUTE_ARG_REGEX) do |arg|
+          case arg[1]?.try(&.downcase)
+          when nil     then positional << arg[2]
+          when "path"  then path = arg[2]
+          when "verbs" then verbs = arg[2]
+          end
+        end
+        path ||= positional[0]?
+        pending_routes << {path, verbs || positional[1]?} if path
       end
     end
 
