@@ -933,4 +933,31 @@ describe Noir::JSRouteExtractor do
       end
     end
   end
+
+  describe "large files" do
+    # Every route used to index the file by CHAR offset (`content[i, n]`,
+    # `index(str, offset)`, `.chars` per brace match), which walks from byte 0
+    # on non-ASCII content and from 0 for `index(String, offset)` even on
+    # ASCII: 2000 routes plus one 'é' took ~13s in a release build.
+    it "stays linear with a non-ASCII char and keeps params and lines" do
+      n = 4000
+      content = String.build do |io|
+        io << "// café\nconst app = express();\n"
+        n.times { |i| io << "app.get('/r#{i}', (req, res) => { const v = req.query.q#{i}; res.send('é' + v); });\n" }
+      end
+      file = File.tempfile("noir_js_large", ".js")
+      begin
+        File.write(file.path, content)
+        endpoints = [] of Endpoint
+        elapsed = Time.measure { endpoints = Noir::JSRouteExtractor.extract_routes(file.path, content) }
+        elapsed.should be < 3.seconds
+        endpoints.size.should eq(n)
+        last = endpoints.find! { |e| e.url == "/r#{n - 1}" }
+        last.details.code_paths.first.line.should eq(n + 2)
+        last.params.map(&.name).should eq(["q#{n - 1}"])
+      ensure
+        file.delete
+      end
+    end
+  end
 end
