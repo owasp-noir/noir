@@ -29,8 +29,8 @@ module Detector::Php
       end
 
       if Noir::FileExtension.fold(filename).ends_with?(".php")
-        return true if file_contents.match(/(?:^|\n|<\?php\s+)\s*use\s+(?:Laminas|Zend)\\(?:Mvc|Router)\\[^;\n]*;/)
-        return true if file_contents.match(/(?:^|\n|<\?php\s+)\s*use\s+Mezzio\\[^;\n]*;/)
+        return true if file_contents.match(/(?:^|\n|<\?php\s)[ \t]*use\s+(?:Laminas|Zend)\\(?:Mvc|Router)\\[^;\n]*;/)
+        return true if file_contents.match(/(?:^|\n|<\?php\s)[ \t]*use\s+Mezzio\\[^;\n]*;/)
         return true if file_contents.includes?("Laminas\\Router\\RouteStackInterface")
         return true if file_contents.includes?("Zend\\Router\\RouteStackInterface")
         return true if file_contents.includes?("Mezzio\\Application")

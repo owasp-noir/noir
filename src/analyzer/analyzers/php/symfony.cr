@@ -43,6 +43,7 @@ module Analyzer::Php
       # present (`@Route` or `#[Route`).
       return endpoints unless content.includes?("Route")
       return endpoints unless content.includes?("@Route") || content.includes?("#[Route")
+      content = php_code(content)
 
       class_prefixes = extract_class_route_prefixes(content)
 
@@ -254,6 +255,7 @@ module Analyzer::Php
         end
       rescue e
         logger.debug "Error parsing YAML routes in #{path}: #{e}"
+        Noir::SkippedFiles.record(tech, path, e.message.presence || e.class.name)
       end
 
       endpoints

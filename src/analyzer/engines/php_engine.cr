@@ -1,5 +1,6 @@
 require "../../models/analyzer"
 require "../../miniparsers/php_callee_extractor"
+require "../../minilexers/php_lexer"
 require "../../utils/utils.cr"
 
 require "./file_scan_engine"
@@ -54,6 +55,37 @@ module Analyzer::Php
       base = File.basename(relative_path)
       return true if base.ends_with?("Test.php")
       base.ends_with?("Tests.php")
+    end
+
+    # `content` with comments blanked (docblocks kept), offsets and lines
+    # intact — see `Noir::PhpLexer#without_comments`. Adapters that pull
+    # routes out with regexes run them on this so commented-out routes stay
+    # dead. Call it after the adapter's relevance gate: it lexes the file.
+    protected def php_code(content : String) : String
+      Noir::PhpLexer.new(content).without_comments
+    end
+
+    # Regex fragment for the rest of a call's argument list, up to the `)`
+    # that closes it. Quoted strings are skipped whole so a `)` in one
+    # (`'placeholder' => '(:num)'`) does not end the list; nested calls are
+    # not balanced, so the text stops at their first bare `)`. Possessive
+    # throughout, so it never backtracks.
+    CALL_ARGS_TAIL = /(?:[^)'"]++|'(?:[^'\\]|\\.)*+'|"(?:[^"\\]|\\.)*+")*+/.source
+
+    RESOURCE_FILTER_RE = /['"](only|except)['"]\s*=>\s*(?:['"]([^'"]*)['"]|(?:\[|array\s*\()([^\])]*))/i
+
+    # Whether a resource action survives the call's `only`/`except` options,
+    # given as `['index', 'show']`, `'index,show'` or `array('new')`.
+    protected def resource_action_allowed?(args : String, action : String) : Bool
+      args.scan(RESOURCE_FILTER_RE) do |m|
+        names = if single = m[2]?
+                  single.split(',').map(&.strip)
+                else
+                  m[3].scan(/['"]([^'"]+)['"]/).map(&.[1])
+                end
+        return false if names.includes?(action) == (m[1].downcase == "except")
+      end
+      true
     end
 
     protected def php_base_path_for(path : String) : String

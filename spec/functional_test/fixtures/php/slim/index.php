@@ -66,3 +66,8 @@ $app->group('/api', function (\Slim\Routing\RouteCollectorProxy $group) {
 });
 
 $app->run();
+// $app->get('/dead-line', fn() => 1);
+/*
+$app->post('/dead-block', fn() => 1);
+*/
+# $app->put('/dead-hash', fn() => 1);

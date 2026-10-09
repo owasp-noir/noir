@@ -25,3 +25,5 @@ Route::any('any-route', 'index/anyRoute');
 
 // 7. Route::rule with '*' (any method)
 Route::rule('rule-route', 'index/ruleRoute', '*');
+// Route::get('dead-line', 'index/hello');
+/* Route::post('dead-block', 'index/save'); */

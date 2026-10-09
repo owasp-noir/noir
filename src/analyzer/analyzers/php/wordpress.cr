@@ -42,11 +42,13 @@ module Analyzer::Php
       return endpoints unless path.ends_with?(".php")
 
       content = read_file_content(path)
+      rest = content.includes?("register_rest_route")
+      hooks = content.includes?("wp_ajax_") || content.includes?("admin_post_")
+      return endpoints unless rest || hooks
 
-      endpoints.concat(analyze_rest_routes(content, path)) if content.includes?("register_rest_route")
-      if content.includes?("wp_ajax_") || content.includes?("admin_post_")
-        endpoints.concat(analyze_action_hooks(content, path))
-      end
+      content = php_code(content)
+      endpoints.concat(analyze_rest_routes(content, path)) if rest
+      endpoints.concat(analyze_action_hooks(content, path)) if hooks
 
       endpoints
     end

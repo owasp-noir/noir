@@ -32,6 +32,7 @@ module Analyzer::Php
       include_callee = callees_needed?
       content = read_file_content(path)
       return endpoints unless phalcon_relevant?(content) || extends_phalcon_controller_base?(content)
+      content = php_code(content)
 
       prefixes = extract_prefixes(content)
 

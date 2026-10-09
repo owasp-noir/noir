@@ -21,7 +21,7 @@ module Analyzer::Php
 
       content = read_file_content(path)
       if slim_relevant?(content)
-        endpoints = analyze_routes_content(content, "", path, include_callee)
+        endpoints = analyze_routes_content(php_code(content), "", path, include_callee)
       end
 
       endpoints

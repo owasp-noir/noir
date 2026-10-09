@@ -18,6 +18,18 @@ module Analyzer::Php
 
     CI3_VERBS = %w[get post put patch delete options head cli]
 
+    # group()/environment() bodies nested deeper than this are not followed:
+    # each level is one recursion, and a hostile depth would overflow the
+    # stack and kill the process.
+    MAX_GROUP_DEPTH = 32
+
+    # Set when a group body was skipped for nesting past MAX_GROUP_DEPTH.
+    private class DepthLimit
+      property? hit = false
+    end
+
+    RESOURCE_CALL_RE = /\$routes->(resource|presenter)\s*\(\s*['"]([^'"]+)['"](#{CALL_ARGS_TAIL})/mi
+
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
 
@@ -35,11 +47,16 @@ module Analyzer::Php
       endpoints = [] of Endpoint
       include_callee = callees_needed?
       begin
-        content = read_file_content(path)
-        endpoints.concat(analyze_routes_content(content, "", path, include_callee, "App\\Controllers"))
+        content = php_code(read_file_content(path))
+        limit = DepthLimit.new
+        endpoints.concat(analyze_routes_content(content, "", path, include_callee, "App\\Controllers", 0, limit))
+        if limit.hit?
+          Noir::SkippedFiles.record(tech, path, "route groups nested deeper than #{MAX_GROUP_DEPTH} levels were not followed")
+        end
         endpoints.concat(analyze_ci3_routes(content, path))
       rescue e
         logger.debug "Error analyzing routes file #{path}: #{e}"
+        Noir::SkippedFiles.record(tech, path, e.message.presence || e.class.name)
       end
       endpoints
     end
@@ -48,7 +65,9 @@ module Analyzer::Php
                                        prefix : String,
                                        file_path : String,
                                        include_callee : Bool,
-                                       controller_namespace : String) : Array(Endpoint)
+                                       controller_namespace : String,
+                                       depth : Int32,
+                                       limit : DepthLimit) : Array(Endpoint)
       endpoints = [] of Endpoint
       details = Details.new(PathInfo.new(file_path))
 
@@ -75,7 +94,11 @@ module Analyzer::Php
         group_content = working_content[(brace_pos + 1)...close]
         group_namespace = extract_group_namespace(group_options) || controller_namespace
         new_prefix = build_full_path(prefix, group_prefix)
-        endpoints.concat(analyze_routes_content(group_content, new_prefix, file_path, include_callee, group_namespace))
+        if depth < MAX_GROUP_DEPTH
+          endpoints.concat(analyze_routes_content(group_content, new_prefix, file_path, include_callee, group_namespace, depth + 1, limit))
+        else
+          limit.hit = true
+        end
         # Strip the entire group call (through its closing brace) so step 3+ never re-scans it.
         working_content = working_content[0...start] + working_content[(close + 1)..]
       end
@@ -93,7 +116,11 @@ module Analyzer::Php
           next
         end
         env_content = working_content[(brace_pos + 1)...close]
-        endpoints.concat(analyze_routes_content(env_content, prefix, file_path, include_callee, controller_namespace))
+        if depth < MAX_GROUP_DEPTH
+          endpoints.concat(analyze_routes_content(env_content, prefix, file_path, include_callee, controller_namespace, depth + 1, limit))
+        else
+          limit.hit = true
+        end
         working_content = working_content[0...start] + working_content[(close + 1)..]
       end
 
@@ -139,18 +166,18 @@ module Analyzer::Php
         end
       end
 
-      # 6. $routes->resource('photos', ...) — RESTful API resource
-      resource_pattern = /\$routes->resource\s*\(\s*['"]([^'"]+)['"][^)]*\)/mi
-      working_content.scan(resource_pattern).each do |match|
-        full_resource_path = build_full_path(prefix, normalize_route(match[1]))
-        endpoints.concat(create_resource_endpoints(full_resource_path, file_path))
-      end
-
-      # 7. $routes->presenter('photos', ...) — controller-style HTML resource
-      presenter_pattern = /\$routes->presenter\s*\(\s*['"]([^'"]+)['"][^)]*\)/mi
-      working_content.scan(presenter_pattern).each do |match|
-        full_resource_path = build_full_path(prefix, normalize_route(match[1]))
-        endpoints.concat(create_presenter_endpoints(full_resource_path, file_path))
+      # 6. $routes->resource('photos', [...]) — RESTful API resource, and
+      # $routes->presenter('photos', [...]) — controller-style HTML resource.
+      # Both honour `only` / `except` in their options array.
+      working_content.scan(RESOURCE_CALL_RE) do |match|
+        args = match[3]
+        full_resource_path = build_full_path(prefix, normalize_route(match[2]))
+        resource_endpoints = if match[1].downcase == "resource"
+                               create_resource_endpoints(full_resource_path, file_path, args)
+                             else
+                               create_presenter_endpoints(full_resource_path, file_path, args)
+                             end
+        endpoints.concat(resource_endpoints)
       end
 
       endpoints
@@ -286,48 +313,44 @@ module Analyzer::Php
     end
 
     # CI4 default RESTful API resource routes
-    private def create_resource_endpoints(resource_path : String, file_path : String) : Array(Endpoint)
-      details = Details.new(PathInfo.new(file_path))
+    private def create_resource_endpoints(resource_path : String, file_path : String, args : String) : Array(Endpoint)
       base = resource_path.starts_with?("/") ? resource_path : "/#{resource_path}"
 
       resource_routes = [
-        {base, "GET"},                # index
-        {"#{base}/new", "GET"},       # new
-        {base, "POST"},               # create
-        {"#{base}/{id}", "GET"},      # show
-        {"#{base}/{id}/edit", "GET"}, # edit
-        {"#{base}/{id}", "PUT"},      # update
-        {"#{base}/{id}", "PATCH"},    # update
-        {"#{base}/{id}", "DELETE"},   # delete
+        {base, "GET", "index"},
+        {"#{base}/new", "GET", "new"},
+        {base, "POST", "create"},
+        {"#{base}/{id}", "GET", "show"},
+        {"#{base}/{id}/edit", "GET", "edit"},
+        {"#{base}/{id}", "PUT", "update"},
+        {"#{base}/{id}", "PATCH", "update"},
+        {"#{base}/{id}", "DELETE", "delete"},
       ]
-
-      resource_routes.map do |route_info|
-        path, method = route_info
-        params = extract_ci_path_params(path)
-        Endpoint.new(path, method, params, details.dup)
-      end
+      resource_route_endpoints(resource_routes, file_path, args)
     end
 
     # CI4 presenter (HTML form) resource routes
-    private def create_presenter_endpoints(resource_path : String, file_path : String) : Array(Endpoint)
-      details = Details.new(PathInfo.new(file_path))
+    private def create_presenter_endpoints(resource_path : String, file_path : String, args : String) : Array(Endpoint)
       base = resource_path.starts_with?("/") ? resource_path : "/#{resource_path}"
 
       presenter_routes = [
-        {base, "GET"},                   # index
-        {"#{base}/show/{id}", "GET"},    # show
-        {"#{base}/new", "GET"},          # new
-        {"#{base}/create", "POST"},      # create
-        {"#{base}/edit/{id}", "GET"},    # edit
-        {"#{base}/update/{id}", "POST"}, # update
-        {"#{base}/remove/{id}", "GET"},  # remove
-        {"#{base}/delete/{id}", "POST"}, # delete
+        {base, "GET", "index"},
+        {"#{base}/show/{id}", "GET", "show"},
+        {"#{base}/new", "GET", "new"},
+        {"#{base}/create", "POST", "create"},
+        {"#{base}/edit/{id}", "GET", "edit"},
+        {"#{base}/update/{id}", "POST", "update"},
+        {"#{base}/remove/{id}", "GET", "remove"},
+        {"#{base}/delete/{id}", "POST", "delete"},
       ]
+      resource_route_endpoints(presenter_routes, file_path, args)
+    end
 
-      presenter_routes.map do |route_info|
-        path, method = route_info
-        params = extract_ci_path_params(path)
-        Endpoint.new(path, method, params, details.dup)
+    private def resource_route_endpoints(routes : Array(Tuple(String, String, String)), file_path : String, args : String) : Array(Endpoint)
+      details = Details.new(PathInfo.new(file_path))
+      routes.compact_map do |path, method, action|
+        next unless resource_action_allowed?(args, action)
+        Endpoint.new(path, method, extract_ci_path_params(path), details.dup)
       end
     end
 

@@ -14,3 +14,5 @@ Router::addGroup('/api/v1', function () {
         Router::delete('/users/{id}', [App\Controller\AdminController::class, 'destroy']);
     });
 });
+// Router::get('/dead-line', [A::class, 'b']);
+/* Router::post('/dead-block', [A::class, 'b']); */

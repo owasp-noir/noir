@@ -223,4 +223,28 @@ describe Noir::PhpLexer do
       lex.in_code?(src.index!("Route::get")).should be_true
     end
   end
+
+  describe "#without_comments" do
+    it "blanks comments but keeps strings, attributes, docblocks and offsets" do
+      src = <<-PHP
+        <?php
+        // $app->get('/dead');
+        # $app->get('/hash');
+        /* $app->get('/block'); */
+        /** @Route("/doc") */
+        #[Route('/attr')]
+        $app->get('http://x//y', 'C@a'); /*/ still a comment */
+        PHP
+      out = Noir::PhpLexer.new(src).without_comments
+      out.size.should eq(src.size)
+      out.lines.size.should eq(src.lines.size)
+      out.should_not contain("/dead")
+      out.should_not contain("/hash")
+      out.should_not contain("/block")
+      out.should_not contain("still a comment")
+      out.should contain(%(/** @Route("/doc") */))
+      out.should contain("#[Route('/attr')]")
+      out.index!("$app->get('http://x//y'").should eq(src.index!("$app->get('http://x//y'"))
+    end
+  end
 end

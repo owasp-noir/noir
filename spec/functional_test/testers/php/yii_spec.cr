@@ -17,7 +17,22 @@ expected_endpoints = [
     Param.new("slug", "", "path"),
   ]),
   Endpoint.new("/health", "GET"),
-  # From PostController action methods
+  # A comma-separated verb list declares one route per verb.
+  Endpoint.new("/tags", "GET"),
+  Endpoint.new("/tags", "HEAD"),
+  # yii\rest\UrlRule expands to the pluralized controller's REST routes;
+  # its own `'class' => …` options are not routes.
+  Endpoint.new("/comments", "GET"),
+  Endpoint.new("/comments", "HEAD"),
+  Endpoint.new("/comments", "POST"),
+  Endpoint.new("/comments", "OPTIONS"),
+  Endpoint.new("/comments/{id}", "GET", [Param.new("id", "", "path")]),
+  Endpoint.new("/comments/{id}", "HEAD", [Param.new("id", "", "path")]),
+  Endpoint.new("/comments/{id}", "PUT", [Param.new("id", "", "path")]),
+  Endpoint.new("/comments/{id}", "PATCH", [Param.new("id", "", "path")]),
+  Endpoint.new("/comments/{id}", "DELETE", [Param.new("id", "", "path")]),
+  Endpoint.new("/comments/{id}", "OPTIONS", [Param.new("id", "", "path")]),
+  # From PostController (the protected actionHidden() is not an action) action methods
   Endpoint.new("/post/index", "GET", [
     Param.new("page", "", "query"),
     Param.new("limit", "", "query"),
@@ -55,5 +70,5 @@ expected_endpoints = [
 
 FunctionalTester.new("fixtures/php/yii/", {
   :techs     => 2,
-  :endpoints => 20,
+  :endpoints => 32,
 }, expected_endpoints).perform_tests

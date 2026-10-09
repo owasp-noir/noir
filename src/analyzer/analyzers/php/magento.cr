@@ -87,6 +87,7 @@ module Analyzer::Php
           end
         rescue e
           logger.debug "Error parsing Magento routes.xml #{path}: #{e}"
+          Noir::SkippedFiles.record(tech, path, e.message.presence || e.class.name)
         end
       end
 
@@ -125,6 +126,7 @@ module Analyzer::Php
         end
       rescue e
         logger.debug "Error parsing Magento webapi.xml #{path}: #{e}"
+        Noir::SkippedFiles.record(tech, path, e.message.presence || e.class.name)
       end
 
       endpoints
@@ -147,7 +149,7 @@ module Analyzer::Php
     private def analyze_controller(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
 
-      content = read_file_content(path)
+      content = php_code(read_file_content(path))
       # A real action controller has an execute() method. Anchor the match
       # so `executeInternal()` / `executeAny()` helpers don't slip through,
       # and skip abstract base classes under /Controller/.
