@@ -1,5 +1,6 @@
 require "xml"
 require "../../engines/specification_engine"
+require "../../../utils/xml_comments"
 
 module Analyzer::Specification
   # OData CSDL (`$metadata`) describes a service's entity sets,
@@ -48,7 +49,7 @@ module Analyzer::Specification
     # them by qualified name) and then walk every EntityContainer
     # to emit endpoints.
     private def parse_metadata(content : String, source : String)
-      doc = XML.parse(content)
+      doc = Noir::XmlComments.parse(content)
       edmx = find_child(doc, "Edmx")
       return unless edmx
 

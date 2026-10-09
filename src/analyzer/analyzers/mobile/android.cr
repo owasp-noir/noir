@@ -1,5 +1,6 @@
 require "xml"
 require "../../../models/analyzer"
+require "../../../utils/xml_comments"
 
 module Analyzer::Mobile
   # Parses AndroidManifest.xml to surface mobile app entry points:
@@ -48,7 +49,7 @@ module Analyzer::Mobile
     end
 
     private def parse_manifest(content : String, path : String)
-      doc = XML.parse(content)
+      doc = Noir::XmlComments.parse(content)
       manifest = find_child(doc, "manifest")
       return unless manifest
 
@@ -431,7 +432,7 @@ module Analyzer::Mobile
         # through `CodeLocator`.
         next if excluded_path?(nav_path)
         begin
-          doc = XML.parse(read_file_content(nav_path))
+          doc = Noir::XmlComments.parse(read_file_content(nav_path))
           root = find_child(doc, "navigation")
           next unless root
           walk_navigation(root, "", package, strings, placeholders, nav_path, seen_urls)
@@ -781,7 +782,7 @@ module Analyzer::Mobile
       Dir.glob(File.join(values_dir, "*.xml")).sort.each do |path|
         next if excluded_path?(path)
         begin
-          doc = XML.parse(read_file_content(path))
+          doc = Noir::XmlComments.parse(read_file_content(path))
           next unless resources = find_child(doc, "resources")
           each_child(resources, "string") do |node|
             name = attr(node, "name")
