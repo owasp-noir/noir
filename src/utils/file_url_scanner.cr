@@ -38,9 +38,9 @@ module Noir
     URL_RE = /https?:\/\/[^\s"'<>\\^`|\x00-\x1F\x7F]+/
 
     # Request files are parsed properly (method, headers, body, `{{vars}}`)
-    # by the `http_file` specification analyzer, so scraping their bare URLs
-    # here would only add a duplicate `GET` for every non-GET request.
-    REQUEST_FILE_EXTENSIONS = {".http", ".rest"}
+    # by the `http_file` / `hurl` specification analyzers, so scraping their
+    # bare URLs here would only add a duplicate `GET` for every non-GET request.
+    REQUEST_FILE_EXTENSIONS = {".http", ".rest", ".hurl"}
 
     # A run of base64 alphabet characters long enough to hold a URL. The
     # surrounding text can make any substring look like one, so decoding is

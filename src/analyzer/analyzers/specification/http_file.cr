@@ -116,7 +116,7 @@ module Analyzer::Specification
           name = stripped[0...sep].strip
           value = stripped[(sep + 1)..].strip
           next if name.empty?
-          next if skipped_header?(name)
+          next if skipped_request_header?(name)
           add_param(params, name, resolve_vars(value, env), "header")
         end
       end
@@ -135,11 +135,11 @@ module Analyzer::Specification
       url_path = template_url_path(url_raw, TEMPLATE_VAR)
       return if url_path.empty?
 
-      extract_query_params(url_raw).each do |query_name, query_value|
+      request_query_pairs(url_raw).each do |query_name, query_value|
         add_param(params, query_name, query_value, "query")
       end
 
-      extract_path_vars(url_path).each do |path_name|
+      request_path_vars(url_path).each do |path_name|
         add_param(params, path_name, "", "path")
       end
 
@@ -240,61 +240,11 @@ module Analyzer::Specification
       resolved
     end
 
-    # Name *and* value. A `.http` file records a concrete request — `GET
-    # /query_http?q=1234` means the caller sent `q=1234` — so the value is
-    # real data, the same as the ones the HAR and Bruno analyzers keep. Only
-    # the names were kept before, so replaying an IntelliJ/VS Code `.http`
-    # file through `-f curl` produced `?q=` and dropped what to send.
-    #
-    # A value still carrying `{{...}}` is a template the caller's environment
-    # never resolved; that is a placeholder, not data, so it is left empty.
-    private def extract_query_params(url_string : String) : Array(Tuple(String, String))
-      query = ""
-      begin
-        uri = URI.parse(url_string)
-        query = uri.query || ""
-      rescue e
-        logger.debug "Failed to parse .http query URL '#{url_string}': #{e}"
-      end
-
-      if query.empty?
-        idx = url_string.index('?')
-        if idx
-          query = url_string[(idx + 1)..].split("#", 2)[0]
-        end
-      end
-
-      pairs = [] of Tuple(String, String)
-      query.split('&').each do |pair|
-        next if pair.empty?
-        name, _, raw_value = pair.partition('=')
-        name = name.strip
-        next if name.empty?
-        value = raw_value.strip
-        value = "" if value.includes?("{{")
-        value = URI.decode_www_form(value) rescue value
-        pairs << {name, value}
-      end
-      pairs
-    end
-
-    private def extract_path_vars(path : String) : Array(String)
-      vars = [] of String
-      path.scan(/:([A-Za-z_][A-Za-z0-9_]*)/) { |m| vars << m[1] }
-      path.scan(/\{([A-Za-z_][A-Za-z0-9_]*)\}/) { |m| vars << m[1] }
-      vars
-    end
-
     private def add_param(params : Array(Param), name : String, value : String, param_type : String)
       normalized = name.strip
       return if normalized.empty?
       return if params.any? { |p| p.name == normalized && p.param_type == param_type }
       params << Param.new(normalized, value, param_type)
-    end
-
-    private def skipped_header?(name : String) : Bool
-      normalized = name.strip.downcase
-      normalized.empty? || normalized == "content-type" || normalized == "content-length" || normalized == "host"
     end
   end
 end

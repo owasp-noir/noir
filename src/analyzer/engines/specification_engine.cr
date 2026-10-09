@@ -204,6 +204,54 @@ module Analyzer::Specification
       template_path(path, template_var)
     end
 
+    # Name *and* value of each query pair in a request URL, as written in an
+    # API-client file (`.http`, Hurl, Hoppscotch, Thunder Client). Such a
+    # file records a concrete request, so the value is real data — except a
+    # value still carrying `{{...}}` / `<<...>>`, which is a placeholder the
+    # caller's environment never resolved and is left empty.
+    protected def request_query_pairs(url_string : String) : Array(Tuple(String, String))
+      query = ""
+      begin
+        query = URI.parse(url_string).query || ""
+      rescue
+        # Templated URLs often fail to parse; fall back to the raw split.
+      end
+
+      if query.empty?
+        if idx = url_string.index('?')
+          query = url_string[(idx + 1)..].split("#", 2)[0]
+        end
+      end
+
+      pairs = [] of Tuple(String, String)
+      query.split('&').each do |pair|
+        next if pair.empty?
+        name, _, raw_value = pair.partition('=')
+        name = name.strip
+        next if name.empty?
+        value = raw_value.strip
+        value = "" if value.includes?("{{") || value.includes?("<<")
+        value = URI.decode_www_form(value) rescue value
+        pairs << {name, value}
+      end
+      pairs
+    end
+
+    # `:name` and `{name}` placeholders in a request path.
+    protected def request_path_vars(path : String) : Array(String)
+      vars = [] of String
+      path.scan(/:([A-Za-z_][A-Za-z0-9_]*)/) { |m| vars << m[1] }
+      path.scan(/\{([A-Za-z_][A-Za-z0-9_]*)\}/) { |m| vars << m[1] }
+      vars
+    end
+
+    # Headers an API-client request carries that are transport detail, not
+    # attack surface.
+    protected def skipped_request_header?(name : String) : Bool
+      normalized = name.strip.downcase
+      normalized.empty? || normalized == "content-type" || normalized == "content-length" || normalized == "host"
+    end
+
     private def looks_host_prefixed?(value : String) : Bool
       first = value.split("/", 2).first
       first.includes?(".") || first.includes?(":") || first.downcase == "localhost" || first.includes?("{{")

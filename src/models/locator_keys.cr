@@ -43,6 +43,7 @@ module Noir::LocatorKeys
     {:HASURA_REST_ENDPOINTS, "hasura-rest-endpoints", :array, :detect_scoped, "detector/specification/hasura"},
     {:HASURA_TABLES, "hasura-tables", :array, :detect_scoped, "detector/specification/hasura"},
     {:HTTP_FILE, "http-file", :array, :detect_scoped, "detector/specification/http_file"},
+    {:HURL_FILE, "hurl-file", :array, :detect_scoped, "detector/specification/hurl"},
     {:INSOMNIA_JSON, "insomnia-json", :array, :detect_scoped, "detector/specification/insomnia"},
     {:INSOMNIA_YAML, "insomnia-yaml", :array, :detect_scoped, "detector/specification/insomnia"},
     {:IOS_AASA, "ios-aasa", :array, :detect_scoped, "detector/mobile/well_known"},
