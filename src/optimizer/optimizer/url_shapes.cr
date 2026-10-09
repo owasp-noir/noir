@@ -119,9 +119,11 @@ class EndpointOptimizer
     return unless url.includes?('{')
 
     bytes = url.to_slice
+    closer = unmatched_closers(bytes)
     i = 0
     while i < bytes.size
-      if '{' === bytes[i] && (close = matching_brace(bytes, i))
+      # The `}` closing a `{` at `i` is the first unmatched `}` after it.
+      if '{' === bytes[i] && (close = closer[i + 1]) >= 0
         yield i, close + 1, url.byte_slice(i + 1, close - i - 1)
         i = close + 1
       else
@@ -130,23 +132,29 @@ class EndpointOptimizer
     end
   end
 
-  # Index of the `}` closing the `{` at `open`, or nil when it never closes.
-  private def matching_brace(bytes : Bytes, open : Int32) : Int32?
-    depth = 0
-    i = open
-    while i < bytes.size
-      byte = bytes[i]
-      if '\\' === byte
-        i += 2
-        next
-      elsif '{' === byte
-        depth += 1
-      elsif '}' === byte
-        depth -= 1
-        return i if depth == 0
-      end
-      i += 1
+  # For each byte offset `p`, the index of the first `}` reached from `p`
+  # that no `{` at or after `p` closes, or -1 when there is none. A
+  # backslash skips the byte after it. Filled right to left, so it is linear;
+  # probing forward from every `{` instead rescanned to the end for each
+  # unbalanced one (`/` + 20000 `{` took seconds).
+  private def unmatched_closers(bytes : Bytes) : Slice(Int32)
+    closer = Slice(Int32).new(bytes.size + 2, -1)
+    p = bytes.size - 1
+    while p >= 0
+      byte = bytes[p]
+      closer[p] = if '\\' === byte
+                    closer[p + 2]
+                  elsif '}' === byte
+                    p
+                  elsif '{' === byte
+                    # Skip past the `}` closing this brace, if any.
+                    (inner = closer[p + 1]) >= 0 ? closer[inner + 1] : -1
+                  else
+                    closer[p + 1]
+                  end
+      p -= 1
     end
+    closer
   end
 
   # Rewrites every named capture group in `url` to `{name}`, consuming the

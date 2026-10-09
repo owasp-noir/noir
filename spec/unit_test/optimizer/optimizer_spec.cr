@@ -1075,6 +1075,33 @@ describe "EndpointOptimizer" do
       result[3].url.should eq("/archive/\\d{4}/")
     end
 
+    it "matches braces past unbalanced openers and escapes" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      endpoints = [
+        Endpoint.new("/a/{{id:[0-9]}", "GET"),
+        Endpoint.new("/a/{x/{id:\\d{3}}", "GET"),
+        Endpoint.new("/a/{id:\\}x}/y", "GET"),
+      ]
+
+      result = optimizer.normalize_url_shapes(endpoints)
+      result[0].url.should eq("/a/{{id}")
+      result[1].url.should eq("/a/{x/{id}")
+      result[2].url.should eq("/a/{id}/y")
+    end
+
+    # Each unbalanced `{` used to rescan to the end of the URL.
+    it "normalizes a URL full of unbalanced braces in linear time" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      urls = ["/" + "{" * 20000, "/b" + "{/a" * 20000, "/c" + "{a:" * 20000]
+      endpoints = urls.map { |url| Endpoint.new(url, "GET") }
+
+      result = [] of Endpoint
+      elapsed = Time.measure { result = optimizer.optimize_endpoints(endpoints) }
+
+      result.size.should eq(3)
+      elapsed.should be < 5.seconds
+    end
+
     it "normalizes Django re_path named groups even when the body contains \\d / \\w classes" do
       optimizer = EndpointOptimizer.new(logger, options)
       endpoints = [
