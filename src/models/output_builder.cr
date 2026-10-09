@@ -576,6 +576,28 @@ class OutputBuilder
     ord < 0x20 || ord == 0x7f || (0x80 <= ord <= 0x9f)
   end
 
+  # A SARIF `artifactLocation.uri` is a URI reference, not a file path, so a
+  # file named `a b.go`, `x#frag?q.go` or `a%20b.go` read back as a broken
+  # URI, a fragment, a query or a different file. Everything outside RFC
+  # 3986's path characters is percent-encoded (`:` too, which would otherwise
+  # read as a scheme in a first segment). Windows separators become `/` and
+  # a drive-lettered path becomes `file:///C:/…`, since `C:` would itself
+  # parse as a scheme.
+  protected def sarif_uri(path : String) : String
+    path = Path.new(path).to_posix.to_s
+    String.build do |io|
+      if path.size >= 3 && path[0].ascii_letter? && path[1] == ':' && path[2] == '/'
+        io << "file:///" << path[0, 2]
+        path = path[2..]
+      end
+      URI.encode(path, io) { |byte| URI.unreserved?(byte) || SARIF_URI_KEPT.includes?(byte.unsafe_chr) }
+    end
+  end
+
+  # Path characters `sarif_uri` leaves as they are: RFC 3986's sub-delims,
+  # `@` and the `/` separator.
+  SARIF_URI_KEPT = Set{'!', '$', '&', '\'', '(', ')', '*', '+', ',', ';', '=', '@', '/'}
+
   private def format_noir_callee(callee : Callee) : String
     location = format_location(callee.path, callee.line)
     location ? "#{callee.name} #{location}" : callee.name

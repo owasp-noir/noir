@@ -195,4 +195,30 @@ describe "OutputBuilderSarif" do
       result["level"].as_s.should eq(expected_level)
     end
   end
+
+  it "percent-encodes file paths in artifactLocation.uri" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderSarif.new(options)
+    builder.io = IO::Memory.new
+
+    # Written raw these read as a broken URI, a `#frag?q.go` fragment+query,
+    # an escaped space instead of the literal `%20`, and a `C:` scheme.
+    paths = ["sar/d1/a b.go", "sar/d2/x#frag?q.go", "sar/d3/a%20b.go", "a:b/(x)@y.go", "C:/src/main.go"]
+    endpoints = paths.map_with_index do |path, i|
+      Endpoint.new("/e#{i}", "GET", Details.new(PathInfo.new(path, 1)))
+    end
+
+    builder.print(endpoints)
+    results = JSON.parse(builder.io.to_s)["runs"][0]["results"].as_a
+    uris = results.map(&.["locations"][0]["physicalLocation"]["artifactLocation"]["uri"].as_s)
+
+    uris.should eq(["sar/d1/a%20b.go", "sar/d2/x%23frag%3Fq.go", "sar/d3/a%2520b.go", "a%3Ab/(x)@y.go", "file:///C:/src/main.go"])
+    uris.each { |uri| URI.decode(uri.lchop("file:///")).should eq(paths[uris.index!(uri)]) }
+  end
 end
