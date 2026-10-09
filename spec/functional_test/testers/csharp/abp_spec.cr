@@ -45,6 +45,12 @@ expected_endpoints = [
     Param.new("title", "", "query"),
   ]),
   Endpoint.new("/api/reporting/sales-report/totals", "GET"),
+  Endpoint.new("/api/reports/ping", "GET"),
+  Endpoint.new("/api/reporting/sales-report/export", "POST", [
+    Param.new("format", "", "query"),
+    Param.new("Title", "", "json"),
+    Param.new("Year", "", "json"),
+  ]),
 
   # Hand-written controller, owned by cs_aspnet_core_mvc.
   Endpoint.new("/api/ping", "GET"),
@@ -61,6 +67,8 @@ describe "ABP conventional controllers", tags: "functional" do
     urls = tester.app.endpoints.map(&.url)
     urls.any?(&.includes?("recalculate")).should be_false
     urls.any?(&.includes?("author-sync")).should be_false
+    urls.any?(&.includes?("purge")).should be_false
+    urls.any?(&.includes?("export-request")).should be_false
     tester.app.endpoints.any? { |e| e.url == "/api/app/author/{id}" && e.method == "DELETE" }.should be_false
   end
 

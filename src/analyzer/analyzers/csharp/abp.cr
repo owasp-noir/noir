@@ -59,7 +59,7 @@ module Analyzer::CSharp
     NON_ACTION_RE  = /\[\s*NonAction\b/
     HTTP_ATTR_RE   = /\bHttp(Get|Post|Put|Delete|Patch|Head|Options)(?:Attribute)?\s*(?:\(\s*@?"([^"]*)")?/
     ROUTE_ATTR_RE  = /\bRoute(?:Attribute)?\s*\(\s*@?"([^"]*)"/
-    METHOD_RE      = /^\s*public\s+(?:(?:virtual|override|async|new|sealed)\s+)*(?!static\b|abstract\b|class\b|event\b|const\b|delegate\b)[\w<>\[\],.?\s]+?\s+(\w+)\s*(?:<[^()]*>)?\s*\(/
+    METHOD_RE      = /^\s*public\s+(?:(?:virtual|override|async|new|sealed)\s+)*(?!static\b|abstract\b|class\b|record\b|struct\b|interface\b|enum\b|event\b|const\b|delegate\b)[\w<>\[\],.?\s]+?\s+(\w+)\s*(?:<[^()]*>)?\s*\(/
 
     PRIMITIVE_TYPES = Set{
       "string", "int", "long", "short", "byte", "sbyte", "uint", "ulong", "ushort",
@@ -91,8 +91,8 @@ module Analyzer::CSharp
 
       all = [] of Tuple(Noir::CSharpType, String, Noir::CSharpLexer)
       creates = [] of Tuple(String, String) # {module type, rootPath}
-      get_files_by_extension(".cs").each do |file|
-        next if Common.csharp_test_path?(base_relative_path(file))
+      files = get_files_by_extension(".cs").reject { |file| Common.csharp_test_path?(base_relative_path(file)) }
+      files.each do |file|
         content = read_file_content(file)
         next unless content_matches?(content, SOURCE_GATE)
         lexer = Noir::CSharpLexer.new(content)
@@ -133,7 +133,7 @@ module Analyzer::CSharp
         services << {service, root_path}
       end
 
-      dtos = build_dto_index(wanted)
+      dtos = build_dto_index(files, wanted)
       services.each { |(service, root_path)| emit_service(service, root_path, dtos, include_callee) }
       @result
     end
@@ -170,15 +170,21 @@ module Analyzer::CSharp
       methods = [] of Method
       header_end = type.start_line + type.header.count('\n')
       depth = 0
+      bracket = 0 # an attribute list still open from a previous line
       attributes = ""
       i = header_end
       while i <= type.end_line && i < lines.size
         m = masked[i]
         if i > header_end && depth == 1 && !m.blank?
-          if m.lstrip.starts_with?('[')
-            attributes += lines[i]
-          elsif match = METHOD_RE.match(m)
-            unless match[1] == type.name
+          code = m
+          if bracket > 0 || m.lstrip.starts_with?('[')
+            column, bracket = attribute_end(m, bracket)
+            attributes += lines[i][0, column] + " "
+            code = m[column..]
+          end
+          if bracket == 0 && !code.blank?
+            match = METHOD_RE.match(code)
+            if match && match[1] != type.name
               signature, sig_end = build_signature(lines, masked, i)
               params = parse_params(extract_balanced_param_list(signature) || "")
               method = Method.new(match[1], params, attributes, i + 1)
@@ -193,14 +199,26 @@ module Analyzer::CSharp
               next
             end
             attributes = ""
-          else
-            attributes = ""
           end
         end
         depth += m.count('{') - m.count('}')
         i += 1
       end
       methods
+    end
+
+    # `{column, open brackets}` just past the attribute groups on a masked
+    # line, starting `bracket` deep (an attribute list continued from above).
+    private def attribute_end(masked : String, bracket : Int32) : Tuple(Int32, Int32)
+      masked.each_char_with_index do |char, column|
+        case char
+        when '[' then bracket += 1
+        when ']' then bracket -= 1
+        else
+          return {column, 0} if bracket <= 0 && !char.ascii_whitespace?
+        end
+      end
+      {masked.size, Math.max(bracket, 0)}
     end
 
     private def parse_params(list : String) : Array(Tuple(String, String, String))
@@ -215,8 +233,12 @@ module Analyzer::CSharp
       end
     end
 
+    # Enums bind like primitives (ABP's `IsPrimitiveExtended(includeEnums: true)`).
+    @enums = Set(String).new
+
     private def primitive?(type_name : String) : Bool
-      PRIMITIVE_TYPES.includes?(type_name.split('.').last)
+      name = type_name.split('.').last
+      PRIMITIVE_TYPES.includes?(name) || @enums.includes?(name)
     end
 
     private def emit_service(service : Service, root_path : String, dtos : Hash(String, DtoDef), include_callee : Bool)
@@ -293,8 +315,12 @@ module Analyzer::CSharp
         url.scan(/\{([^}]+)\}/) { |m| path_names << Common.route_placeholder_name(m[1]) }
       else
         url = base_url
-        if method.params.any? { |(name, _, _)| name == "id" }
-          url += "/{id}"
+        if id = method.params.find { |(name, _, _)| name == "id" }
+          # A composite-key DTO contributes one segment per property.
+          keys = (dto_fields(id[1], dtos) unless primitive?(id[1])) || [] of String
+          keys = ["id"] if keys.empty?
+          keys.each { |key| url += "/{#{key}}" }
+          path_names.concat(keys)
           path_names << "id"
         end
         rest = remove_verb_prefix(action, verb)
@@ -309,9 +335,10 @@ module Analyzer::CSharp
       end
 
       body_type = NO_BODY_VERBS.includes?(verb) ? "query" : "json"
+      url.scan(/\{([^}]+)\}/) { |m| params << Param.new(Common.route_placeholder_name(m[1]), "", "path") }
       method.params.each do |(name, ptype, binding)|
         if path_names.includes?(name)
-          params << Param.new(name, "", "path")
+          next
         elsif !binding.empty?
           params << Param.new(name, "", binding)
         elsif ptype.includes?("RemoteStreamContent")
@@ -368,16 +395,18 @@ module Analyzer::CSharp
       found ? fields : nil
     end
 
-    # Classes named by `wanted` (and their local bases), read from the files
-    # that mention them.
-    private def build_dto_index(wanted : Set(String)) : Hash(String, DtoDef)
+    POSITIONAL_RECORD_RE = /\brecord\s+(?:class\s+|struct\s+)?(\w+)\s*\(([^)]*)\)/
+    ENUM_DECL_RE         = /\benum\s+(\w+)/
+
+    # Classes and positional records named by `wanted` (and their local
+    # bases), plus the enums among them, read from the files that declare them.
+    private def build_dto_index(files : Array(String), wanted : Set(String)) : Hash(String, DtoDef)
       index = {} of String => DtoDef
       pending = wanted.map(&.gsub(/<.*>/, "").split('.').last).to_set
-      files = get_files_by_extension(".cs").reject { |f| Common.csharp_test_path?(base_relative_path(f)) }
       3.times do
         pending.reject! { |name| index.has_key?(name) || ABP_DTO_FIELDS.has_key?(name) || name.empty? }
         break if pending.empty?
-        names_re = Regex.union(pending.map { |name| /\bclass\s+#{Regex.escape(name)}\b/ })
+        names_re = /\b(?:class|record|enum)\s+(?:class\s+|struct\s+)?(?:#{pending.map { |name| Regex.escape(name) }.join('|')})\b/
         searched = pending
         pending = Set(String).new
         files.each do |file|
@@ -390,6 +419,13 @@ module Analyzer::CSharp
             fields = (type.start_line..type.end_line).compact_map { |i| lines[i]?.try { |l| Common::AUTO_PROPERTY_RE.match(l).try(&.[1]) } }
             index[type.name] = DtoDef.new(fields, type.base_name)
             type.base_name.try { |base| pending << base }
+          end
+          code = lexer.code_source
+          code.scan(ENUM_DECL_RE) { |m| @enums << m[1] if searched.includes?(m[1]) }
+          code.scan(POSITIONAL_RECORD_RE) do |m|
+            next if index.has_key?(m[1]) || !searched.includes?(m[1])
+            fields = split_csharp_parameters(m[2]).compact_map { |arg| arg.split('=').first.strip.split(/\s+/).last? }
+            index[m[1]] = DtoDef.new(fields, nil)
           end
         end
       end
