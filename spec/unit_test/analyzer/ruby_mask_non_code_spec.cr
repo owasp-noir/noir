@@ -62,6 +62,30 @@ describe "Analyzer::Ruby::RubyEngine.mask_non_code" do
     mask(source).should eq(source)
   end
 
+  it "keeps any heredoc handed to an eval, whatever its id" do
+    %w[class_eval instance_eval module_eval eval].each do |call|
+      %w[CODE RUBY_EVAL EOS].each do |id|
+        source = "#{call} <<~#{id}, __FILE__, __LINE__ + 1\n  get '/generated' do\n  end\n#{id}\n"
+        mask(source).should eq(source)
+      end
+    end
+  end
+
+  it "does not read `<<` inside %-literals or regex literals as a heredoc" do
+    [
+      "x = %w(<<FOO)", "x = %(a (<<FOO) b)", "x = %r{<<FOO}", "x = %q[<<FOO]",
+      "x = %i<a <<FOO>", "x = /<<FOO/", "ok = s =~ /a<<FOO/",
+    ].each do |opener|
+      source = "#{opener}\nget '/r3' do\nend\nFOO\n"
+      mask(source).should eq(source)
+    end
+  end
+
+  it "still finds a heredoc after a closed %-literal, a regex and a modulo" do
+    source = "x = %w(a b) + [/re/, 7 % 2, <<~DOC]\n  get '/text'\nDOC\nget '/live'\n"
+    mask(source).should eq("x = %w(a b) + [/re/, 7 % 2, <<~DOC]\n\n\nget '/live'\n")
+  end
+
   it "is not quadratic on many unterminated openers" do
     source = String.build do |io|
       20_000.times { |i| io << "a#{i} = <<~X#{i}\nget '/r#{i}'\n" }

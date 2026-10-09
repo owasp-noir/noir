@@ -219,6 +219,7 @@ module Analyzer::Ruby
       RubyEngine.mask_non_code(read_file_content(path))
     end
 
+    EVAL_CALL_RE          = /(?:\b|_)eval\b/
     RUBY_NON_CODE_HINT_RE = /^=begin|^__END__|<<[~-]?["'`]?[A-Za-z_]/m
 
     def self.mask_non_code(content : String) : String
@@ -257,12 +258,15 @@ module Analyzer::Ruby
         # follow one after another. An opener with no terminator below it was
         # a misread `<<` (a shift, an append), so it masks nothing.
         last = i
+        evaluated = nil
         heredoc_openers(line) do |id, indented|
           terminator = index.after(id, last, indented)
           break unless terminator
-          # `<<~RUBY` is the convention for code that gets eval'd
-          # (`class_eval <<~RUBY`); its body is Ruby, not text.
-          unless id == "RUBY"
+          # A heredoc handed to `eval`/`class_eval`/`instance_eval`/
+          # `module_eval` is Ruby that runs, whatever its id; `<<~RUBY` is
+          # the convention for such code even when the eval is elsewhere.
+          evaluated = line.matches?(EVAL_CALL_RE) if evaluated.nil?
+          unless evaluated || id == "RUBY"
             (last + 1..terminator).each { |j| lines[j] = "" }
             changed = true
           end
@@ -286,22 +290,41 @@ module Analyzer::Ruby
       return unless line.includes?("<<")
 
       size = line.bytesize
+      # Inside a string-like literal: `quote` is the byte that closes it and,
+      # for a bracketed `%w( … )`, `open` is the bracket that nests.
       quote = 0_u8
+      open = 0_u8
+      depth = 0
       j = 0
       while j < size
         byte = line.byte_at(j)
         if quote != 0
           if byte == '\\'.ord
             j += 1
+          elsif open != 0 && byte == open
+            depth += 1
           elsif byte == quote
-            quote = 0_u8
+            if depth > 0
+              depth -= 1
+            else
+              quote = 0_u8
+              open = 0_u8
+            end
           end
         elsif byte == '"'.ord || byte == '\''.ord || byte == '`'.ord
           quote = byte
+        elsif byte == '%'.ord && operand_start?(line, j) && (delimiter_at = percent_literal_delimiter(line, j))
+          # `%w(…)`, `%(…)`, `%r{…}`, `%q[…]`: a string, whatever it holds.
+          delimiter = line.byte_at(delimiter_at)
+          quote = PERCENT_CLOSERS[delimiter]? || delimiter
+          open = quote == delimiter ? 0_u8 : delimiter
+          depth = 0
+          j = delimiter_at
+        elsif byte == '/'.ord && regex_literal_start?(line, j)
+          quote = byte
         elsif byte == '#'.ord
           break
-        elsif byte == '<'.ord && j + 1 < size && line.byte_at(j + 1) == '<'.ord &&
-              (j == 0 || " \t(,=[{|&!".includes?(line.byte_at(j - 1).unsafe_chr))
+        elsif byte == '<'.ord && j + 1 < size && line.byte_at(j + 1) == '<'.ord && operand_start?(line, j)
           k = j + 2
           indented = k < size && (line.byte_at(k) == '~'.ord || line.byte_at(k) == '-'.ord)
           k += 1 if indented
@@ -328,6 +351,38 @@ module Analyzer::Ruby
         end
         j += 1
       end
+    end
+
+    PERCENT_CLOSERS = {'('.ord.to_u8 => ')'.ord.to_u8, '['.ord.to_u8 => ']'.ord.to_u8,
+                       '{'.ord.to_u8 => '}'.ord.to_u8, '<'.ord.to_u8 => '>'.ord.to_u8}
+
+    # `<<` / `%` start a literal only where an operand can begin: at line
+    # start or right after whitespace or an opening/operator byte, so
+    # `1<<FLAGS` and `a%b` stay operators.
+    private def self.operand_start?(line : String, index : Int32) : Bool
+      index == 0 || " \t(,=[{|&!".includes?(line.byte_at(index - 1).unsafe_chr)
+    end
+
+    # Offset of the delimiter of a `%` literal starting at `index`
+    # (`%(`, `%w[`, `%r{`, `%q|` …), or nil when `%` is the modulo operator.
+    private def self.percent_literal_delimiter(line : String, index : Int32) : Int32?
+      k = index + 1
+      return if k >= line.bytesize
+      k += 1 if "qQwWiIrsx".includes?(line.byte_at(k).unsafe_chr) && k + 1 < line.bytesize
+      char = line.byte_at(k).unsafe_chr
+      return if char.ascii_alphanumeric? || char.ascii_whitespace? || char == '=' || char == '_' || line.byte_at(k) >= 0x80
+      k
+    end
+
+    # A `/` opens a regex literal when the previous non-blank byte cannot end
+    # an operand (`x = /re/`, `foo(/re/)`, `s =~ /re/`); after a name or `)`
+    # it is division.
+    private def self.regex_literal_start?(line : String, index : Int32) : Bool
+      k = index - 1
+      while k >= 0 && line.byte_at(k).unsafe_chr.ascii_whitespace?
+        k -= 1
+      end
+      k < 0 || "(,=[{|&!~;".includes?(line.byte_at(k).unsafe_chr)
     end
 
     # Line indices of every possible heredoc terminator, so finding the one
