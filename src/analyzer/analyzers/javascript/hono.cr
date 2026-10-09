@@ -23,9 +23,14 @@ module Analyzer::Javascript
         callees_by_route = include_callee ? Noir::JSCalleeExtractor.callees_for_routes(content, path) : {} of String => Array(Noir::JSCalleeExtractor::Entry)
         parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug,
           include_callees: include_callee, route_callees: callees_by_route)
+        # "METHOD url" this file already emitted, for the app.on() pass's
+        # de-duplication (a Set: scanning the whole result per route was
+        # quadratic).
+        recorded = Set(String).new
         parser_endpoints.each do |endpoint|
           extract_path_params(endpoint)
           result << endpoint
+          recorded << "#{endpoint.method} #{endpoint.url}"
         end
 
         # Extract app.on() patterns not handled by JSRouteExtractor.
@@ -38,7 +43,7 @@ module Analyzer::Javascript
         if on_route_candidate?(content) &&
            !Noir::JSRouteExtractor.test_stub_only?(path, content) &&
            !Noir::JSRouteExtractor.minified_content?(content)
-          extract_on_routes(path, content, result, callees_by_route, include_callee)
+          extract_on_routes(path, content, result, recorded, callees_by_route, include_callee)
         end
 
         collect_static_paths(path, content, static_dirs, :hono)
@@ -70,6 +75,7 @@ module Analyzer::Javascript
     private def extract_on_routes(path : String,
                                   content : String,
                                   result : Array(Endpoint),
+                                  recorded : Set(String),
                                   callees_by_route : Hash(String, Array(Noir::JSCalleeExtractor::Entry)),
                                   include_callee : Bool)
       bytes = content.to_slice
@@ -101,16 +107,21 @@ module Analyzer::Javascript
         # call's own arguments. Walking the following lines up to a `})`
         # line skipped a one-line handler and read the next route's instead.
         body_params = [] of Param
+        direct_callees = [] of Noir::JSCalleeExtractor::Entry
         if (open = content.byte_index('(', match_byte)) &&
            (close = Noir::JSLiteralScanner.find_matching_paren_at_byte(content, open))
-          content.byte_slice(open + 1, close - open - 1).each_line do |handler_line|
+          args_src = content.byte_slice(open + 1, close - open - 1)
+          args_src.each_line do |handler_line|
             body_params.concat(line_to_params(handler_line))
           end
+          if include_callee
+            args_line = index + 1 + bytes[match_byte, open - match_byte].count('\n'.ord.to_u8)
+            direct_callees = on_route_callees(args_src, path, args_line)
+          end
         end
-        direct_callees = include_callee ? on_route_callees(content, path, match.begin(0)) : [] of Noir::JSCalleeExtractor::Entry
 
         methods.each do |http_method|
-          next if route_recorded_for_file?(result, path, url, http_method.upcase)
+          next unless recorded.add?("#{http_method.upcase} #{url}")
 
           endpoint = Endpoint.new(url, http_method.upcase)
           details = Details.new(PathInfo.new(path, index + 1))
@@ -126,18 +137,19 @@ module Analyzer::Javascript
       end
     end
 
-    private def on_route_callees(content : String, path : String, call_start : Int32) : Array(Noir::JSCalleeExtractor::Entry)
-      paren_open = content.index("(", call_start)
-      return [] of Noir::JSCalleeExtractor::Entry unless paren_open
-
-      paren_close = Noir::JSRouteExtractor.find_matching_paren(content, paren_open)
-      return [] of Noir::JSCalleeExtractor::Entry unless paren_close
-
-      args = split_top_level_args(content, paren_open + 1, paren_close)
+    # Callees of an `on()` handler (the call's third argument), read from the
+    # call's own argument text so the cost stays local to the call — the
+    # file-wide char-offset walk was quadratic in the route count. Lines are
+    # shifted from the slice back to the file; `args_line` is the line the
+    # arguments start on.
+    private def on_route_callees(args_src : String, path : String, args_line : Int32) : Array(Noir::JSCalleeExtractor::Entry)
+      args = split_top_level_args(args_src, 0, args_src.size)
       return [] of Noir::JSCalleeExtractor::Entry if args.size < 3
 
       handler_source, handler_start = args[2]
-      handler_callees(handler_source, handler_start, content, path)
+      handler_callees(handler_source, handler_start, args_src, path).map do |name, file, line|
+        {name, file, line + args_line - 1}
+      end
     end
 
     private def analyze_with_regex(path : String, result : Array(Endpoint))

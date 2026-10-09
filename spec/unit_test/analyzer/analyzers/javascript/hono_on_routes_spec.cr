@@ -59,6 +59,20 @@ describe "Hono app.on routes" do
     search.callees.map(&.name).should eq(["c.req.query", "c.json"])
   end
 
+  # Each route used to be checked against the whole result array, char
+  # offsets and all: 5000 app.on() routes in one file took ~40s.
+  it "stays linear on a large app.on() file" do
+    n = 5000
+    big = String.build do |io|
+      io << "// café\nimport { Hono } from 'hono'\nconst app = new Hono()\n"
+      n.times { |i| io << "app.on('GET', '/r#{i}', (c) => c.text(c.req.query('q')))\n" }
+    end
+    endpoints = [] of Endpoint
+    elapsed = Time.measure { endpoints = hono_endpoints(big) }
+    elapsed.should be < 5.seconds
+    endpoints.size.should eq(n)
+  end
+
   it "attaches callees to app.query() routes" do
     route = hono_endpoints(source).find! { |e| e.url == "/search" }
     route.callees.map(&.name).should contain("c.req.json")
