@@ -120,7 +120,8 @@ module Analyzer::AI
         @model,
         @api_key,
         event_sink,
-        @native_tool_calling_allowlist
+        @native_tool_calling_allowlist,
+        @max_tokens
       )
       begin
         logger.info "AI Analysis using #{Noir::Redact.url(@provider)} with model #{@model} (max tokens: #{@max_tokens})"

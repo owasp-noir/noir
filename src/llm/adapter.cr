@@ -177,13 +177,14 @@ module LLM
       api_key : String? = nil,
       event_sink : Proc(String, Nil)? = nil,
       native_tool_calling_allowlist : Array(String)? = nil,
+      context_tokens : Int32? = nil,
     ) : Adapter
       prov = provider.downcase
       if LLM::ACPClient.acp_provider?(prov)
         acp_model = LLM::ACPClient.default_model(provider, model)
         LLM::ACPClient.new(provider, acp_model, event_sink)
       elsif ollama_native?(prov)
-        OllamaAdapter.new(LLM::Ollama.new(ollama_base_url(provider), model))
+        OllamaAdapter.new(LLM::Ollama.new(ollama_base_url(provider), model, context_tokens))
       else
         native_tool_calling = native_tool_calling_enabled_for_provider?(provider, native_tool_calling_allowlist)
         GeneralAdapter.new(LLM::General.new(provider, model, api_key), native_tool_calling)
