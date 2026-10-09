@@ -128,12 +128,8 @@ module Noir
     # Strips trailing punctuation and unbalanced brackets from a raw
     # candidate. Returns nil when no host is addressable after the `://`.
     def self.trim(raw : String) : String?
-      url = raw
-      loop do
-        trimmed = trim_once(url)
-        break if trimmed == url
-        url = trimmed
-      end
+      stop = trimmed_bytesize(raw.to_slice)
+      url = stop == raw.bytesize ? raw : raw.byte_slice(0, stop)
 
       scheme_end = url.index("://")
       return if scheme_end.nil?
@@ -156,20 +152,36 @@ module Noir
       url
     end
 
-    private def self.trim_once(url : String) : String
-      last = url[-1]?
-      return url if last.nil?
+    # Byte length of `bytes` once trailing punctuation and unbalanced
+    # brackets are dropped, one at a time from the end. Bracket counts are
+    # taken once and decremented as bytes go, rather than recounted over the
+    # whole URL per dropped byte — a URL followed by 60000 `)` took minutes.
+    # Every character trimmed is ASCII, and an ASCII byte never occurs
+    # inside a multibyte sequence, so working on bytes is exact.
+    private def self.trimmed_bytesize(bytes : Bytes) : Int32
+      counts = Slice(Int32).new(128, 0)
+      bytes.each { |byte| counts[byte] += 1 if byte < 128 }
 
-      return url.rchop if TRAILING_PUNCTUATION.includes?(last)
-
-      BRACKET_PAIRS.each do |opener, closer|
-        # An unbalanced bracket at the end belongs to the surrounding text,
-        # not the URL: a closer with no opener came from `](url)` markup, an
-        # opener with no closer from a byte run that merely ends in one.
-        return url.rchop if last == closer && url.count(closer) > url.count(opener)
-        return url.rchop if last == opener && url.count(opener) > url.count(closer)
+      stop = bytes.size
+      while stop > 0
+        last = bytes[stop - 1]
+        break unless last < 128 && trailing_noise?(last.unsafe_chr, counts)
+        counts[last] -= 1
+        stop -= 1
       end
-      url
+      stop
+    end
+
+    private def self.trailing_noise?(last : Char, counts : Slice(Int32)) : Bool
+      return true if TRAILING_PUNCTUATION.includes?(last)
+
+      # An unbalanced bracket at the end belongs to the surrounding text,
+      # not the URL: a closer with no opener came from `](url)` markup, an
+      # opener with no closer from a byte run that merely ends in one.
+      BRACKET_PAIRS.any? do |opener, closer|
+        (last == closer && counts[closer.ord] > counts[opener.ord]) ||
+          (last == opener && counts[opener.ord] > counts[closer.ord])
+      end
     end
   end
 end

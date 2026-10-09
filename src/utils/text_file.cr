@@ -40,7 +40,14 @@ module Noir::TextFile
   # no line number.
   UTF8_BOM = Bytes[0xEF_u8, 0xBB_u8, 0xBF_u8]
 
+  #
+  # A path that exists but is not a regular file (after following symlinks)
+  # reads as empty. Analyzers probe well-known names (`application.properties`,
+  # `package.json`) with `File.exists?`, which is true for a FIFO, and opening
+  # a FIFO blocks until a writer appears — the scan hung with no output. A
+  # missing path still raises, as before.
   def self.read(path : String) : String
+    return "" unless File.info(path).file?
     content = File.read(path)
     return transcode_utf16(content) if utf16_bom?(content)
     content = strip_utf8_bom(content)
@@ -67,15 +74,40 @@ module Noir::TextFile
     prefix == UTF16_LE_BOM || prefix == UTF16_BE_BOM
   end
 
-  # Decode UTF-16 to UTF-8. The `"UTF-16"` encoding name (rather than an
-  # explicit endianness) is what consumes the BOM instead of leaving it as a
-  # leading U+FEFF in the decoded text.
+  # Decode UTF-16 (after its BOM, which `utf16_bom?` confirmed) to UTF-8.
+  # A lone surrogate and an odd trailing byte are dropped, and so are any
+  # further U+FEFF directly after the BOM (a doubled BOM from concatenating
+  # tools); an interior U+FEFF is kept, as on the UTF-8 path.
+  #
+  # This used to go through iconv with `invalid: :skip`, which on a lone
+  # surrogate skips one *byte*: every later code unit was then read across
+  # the wrong byte pair, and the rest of the file came out as valid-looking
+  # CJK garbage — one stray surrogate in a comment lost every route below it.
   def self.transcode_utf16(content : String) : String
-    io = IO::Memory.new(content.to_slice)
-    io.set_encoding("UTF-16", invalid: :skip)
-    ensure_valid(io.gets_to_end)
-  rescue
-    decode(content)
+    bytes = content.to_slice
+    little = bytes[0, 2] == UTF16_LE_BOM
+    count = (bytes.size - 2) // 2
+    unit_at = ->(i : Int32) do
+      first, second = bytes[2 + 2 * i].to_i32, bytes[3 + 2 * i].to_i32
+      little ? (second << 8) | first : (first << 8) | second
+    end
+
+    String.build(count) do |io|
+      i = 0
+      while i < count && unit_at.call(i) == 0xFEFF
+        i += 1
+      end
+      while i < count
+        unit = unit_at.call(i)
+        i += 1
+        if !(0xD800 <= unit <= 0xDFFF)
+          io << unit.unsafe_chr
+        elsif unit <= 0xDBFF && i < count && 0xDC00 <= (low = unit_at.call(i)) <= 0xDFFF
+          io << (0x10000 + ((unit - 0xD800) << 10) + (low - 0xDC00)).unsafe_chr
+          i += 1
+        end
+      end
+    end
   end
 
   # `invalid: :skip` decode of bytes already in memory.

@@ -923,6 +923,35 @@ describe "EndpointOptimizer" do
         result[0].details.technologies.should eq(["kotlin_spring", "postman"])
       end
 
+      it "folds a concrete example into the first matching template only" do
+        optimizer = EndpointOptimizer.new(logger, options)
+
+        result = optimizer.optimize_endpoints([
+          tech_endpoint("/api/users/{id}", "GET", "go_gin", "a.go"),
+          tech_endpoint("/api/users/{uid}", "GET", "go_echo", "b.go"),
+          tech_endpoint("/api/users/42", "POST", "postman", "c.json"),
+          tech_endpoint("/api/users/7", "GET", "postman", "c.json"),
+        ])
+
+        result.map(&.url).should eq(["/api/users/{id}", "/api/users/{uid}", "/api/users/42"])
+        result[0].details.code_paths.map(&.path).should eq(["a.go", "c.json"])
+        result[1].details.code_paths.map(&.path).should eq(["b.go"])
+      end
+
+      # Every concrete request used to re-test every endpoint as a template:
+      # 4000 Postman requests took 13s.
+      it "merges a large collection in linear time" do
+        optimizer = EndpointOptimizer.new(logger, options)
+        endpoints = (0...8000).map { |i| tech_endpoint("/items#{i}/#{i}", "GET", "postman", "c.json") }
+        endpoints << tech_endpoint("/items0/{id}", "GET", "go_gin", "a.go")
+
+        result = [] of Endpoint
+        elapsed = Time.measure { result = optimizer.optimize_endpoints(endpoints) }
+
+        result.size.should eq(8000)
+        elapsed.should be < 5.seconds
+      end
+
       it "orders the list the same way whichever duplicate sorts first" do
         optimizer = EndpointOptimizer.new(logger, options)
 
@@ -1044,6 +1073,33 @@ describe "EndpointOptimizer" do
       result[1].url.should eq("/zip/{code}/x")
       result[2].url.should eq("/d/{day}-{month}")
       result[3].url.should eq("/archive/\\d{4}/")
+    end
+
+    it "matches braces past unbalanced openers and escapes" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      endpoints = [
+        Endpoint.new("/a/{{id:[0-9]}", "GET"),
+        Endpoint.new("/a/{x/{id:\\d{3}}", "GET"),
+        Endpoint.new("/a/{id:\\}x}/y", "GET"),
+      ]
+
+      result = optimizer.normalize_url_shapes(endpoints)
+      result[0].url.should eq("/a/{{id}")
+      result[1].url.should eq("/a/{x/{id}")
+      result[2].url.should eq("/a/{id}/y")
+    end
+
+    # Each unbalanced `{` used to rescan to the end of the URL.
+    it "normalizes a URL full of unbalanced braces in linear time" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      urls = ["/" + "{" * 20000, "/b" + "{/a" * 20000, "/c" + "{a:" * 20000]
+      endpoints = urls.map { |url| Endpoint.new(url, "GET") }
+
+      result = [] of Endpoint
+      elapsed = Time.measure { result = optimizer.optimize_endpoints(endpoints) }
+
+      result.size.should eq(3)
+      elapsed.should be < 5.seconds
     end
 
     it "normalizes Django re_path named groups even when the body contains \\d / \\w classes" do

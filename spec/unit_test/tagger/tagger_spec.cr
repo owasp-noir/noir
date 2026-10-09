@@ -35,6 +35,39 @@ describe "Tagger" do
     emitting.sort.should eq(NoirTaggers::AUTH_ENTRIES.map(&.key).sort!)
   end
 
+  # Framework taggers sharing a tech append to the same tag arrays. They
+  # used to run one fiber each, so a blocking read let `rails_security` tag
+  # before `ruby_auth` on some runs and after it on others.
+  it "applies framework taggers in registry order every run" do
+    dir = File.tempname("noir-tagger-order")
+    Dir.mkdir_p(dir)
+    begin
+      paths = (0...40).map do |i|
+        path = File.join(dir, "things#{i}_controller.rb")
+        filler = (0...200).map { |k| "  # filler #{k}\n" }.join
+        File.write(path, "class Things#{i}Controller < ApplicationController\n" \
+                         "  before_action :authenticate_user!\n" \
+                         "  protect_from_forgery with: :null_session\n" \
+                         "#{filler}  def index\n    render json: []\n  end\nend\n")
+        path
+      end
+      options = create_test_options
+      options["base"] = YAML::Any.new(dir)
+
+      30.times do
+        endpoints = paths.map do |path|
+          details = Details.new(PathInfo.new(path, 204))
+          details.technology = "ruby_rails"
+          Endpoint.new("/things", "GET", [] of Param, details)
+        end
+        NoirTaggers.run_tagger(endpoints, options, "rails_security,ruby_auth")
+        endpoints.map(&.tags.map(&.name)).uniq!.should eq([["auth", "csrf-protection"]])
+      end
+    ensure
+      FileUtils.rm_rf(dir)
+    end
+  end
+
   it "knows whether a --use-taggers list emits the auth tag" do
     NoirTaggers.auth_tagging?("hunt,cors").should be_false
     NoirTaggers.auth_tagging?("hunt, Django_Auth").should be_true

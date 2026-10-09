@@ -40,6 +40,21 @@ describe Noir::FileUrlScanner do
       urls.should eq ["https://a.example/docs", "https://a.example/faq"]
     end
 
+    it "trims interleaved punctuation and unbalanced closers" do
+      Noir::FileUrlScanner.trim("https://a.example/x_(y).).]").should eq "https://a.example/x_(y)"
+      Noir::FileUrlScanner.trim("https://a.example/é).").should eq "https://a.example/é"
+    end
+
+    # Each trimmed byte used to recount the brackets over the whole URL.
+    it "trims a long run of closers in linear time" do
+      raw = "http://example.com/x" + ")" * 20000
+      result = nil
+      elapsed = Time.measure { result = Noir::FileUrlScanner.trim(raw) }
+
+      result.should eq "http://example.com/x"
+      elapsed.should be < 2.seconds
+    end
+
     it "stops at a quote so a quoted literal keeps its own bounds" do
       urls = [] of String
       Noir::FileUrlScanner.each_url(%(url = "https://a.example/api", next)) { |u| urls << u }

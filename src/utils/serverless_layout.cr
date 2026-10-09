@@ -1,3 +1,5 @@
+require "./text_file"
+
 module Noir
   # File-system layout rules shared by the file-routed serverless platforms
   # (Cloudflare Pages `functions/`, Vercel `api/`, Netlify
@@ -57,7 +59,7 @@ module Noir
       return true if VERCEL_CONFIGS.any? { |config| File.exists?(File.join(root, config)) }
       package = File.join(root, "package.json")
       return false unless File.exists?(package)
-      content = File.read(package) rescue ""
+      content = Noir::TextFile.read(package) rescue ""
       VERCEL_PACKAGE_MARKERS.any? { |marker| content.includes?(marker) }
     end
 

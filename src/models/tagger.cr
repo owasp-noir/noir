@@ -21,11 +21,11 @@ require "./logger"
 # tagger's `name` at runtime — `Tagger#initialize` reads it back off the
 # class, so the two can no longer disagree.
 #
-# `order` fixes the sequence plain taggers run in, which is user-visible:
-# they run sequentially, `Endpoint#add_tag` appends, and nothing sorts tags
-# before output. Values are spaced by 10 so a tagger can be slotted between
-# two others without renumbering. Framework taggers run under a `WaitGroup`,
-# so for them it only orders `noir list taggers`.
+# `order` fixes the sequence taggers run in, which is user-visible: they run
+# sequentially (plain taggers first, then framework taggers, each group in
+# `order`), `Endpoint#add_tag` appends, and nothing sorts tags before output.
+# Values are spaced by 10 so a tagger can be slotted between two others
+# without renumbering.
 #
 # The `Tagger` and `FrameworkTagger` base classes carry no annotation and
 # stay out of the registry — which is also why they can remain instantiable

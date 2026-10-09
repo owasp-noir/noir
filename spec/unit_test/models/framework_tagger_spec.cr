@@ -95,6 +95,28 @@ describe FrameworkTagger do
       end
     end
 
+    # An endpoint merged with an openapi.json carries the spec as a code
+    # path. The taggers' backward walks found no class/def boundary in it
+    # and walked the whole document once per endpoint.
+    it "skips specification-document code paths" do
+      source = File.tempfile("noir_test", ".py", &.print("def users(request):\n    pass\n"))
+      spec = File.tempfile("noir_test", ".json", &.print(%({"paths": {"/users": {}}})))
+
+      begin
+        options = create_test_options
+        options["base"] = YAML::Any.new([YAML::Any.new("/tmp")])
+        tagger = FrameworkTagger.new(options)
+
+        details = Details.new(PathInfo.new(source.path, 1))
+        details.add_path(PathInfo.new(spec.path, 1))
+        contexts = tagger.read_source_context(Endpoint.new("/users", "GET", details))
+        contexts.map(&.path).should eq([source.path])
+      ensure
+        source.delete
+        spec.delete
+      end
+    end
+
     it "returns empty array for endpoint with non-existent code path" do
       options = create_test_options
       options["base"] = YAML::Any.new([YAML::Any.new("/tmp")])

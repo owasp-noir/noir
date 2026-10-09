@@ -66,6 +66,61 @@ describe Noir::TextFile do
     end
   end
 
+  # iconv's skip dropped one byte on a lone surrogate, so everything after
+  # it decoded across the wrong byte pairs and the routes below were lost.
+  it "drops a lone UTF-16 surrogate without misaligning the rest" do
+    dir = File.tempname("noir-text-file")
+    Dir.mkdir_p(dir)
+    begin
+      path = File.join(dir, "app.py")
+      # LE BOM, "# ", a lone 0xD800, more text, then an odd trailing byte.
+      io = IO::Memory.new
+      io.write(Bytes[0xFF, 0xFE])
+      "# ".to_utf16.each { |unit| io.write_bytes(unit, IO::ByteFormat::LittleEndian) }
+      io.write(Bytes[0x00, 0xD8])
+      "\n@app.route('/x')\n😀".to_utf16.each { |unit| io.write_bytes(unit, IO::ByteFormat::LittleEndian) }
+      io.write_byte(0x41)
+      File.write(path, io.to_slice)
+      Noir::TextFile.read(path).should eq("# \n@app.route('/x')\n😀")
+
+      big_endian = Bytes[0xFE, 0xFF, 0xDC, 0x00, 0x00, 0x61, 0xD8, 0x3D, 0xDE, 0x00]
+      File.write(path, big_endian)
+      Noir::TextFile.read(path).should eq("a😀")
+
+      # A doubled BOM drops both; a U+FEFF past the first character stays.
+      File.write(path, Bytes[0xFF, 0xFE, 0xFF, 0xFE, 0x61, 0x00, 0xFF, 0xFE, 0x62, 0x00])
+      Noir::TextFile.read(path).should eq("a﻿b")
+    ensure
+      FileUtils.rm_rf(dir)
+    end
+  end
+
+  {% unless flag?(:win32) %}
+    # Opening a FIFO blocks until a writer appears; analyzers reached one by
+    # probing a well-known name (`application.properties`) and the scan hung.
+    it "reads a FIFO as empty without opening it" do
+      dir = File.tempname("noir-text-file")
+      Dir.mkdir_p(dir)
+      begin
+        path = File.join(dir, "application.properties")
+        Process.run("mkfifo", [path]).success?.should be_true
+        # Unblocks a regressed open after 3s instead of hanging the suite.
+        writer = Process.new("sh", ["-c", "sleep 3; : > \"$0\"", path])
+
+        content = nil
+        elapsed = Time.measure { content = Noir::TextFile.read(path) }
+        writer.terminate rescue nil
+        writer.wait
+
+        content.should eq("")
+        elapsed.should be < 2.seconds
+        expect_raises(File::NotFoundError) { Noir::TextFile.read(File.join(dir, "missing")) }
+      ensure
+        FileUtils.rm_rf(dir)
+      end
+    end
+  {% end %}
+
   it "keeps a BOM-like sequence that is not at the start" do
     dir = File.tempname("noir-text-file")
     Dir.mkdir_p(dir)
