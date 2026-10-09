@@ -56,7 +56,7 @@ tester = FunctionalTester.new("fixtures/csharp/abp/", {
 
 tester.perform_tests
 
-describe "ABP conventional controllers" do
+describe "ABP conventional controllers", tags: "functional" do
   it "skips services and methods that opt out of remoting" do
     urls = tester.app.endpoints.map(&.url)
     urls.any?(&.includes?("recalculate")).should be_false

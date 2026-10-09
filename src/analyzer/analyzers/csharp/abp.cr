@@ -104,37 +104,37 @@ module Analyzer::CSharp
       all.each { |entry| classes[entry[0].name] ||= entry }
       return @result if creates.empty?
 
-      # Project root (nil = no `.csproj`) → rootPaths; an unresolvable module
-      # type covers every project.
-      scoped = Hash(String?, Array(String)).new { |h, k| h[k] = [] of String }
-      global = [] of String
+      # Project root (nil = no `.csproj`) → rootPath; an unresolvable module
+      # type covers every project. ABP resolves a controller to the *first*
+      # setting whose assembly holds it, so a repeated `Create` doesn't add
+      # a second route.
+      scoped = {} of String? => String
+      global = nil
       creates.each do |(module_type, root_path)|
         if entry = classes[module_type]?
-          scoped[Common.project_root_for(entry[1], roots)] << root_path
+          scoped[Common.project_root_for(entry[1], roots)] ||= root_path
         else
-          global << root_path
+          global ||= root_path
         end
       end
 
-      services = [] of Tuple(Service, Array(String))
+      services = [] of Tuple(Service, String)
       wanted = Set(String).new
       all.each do |(type, file, lexer)|
         next unless service?(type, classes)
-        root_paths = scoped.fetch(Common.project_root_for(file, roots), [] of String) + global
-        next if root_paths.empty?
+        root_path = scoped[Common.project_root_for(file, roots)]? || global
+        next unless root_path
         declared = collect_methods(type, lexer, include_callee)
         # `CrudAppService<...>` inherits the five CRUD actions unless the body
         # overrides them (an override carrying `[RemoteService(false)]` hides it).
         methods = declared.reject { |m| m.attributes.matches?(REMOTE_OFF_RE) || m.attributes.matches?(NON_ACTION_RE) }
         service = Service.new(type, file, methods + crud_methods(type, declared))
         service.methods.each { |m| m.params.each { |(_, ptype, _)| wanted << ptype unless primitive?(ptype) } }
-        services << {service, root_paths.uniq}
+        services << {service, root_path}
       end
 
       dtos = build_dto_index(wanted)
-      services.each do |(service, root_paths)|
-        root_paths.each { |root_path| emit_service(service, root_path, dtos, include_callee) }
-      end
+      services.each { |(service, root_path)| emit_service(service, root_path, dtos, include_callee) }
       @result
     end
 
@@ -372,7 +372,7 @@ module Analyzer::CSharp
     # that mention them.
     private def build_dto_index(wanted : Set(String)) : Hash(String, DtoDef)
       index = {} of String => DtoDef
-      pending = wanted.map { |name| name.gsub(/<.*>/, "").split('.').last }.to_set
+      pending = wanted.map(&.gsub(/<.*>/, "").split('.').last).to_set
       files = get_files_by_extension(".cs").reject { |f| Common.csharp_test_path?(base_relative_path(f)) }
       3.times do
         pending.reject! { |name| index.has_key?(name) || ABP_DTO_FIELDS.has_key?(name) || name.empty? }
@@ -386,7 +386,7 @@ module Analyzer::CSharp
           lexer = Noir::CSharpLexer.new(content)
           lines = lexer.code_lines
           Noir::CSharpTypeExtractor.extract(lexer).each do |type|
-            next unless searched.includes?(type.name) && !index.has_key?(type.name)
+            next if index.has_key?(type.name) || !searched.includes?(type.name)
             fields = (type.start_line..type.end_line).compact_map { |i| lines[i]?.try { |l| Common::AUTO_PROPERTY_RE.match(l).try(&.[1]) } }
             index[type.name] = DtoDef.new(fields, type.base_name)
             type.base_name.try { |base| pending << base }
