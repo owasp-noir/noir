@@ -272,12 +272,25 @@ class Deliver
       read_timeout: export_read_timeout
     )
   rescue e
-    @logger.warning "#{warn_label} delivery to #{target} failed: #{e.message}"
+    reason = "#{e.message.presence || e.class.name}#{redirect_hint(e)}"
+    @logger.warning "#{warn_label} delivery to #{target} failed: #{reason}"
     @logger.debug_sub e
     Noir::SkippedFiles.record_gap(
       Noir::SkippedFiles::DELIVER_SCOPE,
-      "#{gap_label} delivery to #{target} failed: #{e.message.presence || e.class.name}"
+      "#{gap_label} delivery to #{target} failed: #{reason}"
     )
+  end
+
+  # Where a refused redirect pointed, so "307" reads as "use https://…"
+  # instead of a dead end. Reduced to its origin like a webhook URL: the
+  # target can carry the same path token the export URL did.
+  private def redirect_hint(error : Exception) : String
+    return "" unless error.is_a?(Crest::RequestFailed)
+    location = error.response.http_client_res.headers["Location"]?
+    return "" if location.nil? || location.empty?
+
+    target = location.matches?(/\A[a-z][a-z0-9+.\-]*:\/\//i) ? Noir::Redact.webhook(location) : "a path on the same host"
+    " (redirects to #{target}; exports do not follow redirects, so use the final URL)"
   end
 
   # Crest defaults both `connect_timeout` and `read_timeout` to nil, i.e.

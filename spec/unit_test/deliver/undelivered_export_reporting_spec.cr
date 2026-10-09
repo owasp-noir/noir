@@ -98,7 +98,7 @@ describe "undelivered export reporting" do
 
     redirector = HTTP::Server.new do |ctx|
       ctx.response.status_code = 307
-      ctx.response.headers["Location"] = "http://127.0.0.1:#{other_address.port}/steal"
+      ctx.response.headers["Location"] = "http://127.0.0.1:#{other_address.port}/steal/T0KEN"
     end
     redirect_address = redirector.bind_tcp("127.0.0.1", 0)
     spawn { redirector.listen }
@@ -113,6 +113,10 @@ describe "undelivered export reporting" do
       stolen.should be_empty
       deliver_gaps.size.should eq(1)
       deliver_gaps.first.message.should contain("webhook delivery")
+      # The target is named so the user can fix the URL, down to its origin
+      # since a redirect can carry the same path token the webhook did.
+      deliver_gaps.first.message.should contain("redirects to http://127.0.0.1:#{other_address.port}/***")
+      deliver_gaps.first.message.should_not contain("T0KEN")
     ensure
       redirector.close
       other.close
