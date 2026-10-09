@@ -78,7 +78,11 @@ module Analyzer::Elixir
         end
         next if in_triple_double || in_triple_single
 
-        line_endpoints = line_to_endpoint(line.strip)
+        # A commented-out route (`# get "/old", do: ...`) is not a route.
+        code = strip_trailing_comment(line).strip
+        next if code.empty?
+
+        line_endpoints = line_to_endpoint(code)
         line_endpoints.each do |endpoint|
           unless endpoint.method.empty?
             details = Details.new(PathInfo.new(file_path, index + 1))
@@ -109,7 +113,7 @@ module Analyzer::Elixir
 
       # Extract parameters from the block content
       (start_index..end_index).each do |i|
-        line = lines[i]
+        line = strip_trailing_comment(lines[i])
         has_conn = line.includes?("conn.")
         has_header = line.includes?("get_req_header")
         next unless has_conn || has_header
@@ -200,10 +204,16 @@ module Analyzer::Elixir
       # Find the matching "end" for the route block starting with "do"
       return -1 if start_index >= lines.size
 
-      # Check if the line has "do" keyword
-      return -1 unless lines[start_index].includes?("do")
+      # Only a real `do` opener starts a block. The inline `do:` keyword
+      # form (`get "/x", do: send_resp(...)`) is its own one-line body —
+      # walking on from it used to run to the next route's `end` and
+      # hand that route's params to this one. So did a bare "do"
+      # substring in a path (`"/download"`) or a comment.
+      depth = elixir_block_depth_delta(lines[start_index].strip)
+      if depth <= 0
+        return lines[start_index].matches?(/\bdo:/) ? start_index : -1
+      end
 
-      depth = 1
       (start_index + 1...lines.size).each do |i|
         depth += elixir_block_depth_delta(lines[i].strip)
         return i if depth == 0

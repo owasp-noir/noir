@@ -57,7 +57,7 @@ module Analyzer::Ruby
           next if RubyEngine.ruby_test_path?(path)
 
           begin
-            content = read_file_content(path)
+            content = ruby_source(path)
 
             # `CABLE_MOUNT` cannot match without the literal
             # `ActionCable.server` in the buffer, so the cheap union gate

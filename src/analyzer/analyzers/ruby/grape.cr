@@ -43,7 +43,7 @@ module Analyzer::Ruby
       parallel_file_scan do |path|
         next unless path.ends_with?(".rb")
         next if ruby_non_production_path?(path)
-        content = read_file_content(path)
+        content = ruby_source(path)
         next unless grape_api_file?(content, index.classes)
         mount_prefix = grape_file_mount_prefix(content, index)
         process_file(path, content, include_callee, mount_prefix)
@@ -80,7 +80,7 @@ module Analyzer::Ruby
       all_files.each do |path|
         next unless path.ends_with?(".rb")
         next if ruby_non_production_path?(path)
-        content = read_file_content(path)
+        content = ruby_source(path)
         # Only base-class definitions (`Grape::API`) and aggregators
         # (`mount`) feed the index; plain route files inherit from a custom
         # base and are recognised by `grape_api_file?` re-checking their

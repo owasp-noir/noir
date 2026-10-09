@@ -82,10 +82,13 @@ module Analyzer::Clojure
           i = Noir::ClojureScanner.skip_comment(source, i, limit)
         when '"'
           i = Noir::ClojureScanner.skip_string(source, i, limit) + 1
+        when '#'
+          i = Noir::ClojureScanner.skip_hash(source, i, limit)
         when '('
           form_end = Noir::ClojureScanner.find_matching_delimiter(source, i, '(', ')', limit)
           break if form_end <= i
-          walk_forms(source, i + 1, form_end, prefix, path, include_callee, function_callees)
+          symbol, _ = Noir::ClojureScanner.read_symbol(source, Noir::ClojureScanner.skip_ws_and_comments(source, i + 1, form_end), form_end)
+          walk_forms(source, i + 1, form_end, prefix, path, include_callee, function_callees) unless Noir::ClojureScanner.comment_form?(symbol)
           i = form_end + 1
         when '['
           vec_end = Noir::ClojureScanner.find_matching_delimiter(source, i, '[', ']', limit)
@@ -604,8 +607,6 @@ module Analyzer::Clojure
         when '"'
           e = Noir::ClojureScanner.skip_string(source, i + 1, limit)
           e >= i + 1 ? e + 1 : limit
-        when '_'
-          end_of_value(source, i + 2, limit)
         else
           _, after = Noir::ClojureScanner.read_symbol(source, i, limit, commas: false)
           after

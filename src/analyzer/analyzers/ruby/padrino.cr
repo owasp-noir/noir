@@ -63,7 +63,7 @@ module Analyzer::Ruby
       parallel_file_scan do |path|
         next unless path.ends_with?(".rb") || path.ends_with?(".ru")
         next if ruby_non_production_path?(path)
-        content = read_file_content(path)
+        content = ruby_source(path)
         # Same rationale as the Sinatra analyzer: a Rails/Hanami route
         # table is never also a Padrino app's route file.
         next if rails_router_source?(content) || hanami_router_source?(content)
@@ -291,7 +291,7 @@ module Analyzer::Ruby
 
       get_files_by_extensions(RUBY_SOURCE_EXTENSIONS).each do |path|
         next if ruby_non_production_path?(path)
-        content = read_file_content(path)
+        content = ruby_source(path)
         next unless content.includes?("Padrino.mount")
 
         content.each_line do |line|

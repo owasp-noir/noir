@@ -138,7 +138,12 @@ module Analyzer::Elixir
       current_module = extract_module_name(content)
 
       index = 0
+      inline_scope_open = false
       while index < lines.size
+        if inline_scope_open
+          scope_stack.pop
+          inline_scope_open = false
+        end
         line = lines[index]
 
         if line.includes?("\"\"\"")
@@ -186,15 +191,14 @@ module Analyzer::Elixir
         end
 
         # Scope openers always contain the `scope` token.
-        if line.includes?("scope")
-          if match = line.match(/^(\s*)scope\s*(?:\(\s*)?["']([^"']+)["'](?:\s*,\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*))?/)
-            scope_stack << {prefix: match[2], module_prefix: match[3]? || "", indent: match[1].size}
-            index += 1
-            next
-          end
-
-          if match = line.match(/^(\s*)scope\s*(?:\(\s*)?unquote\(\s*(\w+)\s*\)(?:\s*,\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*))?/)
-            scope_stack << {prefix: string_bindings[match[2]]? || "", module_prefix: match[3]? || "", indent: match[1].size}
+        if opener = scope_opener(line)
+          prefix = opener[:unquote] ? (string_bindings[opener[:value]]? || "") : opener[:value]
+          scope_stack << {prefix: prefix, module_prefix: opener[:module_prefix], indent: opener[:indent]}
+          if body = opener[:inline_body]
+            # Popped at the top of the next iteration (see `scope_opener`).
+            inline_scope_open = true
+            line = body
+          else
             index += 1
             next
           end
@@ -305,39 +309,6 @@ module Analyzer::Elixir
       opens = trimmed.count('[') + trimmed.count('(') + trimmed.count('{')
       closes = trimmed.count(']') + trimmed.count(')') + trimmed.count('}')
       opens > closes
-    end
-
-    # Drop an Elixir line comment while preserving the string literals
-    # (and their quotes) the `resources` regex depends on — unlike the
-    # callee extractor's `strip_comment`, which discards quotes. A `#`
-    # only opens a comment outside a string, so a `#` inside a quoted
-    # path won't truncate the statement.
-    #
-    # No `#` → return the original slice (zero allocation). The common
-    # path for route / controller lines.
-    private def strip_trailing_comment(line : String) : String
-      return line unless line.includes?('#')
-
-      in_string = false
-      escaped = false
-      quote = '\0'
-      line.each_char_with_index do |char, i|
-        if in_string
-          if escaped
-            escaped = false
-          elsif char == '\\'
-            escaped = true
-          elsif char == quote
-            in_string = false
-          end
-        elsif char == '"' || char == '\''
-          in_string = true
-          quote = char
-        elsif char == '#'
-          return line[0, i]
-        end
-      end
-      line
     end
 
     def extract_controller_params
@@ -702,8 +673,13 @@ module Analyzer::Elixir
       scope_stack = [] of ScopeEntry
       endpoints = [] of Endpoint
       index = 0
+      inline_scope_open = false
 
       while index < route_macro.body_lines.size
+        if inline_scope_open
+          scope_stack.pop
+          inline_scope_open = false
+        end
         line = route_macro.body_lines[index]
         stripped = line.strip
 
@@ -727,19 +703,17 @@ module Analyzer::Elixir
           end
         end
 
-        if line.includes?("scope")
-          if match = line.match(/^(\s*)scope\s*(?:\(\s*)?["']([^"']+)["'](?:\s*,\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*))?/)
-            scope_stack << {prefix: match[2], module_prefix: match[3]? || "", indent: match[1].size}
+        if opener = scope_opener(line)
+          prefix = opener[:unquote] ? bindings[opener[:value]]? : opener[:value]
+          unless prefix
             index += 1
             next
           end
-
-          if match = line.match(/^(\s*)scope\s*(?:\(\s*)?unquote\(\s*(\w+)\s*\)(?:\s*,\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*))?/)
-            unless prefix = bindings[match[2]]?
-              index += 1
-              next
-            end
-            scope_stack << {prefix: prefix, module_prefix: match[3]? || "", indent: match[1].size}
+          scope_stack << {prefix: prefix, module_prefix: opener[:module_prefix], indent: opener[:indent]}
+          if body = opener[:inline_body]
+            inline_scope_open = true
+            line = body
+          else
             index += 1
             next
           end
@@ -944,6 +918,30 @@ module Analyzer::Elixir
     private def normalize_controller_ref(controller : String) : String
       normalized = controller.downcase.gsub("_controller", "controller")
       normalized.ends_with?("controller") ? normalized[0, normalized.size - "controller".size] : normalized
+    end
+
+    SCOPE_LITERAL_RE = /^(\s*)scope\s*(?:\(\s*)?["']([^"']+)["'](?:\s*,\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*))?/
+    SCOPE_UNQUOTE_RE = /^(\s*)scope\s*(?:\(\s*)?unquote\(\s*(\w+)\s*\)(?:\s*,\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*))?/
+    SCOPE_INLINE_RE  = /(?:^|[\s,(])do:\s*(.+)$/
+
+    # A `scope` opener on `line`: its indent, the literal prefix (or the
+    # `unquote(var)` name when `unquote` is set), the module alias, and —
+    # for the one-line `scope "/admin", App, do: get(...)` form, which has
+    # no `end` — the inline body. Callers push the scope, read the body
+    # under it, and pop it before the next line so the prefix cannot leak.
+    private def scope_opener(line : String) : NamedTuple(indent: Int32, value: String, unquote: Bool, module_prefix: String, inline_body: String?)?
+      return unless line.includes?("scope")
+
+      unquote = false
+      match = line.match(SCOPE_LITERAL_RE)
+      unless match
+        match = line.match(SCOPE_UNQUOTE_RE)
+        return unless match
+        unquote = true
+      end
+
+      inline_body = strip_trailing_comment(match.post_match).match(SCOPE_INLINE_RE).try(&.[1])
+      {indent: match[1].size, value: match[2], unquote: unquote, module_prefix: match[3]? || "", inline_body: inline_body}
     end
 
     private def current_scope_prefix(scope_stack : Array(ScopeEntry)) : String

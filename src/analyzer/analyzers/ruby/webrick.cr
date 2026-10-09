@@ -72,7 +72,7 @@ module Analyzer::Ruby
       parallel_file_scan do |path|
         next unless path.ends_with?(".rb") || path.ends_with?(".ru")
         next if ruby_non_production_path?(path)
-        content = read_file_content(path)
+        content = ruby_source(path)
         # Gate early on webrick signals (avoid unnecessary work + comment-only noise)
         next unless content.matches?(WEBRICK_EVIDENCE_RE)
         process_webrick_file(path, content, servlet_index, include_callee)
@@ -89,7 +89,7 @@ module Analyzer::Ruby
         next if ruby_non_production_path?(path)
         next unless File.exists?(path)
 
-        content = read_file_content(path)
+        content = ruby_source(path)
         next unless content.includes?("AbstractServlet")
 
         lines = content.lines

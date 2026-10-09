@@ -72,4 +72,23 @@ describe Noir::ClojureScanner do
         .should eq(source.bytesize - 1)
     end
   end
+
+  describe "skip_ws_and_comments" do
+    it "skips `#_` discarded forms, stacked ones included" do
+      source = %q(#_(GET "/x") #_ #_ [a] "s" #_#?(:clj y) #_sym live)
+      i = Noir::ClojureScanner.skip_ws_and_comments(source, 0, source.bytesize)
+      source.byte_slice(i, source.bytesize - i).should eq("live")
+    end
+
+    it "does not recurse on a long run of `#_`" do
+      source = "#_" * 100_000 + " x" * 100_000 + " live"
+      i = Noir::ClojureScanner.skip_ws_and_comments(source, 0, source.bytesize)
+      source.byte_slice(i, source.bytesize - i).should eq("live")
+    end
+
+    it "steps a walker over only the `#` of other dispatch forms" do
+      source = %q(#{"/a"})
+      Noir::ClojureScanner.skip_hash(source, 0, source.bytesize).should eq(1)
+    end
+  end
 end

@@ -42,7 +42,7 @@ module Analyzer::Ruby
     end
 
     private def analyze_file(path : String, include_callee : Bool)
-      content = read_file_content(path)
+      content = ruby_source(path)
       return unless content.matches?(RODA_EVIDENCE_RE)
 
       lines = content.lines

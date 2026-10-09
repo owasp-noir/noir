@@ -104,6 +104,39 @@ module Analyzer::Elixir
       i
     end
 
+    # Drop an Elixir line comment while preserving the string literals
+    # (and their quotes) the route regexes depend on — unlike the
+    # callee extractor's `strip_comment`, which discards quotes. A `#`
+    # only opens a comment outside a string, so a `#` inside a quoted
+    # path won't truncate the statement.
+    #
+    # No `#` → return the original slice (zero allocation). The common
+    # path for route / controller lines.
+    protected def strip_trailing_comment(line : String) : String
+      return line unless line.includes?('#')
+
+      in_string = false
+      escaped = false
+      quote = '\0'
+      line.each_char_with_index do |char, i|
+        if in_string
+          if escaped
+            escaped = false
+          elsif char == '\\'
+            escaped = true
+          elsif char == quote
+            in_string = false
+          end
+        elsif char == '"' || char == '\''
+          in_string = true
+          quote = char
+        elsif char == '#'
+          return line[0, i]
+        end
+      end
+      line
+    end
+
     # ExUnit's filename convention is rigid: every test module sits in
     # a file named `*_test.exs`, and `mix test` ignores anything else.
     # Production code never adopts that name, so the suffix check is

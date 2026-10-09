@@ -931,7 +931,7 @@ module Analyzer::Ruby
       files.each do |file|
         base = File.basename(file)
         next unless base == "plugin.rb" || base.ends_with?("routes.rb")
-        content = read_file_content(file)
+        content = ruby_source(file)
         next unless content.includes?("mount")
 
         content.each_line do |raw|
@@ -965,7 +965,7 @@ module Analyzer::Ruby
       bracket_depth = 0
       brace_depth = 0
 
-      read_file_content(routes_path).each_line.with_index(1) do |raw_line, line_number|
+      ruby_source(routes_path).each_line.with_index(1) do |raw_line, line_number|
         stripped = strip_inline_comment(raw_line).strip
         next if stripped.empty?
 
@@ -1464,7 +1464,7 @@ module Analyzer::Ruby
         return empty
       end
 
-      controller_content = read_file_content(path)
+      controller_content = ruby_source(path)
       param_type = "json" if controller_content.includes?("render json:")
       callees_by_action = extract_action_callees(controller_content, path) if callees_needed?
 

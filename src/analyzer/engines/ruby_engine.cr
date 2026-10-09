@@ -210,6 +210,216 @@ module Analyzer::Ruby
       scan_files(get_files_by_extensions(RUBY_SOURCE_EXTENSIONS), &block)
     end
 
+    # The file's text with the parts Ruby never runs blanked out: `=begin` …
+    # `=end` block comments, heredoc bodies, and everything after `__END__`.
+    # Every line keeps its place (blanked lines become empty), so line
+    # numbers and per-line walks are unaffected. Ruby analyzers read sources
+    # through this instead of `read_file_content`.
+    protected def ruby_source(path : String) : String
+      RubyEngine.mask_non_code(read_file_content(path))
+    end
+
+    EVAL_CALL_RE          = /(?:\b|_)eval\b/
+    RUBY_NON_CODE_HINT_RE = /^=begin|^__END__|<<[~-]?["'`]?[A-Za-z_]/m
+
+    def self.mask_non_code(content : String) : String
+      return content unless content.matches?(RUBY_NON_CODE_HINT_RE)
+
+      lines = content.split('\n')
+      index = HeredocTerminators.new(lines)
+      in_block_comment = false
+      changed = false
+      i = 0
+      while i < lines.size
+        line = lines[i]
+        if in_block_comment
+          in_block_comment = false if ruby_directive?(line, "=end")
+          lines[i] = ""
+          changed = true
+          i += 1
+          next
+        end
+
+        if ruby_directive?(line, "=begin")
+          in_block_comment = true
+          lines[i] = ""
+          changed = true
+          i += 1
+          next
+        end
+
+        if line.rstrip == "__END__"
+          (i...lines.size).each { |j| lines[j] = "" }
+          changed = true
+          break
+        end
+
+        # A line can open several heredocs (`call(<<~A, <<~B)`); their bodies
+        # follow one after another. An opener with no terminator below it was
+        # a misread `<<` (a shift, an append), so it masks nothing.
+        last = i
+        evaluated = nil
+        heredoc_openers(line) do |id, indented|
+          terminator = index.after(id, last, indented)
+          break unless terminator
+          # A heredoc handed to `eval`/`class_eval`/`instance_eval`/
+          # `module_eval` is Ruby that runs, whatever its id; `<<~RUBY` is
+          # the convention for such code even when the eval is elsewhere.
+          evaluated = line.matches?(EVAL_CALL_RE) if evaluated.nil?
+          unless evaluated || id == "RUBY"
+            (last + 1..terminator).each { |j| lines[j] = "" }
+            changed = true
+          end
+          last = terminator
+        end
+        i = last + 1
+      end
+
+      changed ? lines.join('\n') : content
+    end
+
+    # `=begin`/`=end` must start the line and be the whole first word.
+    private def self.ruby_directive?(line : String, word : String) : Bool
+      line.starts_with?(word) && (line.bytesize == word.bytesize || line.byte_at(word.bytesize).unsafe_chr.ascii_whitespace?)
+    end
+
+    # Yields each heredoc opened on `line` as (identifier, terminator may be
+    # indented). Strings and the trailing comment are skipped, and `<<` only
+    # counts at the start of an operand, so `1<<FLAGS` stays a shift.
+    private def self.heredoc_openers(line : String, &)
+      return unless line.includes?("<<")
+
+      size = line.bytesize
+      # Inside a string-like literal: `quote` is the byte that closes it and,
+      # for a bracketed `%w( … )`, `open` is the bracket that nests.
+      quote = 0_u8
+      open = 0_u8
+      depth = 0
+      j = 0
+      while j < size
+        byte = line.byte_at(j)
+        if quote != 0
+          if byte == '\\'.ord
+            j += 1
+          elsif open != 0 && byte == open
+            depth += 1
+          elsif byte == quote
+            if depth > 0
+              depth -= 1
+            else
+              quote = 0_u8
+              open = 0_u8
+            end
+          end
+        elsif byte == '"'.ord || byte == '\''.ord || byte == '`'.ord
+          quote = byte
+        elsif byte == '%'.ord && operand_start?(line, j) && (delimiter_at = percent_literal_delimiter(line, j))
+          # `%w(…)`, `%(…)`, `%r{…}`, `%q[…]`: a string, whatever it holds.
+          delimiter = line.byte_at(delimiter_at)
+          quote = PERCENT_CLOSERS[delimiter]? || delimiter
+          open = quote == delimiter ? 0_u8 : delimiter
+          depth = 0
+          j = delimiter_at
+        elsif byte == '/'.ord && regex_literal_start?(line, j)
+          quote = byte
+        elsif byte == '#'.ord
+          break
+        elsif byte == '<'.ord && j + 1 < size && line.byte_at(j + 1) == '<'.ord && operand_start?(line, j)
+          k = j + 2
+          indented = k < size && (line.byte_at(k) == '~'.ord || line.byte_at(k) == '-'.ord)
+          k += 1 if indented
+          id = nil
+          if k < size && (line.byte_at(k) == '"'.ord || line.byte_at(k) == '\''.ord || line.byte_at(k) == '`'.ord)
+            close = line.byte_index(line.byte_at(k), k + 1)
+            if close && close > k + 1
+              id = line.byte_slice(k + 1, close - k - 1)
+              k = close + 1
+            end
+          elsif k < size && (line.byte_at(k).unsafe_chr.ascii_letter? || line.byte_at(k) == '_'.ord)
+            start = k
+            while k < size && (line.byte_at(k).unsafe_chr.ascii_alphanumeric? || line.byte_at(k) == '_'.ord)
+              k += 1
+            end
+            id = line.byte_slice(start, k - start)
+          end
+          if id
+            yield id, indented
+            j = k
+            next
+          end
+          j += 1
+        end
+        j += 1
+      end
+    end
+
+    PERCENT_CLOSERS = {'('.ord.to_u8 => ')'.ord.to_u8, '['.ord.to_u8 => ']'.ord.to_u8,
+                       '{'.ord.to_u8 => '}'.ord.to_u8, '<'.ord.to_u8 => '>'.ord.to_u8}
+
+    # `<<` / `%` start a literal only where an operand can begin: at line
+    # start or right after whitespace or an opening/operator byte, so
+    # `1<<FLAGS` and `a%b` stay operators.
+    private def self.operand_start?(line : String, index : Int32) : Bool
+      index == 0 || " \t(,=[{|&!".includes?(line.byte_at(index - 1).unsafe_chr)
+    end
+
+    # Offset of the delimiter of a `%` literal starting at `index`
+    # (`%(`, `%w[`, `%r{`, `%q|` …), or nil when `%` is the modulo operator.
+    private def self.percent_literal_delimiter(line : String, index : Int32) : Int32?
+      k = index + 1
+      return if k >= line.bytesize
+      k += 1 if "qQwWiIrsx".includes?(line.byte_at(k).unsafe_chr) && k + 1 < line.bytesize
+      char = line.byte_at(k).unsafe_chr
+      return if char.ascii_alphanumeric? || char.ascii_whitespace? || char == '=' || char == '_' || line.byte_at(k) >= 0x80
+      k
+    end
+
+    # A `/` opens a regex literal when the previous non-blank byte cannot end
+    # an operand (`x = /re/`, `foo(/re/)`, `s =~ /re/`); after a name or `)`
+    # it is division.
+    private def self.regex_literal_start?(line : String, index : Int32) : Bool
+      k = index - 1
+      while k >= 0 && line.byte_at(k).unsafe_chr.ascii_whitespace?
+        k -= 1
+      end
+      k < 0 || "(,=[{|&!~;".includes?(line.byte_at(k).unsafe_chr)
+    end
+
+    # Line indices of every possible heredoc terminator, so finding the one
+    # that closes an opener is a binary search rather than a forward scan
+    # (a file of unterminated `<<X` lines would otherwise be quadratic).
+    private class HeredocTerminators
+      @indented : Hash(String, Array(Int32))? = nil
+      @flush : Hash(String, Array(Int32))? = nil
+
+      def initialize(@lines : Array(String))
+      end
+
+      # First line after `from` that closes heredoc `id`: the identifier
+      # alone on the line, at column 0 unless the opener was `<<~`/`<<-`.
+      def after(id : String, from : Int32, indented : Bool) : Int32?
+        build unless @indented
+        table = indented ? @indented : @flush
+        candidates = table.try(&.[id]?)
+        return unless candidates
+        pos = candidates.bsearch_index { |line_index| line_index > from }
+        pos ? candidates[pos] : nil
+      end
+
+      private def build
+        indented = Hash(String, Array(Int32)).new
+        flush = Hash(String, Array(Int32)).new
+        @lines.each_with_index do |line, line_index|
+          key = line.strip
+          next if key.empty? || key.bytesize > 128
+          (indented[key] ||= [] of Int32) << line_index
+          (flush[key] ||= [] of Int32) << line_index if line.rstrip == key
+        end
+        @indented = indented
+        @flush = flush
+      end
+    end
+
     protected def attach_ruby_callees(endpoint : Endpoint, callees : Array(Noir::RubyCalleeExtractor::Entry))
       Noir::RubyCalleeExtractor.attach_to(endpoint, callees)
     end
