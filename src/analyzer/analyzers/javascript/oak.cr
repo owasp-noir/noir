@@ -86,8 +86,6 @@ module Analyzer::Javascript
     # the mounting line lives in a different file.
     private def resolve_oak_mount_prefixes
       locator = CodeLocator.instance
-      boundary = @base_path
-
       all_files.each do |path|
         next unless [".ts", ".js", ".mjs", ".cjs"].any? { |ext| path.ends_with?(ext) }
         content = read_file_content(path)
@@ -100,6 +98,7 @@ module Analyzer::Javascript
         # (`import x from "./x.ts"`), but a `require(...)` scan is kept
         # too — cheap, and harmless if it never matches.
         imports = Hash(String, String).new
+        boundary = import_boundary_for(path)
         record_import = ->(var : String, spec : String) do
           resolved = Noir::ImportGraph.resolve_relative_import(path, spec, boundary: boundary)
           imports[var] = resolved if resolved

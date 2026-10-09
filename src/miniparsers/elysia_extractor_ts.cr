@@ -101,11 +101,16 @@ module Noir
 
     # ---- traversal --------------------------------------------------
 
-    private def walk(node : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route), depth : Int32, include_callees : Bool)
+    # `chained` is set while descending a chain's own links, so the chain
+    # head's `new Elysia({ prefix })` is read once, at the outermost call.
+    private def walk(node : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route), depth : Int32, include_callees : Bool, chained : Bool = false)
       return if depth > Noir::TreeSitter::MAX_AST_DEPTH
 
       if Noir::TreeSitter.node_type(node) == "call_expression"
         method = chain_method_name(node, source)
+        if !chained && route_chain_method?(method) && (ctor_prefix = constructor_prefix(node, source))
+          prefix = Noir::URLPath.join_trimmed(prefix, ctor_prefix)
+        end
         case
         when HTTP_VERB_METHODS.has_key?(method)
           emit_route(node, source, HTTP_VERB_METHODS[method], prefix, routes, include_callees)
@@ -126,8 +131,13 @@ module Noir
         end
       end
 
+      # An unrecognised link (`.onError(...)`) keeps the chain going through
+      # its receiver, so the links below it don't re-apply the head's prefix;
+      # its arguments start fresh.
+      link = chained && {"call_expression", "member_expression"}.includes?(Noir::TreeSitter.node_type(node))
       Noir::TreeSitter.each_named_child(node) do |child|
-        walk(child, source, prefix, routes, depth + 1, include_callees)
+        walk(child, source, prefix, routes, depth + 1, include_callees, chained: link)
+        link = false
       end
     end
 
@@ -154,7 +164,37 @@ module Noir
       return unless Noir::TreeSitter.node_type(callee) == "member_expression"
       inner = Noir::TreeSitter.first_named_child(callee)
       return unless inner
-      walk(inner, source, prefix, routes, depth + 1, include_callees) if Noir::TreeSitter.node_type(inner) == "call_expression"
+      walk(inner, source, prefix, routes, depth + 1, include_callees, chained: true) if Noir::TreeSitter.node_type(inner) == "call_expression"
+    end
+
+    private def route_chain_method?(method : String) : Bool
+      HTTP_VERB_METHODS.has_key?(method) || method == "all" ||
+        GROUP_METHODS.includes?(method) || TRANSPARENT_METHODS.includes?(method)
+    end
+
+    # The `prefix` option of the `new Elysia({ prefix: '/v1' })` a chain
+    # starts from. Iterative, and run once per chain, so long chains stay
+    # linear.
+    private def constructor_prefix(call : LibTreeSitter::TSNode, source : String) : String?
+      node = call
+      while Noir::TreeSitter.node_type(node) == "call_expression"
+        callee = Noir::TreeSitter.first_named_child(node)
+        return unless callee && Noir::TreeSitter.node_type(callee) == "member_expression"
+        node = Noir::TreeSitter.first_named_child(callee) || return
+      end
+      return unless Noir::TreeSitter.node_type(node) == "new_expression"
+      ctor = Noir::TreeSitter.field(node, "constructor")
+      return unless ctor && Noir::TreeSitter.node_text(ctor, source) == "Elysia"
+      options = Noir::TreeSitter.field(node, "arguments").try { |args| Noir::TreeSitter.first_named_child(args) }
+      return unless options && Noir::TreeSitter.node_type(options) == "object"
+      Noir::TreeSitter.each_named_child(options) do |pair|
+        next unless Noir::TreeSitter.node_type(pair) == "pair"
+        key = Noir::TreeSitter.field(pair, "key")
+        value = Noir::TreeSitter.field(pair, "value")
+        next unless key && value && decode_string(key, source) == "prefix"
+        return decode_string(value, source) if {"string", "template_string"}.includes?(Noir::TreeSitter.node_type(value))
+      end
+      nil
     end
 
     private def handle_group(call : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route), depth : Int32, include_callees : Bool)
@@ -181,9 +221,15 @@ module Noir
       args = arguments_node(call)
       return unless args
       Noir::TreeSitter.each_named_child(args) do |arg|
-        next unless Noir::TreeSitter.node_type(arg) == "arrow_function"
-        if body = arrow_body(arg)
-          walk(body, source, prefix, routes, depth + 1, include_callees)
+        case Noir::TreeSitter.node_type(arg)
+        when "arrow_function"
+          if body = arrow_body(arg)
+            walk(body, source, prefix, routes, depth + 1, include_callees)
+          end
+        when "call_expression"
+          # `.use(new Elysia({ prefix: '/admin' }).get(...))` — an inline
+          # plugin instance, whose own chain carries its prefix.
+          walk(arg, source, prefix, routes, depth + 1, include_callees)
         end
       end
     end
@@ -205,7 +251,7 @@ module Noir
       return unless path
 
       full_path = Noir::URLPath.join_trimmed(prefix, path)
-      line = Noir::TreeSitter.node_start_row(call)
+      line = Noir::TreeSitter.call_name_row(call)
 
       query_params = [] of String
       header_params = [] of String

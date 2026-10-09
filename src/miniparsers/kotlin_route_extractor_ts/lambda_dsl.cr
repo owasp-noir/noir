@@ -144,7 +144,7 @@ module Noir
       end
 
       routes << TreeSitterJvmLambdaDslExtractor::Route.new(verb, Noir::URLPath.join_trimmed(prefix, path),
-        Noir::TreeSitter.node_start_row(node), body_type, has_body,
+        Noir::TreeSitter.call_name_row(node), body_type, has_body,
         query_params.uniq, form_params.uniq, header_params.uniq, cookie_params.uniq, callees, protocol)
     end
 
@@ -159,7 +159,7 @@ module Noir
 
       item_path = item_arg ? Noir::URLPath.join_trimmed(prefix, item_arg) : prefix
       collection_path = TreeSitterJvmLambdaDslExtractor.crud_collection_path(item_path)
-      line = Noir::TreeSitter.node_start_row(node)
+      line = Noir::TreeSitter.call_name_row(node)
       { {"GET", collection_path}, {"POST", collection_path}, {"GET", item_path},
        {"PATCH", item_path}, {"DELETE", item_path} }.each do |(verb, path)|
         routes << TreeSitterJvmLambdaDslExtractor::Route.new(verb, path, line, nil, false,

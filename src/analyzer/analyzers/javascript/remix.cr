@@ -300,6 +300,7 @@ module Analyzer::Javascript
           end
         end
       end
+      nil
     end
 
     private def named_handler_line(content : String, name : String) : Int32?

@@ -69,8 +69,6 @@ module Analyzer::Javascript
     # has one aggregator file (`routes/index.js`) wiring every sub-router.
     private def resolve_koa_mount_prefixes
       locator = CodeLocator.instance
-      boundary = @base_path
-
       all_files.each do |path|
         next unless [".js", ".ts", ".mts", ".cts", ".mjs", ".cjs"].any? { |ext| path.ends_with?(ext) }
         content = read_file_content(path)
@@ -80,6 +78,7 @@ module Analyzer::Javascript
 
         # Map local identifiers to the router file they import.
         imports = Hash(String, String).new
+        boundary = import_boundary_for(path)
         record_import = ->(var : String, spec : String) do
           resolved = Noir::ImportGraph.resolve_relative_import(path, spec, boundary: boundary)
           imports[var] = resolved if resolved

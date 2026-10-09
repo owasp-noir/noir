@@ -387,17 +387,21 @@ module Analyzer::Javascript
     # Signature of the class method that follows a run of decorators.
     # `dotted_decorator_names` lets a decorator name contain `.`
     # (LoopBack's `@requestBody.file()`); NestJS names stop at `.`.
+    # `\G` anchors at the match offset, so the signature is matched in place
+    # rather than on a copy of the rest of the class per route decorator.
+    METHOD_SIGNATURE_AT = /\G\s*(?:(?:public|private|protected|static|async|readonly|override)\s+)*([A-Za-z_$][\w$]*)\s*\(/
+
     protected def method_signature_after_decorators(content : String, start_pos : Int32, dotted_decorator_names : Bool = false)
       idx = skip_decorators_and_whitespace(content, start_pos, dotted_decorator_names)
-      section = content[idx..-1]
-      match = section.match(/\A\s*(?:(?:public|private|protected|static|async|readonly|override)\s+)*([A-Za-z_$][\w$]*)\s*\(/)
+      return if idx > content.size
+      match = content.match(METHOD_SIGNATURE_AT, idx)
       return unless match
 
-      open_paren = idx + match.end(0) - 1
+      open_paren = match.end(0) - 1
       close_paren = Noir::JSRouteExtractor.find_matching_paren(content, open_paren)
       return unless close_paren
 
-      open_brace = content.index("{", close_paren)
+      open_brace = content.index('{', close_paren)
       return unless open_brace
       close_brace = Noir::JSRouteExtractor.find_matching_brace(content, open_brace)
 
@@ -424,39 +428,55 @@ module Analyzer::Javascript
     # method itself — guards, interceptors, `@authenticate('jwt')`, custom
     # ones — so walk forward over any `@word(...)` / `@word` sequence.
     private def skip_decorators_and_whitespace(content : String, start_pos : Int32, dotted_names : Bool) : Int32
-      idx = start_pos
       # `content[i]` re-decodes UTF-8 from byte 0 on every call once the
-      # string isn't single_byte_optimizable? (any non-ASCII char), making
-      # this O(n^2) when walked once per route decorator in a large
-      # non-ASCII controller class. Index a pre-materialized Char array
-      # instead — same semantics, O(1) lookup.
-      chars = content.chars
+      # string isn't single_byte_optimizable? (any non-ASCII char), so index
+      # a Char array there. ASCII content — the norm — reads its bytes in
+      # place: materialising the whole class per route decorator made a
+      # many-route controller quadratic in allocation alone.
+      if content.bytesize == content.size
+        skip_decorators_in(content, content.to_slice, start_pos, dotted_names)
+      else
+        skip_decorators_in(content, content.chars, start_pos, dotted_names)
+      end
+    end
+
+    private def skip_decorators_in(content : String, src, start_pos : Int32, dotted_names : Bool) : Int32
+      idx = start_pos
+      size = src.size
       loop do
-        while idx < chars.size && chars[idx].whitespace?
+        while idx < size && char_at(src, idx).whitespace?
           idx += 1
         end
-        break if idx >= chars.size || chars[idx] != '@'
+        break if idx >= size || char_at(src, idx) != '@'
 
         name_end = idx + 1
-        while name_end < chars.size && (chars[name_end].alphanumeric? || chars[name_end] == '_' || chars[name_end] == '$' || (dotted_names && chars[name_end] == '.'))
+        while name_end < size && ((c = char_at(src, name_end)).alphanumeric? || c == '_' || c == '$' || (dotted_names && c == '.'))
           name_end += 1
         end
 
         scan = name_end
-        while scan < chars.size && chars[scan].whitespace?
+        while scan < size && char_at(src, scan).whitespace?
           scan += 1
         end
 
-        if scan < chars.size && chars[scan] == '('
+        if scan < size && char_at(src, scan) == '('
           close = Noir::JSRouteExtractor.find_matching_paren(content, scan)
           break unless close
           idx = close + 1
         else
           newline = content.index('\n', scan)
-          idx = newline ? newline + 1 : chars.size
+          idx = newline ? newline + 1 : size
         end
       end
       idx
+    end
+
+    private def char_at(src : Bytes, i : Int32) : Char
+      src.unsafe_fetch(i).unsafe_chr
+    end
+
+    private def char_at(src : Array(Char), i : Int32) : Char
+      src.unsafe_fetch(i)
     end
 
     private def resolve_static_file_path(source_path : String, raw_path : String) : String

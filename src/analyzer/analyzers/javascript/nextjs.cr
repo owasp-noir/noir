@@ -23,6 +23,31 @@ module Analyzer::Javascript
     EXPORT_VERB_FUNCTION_SIG_RES = HTTP_METHODS.map { |m| {m, /export\s+(?:async\s+)?function\s+#{m}\b\s*\([^)]*\)/} }.to_h
     EXPORT_VERB_CONST_ARROW_RES  = HTTP_METHODS.map { |m| {m, /export\s+const\s+#{m}\s*=\s*(?:async\s*)?(?:\([^)]*\)|\w+)(?:\s*:\s*[^=]+?)?\s*=>/} }.to_h
 
+    # Pages Router method checks. The receiver is `req.method` /
+    # `request.method`, or a bare `method` once the file binds it from the
+    # request (`const { method } = req`, `const method = req.method`).
+    METHOD_FROM_REQUEST      = /(?<![\w$.])method\s*=\s*(?:req|request)\.method\b/
+    DESTRUCTURE_FROM_REQUEST = /\{((?:[^{}]++|\{[^{}]*+\})*+)\}\s*=\s*(?:req|request)\b(?!\s*[.\[])/
+    BARE_METHOD_KEY          = /(?<![\w$.:])method\b(?!\s*:)/
+    METHOD_EQ                = /\b(?:req|request)\.method\s*===?\s*['"]([A-Z]+)['"]/
+    METHOD_EQ_BARE           = /(?:\b(?:req|request)\.|(?<![\w$.]))method\s*===?\s*['"]([A-Z]+)['"]/
+    METHOD_NE                = /\b(?:req|request)\.method\s*!==?\s*['"]([A-Z]+)['"]/
+    METHOD_NE_BARE           = /(?:\b(?:req|request)\.|(?<![\w$.]))method\s*!==?\s*['"]([A-Z]+)['"]/
+    METHOD_SWITCH            = /switch\s*\(\s*(?:req|request)\.method\s*\)/
+    METHOD_SWITCH_BARE       = /switch\s*\(\s*(?:(?:req|request)\.)?method\s*\)/
+    METHOD_INCLUDES          = /\[\s*([^\]]+)\]\s*\.includes\s*\(\s*(?:req|request)\.method/
+    METHOD_INCLUDES_BARE     = /\[\s*([^\]]+)\]\s*\.includes\s*\(\s*(?:(?:req|request)\.)?method\b/
+    # `if (<cond>)` followed by its consequent: an immediate `throw`, the
+    # block up to its first brace (captured in a lookahead, so a guard
+    # nested in that block is still scanned), or a `return` statement.
+    # Every repetition is possessive or a single char class: grouped
+    # repetition overflowed the PCRE2 JIT stack on long hostile input.
+    METHOD_GUARD = /\bif\s*\(((?:[^(){};]++|\([^()]*+\))*+)\)\s*(?:(throw)\b|(?=\{([^{}]*))|return\b([^{};\n]*))/
+    # What makes a consequent a rejection, and what makes it conditional
+    # (a nested `if`, ternary or `&&`/`||` ahead of the rejection).
+    GUARD_REJECTS     = /\bthrow\b|\b4\d\d\b|\bMETHOD_NOT_ALLOWED\b|(?i:not allowed)/
+    GUARD_CONDITIONAL = /\bif\b|\?|&&|\|\|/
+
     def analyze
       result = [] of Endpoint
       mutex = Mutex.new
@@ -303,6 +328,7 @@ module Analyzer::Javascript
           end
         end
       end
+      nil
     end
 
     private def extract_braced_body(content : String, start_pos : Int32) : Tuple(String, Int32)?
@@ -356,17 +382,37 @@ module Analyzer::Javascript
       return explicit unless explicit.empty?
 
       # Heuristic: look for req.method checks to infer declared methods.
+      bare = binds_bare_method?(content)
       inferred = [] of String
-      content.scan(/req\.method\s*===?\s*['"]([A-Z]+)['"]/) do |m|
+      content.scan(bare ? METHOD_EQ_BARE : METHOD_EQ) do |m|
         method = m[1]
         inferred << method if HTTP_METHODS.includes?(method) && !inferred.includes?(method)
       end
 
-      infer_switch_method_cases(content).each do |method|
+      # `if (req.method !== 'POST') return res.status(405)...` — an early
+      # exit guard names the methods that get past it. A negation that only
+      # gates some branch says nothing, so it must lead to a rejection, and
+      # only an `||` arm made purely of `&&`-joined method negations bounds
+      # the method (`!== 'GET' && !token` still lets an authed POST in).
+      if content.includes?("!=")
+        ne = bare ? METHOD_NE_BARE : METHOD_NE
+        content.scan(METHOD_GUARD) do |guard|
+          next unless guard[2]? || rejecting_consequent?(guard[3]? || guard[4]? || "")
+          guard[1].split("||").each do |arm|
+            next unless arm.gsub(ne, "").gsub(/[\s()&]/, "").empty?
+            arm.scan(ne) do |m|
+              method = m[1]
+              inferred << method if HTTP_METHODS.includes?(method) && !inferred.includes?(method)
+            end
+          end
+        end
+      end
+
+      infer_switch_method_cases(content, bare).each do |method|
         inferred << method if HTTP_METHODS.includes?(method) && !inferred.includes?(method)
       end
 
-      content.scan(/\[\s*([^\]]+)\]\s*\.includes\s*\(\s*req\.method/) do |m|
+      content.scan(bare ? METHOD_INCLUDES_BARE : METHOD_INCLUDES) do |m|
         m[1].scan(/['"]([A-Z]+)['"]/) do |mm|
           method = mm[1]
           inferred << method if HTTP_METHODS.includes?(method) && !inferred.includes?(method)
@@ -379,9 +425,30 @@ module Analyzer::Javascript
       ["GET", "POST", "PUT", "DELETE", "PATCH"]
     end
 
-    private def infer_switch_method_cases(content : String) : Array(String)
+    # A block or `return` statement that rejects the request outright, with
+    # no nested condition ahead of the rejection: the write branch of
+    # `if (req.method !== 'GET') { if (!id) return res.status(400) ... }`
+    # validates, it does not reject non-GET methods.
+    private def rejecting_consequent?(text : String) : Bool
+      return false unless reject = text =~ GUARD_REJECTS
+      conditional = text =~ GUARD_CONDITIONAL
+      conditional.nil? || reject < conditional
+    end
+
+    # `const method = req.method`, or `method` among the top-level keys of
+    # an object pattern destructured from the request — nested patterns
+    # (`{ query: { id }, method }`) are dropped before looking.
+    private def binds_bare_method?(content : String) : Bool
+      return true if content.matches?(METHOD_FROM_REQUEST)
+      content.scan(DESTRUCTURE_FROM_REQUEST) do |m|
+        return true if m[1].gsub(/\{[^{}]*\}/, "").matches?(BARE_METHOD_KEY)
+      end
+      false
+    end
+
+    private def infer_switch_method_cases(content : String, bare : Bool) : Array(String)
       methods = [] of String
-      content.scan(/switch\s*\(\s*(?:req|request)\.method\s*\)/) do |match|
+      content.scan(bare ? METHOD_SWITCH_BARE : METHOD_SWITCH) do |match|
         match_end = match.end(0)
         next unless match_end
 
@@ -426,7 +493,7 @@ module Analyzer::Javascript
 
       methods = [] of String
       specs.each do |spec|
-        target = Noir::ImportGraph.resolve_relative_import(path, spec, boundary: @base_path)
+        target = Noir::ImportGraph.resolve_relative_import(path, spec, boundary: import_boundary_for(path))
         next unless target
         begin
           target_content = Noir::JSRouteExtractor.strip_js_comments(read_file_content(target))

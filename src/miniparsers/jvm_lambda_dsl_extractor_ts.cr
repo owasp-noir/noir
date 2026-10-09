@@ -191,7 +191,7 @@ module Noir
       end
 
       full_path = Noir::URLPath.join_trimmed(prefix, path_arg)
-      line = Noir::TreeSitter.node_start_row(call)
+      line = Noir::TreeSitter.call_name_row(call)
 
       query_params = [] of String
       form_params = [] of String
@@ -259,7 +259,7 @@ module Noir
 
       item_path = item_path_arg ? Noir::URLPath.join_trimmed(prefix, item_path_arg) : prefix
       collection_path = crud_collection_path(item_path)
-      line = Noir::TreeSitter.node_start_row(call)
+      line = Noir::TreeSitter.call_name_row(call)
 
       [
         {"GET", collection_path},

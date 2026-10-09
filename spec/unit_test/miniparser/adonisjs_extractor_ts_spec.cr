@@ -144,4 +144,16 @@ describe Noir::TreeSitterAdonisJsExtractor do
 
     Noir::TreeSitterAdonisJsExtractor.extract_routes(source).should be_empty
   end
+
+  it "reports a prettier-broken route chain on its verb line" do
+    source = <<-TS
+      router
+        .get('/a', [UsersController, 'index'])
+        .as('users.index')
+      router.post('/b', [UsersController, 'store'])
+      TS
+
+    routes = Noir::TreeSitterAdonisJsExtractor.extract_routes(source)
+    routes.map { |r| {r.path, r.line} }.should eq([{"/a", 1}, {"/b", 3}])
+  end
 end
