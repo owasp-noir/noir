@@ -71,6 +71,8 @@ expected_endpoints = [
     Param.new("year", "", "path"),
     Param.new("slug", "", "path"),
   ]),
+  Endpoint.new("/about", "GET"),
+  Endpoint.new("/terms", "GET"),
   Endpoint.new("/first/health", "GET"),
   Endpoint.new("/rooted/Tilde/x", "GET"),
   Endpoint.new("/mapped/ping", "GET"),
@@ -175,6 +177,14 @@ describe "ASP.NET Core MVC analyzer edge cases", tags: "functional" do
     blog.map(&.method).should eq ["GET"]
     blog.first.params.map(&.name).sort!.should eq ["slug", "year"]
     blog.first.details.code_paths.size.should eq 1
+  end
+
+  it "reads a nameof pin and reports an unreadable pin's template once" do
+    about = tester.app.endpoints.find! { |e| e.url == "/about" }
+    about.details.code_paths.map(&.path).first.should end_with "HomeController.cs"
+    terms = tester.app.endpoints.select { |e| e.url == "/terms" }
+    terms.size.should eq 1
+    terms.first.details.code_paths.all?(&.path.ends_with?("Program.cs")).should be_true
   end
 
   it "does not report NonAction task-returning helpers as endpoints" do

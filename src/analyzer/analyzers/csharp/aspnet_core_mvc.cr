@@ -12,17 +12,35 @@ module Analyzer::CSharp
 
     CONTROLLER_PLACEHOLDER_RE = /\{controller[=:?}]/
     ACTION_PLACEHOLDER_RE     = /\{action[=:?}]/
-    CONTROLLER_DEFAULT_RE     = /\bcontroller\s*=\s*@?"(\w+)"/i
-    ACTION_DEFAULT_RE         = /\baction\s*=\s*@?"(\w+)"/i
+    # `controller = "Home"` or `action = nameof(HomeController.About)`.
+    CONTROLLER_DEFAULT_RE = /\bcontroller\s*=\s*(?:@?"(\w+)"|nameof\s*\(\s*(?:[\w.]+\.)?(\w+))/i
+    ACTION_DEFAULT_RE     = /\baction\s*=\s*(?:@?"(\w+)"|nameof\s*\(\s*(?:[\w.]+\.)?(\w+))/i
+    # Run over the call with its string literals emptied (so the template's
+    # own `{controller=Home}` can't match): a pin set from a constant or
+    # expression, or a `defaults:` object passed in a variable.
+    UNREADABLE_PIN_RE = /\b(?:controller|action)\s*=\s*(?!"|@"|nameof\b)[\w(]|\bdefaults\s*:\s*(?!new\b)\w/i
+    STRING_LITERAL_RE = /@?"[^"]*"/
 
     # A conventional route template plus the `controller`/`action` its
     # `defaults` pin. A template without a `{controller}`/`{action}`
     # placeholder (`blog/{slug}` + `new { controller = "Blog", action =
     # "Show" }`) reaches only the pinned action, never every action.
-    record ConventionalRoute, pattern : String, controller : String? = nil, action : String? = nil do
+    #
+    # When a needed pin can't be read statically (`action = Actions.About`),
+    # the template is `standalone?`: reported once from its declaration
+    # rather than attached to a guessed action or dropped.
+    record ConventionalRoute, pattern : String, controller : String? = nil, action : String? = nil,
+      unreadable_pin : Bool = false, file : String = "", line : Int32 = 0 do
       def applies_to?(controller_name : String, action_name : String) : Bool
+        return false if standalone?
         reaches?(CONTROLLER_PLACEHOLDER_RE, controller, controller_name) &&
           reaches?(ACTION_PLACEHOLDER_RE, action, action_name)
+      end
+
+      def standalone? : Bool
+        unreadable_pin &&
+          ((controller.nil? && !pattern.matches?(CONTROLLER_PLACEHOLDER_RE)) ||
+            (action.nil? && !pattern.matches?(ACTION_PLACEHOLDER_RE)))
       end
 
       private def reaches?(placeholder : Regex, pinned : String?, name : String) : Bool
@@ -54,7 +72,17 @@ module Analyzer::CSharp
       project_roots = Common.project_roots(get_files_by_extension(".csproj"))
       route_patterns_by_scope = load_route_patterns_by_scope(project_roots)
       analyze_controllers(route_patterns_by_scope, project_roots, include_callee)
+      route_patterns_by_scope.each_value do |patterns|
+        patterns.each { |pattern| emit_standalone_route(pattern) if pattern.standalone? }
+      end
       @result
+    end
+
+    private def emit_standalone_route(pattern : ConventionalRoute)
+      route = normalize_route(prune_optional_placeholders(pattern.pattern, [] of Param))
+      endpoint = Endpoint.new(route, "GET", Details.new(PathInfo.new(pattern.file, pattern.line)))
+      align_params_with_route([] of Param, route).each { |param| endpoint.params << param }
+      @result << endpoint
     end
 
     # Conventional routing is declared per project, so scope the collected
@@ -115,7 +143,7 @@ module Analyzer::CSharp
 
       files.each do |file|
         content = read_file_content(file)
-        patterns_by_scope[route_scope_for(file, project_roots)].concat(extract_route_patterns(content))
+        patterns_by_scope[route_scope_for(file, project_roots)].concat(extract_route_patterns(content, file))
       rescue e
         logger.debug "Failed to read #{file}: #{e.message}"
       end
@@ -132,7 +160,7 @@ module Analyzer::CSharp
       patterns_by_scope
     end
 
-    private def extract_route_patterns(content : String) : Array(ConventionalRoute)
+    private def extract_route_patterns(content : String, file : String) : Array(ConventionalRoute)
       patterns = [] of ConventionalRoute
 
       route_regex = /Map[A-Za-z]*ControllerRoute\s*\((.*?)\)/m
@@ -141,13 +169,15 @@ module Analyzer::CSharp
 
       content.scan(route_regex) do |match|
         call_content = match[1]? || ""
-        controller = CONTROLLER_DEFAULT_RE.match(call_content).try(&.[1])
-        action = ACTION_DEFAULT_RE.match(call_content).try(&.[1])
+        controller = CONTROLLER_DEFAULT_RE.match(call_content).try { |m| m[1]? || m[2]? }
+        action = ACTION_DEFAULT_RE.match(call_content).try { |m| m[1]? || m[2]? }
+        unreadable = call_content.gsub(STRING_LITERAL_RE, "\"\"").matches?(UNREADABLE_PIN_RE)
+        line = content[0, match.begin].count('\n') + 1
 
         found_pattern = false
         call_content.scan(pattern_regex) do |pattern_match|
           value = pattern_match[1]?
-          patterns << ConventionalRoute.new(value, controller, action) if value
+          patterns << ConventionalRoute.new(value, controller, action, unreadable, file, line) if value
           found_pattern = true
         end
 
@@ -155,7 +185,7 @@ module Analyzer::CSharp
         unless found_pattern
           call_content.scan(literal_regex) do |literal_match|
             candidate = literal_match[1]?
-            patterns << ConventionalRoute.new(candidate, controller, action) if candidate && !candidate.empty?
+            patterns << ConventionalRoute.new(candidate, controller, action, unreadable, file, line) if candidate && !candidate.empty?
           end
         end
       end
