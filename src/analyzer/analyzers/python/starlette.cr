@@ -390,14 +390,22 @@ module Analyzer::Python
         end
       end
 
+      # A list mounted into itself (`routes = [Mount('/v1', routes=routes)]`
+      # rebinding the name) is not a nesting edge; drop it.
+      mount_edges.reject! { |parent_route_list, route_list, _| parent_route_list == route_list }
+
       mount_edges.each do |parent_route_list, route_list, mount_prefix|
         next if parent_route_list
         add_route_list_prefix(prefixes, route_list, mount_prefix)
       end
 
+      # Cap the fixpoint: an acyclic edge set settles within one pass per
+      # edge, and an `a -> b -> a` cycle would otherwise grow prefixes forever.
       changed = true
-      while changed
+      iterations = 0
+      while changed && iterations <= mount_edges.size
         changed = false
+        iterations += 1
         mount_edges.each do |parent_route_list, route_list, mount_prefix|
           next unless parent_route_list
 
@@ -448,7 +456,7 @@ module Analyzer::Python
         bracket_depth = 0
         index = line_index
         while index < lines.size
-          bracket_depth += lines[index].count('[') - lines[index].count(']')
+          bracket_depth += python_bracket_delta(lines[index])
           end_line = index
           break if bracket_depth <= 0
           index += 1
@@ -541,7 +549,7 @@ module Analyzer::Python
         bracket_depth = 0
         index = line_index
         while index < lines.size
-          bracket_depth += lines[index].count('[') - lines[index].count(']')
+          bracket_depth += python_bracket_delta(lines[index])
           end_line = index
           break if bracket_depth <= 0
           index += 1

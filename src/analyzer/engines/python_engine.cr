@@ -1001,7 +1001,8 @@ module Analyzer::Python
     # line, ignoring delimiters that fall inside single- or
     # double-quoted strings on the same line — a `"("` inside a route
     # pattern or a `"["` inside a regex must not move the depth.
-    # Backslash escapes are tracked inside a quoted run so that `\'`
+    # Counting stops at an unquoted `#`, so a `[` in a trailing comment
+    # does not leave a collection open. Backslash escapes are tracked inside a quoted run so that `\'`
     # / `\"` do not close it early.
     #
     # Only same-line quoting is modelled: `in_quote` resets on every
@@ -1032,6 +1033,8 @@ module Analyzer::Python
         end
 
         case ch
+        when '#'
+          break
         when '\'', '"'
           in_quote = ch
         when open_char
