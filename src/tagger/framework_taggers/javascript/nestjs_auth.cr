@@ -1,7 +1,7 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 
-@[Noir::TaggerFor(key: "nestjs_auth", name: "NestJS Auth Tagger", desc: "Identifies NestJS authentication patterns (Guards, decorators)", order: 150)]
+@[Noir::TaggerFor(key: "nestjs_auth", name: "NestJS Auth Tagger", desc: "Identifies NestJS-style decorator auth (Nest guards, tsoa @Security, routing-controllers @Authorized, Ts.ED @Authenticate)", order: 150)]
 class NestjsAuthTagger < FrameworkTagger
   # NestJS authentication guards — verify who the caller is.
   GUARD_PATTERNS = [
@@ -11,6 +11,11 @@ class NestjsAuthTagger < FrameworkTagger
     {/\@UseGuards\s*\(\s*AuthenticationGuard/, "NestJS @UseGuards(AuthenticationGuard)"},
     {/\@UseGuards\s*\(\s*\w*[Aa]uth\w*Guard/, "NestJS auth guard"},
     {/\@UseGuards\s*\(\s*GqlAuthGuard/, "NestJS GraphQL auth guard"},
+    # The other decorator-controller frameworks (tsoa, routing-controllers,
+    # Ts.ED) mark authenticated handlers and controllers the same way.
+    {/\@Security\s*\(/, "tsoa @Security"},
+    {/\@Authorized\s*\(/, "routing-controllers @Authorized"},
+    {/\@(?:Authenticate|Authorize|UseAuth)\s*\(/, "Ts.ED @Authenticate"},
   ]
 
   # NestJS authorization decorators/guards — verify what the caller may do.
@@ -37,6 +42,7 @@ class NestjsAuthTagger < FrameworkTagger
     /\@Public\s*\(\)/,
     /\@SkipAuth\s*\(\)/,
     /\@AllowAnonymous\s*\(\)/,
+    /\@NoSecurity\s*\(\)/, # tsoa
     /\@SetMetadata\s*\(\s*['"]isPublic['"]/,
   ]
 
@@ -46,7 +52,7 @@ class NestjsAuthTagger < FrameworkTagger
   end
 
   def self.target_techs : Array(String)
-    ["js_nestjs", "ts_nestjs"]
+    ["js_nestjs", "ts_nestjs", "ts_tsoa", "ts_routing_controllers", "ts_tsed"]
   end
 
   private def check_endpoint(endpoint : Endpoint)
@@ -112,8 +118,10 @@ class NestjsAuthTagger < FrameworkTagger
     while idx >= 0 && idx >= method_line - 8
       current = lines[idx].strip
       break if current.empty? && idx < method_line - 1
-      # Stop if we hit another method
+      # Stop if we hit another method: its signature, or the closing brace
+      # of a non-async one, which the signature test does not catch.
       break if current.includes?("async ") && current.includes?("(") && idx < method_line - 1
+      break if current == "}"
 
       collect_decorator_line(current, authn_descs, authz_descs)
 
