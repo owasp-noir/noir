@@ -80,19 +80,24 @@ class OutputBuilderPowershell < OutputBuilder
     "@{#{parts.join("; ")}}"
   end
 
-  # Escape special PowerShell characters in strings
-  # Note: We wrap values in double quotes, so single quotes don't need escaping
+  # Escape special PowerShell characters in strings. Every value is wrapped
+  # in double quotes (no single-quoted strings are emitted, so `'` and its
+  # typographic variants need nothing).
+  #
+  # PowerShell also closes a double-quoted string on the typographic quotes
+  # U+201C/U+201D/U+201E, so a route `/a\u201C;Start-Process calc;\u201C`
+  # broke out of `-Uri "..."` and ran a command; they are backticked like `"`.
+  # Any other control character (a route carrying `\e]8;;...` would drive the
+  # terminal the command is printed to) becomes a subexpression that yields
+  # the same character, in every PowerShell version.
   private def escape_powershell(str : String) : String
     str
-      .gsub("`", "``")   # Escape backticks
-      .gsub("$", "`$")   # Escape dollar signs
-      .gsub("\"", "`\"") # Escape double quotes
-      .gsub("\r", "`r")  # Escape carriage return
-      .gsub("\n", "`n")  # Escape newline
-      .gsub("\t", "`t")  # Escape tab
-    # Any other control character (a route carrying `\e]8;;…` would drive
-    # the terminal the command is printed to) as a subexpression that
-    # yields the same character, in every PowerShell version.
+      .gsub("`", "``")                                     # Escape backticks
+      .gsub("$", "`$")                                     # Escape dollar signs
+      .gsub(/["\x{201C}\x{201D}\x{201E}]/) { |q| "`#{q}" } # Escape double quotes
+      .gsub("\r", "`r")                                    # Escape carriage return
+      .gsub("\n", "`n")                                    # Escape newline
+      .gsub("\t", "`t")                                    # Escape tab
       .gsub(/[\x00-\x1f\x7f-\x9f]/) { |char| "$([char]0x#{char[0].ord.to_s(16).upcase.rjust(2, '0')})" }
   end
 end

@@ -171,4 +171,26 @@ describe "OutputBuilderPowershell" do
     lines[0].should eq(%(Invoke-WebRequest -Method "GET" -Uri "/c" -Headers @{"Cookie"="theme=dark; sid=1"; "X-A"="1"}))
     lines[1].should eq(%(Invoke-WebRequest -Method "POST" -Uri "/up" -Form @{"doc"=""}))
   end
+
+  it "backticks typographic double quotes so a route cannot close the string" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderPowershell.new(options)
+    builder.io = IO::Memory.new
+
+    # PowerShell ends a "..." string on U+201C/U+201D/U+201E as well as on
+    # `"`, so this route used to run `Start-Process calc`.
+    endpoint = Endpoint.new("/a\u201C;Start-Process calc;\u201D\u201E", "GET")
+    endpoint.push_param(Param.new("h\u201C", "v\u201E", "header"))
+
+    builder.print([endpoint])
+    line = builder.io.to_s.strip
+
+    line.should eq(%(Invoke-WebRequest -Method "GET" -Uri "/a`\u201C;Start-Process calc;`\u201D`\u201E" -Headers @{"h`\u201C"="v`\u201E"}))
+  end
 end
