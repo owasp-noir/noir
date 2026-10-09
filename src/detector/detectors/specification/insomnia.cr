@@ -20,7 +20,7 @@ module Detector::Specification
                             content_matches?(file_contents, TYPE_FIELD_MARKER)
 
         begin
-          data = JSON.parse(file_contents)
+          data = parse_json_lenient(file_contents)
           # Insomnia v4 export: top-level `_type: "export"` + `__export_format`
           type_field = data["_type"]?.try(&.as_s?)
           if type_field == "export" && data["__export_format"]?

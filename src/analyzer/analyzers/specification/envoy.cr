@@ -41,7 +41,7 @@ module Analyzer::Specification
 
       each_spec_file_with_details(Noir::LocatorKeys::ENVOY_JSON) do |path, details|
         content = read_file_content(path)
-        process_json(JSON.parse(content), details)
+        process_json(parse_json_lenient(content), details)
       end
 
       @result

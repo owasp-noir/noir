@@ -34,7 +34,7 @@ module Detector::Specification
       if filename.ends_with?(".json")
         return false unless content_matches?(file_contents, OPENAPI3_JSON_MARKER)
         begin
-          data = JSON.parse(file_contents)
+          data = parse_json_lenient(file_contents)
           if data["openapi"].as_s.includes? "3."
             CodeLocator.instance.push(Noir::LocatorKeys::OAS3_JSON, filename)
             return true

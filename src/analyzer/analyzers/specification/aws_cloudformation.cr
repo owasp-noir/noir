@@ -29,9 +29,9 @@ module Analyzer::Specification
 
     private def parse_resources(path : String, content : String) : ResourceMap
       doc = if path.ends_with?(".json")
-              JSON.parse(content)
+              parse_json_lenient(content)
             else
-              JSON.parse(YAML.parse(content).to_json)
+              parse_json_lenient(YAML.parse(content).to_json)
             end
 
       resources = doc["Resources"]?.try(&.as_h?)

@@ -262,7 +262,7 @@ module Analyzer::Specification
       return unless File.exists?(swagger_json)
       details = Details.new(PathInfo.new(swagger_json))
       content = read_file_content(swagger_json)
-      json_obj = JSON.parse(content)
+      json_obj = parse_json_lenient(content)
       line_index = Noir::SpecLineIndex.json(content, "paths")
       base_path = ""
       begin

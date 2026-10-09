@@ -21,7 +21,7 @@ module Analyzer::Specification
       details = Details.new(PathInfo.new(path))
       content = read_file_content(path)
       begin
-        data = JSON.parse(content)
+        data = parse_json_lenient(content)
         routes = data["routes"]?.try(&.as_a?)
         return unless routes
         routes.each { |route| process_route(route, details) }

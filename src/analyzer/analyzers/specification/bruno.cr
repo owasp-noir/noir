@@ -144,7 +144,7 @@ module Analyzer::Specification
       stripped = raw.strip
       return params if stripped.empty?
       begin
-        parsed = JSON.parse(stripped)
+        parsed = parse_json_lenient(stripped)
         if hash = parsed.as_h?
           hash.each do |k, v|
             params << Param.new(k, v.to_s, "json")

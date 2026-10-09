@@ -2,7 +2,7 @@ require "../../models/analyzer"
 require "../../models/code_locator"
 require "../../models/skipped_files"
 require "uri"
-require "json"
+require "../../utils/json"
 require "yaml"
 require "xml"
 require "../../models/locator_keys"
@@ -432,7 +432,7 @@ module Analyzer::Specification
       # JSON, so a YAML document may ref a `.json` file and get it parsed.
       @external_json_docs[path] = begin
         if content = read_ref_file(from_path, path, file_ref)
-          SpecDoc.new(JSON.parse(content), path)
+          SpecDoc.new(parse_json_lenient(content), path)
         end
       rescue e
         record_ref_gap(from_path, file_ref, e.message.presence || e.class.name)

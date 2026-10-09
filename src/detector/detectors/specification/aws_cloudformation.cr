@@ -44,7 +44,7 @@ module Detector::Specification
     private def detect_json(content : String) : Bool
       return false unless cloudformation_candidate?(content)
 
-      data = JSON.parse(content)
+      data = parse_json_lenient(content)
       root = data.as_h?
       return false unless root
 

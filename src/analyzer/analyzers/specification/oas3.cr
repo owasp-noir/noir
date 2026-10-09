@@ -327,7 +327,7 @@ module Analyzer::Specification
     def analyze
       each_spec_file_with_details(Noir::LocatorKeys::OAS3_JSON) do |oas3_json, details|
         content = read_file_content(oas3_json)
-        json_obj = JSON.parse(content)
+        json_obj = parse_json_lenient(content)
 
         base_path = @url
         begin

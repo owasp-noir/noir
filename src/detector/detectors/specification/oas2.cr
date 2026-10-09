@@ -21,7 +21,7 @@ module Detector::Specification
       if filename.ends_with?(".json")
         return false unless content_matches?(file_contents, SWAGGER2_JSON_MARKER)
         begin
-          data = JSON.parse(file_contents)
+          data = parse_json_lenient(file_contents)
           if data["swagger"].as_s.includes? "2."
             CodeLocator.instance.push(Noir::LocatorKeys::SWAGGER_JSON, filename)
             return true

@@ -199,7 +199,7 @@ module Analyzer::Specification
       # urlencoded`. A templated body (`{ "id": {{x}} }`) is invalid JSON and
       # has no `=` pairs, so it is skipped silently — same as Bruno.
       begin
-        parsed = JSON.parse(stripped)
+        parsed = parse_json_lenient(stripped)
         if hash = parsed.as_h?
           hash.each { |k, v| add_param(params, k, v.to_s, "json") }
           return params

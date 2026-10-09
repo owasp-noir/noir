@@ -205,7 +205,7 @@ module Analyzer::Specification
 
     private def parse_json(content : String) : Array(TfResource)
       results = [] of TfResource
-      root = JSON.parse(content).as_h?
+      root = parse_json_lenient(content).as_h?
       return results unless root
       resource_node = root["resource"]?
       return results unless resource_node

@@ -263,7 +263,7 @@ module Analyzer::Specification
 
     private def collect_json_params(text : String) : Array(String)
       names = [] of String
-      value = JSON.parse(text)
+      value = parse_json_lenient(text)
       collect_json_names(value, names)
       names.uniq
     rescue

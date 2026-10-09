@@ -40,7 +40,7 @@ module Analyzer::Specification
     end
 
     private def parse_config(content : String, source : String)
-      root = JSON.parse(content).as_h?
+      root = parse_json_lenient(content).as_h?
       return unless root
 
       project_id = root["projectId"]?.try(&.as_s?) || ""

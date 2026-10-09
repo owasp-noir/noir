@@ -14,7 +14,7 @@ module Analyzer::Specification
     def analyze
       each_spec_file(Noir::LocatorKeys::INSOMNIA_JSON) do |path|
         content = read_file_content(path)
-        process_v4(JSON.parse(content), path)
+        process_v4(parse_json_lenient(content), path)
       end
 
       each_spec_file(Noir::LocatorKeys::INSOMNIA_YAML) do |path|
@@ -367,7 +367,7 @@ module Analyzer::Specification
     end
 
     private def process_json_body_text(text : String, params : Array(Param))
-      parsed = JSON.parse(text)
+      parsed = parse_json_lenient(text)
       if h = parsed.as_h?
         h.each { |k, _| add_param(params, k, "", "json") }
       end

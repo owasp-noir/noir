@@ -18,7 +18,7 @@ module Detector::Specification
 
       if filename.ends_with?(".json")
         begin
-          data = JSON.parse(file_contents)
+          data = parse_json_lenient(file_contents)
           version = data["asyncapi"].as_s
           if version.starts_with?("2.") || version.starts_with?("3.")
             check = true

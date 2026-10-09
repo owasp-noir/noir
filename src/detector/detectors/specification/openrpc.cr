@@ -14,7 +14,7 @@ module Detector::Specification
       return false unless filename.ends_with?(".json")
 
       begin
-        data = JSON.parse(file_contents)
+        data = parse_json_lenient(file_contents)
         version = data["openrpc"].as_s
         if version.starts_with?("1.")
           check = true

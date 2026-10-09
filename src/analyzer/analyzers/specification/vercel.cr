@@ -11,7 +11,7 @@ module Analyzer::Specification
     def analyze
       each_spec_file_with_details(Noir::LocatorKeys::VERCEL_SPEC) do |path, details|
         content = read_file_content(path)
-        process_config(JSON.parse(content), details)
+        process_config(parse_json_lenient(content), details)
       end
 
       @result

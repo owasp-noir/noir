@@ -151,7 +151,7 @@ module Analyzer::Specification
     # ----------- JSON -----------
 
     private def process_json(content : String, details : Details)
-      doc = JSON.parse(content)
+      doc = parse_json_lenient(content)
       apps = doc["apps"]?.try(&.as_h?)
       return unless apps
       http = apps["http"]?.try(&.as_h?)
