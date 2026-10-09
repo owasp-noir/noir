@@ -289,10 +289,16 @@ module Analyzer::AI
         filtered = JSON.parse(response.to_s)
         selected = filtered["files"].as_a.map(&.as_s)
 
+        # Keep only files that were in the listing the model was shown.
+        # The listing is the detector-built file set, so it already honours
+        # --exclude-path and subtree pruning; a reply naming any other path
+        # (an excluded secret, a hallucination) must never reach the
+        # provider. The listed form is returned, not the model's echo.
+        selected = selected.compact_map { |path| walked_path?(Noir::PathScope.expand(path)) }.uniq!
+
         # Keep only real, in-scope source files. The model sometimes
-        # echoes directories, hallucinated paths, or ignorable assets;
-        # analyzing those is wasted work and can mask the recall guard
-        # below.
+        # echoes directories or ignorable assets; analyzing those is
+        # wasted work and can mask the recall guard below.
         selected = selected.select do |path|
           File.file?(path) &&
             !ignore_extensions.includes?(File.extname(path)) &&

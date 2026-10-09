@@ -37,10 +37,17 @@ module FileHelper
   # Falls back to the input for a file outside the scan — there is nothing
   # better to say about it.
   def walked_path(expanded : String) : String
+    walked_path?(expanded) || expanded
+  end
+
+  # Like `walked_path`, but nil for a file the detector did not register —
+  # outside the scan base, pruned, or matched by `--exclude-path`. Use it to
+  # gate a path that came from somewhere untrusted (an LLM reply).
+  def walked_path?(expanded : String) : String?
     index = (@walked_path_index ||= all_files_expanded.each_with_object({} of String => String) do |(file, file_expanded), map|
       map[file_expanded] ||= file
     end)
-    index[expanded]? || expanded
+    index[expanded]?
   end
 
   # Get files filtered by path prefix
