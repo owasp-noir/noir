@@ -40,6 +40,7 @@ module Analyzer::Php
         endpoints.concat(analyze_ci3_routes(content, path))
       rescue e
         logger.debug "Error analyzing routes file #{path}: #{e}"
+        Noir::SkippedFiles.record(tech, path, e.message.presence || e.class.name)
       end
       endpoints
     end

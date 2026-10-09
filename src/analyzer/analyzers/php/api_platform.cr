@@ -142,6 +142,7 @@ module Analyzer::Php
       endpoints
     rescue e
       logger.debug "Error analyzing API Platform resource #{path}: #{e}"
+      Noir::SkippedFiles.record(tech, path, e.message.presence || e.class.name)
       [] of Endpoint
     end
 
@@ -328,6 +329,7 @@ module Analyzer::Php
         end
       rescue e
         logger.debug "Error parsing API Platform routes in #{path}: #{e}"
+        Noir::SkippedFiles.record(tech, path, e.message.presence || e.class.name)
       end
       get_files_by_extension(".php").each do |path|
         next unless path.ends_with?("/config/api-platform.php")

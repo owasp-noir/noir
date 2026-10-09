@@ -44,6 +44,7 @@ module Analyzer::Php
         end
       rescue e
         logger.debug "Error analyzing Mautic config #{path}: #{e}"
+        Noir::SkippedFiles.record(tech, path, e.message.presence || e.class.name)
       end
 
       endpoints
