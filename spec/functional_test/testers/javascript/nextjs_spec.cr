@@ -57,6 +57,18 @@ expected_endpoints = [
     Param.new("cursor", "", "query"),
     Param.new("id", "", "body"),
   ]),
+  # ---- Pages Router: negated early-exit guard (`!==` / `!=` chain) ----
+  Endpoint.new("/api/method-guard", "POST"),
+  Endpoint.new("/api/method-guard", "PUT"),
+  # ---- Pages Router: `const { method } = req` compared by bare name ----
+  Endpoint.new("/api/method-alias", "GET"),
+  Endpoint.new("/api/method-alias", "PUT"),
+  # ---- Pages Router: a negated check that branches keeps the fallback ----
+  Endpoint.new("/api/method-branch", "GET"),
+  Endpoint.new("/api/method-branch", "POST"),
+  Endpoint.new("/api/method-branch", "PUT"),
+  Endpoint.new("/api/method-branch", "DELETE"),
+  Endpoint.new("/api/method-branch", "PATCH"),
   # ---- Pages Router: unrelated HTTP-like switch cases should not suppress fallback methods ----
   Endpoint.new("/api/unrelated-switch", "GET", [
     Param.new("type", "", "query"),

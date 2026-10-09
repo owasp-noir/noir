@@ -23,6 +23,25 @@ module Analyzer::Javascript
     EXPORT_VERB_FUNCTION_SIG_RES = HTTP_METHODS.map { |m| {m, /export\s+(?:async\s+)?function\s+#{m}\b\s*\([^)]*\)/} }.to_h
     EXPORT_VERB_CONST_ARROW_RES  = HTTP_METHODS.map { |m| {m, /export\s+const\s+#{m}\s*=\s*(?:async\s*)?(?:\([^)]*\)|\w+)(?:\s*:\s*[^=]+?)?\s*=>/} }.to_h
 
+    # Pages Router method checks. The receiver is `req.method` /
+    # `request.method`, or a bare `method` once the file binds it from the
+    # request (`const { method } = req`, `const method = req.method`).
+    BARE_METHOD_BINDING  = /\{[^{}]*(?<![\w$.:])method\b(?!\s*:)[^{}]*\}\s*=\s*(?:req|request)\b|(?<![\w$.])method\s*=\s*(?:req|request)\.method\b/
+    METHOD_EQ            = /\b(?:req|request)\.method\s*===?\s*['"]([A-Z]+)['"]/
+    METHOD_EQ_BARE       = /(?:\b(?:req|request)\.|(?<![\w$.]))method\s*===?\s*['"]([A-Z]+)['"]/
+    METHOD_NE            = /\b(?:req|request)\.method\s*!==?\s*['"]([A-Z]+)['"]/
+    METHOD_NE_BARE       = /(?:\b(?:req|request)\.|(?<![\w$.]))method\s*!==?\s*['"]([A-Z]+)['"]/
+    METHOD_SWITCH        = /switch\s*\(\s*(?:req|request)\.method\s*\)/
+    METHOD_SWITCH_BARE   = /switch\s*\(\s*(?:(?:req|request)\.)?method\s*\)/
+    METHOD_INCLUDES      = /\[\s*([^\]]+)\]\s*\.includes\s*\(\s*(?:req|request)\.method/
+    METHOD_INCLUDES_BARE = /\[\s*([^\]]+)\]\s*\.includes\s*\(\s*(?:(?:req|request)\.)?method\b/
+    # An `if (<cond>)` whose consequent rejects the request: a `throw`, or a
+    # 4xx / "Not Allowed" in the returned statement or before the block's
+    # first brace. `return handlePost()` is a branch, not a guard. The
+    # condition allows one level of parens; each repetition starts on a
+    # distinct char class, so the scan stays linear on hostile input.
+    METHOD_GUARD = /\bif\s*\(((?:[^(){};]|\([^()]*\))*)\)\s*(?:throw\b|\{[^{}]*?(?:\bthrow\b|\b4\d\d\b|(?i:not allowed))|return\b[^{};\n]*?(?:\b4\d\d\b|(?i:not allowed)))/
+
     def analyze
       result = [] of Endpoint
       mutex = Mutex.new
@@ -357,17 +376,36 @@ module Analyzer::Javascript
       return explicit unless explicit.empty?
 
       # Heuristic: look for req.method checks to infer declared methods.
+      bare = content.matches?(BARE_METHOD_BINDING)
       inferred = [] of String
-      content.scan(/req\.method\s*===?\s*['"]([A-Z]+)['"]/) do |m|
+      content.scan(bare ? METHOD_EQ_BARE : METHOD_EQ) do |m|
         method = m[1]
         inferred << method if HTTP_METHODS.includes?(method) && !inferred.includes?(method)
       end
 
-      infer_switch_method_cases(content).each do |method|
+      # `if (req.method !== 'POST') return res.status(405)...` — an early
+      # exit guard names the methods that get past it. A negation that only
+      # gates some branch says nothing, so it must lead to a rejection, and
+      # only an `||` arm made purely of `&&`-joined method negations bounds
+      # the method (`!== 'GET' && !token` still lets an authed POST in).
+      if content.includes?("!=")
+        ne = bare ? METHOD_NE_BARE : METHOD_NE
+        content.scan(METHOD_GUARD) do |guard|
+          guard[1].split("||").each do |arm|
+            next unless arm.gsub(ne, "").gsub(/[\s()&]/, "").empty?
+            arm.scan(ne) do |m|
+              method = m[1]
+              inferred << method if HTTP_METHODS.includes?(method) && !inferred.includes?(method)
+            end
+          end
+        end
+      end
+
+      infer_switch_method_cases(content, bare).each do |method|
         inferred << method if HTTP_METHODS.includes?(method) && !inferred.includes?(method)
       end
 
-      content.scan(/\[\s*([^\]]+)\]\s*\.includes\s*\(\s*req\.method/) do |m|
+      content.scan(bare ? METHOD_INCLUDES_BARE : METHOD_INCLUDES) do |m|
         m[1].scan(/['"]([A-Z]+)['"]/) do |mm|
           method = mm[1]
           inferred << method if HTTP_METHODS.includes?(method) && !inferred.includes?(method)
@@ -380,9 +418,9 @@ module Analyzer::Javascript
       ["GET", "POST", "PUT", "DELETE", "PATCH"]
     end
 
-    private def infer_switch_method_cases(content : String) : Array(String)
+    private def infer_switch_method_cases(content : String, bare : Bool) : Array(String)
       methods = [] of String
-      content.scan(/switch\s*\(\s*(?:req|request)\.method\s*\)/) do |match|
+      content.scan(bare ? METHOD_SWITCH_BARE : METHOD_SWITCH) do |match|
         match_end = match.end(0)
         next unless match_end
 
