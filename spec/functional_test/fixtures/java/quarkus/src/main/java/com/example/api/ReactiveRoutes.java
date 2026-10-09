@@ -27,6 +27,22 @@ public class ReactiveRoutes {
         return "ok";
     }
 
+    @Route(path = "/health") // liveness probe (k8s)
+    public String health(@Param("verbose") String verbose) {
+        return "ok";
+    }
+
+    @Route(path = "/ready")
+    // readiness probe
+    public String ready() {
+        return "ok";
+    }
+
+    // @Route(path = "/disabled")
+    public String disabled() {
+        return "no";
+    }
+
     @Route(path = "/*", type = FAILURE)
     public void failure() {
     }

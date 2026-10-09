@@ -36,6 +36,8 @@ expected_endpoints = [
   Endpoint.new("/annotated/default-annotated", "ANY"),
   Endpoint.new("/multi-a/multi-namespace", "ANY"),
   Endpoint.new("/multi-b/multi-namespace", "ANY"),
+  Endpoint.new("/commented/list", "ANY"),
+  Endpoint.new("/commented/own", "ANY"),
 ]
 
 FunctionalTester.new("fixtures/java/struts2/", {
