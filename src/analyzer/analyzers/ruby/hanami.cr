@@ -52,7 +52,7 @@ module Analyzer::Ruby
     private def parse_routes_file(path : String, framework_root : String, include_callee : Bool)
       stack = [] of RouteFrame
 
-      hanami_logical_lines(read_file_content(path)).each do |line, index|
+      hanami_logical_lines(ruby_source(path)).each do |line, index|
         if closes_block?(line)
           stack.pop unless stack.empty?
           next
@@ -151,7 +151,7 @@ module Analyzer::Ruby
     def scan_action_file(endpoint : Endpoint, action_path : String, include_callee : Bool = false)
       return unless File.exists?(action_path)
 
-      lines = read_file_content(action_path).each_line.to_a
+      lines = ruby_source(action_path).each_line.to_a
 
       scan_action_params(endpoint, lines)
       attach_handle_callees(endpoint, action_path, lines) if include_callee

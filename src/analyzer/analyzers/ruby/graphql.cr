@@ -95,7 +95,7 @@ module Analyzer::Ruby
     def analyze
       parsed = ordered_scan_files(get_files_by_extension(".rb")) do |path|
         next if ruby_non_production_path?(path)
-        content = read_file_content(path)
+        content = ruby_source(path)
         next unless content_matches?(content, FILE_GATE_RE)
         parse_file(path, content)
       end

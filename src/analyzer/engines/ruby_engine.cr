@@ -210,6 +210,161 @@ module Analyzer::Ruby
       scan_files(get_files_by_extensions(RUBY_SOURCE_EXTENSIONS), &block)
     end
 
+    # The file's text with the parts Ruby never runs blanked out: `=begin` …
+    # `=end` block comments, heredoc bodies, and everything after `__END__`.
+    # Every line keeps its place (blanked lines become empty), so line
+    # numbers and per-line walks are unaffected. Ruby analyzers read sources
+    # through this instead of `read_file_content`.
+    protected def ruby_source(path : String) : String
+      RubyEngine.mask_non_code(read_file_content(path))
+    end
+
+    RUBY_NON_CODE_HINT_RE = /^=begin|^__END__|<<[~-]?["'`]?[A-Za-z_]/m
+
+    def self.mask_non_code(content : String) : String
+      return content unless content.matches?(RUBY_NON_CODE_HINT_RE)
+
+      lines = content.split('\n')
+      index = HeredocTerminators.new(lines)
+      in_block_comment = false
+      changed = false
+      i = 0
+      while i < lines.size
+        line = lines[i]
+        if in_block_comment
+          in_block_comment = false if ruby_directive?(line, "=end")
+          lines[i] = ""
+          changed = true
+          i += 1
+          next
+        end
+
+        if ruby_directive?(line, "=begin")
+          in_block_comment = true
+          lines[i] = ""
+          changed = true
+          i += 1
+          next
+        end
+
+        if line.rstrip == "__END__"
+          (i...lines.size).each { |j| lines[j] = "" }
+          changed = true
+          break
+        end
+
+        # A line can open several heredocs (`call(<<~A, <<~B)`); their bodies
+        # follow one after another. An opener with no terminator below it was
+        # a misread `<<` (a shift, an append), so it masks nothing.
+        last = i
+        heredoc_openers(line) do |id, indented|
+          terminator = index.after(id, last, indented)
+          break unless terminator
+          # `<<~RUBY` is the convention for code that gets eval'd
+          # (`class_eval <<~RUBY`); its body is Ruby, not text.
+          unless id == "RUBY"
+            (last + 1..terminator).each { |j| lines[j] = "" }
+            changed = true
+          end
+          last = terminator
+        end
+        i = last + 1
+      end
+
+      changed ? lines.join('\n') : content
+    end
+
+    # `=begin`/`=end` must start the line and be the whole first word.
+    private def self.ruby_directive?(line : String, word : String) : Bool
+      line.starts_with?(word) && (line.bytesize == word.bytesize || line.byte_at(word.bytesize).unsafe_chr.ascii_whitespace?)
+    end
+
+    # Yields each heredoc opened on `line` as (identifier, terminator may be
+    # indented). Strings and the trailing comment are skipped, and `<<` only
+    # counts at the start of an operand, so `1<<FLAGS` stays a shift.
+    private def self.heredoc_openers(line : String, &)
+      return unless line.includes?("<<")
+
+      size = line.bytesize
+      quote = 0_u8
+      j = 0
+      while j < size
+        byte = line.byte_at(j)
+        if quote != 0
+          if byte == '\\'.ord
+            j += 1
+          elsif byte == quote
+            quote = 0_u8
+          end
+        elsif byte == '"'.ord || byte == '\''.ord || byte == '`'.ord
+          quote = byte
+        elsif byte == '#'.ord
+          break
+        elsif byte == '<'.ord && j + 1 < size && line.byte_at(j + 1) == '<'.ord &&
+              (j == 0 || " \t(,=[{|&!".includes?(line.byte_at(j - 1).unsafe_chr))
+          k = j + 2
+          indented = k < size && (line.byte_at(k) == '~'.ord || line.byte_at(k) == '-'.ord)
+          k += 1 if indented
+          id = nil
+          if k < size && (line.byte_at(k) == '"'.ord || line.byte_at(k) == '\''.ord || line.byte_at(k) == '`'.ord)
+            close = line.byte_index(line.byte_at(k), k + 1)
+            if close && close > k + 1
+              id = line.byte_slice(k + 1, close - k - 1)
+              k = close + 1
+            end
+          elsif k < size && (line.byte_at(k).unsafe_chr.ascii_letter? || line.byte_at(k) == '_'.ord)
+            start = k
+            while k < size && (line.byte_at(k).unsafe_chr.ascii_alphanumeric? || line.byte_at(k) == '_'.ord)
+              k += 1
+            end
+            id = line.byte_slice(start, k - start)
+          end
+          if id
+            yield id, indented
+            j = k
+            next
+          end
+          j += 1
+        end
+        j += 1
+      end
+    end
+
+    # Line indices of every possible heredoc terminator, so finding the one
+    # that closes an opener is a binary search rather than a forward scan
+    # (a file of unterminated `<<X` lines would otherwise be quadratic).
+    private class HeredocTerminators
+      @indented : Hash(String, Array(Int32))? = nil
+      @flush : Hash(String, Array(Int32))? = nil
+
+      def initialize(@lines : Array(String))
+      end
+
+      # First line after `from` that closes heredoc `id`: the identifier
+      # alone on the line, at column 0 unless the opener was `<<~`/`<<-`.
+      def after(id : String, from : Int32, indented : Bool) : Int32?
+        build unless @indented
+        table = indented ? @indented : @flush
+        candidates = table.try(&.[id]?)
+        return unless candidates
+        pos = candidates.bsearch_index { |line_index| line_index > from }
+        pos ? candidates[pos] : nil
+      end
+
+      private def build
+        indented = Hash(String, Array(Int32)).new
+        flush = Hash(String, Array(Int32)).new
+        @lines.each_with_index do |line, line_index|
+          key = line.strip
+          next if key.empty? || key.bytesize > 128
+          (indented[key] ||= [] of Int32) << line_index
+          (flush[key] ||= [] of Int32) << line_index if line.rstrip == key
+        end
+        @indented = indented
+        @flush = flush
+      end
+    end
+
     protected def attach_ruby_callees(endpoint : Endpoint, callees : Array(Noir::RubyCalleeExtractor::Entry))
       Noir::RubyCalleeExtractor.attach_to(endpoint, callees)
     end

@@ -112,7 +112,7 @@ module Analyzer::Ruby
           next if RubyEngine.ruby_test_path?(path)
 
           begin
-            content = read_file_content(path)
+            content = ruby_source(path)
             next unless cli_evidence?(content)
 
             binary = ruby_binary_name(content, path)

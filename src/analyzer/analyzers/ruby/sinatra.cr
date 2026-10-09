@@ -10,7 +10,7 @@ module Analyzer::Ruby
       parallel_file_scan do |path|
         next unless path.ends_with?(".rb") || path.ends_with?(".ru")
         next if ruby_non_production_path?(path)
-        content = read_file_content(path)
+        content = ruby_source(path)
         # `get "/books", to: "books.index"` inside a Rails or Hanami route
         # table is the same line as a Sinatra route to a line-based matcher.
         # Sinatra has no `config/routes.rb` convention of its own, so a file
