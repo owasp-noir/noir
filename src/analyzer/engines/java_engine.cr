@@ -3,6 +3,8 @@ require "../../miniparsers/jaxrs_extractor_ts"
 require "../../miniparsers/kotlin_route_extractor_ts"
 require "../../miniparsers/import_graph"
 require "../../utils/c_comments"
+require "yaml"
+require "../../utils/path_scope"
 
 # Shared helpers for the Java analyzers. They each extend `Analyzer`
 # directly rather than a language-specific engine (historically the
@@ -301,6 +303,82 @@ module Analyzer::Java
         end
       end
       values
+    end
+
+    # Flattened `application.properties` / `.yml` / `.yaml` keys of one
+    # Spring module (`spring.data.rest.base-path`, `vaadin.endpoint.prefix`, ...).
+    private def spring_config_values_for(project_root : String) : Hash(String, String)
+      values = Hash(String, String).new
+
+      resource_dirs_for(project_root).each do |dir|
+        properties_path = File.join(dir, "application.properties")
+        values.merge!(read_properties(properties_path)) if File.exists?(properties_path)
+
+        yml_path = File.join(dir, "application.yml")
+        yaml_path = File.join(dir, "application.yaml")
+        merge_yaml_properties(values, yml_path) if File.exists?(yml_path)
+        merge_yaml_properties(values, yaml_path) if File.exists?(yaml_path)
+      end
+
+      values
+    end
+
+    private def merge_yaml_properties(values : Hash(String, String), path : String)
+      document = YAML.parse(read_file_content(path))
+      flatten_yaml_properties("", document, values)
+    rescue
+      # Ignore unreadable or malformed YAML.
+    end
+
+    private def flatten_yaml_properties(prefix : String, node : YAML::Any, target : Hash(String, String))
+      if hash = yaml_hash(node)
+        hash.each do |key, value|
+          key_string = key.to_s
+          child_prefix = prefix.empty? ? key_string : "#{prefix}.#{key_string}"
+          flatten_yaml_properties(child_prefix, value, target)
+        end
+      elsif scalar = yaml_scalar(node)
+        target[prefix] = scalar unless prefix.empty?
+      end
+    end
+
+    private def yaml_hash(node : YAML::Any) : Hash(YAML::Any, YAML::Any)?
+      node.as_h
+    rescue
+      nil
+    end
+
+    private def yaml_scalar(node : YAML::Any) : String?
+      node.as_s
+    rescue
+      if int = node.as_i64?
+        int.to_s
+      end
+    end
+
+    # The Maven/Gradle module root: everything above the source root that
+    # holds this file.
+    #
+    # The marker is searched inside the scan-base-relative path, never the
+    # absolute one. `String#index` returns the FIRST occurrence, so on an
+    # absolute path a `src/` directory anywhere above the scan base won
+    # outright and the module root resolved to a directory outside the
+    # scan — `application.properties` was then never found and every
+    # `server.servlet.context-path` prefix silently vanished.
+    # Default for includers; JAX-RS, Quarkus and Helidon MP override it,
+    # and `JavaEngine.project_root_for` above is the absolute-path variant
+    # Micronaut and Dropwizard call.
+    private def project_root_for(path : String) : String
+      base = configured_base_for(path)
+      relative = Noir::PathScope.base_relative(path, base)
+
+      ["/src/main/java/", "/src/"].each do |marker|
+        if index = relative.index(marker)
+          return base.rstrip('/') + relative[...index]
+        end
+      end
+
+      base
     end
 
     private def normalize_optional_path(path : String?) : String
