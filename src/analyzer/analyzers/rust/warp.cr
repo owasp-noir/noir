@@ -78,28 +78,23 @@ module Analyzer::Rust
 
           # `a.or(b)` is two routes, not one: build each alternative on
           # its own so their path segments and verbs don't merge.
-          or_alternatives(value, source).each do |branch, suffix|
+          or_alternatives(value, source, mounts[:route_fns]) do |branch, suffix|
             next unless warp_chain?(branch, source)
-            # Arguments of the calls chained after the `.or` apply to every
-            # alternative: `a.or(b).unify().and(warp::post())`.
-            parts = [branch]
-            suffix.each do |call|
-              if args = Noir::TreeSitter.field(call, "arguments")
-                parts << args
-              end
-            end
+            # The calls chained after the `.or` apply to every alternative:
+            # `a.or(b).unify().and(warp::post())`.
+            parts = branch_filter_parts(branch, source, mounts[:route_fns]).then(suffix)
 
             # `warp::path("api").and(backend(config))` is a mount, not a
             # leaf — its real routes live in the mounted fns (emitted with
             # the composed prefix). Skip it so we don't surface a phantom
             # `/api`.
-            next if composition_root?(parts, suffix, source, mounts[:route_fns])
+            next if parts.mount?
 
-            endpoint = build_endpoint(parts, source, path, Noir::TreeSitter.node_start_row(branch) + 1)
+            endpoint = build_endpoint(parts, path, Noir::TreeSitter.node_start_row(branch) + 1)
             next unless endpoint
 
             if include_callee
-              handler_name = find_handler_name(branch, suffix, source)
+              handler_name = suffix.handler || find_handler_name(branch, source)
               if handler_name
                 if handler_fn = function_for_handler(function_index, handler_name)
                   attach_handler_callees(handler_fn, source, path, endpoint)
@@ -175,17 +170,77 @@ module Analyzer::Rust
       {route_fns: route_fns, mount_prefix: mount_prefix, fn_ranges: fn_ranges}
     end
 
-    # Split a filter chain on the `.or(..)` calls along its receiver spine.
-    # Each alternative comes with the calls chained after its `.or`
-    # (innermost first), which apply to every alternative:
-    # `a.or(b).unify().and(warp::post())` → `{a, [unify, and]}`,
-    # `{b, [unify, and]}`. An `.or` nested inside an argument
+    # What a run of filter nodes contributes to an endpoint, in chain
+    # order. `.or` alternatives share the calls chained after them, so
+    # those are collected once per split and combined with each
+    # alternative instead of being re-walked per alternative (quadratic on
+    # a long `.or(..).unify().and(..)` chain).
+    private class FilterParts
+      getter method : String?
+      getter path_parts : Array(String)
+      # query/json/form and `path!` params, first occurrence kept.
+      getter params : Array(Param)
+      # header/cookie params, listed after `params` (first occurrence kept).
+      getter late_params : Array(Param)
+      getter param_count : Int32
+      getter? path_end : Bool
+      # Combines a local route-bearing fn (`.and(backend())`): a mount.
+      getter? mount : Bool
+      # Outermost `.map` / `.and_then` / `.then` handler.
+      getter handler : String?
+
+      EMPTY = new
+
+      def initialize(@method : String? = nil,
+                     @path_parts = [] of String,
+                     @params = [] of Param,
+                     @late_params = [] of Param,
+                     @param_count = 0,
+                     @path_end = false,
+                     @mount = false,
+                     @handler : String? = nil)
+      end
+
+      def empty? : Bool
+        @method.nil? && @path_parts.empty? && @params.empty? && @late_params.empty? &&
+          @param_count == 0 && !@path_end && !@mount && @handler.nil?
+      end
+
+      # `self` followed by `outer`, the calls chained after it.
+      def then(outer : FilterParts) : FilterParts
+        return self if outer.empty?
+        return outer if empty?
+        FilterParts.new(outer.method || @method,
+          @path_parts + outer.path_parts,
+          FilterParts.merge(@params, outer.params),
+          FilterParts.merge(@late_params, outer.late_params),
+          @param_count + outer.param_count,
+          @path_end || outer.path_end?,
+          @mount || outer.mount?,
+          outer.handler || @handler)
+      end
+
+      def self.merge(a : Array(Param), b : Array(Param)) : Array(Param)
+        return a if b.empty?
+        return b if a.empty?
+        seen = a.to_set { |param| {param.name, param.param_type} }
+        merged = a.dup
+        b.each { |param| merged << param if seen.add?({param.name, param.param_type}) }
+        merged
+      end
+    end
+
+    # Split a filter chain on the `.or(..)` calls along its receiver spine
+    # and yield each alternative with the parts of the calls chained after
+    # its `.or`, which apply to every alternative:
+    # `a.or(b).unify().and(warp::post())` yields `a` and `b`, each with the
+    # `unify`/`and(post)` parts. An `.or` nested inside an argument
     # (`.and(get().or(head()))`) is not on the spine and stays part of its
-    # branch. A chain without `.or` comes back as-is with no suffix.
-    private def or_alternatives(value : LibTreeSitter::TSNode, source : String) : Array(Tuple(LibTreeSitter::TSNode, Array(LibTreeSitter::TSNode)))
-      branches = [] of Tuple(LibTreeSitter::TSNode, Array(LibTreeSitter::TSNode))
-      pending = [{value, [] of LibTreeSitter::TSNode}]
-      while item = pending.shift?
+    # branch. A chain without `.or` is yielded as-is with empty parts.
+    private def or_alternatives(value : LibTreeSitter::TSNode, source : String, route_fns : Set(String), &)
+      # Stack, left alternative pushed last so it pops first.
+      pending = [{value, FilterParts::EMPTY}]
+      while item = pending.pop?
         node, suffix = item
         above = [] of LibTreeSitter::TSNode # calls above the topmost `.or`, outermost first
         split = nil
@@ -203,33 +258,47 @@ module Analyzer::Rust
         if split
           left, alt = split
           # Each side may itself be an `x.or(y)` chain.
-          inner = above.reverse + suffix
-          next_items = [{left, inner}]
-          next_items << {alt, inner} if alt
-          pending = next_items + pending
+          inner = above.empty? ? suffix : call_filter_parts(above, source, route_fns).then(suffix)
+          pending << {alt, inner} if alt
+          pending << {left, inner}
         else
-          branches << {node, suffix}
+          yield node, suffix
         end
       end
-      branches
     end
 
-    # True when the alternative combines a local route-bearing fn via
-    # `.and(fn())` / `.or(fn())` — a router composition, not a leaf endpoint.
-    private def composition_root?(parts : Array(LibTreeSitter::TSNode),
-                                  suffix : Array(LibTreeSitter::TSNode),
-                                  source : String,
-                                  route_fns : Set(String)) : Bool
-      return true if suffix.any? { |call| mount_call?(call, source, route_fns) }
-      parts.any? do |part|
-        found = false
-        walk(part) do |node|
-          next if found
-          next unless Noir::TreeSitter.node_type(node) == "call_expression"
-          found = mount_call?(node, source, route_fns)
+    # Parts of an alternative's own subtree. Its handler is looked up only
+    # when callees are wanted (`find_handler_name`).
+    private def branch_filter_parts(branch : LibTreeSitter::TSNode, source : String, route_fns : Set(String)) : FilterParts
+      collect_filter_parts([branch], source, contains_mount_call?(branch, source, route_fns), nil)
+    end
+
+    # Parts of the chained calls `calls` (outermost first) themselves: their
+    # arguments, plus their own field name for mounts and handlers.
+    private def call_filter_parts(calls : Array(LibTreeSitter::TSNode), source : String, route_fns : Set(String)) : FilterParts
+      args = [] of LibTreeSitter::TSNode
+      calls.reverse_each do |call|
+        if call_args = Noir::TreeSitter.field(call, "arguments")
+          args << call_args
         end
-        found
       end
+      mount = calls.any? { |call| mount_call?(call, source, route_fns) } ||
+              args.any? { |call_args| contains_mount_call?(call_args, source, route_fns) }
+      handler = nil.as(String?)
+      calls.each do |call|
+        break if handler = handler_in_call(call, source)
+      end
+      collect_filter_parts(args, source, mount, handler)
+    end
+
+    private def contains_mount_call?(node : LibTreeSitter::TSNode, source : String, route_fns : Set(String)) : Bool
+      found = false
+      walk(node) do |child|
+        next if found
+        next unless Noir::TreeSitter.node_type(child) == "call_expression"
+        found = mount_call?(child, source, route_fns)
+      end
+      found
     end
 
     private def mount_call?(call : LibTreeSitter::TSNode, source : String, route_fns : Set(String)) : Bool
@@ -330,15 +399,16 @@ module Analyzer::Rust
       found
     end
 
-    # Walk the filter's subtrees (in chain order) once, gathering enough
-    # state to build the endpoint: method, ordered path parts, params.
-    private def build_endpoint(parts : Array(LibTreeSitter::TSNode),
-                               source : String,
-                               file_path : String,
-                               row : Int32) : Endpoint?
-      method = "GET"
+    # Walk the filter's subtrees (in chain order) once, gathering what they
+    # contribute to an endpoint: method, ordered path parts, params.
+    private def collect_filter_parts(parts : Array(LibTreeSitter::TSNode),
+                                     source : String,
+                                     mount : Bool,
+                                     handler : String?) : FilterParts
+      method = nil.as(String?)
       path_parts = [] of String
       params = [] of Param
+      late_params = [] of Param
       param_count = 0
       has_path_end = false
 
@@ -407,25 +477,32 @@ module Analyzer::Rust
           case fn_text
           when "warp::header"
             name = first_string_literal_text(Noir::TreeSitter.field(node, "arguments"), source)
-            params << Param.new(name, "", "header") if name && !params.any? { |p| p.name == name && p.param_type == "header" }
+            late_params << Param.new(name, "", "header") if name && !late_params.any? { |p| p.name == name && p.param_type == "header" }
           when "warp::cookie"
             name = first_string_literal_text(Noir::TreeSitter.field(node, "arguments"), source)
-            params << Param.new(name, "", "cookie") if name && !params.any? { |p| p.name == name && p.param_type == "cookie" }
+            late_params << Param.new(name, "", "cookie") if name && !late_params.any? { |p| p.name == name && p.param_type == "cookie" }
           end
         end
       end
 
+      FilterParts.new(method, path_parts, params, late_params, param_count, has_path_end, mount, handler)
+    end
+
+    private def build_endpoint(parts : FilterParts, file_path : String, row : Int32) : Endpoint?
+      path_parts = parts.path_parts.dup
+      params = parts.params + parts.late_params
+      param_count = parts.param_count
       param_count.times do |i|
         name = param_count > 1 ? "param#{i + 1}" : "param"
         path_parts << ":#{name}"
         params << Param.new(name, "", "path")
       end
 
-      return if path_parts.empty? && !has_path_end
+      return if path_parts.empty? && !parts.path_end?
 
       route = path_parts.empty? ? "/" : "/" + path_parts.join("/")
       details = Details.new(PathInfo.new(file_path, row))
-      Endpoint.new(route, method, params, details)
+      Endpoint.new(route, parts.method || "GET", params, details)
     end
 
     # The trailing (no-semicolon) expression of a function body block —
@@ -514,14 +591,7 @@ module Analyzer::Rust
 
     # `.map(handler)` / `.and_then(handler)` / `.then(handler)` — pull
     # the handler identifier (or trailing segment of a scoped path).
-    # The calls chained after an `.or` (`suffix`) are outermost, so they are
-    # checked first, as the pre-order walk of a whole chain would.
-    private def find_handler_name(value : LibTreeSitter::TSNode, suffix : Array(LibTreeSitter::TSNode), source : String) : String?
-      suffix.reverse_each do |call|
-        if name = handler_in_call(call, source)
-          return name
-        end
-      end
+    private def find_handler_name(value : LibTreeSitter::TSNode, source : String) : String?
       found : String? = nil
       walk(value) do |node|
         next if found
