@@ -35,26 +35,33 @@ module Analyzer::Php
       endpoints
     end
 
-    # A rule key's verb list: `GET /posts`, `GET,HEAD posts`, or a bare
-    # `POST` (pattern ''), as yii\web\UrlRule::init splits it.
-    RULE_VERB_RE  = /^((?:(?:GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS)\s*,\s*)*(?:GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS))(?:\s+(.*))?$/i
-    RULES_KEY_RE  = /["']rules["']\s*=>\s*(?:\[|array\s*\()/
-    RULE_PAIR_RE  = /['"]([^'"]+)['"]\s*=>\s*['"]([^'"]+)['"]/
-    RULE_OPTIONS  = /['"](pattern|verb|controller|prefix)['"]\s*=>\s*(?:['"]([^'"]*)['"]|(?:\[|array\s*\()([^\])]*))/
-    QUOTED_STRING = /['"]([^'"]+)['"]/
+    # A rule key that starts with a verb list, split the way
+    # yii\web\UrlManager::buildRules does: case-sensitive verbs, commas with no
+    # spaces, then whitespace and a pattern. Anything else (`'get'`, `'POST'`)
+    # is a plain pattern.
+    RULE_VERB_RE = /\A((?:(?:GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS),)*(?:GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS))\s+(.+)\z/
+    # yii\rest\UrlRule pattern keys, where the pattern part is optional
+    # (`'POST' => 'create'`).
+    REST_VERB_RE = /\A((?:(?:GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS),)*(?:GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS))(?:\s+(.*))?\z/
+    RULES_KEY_RE = /["']rules["']\s*=>\s*(?:\[|array\s*\()/
 
-    # yii\rest\UrlRule's default `patterns`, `{id}` standing for
-    # `<id:\d[\d,]*>`. A verb-less entry matches any verb; it serves the
-    # `options` action.
-    REST_RULE_PATTERNS = [
-      {["PUT", "PATCH"], "/{id}"},
-      {["DELETE"], "/{id}"},
-      {["GET", "HEAD"], "/{id}"},
-      {["POST"], ""},
-      {["GET", "HEAD"], ""},
-      {["OPTIONS"], "/{id}"},
-      {["OPTIONS"], ""},
-    ]
+    # yii\rest\UrlRule's default `patterns`. A verb-less entry matches any
+    # verb; it serves the `options` action.
+    REST_RULE_PATTERNS = {
+      "PUT,PATCH {id}" => "update",
+      "DELETE {id}"    => "delete",
+      "GET,HEAD {id}"  => "view",
+      "POST"           => "create",
+      "GET,HEAD"       => "index",
+      "{id}"           => "options",
+      ""               => "options",
+    }
+
+    # One top-level entry of a PHP array literal: its string key (nil for a
+    # list entry) and its value — a string literal (`string`), a nested
+    # array's interior (`inner`, lexer char range), or other scalar text
+    # (`raw`, e.g. `false`).
+    private record ArrayEntry, key : String?, string : String?, inner : Range(Int32, Int32)?, raw : String?
 
     # Parse urlManager.rules entries inside Yii2 config files:
     #   "GET /posts" => "post/index"
@@ -62,90 +69,191 @@ module Analyzer::Php
     #   "/posts/<id:\d+>" => "post/view"
     #   ['pattern' => 'feed/<slug>', 'route' => 'feed/view', 'verb' => 'GET']
     #   ['class' => 'yii\rest\UrlRule', 'controller' => 'user']
+    #   ['class' => 'yii\web\GroupUrlRule', 'prefix' => 'admin', 'rules' => [...]]
     #
     # Only the rules array's own entries are rules: the `'k' => 'v'` pairs
     # inside an array-style rule are its options, not routes.
     private def analyze_url_manager(path : String, content : String) : Array(Endpoint)
-      endpoints = [] of Endpoint
       key = content.match(RULES_KEY_RE)
-      return endpoints unless key
+      return [] of Endpoint unless key
 
       lexer = Noir::PhpLexer.new(content)
       open = key.end(0) - 1
       close = lexer.matching_delimiter(open)
-      return endpoints unless close
+      return [] of Endpoint unless close
 
-      details = Details.new(PathInfo.new(path))
-      segment_start = open + 1
-      i = segment_start
-      while i < close
-        c = lexer.masked[i]
-        if c == '[' || c == '('
-          nested_close = lexer.matching_delimiter(i) || close
-          endpoints.concat(string_rule_endpoints(lexer.source(segment_start...i), details))
-          endpoints.concat(array_rule_endpoints(lexer.source((i + 1)...nested_close), details))
-          i = nested_close + 1
-          segment_start = i
-        else
-          i += 1
+      rules_endpoints(lexer, (open + 1)...close, "", Details.new(PathInfo.new(path)), 0)
+    end
+
+    # GroupUrlRule nesting beyond this is not followed.
+    MAX_RULE_GROUP_DEPTH = 16
+
+    private def rules_endpoints(lexer : Noir::PhpLexer, range : Range(Int32, Int32), prefix : String,
+                                details : Details, depth : Int32) : Array(Endpoint)
+      endpoints = [] of Endpoint
+      array_entries(lexer, range).each do |entry|
+        if (key = entry.key) && (route = entry.string)
+          next if route.empty?
+          methods, pattern = split_rule_key(key)
+          endpoints.concat(rule_endpoints(methods, join_rule_path(prefix, pattern), details))
+        elsif entry.key.nil? && (inner = entry.inner)
+          endpoints.concat(array_rule_endpoints(lexer, inner, prefix, details, depth))
         end
       end
-      endpoints.concat(string_rule_endpoints(lexer.source(segment_start...close), details)) if segment_start < close
-
       endpoints
     end
 
-    private def string_rule_endpoints(segment : String, details : Details) : Array(Endpoint)
-      endpoints = [] of Endpoint
-      segment.scan(RULE_PAIR_RE) do |match|
-        methods, route = split_rule_key(match[1])
-        endpoints.concat(rule_endpoints(methods, route, details))
-      end
-      endpoints
-    end
+    private def array_rule_endpoints(lexer : Noir::PhpLexer, range : Range(Int32, Int32), prefix : String,
+                                     details : Details, depth : Int32) : Array(Endpoint)
+      options = {} of String => ArrayEntry
+      array_entries(lexer, range).each { |entry| entry.key.try { |k| options[k] ||= entry } }
 
-    private def array_rule_endpoints(rule : String, details : Details) : Array(Endpoint)
-      options = Hash(String, Array(String)).new
-      rule.scan(RULE_OPTIONS) do |m|
-        next if options.has_key?(m[1])
-        options[m[1]] = if single = m[2]?
-                          [single]
-                        else
-                          m[3].scan(QUOTED_STRING).map(&.[1])
-                        end
-      end
-
-      if controllers = options["controller"]?
-        rest_rule_endpoints(rule, controllers, options["prefix"]?.try(&.first?) || "", details)
-      elsif pattern = options["pattern"]?.try(&.first?)
-        methods = options["verb"]?.try(&.map(&.upcase)) || [] of String
-        methods = ["GET"] if methods.empty?
-        rule_endpoints(methods, pattern, details)
+      if rules = options["rules"]?.try(&.inner)
+        # yii\web\GroupUrlRule: `prefix` leads every pattern declared inside.
+        if depth >= MAX_RULE_GROUP_DEPTH
+          details.code_paths.first?.try { |code_path| Noir::SkippedFiles.record(tech, code_path.path, "GroupUrlRule nesting deeper than #{MAX_RULE_GROUP_DEPTH} levels") }
+          return [] of Endpoint
+        end
+        group_prefix = join_rule_path(prefix, options["prefix"]?.try(&.string) || "")
+        rules_endpoints(lexer, rules, group_prefix, details, depth + 1)
+      elsif options.has_key?("controller")
+        rest_rule_endpoints(lexer, range, options, details)
+      elsif pattern = options["pattern"]?.try(&.string)
+        verbs = option_strings(lexer, options["verb"]?).map(&.upcase)
+        verbs = ["GET"] if verbs.empty?
+        rule_endpoints(verbs, join_rule_path(prefix, pattern), details)
       else
         [] of Endpoint
       end
     end
 
-    # `'controller' => 'user'` or `['user', 'v1/post']` serves the pluralized
-    # name; `['u' => 'user']` serves the key as given.
-    private def rest_rule_endpoints(rule : String, controllers : Array(String), prefix : String, details : Details) : Array(Endpoint)
-      url_names = [] of String
-      if list = rule.match(/['"]controller['"]\s*=>\s*(?:\[|array\s*\()([^\])]*)/)
-        list[1].scan(/['"]([^'"]+)['"](?:\s*=>\s*['"][^'"]+['"])?/) do |m|
-          url_names << (m[0].includes?("=>") ? m[1] : pluralize(m[1]))
-        end
-      else
-        url_names = controllers.map { |name| pluralize(name) }
-      end
+    # yii\rest\UrlRule: every controller gets the default `patterns` plus its
+    # `extraPatterns`, filtered by `only`/`except`. `'controller' => 'user'`
+    # or `['user', 'v1/post']` serves the pluralized name unless
+    # `'pluralize' => false`; `['u' => 'user']` serves the key as given.
+    private def rest_rule_endpoints(lexer : Noir::PhpLexer, range : Range(Int32, Int32),
+                                    options : Hash(String, ArrayEntry), details : Details) : Array(Endpoint)
+      controller = options["controller"]
+      plural = !{"false", "0"}.includes?(options["pluralize"]?.try(&.raw).try(&.downcase))
+      url_names = if name = controller.string
+                    [plural ? pluralize(name) : name]
+                  elsif inner = controller.inner
+                    array_entries(lexer, inner).compact_map do |entry|
+                      next unless name = entry.string
+                      entry.key || (plural ? pluralize(name) : name)
+                    end
+                  else
+                    [] of String
+                  end
 
+      patterns = {} of String => String
+      if extra = options["extraPatterns"]?.try(&.inner)
+        array_entries(lexer, extra).each do |entry|
+          key, action = entry.key, entry.string
+          patterns[key] = action if key && action && !patterns.has_key?(key)
+        end
+      end
+      REST_RULE_PATTERNS.each { |key, action| patterns[key] = action unless patterns.has_key?(key) }
+
+      rule_text = lexer.source(range)
+      prefix = options["prefix"]?.try(&.string) || ""
       endpoints = [] of Endpoint
-      url_names.each do |name|
-        base = prefix.empty? ? name : "#{prefix.strip('/')}/#{name}"
-        REST_RULE_PATTERNS.each do |methods, suffix|
-          endpoints.concat(rule_endpoints(methods, base + suffix, details))
+      url_names.each do |url_name|
+        base = join_rule_path(prefix, url_name)
+        patterns.each do |key, action|
+          next unless resource_action_allowed?(rule_text, action)
+          if match = key.match(REST_VERB_RE)
+            endpoints.concat(rule_endpoints(match[1].split(','), join_rule_path(base, match[2]? || ""), details))
+          else
+            # A verb-less pattern answers any verb: report the defaults'
+            # `options` action as OPTIONS, anything else as GET.
+            verbs = action == "options" ? ["OPTIONS"] : ["GET"]
+            endpoints.concat(rule_endpoints(verbs, join_rule_path(base, key), details))
+          end
         end
       end
       endpoints
+    end
+
+    # Top-level entries of the PHP array whose interior is `range`. Walks the
+    # lexer's masked text once: strings come from its spans, nested arrays
+    # (`[...]` / `array(...)`) are skipped whole via `matching_delimiter`.
+    private def array_entries(lexer : Noir::PhpLexer, range : Range(Int32, Int32)) : Array(ArrayEntry)
+      entries = [] of ArrayEntry
+      spans = lexer.spans
+      span_index = spans.bsearch_index { |(_, s, _)| s >= range.begin } || spans.size
+      key = nil
+      value_start = nil
+      i = range.begin
+      stop = range.end
+      while i < stop
+        while span_index < spans.size && spans[span_index][1] < i
+          span_index += 1
+        end
+        span = spans[span_index]?
+        if span && span[1] == i
+          kind, s, e = span
+          if kind == :string
+            text = lexer.source((s + 1)...(e - 1))
+            j = e
+            while j < stop && lexer.masked[j].whitespace?
+              j += 1
+            end
+            if key.nil? && lexer.masked[j]? == '=' && lexer.masked[j + 1]? == '>'
+              key = text
+              i = j + 2
+              value_start = i
+            else
+              entries << ArrayEntry.new(key, text, nil, nil)
+              key = nil
+              value_start = nil
+              i = e
+            end
+          else
+            i = e
+          end
+          next
+        end
+
+        c = lexer.masked[i]
+        if c == '[' || c == '('
+          close = lexer.matching_delimiter(i) || stop
+          entries << ArrayEntry.new(key, nil, (i + 1)...close, nil)
+          key = nil
+          value_start = nil
+          i = close + 1
+          next
+        elsif c == ','
+          if (k = key) && (from = value_start)
+            entries << ArrayEntry.new(k, nil, nil, lexer.source(from...i).strip)
+          end
+          key = nil
+          value_start = nil
+        end
+        i += 1
+      end
+      if (k = key) && (from = value_start)
+        entries << ArrayEntry.new(k, nil, nil, lexer.source(from...stop).strip)
+      end
+      entries
+    end
+
+    # String values of an option given as one string or a list of them.
+    private def option_strings(lexer : Noir::PhpLexer, entry : ArrayEntry?) : Array(String)
+      return [] of String unless entry
+      if value = entry.string
+        [value]
+      elsif inner = entry.inner
+        array_entries(lexer, inner).compact_map(&.string)
+      else
+        [] of String
+      end
+    end
+
+    private def join_rule_path(prefix : String, pattern : String) : String
+      return pattern if prefix.empty?
+      return prefix if pattern.empty?
+      "#{prefix.rstrip('/')}/#{pattern.lstrip('/')}"
     end
 
     private def rule_endpoints(methods : Array(String), route : String, details : Details) : Array(Endpoint)
@@ -165,11 +273,10 @@ module Analyzer::Php
     end
 
     private def split_rule_key(key : String) : Tuple(Array(String), String)
-      stripped = key.strip
-      if match = stripped.match(RULE_VERB_RE)
-        {match[1].split(',').map(&.strip.upcase), match[2]? || ""}
+      if match = key.match(RULE_VERB_RE)
+        {match[1].split(','), match[2]}
       else
-        {["GET"], stripped}
+        {["GET"], key.strip}
       end
     end
 
