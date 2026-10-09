@@ -208,6 +208,160 @@ module Analyzer::Go
       package_groups[dir]? || Hash(String, String).new
     end
 
+    # Router-builder helpers (`func addUserRoutes(rg *gin.RouterGroup)`)
+    # receive their group as an argument, so the prefix lives at the call
+    # site (`addUserRoutes(router.Group("/v1"))`) and has to be grafted onto
+    # the helper's routes. `builder_type` is the group parameter type as
+    # written (`*gin.RouterGroup`, `*echo.Group`, `*route.RouterGroup`); its
+    # text gates the per-file parse and its last segment is the type name.
+    #
+    # Builds `{dir => {builder_fn => set(prefixes)}}` by (1) collecting
+    # every helper across the directory's files and (2) resolving each call
+    # site `F(arg)` to the prefix `arg` denotes via the directory group map.
+    # A helper called with several groups accumulates each prefix; one with
+    # any unresolved call site (the root router, a computed value) is left
+    # out so the whole-file pass keeps its routes.
+    def resolve_router_builder_prefixes(file_contents : Hash(String, String),
+                                        package_groups : Hash(String, Hash(String, String)),
+                                        builder_type : String) : Hash(String, Hash(String, Set(String)))
+      type_name = builder_type.split('.').last
+      result = Hash(String, Hash(String, Set(String))).new
+      files_by_dir = Hash(String, Array(String)).new
+      file_contents.each_key { |p| (files_by_dir[File.dirname(p)] ||= [] of String) << p }
+
+      files_by_dir.each do |dir, paths|
+        builders = Set(String).new
+        paths.each do |p|
+          content = file_contents[p]?
+          next unless content && content.includes?(builder_type)
+          Noir::TreeSitterGoRouteExtractor.collect_router_group_builders(content, type_name).each_key { |fn| builders << fn }
+        end
+        next if builders.empty?
+
+        group_map = package_groups[dir]? || Hash(String, String).new
+        prefixes = Hash(String, Set(String)).new
+        unresolved = Set(String).new
+        paths.each do |p|
+          content = file_contents[p]?
+          next unless content
+          Noir::TreeSitterGoRouteExtractor.collect_router_builder_callsites(content, builders).each do |fn, arg|
+            prefix = group_map[arg]?
+            prefix = arg if prefix.nil? && arg.starts_with?("/")
+            if prefix
+              (prefixes[fn] ||= Set(String).new) << prefix
+            else
+              unresolved << fn
+            end
+          end
+        end
+        prefixes.reject! { |fn, _| unresolved.includes?(fn) }
+        result[dir] = prefixes unless prefixes.empty?
+      end
+
+      result
+    end
+
+    # The router-builder helpers defined in `content` to expand, with their
+    # resolved call-site prefixes. A helper whose group parameter name is
+    # already a package-level group (both named `v1`) is resolved by the
+    # whole-file pass and is left alone.
+    def router_builder_expansions(content : String,
+                                  builder_type : String,
+                                  dir_prefixes : Hash(String, Set(String))?,
+                                  cross_file_groups : Hash(String, String)) : Array(Tuple(String, Noir::TreeSitterGoRouteExtractor::RouterBuilder, Set(String)))
+      expansions = [] of Tuple(String, Noir::TreeSitterGoRouteExtractor::RouterBuilder, Set(String))
+      return expansions unless dir_prefixes && content.includes?(builder_type)
+      Noir::TreeSitterGoRouteExtractor.collect_router_group_builders(content, builder_type.split('.').last).each do |fn, rb|
+        pset = dir_prefixes[fn]?
+        next if pset.nil? || pset.empty?
+        next if cross_file_groups.has_key?(rb.param)
+        expansions << {fn, rb, pset}
+      end
+      expansions
+    end
+
+    # Emits every `expansions` helper's routes once per call-site prefix
+    # (with the route's callees), then yields each `(line, endpoint)` pair
+    # of the helper body so the caller applies its framework's param
+    # patterns. The caller skips the helper bodies in its own line loop.
+    def expand_router_builders(content : String,
+                               lines : Array(String),
+                               path : String,
+                               expansions : Array(Tuple(String, Noir::TreeSitterGoRouteExtractor::RouterBuilder, Set(String))),
+                               callees_by_route : Hash(Int32, Array(Tuple(String, String, Int32))),
+                               named : Noir::GoNamedHandler,
+                               handle_method : String? = nil,
+                               & : String, Endpoint ->)
+      expansions.each do |fn, rb, pset|
+        emitted = [] of Endpoint
+        pset.each do |prefix|
+          Noir::TreeSitterGoRouteExtractor.extract_routes_from_function(
+            content, fn, {rb.param => prefix}, handle_method: handle_method
+          ).each do |route|
+            details = Details.new(PathInfo.new(path, route.line + 1))
+            Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
+              ep = Endpoint.new(route.path, verb, details)
+              callees_by_route[route.line]?.try &.each do |name, callee_path, callee_line|
+                ep.push_callee(Callee.new(name, path: callee_path, line: callee_line))
+              end
+              result << ep
+              named.bind(route.handler, ep)
+              emitted << ep
+            end
+          end
+        end
+        each_router_builder_line(lines, emitted, rb) do |line, eps|
+          eps.each { |ep| yield line, ep }
+        end
+      end
+    end
+
+    # Yields each line of a router-builder body that belongs to one of the
+    # expanded `emitted` endpoints (the registration line and its inline
+    # closure) with the endpoints registered there.
+    private def each_router_builder_line(lines : Array(String),
+                                         emitted : Array(Endpoint),
+                                         builder : Noir::TreeSitterGoRouteExtractor::RouterBuilder,
+                                         & : String, Array(Endpoint) ->)
+      eps_by_line = Hash(Int32, Array(Endpoint)).new { |h, k| h[k] = [] of Endpoint }
+      emitted.each do |ep|
+        ep.details.code_paths.each do |cp|
+          if ln = cp.line
+            eps_by_line[ln.to_i - 1] << ep
+          end
+        end
+      end
+      return if eps_by_line.empty?
+      currents = [] of Endpoint
+      in_inline = false
+      brace_count = 0
+      (builder.start_row..[builder.end_row, lines.size - 1].min).each do |i|
+        line = lines[i]?
+        next unless line
+        apply_now = false
+        if eps = eps_by_line[i]?
+          currents = eps
+          apply_now = true
+          if line.includes?("func(")
+            in_inline = true
+            brace_count = line.count("{") - line.count("}")
+            if brace_count <= 0
+              in_inline = false
+              brace_count = 0
+            end
+          end
+        elsif in_inline
+          brace_count += line.count("{") - line.count("}")
+          if brace_count <= 0
+            in_inline = false
+            brace_count = 0
+          end
+          apply_now = true
+        end
+        yield line, currents if !currents.empty? && apply_now
+      end
+    end
+
     GO_HTTP_ROUTE_CALL_RE = /\.(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|QUERY|Get|Post|Put|Delete|Patch|Head|Options|Query|ANY|Any|All)\s*\(/
 
     # Crystal recompiles an interpolated regex literal on every evaluation

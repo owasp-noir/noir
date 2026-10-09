@@ -69,7 +69,7 @@ module Noir
     # Only a helper that is called at least once is skipped by the free
     # walk; an uncalled one keeps its historical (prefix-less) routes so
     # nothing that used to be reported disappears.
-    def collect_route_helpers(root : LibTreeSitter::TSNode, source : String) : RouteHelperIndex
+    def collect_route_helpers(root : LibTreeSitter::TSNode, source : String, prefix_method : String = "Route") : RouteHelperIndex
       index = RouteHelperIndex.new
       Noir::TreeSitter.walk(root) do |node|
         case Noir::TreeSitter.node_type(node)
@@ -100,12 +100,37 @@ module Noir
       Noir::TreeSitter.walk(root) do |node|
         next unless Noir::TreeSitter.node_type(node) == "call_expression"
         function = Noir::TreeSitter.field(node, "function")
-        next unless function && Noir::TreeSitter.node_type(function) == "identifier"
-        if helper = index[Noir::TreeSitter.node_text(function, source)]
-          helper.calls += 1
+        next unless function
+        if Noir::TreeSitter.node_type(function) == "identifier"
+          if helper = index[Noir::TreeSitter.node_text(function, source)]
+            helper.calls += 1
+          end
+        elsif ref = route_helper_reference(node, source, prefix_method, index)
+          ref[1].calls += 1
         end
       end
       index
+    end
+
+    # `r.Route("/users", userRoutes)` — a `Route` call naming a route
+    # helper that takes the sub-router as its only router parameter, instead
+    # of an inline closure. Returns `{helper_name, helper}` or nil.
+    private def route_helper_reference(call : LibTreeSitter::TSNode,
+                                       source : String,
+                                       prefix_method : String,
+                                       helpers : RouteHelperIndex) : Tuple(String, RouteHelper)?
+      function = Noir::TreeSitter.field(call, "function")
+      return unless function && Noir::TreeSitter.node_type(function) == "selector_expression"
+      field = Noir::TreeSitter.field(function, "field")
+      return unless field && Noir::TreeSitter.node_text(field, source) == prefix_method
+      args = Noir::TreeSitter.field(call, "arguments")
+      return unless args
+      last = nil
+      Noir::TreeSitter.each_named_child(args) { |arg| last = arg }
+      return unless (arg = last) && Noir::TreeSitter.node_type(arg) == "identifier"
+      name = Noir::TreeSitter.node_text(arg, source)
+      helper = helpers[name]
+      {name, helper} if helper && helper.router_index == 0
     end
 
     # `{name, position}` of the first router-typed parameter of a
@@ -205,6 +230,18 @@ module Noir
               expand_route_helper(node, helper, name, source, prefix_stack, local_groups, routes, skip_functions, config, string_values, helpers)
               return
             end
+          elsif (ref = route_helper_reference(node, source, config.prefix_method, helpers)) &&
+                (prefix = chi_first_string_arg(node, source, string_values))
+            name, helper = ref
+            return if helpers.active.includes?(name) || helpers.active.size >= 8
+            # Walk the named sub-router function as if it were the inline
+            # closure: its router parameter resolves through the stack.
+            inner_groups = local_groups.dup
+            inner_groups.delete(helper.router_param)
+            helpers.active << name
+            walk_chi(helper.body, source, prefix_stack + [prefix], inner_groups, routes, skip_functions, config, string_values, helpers)
+            helpers.active.delete(name)
+            return
           end
         end
       end

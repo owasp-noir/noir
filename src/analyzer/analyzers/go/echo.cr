@@ -5,6 +5,7 @@ module Analyzer::Go
     analyzer_for "go_echo"
 
     IMPORT_MARKER = "github.com/labstack/echo"
+    BUILDER_TYPE  = "*echo.Group"
 
     def analyze
       # Source Analysis
@@ -16,6 +17,9 @@ module Analyzer::Go
       # walking every sibling source file.
       package_function_bodies = collect_package_function_bodies(file_contents)
       import_path_function_bodies = collect_import_path_function_bodies(package_function_bodies)
+      # `RegisterUsers(e.Group("/api/v1"))` + `func RegisterUsers(g *echo.Group)`:
+      # the prefix lives at the call site (see `resolve_router_builder_prefixes`).
+      builder_prefixes_by_dir = resolve_router_builder_prefixes(file_contents, package_groups, BUILDER_TYPE)
       framework_dirs = framework_package_dirs(file_contents, IMPORT_MARKER)
       parallel_analyze(get_files_by_extension(".go")) do |path|
         next if GoEngine.go_test_file?(base_relative_path(path))
@@ -42,6 +46,8 @@ module Analyzer::Go
         end
 
         named = Noir::GoNamedHandler.new(content, path, ts_routes)
+        expand_builders = router_builder_expansions(content, BUILDER_TYPE, builder_prefixes_by_dir[dir]?, cross_file_groups)
+        suppress_ranges = expand_builders.map { |_, rb, _| rb.start_row..rb.end_row }
 
         # Resolve 1-hop callees for every route in this file.
         # Inline-closure handlers walk in place; bare
@@ -70,6 +76,9 @@ module Analyzer::Go
         end
 
         lines.each_with_index do |line, index|
+          # Expanded router-builder bodies are emitted below with their
+          # call-site prefix.
+          next if suppress_ranges.any?(&.includes?(index))
           next if named.claim?(index, line)
 
           details = Details.new(PathInfo.new(path, index + 1))
@@ -96,6 +105,10 @@ module Analyzer::Go
           end
 
           last_endpoints.each { |ep| add_echo_param_patterns(line, ep) }
+        end
+
+        expand_router_builders(content, lines, path, expand_builders, callees_by_route, named, "Add") do |line, ep|
+          add_echo_param_patterns(line, ep)
         end
 
         named.each_attribution { |line, ep| add_echo_param_patterns(line, ep) }

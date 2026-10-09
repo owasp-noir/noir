@@ -14,6 +14,7 @@ module Analyzer::Go
     HTTP_METHODS_EXPANDED = %w[GET POST PUT DELETE PATCH OPTIONS HEAD]
     HTTP_METHODS_ALLOWED  = (HTTP_METHODS_EXPANDED + %w[TRACE CONNECT QUERY ANY]).to_set
     IMPORT_MARKER         = "github.com/cloudwego/hertz"
+    BUILDER_TYPE          = "*route.RouterGroup"
 
     def analyze
       public_dirs = [] of (Hash(String, String))
@@ -21,6 +22,9 @@ module Analyzer::Go
       # Pre-pass for cross-file identifier-handler resolution (see Gin).
       package_function_bodies = collect_package_function_bodies(file_contents)
       import_path_function_bodies = collect_import_path_function_bodies(package_function_bodies)
+      # `RegisterUsers(h.Group("/api/v1"))` + `func RegisterUsers(g *route.RouterGroup)`:
+      # the prefix lives at the call site (see `resolve_router_builder_prefixes`).
+      builder_prefixes_by_dir = resolve_router_builder_prefixes(file_contents, package_groups, BUILDER_TYPE)
       framework_dirs = framework_package_dirs(file_contents, IMPORT_MARKER)
       parallel_analyze(get_files_by_extension(".go")) do |path|
         next if GoEngine.go_test_file?(base_relative_path(path))
@@ -45,6 +49,8 @@ module Analyzer::Go
         end
 
         named = Noir::GoNamedHandler.new(content, path, ts_routes)
+        expand_builders = router_builder_expansions(content, BUILDER_TYPE, builder_prefixes_by_dir[dir]?, cross_file_groups)
+        suppress_ranges = expand_builders.map { |_, rb, _| rb.start_row..rb.end_row }
 
         # Resolve 1-hop callees for every route (see Gin).
         route_rows = Set(Int32).new
@@ -65,6 +71,9 @@ module Analyzer::Go
         end
 
         lines.each_with_index do |line, index|
+          # Expanded router-builder bodies are emitted below with their
+          # call-site prefix.
+          next if suppress_ranges.any?(&.includes?(index))
           next if named.claim?(index, line)
 
           details = Details.new(PathInfo.new(path, index + 1))
@@ -97,6 +106,10 @@ module Analyzer::Go
           end
 
           add_hertz_param_patterns(line, last_endpoint)
+        end
+
+        expand_router_builders(content, lines, path, expand_builders, callees_by_route, named, "Handle") do |line, ep|
+          add_hertz_param_patterns(line, ep)
         end
 
         named.each_attribution { |line, ep| add_hertz_param_patterns(line, ep) }
