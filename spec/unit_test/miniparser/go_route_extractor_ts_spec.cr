@@ -297,6 +297,33 @@ describe Noir::TreeSitterGoRouteExtractor do
     routes.map { |r| {r.verb, r.path} }.should eq([{"GET", "/a/b/x"}])
   end
 
+  it "scopes a package-level func literal's params as locals, not its var block" do
+    closure = <<-GO
+      package main
+
+      var setup = func(g *gin.RouterGroup) {
+          g = g.Group("/v1")
+          g.GET("/x", h)
+      }
+      GO
+    Noir::TreeSitterGoRouteExtractor.extract_routes(closure, {"g" => "/api"})
+      .map { |r| {r.verb, r.path} }.should eq([{"GET", "/v1/x"}])
+
+    block = <<-GO
+      package main
+
+      var (
+          g     *gin.RouterGroup
+          setup = func() {
+              g = g.Group("/v1")
+              g.GET("/x", h)
+          }
+      )
+      GO
+    Noir::TreeSitterGoRouteExtractor.extract_routes(block, {"g" => "/api"})
+      .map { |r| {r.verb, r.path} }.should eq([{"GET", "/api/v1/x"}])
+  end
+
   it "stacks a package-level self-regroup onto the sibling file's binding" do
     source = <<-GO
       package main

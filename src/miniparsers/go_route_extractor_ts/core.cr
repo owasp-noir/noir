@@ -241,7 +241,7 @@ module Noir
         string_values = collect_string_values(root, source)
         mux_chained_operands = Set(String).new
 
-        drop_local_self_regroups(root, source, group_prefixes, group_method)
+        drop_local_self_regroups(group_prefixes, self_regroups(root, source, group_method)) unless group_prefixes.empty?
 
         # Sub-app mounts (Fiber `app.Mount("/mnt", micro)`) bind the mounted
         # app's variable to the prefix. Collected before the group walk so
@@ -336,12 +336,13 @@ module Noir
       Noir::TreeSitter.parse_go(source) do |root|
         string_values = collect_string_values(root, source)
 
-        drop_local_self_regroups(root, source, group_prefixes, group_method)
+        regroups = self_regroups(root, source, group_method)
+        drop_local_self_regroups(group_prefixes, regroups)
         Noir::TreeSitter.walk(root) do |node|
           next unless group_assignment_node?(node)
           collect_group(node, source, group_prefixes, group_method, group_aliases, string_values)
         end
-        unexported_self_regroups(root, source, group_method).each { |name| group_prefixes.delete(name) }
+        unexported_self_regroups(regroups).each { |name| group_prefixes.delete(name) }
       end
       group_prefixes
     end
@@ -361,8 +362,15 @@ module Noir
       package_level = Set(String).new
       others = Set(String).new
       Noir::TreeSitter.each_named_child(root) do |decl|
-        in_function = {"function_declaration", "method_declaration"}.includes?(Noir::TreeSitter.node_type(decl))
-        declared = nil.as(Set(String)?)
+        # Function scopes in this declaration, disjoint and in source order:
+        # the function itself, or each `var f = func(...) {...}` literal.
+        scopes = if {"function_declaration", "method_declaration"}.includes?(Noir::TreeSitter.node_type(decl))
+                   [decl]
+                 else
+                   var_func_literals(decl)
+                 end
+        declared = Hash(Int32, Set(String)).new
+        scope_index = 0
         Noir::TreeSitter.walk(decl) do |node|
           next unless binding = regroup_binding(node, source, group_method)
           name, self_bound = binding
@@ -370,11 +378,41 @@ module Noir
             others << name
             next
           end
-          names = declared || (declared = declared_names(decl, source)) if in_function
+          # `walk` is pre-order, so binding start bytes never decrease.
+          start = LibTreeSitter.ts_node_start_byte(node)
+          while scope_index < scopes.size && LibTreeSitter.ts_node_end_byte(scopes[scope_index]) <= start
+            scope_index += 1
+          end
+          scope = scopes[scope_index]?
+          names = (declared[scope_index] ||= declared_names(scope, source)) if scope && LibTreeSitter.ts_node_start_byte(scope) <= start
           (names && names.includes?(name) ? local : package_level) << name
         end
       end
       {local, package_level, others}
+    end
+
+    # `func` literals bound directly by a top-level `var` (`var setup =
+    # func(g *gin.RouterGroup) {...}`), each its own function scope. The
+    # surrounding `var (...)` block stays package level.
+    private def var_func_literals(decl : LibTreeSitter::TSNode) : Array(LibTreeSitter::TSNode)
+      literals = [] of LibTreeSitter::TSNode
+      return literals unless Noir::TreeSitter.node_type(decl) == "var_declaration"
+      specs = [] of LibTreeSitter::TSNode
+      Noir::TreeSitter.each_named_child(decl) do |child|
+        case Noir::TreeSitter.node_type(child)
+        when "var_spec"      then specs << child
+        when "var_spec_list" then Noir::TreeSitter.each_named_child(child) { |s| specs << s if Noir::TreeSitter.node_type(s) == "var_spec" }
+        end
+      end
+      specs.each do |spec|
+        next unless value = Noir::TreeSitter.field(spec, "value")
+        if Noir::TreeSitter.node_type(value) == "func_literal"
+          literals << value
+        else
+          Noir::TreeSitter.each_named_child(value) { |v| literals << v if Noir::TreeSitter.node_type(v) == "func_literal" }
+        end
+      end
+      literals
     end
 
     # `{name, self_bound}` for a `<name> = <chain>.<group_method>(...)`
@@ -410,8 +448,8 @@ module Noir
     # real binding. Locally bound names keep exporting their own value,
     # which is what lets the package map flag a reused local name as
     # ambiguous; their seed is dropped by `drop_local_self_regroups`.
-    private def unexported_self_regroups(root : LibTreeSitter::TSNode, source : String, group_method : String) : Set(String)
-      local, package_level, others = self_regroups(root, source, group_method)
+    private def unexported_self_regroups(regroups : Tuple(Set(String), Set(String), Set(String))) : Set(String)
+      local, package_level, others = regroups
       package_level - others - local
     end
 
@@ -420,12 +458,10 @@ module Noir
     # not from a same-named package group, so its seed is dropped. A
     # package-level var (`var r fiber.Router` set in a sibling file) keeps
     # its seed.
-    private def drop_local_self_regroups(root : LibTreeSitter::TSNode,
-                                         source : String,
-                                         groups : Hash(String, String),
-                                         group_method : String)
+    private def drop_local_self_regroups(groups : Hash(String, String),
+                                         regroups : Tuple(Set(String), Set(String), Set(String)))
       return if groups.empty?
-      local, package_level, _ = self_regroups(root, source, group_method)
+      local, package_level, _ = regroups
       local.each { |name| groups.delete(name) unless package_level.includes?(name) }
     end
 
@@ -702,7 +738,7 @@ module Noir
             collect_engine_param(node, source, names)
           end
         end
-        unexported_self_regroups(root, source, group_method).each { |name| group_prefixes.delete(name) }
+        unexported_self_regroups(self_regroups(root, source, group_method)).each { |name| group_prefixes.delete(name) }
       end
       {names, group_prefixes}
     end
