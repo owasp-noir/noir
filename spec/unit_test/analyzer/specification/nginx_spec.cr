@@ -127,6 +127,26 @@ describe "Nginx Analyzer" do
     ])
   end
 
+  # The regex's `{1,2}` was counted as structure, so its `}` popped the
+  # location before its `{` on the next line was ever read.
+  it "keeps a regex location whose block opens on the next line" do
+    endpoints = analyze_nginx <<-'CONF'
+      server {
+          location ~ ^/v\d{1,2}/u$
+          {
+              if ($request_method = POST) { return 200; }
+          }
+          location /after { }
+      }
+      CONF
+
+    endpoints.map { |e| {e.url, e.method} }.sort!.should eq([
+      {"/after", "ANY"},
+      {"/v\\d{1,2}/u", "ANY"},
+      {"/v\\d{1,2}/u", "POST"},
+    ])
+  end
+
   # Each `}` of a one-line block or of an unpushed `@named` location used to
   # pop a frame it never pushed, closing /admin and then the server early.
   it "keeps frames balanced across one-line blocks and named locations" do

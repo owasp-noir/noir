@@ -49,6 +49,7 @@ module Analyzer::Specification
         next if balanced.empty?
 
         depth_before = stack.size
+        structure = balanced
         if balanced.matches?(/^server\s*\{/)
           stack << Frame.new("server", "", idx + 1)
           server_names = [] of String
@@ -61,6 +62,9 @@ module Analyzer::Specification
           modifier = m[1]? || ""
           raw_location = m[2]
           location = normalize_location_path(raw_location)
+          # The path's own braces (`^/v\d{1,2}/u$`) are not structure; only
+          # what follows it, plus a `{` glued to its end, opens a block.
+          structure = "#{'{' if raw_location.ends_with?('{')}#{balanced[m.end(0)..]}"
           unless location.empty? || internal_location?(raw_location) || internal_location?(location)
             stack << Frame.new("location", location, idx + 1, modifier)
             emit_location(details, location, modifier, METHOD_ANY, server_names, server_tls, idx + 1)
@@ -75,15 +79,14 @@ module Analyzer::Specification
         # Every `{` opens a frame and every `}` closes one. The handlers above
         # push the frames that mean something; any other `{` gets a
         # placeholder, so `if ($bad_ua) { return 403; }`, an `@named`
-        # location, a quoted `'{}'` or a `\d{3}` regex closes only what it
-        # opened. Popping on every `}` without the matching push emptied the
+        # location or a quoted `'{}'` closes only what it opened. Popping on every `}` without the matching push emptied the
         # stack early: the location lost its later `$request_method` blocks
         # and the server's host/TLS reset mid-block. `owed` covers a location
         # whose `{` sits on the next line.
-        net = balanced.count('{') - (stack.size - depth_before) - owed
+        net = structure.count('{') - (stack.size - depth_before) - owed
         owed = net < 0 ? -net : 0
         net.times { stack << Frame.new("block", "", idx + 1) }
-        balanced.count('}').times { pop_frame(stack) }
+        structure.count('}').times { pop_frame(stack) }
       end
     end
 
