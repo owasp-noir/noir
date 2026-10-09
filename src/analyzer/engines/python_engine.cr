@@ -458,15 +458,11 @@ module Analyzer::Python
 
     # Parses a function or class definition from a string or an array of strings
     def parse_code_block(data : ::String | Array(::String), after : Regex? = nil) : ::String?
-      content = ""
-      lines = [] of ::String
-      if data.is_a?(::String)
-        lines = data.split("\n")
-        content = data
-      else
-        lines = data
-        content = data.join("\n")
-      end
+      # The block is returned as its own lines re-joined, never as a slice
+      # of `data` joined whole: callers pass the rest of the file, and
+      # joining all of it once per handler made a file with many routes
+      # quadratic.
+      lines = data.is_a?(::String) ? data.split("\n") : data
 
       # Remove lines before the "after" line if provided
       unless after.nil?
@@ -474,7 +470,6 @@ module Analyzer::Python
         lines.each_with_index do |line, index|
           if line.starts_with?(after)
             lines = lines[index..]
-            content = lines.join("\n")
             break
           end
         end
@@ -498,7 +493,7 @@ module Analyzer::Python
       if indent_size > 0
         double_quote_open, single_quote_open = [false, false]
         double_comment_open, single_comment_open = [false, false]
-        end_index = lines[0].size + 1
+        kept = 1
         # A `def`/`class` signature frequently wraps across lines, with
         # the closing `)` and a `-> T:` return annotation sitting at
         # column 0 — at or below the body's indent. Those header lines
@@ -507,7 +502,9 @@ module Analyzer::Python
         # handlers (`def read_items(\n  session: Dep,\n) -> Any:`) hit
         # this on nearly every endpoint.
         header_span = python_signature_line_span(lines)
-        lines[1..].each_with_index do |line, body_idx|
+        (1...lines.size).each do |line_number|
+          line = lines[line_number]
+          body_idx = line_number - 1
           line_index = 0
           clear_line = line
           # `String#[](Int)` walks from the start of the string on every call
@@ -585,17 +582,14 @@ module Analyzer::Python
           # `body_idx` is 0-based within `lines[1..]`, so absolute line
           # `body_idx + 1`. While that is still inside the multi-line
           # signature, keep the line unconditionally.
-          if body_idx + 1 < header_span
-            end_index += line.size + 1
-          elsif clear_line[0..(indent_size - 1)].strip.empty? || open_status
-            end_index += line.size + 1
+          if body_idx + 1 < header_span || clear_line[0..(indent_size - 1)].strip.empty? || open_status
+            kept += 1
           else
             break
           end
         end
 
-        end_index -= 1
-        return content[..end_index].strip
+        return lines[0, kept].join("\n").strip
       end
 
       nil

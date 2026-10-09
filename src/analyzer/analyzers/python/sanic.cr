@@ -155,7 +155,7 @@ module Analyzer::Python
         router_info_list.each do |router_info|
           line_index, path, route_path, extra_params, route_attr = router_info
           source = fetch_file_content(path)
-          lines = source.lines
+          lines = fetch_file_lines(path)
           definition_base_path = python_base_path_for(path)
           # Route-level `@bp.get("/x", version=2)` overrides the blueprint's
           # version for just this route.
@@ -255,7 +255,7 @@ module Analyzer::Python
         router_info_list.each do |route_info|
           line_index, path, route_path, extra_params, handler_name = route_info
           source = fetch_file_content(path)
-          lines = source.lines
+          lines = fetch_file_lines(path)
           definition_base_path = python_base_path_for(path)
           api_instances = path_api_instances[path]
           prefix = api_instances[router_name]? || ""
@@ -275,7 +275,7 @@ module Analyzer::Python
             next unless File.exists?(handler_path)
 
             handler_source = fetch_file_content(handler_path)
-            handler_lines = handler_source.lines
+            handler_lines = fetch_file_lines(handler_path)
             function_def_index = find_function_def(handler_lines, function_name)
             next if function_def_index.nil?
           end
@@ -306,7 +306,7 @@ module Analyzer::Python
         router_info_list.each do |route_info|
           line_index, path, route_path, extra_params, handler_name = route_info
           source = fetch_file_content(path)
-          lines = source.lines
+          lines = fetch_file_lines(path)
           definition_base_path = python_base_path_for(path)
           api_instances = path_api_instances[path]
           prefix = api_instances[router_name]? || ""
@@ -326,7 +326,7 @@ module Analyzer::Python
             next unless File.exists?(handler_path)
 
             handler_source = fetch_file_content(handler_path)
-            handler_lines = handler_source.lines
+            handler_lines = fetch_file_lines(handler_path)
             function_def_index = find_function_def(handler_lines, function_name)
             next if function_def_index.nil?
           end
@@ -357,7 +357,7 @@ module Analyzer::Python
         router_info_list.each do |route_info|
           line_index, path, route_path, extra_params, class_name = route_info
           source = fetch_file_content(path)
-          lines = source.lines
+          lines = fetch_file_lines(path)
           definition_base_path = python_base_path_for(path)
           api_instances = path_api_instances[path]
           prefix = api_instances[router_name]? || ""
@@ -708,6 +708,14 @@ module Analyzer::Python
         @file_content_cache[path] = read_file_content(path)
       end
       @file_content_cache[path]
+    end
+
+    @file_lines_cache = Hash(::String, Array(::String)).new
+
+    # Split once per file: the per-route loops re-split the whole file for
+    # every route otherwise, quadratic in a file holding many routes.
+    private def fetch_file_lines(path : ::String) : Array(::String)
+      @file_lines_cache[path] ||= fetch_file_content(path).lines
     end
 
     private def extract_params_from_decorator(path : ::String, lines : Array(::String), line_index : Int32, direction : Symbol = :down) : Tuple(Array(Param), Int32)

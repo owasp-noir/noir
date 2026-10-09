@@ -175,7 +175,7 @@ module Analyzer::Python
     # sequentially.
     private def analyze_flask_source(path : ::String, current_base_path : ::String,
                                      file_content : ::String, state : ScanState) : Nil
-      lines = file_content.lines
+      lines = fetch_file_lines(path)
       # `@expose` routes are resolved in a second pass (the class that
       # pins `route_base`/`resource_name` can live in any file); a source
       # that carries nothing else has no work left here.
@@ -639,7 +639,7 @@ module Analyzer::Python
           fn_path, resolved_name = resolved
           if File.exists?(fn_path)
             fn_source = fetch_file_content(fn_path)
-            fn_lines = fn_source.lines
+            fn_lines = fetch_file_lines(fn_path)
             fn_def_index = find_function_def(fn_lines, resolved_name)
           end
         end
@@ -768,7 +768,7 @@ module Analyzer::Python
       @routes.each do |router_name, router_info_list|
         router_info_list.each do |router_info|
           line_index, path, route_path, extra_params = router_info
-          lines = fetch_file_content(path).lines
+          lines = fetch_file_lines(path)
           expect_params, class_def_index = extract_params_from_decorator(path, lines, line_index)
           api_instances = state.path_api_instances[path]
           route_base_path = python_base_path_for(path)
@@ -907,7 +907,7 @@ module Analyzer::Python
             class_file = gv.path
           end
 
-          class_lines = fetch_file_content(class_file).lines
+          class_lines = fetch_file_lines(class_file)
           class_def_index = find_python_class_def(class_lines, class_name)
 
           # Parser globals only track assignments (not `class`/`def`
@@ -919,7 +919,7 @@ module Analyzer::Python
             import_map = import_map_by_path[path] ||= find_imported_modules(python_base_path_for(path), path)
             if (import_info = import_map[class_name]?) && !import_info[0].empty? && File.exists?(import_info[0])
               class_file = import_info[0]
-              class_lines = fetch_file_content(class_file).lines
+              class_lines = fetch_file_lines(class_file)
               class_def_index = find_python_class_def(class_lines, class_name)
             end
           end

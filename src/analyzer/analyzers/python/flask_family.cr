@@ -64,6 +64,15 @@ module Analyzer::Python
       @file_content_cache[path] ||= read_file_content(path)
     end
 
+    @file_lines_cache = Hash(::String, Array(::String)).new
+
+    # `fetch_file_content(path).lines`, split once per file: the per-route
+    # emit loops otherwise re-split the whole file for every route, which
+    # is quadratic in a single file holding thousands of routes.
+    private def fetch_file_lines(path : ::String) : Array(::String)
+      @file_lines_cache[path] ||= fetch_file_content(path).lines
+    end
+
     # Get a parser for a given path
     def get_parser(path : ::String, content : ::String = "") : PythonParser
       @parsers[path] ||= create_parser(path, content)
@@ -264,17 +273,25 @@ module Analyzer::Python
       end
     end
 
-    private def find_function_def(lines : Array(::String), function_name : ::String) : Int32?
-      # Compile once per call; an interpolated literal inside the loop
-      # would be recompiled on every line.
-      def_re = /^\s*(?:async\s+)?def\s+#{Regex.escape(function_name)}\s*\(/
-      lines.each_with_index do |line, index|
-        if line.match(def_re)
-          return index
-        end
-      end
+    FUNCTION_DEF_RE = /^\s*(?:async\s+)?def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/
 
-      nil
+    # First `def <name>(` line per name, built once per lines array (keyed
+    # by identity; the arrays come from `fetch_file_lines`). A linear scan
+    # per call made many `add_url_rule(view_func=...)` routes quadratic.
+    @function_def_index = Hash(Array(::String), Hash(::String, Int32)).new.compare_by_identity
+
+    private def find_function_def(lines : Array(::String), function_name : ::String) : Int32?
+      index = @function_def_index[lines] ||= begin
+        defs = Hash(::String, Int32).new
+        lines.each_with_index do |line, line_index|
+          next unless line.includes?("def")
+          if match = line.match(FUNCTION_DEF_RE)
+            defs[match[1]] = line_index unless defs.has_key?(match[1])
+          end
+        end
+        defs
+      end
+      index[function_name]?
     end
 
     # Locate `class <name>(...):` in a file's lines (-1 when absent).
