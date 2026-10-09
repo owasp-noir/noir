@@ -45,9 +45,14 @@ typedef char Delimiter;
 // We use a stack to keep track of the string delimiters.
 typedef Array(Delimiter) Stack;
 
-static inline void stack_push(Stack *stack, char chr, bool triple) {
-  if (stack->size >= TREE_SITTER_SERIALIZATION_BUFFER_SIZE) abort();
+// noir local patch (keep when re-vendoring): upstream abort()s here once
+// string templates nest past the serialization buffer, which killed the
+// whole noir process on one hostile .kt file. Refuse the push instead so
+// the STRING_START token fails and tree-sitter recovers with an ERROR node.
+static inline bool stack_push(Stack *stack, char chr, bool triple) {
+  if (stack->size >= TREE_SITTER_SERIALIZATION_BUFFER_SIZE) return false;
   array_push(stack, (Delimiter)(triple ? (chr + 1) : chr));
+  return true;
 }
 
 static inline Delimiter stack_pop(Stack *stack) {
@@ -68,14 +73,12 @@ static bool scan_string_start(TSLexer *lexer, Stack *stack) {
   for (unsigned count = 1; count < DELIMITER_LENGTH; ++count) {
     if (lexer->lookahead != '"') {
       // It's not a triple quoted delimiter.
-      stack_push(stack, '"', false);
-      return true;
+      return stack_push(stack, '"', false);
     }
     advance(lexer);
   }
   lexer->mark_end(lexer);
-  stack_push(stack, '"', true);
-  return true;
+  return stack_push(stack, '"', true);
 }
 
 static bool scan_string_content(TSLexer *lexer, Stack *stack) {

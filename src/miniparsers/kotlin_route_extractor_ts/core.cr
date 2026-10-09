@@ -214,9 +214,10 @@ module Noir
       # `each_named_child` would lose the class-level mapping prefix.
       pending = [] of LibTreeSitter::TSNode
       orphan_class : Tuple(String, Array(String))? = nil
-      count = LibTreeSitter.ts_node_named_child_count(node)
-      count.times do |i|
-        child = LibTreeSitter.ts_node_named_child(node, i.to_u32)
+      # Cursor-backed on wide nodes: indexing `ts_node_named_child(node, i)`
+      # is O(i), so a flat ERROR node with tens of thousands of children
+      # (a hostile string-template nest) walked quadratically.
+      Noir::TreeSitter.each_named_child(node) do |child|
         case Noir::TreeSitter.node_type(child)
         when "class_declaration", "object_declaration", "interface_declaration"
           process_class(child, source, outer_prefixes, pending, routes, string_constants, local_string_constants, depth + 1)

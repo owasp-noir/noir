@@ -763,4 +763,13 @@ describe Noir::TreeSitterKotlinRouteExtractor do
 
     Noir::TreeSitterKotlinRouteExtractor.extract_stomp_application_prefixes(source).should eq(["/app"])
   end
+
+  # The vendored scanner used to abort() the whole process once string
+  # templates nested past its 1024-entry delimiter stack.
+  it "survives string templates nested deeper than the scanner stack" do
+    depth = 1100
+    nested = %(") + %(${") * depth + "x" + %("}) * depth + %(")
+    source = "@RestController\nclass Deep {\n    @GetMapping(#{nested})\n    fun deep(): String = \"\"\n}\n"
+    Noir::TreeSitterKotlinRouteExtractor.extract_routes(source).should be_a(Array(Noir::TreeSitterKotlinRouteExtractor::Route))
+  end
 end
