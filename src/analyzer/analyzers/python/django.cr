@@ -721,6 +721,52 @@ module Analyzer::Python
       nil
     end
 
+    # Argument lists of each top-level `url|path|re_path|register(...)` call
+    # in `text`. A call nested in another's arguments (an inline
+    # `include([...])` body) is skipped here and read when that include is
+    # expanded. Scans bytes: every delimiter is ASCII, so UTF-8 is safe and
+    # each call costs one forward pass.
+    private def route_call_args(text : ::String) : Array(Array(::String))
+      calls = [] of Array(::String)
+      bytes = text.to_slice
+      pos = 0
+      while call = /\b(?:url|path|re_path|register)\s*\(/.match_at_byte_index(text, pos)
+        open = call.byte_end(0) - 1
+        close = python_close_paren_byte(bytes, open)
+        break unless close
+        calls << split_python_arguments(text.byte_slice(open + 1, close - open - 1))
+        pos = close + 1
+      end
+      calls
+    end
+
+    # Byte index of the `)` closing the `(` at `open`, skipping quoted runs.
+    private def python_close_paren_byte(bytes : Bytes, open : Int32) : Int32?
+      depth = 0
+      quote : UInt8? = nil
+      escaped = false
+      (open...bytes.size).each do |i|
+        b = bytes[i]
+        if quote
+          if escaped
+            escaped = false
+          elsif b === '\\'
+            escaped = true
+          elsif b == quote
+            quote = nil
+          end
+        elsif b === '\'' || b === '"'
+          quote = b
+        elsif b === '('
+          depth += 1
+        elsif b === ')'
+          depth -= 1
+          return i if depth == 0
+        end
+      end
+      nil
+    end
+
     private def extract_route_mappings(content : ::String) : Array(Tuple(::String, ::String))
       mappings = [] of Tuple(::String, ::String)
       lines = content.split("\n")
@@ -737,51 +783,53 @@ module Analyzer::Python
         next unless line.matches?(/\b(?:url|path|re_path|register)\s*\(/)
 
         logical_line = python_paren_delta(line) > 0 ? join_until_python_call_closes(lines, index, line) : line
-        call_match = logical_line.match(/\b(?:url|path|re_path|register)\s*\((.*)\)/m)
-        next unless call_match
+        mapped_before = mappings.size
 
-        args = split_python_arguments(call_match[1])
-        next if args.size < 2
+        # One line can hold several sibling calls (`[path('a', v), path('b', w)]`,
+        # or an inline `include([...])` body), so read every top-level call.
+        route_call_args(logical_line).each do |args|
+          next if args.size < 2
 
-        view_expr = extract_python_keyword_expression(args, "view")
-        view_expr ||= args[1]?.try do |candidate|
-          if keyword_view = candidate.match(/^\s*view\s*=\s*(.+)$/m)
-            keyword_view[1].strip
-          else
-            candidate.strip
+          view_expr = extract_python_keyword_expression(args, "view")
+          view_expr ||= args[1]?.try do |candidate|
+            if keyword_view = candidate.match(/^\s*view\s*=\s*(.+)$/m)
+              keyword_view[1].strip
+            else
+              candidate.strip
+            end
           end
+          view_expr ||= ""
+
+          route = Helper.extract_python_string(args[0])
+          route ||= extract_python_keyword_string(args, "route")
+          route ||= extract_python_keyword_string(args, "regex")
+
+          # A route prefix that isn't a string literal — the canonical shape is
+          # a deployment sub-path pulled from settings, e.g. NetBox's root
+          # urlconf, which is nothing but
+          # `urlpatterns = [path(settings.BASE_PATH, include(_patterns))]`.
+          # Skipping the whole entry threw away not just the prefix but every
+          # route the `include()` mounts: NetBox's entire URL tree hung off
+          # that one line, so the ROOT_URLCONF pass returned zero and the
+          # orphan-urlconf fallback re-derived each app's routes app-relative,
+          # dropping the `/api/<app>/` mount that distinguishes the REST API
+          # from the web UI.
+          #
+          # Mounting the subtree at the empty prefix is the right recovery:
+          # these settings-driven prefixes are empty in the default deployment
+          # (BASE_PATH is `''` unless the operator serves NetBox under a
+          # sub-path), so the paths are exactly right far more often than not,
+          # and a missing leading segment is a much smaller error than a
+          # missing API. The tolerance is deliberately limited to `include()`
+          # views: for a leaf `path(some_var, view)` there is no subtree to
+          # rescue, and guessing `/` for it would invent an endpoint.
+          route ||= "" if view_expr.matches?(/\binclude\s*\(/)
+          next unless route
+
+          mappings << {route, view_expr}
         end
-        view_expr ||= ""
 
-        route = Helper.extract_python_string(args[0])
-        route ||= extract_python_keyword_string(args, "route")
-        route ||= extract_python_keyword_string(args, "regex")
-
-        # A route prefix that isn't a string literal — the canonical shape is
-        # a deployment sub-path pulled from settings, e.g. NetBox's root
-        # urlconf, which is nothing but
-        # `urlpatterns = [path(settings.BASE_PATH, include(_patterns))]`.
-        # Skipping the whole entry threw away not just the prefix but every
-        # route the `include()` mounts: NetBox's entire URL tree hung off
-        # that one line, so the ROOT_URLCONF pass returned zero and the
-        # orphan-urlconf fallback re-derived each app's routes app-relative,
-        # dropping the `/api/<app>/` mount that distinguishes the REST API
-        # from the web UI.
-        #
-        # Mounting the subtree at the empty prefix is the right recovery:
-        # these settings-driven prefixes are empty in the default deployment
-        # (BASE_PATH is `''` unless the operator serves NetBox under a
-        # sub-path), so the paths are exactly right far more often than not,
-        # and a missing leading segment is a much smaller error than a
-        # missing API. The tolerance is deliberately limited to `include()`
-        # views: for a leaf `path(some_var, view)` there is no subtree to
-        # rescue, and guessing `/` for it would invent an endpoint.
-        route ||= "" if view_expr.matches?(/\binclude\s*\(/)
-        next unless route
-
-        mappings << {route, view_expr}
-
-        if line.includes?("include([")
+        if mappings.size > mapped_before && line.includes?("include([")
           include_start = line.index("include([") || 0
           inline_include_depth = python_bracket_delta(line[include_start..])
         end
