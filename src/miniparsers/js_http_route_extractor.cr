@@ -956,8 +956,7 @@ module Noir
 
       JSRouteExtractor.extract_header_params(body, endpoint)
       JSRouteExtractor.extract_cookie_params(body, endpoint)
-      extract_query_params(body, endpoint)
-      extract_json_body_params(body, endpoint)
+      extract_fetch_request_params(body, endpoint)
     end
 
     # Query and body params a Fetch-API / node:http handler reads from a

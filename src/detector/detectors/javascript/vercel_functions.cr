@@ -12,7 +12,6 @@ module Detector::Javascript
 
     EXTENSIONS = {".js", ".mjs", ".ts", ".tsx"}
 
-    VERCEL_IMPORT  = /(?:\bfrom\s*|\brequire\s*\(\s*|\bimport\s*\(\s*)['"]@vercel\/(?:node|functions)['"]/
     HANDLER_EXPORT = /(?:^|[^\w$.])export\s+default\b|(?:^|[^\w$.])module\s*\.\s*exports\s*=(?!=)|(?:^|[^\w$.])export\s+(?:(?:async\s+)?function\s+|(?:const|let|var)\s+)(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b/m
 
     def applicable?(filename : String) : Bool
@@ -29,7 +28,7 @@ module Detector::Javascript
       return false if Noir::ServerlessLayout.private_segment?(segments)
       return false unless content_matches?(file_contents, HANDLER_EXPORT)
 
-      content_matches?(file_contents, VERCEL_IMPORT) || Noir::ServerlessLayout.vercel_project?(root)
+      content_matches?(file_contents, Noir::ServerlessLayout::VERCEL_IMPORT) || Noir::ServerlessLayout.vercel_project?(root)
     end
   end
 end

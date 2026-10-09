@@ -24,9 +24,7 @@ module Analyzer::Javascript
     analyzer_for "js_vercel_functions"
 
     # `api/**/*.+(js|mjs|ts|tsx)` — the @vercel/node builder's pattern.
-    EXTENSIONS    = [".js", ".mjs", ".ts", ".tsx"]
-    VERB_EXPORTS  = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
-    VERCEL_IMPORT = /(?:\bfrom\s*|\brequire\s*\(\s*|\bimport\s*\(\s*)['"]@vercel\/(?:node|functions)['"]/
+    EXTENSIONS = [".js", ".mjs", ".ts", ".tsx"]
 
     def analyze
       include_callee = callees_needed?
@@ -35,7 +33,7 @@ module Analyzer::Javascript
         root, segments = route_location(path) || next
         content = read_file_content(path)
         vercel = vercel_roots.fetch(root) { vercel_roots[root] = Noir::ServerlessLayout.vercel_project?(root) }
-        next unless vercel || content.matches?(VERCEL_IMPORT)
+        next unless vercel || content.matches?(Noir::ServerlessLayout::VERCEL_IMPORT)
 
         endpoints_for(path, content, file_route_url(["api"] + segments), include_callee)
       end.each { |endpoints| @result.concat(endpoints) }
@@ -57,7 +55,7 @@ module Analyzer::Javascript
 
     private def endpoints_for(path : String, content : String, url : String, include_callee : Bool) : Array(Endpoint)
       endpoints = [] of Endpoint
-      VERB_EXPORTS.each do |verb|
+      FILE_ROUTE_METHODS.each do |verb|
         handler = Noir::JSServerlessFunctionExtractor.exported_handler(content, verb) || next
         endpoints << serverless_endpoint(url, verb, path, handler, :request, include_callee, path_params_in_query: true)
       end

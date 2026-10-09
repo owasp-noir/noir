@@ -47,8 +47,9 @@ module Noir
 
     VERCEL_CONFIGS         = {"vercel.json", "now.json"}
     VERCEL_PACKAGE_MARKERS = {"\"@vercel/node\"", "\"@vercel/functions\""}
-    NETLIFY_FUNCTION_DIRS  = {"functions", "edge-functions"}
-    NETLIFY_DEFAULT_PARENT = "netlify"
+    # A module importing the Vercel runtime types marks itself as a function.
+    VERCEL_IMPORT         = /(?:\bfrom\s*|\brequire\s*\(\s*|\bimport\s*\(\s*)['"]@vercel\/(?:node|functions)['"]/
+    NETLIFY_FUNCTION_DIRS = {"functions", "edge-functions"}
 
     # Whether `root` is a Vercel project: it carries a `vercel.json` /
     # `now.json`, or its package.json depends on the Vercel runtime types.
@@ -62,13 +63,13 @@ module Noir
 
     # Netlify's default function directories: `netlify/functions/` and
     # `netlify/edge-functions/` under the site's base directory. Returns
-    # `{kind, function_dir, segments_below_it}` where kind is `functions` or
+    # `{kind, segments_below_it}` where kind is `functions` or
     # `edge-functions`.
-    def netlify_default_remainder(path : String, relative : String) : Tuple(String, String, Array(String))?
+    def netlify_default_remainder(relative : String) : Tuple(String, Array(String))?
       segments = relative.split('/').reject(&.empty?)
       (segments.size - 2).times do |i|
-        next unless segments[i] == NETLIFY_DEFAULT_PARENT && NETLIFY_FUNCTION_DIRS.includes?(segments[i + 1])
-        return {segments[i + 1], ancestor(path, segments.size - i - 2), segments[(i + 2)..]}
+        next unless segments[i] == "netlify" && NETLIFY_FUNCTION_DIRS.includes?(segments[i + 1])
+        return {segments[i + 1], segments[(i + 2)..]}
       end
       nil
     end
@@ -100,10 +101,9 @@ module Noir
         path.matches?(/\.(?:test|spec)\.[cm]?[jt]sx?\z/)
     end
 
-    # Hidden (`.x`) and private (`_x`) entries, which none of the platforms
-    # deploy as routes, and vendored code.
+    # Hidden (`.x`) and private (`_x`) entries, which Vercel does not deploy.
     def private_segment?(segments : Array(String)) : Bool
-      segments.any? { |seg| seg.starts_with?('.') || seg.starts_with?('_') || seg == "node_modules" }
+      segments.any? { |seg| seg.starts_with?('.') || seg.starts_with?('_') }
     end
   end
 end

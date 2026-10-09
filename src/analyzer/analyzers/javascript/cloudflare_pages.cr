@@ -50,7 +50,6 @@ module Analyzer::Javascript
     private def route_segments(path : String) : Array(String)?
       return if Noir::ServerlessLayout.non_handler_file?(path)
       _, segments = Noir::ServerlessLayout.routing_remainder(path, base_relative_path(path), "functions") || return
-      return if segments.any?(&.==("node_modules"))
       leaf = Noir::ServerlessLayout.stem(segments.last)
       return if leaf == "_middleware" || leaf == "_middleware_"
 

@@ -35,7 +35,7 @@ module Detector::Javascript
       return false if Noir::ServerlessLayout.non_handler_file?(filename)
 
       relative = base_relative_path(filename).gsub('\\', '/')
-      _, _, segments = Noir::ServerlessLayout.netlify_default_remainder(filename, relative) || return false
+      _, segments = Noir::ServerlessLayout.netlify_default_remainder(relative) || return false
       return false if Noir::ServerlessLayout.netlify_function_name(segments).nil?
       content_matches?(file_contents, HANDLER_EXPORT)
     end

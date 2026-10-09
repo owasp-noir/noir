@@ -68,13 +68,7 @@ module Analyzer::Javascript
     # `{kind, segments_below_the_functions_dir}`, or nil outside one.
     private def function_location(path : String, configured : Array(Tuple(String, String))) : Tuple(String, Array(String))?
       return if Noir::ServerlessLayout.non_handler_file?(path)
-      location = configured_location(path, configured)
-      location ||= Noir::ServerlessLayout.netlify_default_remainder(path, base_relative_path(path)).try do |kind, _, segments|
-        {kind, segments}
-      end
-      return unless location
-      return if location[1].any?(&.==("node_modules"))
-      location
+      configured_location(path, configured) || Noir::ServerlessLayout.netlify_default_remainder(base_relative_path(path))
     end
 
     private def configured_location(path : String, configured : Array(Tuple(String, String))) : Tuple(String, Array(String))?
