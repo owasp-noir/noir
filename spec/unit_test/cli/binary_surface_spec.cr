@@ -273,7 +273,7 @@ describe "noir CLI surface (built binary)" do
         File.chmod(path, 0o000)
         begin
           # root reads through mode 000; nothing to assert there.
-          next if File.readable?(path)
+          next if File::Info.readable?(path)
           result = run_noir(["config", "show"], env: {"NOIR_HOME" => home})
           result.stderr.should_not contain("Unhandled exception")
           result.stderr.should contain("Cannot read config file")

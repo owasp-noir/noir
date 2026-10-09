@@ -36,7 +36,7 @@ module PassiveRulesUpdater
       rescue RuntimeError
         # already exited between the timeout firing and the signal
       end
-      logger.warning "git #{args.first} timed out after #{git_timeout.total_seconds.to_i}s; continuing with the cached passive rules."
+      logger.warning "git #{args.first} timed out after #{git_timeout.total_seconds.to_i}s (NOIR_RULES_GIT_TIMEOUT raises the limit)."
       false
     end
   end

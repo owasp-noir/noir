@@ -89,7 +89,7 @@ describe "PassiveRulesUpdater" do
         # A fake `git` that hangs like a fetch against a blackholed remote.
         bin = File.join(Dir.tempdir, "noir-fake-git-#{Random.new.hex(4)}")
         Dir.mkdir_p(bin)
-        File.write(File.join(bin, "git"), "#!/bin/sh\nsleep 30\n")
+        File.write(File.join(bin, "git"), "#!/bin/sh\nexec sleep 30\n")
         File.chmod(File.join(bin, "git"), 0o755)
         prev_path = ENV["PATH"]?
         prev_timeout = PassiveRulesUpdater.git_timeout
