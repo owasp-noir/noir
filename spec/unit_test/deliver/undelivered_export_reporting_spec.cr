@@ -1,6 +1,7 @@
 require "../../spec_helper"
 require "http/server"
 require "../../../src/deliver/send_req"
+require "../../../src/deliver/send_proxy"
 require "../../../src/deliver/send_webhook"
 require "../../../src/deliver/send_elasticsearch"
 require "../../../src/models/endpoint"
@@ -59,6 +60,28 @@ describe "undelivered export reporting" do
     gaps = deliver_gaps
     gaps.size.should eq(1)
     gaps.first.message.should contain("probe delivery: 1 request could not be sent")
+  end
+
+  # --probe-via only warned, so `--strict` passed with nothing delivered while
+  # --probe recorded the same failure.
+  it "records proxy probes that could not be sent" do
+    options = create_test_options
+    options["probe_via"] = YAML::Any.new(UNREACHABLE)
+    SendWithProxy.new(options).run(endpoints)
+
+    gaps = deliver_gaps
+    gaps.size.should eq(1)
+    gaps.first.message.should contain("proxy delivery: 1 request could not be sent")
+  end
+
+  it "records a --probe-via value that names no proxy" do
+    options = create_test_options
+    options["probe_via"] = YAML::Any.new("not a proxy")
+    SendWithProxy.new(options).run(endpoints)
+
+    gaps = deliver_gaps
+    gaps.size.should eq(1)
+    gaps.first.message.should contain("does not resolve to a proxy host and port")
   end
 
   # Crest followed the 307 as a body-less GET carrying the request headers,

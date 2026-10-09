@@ -1,4 +1,5 @@
 require "../models/deliver"
+require "../models/skipped_files"
 
 class SendWithProxy < Deliver
   # Crest's `set_proxy!` is a no-op unless it gets BOTH a host and a port,
@@ -32,6 +33,10 @@ class SendWithProxy < Deliver
     resolved = SendWithProxy.resolve_proxy_target(@proxy)
     if resolved.nil?
       @logger.error "--probe-via '#{Noir::Redact.url(@proxy)}' does not resolve to a proxy host and port — expected e.g. http://127.0.0.1:8080. Skipping proxy delivery rather than sending probes directly to the target."
+      Noir::SkippedFiles.record_gap(
+        Noir::SkippedFiles::DELIVER_SCOPE,
+        "proxy delivery: --probe-via '#{Noir::Redact.url(@proxy)}' does not resolve to a proxy host and port; nothing was sent"
+      )
       return
     end
     proxy_host, proxy_port = resolved
@@ -47,7 +52,14 @@ class SendWithProxy < Deliver
     # would fail the handshake against the proxy's cert.
     failed = probe_all(endpoints, OpenSSL::SSL::Context::Client.insecure, "proxy delivery", proxy_host, proxy_port)
 
-    # Counts only requests that never reached the proxy — see SendReq#run.
-    @logger.warning "Proxy delivery: #{failed} request(s) could not be sent (run with --debug for details)." if failed > 0
+    # Counts only requests that never reached the proxy, and records them the
+    # way SendReq#run does so `--strict` and `errors` see them too.
+    return if failed == 0
+
+    @logger.warning "Proxy delivery: #{failed} request(s) could not be sent (run with --debug for details)."
+    Noir::SkippedFiles.record_gap(
+      Noir::SkippedFiles::DELIVER_SCOPE,
+      "proxy delivery: #{failed} request#{"s" if failed != 1} could not be sent (run with --debug for details)"
+    )
   end
 end
