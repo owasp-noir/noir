@@ -262,17 +262,15 @@ module OutputBuilderOasCommon
   private def rename_path_parameters(parameters : Array(Hash(String, JSON::Any)), renames : Hash(String, String))
     return if renames.empty?
 
-    renamed = [] of Hash(String, JSON::Any)
-    parameters.each do |parameter|
+    renamed = parameters.map do |parameter|
       if parameter["in"].as_s == "path" && (name = renames[parameter["name"].as_s]?)
         parameter = parameter.dup
         parameter["name"] = JSON::Any.new(name)
       end
-
-      append_unique_parameter(renamed, parameter)
+      parameter
     end
 
-    parameters.replace(renamed)
+    parameters.replace(unique_parameters(renamed))
   end
 
   # The alternate spellings folded into a path item, so merging two routes
@@ -354,13 +352,14 @@ module OutputBuilderOasCommon
     return unless operation_parameters
 
     parameters = path_item["parameters"]?.try(&.as_a?).try(&.compact_map(&.as_h?)) || [] of Hash(String, JSON::Any)
+    seen = parameters.to_set { |existing| parameter_key(existing) }
     added = false
 
     operation_parameters.each do |raw|
       parameter = raw.as_h?
       next unless parameter
       next unless parameter["in"]?.try(&.as_s?) == "path"
-      next if parameters.any? { |existing| parameter_key(existing) == parameter_key(parameter) }
+      next unless seen.add?(parameter_key(parameter))
 
       parameters << parameter
       added = true
@@ -371,18 +370,21 @@ module OutputBuilderOasCommon
     path_item["parameters"] = JSON::Any.new(parameters.map { |parameter| JSON::Any.new(parameter) })
   end
 
-  private def parameter_key(parameter : Hash(String, JSON::Any)) : String
-    "#{parameter["in"].as_s}\0#{parameter["name"].as_s}"
+  private def parameter_key(parameter : Hash(String, JSON::Any)) : {String, String}
+    {parameter["in"].as_s, parameter["name"].as_s}
   end
 
-  private def append_unique_parameter(parameters : Array(Hash(String, JSON::Any)), parameter : Hash(String, JSON::Any))
-    key = parameter_key(parameter)
-    if index = parameters.index { |existing| parameter_key(existing) == key }
-      parameters[index] = merge_parameter(parameters[index], parameter)
-      return
+  # One parameter per name+in, at its first position, later repeats folded in
+  # with `merge_parameter`. A hash instead of a scan per append: an operation
+  # with 20000 query params took 49s to render as oas3 against 2s as json.
+  private def unique_parameters(parameters : Array(Hash(String, JSON::Any))) : Array(Hash(String, JSON::Any))
+    unique = {} of {String, String} => Hash(String, JSON::Any)
+    parameters.each do |parameter|
+      key = parameter_key(parameter)
+      existing = unique[key]?
+      unique[key] = existing ? merge_parameter(existing, parameter) : parameter
     end
-
-    parameters << parameter
+    unique.values
   end
 
   # A repeated name+in is not always redundant. Two routes that differ only in
@@ -466,12 +468,13 @@ module OutputBuilderOasCommon
   # can keep them in an extension instead of losing them.
   private def extract_unmapped_path_parameters(parameters : Array(Hash(String, JSON::Any)), template_names : Array(String)) : Array(String)
     unmapped = [] of String
+    template_name_set = template_names.to_set
 
     parameters.reject! do |parameter|
       next false unless parameter["in"].as_s == "path"
 
       name = parameter["name"].as_s
-      next false if template_names.includes?(name)
+      next false if template_name_set.includes?(name)
 
       unmapped << name
       true
@@ -487,13 +490,7 @@ module OutputBuilderOasCommon
   end
 
   private def merge_parameters(existing : Array(JSON::Any), incoming : Array(JSON::Any)) : Array(JSON::Any)
-    merged = [] of Hash(String, JSON::Any)
-
-    (existing + incoming).each do |parameter|
-      append_unique_parameter(merged, parameter.as_h)
-    end
-
-    merged.map { |parameter| JSON::Any.new(parameter) }
+    unique_parameters((existing + incoming).map(&.as_h)).map { |parameter| JSON::Any.new(parameter) }
   end
 
   private def merge_body_parameter(existing : Hash(String, JSON::Any), incoming : Hash(String, JSON::Any)) : Hash(String, JSON::Any)

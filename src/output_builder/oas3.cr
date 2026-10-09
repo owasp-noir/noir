@@ -28,7 +28,7 @@ class OutputBuilderOas3 < OutputBuilder
       url_parts = split_route_url(endpoint.url)
       route_query = route_query_parameters(url_parts[:query], endpoint)
       route_query.each do |name, values|
-        append_unique_parameter(parameters, openapi_parameter(name, "query", false, values))
+        parameters << openapi_parameter(name, "query", false, values)
       end
 
       endpoint.params.each do |param|
@@ -55,29 +55,29 @@ class OutputBuilderOas3 < OutputBuilder
           xml_properties[param.name] = schema_string
         when "header"
           # Header parameters
-          append_unique_parameter(parameters, openapi_parameter(param.name, "header", false))
+          parameters << openapi_parameter(param.name, "header", false)
         when "path"
           # Path parameters
-          append_unique_parameter(parameters, openapi_parameter(param.name, "path", true))
+          parameters << openapi_parameter(param.name, "path", true)
         when "cookie"
           # Cookie parameters (supported in OAS3)
-          append_unique_parameter(parameters, openapi_parameter(param.name, "cookie", false))
+          parameters << openapi_parameter(param.name, "cookie", false)
         else
           # Default to query parameter
-          append_unique_parameter(parameters, openapi_parameter(param.name, "query", false))
+          parameters << openapi_parameter(param.name, "query", false)
         end
       end
 
       oas_path, path_variant = resolve_oas_path(endpoint, url_parts[:route], parameters, canonical_paths)
       template_names = path_template_names(oas_path)
-      template_names.each do |name|
-        # A path template variable must win over a same-named query/header/
-        # cookie parameter. Emitting both `in: path` and `in: query` for the
-        # same name is redundant and trips strict OAS validators, so drop the
-        # non-path duplicate before adding the path parameter.
-        parameters.reject! { |p| p["name"].as_s == name && p["in"].as_s != "path" }
-        append_unique_parameter(parameters, openapi_parameter(name, "path", true))
-      end
+      # A path template variable must win over a same-named query/header/
+      # cookie parameter. Emitting both `in: path` and `in: query` for the
+      # same name is redundant and trips strict OAS validators, so drop the
+      # non-path duplicate before adding the path parameter.
+      template_name_set = template_names.to_set
+      parameters.reject! { |p| p["in"].as_s != "path" && template_name_set.includes?(p["name"].as_s) }
+      template_names.each { |name| parameters << openapi_parameter(name, "path", true) }
+      parameters = unique_parameters(parameters)
       unmapped_path_params = extract_unmapped_path_parameters(parameters, template_names)
 
       # Build operation object
