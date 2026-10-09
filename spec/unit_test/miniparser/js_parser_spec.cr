@@ -405,6 +405,21 @@ describe Noir::JSParser do
       routes.should eq(["GET /spec", "OPTIONS /cors"])
     end
 
+    it "keeps { path } specs with custom keys and nested option objects" do
+      # Restify keeps arbitrary spec keys on req.route.spec: manta-muskie's
+      # `authAction`, node-restify-validation's `validation`, swagger docs.
+      code = <<-JS
+        const restify = require('restify');
+        const server = restify.createServer();
+        server.get({ path: '/:account', name: 'GetRootDir', authAction: 'getdirectory' }, (req, res, next) => next());
+        server.post({ path: '/users', validation: { resources: { name: { isRequired: true }, headers: {} } } }, (req, res, next) => next());
+        server.put({ url: '/docs', swagger: { summary: 'x', host: 'ignored-nested' } }, (req, res, next) => next());
+        server.get({ path: '/upstream', headers: { a: 1 } }, (req, res, next) => next());
+        JS
+      routes = Noir::JSParser.new(code).parse_routes.map { |r| "#{r.method} #{r.path}" }.uniq!.sort!
+      routes.should eq(["GET /:account", "POST /users", "PUT /docs"])
+    end
+
     it "reads { path } routes past the first 10k tokens" do
       n = 2000
       code = String.build do |io|

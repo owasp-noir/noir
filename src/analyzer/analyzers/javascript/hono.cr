@@ -73,7 +73,7 @@ module Analyzer::Javascript
     # neither — except the usual event-emitter names, whose `.on('get',
     # '/room/1', cb)` has the same shape.
     ON_ROUTE_RE            = /(?<![\w$])([A-Za-z_$][\w$]*)\s*\.\s*on\s*\(\s*(?:['"](\w+)['"]|\[([^\]\n]+)\])\s*,\s*['"]([\/*][^'"\n]*)['"]/
-    EVENT_EMITTER_RECEIVER = /\A(?:ee|io|ws|process|knex|proxy|events?|\w*(?:[Ee]mitter|[Ss]ocket|[Ss]tream))\z/
+    EVENT_EMITTER_RECEIVER = /\A(?:ee|io|ws|process|events?|\w*(?:[Ee]mitter|[Ss]ocket|[Ss]tream))\z/
 
     private def extract_on_routes(path : String,
                                   content : String,

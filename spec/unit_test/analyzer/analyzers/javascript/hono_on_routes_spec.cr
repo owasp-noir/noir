@@ -82,9 +82,11 @@ describe "Hono app.on routes" do
       socket.on('delete', '/room/1', () => {})
       myEmitter.on('options', '/ignored', cb)
       cache.on(['get', 'set'], 'key', cb)
-      proxy.on('head', '/x', handler)
+      dataStream.on('head', '/x', handler)
+      const proxy = new Hono()
+      proxy.on('GET', '/proxied', (c) => c.text('p'))
       TS
-    eps.map { |e| "#{e.method} #{e.url}" }.should eq(["GET /books-on"])
+    eps.map { |e| "#{e.method} #{e.url}" }.sort!.should eq(["GET /books-on", "GET /proxied"])
   end
 
   it "attaches callees to app.query() routes" do

@@ -251,9 +251,11 @@ module Analyzer::Javascript
     # `child`). The argument shape is the gate, and it is in the pattern so
     # the per-call work below never runs for `db.query(sql)` or Express's
     # `router.route('/x')`.
-    ROUTE_CONFIG_CALL_RE = /(?<![\w$])[A-Za-z_$][\w$]*\s*\.\s*route\s*\(\s*\{/
+    ROUTE_CONFIG_CALL_RE = /(?<![\w$])([A-Za-z_$][\w$]*)\s*\.\s*route\s*\(\s*\{/
     # A `handler` key: `handler: fn`, `handler(req) {…}` or shorthand `{ handler }`.
-    ROUTE_CONFIG_HANDLER_KEY = /(?<![\w$.])handler\s*(?:[:(,}]|$)/m
+    # A `handler` (or `wsHandler`) key (`handler: fn`, `handler(req) {…}`, shorthand
+    # `{ handler }`) or a spread that may carry one (`...routeOpts`).
+    ROUTE_CONFIG_HANDLER_KEY = /(?<![\w$.])(?:handler|wsHandler)\s*(?:[:(,}]|$)|\.\.\./m
     QUERY_CALL_RE            = /(?<![\w$])([A-Za-z_$][\w$]*)\s*\.\s*query\s*\(\s*[`'"][\/*]/
 
     # `.query(` is every database and search client's method, so unlike
@@ -264,8 +266,11 @@ module Analyzer::Javascript
     FASTIFY_INSTANCE_NAME  = /\A(?:fastify|app|server|instance)\z|(?:App|Server)\z/
     INLINE_PLUGIN_PARAM    = /\.register\s*\(\s*(?:async\s+)?(?:function\s*[\w$]*\s*\(\s*([A-Za-z_$][\w$]*)|\(\s*([A-Za-z_$][\w$]*)|([A-Za-z_$][\w$]*)\s*=>)/
     REGISTERED_PLUGIN_NAME = /\.register\s*\(\s*([A-Za-z_$][\w$]*)\s*[,)]/
-    FUNCTION_FIRST_PARAM   = /function\s+([A-Za-z_$][\w$]*)\s*\(\s*([A-Za-z_$][\w$]*)|(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s+)?(?:function\s*[\w$]*\s*\(\s*([A-Za-z_$][\w$]*)|\(\s*([A-Za-z_$][\w$]*)|([A-Za-z_$][\w$]*)\s*=>)/
-    EXPORTED_PLUGIN_PARAM  = /(?:export\s+default|module\.exports\s*=)\s*(?:async\s+)?(?:function\s*[\w$]*\s*\(\s*([A-Za-z_$][\w$]*)|\(\s*([A-Za-z_$][\w$]*)|([A-Za-z_$][\w$]*)\s*=>)/
+    # `module.exports = routes` / `export default fp(routes)`: registered elsewhere.
+    EXPORTED_PLUGIN_NAME = /(?:export\s+default|module\.exports\s*=)\s*(?:[\w$.]+\s*\(\s*)?([A-Za-z_$][\w$]*)\s*[;)\n]/
+    FUNCTION_FIRST_PARAM = /function\s+([A-Za-z_$][\w$]*)\s*\(\s*([A-Za-z_$][\w$]*)|(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s+)?(?:function\s*[\w$]*\s*\(\s*([A-Za-z_$][\w$]*)|\(\s*([A-Za-z_$][\w$]*)|([A-Za-z_$][\w$]*)\s*=>)/
+    # Optionally wrapped: `module.exports = fp(async function (f) {…})`.
+    EXPORTED_PLUGIN_PARAM = /(?:export\s+default|module\.exports\s*=)\s*(?:[\w$.]+\s*\(\s*)?(?:async\s+)?(?:function\s*[\w$]*\s*\(\s*([A-Za-z_$][\w$]*)|\(\s*([A-Za-z_$][\w$]*)|([A-Za-z_$][\w$]*)\s*=>)/
 
     private def fastify_instance_names(content : String) : Set(String)
       names = Set(String).new
@@ -274,6 +279,7 @@ module Analyzer::Javascript
       end
       registered = Set(String).new
       content.scan(REGISTERED_PLUGIN_NAME) { |m| registered << m[1] }
+      content.scan(EXPORTED_PLUGIN_NAME) { |m| registered << m[1] }
       return names if registered.empty?
 
       # One pass over the file's function declarations, not a regex per
@@ -385,7 +391,9 @@ module Analyzer::Javascript
         next unless config.lstrip.starts_with?("{")
         # Fastify requires a handler; `nock.route({ method, url, reply })` or
         # Cypress's `cy.route({ method, url, response })` has none.
-        next unless config.matches?(ROUTE_CONFIG_HANDLER_KEY)
+        # Off a conventionally named instance any config counts, as before
+        # (`{ websocket: true, wsHandler }` has no `handler`).
+        next unless m[1].matches?(FASTIFY_INSTANCE_NAME) || config.matches?(ROUTE_CONFIG_HANDLER_KEY)
 
         methods = [] of String
         url = ""

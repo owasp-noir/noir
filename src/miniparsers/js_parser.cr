@@ -1149,9 +1149,10 @@ module Noir
       nil
     end
 
-    # Keys a Restify route spec may carry. Anything else (`headers`,
-    # `socketPath`, `host`, `bucket`, ...) is an options bag for some client.
-    RESTIFY_ROUTE_SPEC_KEYS = Set{"path", "url", "name", "version", "versions", "contentType", "urlParamPattern", "flags"}
+    # Top-level keys of an HTTP *client* options bag. A Restify route spec
+    # keeps arbitrary keys (`authAction`, `validation`, `swagger`, ...) on
+    # `req.route.spec`, so only these disqualify one.
+    HTTP_CLIENT_OPTION_KEYS = Set{"host", "hostname", "port", "protocol", "agent", "socketPath", "headers"}
 
     private def parse_restify_route : JSRoutePattern?
       # Similar to Express but handle restify specific patterns like .del()
@@ -1185,18 +1186,28 @@ module Noir
             # both `{ path: '/x' }` and `{ url: '/x', name: '...' }` —
             # treat `url` as an alias for `path`. A route spec is only read
             # off a server or router (`store.get({ path }, cb)` and
-            # `http.get({ socketPath, path }, cb)` have the same shape) and
-            # only when every key is a route-spec key.
-            obj_idx = path_idx + 1
+            # `http.get({ socketPath, path }, cb)` have the same shape), and
+            # not when a top-level key marks a client options bag. Keys of
+            # nested objects (`validation: { … }`) are not the spec's own.
+            obj_idx = path_idx + 2
+            depth = 0
             spec = routing_receiver?(@tokens[idx].value)
-            while spec && obj_idx + 2 < @tokens.size && @tokens[obj_idx].type != :rbrace
-              if @tokens[obj_idx + 1].type == :colon &&
-                 (@tokens[obj_idx - 1].type == :lbrace || @tokens[obj_idx - 1].type == :comma)
-                key = @tokens[obj_idx].value
-                spec = false unless RESTIFY_ROUTE_SPEC_KEYS.includes?(key)
-                if path.nil? && (key == "path" || key == "url") && @tokens[obj_idx + 2].type == :string
-                  path = @tokens[obj_idx + 2].value
-                  @position = obj_idx + 3
+            while spec && obj_idx + 2 < @tokens.size
+              case @tokens[obj_idx].type
+              when :lbrace, :lbracket, :lparen
+                depth += 1
+              when :rbrace, :rbracket, :rparen
+                break if depth == 0
+                depth -= 1
+              else
+                if depth == 0 && @tokens[obj_idx + 1].type == :colon &&
+                   (@tokens[obj_idx - 1].type == :lbrace || @tokens[obj_idx - 1].type == :comma)
+                  key = @tokens[obj_idx].value
+                  spec = false if HTTP_CLIENT_OPTION_KEYS.includes?(key)
+                  if path.nil? && (key == "path" || key == "url") && @tokens[obj_idx + 2].type == :string
+                    path = @tokens[obj_idx + 2].value
+                    @position = obj_idx + 3
+                  end
                 end
               end
               obj_idx += 1

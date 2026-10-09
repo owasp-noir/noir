@@ -13,7 +13,12 @@ async function plugin(api, opts) {
   });
   api.route({ method: ['GET'], url: '/r4', handler: async () => 1 });
   api.query('/q1', async (request) => request.query.term);
+  // The handler may arrive through a spread.
+  api.route({ method: 'DELETE', url: '/r5', ...opts.routeDefaults });
 }
+
+// @fastify/websocket: `wsHandler`, no `handler`, on the instance itself.
+fastify.route({ method: 'GET', url: '/ws', websocket: true, wsHandler: (socket) => socket });
 
 // Not routes: a mock route config with no handler, a database call and a
 // handler-less helper call.
