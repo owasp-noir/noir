@@ -220,16 +220,29 @@ describe "noir CLI surface (built binary)" do
       result.exit_code.should eq(1)
     end
 
-    it "reports a bad $EDITOR in one line instead of a backtrace" do
+    it "names the missing terminal first when not on a TTY, whatever the editor" do
       home = File.join(Dir.tempdir, "noir-cfg-editor-#{Random.new.hex(4)}")
       Dir.mkdir_p(home)
       begin
-        {"/no/such/ed" => "could not be started", %(vi ") => "Cannot parse editor command"}.each do |editor, message|
+        ["/no/such/ed", %(vi ")].each do |editor|
           result = run_noir(["config", "edit"], env: {"NOIR_HOME" => home, "VISUAL" => editor})
-          result.stderr.should_not contain("Unhandled exception")
-          result.stderr.should contain(message)
+          result.stderr.should contain("needs an interactive terminal")
           result.exit_code.should eq(1)
         end
+      ensure
+        FileUtils.rm_rf(home)
+      end
+    end
+
+    it "shows a config file holding invalid UTF-8 instead of crashing" do
+      home = File.join(Dir.tempdir, "noir-cfg-utf8-#{Random.new.hex(4)}")
+      Dir.mkdir_p(home)
+      File.write(File.join(home, "config.yaml"), Bytes[0x62, 0x3a, 0x20, 0xff, 0xfe, 0x0a])
+      begin
+        result = run_noir(["config", "show"], env: {"NOIR_HOME" => home})
+        result.stderr.should_not contain("Unhandled exception")
+        result.stdout.should start_with("b: ")
+        result.exit_code.should eq(0)
       ensure
         FileUtils.rm_rf(home)
       end

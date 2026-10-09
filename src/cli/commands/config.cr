@@ -197,6 +197,8 @@ module Noir::CLI::ConfigCommand
   # present in it as `{old_key => v1_key}`. Pulled out so the
   # detection rule can be exercised without going through STDERR.
   def self.detect_legacy_keys(content : String) : Hash(String, String)
+    # Regexes skip PCRE2's UTF check, so invalid bytes would raise.
+    content = content.scrub unless content.valid_encoding?
     ConfigInitializer::LEGACY_CONFIG_KEY_MAP.select do |old_key, _|
       content =~ /^\s*#{Regex.escape(old_key)}\s*:/m
     end
@@ -227,27 +229,6 @@ module Noir::CLI::ConfigCommand
     # matching `show` and the scan-path validator.
     die_if_directory(path, override_path)
 
-    # Resolve the editor before the TTY check so a broken $VISUAL/$EDITOR
-    # is reported as such everywhere. Split it into argv WITHOUT a shell so
-    # a poisoned value can't inject commands: `EDITOR="rm -rf /; vi"` used
-    # to run under `shell: true` and execute `rm -rf /`. Parsing to argv
-    # means metacharacters (`;`, `|`, `$()`) are passed literally, never
-    # evaluated, while still supporting editors carrying flags (e.g.
-    # `code --wait`).
-    editor = pick_editor
-    editor_argv = begin
-      Process.parse_arguments(editor)
-    rescue ex : ArgumentError
-      Noir::CLI.die("Cannot parse editor command '#{editor}': #{ex.message}")
-    end
-    if editor_argv.empty?
-      Noir::CLI.die("No editor configured. Set $VISUAL or $EDITOR (or install vi).")
-    end
-    command = editor_argv.first
-    unless Process.find_executable(command)
-      Noir::CLI.die("Editor '#{command}' could not be started: command not found. Set $VISUAL or $EDITOR.")
-    end
-
     # `edit` launches an interactive terminal editor. In a non-interactive
     # context (CI, piped stdin, background job) that editor would block
     # forever waiting for input that never arrives, hanging the pipeline.
@@ -272,18 +253,40 @@ module Noir::CLI::ConfigCommand
       end
     end
 
-    args = editor_argv[1..] + [path]
+    if error = launch_editor(pick_editor, path)
+      Noir::CLI.die(error)
+    end
+  end
+
+  # Runs `editor` on `path`; returns nil on success or the one-line error to
+  # die with. Split out of `edit` (which needs a TTY) so specs can reach it.
+  #
+  # The editor string is split into argv WITHOUT a shell so a poisoned
+  # $EDITOR/$VISUAL can't inject commands: `EDITOR="rm -rf /; vi"` used to
+  # run under `shell: true` and execute `rm -rf /`. Parsing to argv means
+  # metacharacters (`;`, `|`, `$()`) are passed literally, never evaluated,
+  # while still supporting editors carrying flags (e.g. `code --wait`).
+  def self.launch_editor(editor : String, path : String) : String?
+    editor_argv = Process.parse_arguments(editor)
+    return "No editor configured. Set $VISUAL or $EDITOR (or install vi)." if editor_argv.empty?
+    command = editor_argv.first
+    unless Process.find_executable(command)
+      return "Editor '#{command}' could not be started: command not found. Set $VISUAL or $EDITOR."
+    end
+
     status = Process.run(
       command,
-      args: args,
+      args: editor_argv[1..] + [path],
       input: Process::Redirect::Inherit,
       output: Process::Redirect::Inherit,
       error: Process::Redirect::Inherit,
     )
-
-    unless status.success?
-      Noir::CLI.die("Editor '#{editor}' exited with status #{status.exit_code}.")
-    end
+    "Editor '#{editor}' exited with status #{status.exit_code? || status}." unless status.success?
+  rescue ex : ArgumentError
+    "Cannot parse editor command '#{editor}': #{ex.message}"
+  rescue ex : IO::Error
+    # Found on PATH but not runnable, e.g. a script whose interpreter is gone.
+    "Editor '#{editor}' could not be started: #{ex.os_error.try(&.message) || ex.message}"
   end
 
   # `File.exists?` is true for a directory, so without this `show` crashed
