@@ -29,7 +29,7 @@ module Detector::Specification
     private def yarp_routes?(content : String) : Bool
       return false unless root = json_any?(strip_jsonc(content)).try(&.as_h?)
       routes = root["ReverseProxy"]?.try(&.as_h?).try(&.["Routes"]?)
-      !!(routes.try(&.as_h?).try(&.any?) || routes.try(&.as_a?).try(&.any?))
+      !!(routes.try(&.as_h?).try(&.present?) || routes.try(&.as_a?).try(&.present?))
     end
   end
 end
