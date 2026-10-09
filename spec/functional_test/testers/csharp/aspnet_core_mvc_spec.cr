@@ -52,6 +52,13 @@ expected_endpoints = [
     Param.new("message", "", "form"),
     Param.new("sessionId", "", "form"),
   ]),
+  Endpoint.new("/api/First/b", "GET", [
+    Param.new("k", "", "query"),
+    Param.new("z", "", "query"),
+  ]),
+  Endpoint.new("/api/First", "GET", [
+    Param.new("k", "", "query"),
+  ]),
   Endpoint.new("/mapped/ping", "GET"),
   Endpoint.new("/mapped/health", "GET"),
   Endpoint.new("/mapped/items/{id}", "POST", [
@@ -141,6 +148,12 @@ describe "ASP.NET Core MVC analyzer edge cases", tags: "functional" do
     search = tester.app.endpoints.find { |e| e.url == "/api/Users/search" && e.method == "GET" }
     search.should_not be_nil
     search.as(Endpoint).params.any? { |p| p.name == "repository" }.should be_false
+  end
+
+  it "does not read a same-line attribute's arguments as action params" do
+    first = tester.app.endpoints.find { |e| e.url == "/api/First" && e.method == "GET" }
+    first.should_not be_nil
+    first.as(Endpoint).params.map(&.name).should eq ["k"]
   end
 
   it "does not report NonAction task-returning helpers as endpoints" do

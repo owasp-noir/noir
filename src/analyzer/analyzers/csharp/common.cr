@@ -216,7 +216,24 @@ module Analyzer::CSharp::Common
     # default value doesn't unbalance the parameter-list bounds. The masked
     # twin is character-aligned with `signature`, so the slice indices apply.
     masked = Noir::CSharpLexer.new(signature).masked
-    open = masked.index('(')
+    # Skip leading `[Attr(...)]` groups sharing the line with the method
+    # (`[HttpGet("b")] public IActionResult B(int k)`), so the attribute's
+    # own parens aren't taken for the parameter list.
+    start = 0
+    loop do
+      while start < masked.size && masked[start].whitespace?
+        start += 1
+      end
+      break unless masked[start]? == '['
+      depth = 0
+      while start < masked.size
+        depth += 1 if masked[start] == '['
+        depth -= 1 if masked[start] == ']'
+        start += 1
+        break if depth == 0
+      end
+    end
+    open = masked.index('(', start)
     return unless open
 
     depth = 0
