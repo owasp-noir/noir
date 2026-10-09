@@ -373,6 +373,42 @@ describe Noir::JSParser do
     end
   end
 
+  describe "nested router prefixes" do
+    it "applies each ancestor's prefix once on a three-level chain" do
+      code = <<-JS
+        const r0 = new Router();
+        const r1 = new Router();
+        const r2 = new Router();
+        const r3 = new Router();
+        r0.use('/a', r1.routes());
+        r1.use('/b', r2.routes());
+        r2.use('/c', r3.routes());
+        r3.get('/leaf', (ctx) => { ctx.body = 1; });
+        JS
+      routes = Noir::JSParser.new(code).parse_routes
+      routes.map(&.path).uniq!.should eq(["/a/b/c/leaf"])
+    end
+
+    it "resolves a deep diamond lattice in bounded time and caps the prefixes" do
+      depth = 16
+      lines = [] of String
+      (0..depth).each { |lv| lines << "const r#{lv}a = new Router();" << "const r#{lv}b = new Router();" }
+      depth.times do |lv|
+        %w[a b].each do |src|
+          %w[a b].each { |dst| lines << "r#{lv}#{src}.use('/l#{lv}#{dst}', r#{lv + 1}#{dst}.routes());" }
+        end
+      end
+      lines << "r#{depth}a.get('/leaf', (ctx) => { ctx.body = 1; });"
+
+      parser = Noir::JSParser.new(lines.join("\n"))
+      routes = [] of Noir::JSRoutePattern
+      elapsed = Time.measure { routes = parser.parse_routes }
+      elapsed.should be < 5.seconds
+      routes.map(&.path).uniq!.size.should eq(Noir::JSParser::MAX_MOUNT_PREFIXES)
+      parser.mount_prefixes_capped?.should be_true
+    end
+  end
+
   describe "JSRoutePattern" do
     it "stores method and path" do
       pattern = Noir::JSRoutePattern.new("GET", "/users")

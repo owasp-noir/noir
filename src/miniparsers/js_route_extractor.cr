@@ -60,6 +60,9 @@ module Noir
         if debug && parser.hit_max_iterations?
           STDERR.puts "Warning: Maximum iterations reached in JS parser, parsing may be incomplete"
         end
+        if debug && parser.mount_prefixes_capped?
+          STDERR.puts "#{file_path}: router prefixes capped at #{MAX_MOUNT_PREFIXES} per router"
+        end
 
         # No route patterns means the rest of this method has nothing
         # to emit — every downstream step (function_ranges build,
@@ -997,8 +1000,9 @@ module Noir
     # Ceiling on the prefixes one router collects. The (router, prefix)
     # dedupe already bounds the work; this only stops a diamond lattice of
     # parallel edges from multiplying without end. A shared router mounted
-    # under many paths stays well below it.
-    MAX_MOUNT_PREFIXES = 1024
+    # under many paths stays well below it. Shared with JSParser's
+    # same-file router resolution.
+    MAX_MOUNT_PREFIXES = JSParser::MAX_MOUNT_PREFIXES
 
     # Pushes mount prefixes along `{parent, prefix, child}` edges into
     # `prefixes`, starting from each parent's existing prefixes (or

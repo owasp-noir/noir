@@ -171,10 +171,14 @@ module Noir
         idx += 1
       end
 
-      # Resolve full paths for nested routers by walking up the parent chain
+      # Resolve full paths for nested routers by walking up the parent chain.
+      # Resolve against a snapshot of the declared (own) prefixes: writing
+      # each result back into the table being walked made a grandchild
+      # re-apply an already-resolved parent's prefixes (`/a/a/b/c`).
+      declared_prefixes = router_prefixes.transform_values(&.dup)
+      resolved = {} of String => Array(String)
       router_prefixes.keys.each do |router_name|
-        resolved_prefixes = resolve_full_prefixes(router_name, router_prefixes, router_parents)
-        router_prefixes[router_name] = resolved_prefixes
+        router_prefixes[router_name] = resolve_full_prefixes(router_name, declared_prefixes, router_parents, resolved, Set(String).new)
       end
 
       @router_prefixes = router_prefixes
@@ -259,40 +263,54 @@ module Noir
       unique
     end
 
-    # Resolve full prefix for a router by walking up all parent chains
-    # Supports multiple parents (router mounted under different parent routers)
-    private def resolve_full_prefixes(router : String, router_prefixes : Hash(String, Array(String)), router_parents : Hash(String, Array(String)), visited : Set(String) = Set(String).new) : Array(String)
-      prefixes = router_prefixes[router]?.try(&.dup) || [] of String
-      return prefixes if prefixes.empty?
-      return prefixes if visited.includes?(router) # Prevent infinite loops
+    # Ceiling on the full prefixes one router resolves to. A diamond lattice
+    # of parallel mounts doubles the distinct paths per level; a shared
+    # router mounted under many paths stays well below it.
+    MAX_MOUNT_PREFIXES = 1024
 
-      visited.add(router)
+    getter? mount_prefixes_capped : Bool = false
+
+    # Resolve full prefix for a router by walking up all parent chains
+    # Supports multiple parents (router mounted under different parent routers).
+    # Memoized per router in `resolved` — re-walking every parent chain for
+    # every router enumerated each path of a diamond lattice again and again.
+    private def resolve_full_prefixes(router : String, router_prefixes : Hash(String, Array(String)),
+                                      router_parents : Hash(String, Array(String)),
+                                      resolved : Hash(String, Array(String)), on_path : Set(String)) : Array(String)
+      if memo = resolved[router]?
+        return memo
+      end
+      prefixes = router_prefixes[router]? || [] of String
+      return prefixes if prefixes.empty?
+
+      on_path.add(router)
       # A parent already on this chain is a self-mount or a cycle; walking
       # it again joined the cycle's prefixes onto themselves (`/v1/v1`).
-      parents = (router_parents[router]? || [] of String).reject { |parent| visited.includes?(parent) }
-      return prefixes if parents.empty?
+      parents = (router_parents[router]? || [] of String).reject { |parent| on_path.includes?(parent) }
 
       # Combine with all parent chains
       result = [] of String
+      seen = Set(String).new
       parents.each do |parent|
-        # Recursively resolve parent's full prefixes
-        parent_full_prefixes = resolve_full_prefixes(parent, router_prefixes, router_parents, visited.dup)
-
-        if parent_full_prefixes.empty?
-          # No parent prefix, just use our prefixes
-          result.concat(prefixes)
-        else
-          # Cartesian product: combine each parent prefix with each of our prefixes
-          parent_full_prefixes.each do |parent_prefix|
-            prefixes.each do |prefix|
-              combined = URLPath.join(parent_prefix, prefix)
-              result << combined unless result.includes?(combined)
+        parent_full_prefixes = resolve_full_prefixes(parent, router_prefixes, router_parents, resolved, on_path)
+        # No parent prefix: our own prefixes stand alone.
+        parent_full_prefixes = [""] if parent_full_prefixes.empty?
+        # Cartesian product: combine each parent prefix with each of our prefixes
+        parent_full_prefixes.each do |parent_prefix|
+          prefixes.each do |prefix|
+            combined = parent_prefix.empty? ? prefix : URLPath.join(parent_prefix, prefix)
+            next unless seen.add?(combined)
+            if result.size >= MAX_MOUNT_PREFIXES
+              @mount_prefixes_capped = true
+              break
             end
+            result << combined
           end
         end
       end
+      on_path.delete(router)
 
-      result.empty? ? prefixes : result
+      resolved[router] = result.empty? ? prefixes.dup : result
     end
 
     # Koa/@koa-router commonly attaches route prefixes in the constructor:
