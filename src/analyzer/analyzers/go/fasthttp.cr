@@ -1,6 +1,7 @@
 require "../../../models/analyzer"
 require "../../../miniparsers/go_callee_extractor"
 require "../../../miniparsers/go_route_extractor_ts"
+require "../../../miniparsers/go_named_handler"
 require "../../engines/go_engine"
 
 module Analyzer::Go
@@ -71,8 +72,11 @@ module Analyzer::Go
               external_fns = Noir::GoCalleeExtractor.function_bodies_for_directory(package_function_bodies, File.dirname(path))
               external_methods = Noir::GoCalleeExtractor.method_bodies_for_directory(package_method_bodies, File.dirname(path))
               callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns, external_methods)
+              named = Noir::GoNamedHandler.new(content, path, ts_routes)
 
               content.each_line.with_index do |line, index|
+                next if named.claim?(index, line)
+
                 details = Details.new(PathInfo.new(path, index + 1))
 
                 if ts_hits = routes_by_line[index]?
@@ -87,20 +91,16 @@ module Analyzer::Go
                         end
                       end
                       result << endpoint
+                      named.bind(route.handler, endpoint)
                       last_endpoint = endpoint
                     end
                   end
                 end
 
-                params = analyze_param_line(line)
-                params.each do |param|
-                  if !param.name.empty? && !last_endpoint.method.empty?
-                    unless last_endpoint.params.any? { |p| p.name == param.name && p.param_type == param.param_type }
-                      last_endpoint.params << param
-                    end
-                  end
-                end
+                add_fasthttp_params(line, last_endpoint)
               end
+
+              named.each_attribution { |line, ep| add_fasthttp_params(line, ep) }
             end
           end
         end
@@ -121,6 +121,16 @@ module Analyzer::Go
     # surfaced URL and the path-param names are clean.
     private def normalize_fasthttp_path(path : String) : String
       path.gsub(/\{([a-zA-Z0-9_]+)\??(?::[^{}]+)?\}/) { "{#{$1}}" }
+    end
+
+    private def add_fasthttp_params(line : String, endpoint : Endpoint)
+      return if endpoint.method.empty?
+      analyze_param_line(line).each do |param|
+        next if param.name.empty?
+        unless endpoint.params.any? { |p| p.name == param.name && p.param_type == param.param_type }
+          endpoint.params << param
+        end
+      end
     end
 
     # Cheap pre-filter for `analyze_param_line`, called on EVERY line of

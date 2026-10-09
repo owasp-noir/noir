@@ -44,6 +44,8 @@ module Analyzer::Go
           routes_by_line[r.line] << r
         end
 
+        named = Noir::GoNamedHandler.new(content, path, ts_routes)
+
         # Resolve 1-hop callees for every route (see Gin).
         route_rows = Set(Int32).new
         routes_by_line.each_key { |row| route_rows << row }
@@ -63,6 +65,8 @@ module Analyzer::Go
         end
 
         lines.each_with_index do |line, index|
+          next if named.claim?(index, line)
+
           details = Details.new(PathInfo.new(path, index + 1))
 
           if ts_hits = routes_by_line[index]?
@@ -76,6 +80,7 @@ module Analyzer::Go
                     new_endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
                   end
                   result << new_endpoint
+                  named.bind(route.handler, new_endpoint)
                   last_endpoint = new_endpoint
                 end
               else
@@ -84,48 +89,55 @@ module Analyzer::Go
                   name, callee_path, callee_line = entry
                   new_endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
                 end
+                named.bind(route.handler, new_endpoint)
                 result << new_endpoint
                 last_endpoint = new_endpoint
               end
             end
           end
 
-          # Bind* helpers already contribute a single generic body
-          # param below. Skip the accessor loop on those lines so
-          # `BindQuery(&input)` does not also fabricate a bogus
-          # query param named "&input" via the `Query(` substring.
-          is_bind_line = line.matches?(/\.Bind(?:JSON|Query|Header|Form|Protobuf|And\w+)?\s*\(/)
-
-          unless is_bind_line
-            ["Query", "PostForm", "GetHeader", "Param", "FormValue"].each do |pattern|
-              if line.includes?("#{pattern}(")
-                add_param_to_endpoint(get_param(line), last_endpoint)
-              end
-            end
-          end
-
-          # Read cookies via `ctx.Cookie("name")`. The leading `\.` avoids matching
-          # `SetCookie(...)` (which is for *writing* cookies, not extracting params).
-          if line.includes?("Cookie(")
-            if cookie_match = line.match(/\.Cookie\s*\(\s*"([^"]+)"/)
-              add_param_to_endpoint(Param.new(cookie_match[1], "", "cookie"), last_endpoint)
-            end
-          end
-
-          # Hertz body-binding helpers populate the request
-          # body from JSON/form/etc. Surface a single "body"
-          # indicator — the bound struct's fields are not
-          # statically resolvable here. `And\w+` catches
-          # `BindAndValidate`.
-          if is_bind_line
-            add_param_to_endpoint(Param.new("body", "", "json"), last_endpoint)
-          end
+          add_hertz_param_patterns(line, last_endpoint)
         end
+
+        named.each_attribution { |line, ep| add_hertz_param_patterns(line, ep) }
       end
 
       resolve_public_dirs(public_dirs)
 
       result
+    end
+
+    private def add_hertz_param_patterns(line : String, ep : Endpoint)
+      # Bind* helpers already contribute a single generic body
+      # param below. Skip the accessor loop on those lines so
+      # `BindQuery(&input)` does not also fabricate a bogus
+      # query param named "&input" via the `Query(` substring.
+      is_bind_line = line.matches?(/\.Bind(?:JSON|Query|Header|Form|Protobuf|And\w+)?\s*\(/)
+
+      unless is_bind_line
+        ["Query", "PostForm", "GetHeader", "Param", "FormValue"].each do |pattern|
+          if line.includes?("#{pattern}(")
+            add_param_to_endpoint(get_param(line), ep)
+          end
+        end
+      end
+
+      # Read cookies via `ctx.Cookie("name")`. The leading `\.` avoids matching
+      # `SetCookie(...)` (which is for *writing* cookies, not extracting params).
+      if line.includes?("Cookie(")
+        if cookie_match = line.match(/\.Cookie\s*\(\s*"([^"]+)"/)
+          add_param_to_endpoint(Param.new(cookie_match[1], "", "cookie"), ep)
+        end
+      end
+
+      # Hertz body-binding helpers populate the request
+      # body from JSON/form/etc. Surface a single "body"
+      # indicator — the bound struct's fields are not
+      # statically resolvable here. `And\w+` catches
+      # `BindAndValidate`.
+      if is_bind_line
+        add_param_to_endpoint(Param.new("body", "", "json"), ep)
+      end
     end
 
     # Regex-based extraction so nested calls (e.g. `fmt.Println(ctx.Query("x"))`)

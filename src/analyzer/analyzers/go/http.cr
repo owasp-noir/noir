@@ -95,8 +95,13 @@ module Analyzer::Go
         request_fns = Noir::GoRequestParamExtractor.function_bodies_for_directory(request_bodies, dir)
         request_methods = Noir::GoRequestParamExtractor.method_bodies_for_directory(request_bodies, dir)
         params_by_route = Noir::GoRequestParamExtractor.params_for_routes(content, route_rows, route_methods_by_row, request_fns, request_methods)
+        # A same-file named handler's accessors already arrive through
+        # `params_by_route`; keep its body out of the last-route heuristic.
+        named = Noir::GoNamedHandler.new(content, path, ts_routes)
 
         lines.each_with_index do |line, index|
+          next if named.claim?(index, line)
+
           details = Details.new(PathInfo.new(path, index + 1))
 
           if ts_hits = routes_by_line[index]?

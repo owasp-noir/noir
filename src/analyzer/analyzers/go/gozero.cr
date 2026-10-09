@@ -95,8 +95,11 @@ module Analyzer::Go
         # dedupe instead of producing half-paths.
         api_prefix = ""
         in_server_block = false
+        named = Noir::GoNamedHandler.new(content, path, routes_by_line.values.flatten)
 
         lines.each_with_index do |line, index|
+          next if named.claim?(index, line)
+
           details = Details.new(PathInfo.new(path, index + 1))
 
           # Handle .api files (go-zero API definition files)
@@ -144,32 +147,39 @@ module Analyzer::Go
                     end
                   end
                   result << new_endpoint
+                  named.bind(route.handler, new_endpoint)
                   last_endpoint = new_endpoint
                 end
               end
             end
 
-            ["Query", "PostForm", "GetHeader", "PathParam", "FormValue"].each do |pattern|
-              if line.includes?("#{pattern}(")
-                add_param_to_endpoint(get_param(line, pattern), last_endpoint)
-              end
-            end
-
-            # gozero's canonical body-binding entrypoint is
-            # `httpx.Parse(r, &req)` / `httpx.ParseJsonBody`;
-            # both populate the request body. `json.NewDecoder`
-            # is also common in raw handlers.
-            if line.includes?("httpx.Parse(") || line.includes?("httpx.ParseJsonBody(") ||
-               line.includes?("httpx.ParseForm(") || line.matches?(/json\.NewDecoder\(.+\.Body\)/)
-              add_param_to_endpoint(Param.new("body", "", "json"), last_endpoint)
-            end
+            add_gozero_params(line, last_endpoint)
           end
         end
+
+        named.each_attribution { |line, ep| add_gozero_params(line, ep) }
       end
 
       resolve_public_dirs_with_glob(public_dirs)
 
       result
+    end
+
+    private def add_gozero_params(line : String, endpoint : Endpoint)
+      ["Query", "PostForm", "GetHeader", "PathParam", "FormValue"].each do |pattern|
+        if line.includes?("#{pattern}(")
+          add_param_to_endpoint(get_param(line, pattern), endpoint)
+        end
+      end
+
+      # gozero's canonical body-binding entrypoint is
+      # `httpx.Parse(r, &req)` / `httpx.ParseJsonBody`;
+      # both populate the request body. `json.NewDecoder`
+      # is also common in raw handlers.
+      if line.includes?("httpx.Parse(") || line.includes?("httpx.ParseJsonBody(") ||
+         line.includes?("httpx.ParseForm(") || line.matches?(/json\.NewDecoder\(.+\.Body\)/)
+        add_param_to_endpoint(Param.new("body", "", "json"), endpoint)
+      end
     end
 
     # Type the param by the actual accessor name. The previous

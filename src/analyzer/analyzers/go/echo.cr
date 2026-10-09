@@ -41,6 +41,8 @@ module Analyzer::Go
           routes_by_line[r.line] << r
         end
 
+        named = Noir::GoNamedHandler.new(content, path, ts_routes)
+
         # Resolve 1-hop callees for every route in this file.
         # Inline-closure handlers walk in place; bare
         # identifier handlers fall through to sibling-file
@@ -68,6 +70,8 @@ module Analyzer::Go
         end
 
         lines.each_with_index do |line, index|
+          next if named.claim?(index, line)
+
           details = Details.new(PathInfo.new(path, index + 1))
 
           if ts_hits = routes_by_line[index]?
@@ -85,51 +89,54 @@ module Analyzer::Go
                   end
                 end
                 result << new_endpoint
+                named.bind(route.handler, new_endpoint)
                 last_endpoints << new_endpoint
               end
             end
           end
 
-          if line.includes?("Param(") || line.includes?("FormValue(")
-            param = get_param(line)
-            last_endpoints.each { |ep| add_param_to_endpoint(param, ep) }
-          end
-
-          # `c.Bind(&v)` / `c.BindBody(...)` populate the
-          # request body. Echo also exposes `BindJSON`-style
-          # helpers via the echo-contrib package. Emit a
-          # single "body" indicator without trying to decode
-          # the bound struct's shape (would need static-type
-          # resolution we don't have).
-          if line.matches?(/\.Bind(?:Body|JSON|XML|YAML|Headers|Query|Path)?\s*\(/) &&
-             !line.includes?("// ")
-            body_param = Param.new("body", "", "json")
-            last_endpoints.each { |ep| add_param_to_endpoint(body_param, ep) }
-          end
-
-          if line.includes?("Request().Header.Get(")
-            match = line.match(/Request\(\)\.Header\.Get\(\"(.*)\"\)/)
-            if match
-              header_param = Param.new(match[1], "", "header")
-              last_endpoints.each { |ep| ep.params << header_param }
-            end
-          end
-
-          if line.includes?("Cookie(") &&
-             !line.includes?("Header.Get") && !line.includes?("Query().Get") &&
-             !line.includes?("Request().Header.Get")
-            match = line.match(/Cookie\(\"(.*)\"\)/)
-            if match
-              cookie_param = Param.new(match[1], "", "cookie")
-              last_endpoints.each { |ep| ep.params << cookie_param }
-            end
-          end
+          last_endpoints.each { |ep| add_echo_param_patterns(line, ep) }
         end
+
+        named.each_attribution { |line, ep| add_echo_param_patterns(line, ep) }
       end
 
       resolve_public_dirs(public_dirs)
 
       result
+    end
+
+    private def add_echo_param_patterns(line : String, ep : Endpoint)
+      if line.includes?("Param(") || line.includes?("FormValue(")
+        add_param_to_endpoint(get_param(line), ep)
+      end
+
+      # `c.Bind(&v)` / `c.BindBody(...)` populate the
+      # request body. Echo also exposes `BindJSON`-style
+      # helpers via the echo-contrib package. Emit a
+      # single "body" indicator without trying to decode
+      # the bound struct's shape (would need static-type
+      # resolution we don't have).
+      if line.matches?(/\.Bind(?:Body|JSON|XML|YAML|Headers|Query|Path)?\s*\(/) &&
+         !line.includes?("// ")
+        add_param_to_endpoint(Param.new("body", "", "json"), ep)
+      end
+
+      if line.includes?("Request().Header.Get(")
+        match = line.match(/Request\(\)\.Header\.Get\(\"(.*)\"\)/)
+        if match
+          ep.params << Param.new(match[1], "", "header")
+        end
+      end
+
+      if line.includes?("Cookie(") &&
+         !line.includes?("Header.Get") && !line.includes?("Query().Get") &&
+         !line.includes?("Request().Header.Get")
+        match = line.match(/Cookie\(\"(.*)\"\)/)
+        if match
+          ep.params << Param.new(match[1], "", "cookie")
+        end
+      end
     end
 
     def get_param(line : String) : Param

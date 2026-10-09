@@ -37,6 +37,8 @@ module Analyzer::Go
           routes_by_line[r.line] << r
         end
 
+        named = Noir::GoNamedHandler.new(content, path, ts_routes)
+
         # Resolve 1-hop callees for every route (see Gin).
         route_rows = Set(Int32).new
         routes_by_line.each_key { |row| route_rows << row }
@@ -59,6 +61,8 @@ module Analyzer::Go
         end
 
         lines.each_with_index do |line, index|
+          next if named.claim?(index, line)
+
           details = Details.new(PathInfo.new(path, index + 1))
 
           if ts_hits = routes_by_line[index]?
@@ -73,57 +77,61 @@ module Analyzer::Go
                   end
                 end
                 result << new_endpoint
+                named.bind(route.handler, new_endpoint)
                 last_endpoint = new_endpoint
               end
             end
           end
 
-          if line.includes?(".Query(") || line.includes?(".FormValue(") ||
-             line.includes?(".Params(") || line.includes?(".ParamsInt(")
-            add_param_to_endpoint(get_param(line), last_endpoint)
-          end
-
-          # Fiber's body-binding helpers: `c.BodyParser(&v)`
-          # for arbitrary content negotiation, plus the
-          # explicit `c.QueryParser` / `c.ReqHeaderParser`
-          # /`c.CookieParser` /`c.ParamsParser` variants that
-          # parse into a struct. `BodyParser` is the one
-          # that signals a request body is expected; the
-          # others duplicate accessors we already surface.
-          if line.includes?(".BodyParser(")
-            add_param_to_endpoint(Param.new("body", "", "json"), last_endpoint)
-          end
-
-          if line.includes?("GetRespHeader(")
-            match = line.match(/GetRespHeader\(\"(.*)\"\)/)
-            if match
-              header_name = match[1]
-              last_endpoint.params << Param.new(header_name, "", "header")
-            end
-          end
-
-          if line.includes?("Vary(")
-            match = line.match(/Vary\(\"(.*)\"\)/)
-            if match
-              header_value = match[1]
-              last_endpoint.params << Param.new("Vary", header_value, "header")
-            end
-          end
-
-          if line.includes?("Cookies(") &&
-             !line.includes?("Header.Get") && !line.includes?("Cookie.Get")
-            match = line.match(/Cookies\(\"(.*)\"\)/)
-            if match
-              cookie_name = match[1]
-              last_endpoint.params << Param.new(cookie_name, "", "cookie")
-            end
-          end
+          add_fiber_param_patterns(line, last_endpoint)
         end
+
+        named.each_attribution { |line, ep| add_fiber_param_patterns(line, ep) }
       end
 
       resolve_public_dirs(public_dirs)
 
       result
+    end
+
+    private def add_fiber_param_patterns(line : String, ep : Endpoint)
+      if line.includes?(".Query(") || line.includes?(".FormValue(") ||
+         line.includes?(".Params(") || line.includes?(".ParamsInt(")
+        add_param_to_endpoint(get_param(line), ep)
+      end
+
+      # Fiber's body-binding helpers: `c.BodyParser(&v)`
+      # for arbitrary content negotiation, plus the
+      # explicit `c.QueryParser` / `c.ReqHeaderParser`
+      # /`c.CookieParser` /`c.ParamsParser` variants that
+      # parse into a struct. `BodyParser` is the one
+      # that signals a request body is expected; the
+      # others duplicate accessors we already surface.
+      if line.includes?(".BodyParser(")
+        add_param_to_endpoint(Param.new("body", "", "json"), ep)
+      end
+
+      if line.includes?("GetRespHeader(")
+        match = line.match(/GetRespHeader\(\"(.*)\"\)/)
+        if match
+          ep.params << Param.new(match[1], "", "header")
+        end
+      end
+
+      if line.includes?("Vary(")
+        match = line.match(/Vary\(\"(.*)\"\)/)
+        if match
+          ep.params << Param.new("Vary", match[1], "header")
+        end
+      end
+
+      if line.includes?("Cookies(") &&
+         !line.includes?("Header.Get") && !line.includes?("Cookie.Get")
+        match = line.match(/Cookies\(\"(.*)\"\)/)
+        if match
+          ep.params << Param.new(match[1], "", "cookie")
+        end
+      end
     end
 
     def get_param(line : String) : Param

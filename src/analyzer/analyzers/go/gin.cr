@@ -79,6 +79,8 @@ module Analyzer::Go
           routes_by_line[r.line] << r
         end
 
+        named = Noir::GoNamedHandler.new(content, path, ts_routes)
+
         # Resolve 1-hop callees for every route in this file.
         # Inline-closure handlers walk in place; bare
         # identifier handlers fall through to sibling-file
@@ -119,6 +121,8 @@ module Analyzer::Go
           # routes (and any params) are emitted, with the call-site
           # prefix applied, by the expansion pass below.
           next if suppress_ranges.any?(&.includes?(index))
+          # A named handler's body belongs to the route that names it.
+          next if named.claim?(index, line)
 
           details = Details.new(PathInfo.new(path, index + 1))
 
@@ -142,6 +146,7 @@ module Analyzer::Go
                   end
                 end
                 result << new_endpoint
+                named.bind(route.handler, new_endpoint)
                 last_endpoint = new_endpoint
               end
             end
@@ -172,6 +177,7 @@ module Analyzer::Go
                   end
                 end
                 result << ep
+                named.bind(route.handler, ep)
                 builder_emitted << ep
               end
             end
@@ -185,6 +191,8 @@ module Analyzer::Go
             attach_gin_builder_params(builder_emitted, content, rb.start_row, rb.end_row)
           end
         end
+
+        named.each_attribution { |line, ep| add_gin_param_patterns(line, ep) }
       end
 
       resolve_public_dirs(public_dirs)
