@@ -14,7 +14,12 @@ describe CurlCommand do
   describe ".build" do
     it "builds a bare request" do
       cmd = CurlCommand.build("GET", "/test?id=1", "", "", [] of String, [] of String)
-      cmd.should eq("curl -i -X 'GET' '/test?id=1'")
+      cmd.should eq("curl -i -g -X 'GET' '/test?id=1'")
+    end
+
+    it "passes -g so {id} and [..] in the URL are not glob-expanded by curl" do
+      cmd = CurlCommand.build("GET", "/users/{id}?filter[name]=", "", "", [] of String, [] of String)
+      cmd.should eq("curl -i -g -X 'GET' '/users/{id}?filter[name]='")
     end
 
     it "adds a JSON body with content type" do
@@ -40,7 +45,7 @@ describe CurlCommand do
     it "sends text fields with --form-string and file parts with -F" do
       cmd = CurlCommand.build_multipart("POST", "/upload", [{"name", "@/etc/passwd"}, {"bio", "<x"}],
         [{"avatar", ""}], [] of String, [] of String)
-      cmd.should eq("curl -i -X 'POST' '/upload' --form-string 'name=@/etc/passwd' --form-string 'bio=<x' -F 'avatar=@avatar'")
+      cmd.should eq("curl -i -g -X 'POST' '/upload' --form-string 'name=@/etc/passwd' --form-string 'bio=<x' -F 'avatar=@avatar'")
     end
   end
 end

@@ -18,9 +18,9 @@ noir scan . -f curl -u https://www.example.com
 
 출력 예시
 ```bash
-curl -i -X 'GET' 'https://www.example.com/' -H 'x-api-key: '
-curl -i -X 'POST' 'https://www.example.com/query' --data-raw 'query=' -H 'Content-Type: application/x-www-form-urlencoded' --cookie 'my_auth='
-curl -i -X 'GET' 'https://www.example.com/token' --data-raw 'client_id=&redirect_url=&grant_type=' -H 'Content-Type: application/x-www-form-urlencoded'
+curl -i -g -X 'GET' 'https://www.example.com/' -H 'x-api-key: '
+curl -i -g -X 'POST' 'https://www.example.com/query' --data-raw 'query=' -H 'Content-Type: application/x-www-form-urlencoded' --cookie 'my_auth='
+curl -i -g -X 'GET' 'https://www.example.com/token' --data-raw 'client_id=&redirect_url=&grant_type=' -H 'Content-Type: application/x-www-form-urlencoded'
 ```
 
 ## HTTPie
@@ -68,7 +68,7 @@ Invoke-WebRequest -Method "GET" -Uri "https://www.example.com/token" -Body "clie
 
 ```bash
 # cURL
-curl -i -X 'POST' 'https://www.example.com/upload' -F 'title=' -F 'avatar=@avatar'
+curl -i -g -X 'POST' 'https://www.example.com/upload' -F 'title=' -F 'avatar=@avatar'
 
 # HTTPie
 http --form 'POST' 'https://www.example.com/upload' 'title=' 'avatar@avatar'

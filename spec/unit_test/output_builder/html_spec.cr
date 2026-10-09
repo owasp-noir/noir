@@ -555,7 +555,7 @@ describe "OutputBuilderHtml" do
     output.should contain("data-action=\"copy-url\"")
     output.should contain("data-action=\"copy-curl\"")
     output.should contain("data-url=\"/api/users\"")
-    output.should contain("curl -i -X &#39;POST&#39; &#39;/api/users&#39;")
+    output.should contain("curl -i -g -X &#39;POST&#39; &#39;/api/users&#39;")
     output.should contain("Content-Type: application/json")
   end
 
@@ -596,9 +596,9 @@ describe "OutputBuilderHtml" do
     builder.print([Endpoint.new("/wildcard", "ANY")])
     output = builder.io.to_s
 
-    output.should contain("curl -i -X &#39;GET&#39; &#39;/wildcard&#39;")
-    output.should contain("curl -i -X &#39;DELETE&#39; &#39;/wildcard&#39;")
-    output.should_not contain("curl -i -X &#39;ANY&#39;")
+    output.should contain("curl -i -g -X &#39;GET&#39; &#39;/wildcard&#39;")
+    output.should contain("curl -i -g -X &#39;DELETE&#39; &#39;/wildcard&#39;")
+    output.should_not contain("curl -i -g -X &#39;ANY&#39;")
   end
 
   it "omits copy-as-curl for non-HTTP endpoints" do
