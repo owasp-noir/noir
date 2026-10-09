@@ -37,11 +37,13 @@ FunctionalTester.new("fixtures/java/camel/", {
   :endpoints => expected_endpoints.size,
 }, expected_endpoints).perform_tests
 
-# `camel.rest.context-path` in application.properties prefixes REST DSL
-# routes only; plain HTTP consumers stay at the server root.
+# `camel.rest.context-path` prefixes REST DSL routes of its own module only
+# (application.properties at the root, application.yml in yml-module); plain
+# HTTP consumers stay at the server root.
 properties_endpoints = [
   Endpoint.new("/svc/v1/status", "GET"),
   Endpoint.new("/raw", "ANY"),
+  Endpoint.new("/yml/items", "GET"),
 ]
 
 FunctionalTester.new("fixtures/java/camel_properties/", {

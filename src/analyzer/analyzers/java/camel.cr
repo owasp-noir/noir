@@ -13,8 +13,8 @@ module Analyzer::Java
     analyzer_for "java_camel"
 
     # Spring Boot / Quarkus spelling of `restConfiguration().contextPath`.
-    PROPERTY_KEYS  = {"camel.rest.context-path", "camel.rest.contextPath"}
-    MODULE_MARKERS = {"/src/main/java/", "/src/main/resources/"}
+    PROPERTY_KEYS     = {"camel.rest.context-path", "camel.rest.contextPath"}
+    SPRING_YAML_FILES = {"application.yml", "application.yaml"}
 
     def analyze
       files = get_files_by_extensions([".java", ".xml", ".yaml", ".yml"])
@@ -32,14 +32,16 @@ module Analyzer::Java
         {path, result} if result
       end
 
-      # DSL `restConfiguration` wins over application properties.
-      context_paths = property_context_paths
+      # DSL `restConfiguration` (first one in walk order) wins over properties.
+      dsl_paths = Hash(String, String).new
       results.each do |(path, result)|
-        result.context_path.try { |context| context_paths[module_key(path)] = context }
+        result.context_path.try { |context| dsl_paths[module_key(path)] ||= context }
       end
+      property_paths = property_context_paths
 
       results.each do |(path, result)|
-        context = context_paths[module_key(path)]? || ""
+        key = module_key(path)
+        context = dsl_paths[key]? || property_paths[key]? || ""
         result.routes.each do |route|
           url = route.rest? ? Noir::URLPath.absolute_join(context, route.path) : route.path
           params = route.params.map { |(name, type)| Param.new(name, "", type) }
@@ -51,21 +53,34 @@ module Analyzer::Java
       @result
     end
 
-    # ponytail: one context path per Maven/Gradle module (or one for a flat
-    # tree); several CamelContexts in one module would need per-context scoping.
+    # Maven/Gradle module (everything before `/src/main/`), else the file's
+    # directory. ponytail: one context path per module; several CamelContexts
+    # in one module would need per-context scoping.
     private def module_key(path : String) : String
-      JavaEngine.marker_root(path, MODULE_MARKERS) || ""
+      relative = base_relative_path(path)
+      index = relative.index("/src/main/")
+      index ? configured_base_for(path).rstrip('/') + relative[...index] : File.dirname(path)
     end
 
+    # `camel.rest.context-path` from Spring Boot / Quarkus config.
     private def property_context_paths : Hash(String, String)
       paths = Hash(String, String).new
       get_files_by_basename("application.properties").each do |path|
         next if JavaEngine.test_path?(base_relative_path(path))
         properties = read_properties(path)
-        PROPERTY_KEYS.each do |key|
-          if value = properties[key]?.presence
+        if value = PROPERTY_KEYS.compact_map { |key| properties[key]?.presence }.first?
+          paths[module_key(path)] ||= value
+        end
+      end
+      SPRING_YAML_FILES.each do |basename|
+        get_files_by_basename(basename).each do |path|
+          next if JavaEngine.test_path?(base_relative_path(path))
+          rest = YAML.parse(read_file_content(path)).dig?("camel", "rest")
+          if value = (rest.try(&.["context-path"]?) || rest.try(&.["contextPath"]?)).try(&.as_s?).presence
             paths[module_key(path)] ||= value
           end
+        rescue
+          # Malformed or multi-document YAML: no context path.
         end
       end
       paths

@@ -31,5 +31,7 @@ public class RestRoutes extends RouteBuilder {
     from("direct:getUser").to("bean:userService?method=get");
     from("timer:tick?period=1000").log("tick");
     // rest("/commented").get("/out");
+    // Unresolvable base: dropped rather than reported as /api/skip.
+    rest(Paths.EXTERNAL).get("/skip").to("direct:skip");
   }
 }

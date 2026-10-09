@@ -20,6 +20,9 @@ describe "Detect Java Apache Camel" do
   it "YAML DSL rest definition" do
     instance.detect("routes.camel.yaml", "- rest:\n    path: /x\n").should be_true
   end
+  it "YAML DSL after a leading comment" do
+    instance.detect("routes.camel.yaml", "# camel-k: language=yaml\n- from:\n    uri: platform-http:/x\n").should be_true
+  end
   it "unrelated Java file" do
     instance.detect("App.java", "import org.springframework.web.bind.annotation.RestController;").should be_false
   end

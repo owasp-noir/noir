@@ -1,3 +1,4 @@
+# camel-k: language=yaml
 - rest:
     path: /yaml/books
     get:

@@ -25,7 +25,8 @@ module Noir
     # Content gates for route files, shared by the detector and the analyzer.
     JAVA_DSL = "org.apache.camel"
     XML_DSL  = /camel\.apache\.org\/schema|<camel[\s>]/
-    YAML_DSL = /^-\s+(?:rest|route|from|restConfiguration|rest-configuration):/
+    # `/m`: in Crystal, `^` matches only at the start of the string without it.
+    YAML_DSL = /^-[ \t]+(?:rest|route|from|restConfiguration|rest-configuration):/m
 
     # Camel `RestParamType` -> noir param type.
     PARAM_TYPES = {"path" => "path", "query" => "query", "header" => "header", "body" => "json", "formData" => "form"}
@@ -34,6 +35,11 @@ module Noir
     URI_HOST         = %r{\Ahttps?://[^/]*}
     METHOD_RESTRICT  = /(?:\A|&)httpMethodRestrict=([^&]*)/
     YAML_CONTEXT_KEY = Set{"restConfiguration", "rest-configuration"}
+
+    # A declared param's noir type; Camel's `RestParamType` defaults to path.
+    def param_type(raw : String?) : String
+      PARAM_TYPES[raw || "path"]? || "query"
+    end
 
     class Route
       getter verb : String
@@ -54,7 +60,7 @@ module Noir
     # Endpoints of one consumer URI. Non-HTTP components yield none.
     def consumer_routes(uri : String, line : Int32, method_restrict : String? = nil) : Array(Route)
       return [] of Route unless match = uri.strip.match(CONSUMER_URI)
-      target, _, query = match[2].partition('?')
+      target, _, query = match[2].lchop("//").partition('?')
 
       if match[1] == "rest"
         # `rest:get:hello:{me}` = method, path, optional uri template.
@@ -64,7 +70,7 @@ module Noir
         return [Route.new(verb.upcase, URLPath.absolute_join(path, template), line, true)]
       end
 
-      path = URLPath.absolute_join(target.lchop("//").sub(URI_HOST, ""))
+      path = URLPath.absolute_join(target.sub(URI_HOST, ""))
       restrict = method_restrict || query.match(METHOD_RESTRICT).try(&.[1])
       verbs = restrict.try(&.split(',').map(&.strip.upcase).reject(&.empty?)) || [] of String
       verbs = ["ANY"] if verbs.empty?
@@ -101,12 +107,12 @@ module Noir
         end
 
         links = [node]
-        while (object = Noir::TreeSitter.field(links.last, "object")) && Noir::TreeSitter.node_type(object) == "method_invocation"
-          links << object
+        while (receiver = Noir::TreeSitter.field(links.last, "object")) && Noir::TreeSitter.node_type(receiver) == "method_invocation"
+          links << receiver
         end
         links.reverse!
         handle_chain(links)
-        Noir::TreeSitter.field(links.first, "object").try { |object| walk(object) }
+        Noir::TreeSitter.field(links.first, "object").try { |head_receiver| walk(head_receiver) }
         links.each { |link| Noir::TreeSitter.field(link, "arguments").try { |args| walk(args) } }
       end
 
@@ -130,8 +136,12 @@ module Noir
       end
 
       # `rest(base).get(path?)...type(User.class)...param().name(n).type(RestParamType.query).endParam()...`
+      #
+      # A base or verb path that does not resolve to a string (a constant
+      # from another file, a field, a parameter) drops its routes rather
+      # than reporting them under a wrong URL.
       private def rest_chain(links : Array(Node))
-        base = ""
+        base = "".as(String?)
         current = nil.as(Route?)
         param_name = nil.as(String?)
         param_type = "path"
@@ -146,12 +156,12 @@ module Noir
 
           case method
           when "rest", "path"
-            base = string_arg(link) || "" if method == "rest" || current.nil?
+            base = path_arg(link) if method == "rest" || current.nil?
             current = nil if method == "rest"
           when .in?(VERBS)
-            current = Route.new(method.upcase, URLPath.absolute_join(base, string_arg(link) || ""),
-              Noir::TreeSitter.call_name_row(link), true)
-            @routes << current
+            path = path_arg(link)
+            current = base && path ? Route.new(method.upcase, URLPath.absolute_join(base, path), Noir::TreeSitter.call_name_row(link), true) : nil
+            current.try { |route| @routes << route }
           when "param"
             next unless current
             in_param = true
@@ -173,7 +183,7 @@ module Noir
       end
 
       private def add_param(route : Route?, name : String?, type : String)
-        route.params << {name, PARAM_TYPES[type]? || "query"} if route && name
+        route.params << {name, CamelRouteExtractor.param_type(type)} if route && name
       end
 
       private def name(call : Node) : String
@@ -184,6 +194,11 @@ module Noir
         Noir::TreeSitter.field(call, "arguments").try { |args| Noir::TreeSitter.first_named_child(args) }
       end
 
+      # "" for a call with no arguments, nil for an unresolvable one.
+      private def path_arg(call : Node) : String?
+        first_arg(call) ? string_arg(call) : ""
+      end
+
       private def string_arg(call : Node) : String?
         return unless arg = first_arg(call)
         case Noir::TreeSitter.node_type(arg)
@@ -191,7 +206,8 @@ module Noir
           Noir::TreeSitter.decode_string_literal(arg, @source)
         when "identifier", "field_access"
           text = Noir::TreeSitter.node_text(arg, @source)
-          @constants[text]? || @constants.find { |key, _| key.ends_with?(".#{text}") }.try(&.[1])
+          suffix = ".#{text}"
+          @constants[text]? || @constants.find { |key, _| key.ends_with?(suffix) }.try(&.[1])
         end
       end
     end
@@ -213,7 +229,7 @@ module Noir
             route.body_type = verb["type"]?.try(&.split('.').last)
             verb.children.each do |param|
               next unless param.element? && param.name == "param" && (param_name = param["name"]?)
-              route.params << {param_name, PARAM_TYPES[param["type"]? || "path"]? || "query"}
+              route.params << {param_name, param_type(param["type"]?)}
             end
             routes << route
           end
@@ -277,7 +293,7 @@ module Noir
           if params.is_a?(YAML::Nodes::Sequence)
             params.nodes.each do |param|
               next unless param_name = scalar(yaml_get(param, "name"))
-              route.params << {param_name, PARAM_TYPES[scalar(yaml_get(param, "type")) || "path"]? || "query"}
+              route.params << {param_name, param_type(scalar(yaml_get(param, "type")))}
             end
           end
           routes << route
