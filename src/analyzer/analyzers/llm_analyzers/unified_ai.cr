@@ -141,7 +141,9 @@ module Analyzer::AI
           return @result
         end
 
-        if @max_tokens > 0 && target_paths.size > 5
+        # The per-file path sends each file whole, so a file over the token
+        # budget has to go through bundling, the only path that splits one.
+        if @max_tokens > 0 && (target_paths.size > 5 || target_paths.any? { |path| over_token_budget?(path) })
           analyze_with_bundling(target_paths, adapter)
         else
           target_paths.each { |path| analyze_file(path, adapter) }
@@ -152,6 +154,14 @@ module Analyzer::AI
       ensure
         adapter.close
       end
+    end
+
+    # Bytes, not chars: never smaller than the char count `LLM.bundle_files`
+    # budgets with, so a file this lets through is never one it would split.
+    private def over_token_budget?(path : String) : Bool
+      File.size(path) > @max_tokens * 4 * 0.8
+    rescue File::Error
+      false
     end
 
     private def analyze_with_bundling(paths : Array(String), adapter : LLM::Adapter)
