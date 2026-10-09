@@ -149,7 +149,7 @@ describe "NestjsAuthTagger" do
     NestjsAuthTagger.new(noir_options).perform([secured, open])
 
     secured.tags.map(&.name).should eq(["auth"])
-    secured.tags.first.description.should contain("tsoa @Security")
+    secured.tags.first.description.should contain("@Security")
     open.tags.should be_empty
 
     FileUtils.rm_rf(tmpdir)

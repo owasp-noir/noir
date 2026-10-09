@@ -34,18 +34,6 @@ module Analyzer::Typescript
     BOOTSTRAP_RE = /\bnew\s+InversifyExpressServer\s*\(/
     ROOT_PATH_RE = /\brootPath\s*:\s*(['"`])([^'"`]+)\1/
 
-    def import_re : Regex
-      IMPORT_RE
-    end
-
-    def param_decorators : ParamDecorators
-      PARAMS
-    end
-
-    def param_decorator_re : Regex
-      PARAM_RE
-    end
-
     protected def controller_decorators : Array(String)
       CONTROLLERS
     end

@@ -21,8 +21,8 @@ FunctionalTester.new("fixtures/typescript/tsoa/", {
   :endpoints => expected_endpoints.size,
 }, expected_endpoints).perform_tests
 
-# `routes.basePath` in tsoa.json prefixes every route (`spec.basePath` is
-# only the fallback).
+# `routes.basePath` in tsoa.json prefixes every route; `spec.basePath` only
+# moves the OpenAPI document and is ignored.
 basepath_endpoints = [
   Endpoint.new("/v1/items/{itemId}", "GET", [
     Param.new("itemId", "", "path"),

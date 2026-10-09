@@ -11,11 +11,12 @@ class NestjsAuthTagger < FrameworkTagger
     {/\@UseGuards\s*\(\s*AuthenticationGuard/, "NestJS @UseGuards(AuthenticationGuard)"},
     {/\@UseGuards\s*\(\s*\w*[Aa]uth\w*Guard/, "NestJS auth guard"},
     {/\@UseGuards\s*\(\s*GqlAuthGuard/, "NestJS GraphQL auth guard"},
-    # The other decorator-controller frameworks (tsoa, routing-controllers,
-    # Ts.ED) mark authenticated handlers and controllers the same way.
-    {/\@Security\s*\(/, "tsoa @Security"},
-    {/\@Authorized\s*\(/, "routing-controllers @Authorized"},
-    {/\@(?:Authenticate|Authorize|UseAuth)\s*\(/, "Ts.ED @Authenticate"},
+    # The other decorator-controller frameworks mark authenticated handlers
+    # and controllers the same way: tsoa `@Security`, routing-controllers
+    # `@Authorized`, Ts.ED `@Authenticate` / `@UseAuth`.
+    {/\@Security\s*\(/, "@Security decorator"},
+    {/\@Authorized\s*\(/, "@Authorized decorator"},
+    {/\@(?:Authenticate|UseAuth)\s*\(/, "@Authenticate decorator"},
   ]
 
   # NestJS authorization decorators/guards — verify what the caller may do.

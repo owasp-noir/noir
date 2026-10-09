@@ -83,6 +83,13 @@ module Analyzer::Javascript
       result
     end
 
+    protected def strip_trailing_slashes(endpoints : Array(Endpoint)) : Array(Endpoint)
+      endpoints.map do |endpoint|
+        endpoint.url = endpoint.url.rstrip('/') if endpoint.url.size > 1
+        endpoint
+      end
+    end
+
     private def ignored_nest_path?(path : String) : Bool
       # Scan-base-relative, never absolute: a `__tests__/` or `test/`
       # directory ABOVE the scan base is not this project's test tree.

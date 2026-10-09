@@ -4,7 +4,8 @@ require "./decorator_controller"
 module Analyzer::Typescript
   # tsoa: `@Route("users")` on a class extending `Controller`, `@Get("{id}")`
   # on methods, `@Path`/`@Query`/`@Body`/`@Header` on arguments. The server
-  # prefix is `routes.basePath` (or `spec.basePath`) in `tsoa.json`.
+  # prefix is `routes.basePath` in `tsoa.json`; `spec.basePath` only moves the
+  # generated OpenAPI document, not the routes `RegisterRoutes` mounts.
   class Tsoa < DecoratorController
     analyzer_for "ts_tsoa"
 
@@ -13,6 +14,7 @@ module Analyzer::Typescript
     PARAMS      = {
       "Path"          => {"path", nil},
       "Query"         => {"query", nil},
+      "Queries"       => {"query", nil},
       "Header"        => {"header", nil},
       "Body"          => {"body", "body"},
       "BodyProp"      => {"body", nil},
@@ -31,18 +33,6 @@ module Analyzer::Typescript
       strip_trailing_slashes(endpoints)
     end
 
-    def import_re : Regex
-      IMPORT_RE
-    end
-
-    def param_decorators : ParamDecorators
-      PARAMS
-    end
-
-    def param_decorator_re : Regex
-      PARAM_RE
-    end
-
     protected def controller_decorators : Array(String)
       CONTROLLERS
     end
@@ -59,7 +49,7 @@ module Analyzer::Typescript
 
     private def base_path_config(path : String) : GlobalPrefixConfig?
       json = JSON.parse(read_file_content(path))
-      base = json.dig?("routes", "basePath").try(&.as_s?) || json.dig?("spec", "basePath").try(&.as_s?)
+      base = json.dig?("routes", "basePath").try(&.as_s?)
       GlobalPrefixConfig.new(base, [] of GlobalPrefixExclude) if base
     rescue # unreadable, invalid, or not an object at the top
       nil

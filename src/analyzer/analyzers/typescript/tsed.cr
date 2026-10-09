@@ -26,18 +26,6 @@ module Analyzer::Typescript
     BOOTSTRAP_RE = /@(?:Configuration|ServerSettings)\s*\(/
     MOUNT_RE     = /\bmount\s*:\s*\{\s*(['"`])([^'"`]+)\1\s*:/
 
-    def import_re : Regex
-      IMPORT_RE
-    end
-
-    def param_decorators : ParamDecorators
-      PARAMS
-    end
-
-    def param_decorator_re : Regex
-      PARAM_RE
-    end
-
     protected def app_root_markers : Array(String)
       ["\"@tsed/"]
     end
