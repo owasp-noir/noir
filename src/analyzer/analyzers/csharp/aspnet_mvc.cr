@@ -69,57 +69,110 @@ module Analyzer::CSharp
       end
 
       core_projects = aspnet_core_project_roots
-      bases = local_base_classes(controller_files)
+      bases = local_base_classes
       controller_files.each do |file|
-        next if (root = core_projects[:roots].empty? ? nil : Common.project_root_for(file, core_projects[:roots])) &&
-                core_projects[:core].includes?(root)
-        analyze_controller_file(file, bases, include_callee)
+        root = core_projects[:roots].empty? ? nil : Common.project_root_for(file, core_projects[:roots])
+        analyze_controller_file(file, bases, !root.nil? && core_projects[:core].includes?(root), include_callee)
       end
     end
 
     # Project roots (longest first) and the ones that build ASP.NET Core. A
     # Core project's controllers can carry no `Microsoft.AspNetCore` using of
     # their own (`GlobalUsings.cs`, implicit usings), so the project decides.
+    # A web SDK project that still references MVC 5 (multi-targeted, or an
+    # incremental-migration setup) is not Core-only.
     private def aspnet_core_project_roots : NamedTuple(roots: Array(String), core: Set(String))
       csprojs = get_files_by_extension(".csproj")
       core = Set(String).new
       csprojs.each do |csproj|
-        core << File.dirname(csproj) if read_file_content(csproj).matches?(ASPNET_CORE_PROJECT_RE)
+        project = read_file_content(csproj)
+        core << File.dirname(csproj) if project.matches?(ASPNET_CORE_PROJECT_RE) && !project.matches?(MVC5_REFERENCE_RE)
       rescue
         next
       end
       {roots: Common.project_roots(csprojs), core: core}
     end
 
-    ASPNET_CORE_PROJECT_RE = /Microsoft\.NET\.Sdk\.Web|Microsoft\.AspNetCore/
+    ASPNET_CORE_PROJECT_RE = /Sdk\s*=\s*"Microsoft\.NET\.Sdk\.Web"|FrameworkReference\s+Include\s*=\s*"Microsoft\.AspNetCore\.App"/
+    MVC5_REFERENCE_RE      = /System\.Web\.Mvc|Microsoft\.AspNet\.Mvc/
     # Types that exist only in ASP.NET Core.
     ASPNET_CORE_MARKER_RE = /\bIActionResult\b|\[\s*ApiController\b/
     LOCAL_CLASS_BASE_RE   = /\bclass\s+(\w+)(?:\s*<[^<>]*+>)?\s*:\s*([\w.]+)/
 
-    # `class Name : Base` across the candidate files, so a controller's base
-    # can be followed to a framework one.
-    private def local_base_classes(files : Array(String)) : Hash(String, String)
-      bases = Hash(String, String).new
-      files.each do |file|
+    # Every `class Name : Base` in the scan (bases live anywhere, e.g.
+    # `Infrastructure/SecureBase.cs`), so a controller's base can be followed
+    # to a framework one. A name declared more than once keeps every base.
+    #
+    # The whole solution is read here, so instead of lexing every file a
+    # match is dropped when its own line puts it inside a comment or string.
+    # ponytail: line-local check; a declaration-shaped line deep inside a
+    # multi-line string or `/* */` body still counts.
+    private def local_base_classes : Hash(String, Array(String))
+      bases = Hash(String, Array(String)).new
+      get_files_by_extension(".cs").each do |file|
         content = read_file_content(file)
-        next unless content.includes?("class")
-        content.scan(LOCAL_CLASS_BASE_RE) { |m| bases[m[1]] ||= m[2].split('.').last }
+        next unless content.matches?(LOCAL_CLASS_BASE_RE)
+        prefix = LinePrefixScan.new(content.to_slice)
+        content.scan(LOCAL_CLASS_BASE_RE) do |m|
+          next unless prefix.code?(m.byte_begin)
+          parents = bases[m[1]] ||= [] of String
+          parent = m[2].split('.').last
+          parents << parent unless parents.includes?(parent)
+        end
       rescue
         next
       end
       bases
     end
 
-    private def analyze_controller_file(file : String, bases : Hash(String, String), include_callee : Bool)
+    # Whether the line text before a byte offset leaves it in code: no `//`,
+    # `/*` or `"` earlier on the line, and not a `*`-led `/* */` continuation.
+    # Offsets must be asked in increasing order; each byte is read once.
+    private class LinePrefixScan
+      @position = 0
+      @blocked = false
+      @line_blank = true
+
+      def initialize(@bytes : Bytes)
+      end
+
+      def code?(offset : Int32) : Bool
+        while @position < offset
+          byte = @bytes[@position]
+          if byte == '\n'.ord
+            @blocked = false
+            @line_blank = true
+            @position += 1
+            next
+          elsif byte == '"'.ord
+            @blocked = true
+          elsif byte == '/'.ord && (next_byte = @bytes[@position + 1]?) && (next_byte == '/'.ord || next_byte == '*'.ord)
+            @blocked = true
+          elsif byte == '*'.ord && @line_blank
+            @blocked = true
+          end
+          @line_blank = false unless byte.unsafe_chr.ascii_whitespace?
+          @position += 1
+        end
+        !@blocked
+      end
+    end
+
+    private def analyze_controller_file(file : String, bases : Hash(String, Array(String)), core_project : Bool,
+                                        include_callee : Bool)
       return unless File.exists?(file)
 
       content = read_file_content(file)
       return unless content.includes?("Controller") && content.includes?("Result")
-      return if Common.aspnet_core_source?(content) || content.matches?(ASPNET_CORE_MARKER_RE)
-      web_api_file = !content.includes?("System.Web.Mvc") && content.matches?(WEB_API_NAMESPACE_RE)
 
       # Comment-blanked, so a commented-out attribute or parameter is not read.
       lexer = Noir::CSharpLexer.new(content)
+      masked = lexer.masked_source
+      # A file that names MVC 5 is classic whatever project it sits in.
+      unless masked.includes?("System.Web.Mvc")
+        return if core_project || Common.aspnet_core_source?(masked) || masked.matches?(ASPNET_CORE_MARKER_RE)
+      end
+      web_api_file = !masked.includes?("System.Web.Mvc") && masked.matches?(WEB_API_NAMESPACE_RE)
       lines = lexer.code_lines
       masked_lines = lexer.masked_lines
 
@@ -270,7 +323,7 @@ module Analyzer::CSharp
     # base in a file that imports Web API but not MVC) route by verb
     # convention, which this analyzer does not model.
     private def controller_class_name(name : String, base : String?, web_api_file : Bool,
-                                      bases : Hash(String, String)) : String?
+                                      bases : Hash(String, Array(String))) : String?
       return unless base && name.ends_with?("Controller") && name != "Controller"
       base_name = base.split('.').last
       return if web_api_file && base_name != "Controller"
@@ -280,32 +333,32 @@ module Analyzer::CSharp
 
     @controller_base_memo = Hash(String, Bool).new
 
-    # Memoized for every name on the walked chain, so a long inheritance
-    # chain is walked once rather than once per class on it.
-    private def controller_base?(base_name : String, bases : Hash(String, String)) : Bool
-      chain = [] of String
-      seen = Set(String).new
-      current = base_name
-      result = false
-      while seen.add?(current)
-        if (known = @controller_base_memo[current]?).is_a?(Bool)
-          result = known
-          break
+    # Whether `base_name` leads to a framework controller. A name declared
+    # more than once counts if any declaration does (`Web/BaseController :
+    # Controller` next to `Api/BaseController : ApiController`). Walked with
+    # an explicit stack and memoized, so a long or cyclic chain stays linear.
+    private def controller_base?(base_name : String, bases : Hash(String, Array(String))) : Bool
+      memo = @controller_base_memo
+      stack = [base_name]
+      expanded = Set(String).new
+      while current = stack.last?
+        if memo.has_key?(current)
+          stack.pop
+        elsif current.ends_with?("ApiController") || current == "ODataController"
+          memo[current] = false
+          stack.pop
+        elsif (parents = bases[current]?).nil?
+          memo[current] = current.ends_with?("Controller") || current.ends_with?("ControllerBase")
+          stack.pop
+        elsif expanded.add?(current)
+          parents.each { |parent| stack << parent unless memo.has_key?(parent) || expanded.includes?(parent) }
+        else
+          # Second visit: parents are resolved (a cycle back here reads false).
+          memo[current] = parents.any? { |parent| memo[parent]? == true }
+          stack.pop
         end
-        chain << current
-        if current.ends_with?("ApiController") || current == "ODataController"
-          result = false
-          break
-        end
-        parent = bases[current]?
-        unless parent
-          result = current.ends_with?("Controller") || current.ends_with?("ControllerBase")
-          break
-        end
-        current = parent
       end
-      chain.each { |name| @controller_base_memo[name] = result }
-      result
+      memo[base_name]
     end
 
     ROUTE_PREFIX_ATTR_RE = /\[\s*RoutePrefix\s*\(\s*"([^"]+)"/

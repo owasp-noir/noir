@@ -129,4 +129,54 @@ describe "legacy analyzers and the scan base path" do
       FileUtils.rm_rf(root) if Dir.exists?(root)
     end
   end
+
+  it "keeps MVC 5 controllers in web SDK, migration and colliding-base layouts" do
+    root = File.tempname("noir-mvc-layouts")
+
+    begin
+      # Multi-targeted web SDK project that still builds MVC 5.
+      write_file(File.join(root, "Multi", "Multi.csproj"), <<-XML)
+        <Project Sdk="Microsoft.NET.Sdk.Web"><PropertyGroup><TargetFrameworks>net48;net8.0</TargetFrameworks></PropertyGroup>
+        <ItemGroup><PackageReference Include="Microsoft.AspNet.Mvc" Version="5.2.9" /></ItemGroup></Project>
+        XML
+      write_file(File.join(root, "Multi", "Controllers", "MultiController.cs"), <<-CS)
+        using System.Web.Mvc;
+        public class MultiController : Controller { public ActionResult Index() { return View(); } }
+        CS
+      # Incremental migration: a classic project referencing SystemWebAdapters.
+      write_file(File.join(root, "Adapters", "Adapters.csproj"), <<-XML)
+        <Project ToolsVersion="15.0"><ItemGroup><Reference Include="System.Web.Mvc" />
+        <PackageReference Include="Microsoft.AspNetCore.SystemWebAdapters" Version="1.3.0" /></ItemGroup></Project>
+        XML
+      write_file(File.join(root, "Adapters", "Controllers", "AdaptedController.cs"), <<-CS)
+        using System.Web.Mvc;
+        public class AdaptedController : Controller { public ActionResult Index() { return View(); } }
+        CS
+      # Same base name in a Web API project, and a base outside Controllers/.
+      write_file(File.join(root, "Api", "Controllers", "BaseController.cs"), <<-CS)
+        using System.Web.Http;
+        public abstract class BaseController : ApiController { }
+        CS
+      write_file(File.join(root, "Web", "packages.config"), %(<packages><package id="Microsoft.AspNet.Mvc" version="5.2.7" /></packages>))
+      write_file(File.join(root, "Web", "Controllers", "BaseController.cs"), <<-CS)
+        using System.Web.Mvc;
+        public abstract class BaseController : Controller { }
+        CS
+      write_file(File.join(root, "Web", "Infrastructure", "SecureBase.cs"), <<-CS)
+        using System.Web.Mvc;
+        public abstract class SecureBase : Controller { }
+        CS
+      write_file(File.join(root, "Web", "Controllers", "HomeController.cs"), <<-CS)
+        using System.Web.Mvc;
+        public class HomeController : BaseController { public ActionResult Index() { return View(); } }
+        public class OrdersController : SecureBase { public ActionResult List() { return View(); } }
+        CS
+
+      urls = scan_tree(root).select { |endpoint| endpoint.details.technology == "cs_aspnet_mvc" }.map(&.url)
+
+      %w[/Multi/Index /Adapted/Index /Home/Index /Orders/List].each { |url| urls.should contain(url) }
+    ensure
+      FileUtils.rm_rf(root) if Dir.exists?(root)
+    end
+  end
 end
