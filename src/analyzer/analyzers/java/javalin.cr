@@ -60,10 +60,11 @@ module Analyzer::Java
         next unless JAVALIN_MARKERS.any? { |m| content.includes?(m) }
 
         constants = string_constants_for(content, kotlin)
-        # The config scans below are textual; for Kotlin they read a
-        # comment-free copy (offsets kept), since a `// note` after
-        # `contextPath = "/api"` would otherwise end up in the value.
-        config_source = kotlin ? Noir::KotlinSourceMask.code_only(content) : content
+        # The config scans below are textual, so they read a comment-free
+        # copy (offsets kept): a `// note` after `contextPath = "/api"`
+        # would otherwise end up in the value, and a commented-out
+        # `staticFiles.add(...)` would be a static mount.
+        config_source = kotlin ? Noir::KotlinSourceMask.code_only(content) : JavaEngine.strip_comments(content)
         context_path = context_path_for(config_source, constants, kotlin)
         routes = if kotlin
                    Noir::TreeSitterKotlinRouteExtractor.extract_lambda_dsl_routes(content, CONFIG, constants, include_callees: include_callee)

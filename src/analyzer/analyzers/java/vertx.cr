@@ -86,6 +86,12 @@ module Analyzer::Java
         # Skip if no Vert.x related content
         next unless content.includes?("Router") || content.includes?("vertx")
 
+        # Every scan below is textual. On the raw source a commented-out
+        # `router.get(...)` became an endpoint, and an apostrophe in a
+        # comment (`// don't`) opened a phantom char literal that swallowed
+        # the next route's handler. Offsets and line numbers are kept.
+        content = path.ends_with?(".kt") ? Noir::KotlinSourceMask.code_only(content) : JavaEngine.strip_comments(content)
+
         constants = path.ends_with?(".java") ? Noir::TreeSitterJavaRouteExtractor.extract_string_constants(content) : Hash(String, String).new
         callees_by_route = include_callee ? extract_method_reference_callees(content, path, constants) : {} of String => Array(Callee)
         client_names = client_receivers(content)

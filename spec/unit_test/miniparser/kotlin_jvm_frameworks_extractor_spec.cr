@@ -45,6 +45,31 @@ describe "Noir::TreeSitterKotlinRouteExtractor JAX-RS" do
     routes.map { |route| {route.verb, route.path, route.method_name} }.should eq([{"GET", "/f", "x"}])
   end
 
+  it "keeps a split-off class @Path across a trailing comment" do
+    source = <<-KT
+      package a
+
+      import x.Y
+
+      @ApplicationScoped
+      @Path("/x") // c
+      class R(private val s: S) {
+          @GET
+          fun a() = 1
+      }
+
+      @ApplicationScoped
+      @Path("/y")
+      class Q(private val s: S) {
+          @GET
+          fun b() = 1
+      }
+      KT
+
+    routes = Noir::TreeSitterKotlinRouteExtractor.extract_jaxrs_routes(source)
+    routes.map { |route| {route.verb, route.path} }.should eq([{"GET", "/x"}, {"GET", "/y"}])
+  end
+
   it "maps parameter annotations like the Java walker" do
     source = <<-KT
       @Path("/users")

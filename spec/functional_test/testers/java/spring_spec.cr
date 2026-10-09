@@ -30,6 +30,8 @@ expected_endpoints = [
   Endpoint.new("/{user}/options", "OPTIONS", [Param.new("user", "", "path")]),
   # QuoteRouter.java
   Endpoint.new("/hello", "GET"),
+  # CommentedRouter.java: the commented-out andRoute calls are not routes.
+  Endpoint.new("/live-router", "GET"),
   Endpoint.new("/echo", "POST"),
   Endpoint.new("/quotes/{id}", "PATCH", [Param.new("id", "", "path")]),
   Endpoint.new("/quotes", "GET"),

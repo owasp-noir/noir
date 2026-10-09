@@ -31,6 +31,8 @@ expected_endpoints = [
   Endpoint.new("/multi-search", "GET", [Param.new("term", "", "query")]),
   Endpoint.new("/multi-search", "QUERY", [Param.new("term", "", "query")]),
   Endpoint.new("/api/v1/search", "QUERY", [Param.new("keyword", "", "query")]),
+  # CommentedRoutes.java: only the live route, despite `// don't` in its body.
+  Endpoint.new("/apostrophe", "ANY"),
 ]
 
 FunctionalTester.new("fixtures/java/vertx/", {

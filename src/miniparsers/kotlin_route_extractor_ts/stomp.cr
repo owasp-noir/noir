@@ -100,6 +100,8 @@ module Noir
               child, source, string_constants, local_string_constants, application_prefixes, outer_prefixes, routes, depth + 1
             )
           end
+        when "line_comment", "multiline_comment"
+          # A comment between stray annotations and their class keeps them paired.
         else
           pending = [] of LibTreeSitter::TSNode
           walk_message_mapping_routes(

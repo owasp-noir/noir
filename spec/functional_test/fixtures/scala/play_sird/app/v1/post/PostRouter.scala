@@ -22,5 +22,10 @@ class PostRouter @Inject() (controller: PostController) extends SimpleRouter {
 
     case PUT(p"/$id<[0-9]+>") =>
       controller.update(id)
+
+    // case GET(p"/old") => controller.old
+    /*
+    case DELETE(p"/gone") => controller.gone
+    */
   }
 }

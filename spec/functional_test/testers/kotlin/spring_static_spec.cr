@@ -10,10 +10,13 @@ require "../../func_spec.cr"
 #   * a `file:` location was globbed verbatim, with no containment check
 #     against the scan base — `file:/etc/` walked the machine's config
 #     directory and emitted an endpoint per file, with absolute
-#     `code_paths` leaking the scanning machine's layout into the report.
+#     `code_paths` leaking the scanning machine's layout into the report;
+#   * a `classpath:` location was joined onto `src/main/resources` and
+#     globbed with no such check either, so `classpath:/../../../../x/`
+#     climbed out of the scan base the same way.
 #
 # The fixture declares one location of each shape; the `spring_static_outside`
-# directory it points at is deliberately outside the scan base.
+# directory two of them point at is deliberately outside the scan base.
 empty_count = Hash(Symbol, Int32).new
 no_endpoints = [] of Endpoint
 
@@ -35,7 +38,7 @@ describe "Spring static-locations", tags: "functional" do
     urls.should contain("/extra.html")
   end
 
-  it "skips a file: location that resolves outside the scan base" do
+  it "skips file: and classpath: locations that resolve outside the scan base" do
     baseline.endpoints.map(&.url).should_not contain("/leaked.html")
   end
 

@@ -169,11 +169,14 @@ module Analyzer::Groovy
           end
         end
 
+        # Counting newlines from the file head once per action was
+        # quadratic on a controller with thousands of them.
+        next if actions.empty?
+        starts = line_starts(content)
         actions.each do |action|
           methods = allowed_methods[action[:name]]? || DEFAULT_METHODS
-          line = line_number_for_index(content, body_start + action[:offset])
-          line = line_number_for_index(content, match_start) if line <= 0
-          callees = include_callee ? callees_for_action(path, content, body_start, action) : [] of Noir::GroovyCalleeExtractor::Entry
+          line = line_at(starts, body_start + action[:offset])
+          callees = include_callee ? callees_for_action(path, starts, body_start, action) : [] of Noir::GroovyCalleeExtractor::Entry
           methods.each do |verb|
             url = "/#{controller_name}/#{action[:name]}"
             details = Details.new(PathInfo.new(path, line))
@@ -186,11 +189,25 @@ module Analyzer::Groovy
     end
 
     private def callees_for_action(path : String,
-                                   content : String,
+                                   line_starts : Array(Int32),
                                    class_body_start : Int32,
                                    action : Action) : Array(Noir::GroovyCalleeExtractor::Entry)
-      start_line = line_number_for_index(content, class_body_start + action[:body_start])
+      start_line = line_at(line_starts, class_body_start + action[:body_start])
       Noir::GroovyCalleeExtractor.callees_for_body(action[:body], path, start_line)
+    end
+
+    # Char offset where each line of `content` starts; `line_at` turns a
+    # char offset into its 1-based line (what `line_number_for_index`
+    # answers) by binary search instead of a scan from the head.
+    private def line_starts(content : String) : Array(Int32)
+      starts = [0]
+      content.each_char_with_index { |char, i| starts << i + 1 if char == '\n' }
+      starts
+    end
+
+    private def line_at(line_starts : Array(Int32), index : Int32) : Int32
+      return 1 if index <= 0
+      line_starts.bsearch_index { |start| start > index } || line_starts.size
     end
 
     private def extends_restful_controller?(clause : String) : Bool
@@ -243,6 +260,25 @@ module Analyzer::Groovy
 
     alias Action = NamedTuple(name: String, offset: Int32, body: String, body_start: Int32)
 
+    # `\G`: anchored at the byte offset passed to `match_at_byte_index`.
+    # Matched with NO_UTF_CHECK, or PCRE2 revalidates the whole body per
+    # call; the body is built char by char, so it is valid UTF-8.
+    DEF_ACTION_RE       = /\G(public\s+|protected\s+|private\s+)?def\s+([a-z_][A-Za-z0-9_]*)\s*(?:\(|=\s*(?=\{))/
+    TYPED_ACTION_RE     = /\G((?:(?:public|protected|private|static|final|synchronized)\s+)*)([A-Z][A-Za-z0-9_]*(?:\s*<[^<>]+>)?(?:\s*\[\s*\])?)\s+([a-z_][A-Za-z0-9_]*)\s*\([^)]*\)\s*(?:throws\s+[A-Za-z0-9_,\s.]+)?\s*\{/
+    PRIMITIVE_ACTION_RE = /\G((?:(?:public|protected|private|static|final|synchronized)\s+)*)(void|int|long|boolean|byte|short|float|double|char)\s+([a-z_][A-Za-z0-9_]*)\s*\([^)]*\)\s*(?:throws\s+[A-Za-z0-9_,\s.]+)?\s*\{/
+
+    # Byte offset of each char of `chars` (plus the end), for matching a
+    # regex in place at a char position of a non-ASCII string.
+    private def char_byte_offsets(chars : Array(Char)) : Array(Int32)
+      offsets = Array(Int32).new(chars.size + 1)
+      offset = 0
+      chars.each do |char|
+        offsets << offset
+        offset += char.bytesize
+      end
+      offsets << offset
+    end
+
     private def extract_actions(body : String) : Array(Action)
       actions = [] of Action
       depth = 0
@@ -254,6 +290,11 @@ module Analyzer::Groovy
       # the array instead; char offsets (and thus `action[:offset]`) are
       # unchanged.
       chars = body.chars
+      # The action regexes are `\G`-anchored and matched in place at the
+      # current position. Slicing `body[i..]` for every depth-0 char copied
+      # the rest of the body each time: quadratic on a long top-level
+      # line such as a 4000-entry `allowedMethods` map.
+      byte_offsets = body.bytesize == chars.size ? nil : char_byte_offsets(chars)
 
       while i < chars.size
         c = chars[i]
@@ -277,24 +318,24 @@ module Analyzer::Groovy
         end
 
         if depth == 0
-          rest = body[i..]
+          byte_i = byte_offsets ? byte_offsets[i] : i
           # Method form: `def name(...)`
           # Closure form: `def name = { ... }` — explicitly require the
           # closure brace via lookahead so plain field assignments like
           # `def cache = [:]` or `def bookService = new BookService()`
           # are not mistaken for actions.
-          m = rest.match(/\A(public\s+|protected\s+|private\s+)?def\s+([a-z_][A-Za-z0-9_]*)\s*(?:\(|=\s*(?=\{))/)
+          m = DEF_ACTION_RE.match_at_byte_index(body, byte_i, Noir::TextFile::MATCH_OPTIONS)
           if m
             modifier = m[1]?
             name = m[2]
+            match_size = m[0].size
             unless nonpublic_modifier?(modifier) || SKIP_ACTION_NAMES.includes?(name) || accessor_name?(name)
-              if action_body = extract_braced_block(body, i + (m.end(0) || 0))
+              if action_body = extract_braced_block(body, i + match_size, chars)
                 action_body_text, action_body_start = action_body
                 actions << {name: name, offset: i, body: action_body_text, body_start: action_body_start}
               end
             end
-            match_end = m.end(0)
-            i = match_end ? i + match_end : i + 1
+            i += match_size
             next
           end
 
@@ -302,37 +343,21 @@ module Analyzer::Groovy
           # Grails 3+ allows actions with explicit return types. We
           # require the trailing `{` to avoid matching field declarations
           # like `String name = "x"` or method calls.
-          m2 = rest.match(/\A((?:(?:public|protected|private|static|final|synchronized)\s+)*)([A-Z][A-Za-z0-9_]*(?:\s*<[^<>]+>)?(?:\s*\[\s*\])?)\s+([a-z_][A-Za-z0-9_]*)\s*\([^)]*\)\s*(?:throws\s+[A-Za-z0-9_,\s.]+)?\s*\{/)
-          if m2
-            name = m2[3]
-            unless nonpublic_modifier?(m2[1]?) || SKIP_ACTION_NAMES.includes?(name) || accessor_name?(name)
-              open_brace = i + (m2.end(0) || 1) - 1
-              if action_body = extract_braced_block(body, open_brace)
-                action_body_text, action_body_start = action_body
-                actions << {name: name, offset: i, body: action_body_text, body_start: action_body_start}
-              end
-            end
-            match_end = m2.end(0)
-            i = match_end ? i + match_end : i + 1
-            next
-          end
-
           # Void / primitive-return method form: `void name(...) { ... }`,
           # `int count(...) { ... }`. Distinct from the uppercase-return
-          # pattern above to avoid colliding with field declarations and
-          # `def` actions.
-          m3 = rest.match(/\A((?:(?:public|protected|private|static|final|synchronized)\s+)*)(void|int|long|boolean|byte|short|float|double|char)\s+([a-z_][A-Za-z0-9_]*)\s*\([^)]*\)\s*(?:throws\s+[A-Za-z0-9_,\s.]+)?\s*\{/)
-          if m3
-            name = m3[3]
-            unless nonpublic_modifier?(m3[1]?) || SKIP_ACTION_NAMES.includes?(name) || accessor_name?(name)
-              open_brace = i + (m3.end(0) || 1) - 1
-              if action_body = extract_braced_block(body, open_brace)
+          # pattern to avoid colliding with field declarations and `def`
+          # actions.
+          if m2 = TYPED_ACTION_RE.match_at_byte_index(body, byte_i, Noir::TextFile::MATCH_OPTIONS) ||
+                  PRIMITIVE_ACTION_RE.match_at_byte_index(body, byte_i, Noir::TextFile::MATCH_OPTIONS)
+            name = m2[3]
+            match_size = m2[0].size
+            unless nonpublic_modifier?(m2[1]?) || SKIP_ACTION_NAMES.includes?(name) || accessor_name?(name)
+              if action_body = extract_braced_block(body, i + match_size - 1, chars)
                 action_body_text, action_body_start = action_body
                 actions << {name: name, offset: i, body: action_body_text, body_start: action_body_start}
               end
             end
-            match_end = m3.end(0)
-            i = match_end ? i + match_end : i + 1
+            i += match_size
             next
           end
         end
@@ -666,13 +691,11 @@ module Analyzer::Groovy
       pattern.gsub(/\(\.\$\{?[A-Za-z_][A-Za-z0-9_]*\}?\)\??/, "")
     end
 
-    private def extract_braced_block(text : String, start : Int32) : Tuple(String, Int32)?
+    # `chars` is `text.chars`; a caller extracting many blocks from one
+    # text passes it in rather than re-materializing it per block.
+    private def extract_braced_block(text : String, start : Int32, chars : Array(Char) = text.chars) : Tuple(String, Int32)?
       # Same non-ASCII O(n) `String#[]` concern as elsewhere in this file:
-      # materialize once and index the array instead of re-indexing `text`.
-      # `text[body_start...i]` below still reads from the original String
-      # (a single one-shot slice, not a per-char access), so output bytes
-      # are unaffected.
-      chars = text.chars
+      # index the char array instead of re-indexing `text`.
       i = start
       while i < chars.size && chars[i] != '{'
         i += 1
@@ -703,7 +726,9 @@ module Analyzer::Groovy
       end
 
       return if depth != 0
-      {text[body_start...i], body_start}
+      # Joined from `chars`: slicing a non-ASCII `text` by char index
+      # rescans it from the head, once per action.
+      {chars[body_start...i].join, body_start}
     end
 
     private def strip_groovy_comments(text : String) : String
