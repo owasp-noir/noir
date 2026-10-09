@@ -15,6 +15,7 @@ module Noir::JSCalleeExtractor
     "patch"   => "PATCH",
     "head"    => "HEAD",
     "options" => "OPTIONS",
+    "query"   => "QUERY",
     "trace"   => "TRACE",
     "connect" => "CONNECT",
     "all"     => "ALL",

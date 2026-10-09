@@ -62,42 +62,40 @@ module Analyzer::Javascript
       content.matches?(ON_ROUTE_CALL_PATTERN)
     end
 
+    # `app.on('GET', '/path', …)` (group 1) or `app.on(['GET', 'POST'],
+    # '/path', …)` (group 2); the path is group 3.
+    ON_ROUTE_RE = /\b(?:app|router|hono)\s*\.\s*on\s*\(\s*(?:['"](\w+)['"]|\[([^\]\n]+)\])\s*,\s*['"]([^'"\n]+)['"]/
+
     private def extract_on_routes(path : String,
                                   content : String,
                                   result : Array(Endpoint),
                                   callees_by_route : Hash(String, Array(Noir::JSCalleeExtractor::Entry)),
                                   include_callee : Bool)
-      http_methods = %w[get post put delete patch options head query]
       lines = content.lines
-      line_offset = 0
-      lines.each_with_index do |line, index|
+      bytes = content.to_slice
+      # Matches arrive in order, so the line is counted incrementally from
+      # the match's own byte offset. Summing `line.bytesize + 1` over
+      # `content.lines` (terminators stripped) drifted one byte per CRLF
+      # line and mixed bytes with the char offsets callees are found by.
+      line_byte = 0
+      index = 0
+      content.scan(ON_ROUTE_RE) do |match|
         methods = [] of String
-        url = ""
-        call_start = nil.as(Int32?)
-
-        # app.on('GET', '/path', ...) - single method string
-        if match = line.match(/\b(?:app|router|hono)\s*\.\s*on\s*\(\s*['"](\w+)['"]\s*,\s*['"]([^'"]+)['"]/)
-          method = match[1].downcase
-          if http_methods.includes?(method)
-            methods << method
-            url = match[2]
-            call_start = line_offset + (match.begin(0) || 0)
-          end
-          # app.on(['GET', 'POST'], '/path', ...) - array of methods
-        elsif match = line.match(/\b(?:app|router|hono)\s*\.\s*on\s*\(\s*\[([^\]]+)\]\s*,\s*['"]([^'"]+)['"]/)
-          methods_str = match[1]
-          url = match[2]
-          call_start = line_offset + (match.begin(0) || 0)
-          methods_str.scan(/['"](\w+)['"]/) do |m|
+        if single = match[1]?
+          method = single.downcase
+          methods << method if HTTP_METHODS.includes?(method)
+        elsif list = match[2]?
+          list.scan(/['"](\w+)['"]/) do |m|
             method = m[1].downcase
-            methods << method if http_methods.includes?(method) && !methods.includes?(method)
+            methods << method if HTTP_METHODS.includes?(method) && !methods.includes?(method)
           end
         end
+        url = match[3]
+        next if methods.empty? || url.empty?
 
-        if methods.empty? || url.empty?
-          line_offset += line.bytesize + 1
-          next
-        end
+        match_byte = match.byte_begin(0)
+        index += bytes[line_byte, match_byte - line_byte].count('\n'.ord.to_u8)
+        line_byte = match_byte
 
         # Pre-extract handler-body params once so each method-variant
         # endpoint gets the same params without re-walking lines.
@@ -109,7 +107,7 @@ module Analyzer::Javascript
             body_params << param
           end
         end
-        direct_callees = include_callee && call_start ? on_route_callees(content, path, call_start) : [] of Noir::JSCalleeExtractor::Entry
+        direct_callees = include_callee ? on_route_callees(content, path, match.begin(0)) : [] of Noir::JSCalleeExtractor::Entry
 
         methods.each do |http_method|
           next if route_recorded_for_file?(result, path, url, http_method.upcase)
@@ -125,7 +123,6 @@ module Analyzer::Javascript
 
           result << endpoint
         end
-        line_offset += line.bytesize + 1
       end
     end
 
