@@ -238,4 +238,26 @@ describe "OutputBuilderMermaid" do
     # Both groups plus the two members => exactly two `token` leaf nodes.
     output.scan("token").size.should eq(2)
   end
+
+  it "folds a very deep route into one node instead of nesting it" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderMermaid.new(options)
+    builder.io = IO::Memory.new
+
+    # One recursion level per segment overflowed the stack at ~7000 segments
+    # and printed tens of MB of indentation before it did.
+    deep = "/" + (0...10_000).join("/") { |i| "s#{i}" }
+    builder.print([Endpoint.new(deep, "GET")])
+    lines = builder.io.to_s.lines
+
+    lines.max_of { |line| line.size - line.lstrip.size }.should be <= (OutputBuilderMermaid::MAX_DEPTH + 2) * 2
+    lines.should contain(("  " * (OutputBuilderMermaid::MAX_DEPTH + 1)) + "s63_s64_s65_" + (66...10_000).join("_") { |i| "s#{i}" })
+    lines.last.strip.should eq("GET")
+  end
 end

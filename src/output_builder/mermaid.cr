@@ -10,6 +10,9 @@ class OutputBuilderMermaid < OutputBuilder
   # Buckets `output_tree` renders explicitly, under a label of their own.
   RENDERED_BUCKETS = Set{"header", "cookie", "query", "json", "form", "path"}
 
+  # Deepest path-segment level the mindmap nests to (see `build_path_tree`).
+  MAX_DEPTH = 64
+
   def print(endpoints : Array(Endpoint), passive_results : Array(PassiveScanResult) = [] of PassiveScanResult)
     build_mindmap(endpoints, passive_results)
   end
@@ -76,6 +79,13 @@ class OutputBuilderMermaid < OutputBuilder
       end
       # Split path into segments
       segments = path.split("/").reject(&.empty?)
+      # A mindmap nests by indentation, so a route 10000 segments deep made
+      # `output_tree` recurse 10000 times (stack overflow) and printed
+      # ~50MB of leading spaces. Past MAX_DEPTH the rest of the route is one
+      # node; no real route comes near it.
+      if segments.size > MAX_DEPTH
+        segments = segments[0, MAX_DEPTH - 1] << segments[(MAX_DEPTH - 1)..].join("/")
+      end
       # Navigate/create tree structure
       current_node = root
       segments.each do |segment|
