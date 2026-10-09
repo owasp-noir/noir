@@ -30,6 +30,13 @@ describe "Detect Caddy config" do
     instance.detect("config.json", %({"foo":"bar"})).should be_false
   end
 
+  # Both words appear, but not as `apps.http`; claiming it made the analyzer
+  # raise and `--strict` fail on an icon list.
+  it "rejects JSON that only mentions apps and http" do
+    instance.detect("icons.json", %([{"name":"apps","kind":"http"}])).should be_false
+    instance.detect("meta.json", %({"apps":["http"]})).should be_false
+  end
+
   it "rejects arbitrary filename" do
     instance.detect("config.txt", caddyfile).should be_false
   end

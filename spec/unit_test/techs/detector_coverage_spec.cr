@@ -93,7 +93,6 @@ UNTESTED_DETECTORS = [
   "rust/cli",
   "scala/cli",
   "scala/http4s",
-  "specification/har",
   "specification/odata",
   "specification/typespec",
   "swift/cli",

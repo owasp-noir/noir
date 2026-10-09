@@ -10,9 +10,12 @@ module Detector::Specification
     detector_for "har", extensions: %w[.har .json], idempotent: false
 
     # Every `.json` in the tree reaches these guards. Both must match, so
-    # they stay separate probes rather than a union.
-    LOG_MARKER     = /"log"/
-    ENTRIES_MARKER = /"entries"/
+    # they stay separate probes rather than a union. A HAR's `log` is an
+    # object and its `entries` an array; matching the bare key names claimed
+    # any JSON that mentions them (`{"log":"Log","entries":"Entries"}` in a
+    # locale file) and then reported it as an unparsable HAR.
+    LOG_MARKER     = /"log"\s*:\s*\{/
+    ENTRIES_MARKER = /"entries"\s*:\s*\[/
 
     def detect(filename : String, file_contents : String) : Bool
       if (filename.ends_with? ".har") || (filename.ends_with? ".json")
