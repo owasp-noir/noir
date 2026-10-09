@@ -13,6 +13,13 @@ expected_endpoints = [
   Endpoint.new("/named-default", "GET", [
     Param.new("q", "", "query"),
   ]),
+  # Verb after a filter name; verb list behind a constraint type.
+  Endpoint.new("/filtered", "DELETE", [
+    Param.new("q", "", "query"),
+  ]),
+  Endpoint.new("/typed", "PATCH", [
+    Param.new("q", "", "query"),
+  ]),
   Endpoint.new("/submit", "POST", [
     Param.new("body", "", "json"),
   ]),

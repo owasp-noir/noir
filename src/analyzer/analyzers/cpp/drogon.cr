@@ -24,8 +24,10 @@ module Analyzer::Cpp
       "Options" => "OPTIONS",
     }
 
-    # `{Get, Post}` method list: brace block whose first token is a verb.
-    METHOD_BLOCK = /\{\s*((?:drogon::)?(?:Get|Post|Put|Delete|Patch|Head|Options)\b[^{}]*)\}/
+    # `{Get, Post}` method list: a flat brace block holding a verb anywhere,
+    # so filters may precede verbs (`{"LoginFilter", Delete}`) and the block
+    # may follow a type (`std::vector<internal::HttpConstraint>{Patch}`).
+    METHOD_BLOCK = /\{([^{}]*\b(?:Get|Post|Put|Delete|Patch|Head|Options)\b[^{}]*)\}/
 
     REGEX_REGISTER_HANDLER = /app\(\)\s*\.?\s*registerHandler(?:ViaRegex)?\s*\(\s*"([^"]+)"/
 
@@ -127,7 +129,7 @@ module Analyzer::Cpp
                  [] of String
                end
         method_list = args.skip(2).reverse_each.compact_map do |arg|
-          arg.match(METHOD_BLOCK) if arg.lstrip.starts_with?('{')
+          arg.match(METHOD_BLOCK)
         end.first?
         methods = method_list ? parse_methods(method_list[1]) : ["GET"]
 

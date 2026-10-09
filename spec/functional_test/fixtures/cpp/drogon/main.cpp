@@ -57,6 +57,10 @@ int main() {
 
     app().registerHandler("/named", &namedSearchHandler, {Get});
 
+    // Filters before the verb, and a typed constraint list.
+    app().registerHandler("/filtered", &namedSearchHandler, {"LoginFilter", Delete});
+    app().registerHandler("/typed", &namedSearchHandler, std::vector<internal::HttpConstraint>{Patch});
+
     app().run();
     return 0;
 }
