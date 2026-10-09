@@ -769,7 +769,10 @@ module Analyzer::Python
 
     private def extract_route_mappings(content : ::String) : Array(Tuple(::String, ::String))
       mappings = [] of Tuple(::String, ::String)
-      lines = content.split("\n")
+      # Comments go first: a commented-out `path(...)` or a `(` in a
+      # trailing comment would otherwise be read as code once lines are
+      # joined into one logical call.
+      lines = content.split("\n").map { |line| strip_python_comment(line) }
       inline_include_depth = 0
 
       lines.each_with_index do |line, index|

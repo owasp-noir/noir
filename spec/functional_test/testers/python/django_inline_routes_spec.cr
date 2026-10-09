@@ -2,7 +2,8 @@ require "../../func_spec.cr"
 
 # A URLconf may hold several `path()` / `re_path()` calls on one source
 # line, either as siblings or as the body of an inline `include([...])`.
-# Only the first call on each line used to survive.
+# Only the first call on each line used to survive. Comments on those
+# lines are not code.
 extracted_endpoints = [
   Endpoint.new("/", "GET"),
   Endpoint.new("/about/", "GET"),
@@ -12,6 +13,8 @@ extracted_endpoints = [
   Endpoint.new("/api/users/", "GET"),
   Endpoint.new("/api/teams/", "GET"),
   Endpoint.new("/api/ping/", "GET"),
+  Endpoint.new("/kept/", "GET"),
+  Endpoint.new("/split/", "GET"),
 ]
 
 FunctionalTester.new("fixtures/python/django_inline_routes/", {

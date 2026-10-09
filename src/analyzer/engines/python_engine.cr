@@ -1001,8 +1001,7 @@ module Analyzer::Python
     # line, ignoring delimiters that fall inside single- or
     # double-quoted strings on the same line — a `"("` inside a route
     # pattern or a `"["` inside a regex must not move the depth.
-    # Counting stops at an unquoted `#`, so a `[` in a trailing comment
-    # does not leave a collection open. Backslash escapes are tracked inside a quoted run so that `\'`
+    # Backslash escapes are tracked inside a quoted run so that `\'`
     # / `\"` do not close it early.
     #
     # Only same-line quoting is modelled: `in_quote` resets on every
@@ -1033,8 +1032,6 @@ module Analyzer::Python
         end
 
         case ch
-        when '#'
-          break
         when '\'', '"'
           in_quote = ch
         when open_char
@@ -1090,6 +1087,31 @@ module Analyzer::Python
         i += 1
       end
       pieces.join(' ')
+    end
+
+    # `line` up to its first `#` outside a single-line quoted string.
+    # Per-line like `python_delimiter_delta`: a line inside a multi-line
+    # triple-quoted string is not recognised as such.
+    def strip_python_comment(line : ::String) : ::String
+      return line unless line.includes?('#')
+      in_quote : Char? = nil
+      escaped = false
+      line.each_char_with_index do |ch, index|
+        if in_quote
+          if escaped
+            escaped = false
+          elsif ch == '\\'
+            escaped = true
+          elsif ch == in_quote
+            in_quote = nil
+          end
+        elsif ch == '\'' || ch == '"'
+          in_quote = ch
+        elsif ch == '#'
+          return line[0, index]
+        end
+      end
+      line
     end
   end
 end

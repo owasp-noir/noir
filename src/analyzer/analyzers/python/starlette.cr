@@ -456,7 +456,7 @@ module Analyzer::Python
         bracket_depth = 0
         index = line_index
         while index < lines.size
-          bracket_depth += python_bracket_delta(lines[index])
+          bracket_depth += python_bracket_delta(strip_python_comment(lines[index]))
           end_line = index
           break if bracket_depth <= 0
           index += 1
@@ -549,7 +549,7 @@ module Analyzer::Python
         bracket_depth = 0
         index = line_index
         while index < lines.size
-          bracket_depth += python_bracket_delta(lines[index])
+          bracket_depth += python_bracket_delta(strip_python_comment(lines[index]))
           end_line = index
           break if bracket_depth <= 0
           index += 1
