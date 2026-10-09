@@ -36,6 +36,12 @@ module Analyzer::Python
     PYTHON_VAR_NAME_REGEX = /[a-zA-Z_][a-zA-Z0-9_]*/
     # Regex for valid Python module names
     DOT_NATION = /[a-zA-Z_][a-zA-Z0-9_.]*/
+    # A call's argument text up to (not including) its closing `)`: quoted
+    # strings are skipped whole and one level of nested parentheses is
+    # allowed, so `http_method=("GET", "POST")` or `title="x (y)"` does not
+    # end it early. Possessive, so an unclosed call fails fast instead of
+    # backtracking.
+    PYTHON_CALL_ARGS = /(?:[^()'"]++|'[^']*+'|"[^"]*+"|\((?:[^()'"]++|'[^']*+'|"[^"]*+")*+\))*+/
 
     # Standard Python/pytest/unittest test-file conventions. A file
     # under any of these patterns ships with `python -m pytest` or

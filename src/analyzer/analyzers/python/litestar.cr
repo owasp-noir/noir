@@ -12,7 +12,7 @@ module Analyzer::Python
     # decorators (the listener/stream class-based WS handlers), which
     # take a positional path just like `@websocket` — without the
     # variants every listener/stream endpoint was silently dropped.
-    DECORATOR_REGEX = /@(get|post|put|patch|delete|head|options|route|websocket(?:_listener|_stream)?)\s*\(([^)]*)/
+    DECORATOR_REGEX = /@(get|post|put|patch|delete|head|options|route|websocket(?:_listener|_stream)?)\s*\((#{PYTHON_CALL_ARGS})/
     # Path literal inside a decorator. Litestar accepts both a positional
     # path and an explicit `path=` keyword argument. List forms
     # (`@get(["/a", "/b"])`, `@get(path=["/a", "/b"])`) and omitted paths
@@ -27,7 +27,10 @@ module Analyzer::Python
     HTTP_METHOD_ITEM_REGEX = /['"]([A-Za-z]+)['"]|HttpMethod\.([A-Za-z]+)/
     # `Parameter(header="X-Token")` / `cookie=` / `query=`: the location
     # and wire name, in a default or an `Annotated[...]` hint.
-    PARAMETER_LOCATION_REGEX = /\bParameter\s*\([^)]*?\b(header|cookie|query)\s*=\s*[rf]?['"]([^'"]+)['"]/
+    PARAMETER_LOCATION_REGEX = /\bParameter\s*\((?:[^()'"]|'[^']*'|"[^"]*"|\([^()]*\))*?\b(header|cookie|query)\s*=\s*[rf]?['"]([^'"]+)['"]/
+    # The same, as the whole default: `x: str = Parameter(header="X")`.
+    # Anchored, so a long default is not searched end to end.
+    PARAMETER_DEFAULT_LOCATION_REGEX = /\A\s*#{PARAMETER_LOCATION_REGEX}/
     # Router(path="/prefix", route_handlers=[...])
     ROUTER_REGEX = /(#{PYTHON_VAR_NAME_REGEX})\s*=\s*Router\s*\(([^)]*)\)/m
     # Path param: {name} or {name:type}. Litestar uses the :type suffix
@@ -437,7 +440,7 @@ module Analyzer::Python
           next if litestar_dependency_param?(fp)
 
           type_hint = fp.type.strip
-          if location = "#{type_hint} #{fp.default}".match(PARAMETER_LOCATION_REGEX)
+          if location = type_hint.match(PARAMETER_LOCATION_REGEX) || fp.default.match(PARAMETER_DEFAULT_LOCATION_REGEX)
             add_unique(params, Param.new(location[2], "", location[1]))
             next
           end
@@ -522,7 +525,7 @@ module Analyzer::Python
 
     # When `line` is the start of a Litestar route decorator with an
     # unbalanced opening paren, join continuation lines until the
-    # matching `)` so the `[^)]*` body capture in `DECORATOR_REGEX`
+    # matching `)` so the body capture in `DECORATOR_REGEX`
     # actually sees the path string. No-op for the common single-line
     # form. Newlines in the join are collapsed to spaces so the
     # body-side path/method scans don't have to special-case them.

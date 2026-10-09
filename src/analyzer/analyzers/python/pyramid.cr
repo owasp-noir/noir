@@ -53,6 +53,9 @@ module Analyzer::Python
       end
     end
 
+    # `.add_route(...)` and its argument text, tuples included.
+    ADD_ROUTE_RE = /\.add_route\s*\((#{PYTHON_CALL_ARGS})\)/
+
     alias RouteNameKey = Tuple(String, String)
     # {base_path, name} => {path, decl_file, add_route request_method verbs}
     alias RouteMap = Hash(RouteNameKey, Tuple(String, String, Array(String)))
@@ -169,7 +172,7 @@ module Analyzer::Python
     # config.add_route("name", "/path") plus keyword variants like
     # name="x", pattern="/y" in either order.
     private def extract_route_declarations(content : String, path : String, route_map : RouteMap, base_path : String)
-      content.scan(/\.add_route\s*\((.*?)\)/m) do |m|
+      content.scan(ADD_ROUTE_RE) do |m|
         args = m[1]
         name = nil
         pattern = nil

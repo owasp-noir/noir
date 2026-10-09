@@ -27,7 +27,7 @@ def main():
     config.add_route("create", "/things", request_method="POST")
     config.add_route("delete", "/things/{id}", request_method="DELETE")
     config.add_route("patch", "/things/{id}/patch", request_method="POST")
-    config.add_route("show", "/show", request_method=["GET", "HEAD"])
+    config.add_route("show", "/show", request_method=("GET", "HEAD"))
     config.add_view(show, route_name="show", renderer="json")
     config.scan()
     return config.make_wsgi_app()
