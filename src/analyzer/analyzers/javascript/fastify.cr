@@ -28,6 +28,10 @@ module Analyzer::Javascript
         autoload_prefix = autoload_prefix_for(path, autoload_roots, content)
         parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug,
           include_callees: include_callee)
+        # "METHOD url" this file already emitted, for the auxiliary passes'
+        # de-duplication (a Set: scanning the whole result per route was
+        # quadratic).
+        recorded = Set(String).new
         parser_endpoints.each do |endpoint|
           # The shared JS parser emits `.query(` shorthand for any receiver
           # and without the addHttpMethod('QUERY') gate or plugin prefixes.
@@ -57,6 +61,7 @@ module Analyzer::Javascript
           end
 
           result << endpoint
+          recorded << "#{endpoint.method} #{endpoint.url}"
         end
 
         # Auxiliary pass for `fastify.route({ method, url })` shapes
@@ -67,9 +72,9 @@ module Analyzer::Javascript
         # never a real config — issue #1903).
         unless Noir::JSRouteExtractor.test_stub_only?(path, content) ||
                Noir::JSRouteExtractor.minified_content?(content)
-          extract_route_configs(path, content, result, include_callee, autoload_prefix)
+          extract_route_configs(path, content, result, recorded, include_callee, autoload_prefix)
           if has_query_method
-            extract_query_shorthand_routes(path, content, result, include_callee, autoload_prefix)
+            extract_query_shorthand_routes(path, content, result, recorded, include_callee, autoload_prefix)
           end
         end
 
@@ -198,24 +203,24 @@ module Analyzer::Javascript
       end
     end
 
-    private def plugin_prefix_at(content : String, offset : Int32) : String
+    # Body ranges of prefixed plugins, as {open_brace, close_brace, prefix}
+    # BYTE offsets, in the order `plugin_prefix_at` consults them. Built
+    # once per file: re-scanning the whole file for every route made a large
+    # route file quadratic.
+    private def plugin_ranges(content : String) : Array(Tuple(Int32, Int32, String))
+      ranges = [] of Tuple(Int32, Int32, String)
+
       # 1. Anonymous plugin functions:
       #    fastify.register(function (instance) { ... }, { prefix: '/x' })
       #    fastify.register((instance) => { ... }, { prefix: '/x' })
       content.scan(/\b\w+\.register\s*\(\s*(?:async\s+)?(?:function\s*\([^)]*\)|\([^)]*\)\s*=>|\w+\s*=>)\s*\{/) do |m|
-        match_start = m.begin(0)
-        next unless match_start
-
-        open_brace = content.index("{", match_start)
+        open_brace = content.byte_index('{', m.byte_begin(0))
         next unless open_brace
-        close_brace = Noir::JSRouteExtractor.find_matching_brace(content, open_brace)
+        close_brace = Noir::JSLiteralScanner.find_matching_brace_at_byte(content, open_brace)
         next unless close_brace
 
-        if offset >= open_brace && offset <= close_brace
-          after_body = content[close_brace..]
-          if prefix_match = after_body.match(/^[^)]*prefix\s*:\s*['"]([^'"]+)['"]/)
-            return prefix_match[1]
-          end
+        if prefix_match = content.byte_slice(close_brace).match(/^[^)]*prefix\s*:\s*['"]([^'"]+)['"]/)
+          ranges << {open_brace, close_brace, prefix_match[1]}
         end
       end
 
@@ -226,38 +231,88 @@ module Analyzer::Javascript
         fn_name = m[1]
         prefix = m[2]
 
-        pattern = /(?:const|let|var)\s+#{Regex.escape(fn_name)}\s*=\s*(?:async\s*)?(?:\([^)]*\)|\w+)\s*=>\s*\{|(?:function\s+#{Regex.escape(fn_name)}|(?:const|let|var)\s+#{Regex.escape(fn_name)}\s*=\s*(?:async\s+)?function\b[^{]*)\s*\{/
-        if fn_match = content.match(pattern)
-          if match_pos = fn_match.begin(0)
-            if open_brace = content.index("{", match_pos)
-              if close_brace = Noir::JSRouteExtractor.find_matching_brace(content, open_brace)
-                if offset >= open_brace && offset <= close_brace
-                  return prefix
-                end
-              end
-            end
-          end
+        pattern = /(?:const|let|var)\s+#{Regex.escape(fn_name)}\s*=\s*(?:async\s*)?(?:\([^)]*\)|\w+)\s*=>\s*\{|(?:function\s+#{Regex.escape(fn_name)}\s*\([^)]*\)|(?:const|let|var)\s+#{Regex.escape(fn_name)}\s*=\s*(?:async\s+)?function\b[^{]*)\s*\{/
+        if (fn_match = content.match(pattern)) &&
+           (open_brace = content.byte_index('{', fn_match.byte_begin(0))) &&
+           (close_brace = Noir::JSLiteralScanner.find_matching_brace_at_byte(content, open_brace))
+          ranges << {open_brace, close_brace, prefix}
         end
       end
 
-      ""
+      ranges
+    end
+
+    private def plugin_prefix_at(ranges : Array(Tuple(Int32, Int32, String)), offset : Int32) : String
+      ranges.find { |open_brace, close_brace, _| offset >= open_brace && offset <= close_brace }.try(&.[2]) || ""
+    end
+
+    # `<instance>.route({` / `<instance>.query('/…'` on any receiver: a
+    # plugin's instance is whatever its function names it (`api`, `f`,
+    # `child`). The argument shape is the gate, and it is in the pattern so
+    # the per-call work below never runs for `db.query(sql)` or Express's
+    # `router.route('/x')`.
+    ROUTE_CONFIG_CALL_RE = /(?<![\w$])([A-Za-z_$][\w$]*)\s*\.\s*route\s*\(\s*\{/
+    # A `handler` key: `handler: fn`, `handler(req) {…}` or shorthand `{ handler }`.
+    # A `handler` (or `wsHandler`) key (`handler: fn`, `handler(req) {…}`, shorthand
+    # `{ handler }`) or a spread that may carry one (`...routeOpts`).
+    ROUTE_CONFIG_HANDLER_KEY = /(?<![\w$.])(?:handler|wsHandler)\s*(?:[:(,}]|$)|\.\.\./m
+    QUERY_CALL_RE            = /(?<![\w$])([A-Za-z_$][\w$]*)\s*\.\s*query\s*\(\s*[`'"][\/*]/
+
+    # `.query(` is every database and search client's method, so unlike
+    # `route({ …, handler })` the call shape cannot vouch for the receiver.
+    # It has to be a Fastify instance: conventionally named, or the first
+    # parameter of a plugin function (inline in `register(…)`, a function
+    # handed to `register(name, …)`, or a module's default export).
+    FASTIFY_INSTANCE_NAME  = /\A(?:fastify|app|server|instance)\z|(?:App|Server)\z/
+    INLINE_PLUGIN_PARAM    = /\.register\s*\(\s*(?:async\s+)?(?:function\s*[\w$]*\s*\(\s*([A-Za-z_$][\w$]*)|\(\s*([A-Za-z_$][\w$]*)|([A-Za-z_$][\w$]*)\s*=>)/
+    REGISTERED_PLUGIN_NAME = /\.register\s*\(\s*([A-Za-z_$][\w$]*)\s*[,)]/
+    # `module.exports = routes` / `export default fp(routes)`: registered elsewhere.
+    EXPORTED_PLUGIN_NAME = /(?:export\s+default|module\.exports\s*=)\s*(?:[\w$.]+\s*\(\s*)?([A-Za-z_$][\w$]*)\s*[;)\n]/
+    FUNCTION_FIRST_PARAM = /function\s+([A-Za-z_$][\w$]*)\s*\(\s*([A-Za-z_$][\w$]*)|(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s+)?(?:function\s*[\w$]*\s*\(\s*([A-Za-z_$][\w$]*)|\(\s*([A-Za-z_$][\w$]*)|([A-Za-z_$][\w$]*)\s*=>)/
+    # Optionally wrapped: `module.exports = fp(async function (f) {…})`.
+    EXPORTED_PLUGIN_PARAM = /(?:export\s+default|module\.exports\s*=)\s*(?:[\w$.]+\s*\(\s*)?(?:async\s+)?(?:function\s*[\w$]*\s*\(\s*([A-Za-z_$][\w$]*)|\(\s*([A-Za-z_$][\w$]*)|([A-Za-z_$][\w$]*)\s*=>)/
+
+    private def fastify_instance_names(content : String) : Set(String)
+      names = Set(String).new
+      {INLINE_PLUGIN_PARAM, EXPORTED_PLUGIN_PARAM}.each do |re|
+        content.scan(re) { |m| (m[1]? || m[2]? || m[3]?).try { |n| names << n } }
+      end
+      registered = Set(String).new
+      content.scan(REGISTERED_PLUGIN_NAME) { |m| registered << m[1] }
+      content.scan(EXPORTED_PLUGIN_NAME) { |m| registered << m[1] }
+      return names if registered.empty?
+
+      # One pass over the file's function declarations, not a regex per
+      # registered name.
+      content.scan(FUNCTION_FIRST_PARAM) do |m|
+        next unless registered.includes?(m[1]? || m[3]? || "")
+        (m[2]? || m[4]? || m[5]? || m[6]?).try { |n| names << n }
+      end
+      names
     end
 
     # Scans for `fastify.query('/url', ...)` route shorthand calls.
     # Fastify only provides this method when registered via
     # `fastify.addHttpMethod('QUERY')` or the `fastify-http-query` plugin.
-    private def extract_query_shorthand_routes(path : String, content : String, result : Array(Endpoint), include_callee : Bool, autoload_prefix : String = "")
-      content.scan(/\b(?:fastify|app|server|instance)\s*\.\s*query\s*\(/) do |m|
-        call_start = m.begin(0)
-        next unless call_start
+    private def extract_query_shorthand_routes(path : String, content : String, result : Array(Endpoint), recorded : Set(String), include_callee : Bool, autoload_prefix : String = "")
+      ranges = nil
+      offsets = nil
+      instances = nil
+      content.scan(QUERY_CALL_RE) do |m|
+        receiver = m[1]
+        unless receiver.matches?(FASTIFY_INSTANCE_NAME)
+          next unless (instances ||= fastify_instance_names(content)).includes?(receiver)
+        end
+        # Byte offsets throughout: a char offset costs O(offset) per call.
+        call_start = m.byte_begin(0)
 
-        paren_open = content.index("(", call_start)
+        paren_open = content.byte_index('(', call_start)
         next unless paren_open
 
-        paren_close = Noir::JSRouteExtractor.find_matching_paren(content, paren_open)
+        paren_close = Noir::JSLiteralScanner.find_matching_paren_at_byte(content, paren_open)
         next unless paren_close && paren_close > paren_open
 
-        args = content[(paren_open + 1)...paren_close]
+        args = content.byte_slice(paren_open + 1, paren_close - paren_open - 1)
         first_arg = args.lstrip
 
         # Match string or template literal URL
@@ -265,16 +320,22 @@ module Analyzer::Javascript
         next unless url_match
 
         raw_url = url_match[1]
-        # Ignore non-URL strings (e.g. SQL queries with spaces)
-        next if raw_url.includes?(" ") || raw_url.empty?
+        # Fastify paths start with `/` (or are `*`); anything else is a
+        # client or database call such as `db.query('users', cb)`.
+        next unless raw_url.starts_with?('/') || raw_url == "*"
+        next if raw_url.includes?(" ")
+        # A route takes a handler after the path; `helper.query('/x')` is a
+        # plain call.
+        next unless first_arg[url_match.end(0)..].lstrip.starts_with?(',')
 
-        plugin_prefix = plugin_prefix_at(content, call_start)
+        prefix_ranges = (ranges ||= plugin_ranges(content))
+        plugin_prefix = plugin_prefix_at(prefix_ranges, call_start)
         url = plugin_prefix.empty? ? raw_url : Noir::URLPath.join(plugin_prefix, raw_url)
         url = Noir::URLPath.join(autoload_prefix, url) unless autoload_prefix.empty?
 
-        next if route_recorded_for_file?(result, path, url, "QUERY")
+        next unless recorded.add?("QUERY #{url}")
 
-        line_no = line_number_for_index(content, call_start)
+        line_no = (offsets ||= Noir::JSRouteExtractor::ByteOffsets.new(content)).line(call_start)
 
         endpoint = Endpoint.new(url, "QUERY")
         endpoint.details = Details.new(PathInfo.new(path, line_no))
@@ -305,27 +366,34 @@ module Analyzer::Javascript
     # shared parser misses: the config object may span multiple lines,
     # and `methods` may be an array. For each block, decode the method
     # (or methods) and the url/path and emit one endpoint per method.
-    private def extract_route_configs(path : String, content : String, result : Array(Endpoint), include_callee : Bool, autoload_prefix : String = "")
+    private def extract_route_configs(path : String, content : String, result : Array(Endpoint), recorded : Set(String), include_callee : Bool, autoload_prefix : String = "")
       http_methods = HTTP_METHODS
 
       # Match the call site `instance.route(` and walk the balanced
       # parens to capture the whole config object — line-by-line regex
       # would clip multi-line objects.
-      content.scan(/\b(?:fastify|app|server|instance)\s*\.\s*route\s*\(/) do |m|
-        call_start = m.begin(0)
-        next unless call_start
+      ranges = nil
+      offsets = nil
+      content.scan(ROUTE_CONFIG_CALL_RE) do |m|
+        # Byte offsets throughout: a char offset costs O(offset) per call.
+        call_start = m.byte_begin(0)
 
-        paren_open = content.index("(", call_start)
+        paren_open = content.byte_index('(', call_start)
         next unless paren_open
 
-        paren_close = Noir::JSRouteExtractor.find_matching_paren(content, paren_open)
+        paren_close = Noir::JSLiteralScanner.find_matching_paren_at_byte(content, paren_open)
         next unless paren_close && paren_close > paren_open
 
-        config = content[(paren_open + 1)...paren_close]
+        config = content.byte_slice(paren_open + 1, paren_close - paren_open - 1)
         # Only treat this as an object-literal route() call. Bare
         # references like `route(handler)` aren't config objects and
         # would just produce noise.
         next unless config.lstrip.starts_with?("{")
+        # Fastify requires a handler; `nock.route({ method, url, reply })` or
+        # Cypress's `cy.route({ method, url, response })` has none.
+        # Off a conventionally named instance any config counts, as before
+        # (`{ websocket: true, wsHandler }` has no `handler`).
+        next unless m[1].matches?(FASTIFY_INSTANCE_NAME) || config.matches?(ROUTE_CONFIG_HANDLER_KEY)
 
         methods = [] of String
         url = ""
@@ -351,12 +419,13 @@ module Analyzer::Javascript
 
         next if methods.empty? || url.empty?
 
-        plugin_prefix = plugin_prefix_at(content, call_start)
+        prefix_ranges = (ranges ||= plugin_ranges(content))
+        plugin_prefix = plugin_prefix_at(prefix_ranges, call_start)
         url = plugin_prefix.empty? ? url : Noir::URLPath.join(plugin_prefix, url)
         url = Noir::URLPath.join(autoload_prefix, url) unless autoload_prefix.empty?
 
         # Compute line number from the call site offset.
-        line_no = line_number_for_index(content, call_start)
+        line_no = (offsets ||= Noir::JSRouteExtractor::ByteOffsets.new(content)).line(call_start)
 
         # Pre-scan the config body for handler params (request.body.x,
         # request.query.x, ...). The shorthand `.get(url, handler)`
@@ -371,7 +440,7 @@ module Analyzer::Javascript
 
         methods.each do |http_method|
           method_up = http_method.upcase
-          next if route_recorded_for_file?(result, path, url, method_up)
+          next unless recorded.add?("#{method_up} #{url}")
 
           endpoint = Endpoint.new(url, method_up)
           endpoint.details = Details.new(PathInfo.new(path, line_no))

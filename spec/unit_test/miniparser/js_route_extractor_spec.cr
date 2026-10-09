@@ -933,4 +933,82 @@ describe Noir::JSRouteExtractor do
       end
     end
   end
+
+  describe "handler params" do
+    it "reads each chained route() verb's own handler and line" do
+      filler = "x" * 300
+      content = <<-JS
+        app.route('/products')
+          .get(function (req, res) {
+            const category = req.query.category;
+            res.json({ category, pad: '#{filler}' });
+          })
+          .post(function (req, res) {
+            const title = req.body.title;
+            const auth = req.headers['authorization'];
+            res.json({ title, auth });
+          });
+        JS
+      file = File.tempfile("noir_js_chain", ".js")
+      begin
+        File.write(file.path, content)
+        endpoints = Noir::JSRouteExtractor.extract_routes(file.path, content)
+        get = endpoints.find! { |e| e.method == "GET" }
+        post = endpoints.find! { |e| e.method == "POST" }
+        get.details.code_paths.first.line.should eq(2)
+        get.params.map(&.name).should eq(["category"])
+        post.details.code_paths.first.line.should eq(6)
+        post.params.map { |p| {p.name, p.param_type} }.should eq([{"title", "json"}, {"authorization", "header"}])
+      ensure
+        file.delete
+      end
+    end
+
+    it "reads expression-bodied arrow handlers without taking a nested arrow" do
+      content = <<-JS
+        app.get('/concise', (req, res) => res.json({ q: req.query.q }));
+        app.get('/nested', (req, res) => res.json(req.query.ids.map((id) => id + req.query.sep)));
+        app.get('/mw', (req, res, next) => next(), (req, res) => res.send(req.body.name));
+        JS
+      file = File.tempfile("noir_js_concise", ".js")
+      begin
+        File.write(file.path, content)
+        params = Noir::JSRouteExtractor.extract_routes(file.path, content).to_h do |e|
+          {e.url, e.params.map(&.name)}
+        end
+        params["/concise"].should eq(["q"])
+        params["/nested"].should eq(["ids", "sep"])
+        params["/mw"].should eq(["name"])
+      ensure
+        file.delete
+      end
+    end
+  end
+
+  describe "large files" do
+    # Every route used to index the file by CHAR offset (`content[i, n]`,
+    # `index(str, offset)`, `.chars` per brace match), which walks from byte 0
+    # on non-ASCII content and from 0 for `index(String, offset)` even on
+    # ASCII: 2000 routes plus one 'é' took ~13s in a release build.
+    it "stays linear with a non-ASCII char and keeps params and lines" do
+      n = 4000
+      content = String.build do |io|
+        io << "// café\nconst app = express();\n"
+        n.times { |i| io << "app.get('/r#{i}', (req, res) => { const v = req.query.q#{i}; res.send('é' + v); });\n" }
+      end
+      file = File.tempfile("noir_js_large", ".js")
+      begin
+        File.write(file.path, content)
+        endpoints = [] of Endpoint
+        elapsed = Time.measure { endpoints = Noir::JSRouteExtractor.extract_routes(file.path, content) }
+        elapsed.should be < 3.seconds
+        endpoints.size.should eq(n)
+        last = endpoints.find! { |e| e.url == "/r#{n - 1}" }
+        last.details.code_paths.first.line.should eq(n + 2)
+        last.params.map(&.name).should eq(["q#{n - 1}"])
+      ensure
+        file.delete
+      end
+    end
+  end
 end

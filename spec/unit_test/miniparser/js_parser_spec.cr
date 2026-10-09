@@ -373,6 +373,125 @@ describe Noir::JSParser do
     end
   end
 
+  describe "restify second-pass routes" do
+    it "keeps routes after an applyRoutes() call" do
+      code = <<-JS
+        const restify = require('restify');
+        const srv = restify.createServer();
+        userRouter.get('/u', (req, res, next) => next());
+        userRouter.applyRoutes(srv, '/users');
+        srv.post({ path: '/after' }, (req, res, next) => next());
+        srv.opts('/o', (req, res, next) => next());
+        JS
+      routes = Noir::JSParser.new(code).parse_routes.map { |r| "#{r.method} #{r.path}" }
+      routes.should contain("POST /after")
+      routes.should contain("OPTIONS /o")
+    end
+
+    it "reads { path } specs and opts on servers only, not on client option bags" do
+      code = <<-JS
+        const restify = require('restify');
+        const http = require('http');
+        const api = restify.createServer();
+        api.get({ path: '/spec', version: '1.0.0' }, (req, res, next) => next());
+        api.opts('/cors', (req, res, next) => next());
+        http.get({ host: 'upstream', path: '/remote' }, (res) => res.resume());
+        http.get({ socketPath: '/var/run/docker.sock', path: '/containers/json' }, (res) => {});
+        upstream.get({ path: '/upstream/users', headers: { a: 1 } }, function (err, req, res, obj) {});
+        store.get({ path: '/files/a.txt' }, (err, data) => {});
+        cfg.opts('/x', handler);
+        JS
+      routes = Noir::JSParser.new(code).parse_routes.map { |r| "#{r.method} #{r.path}" }.uniq!.sort!
+      routes.should eq(["GET /spec", "OPTIONS /cors"])
+    end
+
+    it "keeps { path } specs with custom keys and nested option objects" do
+      # Restify keeps arbitrary spec keys on req.route.spec: manta-muskie's
+      # `authAction`, node-restify-validation's `validation`, swagger docs.
+      code = <<-JS
+        const restify = require('restify');
+        const server = restify.createServer();
+        server.get({ path: '/:account', name: 'GetRootDir', authAction: 'getdirectory' }, (req, res, next) => next());
+        server.post({ path: '/users', validation: { resources: { name: { isRequired: true }, headers: {} } } }, (req, res, next) => next());
+        server.put({ url: '/docs', swagger: { summary: 'x', host: 'ignored-nested' } }, (req, res, next) => next());
+        server.get({ path: '/upstream', headers: { a: 1 } }, (req, res, next) => next());
+        JS
+      routes = Noir::JSParser.new(code).parse_routes.map { |r| "#{r.method} #{r.path}" }.uniq!.sort!
+      routes.should eq(["GET /:account", "POST /users", "PUT /docs"])
+    end
+
+    it "reads { path } routes past the first 10k tokens" do
+      n = 2000
+      code = String.build do |io|
+        io << "const restify = require('restify');\nconst srv = restify.createServer();\n"
+        n.times { |i| io << "srv.post({ path: '/r#{i}' }, (req, res, next) => next());\n" }
+      end
+      parser = Noir::JSParser.new(code)
+      parser.parse_routes.map(&.path).uniq!.size.should eq(n)
+      parser.hit_max_iterations?.should be_false
+    end
+  end
+
+  describe "nested router prefixes" do
+    it "applies each ancestor's prefix once on a three-level chain" do
+      code = <<-JS
+        const r0 = new Router();
+        const r1 = new Router();
+        const r2 = new Router();
+        const r3 = new Router();
+        r0.use('/a', r1.routes());
+        r1.use('/b', r2.routes());
+        r2.use('/c', r3.routes());
+        r3.get('/leaf', (ctx) => { ctx.body = 1; });
+        JS
+      routes = Noir::JSParser.new(code).parse_routes
+      routes.map(&.path).uniq!.should eq(["/a/b/c/leaf"])
+    end
+
+    it "does not memoize a router resolved mid-cycle with its parent cut" do
+      code = <<-JS
+        const p = express.Router();
+        const q = express.Router();
+        app.use("/root", q);
+        p.use('/p', q);
+        q.use('/q', p);
+        p.get('/pp', (req, res) => res.end());
+        JS
+      Noir::JSParser.new(code).parse_routes.map(&.path).should contain("/root/q/pp")
+    end
+
+    it "stays bounded on a densely cyclic mount graph" do
+      names = (0...14).map { |i| "r#{i}" }
+      lines = names.map { |n| "const #{n} = express.Router();" }
+      lines << "app.use('/root', r0);"
+      names.each { |a| names.each { |b| lines << "#{a}.use('/#{b}', #{b});" unless a == b } }
+      lines << "r13.get('/leaf', (req, res) => res.end());"
+      routes = [] of Noir::JSRoutePattern
+      elapsed = Time.measure { routes = Noir::JSParser.new(lines.join("\n")).parse_routes }
+      elapsed.should be < 5.seconds
+      routes.should_not be_empty
+    end
+
+    it "resolves a deep diamond lattice in bounded time and caps the prefixes" do
+      depth = 16
+      lines = [] of String
+      (0..depth).each { |lv| lines << "const r#{lv}a = new Router();" << "const r#{lv}b = new Router();" }
+      depth.times do |lv|
+        %w[a b].each do |src|
+          %w[a b].each { |dst| lines << "r#{lv}#{src}.use('/l#{lv}#{dst}', r#{lv + 1}#{dst}.routes());" }
+        end
+      end
+      lines << "r#{depth}a.get('/leaf', (ctx) => { ctx.body = 1; });"
+
+      parser = Noir::JSParser.new(lines.join("\n"))
+      routes = [] of Noir::JSRoutePattern
+      elapsed = Time.measure { routes = parser.parse_routes }
+      elapsed.should be < 5.seconds
+      routes.map(&.path).uniq!.size.should eq(Noir::JSParser::MAX_MOUNT_PREFIXES)
+      parser.mount_prefixes_capped?.should be_true
+    end
+  end
+
   describe "JSRoutePattern" do
     it "stores method and path" do
       pattern = Noir::JSRoutePattern.new("GET", "/users")

@@ -9,6 +9,9 @@ module Noir
     getter method : String
     property path : String
     getter raw_path : String
+    # CHAR index of the route's receiver token — or, for a link of a
+    # `route('/x').get(...).post(...)` chain, of that link's own verb, so
+    # each verb reports its own line and handler.
     getter start_pos : Int32
     getter params : Array(Param)
 
@@ -32,7 +35,6 @@ module Noir
     @current_route_paths : Array(String)? = nil # For multi-prefix support in route chains
     @current_route_start_idx : Int32? = nil
     @current_route_raw_path : String? = nil
-    @current_route_start_pos : Int32? = nil
     @router_prefixes : Hash(String, Array(String)) = Hash(String, Array(String)).new { |h, k| h[k] = [] of String }
     @named_route_receivers = Set(String).new
     # Receivers this file explicitly builds a router from (`x =
@@ -61,6 +63,14 @@ module Noir
 
     private def http_method?(token : JSToken) : Bool
       token.type == :http_method || (token.type == :keyword && token.value == "delete")
+    end
+
+    # A route verb: an HTTP method, or Restify's `opts` (OPTIONS) called on
+    # a server or router in a Restify file — `opts` is far too common a name
+    # to read as one anywhere else.
+    private def route_verb?(token : JSToken, receiver : String) : Bool
+      http_method?(token) ||
+        (@framework == :restify && token.value == "opts" && routing_receiver?(receiver))
     end
 
     def initialize(source : String)
@@ -97,7 +107,10 @@ module Noir
       @framework = detect_framework
 
       # Add a maximum iteration count to prevent infinite loops
-      max_iterations = 10000
+      # Every iteration advances at least one token, so this is only a
+      # safety net. A fixed 10000 silently dropped the second-pass routes
+      # (Restify `{ path }` specs) of any file past ~10k tokens.
+      max_iterations = @tokens.size + 10_000
       iterations = 0
 
       # Track router mount paths: router_variable_name => array of prefix_paths (supports multi-mount)
@@ -171,10 +184,14 @@ module Noir
         idx += 1
       end
 
-      # Resolve full paths for nested routers by walking up the parent chain
+      # Resolve full paths for nested routers by walking up the parent chain.
+      # Resolve against a snapshot of the declared (own) prefixes: writing
+      # each result back into the table being walked made a grandchild
+      # re-apply an already-resolved parent's prefixes (`/a/a/b/c`).
+      declared_prefixes = router_prefixes.transform_values(&.dup)
+      resolved = {} of String => Array(String)
       router_prefixes.keys.each do |router_name|
-        resolved_prefixes = resolve_full_prefixes(router_name, router_prefixes, router_parents)
-        router_prefixes[router_name] = resolved_prefixes
+        router_prefixes[router_name] = resolve_full_prefixes(router_name, declared_prefixes, router_parents, resolved, Set(String).new)[0]
       end
 
       @router_prefixes = router_prefixes
@@ -259,40 +276,73 @@ module Noir
       unique
     end
 
-    # Resolve full prefix for a router by walking up all parent chains
-    # Supports multiple parents (router mounted under different parent routers)
-    private def resolve_full_prefixes(router : String, router_prefixes : Hash(String, Array(String)), router_parents : Hash(String, Array(String)), visited : Set(String) = Set(String).new) : Array(String)
-      prefixes = router_prefixes[router]?.try(&.dup) || [] of String
-      return prefixes if prefixes.empty?
-      return prefixes if visited.includes?(router) # Prevent infinite loops
+    # Ceiling on the full prefixes one router resolves to. A diamond lattice
+    # of parallel mounts doubles the distinct paths per level; a shared
+    # router mounted under many paths stays well below it.
+    MAX_MOUNT_PREFIXES = 1024
 
-      visited.add(router)
+    # Ceiling on resolver calls per file. Results cut short by a cycle are
+    # not memoized, so a densely cyclic mount graph could otherwise enumerate
+    # every path; past this budget they are memoized anyway.
+    MAX_PREFIX_RESOLUTIONS = 100_000
+
+    getter? mount_prefixes_capped : Bool = false
+    @prefix_resolutions = 0
+
+    # Resolve full prefix for a router by walking up all parent chains
+    # Supports multiple parents (router mounted under different parent routers).
+    # Memoized per router in `resolved` — re-walking every parent chain for
+    # every router enumerated each path of a diamond lattice again and again.
+    # Returns the prefixes and whether a cycle cut the walk short: such a
+    # result is only right for the current path, so it is not memoized (a
+    # mid-cycle `p` resolved as `/q` alone lost `/root/q/pp` for good).
+    private def resolve_full_prefixes(router : String, router_prefixes : Hash(String, Array(String)),
+                                      router_parents : Hash(String, Array(String)),
+                                      resolved : Hash(String, Array(String)), on_path : Set(String)) : Tuple(Array(String), Bool)
+      if memo = resolved[router]?
+        return {memo, false}
+      end
+      prefixes = router_prefixes[router]? || [] of String
+      return {prefixes, false} if prefixes.empty?
+
+      @prefix_resolutions += 1
+      on_path.add(router)
       # A parent already on this chain is a self-mount or a cycle; walking
       # it again joined the cycle's prefixes onto themselves (`/v1/v1`).
-      parents = (router_parents[router]? || [] of String).reject { |parent| visited.includes?(parent) }
-      return prefixes if parents.empty?
+      all_parents = router_parents[router]? || [] of String
+      parents = all_parents.reject { |parent| on_path.includes?(parent) }
+      cut = parents.size < all_parents.size
 
       # Combine with all parent chains
       result = [] of String
+      seen = Set(String).new
       parents.each do |parent|
-        # Recursively resolve parent's full prefixes
-        parent_full_prefixes = resolve_full_prefixes(parent, router_prefixes, router_parents, visited.dup)
-
-        if parent_full_prefixes.empty?
-          # No parent prefix, just use our prefixes
-          result.concat(prefixes)
-        else
-          # Cartesian product: combine each parent prefix with each of our prefixes
-          parent_full_prefixes.each do |parent_prefix|
-            prefixes.each do |prefix|
-              combined = URLPath.join(parent_prefix, prefix)
-              result << combined unless result.includes?(combined)
+        parent_full_prefixes, parent_cut = resolve_full_prefixes(parent, router_prefixes, router_parents, resolved, on_path)
+        cut ||= parent_cut
+        # No parent prefix: our own prefixes stand alone.
+        parent_full_prefixes = [""] if parent_full_prefixes.empty?
+        # Cartesian product: combine each parent prefix with each of our prefixes
+        parent_full_prefixes.each do |parent_prefix|
+          prefixes.each do |prefix|
+            combined = parent_prefix.empty? ? prefix : URLPath.join(parent_prefix, prefix)
+            next unless seen.add?(combined)
+            if result.size >= MAX_MOUNT_PREFIXES
+              @mount_prefixes_capped = true
+              break
             end
+            result << combined
           end
         end
       end
+      on_path.delete(router)
 
-      result.empty? ? prefixes : result
+      result = prefixes.dup if result.empty?
+      if cut && @prefix_resolutions >= MAX_PREFIX_RESOLUTIONS
+        @mount_prefixes_capped = true
+        cut = false
+      end
+      resolved[router] = result unless cut
+      {result, cut}
     end
 
     # Koa/@koa-router commonly attaches route prefixes in the constructor:
@@ -896,7 +946,7 @@ module Noir
         # Pattern 1: identifier . http_method ( 'path' | `tpl` | identifier/concat )
         if @tokens[idx].type == :identifier &&
            @tokens[idx + 1].type == :dot &&
-           http_method?(@tokens[idx + 2]) &&
+           route_verb?(@tokens[idx + 2], @tokens[idx].value) &&
            @tokens[idx + 3].type == :lparen
           if !route_handler_arg?(idx + 3) || http_client_receiver?(@tokens[idx].value)
             idx += 1
@@ -965,7 +1015,6 @@ module Noir
             paths = route_path_entries_from_args(idx + 4, receiver: router_var)
           end
 
-          start_pos = @tokens[idx].position
           route_rparen = skip_matching_paren(idx + 3)
           if route_rparen
             each_prefixed_path(paths, router_var, router_prefixes) do |path_entry, prefixed_path|
@@ -987,8 +1036,9 @@ module Noir
                 break unless method_rparen
                 # Non-verb links (`.all(...)`-style middleware) keep the
                 # chain alive without emitting a route.
+                # Each link is located at its own verb (see start_pos).
                 if http_method?(@tokens[j + 1])
-                  results << create_route_with_params(@tokens[j + 1].value, prefixed_path, path_entry.path, start_pos, path_entry.is_regex?)
+                  results << create_route_with_params(@tokens[j + 1].value, prefixed_path, path_entry.path, @tokens[j + 1].position, path_entry.is_regex?)
                 end
                 j = method_rparen + 1
                 steps += 1
@@ -1099,29 +1149,33 @@ module Noir
       nil
     end
 
+    # Top-level keys of an HTTP *client* options bag. A Restify route spec
+    # keeps arbitrary keys (`authAction`, `validation`, `swagger`, ...) on
+    # `req.route.spec`, so only these disqualify one.
+    HTTP_CLIENT_OPTION_KEYS = Set{"host", "hostname", "port", "protocol", "agent", "socketPath", "headers"}
+
     private def parse_restify_route : JSRoutePattern?
       # Similar to Express but handle restify specific patterns like .del()
       # Only check at current position
       idx = @position
 
-      # Look for server.METHOD patterns
+      # Look for <receiver>.METHOD patterns. Any receiver — a Restify server
+      # is as often `srv` or a function parameter as `server` — gated, like
+      # fast_scan, on a handler argument and on not being an HTTP client.
       if idx < @tokens.size - 2 &&
-         (@tokens[idx].value == "server" ||
-         @tokens[idx].value == "router" ||
-         @tokens[idx].value.ends_with?("Router")) &&
+         @tokens[idx].type == :identifier &&
+         !http_client_receiver?(@tokens[idx].value) &&
          idx + 2 < @tokens.size &&
          @tokens[idx + 1].type == :dot &&
-         http_method?(@tokens[idx + 2])
-        method = @tokens[idx + 2].value
-        # Handle restify's 'del' method which means DELETE
-        method = "DELETE" if method.downcase == "del"
-        method = method.upcase
+         route_verb?(@tokens[idx + 2], @tokens[idx].value)
+        method = normalize_verb(@tokens[idx + 2].value)
 
         # Look for the path string in parentheses
         path_idx = idx + 3
         if path_idx < @tokens.size &&
            @tokens[path_idx].type == :lparen &&
-           path_idx + 1 < @tokens.size
+           path_idx + 1 < @tokens.size &&
+           route_handler_arg?(path_idx)
           path = nil
           # Handle both string and object pattern { path: '/route' }
           if @tokens[path_idx + 1].type == :string
@@ -1130,20 +1184,35 @@ module Noir
           elsif @tokens[path_idx + 1].type == :lbrace
             # Look for the path property in the object. Restify accepts
             # both `{ path: '/x' }` and `{ url: '/x', name: '...' }` —
-            # treat `url` as an alias for `path`.
-            obj_idx = path_idx + 1
-            while obj_idx < @tokens.size && @tokens[obj_idx].type != :rbrace
-              if (@tokens[obj_idx].value == "path" || @tokens[obj_idx].value == "url") &&
-                 obj_idx + 1 < @tokens.size &&
-                 @tokens[obj_idx + 1].type == :colon &&
-                 obj_idx + 2 < @tokens.size &&
-                 @tokens[obj_idx + 2].type == :string
-                path = @tokens[obj_idx + 2].value
-                @position = obj_idx + 3
-                break
+            # treat `url` as an alias for `path`. A route spec is only read
+            # off a server or router (`store.get({ path }, cb)` and
+            # `http.get({ socketPath, path }, cb)` have the same shape), and
+            # not when a top-level key marks a client options bag. Keys of
+            # nested objects (`validation: { … }`) are not the spec's own.
+            obj_idx = path_idx + 2
+            depth = 0
+            spec = routing_receiver?(@tokens[idx].value)
+            while spec && obj_idx + 2 < @tokens.size
+              case @tokens[obj_idx].type
+              when :lbrace, :lbracket, :lparen
+                depth += 1
+              when :rbrace, :rbracket, :rparen
+                break if depth == 0
+                depth -= 1
+              else
+                if depth == 0 && @tokens[obj_idx + 1].type == :colon &&
+                   (@tokens[obj_idx - 1].type == :lbrace || @tokens[obj_idx - 1].type == :comma)
+                  key = @tokens[obj_idx].value
+                  spec = false if HTTP_CLIENT_OPTION_KEYS.includes?(key)
+                  if path.nil? && (key == "path" || key == "url") && @tokens[obj_idx + 2].type == :string
+                    path = @tokens[obj_idx + 2].value
+                    @position = obj_idx + 3
+                  end
+                end
               end
               obj_idx += 1
             end
+            path = nil unless spec
           end
 
           # If we found a path, create a route object
@@ -1267,10 +1336,9 @@ module Noir
           # Create routes for all prefixed paths
           paths = @current_route_paths || [@current_route_path.as(String)]
           raw_path = @current_route_raw_path || paths.first
-          start_pos = @current_route_start_pos || @tokens[@current_route_start_idx.as(Int32)].position
 
           paths.each do |path|
-            route = JSRoutePattern.new(method, path, raw_path, start_pos)
+            route = JSRoutePattern.new(method, path, raw_path, @tokens[method_idx + 1].position)
             extract_path_params(path).each do |param|
               route.push_param(param)
             end
@@ -1287,7 +1355,6 @@ module Noir
         @current_route_paths = nil
         @current_route_start_idx = nil
         @current_route_raw_path = nil
-        @current_route_start_pos = nil
       end
 
       # Look for a new route() declaration - only at the current position
@@ -1313,7 +1380,6 @@ module Noir
         base_path = @tokens[idx + 4].value
         router_var = @tokens[idx].value
         raw_path = base_path
-        start_pos = @tokens[idx].position
 
         # Get all prefixes for multi-mount support
         prefixes_to_apply = if @router_prefixes.has_key?(router_var)
@@ -1344,7 +1410,7 @@ module Noir
 
           # Create routes for all prefixed paths
           paths.each do |path|
-            route = JSRoutePattern.new(method, path, raw_path, start_pos)
+            route = JSRoutePattern.new(method, path, raw_path, @tokens[method_idx + 1].position)
             extract_path_params(path).each do |param|
               route.push_param(param)
             end
@@ -1356,7 +1422,6 @@ module Noir
           @current_route_paths = paths
           @current_route_start_idx = idx
           @current_route_raw_path = raw_path
-          @current_route_start_pos = start_pos
           @position = method_idx + 2 # Move past dot and method
           return results
         end
@@ -1413,7 +1478,10 @@ module Noir
               route.push_param(param)
             end
 
-            @position = back_idx + 3
+            # Resume past this `applyRoutes(` call. Jumping back to the route
+            # walked forward onto the same call again, looping until the
+            # iteration budget ran out and dropping every route after it.
+            @position = idx + 4
             return route
           end
           back_idx -= 1
@@ -1520,10 +1588,17 @@ module Noir
     end
 
     # Creates a route pattern and adds path params unless it's a regex path.
+    # Restify's `del` and `opts` aliases to their HTTP methods.
+    private def normalize_verb(method : String) : String
+      case m = method.upcase
+      when "DEL"  then "DELETE"
+      when "OPTS" then "OPTIONS"
+      else             m
+      end
+    end
+
     private def create_route_with_params(method : String, path : String, raw_path : String, start_pos : Int32, is_regex : Bool) : JSRoutePattern
-      m = method.upcase
-      m = "DELETE" if m.downcase == "del"
-      route = JSRoutePattern.new(m, path, raw_path, start_pos)
+      route = JSRoutePattern.new(normalize_verb(method), path, raw_path, start_pos)
       unless is_regex
         extract_path_params(path).each { |p| route.push_param(p) }
       end

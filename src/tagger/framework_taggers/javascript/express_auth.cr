@@ -214,6 +214,9 @@ class ExpressAuthTagger < FrameworkTagger
     # registration whose receiver sits above the referenced line) means we
     # cannot tell app from sub-router, so decline rather than guess: a false
     # "protected" is the failure that gets an endpoint skipped in review.
+    # A `x.route('/p')` chain link (`  .post(...)`) reports its own line, which
+    # names no receiver: the chain's `x.route(` line above does.
+    line_idx = chain_start_line(lines, line_idx) if lines[line_idx].lstrip.starts_with?('.')
     receiver = lines[line_idx].match(ROUTE_RECEIVER).try &.[1]
     return if receiver.nil?
 
@@ -228,6 +231,34 @@ class ExpressAuthTagger < FrameworkTagger
     end
 
     nil
+  end
+
+  ROUTE_CHAIN_START  = /\b\w+\s*\.\s*route\s*\(/
+  MAX_CHAIN_LOOKBACK = 500
+
+  # The `x.route(` line a chain link at `line_idx` belongs to: walk up over
+  # earlier links and their (bracket-balanced) handler bodies to the first
+  # line outside any bracket that does not continue the chain. Returns
+  # `line_idx` itself when that line is not an `x.route(` head (`app` alone
+  # on the line above `.get(`, say), so the receiver reads as unknown.
+  private def chain_start_line(lines : Array(String), line_idx : Int32) : Int32
+    depth = 0
+    idx = line_idx - 1
+    stop = Math.max(0, line_idx - MAX_CHAIN_LOOKBACK)
+    while idx >= stop
+      line = lines[idx]
+      line.each_char do |char|
+        case char
+        when ')', '}', ']' then depth += 1
+        when '(', '{', '[' then depth -= 1
+        end
+      end
+      if depth <= 0 && !line.lstrip.starts_with?('.')
+        return line.matches?(ROUTE_CHAIN_START) ? idx : line_idx
+      end
+      idx -= 1
+    end
+    line_idx
   end
 
   private def check_mounted_use_auth(endpoint : Endpoint) : String?

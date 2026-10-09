@@ -168,6 +168,10 @@ module Analyzer::Javascript
       # re-running File.expand_path + File.directory? across every
       # static dir (and across every concurrent JS analyzer).
       files = all_files_expanded
+      # GET urls already emitted (routes and earlier static files). A Set
+      # instead of `result.any?` per file, which went quadratic on large
+      # asset trees.
+      seen_get = result.compact_map { |e| e.url if e.method == "GET" }.to_set
 
       static_dirs.each do |dir|
         root = Noir::PathScope.normalize_root(dir["file_path"])
@@ -187,9 +191,8 @@ module Analyzer::Javascript
                 end
           url = url.squeeze('/')
 
-          details = Details.new(PathInfo.new(file_path))
-          endpoint = Endpoint.new(url, "GET", details)
-          result << endpoint unless result.any? { |e| e.url == url && e.method == "GET" }
+          next unless seen_get.add?(url)
+          result << Endpoint.new(url, "GET", Details.new(PathInfo.new(file_path)))
         end
       end
     end

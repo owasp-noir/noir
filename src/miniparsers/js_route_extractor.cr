@@ -11,6 +11,60 @@ require "../utils/text_file"
 module Noir
   # JSRouteExtractor provides a unified interface for extracting routes from JavaScript files
   class JSRouteExtractor
+    # JSLexer route positions are CHAR indices, but every String op keyed
+    # by a char index (`[]`, `index(str, offset)`, `MatchData#begin`) walks
+    # from byte 0 once a file holds one non-ASCII char, and
+    # `index(String, offset)` does so even on ASCII. Done per route that was
+    # quadratic in the route count. Convert each position once here and work
+    # in bytes, so per-route cost stays proportional to the route's own text.
+    class ByteOffsets
+      getter content : String
+
+      def initialize(@content : String)
+        bytes = content.to_slice
+        @newlines = [] of Int32
+        i = 0
+        while nl = bytes.index('\n'.ord.to_u8, i)
+          @newlines << nl
+          i = nl + 1
+        end
+        @char_starts = nil.as(Array(Int32)?)
+        unless content.bytesize == content.size
+          starts = Array(Int32).new(content.size + 1)
+          reader = Char::Reader.new(content)
+          while reader.has_next?
+            starts << reader.pos
+            reader.next_char
+          end
+          starts << content.bytesize
+          @char_starts = starts
+        end
+      end
+
+      # Byte offset of CHAR index `char_pos`.
+      def byte(char_pos : Int32) : Int32
+        if starts = @char_starts
+          starts[char_pos.clamp(0, starts.size - 1)]
+        else
+          char_pos.clamp(0, @content.bytesize)
+        end
+      end
+
+      # 1-based line of a byte offset.
+      def line(byte_pos : Int32) : Int32
+        (@newlines.bsearch_index { |nl| nl >= byte_pos } || @newlines.size) + 1
+      end
+
+      # Up to `max` bytes from `start`, shortened to end on a char boundary.
+      def window(start : Int32, max : Int32) : String
+        stop = Math.min(start + max, @content.bytesize)
+        while stop > start && stop < @content.bytesize && (@content.to_unsafe[stop] & 0xC0) == 0x80
+          stop -= 1
+        end
+        @content.byte_slice(start, stop - start)
+      end
+    end
+
     def self.extract_routes(file_path : String,
                             content : String? = nil,
                             debug : Bool = false,
@@ -60,6 +114,9 @@ module Noir
         if debug && parser.hit_max_iterations?
           STDERR.puts "Warning: Maximum iterations reached in JS parser, parsing may be incomplete"
         end
+        if debug && parser.mount_prefixes_capped?
+          STDERR.puts "#{file_path}: router prefixes capped at #{MAX_MOUNT_PREFIXES} per router"
+        end
 
         # No route patterns means the rest of this method has nothing
         # to emit — every downstream step (function_ranges build,
@@ -84,7 +141,10 @@ module Noir
         # Use all() since routers can be mounted at multiple prefixes
         file_prefixes = locator.all(lookup_key)
 
-        # Build function ranges to support function-scoped router prefixes
+        offsets = ByteOffsets.new(content)
+
+        # Build function ranges to support function-scoped router prefixes.
+        # Ranges and route positions below are BYTE offsets (see ByteOffsets).
         function_ranges = [] of Tuple(String, Int32, Int32)
         function_names = Set(String).new
         function_patterns = {
@@ -97,22 +157,21 @@ module Noir
           content.scan(pattern) do |m|
             next unless m.size >= 2
             func_name = m[1]
-            match_start = m.begin(0)
-            next unless match_start
+            match_start = m.byte_begin(0)
 
             open_brace_idx = if kind == :arrow
-                               arrow_idx = content.index("=>", match_start)
+                               arrow_idx = content.byte_index("=>", match_start)
                                next unless arrow_idx
-                               content.index("{", arrow_idx + 2)
+                               content.byte_index('{', arrow_idx + 2)
                              else
-                               param_start = content.index("(", match_start)
+                               param_start = content.byte_index('(', match_start)
                                next unless param_start
-                               param_end = find_matching_paren(content, param_start) || param_start
-                               content.index("{", param_end + 1)
+                               param_end = JSLiteralScanner.find_matching_paren_at_byte(content, param_start) || param_start
+                               content.byte_index('{', param_end + 1)
                              end
 
             next unless open_brace_idx
-            close_brace_idx = find_matching_brace(content, open_brace_idx)
+            close_brace_idx = JSLiteralScanner.find_matching_brace_at_byte(content, open_brace_idx)
             next unless close_brace_idx
             function_ranges << {func_name, open_brace_idx, close_brace_idx}
             function_names.add(func_name)
@@ -122,7 +181,7 @@ module Noir
         # Build internal mount relationships: parent function -> child function with prefix
         internal_mounts = [] of Tuple(String, String, String)
         function_ranges.each do |func_name, start_idx, end_idx|
-          body = content[start_idx..end_idx]
+          body = content.byte_slice(start_idx, end_idx - start_idx + 1)
           body.scan(/\b\w+\.use\s*\(\s*['"]([^'"]+)['"]\s*,\s*(\w+)\s*(?:\(\s*\))?/) do |m|
             if m.size >= 3
               prefix = m[1]
@@ -161,20 +220,18 @@ module Noir
 
         anonymous_register_patterns.each do |register_pattern|
           content.scan(register_pattern) do |m|
-            match_start = m.begin(0)
-            next unless match_start
+            match_start = m.byte_begin(0)
 
-            register_paren_idx = content.index("(", match_start)
-            open_brace_idx = content.index("{", match_start)
+            register_paren_idx = content.byte_index('(', match_start)
+            open_brace_idx = content.byte_index('{', match_start)
             next unless register_paren_idx && open_brace_idx
 
-            close_brace_idx = find_matching_brace(content, open_brace_idx)
-            close_paren_idx = find_matching_paren(content, register_paren_idx)
+            close_brace_idx = JSLiteralScanner.find_matching_brace_at_byte(content, open_brace_idx)
+            close_paren_idx = JSLiteralScanner.find_matching_paren_at_byte(content, register_paren_idx)
             next unless close_brace_idx && close_paren_idx
             next if close_brace_idx >= close_paren_idx
 
-            trailer = content[(close_brace_idx + 1)...close_paren_idx]
-            next unless trailer
+            trailer = content.byte_slice(close_brace_idx + 1, close_paren_idx - close_brace_idx - 1)
 
             prefix_match = trailer.match(/prefix\s*:\s*['"]([^'"]+)['"]/)
             next unless prefix_match
@@ -209,7 +266,7 @@ module Noir
           next unless function_names.includes?(func_name)
           # A plugin registering itself is an internal mount (handled
           # below), not a top-level prefix for the plugin.
-          reg_pos = m.begin(0)
+          reg_pos = m.byte_begin(0)
           next if function_ranges.any? { |name, open_idx, close_idx| name == func_name && open_idx <= reg_pos <= close_idx }
           prefixes_by_function[func_name] << prefix unless prefixes_by_function[func_name].includes?(prefix)
         end
@@ -224,13 +281,14 @@ module Noir
 
         endpoints = [] of Endpoint
         route_patterns.each do |pattern|
+          start_byte = pattern.start_pos >= 0 ? offsets.byte(pattern.start_pos) : -1
           # Apply cross-file router prefix if present (function-scoped first)
           prefixes = [] of String
-          if pattern.start_pos >= 0
+          if start_byte >= 0
             # Find all functions containing this route, sorted by span (innermost first)
             containing_functions = [] of Tuple(String, Int32)
             function_ranges.each do |func_name, start_idx, end_idx|
-              if start_idx <= pattern.start_pos && pattern.start_pos <= end_idx
+              if start_idx <= start_byte && start_byte <= end_idx
                 span = end_idx - start_idx
                 containing_functions << {func_name, span}
               end
@@ -246,10 +304,10 @@ module Noir
               end
             end
           end
-          if prefixes.empty? && pattern.start_pos >= 0
+          if prefixes.empty? && start_byte >= 0
             containing_registers = [] of Tuple(String, Int32)
             anonymous_register_ranges.each do |start_idx, end_idx, prefix|
-              if start_idx <= pattern.start_pos && pattern.start_pos <= end_idx
+              if start_idx <= start_byte && start_byte <= end_idx
                 containing_registers << {prefix, end_idx - start_idx}
               end
             end
@@ -267,16 +325,13 @@ module Noir
           # Normalize HTTP method (e.g., DEL -> DELETE)
           normalized_method = normalize_http_method(pattern.method)
 
-          # `start_pos` is a JSLexer token position, i.e. an index into
-          # `Array(Char)`. `to_slice` is bytes, so it has to be converted
-          # first or every route below a non-ASCII literal reports a line
-          # from somewhere earlier in the file.
-          line_number = if pattern.start_pos >= 0
-                          line_for_char_pos(content, pattern.start_pos)
-                        else
-                          1
-                        end
+          line_number = start_byte >= 0 ? offsets.line(start_byte) : 1
           route_details = Details.new(PathInfo.new(file_path, line_number))
+
+          # Body/query/header/... params from the handler, read once per
+          # route rather than once per prefix and expanded method.
+          context = Endpoint.new("", "")
+          extract_params_from_context(offsets, pattern, context)
 
           # Handle router.all by expanding to all HTTP methods
           prefixes.each do |prefix|
@@ -293,8 +348,7 @@ module Noir
                   endpoint.push_param(param)
                 end
 
-                # Extract other parameters like body, query, etc. from the content around this route
-                extract_params_from_context(content, pattern, endpoint)
+                context.params.each { |param| endpoint.push_param(param) }
                 attach_callees(endpoint, callees_by_route, normalized_method, pattern.raw_path, line_number)
 
                 endpoints << endpoint
@@ -307,8 +361,7 @@ module Noir
                 endpoint.push_param(param)
               end
 
-              # Extract other parameters like body, query, etc. from the content around this route
-              extract_params_from_context(content, pattern, endpoint)
+              context.params.each { |param| endpoint.push_param(param) }
               attach_callees(endpoint, callees_by_route, normalized_method, pattern.raw_path, line_number)
 
               endpoints << endpoint
@@ -997,8 +1050,9 @@ module Noir
     # Ceiling on the prefixes one router collects. The (router, prefix)
     # dedupe already bounds the work; this only stops a diamond lattice of
     # parallel edges from multiplying without end. A shared router mounted
-    # under many paths stays well below it.
-    MAX_MOUNT_PREFIXES = 1024
+    # under many paths stays well below it. Shared with JSParser's
+    # same-file router resolution.
+    MAX_MOUNT_PREFIXES = JSParser::MAX_MOUNT_PREFIXES
 
     # Pushes mount prefixes along `{parent, prefix, child}` edges into
     # `prefixes`, starting from each parent's existing prefixes (or
@@ -1072,7 +1126,16 @@ module Noir
       false
     end
 
-    def self.extract_params_from_context(content : String, pattern : JSRoutePattern, endpoint : Endpoint)
+    # Bytes after a route's start searched for its declaration when the
+    # direct `.verb(` probe misses. The declaration is the call at the
+    # route's own position; searching the whole file found the first route
+    # elsewhere with the same path (wrong handler) and cost O(file) per route.
+    DECLARATION_SEARCH_BYTES = 2000
+
+    # Every offset here is a BYTE offset into `offsets.content` (see
+    # ByteOffsets) so a route's cost is local to its own text.
+    def self.extract_params_from_context(offsets : ByteOffsets, pattern : JSRoutePattern, endpoint : Endpoint)
+      content = offsets.content
       # Extract additional parameters from the route handler content
       # Look for the route declaration and then analyze the handler function
       method_name = pattern.method.downcase
@@ -1085,6 +1148,8 @@ module Noir
         method_variations << "del"
       elsif method_name == "del"
         method_variations << "delete"
+      elsif method_name == "options"
+        method_variations << "opts" # Restify
       end
 
       # Generate all possible route declarations with different syntax patterns
@@ -1113,9 +1178,14 @@ module Noir
       # Find the index of any matching route declaration
       idx = nil
       found_declaration = ""
-      if pattern.start_pos >= 0
-        start_idx = pattern.start_pos
-        search_window = content[start_idx, Math.min(content.size - start_idx, 500)]
+      start_byte = pattern.start_pos >= 0 ? offsets.byte(pattern.start_pos) : nil
+      if start_byte && chain_link_at?(content, start_byte, method_variations)
+        # A `route('/x').verb(...)` chain link starts at its own verb (see
+        # JSRoutePattern#start_pos), and its arguments carry no path.
+        idx = start_byte
+        found_declaration = "direct"
+      elsif start_byte
+        search_window = offsets.window(start_byte, 500)
         method_alternation = method_variations.map { |method| Regex.escape(method) }.join("|")
         # Memoized — method_alternation has ~8 distinct values, and an
         # interpolated regex literal would recompile (full PCRE2 compile)
@@ -1124,10 +1194,10 @@ module Noir
           @@direct_call_res[method_alternation] = /\.\s*(?:#{method_alternation})\s*\(/i
         end
         if direct_match = search_window.match(direct_call_pattern)
-          candidate_idx = start_idx + (direct_match.begin(0) || 0)
-          open_paren = content.index("(", candidate_idx)
+          candidate_idx = start_byte + direct_match.byte_begin(0)
+          open_paren = content.byte_index('(', candidate_idx)
           if open_paren
-            arg_window = content[open_paren, Math.min(content.size - open_paren, 300)]
+            arg_window = offsets.window(open_paren, 300)
             if quoted_substring?(arg_window, lookup_path)
               idx = candidate_idx
               found_declaration = "direct"
@@ -1136,12 +1206,17 @@ module Noir
         end
       end
 
+      # The declaration fallbacks search from the route's own position
+      # (the whole file only when the parser gave none).
+      scope_start = start_byte || 0
+      scope = start_byte ? offsets.window(start_byte, DECLARATION_SEARCH_BYTES) : content
+
       route_declarations.each do |declaration|
         break if idx
 
-        found_idx = content.index(declaration)
+        found_idx = scope.byte_index(declaration)
         if found_idx
-          idx = found_idx
+          idx = scope_start + found_idx
           found_declaration = declaration
           break
         end
@@ -1153,8 +1228,8 @@ module Noir
         escaped_path = Regex.escape(lookup_path)
         method_variations.each do |method|
           named_route_pattern = /#{Regex.escape(method)}\s*\(\s*['"][^'"]+['"]\s*,\s*['"]#{escaped_path}['"]/
-          if named_match = content.match(named_route_pattern)
-            idx = named_match.begin(0)
+          if named_match = scope.match(named_route_pattern)
+            idx = scope_start + named_match.byte_begin(0)
             found_declaration = method
             break
           end
@@ -1166,71 +1241,67 @@ module Noir
       # If we found a route() declaration, we need to find the specific .method() call after it
       if found_declaration.starts_with?("route(")
         # Look for the .method( pattern after the route declaration
-        search_start = idx
+        chain_window = offsets.window(idx, 216)
         method_variations.each do |method|
-          method_idx = content.index(".#{method}(", search_start)
-          if method_idx && method_idx > idx && (method_idx - idx) < 200
-            idx = method_idx
+          method_idx = chain_window.byte_index(".#{method}(")
+          if method_idx && method_idx > 0 && method_idx < 200
+            idx += method_idx
             break
           end
         end
       end
 
       # Find the bounds of the method call arguments to keep the search scoped
-      open_paren_idx = content.index("(", idx)
+      open_paren_idx = content.byte_index('(', idx)
       return unless open_paren_idx
-      close_paren_idx = find_matching_paren(content, open_paren_idx)
+      close_paren_idx = JSLiteralScanner.find_matching_paren_at_byte(content, open_paren_idx)
       return unless close_paren_idx
 
       args_start = open_paren_idx + 1
-      args_end = close_paren_idx - 1
-      return if args_end < args_start
+      return if close_paren_idx <= args_start
 
-      args_slice = content[args_start..args_end]
+      args_slice = content.byte_slice(args_start, close_paren_idx - args_start)
+      args_bytes = args_slice.to_slice
 
       # The handler is the last function argument. Walk the arguments'
       # functions in order, skipping each one's body: `rindex` over the
       # whole slice picked an arrow *inside* the handler
       # (`items.map(i => …)`) and scoped the param scan to that.
-      anchor_idx = nil
-      anchor_kind = :function
+      handler = nil.as(Tuple(Int32, Int32)?) # {start, end} in args_slice
       search = 0
-      while anchor = args_slice.match(HANDLER_ANCHOR_RE, search)
-        anchor_idx = anchor.begin(0)
-        anchor_kind = anchor[0] == "=>" ? :arrow : :function
-        body_open = if anchor_kind == :arrow
-                      ws_end = args_slice.index(/\S/, anchor.end(0))
-                      ws_end if ws_end && args_slice[ws_end] == '{'
-                    elsif (params_open = args_slice.index('(', anchor_idx)) &&
-                          (params_close = find_matching_paren(args_slice, params_open))
-                      args_slice.index('{', params_close)
+      while anchor = HANDLER_ANCHOR_RE.match_at_byte_index(args_slice, search)
+        anchor_idx = anchor.byte_begin(0)
+        arrow = anchor[0] == "=>"
+        body_open = if arrow
+                      ws_end = anchor.byte_end(0)
+                      while ws_end < args_bytes.size && args_bytes[ws_end].unsafe_chr.ascii_whitespace?
+                        ws_end += 1
+                      end
+                      ws_end if ws_end < args_bytes.size && args_bytes[ws_end] == '{'.ord
+                    elsif (params_open = args_slice.byte_index('(', anchor_idx)) &&
+                          (params_close = JSLiteralScanner.find_matching_paren_at_byte(args_slice, params_open))
+                      args_slice.byte_index('{', params_close)
                     end
-        body_close = body_open && find_matching_brace(args_slice, body_open)
-        # A concise arrow has no body to skip; keep walking past `=>`.
-        search = body_close ? body_close + 1 : anchor.end(0)
-      end
-
-      return unless anchor_idx
-
-      anchor_abs = args_start + anchor_idx
-      open_brace_idx = content.index("{", anchor_abs)
-      return unless open_brace_idx && open_brace_idx < close_paren_idx
-
-      # Avoid treating concise arrow returning object literals as a block body.
-      if anchor_kind == :arrow
-        prev = open_brace_idx - 1
-        while prev > anchor_abs && content[prev].whitespace?
-          prev -= 1
+        body_close = body_open && JSLiteralScanner.find_matching_brace_at_byte(args_slice, body_open)
+        if body_open && body_close
+          handler = {body_open, body_close + 1}
+          search = body_close + 1
+        elsif arrow
+          # Concise arrow (`(req, res) => res.json(req.query)`): the body is
+          # the expression up to the end of this argument, skipped whole so
+          # an arrow nested in it is not taken for the handler.
+          expr_end = argument_end(args_bytes, anchor.byte_end(0))
+          handler = {anchor.byte_end(0), expr_end}
+          search = expr_end
+        else
+          handler = nil
+          search = anchor.byte_end(0)
         end
-        return if prev >= anchor_abs && content[prev] == '('
       end
 
-      # Extract the handler function body
-      # (This is a simplified approach - a more robust approach would count braces)
-      close_brace_idx = find_matching_brace(content, open_brace_idx)
-      return unless close_brace_idx && close_brace_idx < close_paren_idx
+      return unless handler
 
-      handler_body = content[open_brace_idx..close_brace_idx]
+      handler_body = args_slice.byte_slice(handler[0], handler[1] - handler[0])
 
       # Now analyze the handler body for req.body, req.query, etc.
       extract_body_params(handler_body, endpoint)
@@ -1238,6 +1309,57 @@ module Noir
       extract_header_params(handler_body, endpoint)
       extract_cookie_params(handler_body, endpoint)
       extract_path_params(handler_body, endpoint)
+    end
+
+    # True when `start` is a chained `.verb(` call's verb: one of `methods`
+    # preceded by a `.` and followed by `(`.
+    private def self.chain_link_at?(content : String, start : Int32, methods : Array(String)) : Bool
+      bytes = content.to_slice
+      prev = start - 1
+      while prev >= 0 && bytes[prev].unsafe_chr.ascii_whitespace?
+        prev -= 1
+      end
+      return false unless prev >= 0 && bytes[prev] == '.'.ord
+
+      methods.any? do |method|
+        stop = start + method.bytesize
+        next false unless stop <= bytes.size && content.byte_slice(start, method.bytesize).compare(method, case_insensitive: true) == 0
+        while stop < bytes.size && bytes[stop].unsafe_chr.ascii_whitespace?
+          stop += 1
+        end
+        stop < bytes.size && bytes[stop] == '('.ord
+      end
+    end
+
+    # End (exclusive) of the argument starting at byte `from` of an
+    # argument list: its first top-level `,`, or the end of the list.
+    private def self.argument_end(bytes : Bytes, from : Int32) : Int32
+      depth = 0
+      quote = 0_u8
+      i = from
+      while i < bytes.size
+        byte = bytes[i]
+        if quote != 0
+          if byte == '\\'.ord
+            i += 1
+          elsif byte == quote
+            quote = 0_u8
+          end
+        else
+          case byte
+          when '\''.ord, '"'.ord, '`'.ord
+            quote = byte
+          when '('.ord, '['.ord, '{'.ord
+            depth += 1
+          when ')'.ord, ']'.ord, '}'.ord
+            depth -= 1 if depth > 0
+          when ','.ord
+            return i if depth == 0
+          end
+        end
+        i += 1
+      end
+      bytes.size
     end
 
     # Delegate to JSLiteralScanner for literal-aware brace matching

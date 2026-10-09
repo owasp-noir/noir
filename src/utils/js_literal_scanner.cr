@@ -67,6 +67,19 @@ module Noir
       end
     end
 
+    # BYTE-offset variants over the raw UTF-8 bytes, for any content. Every
+    # delimiter, quote and comment marker is ASCII and no byte of a
+    # multi-byte char is, so non-ASCII text is just opaque bytes here — and
+    # the walk costs only the distance scanned, where the char variants above
+    # materialize `content.chars` on every call once a file is non-ASCII.
+    def self.find_matching_brace_at_byte(content : String, open_brace_byte : Int32) : Int32?
+      find_matching_impl(content.to_slice, open_brace_byte, '{', '}')
+    end
+
+    def self.find_matching_paren_at_byte(content : String, open_paren_byte : Int32) : Int32?
+      find_matching_impl(content.to_slice, open_paren_byte, '(', ')')
+    end
+
     # --- indexed char access (ASCII byte slice / char array) ---
 
     # O(1) ASCII probe: a UTF-8 string is all-ASCII iff its char count
@@ -79,8 +92,8 @@ module Noir
     end
 
     private def self.chr(src : Bytes, i : Int32) : Char
-      # Only reached through the `single_byte?` fast path, so every byte is
-      # a valid single-byte char.
+      # A byte of a multi-byte char maps to U+0080..U+00FF, which never
+      # equals the ASCII syntax the scanner compares against.
       src[i].unsafe_chr
     end
 
