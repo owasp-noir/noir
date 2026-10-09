@@ -129,6 +129,14 @@ urlpatterns = [
         views.require_methods_view,
         name='require_methods_view'),
     path(
+        r'api_view_post',
+        views.api_view_post,
+        name='api_view_post'),
+    path(
+        r'api_view_get',
+        views.api_view_get,
+        name='api_view_get'),
+    path(
         r'widget/delete',
         views.WidgetDeleteView.as_view(),
         name='widget_delete'),

@@ -56,7 +56,9 @@ class PythonParser
     @own_globals = Hash(String, GlobalVariables).new
     @basedir = File.dirname(@path)
     while !@basedir.empty? && File.exists?(@basedir + "/__init__.py")
-      @basedir = File.dirname(@basedir)
+      parent = File.dirname(@basedir)
+      break if parent == @basedir # relative "." (and "/") are fixed points of dirname
+      @basedir = parent
     end
 
     @depth = depth

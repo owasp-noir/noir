@@ -369,7 +369,7 @@ module Analyzer::Python
 
           if local_patterns = extract_local_include_target(view)
             if pattern_content = urlpattern_lists[local_patterns]?
-              extract_local_urlpattern_endpoints(django_urls, route, pattern_content, package_map, route_path, urlpattern_lists, import_aliases, drf_router_registrations).each do |endpoint|
+              extract_local_urlpattern_endpoints(django_urls, route, pattern_content, package_map, route_path, urlpattern_lists, import_aliases, drf_router_registrations, [local_patterns]).each do |endpoint|
                 endpoints << endpoint
               end
               next
@@ -431,7 +431,8 @@ module Analyzer::Python
       # per-line loop would be recompiled on every line.
       list_name_re = list_names.map { |name| Regex.escape(name) }.join("|")
       assign_check_re = /^\s*(?:#{list_name_re})\s*=/
-      assign_capture_re = /^\s*(?:#{list_name_re})\s*=\s*(.+)$/m
+      assign_capture_re = /^\s*(#{list_name_re})\s*=\s*(.+)$/m
+      bindings = Hash(::String, ::String).new
       append_check_re = /^\s*(?:#{list_name_re})\s*\+=/
       append_capture_re = /^\s*(?:#{list_name_re})\s*\+=\s*(.+)$/m
       extend_check_re = /^\s*(?:#{list_name_re})\s*\.\s*extend\s*\(/
@@ -441,7 +442,10 @@ module Analyzer::Python
         if line.matches?(assign_check_re)
           logical_line = collect_python_expression(lines, index, line)
           if assignment_match = logical_line.match(assign_capture_re)
-            add_urlpattern_expression_contents(contents, assignment_match[1], urlpattern_lists)
+            name = assignment_match[1]
+            expression = inline_previous_binding(assignment_match[2], name, bindings[name]?)
+            bindings[name] = expression if expression.lstrip.starts_with?('[')
+            add_urlpattern_expression_contents(contents, expression, urlpattern_lists)
           end
         elsif line.matches?(append_check_re)
           logical_line = collect_python_expression(lines, index, line)
@@ -499,6 +503,15 @@ module Analyzer::Python
       Noir::TopLevelSplit.split(expression, '+', Noir::TopLevelSplit::Rules::PYTHON)
     end
 
+    # `x = [path(.., include(x))]` includes the *previous* binding of x, not
+    # itself: inline it so the include resolves instead of recursing forever.
+    private def inline_previous_binding(text : ::String, name : ::String, previous : ::String?) : ::String
+      # ponytail: size cap, since a rebind that includes itself twice doubles
+      # per binding (2^n); past the cap the `seen` guard just cuts the cycle.
+      return text if previous.nil? || previous.bytesize > 65_536
+      text.gsub(/\binclude\s*\(\s*#{Regex.escape(name)}\s*\)/) { "include(#{previous})" }
+    end
+
     private def extract_urlpattern_lists(content : ::String) : Hash(::String, ::String)
       pattern_lists = Hash(::String, ::String).new
       lines = content.split("\n")
@@ -516,7 +529,8 @@ module Analyzer::Python
           line_index += 1
         end
 
-        pattern_lists[assignment_match[1]] = pieces.join("\n")
+        name = assignment_match[1]
+        pattern_lists[name] = inline_previous_binding(pieces.join("\n"), name, pattern_lists[name]?)
       end
 
       pattern_lists
@@ -619,7 +633,8 @@ module Analyzer::Python
                                                      urlpattern_lists : Hash(::String, ::String),
                                                      app_config_refs : Hash(::String, ::String),
                                                      route_path : PathInfo,
-                                                     parent_route_path : PathInfo) : Array(Endpoint)
+                                                     parent_route_path : PathInfo,
+                                                     seen : Array(::String) = [] of ::String) : Array(Endpoint)
       endpoints = [] of Endpoint
 
       extract_route_mappings(pattern_content).each do |route_mapping|
@@ -636,8 +651,8 @@ module Analyzer::Python
         end
 
         if local_patterns = extract_local_include_target(view)
-          if nested_pattern_content = urlpattern_lists[local_patterns]?
-            extract_app_config_pattern_endpoints(nested_prefix, nested_pattern_content, current_app_config_path, package_map, urlpattern_lists, app_config_refs, route_path, parent_route_path).each do |endpoint|
+          if !seen.includes?(local_patterns) && (nested_pattern_content = urlpattern_lists[local_patterns]?)
+            extract_app_config_pattern_endpoints(nested_prefix, nested_pattern_content, current_app_config_path, package_map, urlpattern_lists, app_config_refs, route_path, parent_route_path, seen + [local_patterns]).each do |endpoint|
               endpoints << endpoint
             end
             next
@@ -645,7 +660,7 @@ module Analyzer::Python
         end
 
         if inline_patterns = extract_inline_include_patterns(view)
-          extract_app_config_pattern_endpoints(nested_prefix, inline_patterns, current_app_config_path, package_map, urlpattern_lists, app_config_refs, route_path, parent_route_path).each do |endpoint|
+          extract_app_config_pattern_endpoints(nested_prefix, inline_patterns, current_app_config_path, package_map, urlpattern_lists, app_config_refs, route_path, parent_route_path, seen).each do |endpoint|
             endpoints << endpoint
           end
           next
@@ -988,7 +1003,8 @@ module Analyzer::Python
                                                    route_path : PathInfo,
                                                    urlpattern_lists : Hash(::String, ::String),
                                                    import_aliases : Hash(::String, ::String),
-                                                   drf_router_registrations : Hash(::String, Array(DjangoDrfRegistration))) : Array(Endpoint)
+                                                   drf_router_registrations : Hash(::String, Array(DjangoDrfRegistration)),
+                                                   seen : Array(::String) = [] of ::String) : Array(Endpoint)
       endpoints = [] of Endpoint
 
       extract_route_mappings(pattern_content).each do |route_mapping|
@@ -1015,8 +1031,8 @@ module Analyzer::Python
         end
 
         if local_patterns = extract_local_include_target(view)
-          if nested_pattern_content = urlpattern_lists[local_patterns]?
-            extract_local_urlpattern_endpoints(django_urls, nested_mount, nested_pattern_content, package_map, route_path, urlpattern_lists, import_aliases, drf_router_registrations).each do |endpoint|
+          if !seen.includes?(local_patterns) && (nested_pattern_content = urlpattern_lists[local_patterns]?)
+            extract_local_urlpattern_endpoints(django_urls, nested_mount, nested_pattern_content, package_map, route_path, urlpattern_lists, import_aliases, drf_router_registrations, seen + [local_patterns]).each do |endpoint|
               endpoints << endpoint
             end
             next
@@ -1024,7 +1040,7 @@ module Analyzer::Python
         end
 
         if inline_patterns = extract_inline_include_patterns(view)
-          extract_local_urlpattern_endpoints(django_urls, nested_mount, inline_patterns, package_map, route_path, urlpattern_lists, import_aliases, drf_router_registrations).each do |endpoint|
+          extract_local_urlpattern_endpoints(django_urls, nested_mount, inline_patterns, package_map, route_path, urlpattern_lists, import_aliases, drf_router_registrations, seen).each do |endpoint|
             endpoints << endpoint
           end
           next
@@ -1209,6 +1225,7 @@ module Analyzer::Python
 
       # Function Based View
       function_start_index = content.index /(?:async\s+)?def\s+#{function_or_class_name}\s*\(/
+      restricted = false
       unless function_start_index.nil?
         function_codeblock = parse_code_block(content[function_start_index..])
         unless function_codeblock.nil?
@@ -1252,7 +1269,10 @@ module Analyzer::Python
 
             # A method-restricting decorator replaces the implicit GET.
             if rm = restricted_methods
-              suspicious_http_methods = rm unless rm.empty?
+              unless rm.empty?
+                suspicious_http_methods = rm
+                restricted = true
+              end
             end
           end
 
@@ -1268,7 +1288,10 @@ module Analyzer::Python
               end
             end
 
-            extract_params_from_line(line, suspicious_http_methods).each do |param|
+            # A decorator-restricted view keeps its verb set: body accessors
+            # (`request.data`, `request.POST`) must not widen it.
+            scan_methods = restricted ? suspicious_http_methods.dup : suspicious_http_methods
+            extract_params_from_line(line, scan_methods).each do |param|
               suspicious_params << param
             end
           end
@@ -1772,6 +1795,21 @@ module Analyzer::Python
       # `@require_safe` allows GET + HEAD.
       if decorator.matches?(/@\s*(?:\w+\.)*require_safe\b/)
         return ["GET", "HEAD"]
+      end
+
+      # DRF `@api_view([...])` / `@api_view(http_method_names=[...])`:
+      # the list is authoritative and a bare `@api_view()` means GET only.
+      if match = decorator.match(/@\s*(?:\w+\.)*api_view\b\s*(?:\((.*)\))?/)
+        args = match[1]?.to_s.strip
+        return ["GET"] if args.empty?
+        if list = args.match(/\A(?:http_method_names\s*=\s*)?[\[(]([^\])]*)[\])]/)
+          methods = [] of ::String
+          list[1].scan(/['"]([A-Za-z]+)['"]/) do |m|
+            verb = m[1].upcase
+            methods << verb if HTTP_METHODS.any? { |hm| hm.upcase == verb }
+          end
+          return methods.empty? ? nil : methods
+        end
       end
 
       nil
