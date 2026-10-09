@@ -80,7 +80,12 @@ module Noir
     # `Schema.Class<User>("User")` as comparisons, which derails the whole
     # call chain. Blank generic arguments in front of a call, keeping
     # every line where it was.
-    GENERIC_ARGS = /(?<=[\w$])<(?:[^<>()\n;]|<[^<>()\n;]*>)*>(?=\s*\()/
+    GENERIC_ARGS = /(?<=[\w$])(?<g><(?:[^<>()\n;]++|(?&g))*>)(?=\s*\()/
+
+    # Curried schema classes: `Schema.Class<X>("X")({ ...fields })`.
+    SCHEMA_CLASS_CALLS = Set{"Class", "TaggedClass", "TaggedRequest", "TaggedError"}
+    # Schema combinators whose argument contributes fields.
+    SCHEMA_MERGE_CALLS = Set{"extend", "merge", "and"}
 
     SCHEMA_OBJECT_CALLS = Set{"object", "strictObject", "looseObject", "Struct"}
     QUERY_METHODS       = Set{"GET", "HEAD"}
@@ -109,11 +114,11 @@ module Noir
 
     private def ts_rest_entries(obj : LibTreeSitter::TSNode, prefix : String, ctx : Context) : Array(Route)
       routes = [] of Route
-      each_pair(obj, ctx) { |_, value, pair| routes.concat(ts_rest_entry(value, pair, prefix, ctx)) }
+      each_pair(obj, ctx) { |_, value| routes.concat(ts_rest_entry(value, prefix, ctx)) }
       routes
     end
 
-    private def ts_rest_entry(value : LibTreeSitter::TSNode, pair : LibTreeSitter::TSNode, prefix : String, ctx : Context) : Array(Route)
+    private def ts_rest_entry(value : LibTreeSitter::TSNode, prefix : String, ctx : Context) : Array(Route)
       case TreeSitter.node_type(value)
       when "object"
         method = object_string(value, "method", ctx)
@@ -121,20 +126,20 @@ module Noir
         # A plain nested object is a sub-router too.
         return ts_rest_entries(value, prefix, ctx) unless method && path
 
-        route = Route.new(method.upcase, URLPath.join(prefix, path), TreeSitter.node_start_row(pair) + 1)
+        route = Route.new(method.upcase, URLPath.join(prefix, path), TreeSitter.node_start_row(value) + 1)
         each_pair(value, ctx) do |key, field_value|
           TS_REST_FIELDS[key]?.try { |type| route.add_fields(schema_fields(field_value, ctx), type) }
         end
         [route]
       when "identifier", "shorthand_property_identifier"
-        ctx.resolve(text(value, ctx)) { |decl| ts_rest_entry(decl, pair, prefix, ctx) }
+        ctx.resolve(text(value, ctx)) { |decl| ts_rest_entry(decl, prefix, ctx) }
       when "call_expression"
         # Nested `c.router(...)`, or the older `c.query({...})` /
         # `c.mutation({...})` wrappers around a route object.
         if router_call_object(value, ctx)
           ts_rest_routes(value, prefix, ctx)
         elsif (arg = first_arg(value)) && TreeSitter.node_type(arg) == "object"
-          ts_rest_entry(arg, pair, prefix, ctx)
+          ts_rest_entry(arg, prefix, ctx)
         else
           [] of Route
         end
@@ -162,7 +167,8 @@ module Noir
     private def orpc_routes(node : LibTreeSitter::TSNode, prefix : String, ctx : Context) : Array(Route)
       links = chain_links(node, ctx)
       if (route_call = links.find { |l| l[0] == "route" }) && (config = first_arg(route_call[1]))
-        if TreeSitter.node_type(config) == "object" && (path = object_string(config, "path", ctx))
+        # A `handler` key is Hapi's / Fastify's `server.route({...})`, not oRPC.
+        if TreeSitter.node_type(config) == "object" && (path = object_string(config, "path", ctx)) && !object_key?(config, "handler", ctx)
           method = (object_string(config, "method", ctx) || "POST").upcase
           route = Route.new(method, URLPath.join(prefix, path), TreeSitter.call_name_row(route_call[1]) + 1)
           links.find { |l| l[0] == "input" }.try do |input|
@@ -172,11 +178,11 @@ module Noir
         end
       end
 
-      if (router = links.find { |l| l[0] == "router" }) && (obj = router_call_object(router[1], ctx))
+      if (router = links.find { |l| l[0] == "router" }) && (routes = first_arg(router[1]))
         links.find { |l| l[0] == "prefix" }.try do |link|
           first_arg(link[1]).try { |arg| string_value(arg, ctx).try { |p| prefix = URLPath.join(prefix, p) } }
         end
-        return orpc_entries(obj, prefix, ctx)
+        return orpc_value(routes, prefix, ctx)
       end
 
       return descend(node) { |child| orpc_routes(child, prefix, ctx) } if links.empty?
@@ -189,21 +195,19 @@ module Noir
       head ? routes.concat(orpc_routes(head, prefix, ctx)) : routes
     end
 
-    private def orpc_entries(obj : LibTreeSitter::TSNode, prefix : String, ctx : Context) : Array(Route)
-      routes = [] of Route
-      each_pair(obj, ctx) do |_, value|
-        routes.concat(
-          case TreeSitter.node_type(value)
-          when "identifier", "shorthand_property_identifier"
-            ctx.resolve(text(value, ctx)) { |decl| orpc_routes(decl, prefix, ctx) }
-          when "object"
-            orpc_entries(value, prefix, ctx)
-          else
-            orpc_routes(value, prefix, ctx)
-          end
-        )
+    # A router entry: a procedure, a nested router object, or either one
+    # named by a same-file declaration (`router(sub)`, `{ ...sub }`).
+    private def orpc_value(value : LibTreeSitter::TSNode, prefix : String, ctx : Context) : Array(Route)
+      case TreeSitter.node_type(value)
+      when "identifier", "shorthand_property_identifier"
+        ctx.resolve(text(value, ctx)) { |decl| orpc_value(decl, prefix, ctx) }
+      when "object"
+        routes = [] of Route
+        each_pair(value, ctx) { |_, entry| routes.concat(orpc_value(entry, prefix, ctx)) }
+        routes
+      else
+        orpc_routes(value, prefix, ctx)
       end
-      routes
     end
 
     # The links of `a.b(1).c(2)` as {"c", call}, {"b", call}, outermost first.
@@ -313,7 +317,13 @@ module Noir
           ctx.decls[name] = node if name
           roots << {name, node}
         end
-        roots.map { |name, node| {name, collect.call(node, ctx)} }.each do |name, routes|
+        # Outer routers are usually declared after the parts they compose,
+        # so walking last-to-first lets a sub-router consumed by a later
+        # root be skipped instead of walked again; output keeps source order.
+        per_root = roots.reverse.map do |name, node|
+          {name, name && ctx.used.includes?(name) ? [] of Route : collect.call(node, ctx)}
+        end
+        per_root.reverse_each do |name, routes|
           result.concat(routes) unless name && ctx.used.includes?(name)
         end
       end
@@ -343,34 +353,45 @@ module Noir
 
     # Field names of a `z.object({...})` / `Schema.Struct({...})` schema,
     # looking through modifier chains (`.strict()`, `.optional()`),
-    # `.extend` / `.omit` / `.pick({...})` and same-file schema constants.
+    # `.extend` / `.merge` / `.and` / `.omit` / `.pick`, Effect schema
+    # classes and same-file schema constants.
     private def schema_fields(node : LibTreeSitter::TSNode, ctx : Context, depth : Int32 = 0) : Array(String)
       fields = [] of String
       return fields if depth > 8
 
       case TreeSitter.node_type(node)
       when "object"
-        each_pair(node, ctx) { |key| fields << key }
+        each_pair(node, ctx) { |key, value| key == SPREAD ? fields.concat(schema_fields(value, ctx, depth + 1)) : fields << key }
       when "identifier"
         ctx.decls[text(node, ctx)]?.try { |decl| fields = schema_fields(decl, ctx, depth + 1) }
+      when "class_declaration"
+        heritage = nil
+        TreeSitter.each_named_child(node) { |child| heritage = child if TreeSitter.node_type(child) == "class_heritage" }
+        heritage.try { |h| TreeSitter.first_named_child(h) }.try { |expr| fields = schema_fields(expr, ctx, depth + 1) }
       when "call_expression"
         property = call_property(node, ctx)
         arg = first_arg(node)
+        function = TreeSitter.field(node, "function")
         if property && SCHEMA_OBJECT_CALLS.includes?(property)
           fields = schema_fields(arg, ctx, depth + 1) if arg && TreeSitter.node_type(arg) == "object"
+        elsif function && (curried = call_property(function, ctx)) && SCHEMA_CLASS_CALLS.includes?(curried)
+          fields = schema_fields(arg, ctx, depth + 1) if arg
         elsif property
           fields = receiver(node).try { |object| schema_fields(object, ctx, depth + 1) } || fields
-          if arg && TreeSitter.node_type(arg) == "object"
-            case property
-            when "extend" then fields.concat(schema_fields(arg, ctx, depth + 1))
-            when "omit"   then fields -= schema_fields(arg, ctx, depth + 1)
-            when "pick"   then fields &= schema_fields(arg, ctx, depth + 1)
-            end
+          if arg && SCHEMA_MERGE_CALLS.includes?(property)
+            fields.concat(schema_fields(arg, ctx, depth + 1))
+          elsif arg && TreeSitter.node_type(arg) == "object"
+            fields -= schema_fields(arg, ctx, depth + 1) if property == "omit"
+            fields &= schema_fields(arg, ctx, depth + 1) if property == "pick"
           end
         end
       end
       fields
     end
+
+    # Key yielded by `each_pair` for a `...spread` entry, with the spread
+    # expression as its value.
+    SPREAD = "..."
 
     private def each_pair(obj : LibTreeSitter::TSNode, ctx : Context, &)
       TreeSitter.each_named_child(obj) do |pair|
@@ -380,11 +401,18 @@ module Noir
           value = TreeSitter.field(pair, "value")
           next unless key && value
           name = TreeSitter.node_type(key) == "string" ? string_value(key, ctx) : text(key, ctx)
-          yield name, value, pair if name
+          yield name, value if name
         when "shorthand_property_identifier"
-          yield text(pair, ctx), pair, pair
+          yield text(pair, ctx), pair
+        when "spread_element"
+          TreeSitter.first_named_child(pair).try { |expr| yield SPREAD, expr }
         end
       end
+    end
+
+    private def object_key?(obj : LibTreeSitter::TSNode, key : String, ctx : Context) : Bool
+      each_pair(obj, ctx) { |name| return true if name == key }
+      false
     end
 
     private def object_string(obj : LibTreeSitter::TSNode?, key : String, ctx : Context) : String?
@@ -393,15 +421,23 @@ module Noir
       nil
     end
 
-    # A quoted or substitution-free backtick literal.
-    private def string_value(node : LibTreeSitter::TSNode, ctx : Context) : String?
+    # A quoted literal, or a backtick one whose `${NAME}` substitutions
+    # name same-file string constants (`path: `${BASE}/posts``).
+    private def string_value(node : LibTreeSitter::TSNode, ctx : Context, depth : Int32 = 0) : String?
       case TreeSitter.node_type(node)
       when "string"
         raw = text(node, ctx)
         raw.size >= 2 ? raw[1..-2] : nil
       when "template_string"
-        raw = text(node, ctx)
-        raw[1..-2] unless raw.includes?("${")
+        return if depth > 4
+        String.build do |io|
+          TreeSitter.each_named_child(node) do |part|
+            next io << text(part, ctx) unless TreeSitter.node_type(part) == "template_substitution"
+            expr = TreeSitter.first_named_child(part)
+            return unless expr && TreeSitter.node_type(expr) == "identifier"
+            io << (ctx.decls[text(expr, ctx)]?.try { |decl| string_value(decl, ctx, depth + 1) } || return)
+          end
+        end
       end
     end
 

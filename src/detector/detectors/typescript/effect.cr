@@ -4,7 +4,8 @@ module Detector::Typescript
   class Effect < Detector
     detector_for "ts_effect", extensions: %w[.ts .tsx .mts .cts .js .jsx .mjs .cjs]
 
-    IMPORT_RE = /(?:from\s*|require\(\s*)['"](?:@effect\/platform|effect\/unstable\/httpapi)['"]/
+    # The package root or an HttpApi subpath (`@effect/platform/HttpApiEndpoint`).
+    IMPORT_RE = /(?:from\s*|require\(\s*)['"](?:@effect\/platform(?:\/HttpApi\w*)?|effect\/unstable\/httpapi(?:\/\w+)?)['"]/
 
     # `@effect/platform` is also the home of Effect's HTTP *client*, file
     # system and worker modules, so a dependency alone says nothing; the

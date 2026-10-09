@@ -16,8 +16,11 @@ module Analyzer::Typescript
 
     MARKER = /['"]@orpc\/(?:server|contract)['"]/
 
-    def marker : Regex
-      MARKER
+    # Procedures are usually built on a base exported from a local module
+    # (`import { pub } from './orpc'`), so the file itself need not import
+    # oRPC; any `.route(` call is worth a look.
+    def candidate?(content : String) : Bool
+      content.includes?(".route(") || content.matches?(MARKER)
     end
 
     def routes(content : String) : Array(Noir::TSContractExtractor::Route)

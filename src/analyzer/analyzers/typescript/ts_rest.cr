@@ -14,8 +14,8 @@ module Analyzer::Typescript
 
     MARKER = /['"]@ts-rest\/core['"]/
 
-    def marker : Regex
-      MARKER
+    def candidate?(content : String) : Bool
+      content.matches?(MARKER)
     end
 
     def routes(content : String) : Array(Noir::TSContractExtractor::Route)

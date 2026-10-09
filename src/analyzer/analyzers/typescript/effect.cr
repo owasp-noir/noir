@@ -12,14 +12,13 @@ module Analyzer::Typescript
   class Effect < TSContractEngine
     analyzer_for "ts_effect"
 
-    MARKER = /['"](?:@effect\/platform|effect\/unstable\/httpapi)['"]/
-
-    def marker : Regex
-      MARKER
+    # The module name is the marker; it is imported from the package root,
+    # a subpath (`@effect/platform/HttpApiEndpoint`) or a local re-export.
+    def candidate?(content : String) : Bool
+      content.includes?("HttpApiEndpoint")
     end
 
     def routes(content : String) : Array(Noir::TSContractExtractor::Route)
-      return [] of Noir::TSContractExtractor::Route unless content.includes?("HttpApiEndpoint")
       Noir::TSContractExtractor.effect(content)
     end
   end

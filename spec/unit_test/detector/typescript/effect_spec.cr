@@ -13,6 +13,10 @@ describe "Detect TypeScript Effect HttpApi" do
     instance.detect("src/api.ts", "import { HttpApiEndpoint } from \"effect/unstable/httpapi\"").should be_true
   end
 
+  it "@effect/platform HttpApi subpath import" do
+    instance.detect("src/api.ts", "import * as HttpApiEndpoint from \"@effect/platform/HttpApiEndpoint\"").should be_true
+  end
+
   it "@effect/platform without HttpApi" do
     instance.detect("src/client.ts", "import { HttpClient, FileSystem } from \"@effect/platform\"").should be_false
   end

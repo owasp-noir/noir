@@ -15,6 +15,8 @@ expected_endpoints = [
   # `HttpApiGroup.prefix` on the group chain, and on a group added by name.
   Endpoint.new("/system/health", "GET"),
   Endpoint.new("/admin/stats", "GET"),
+  # Subpath imports; payload is a `Schema.Class`.
+  Endpoint.new("/orders", "POST", [Param.new("sku", "", "json"), Param.new("quantity", "", "json")]),
 ]
 
 FunctionalTester.new("fixtures/typescript/effect_httpapi/", {

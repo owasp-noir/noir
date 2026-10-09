@@ -4,16 +4,17 @@ require "../../miniparsers/ts_contract_extractor"
 
 module Analyzer::Typescript
   # Shared base of the contract-first TypeScript routers (ts-rest, oRPC,
-  # Effect HttpApi): every source carrying the framework's import marker
+  # Effect HttpApi): every source the adapter accepts
   # goes through its `Noir::TSContractExtractor` entry point.
   abstract class TSContractEngine < Analyzer::Javascript::JavascriptEngine
-    abstract def marker : Regex
+    # Whether a file is worth parsing for this framework.
+    abstract def candidate?(content : String) : Bool
     abstract def routes(content : String) : Array(Noir::TSContractExtractor::Route)
 
     def analyze
       ordered_scan_files(get_files_by_extensions(DEFAULT_EXTENSIONS)) do |path|
         content = read_file_content(path)
-        next unless content.matches?(marker)
+        next unless candidate?(content)
         next if Noir::JSRouteExtractor.test_stub_only?(path, content)
         routes(content).map do |route|
           endpoint = Endpoint.new(route.path, route.method, Details.new(PathInfo.new(path, route.line)))
