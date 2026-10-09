@@ -27,4 +27,9 @@ class PostController extends Controller
         $csrf = Yii::$app->request->headers->get('X-CSRF-Token');
         return $this->render('create', ['title' => $title, 'body' => $body]);
     }
+
+    protected function actionHidden()
+    {
+        return 1;
+    }
 }

@@ -331,6 +331,13 @@ module Noir
       chars.join
     end
 
+    # Source text over a character range, copied from the char array: O(range)
+    # where `String#[]` on multi-byte input is O(offset), which turns a loop of
+    # slices into a quadratic walk.
+    def source(range : Range(Int32, Int32)) : String
+      String.build { |io| range.each { |i| io << @chars[i] } }
+    end
+
     # `/**` followed by whitespace — PHP's T_DOC_COMMENT. `/**/` is a plain
     # empty comment.
     private def docblock?(start : Int32) : Bool

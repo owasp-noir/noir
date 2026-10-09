@@ -21,6 +21,8 @@ $config = [
                 'DELETE /posts/<id:\d+>' => 'post/delete',
                 '/articles/<slug:[\w-]+>' => 'article/view',
                 'GET /health' => 'site/health',
+                'GET,HEAD tags' => 'tag/index',
+                ['class' => 'yii\\rest\\UrlRule', 'controller' => 'comment'],
                 // 'GET /dead-line' => 'site/dead',
                 /* 'POST /dead-block' => 'site/dead', */
             ],

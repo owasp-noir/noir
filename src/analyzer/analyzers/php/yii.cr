@@ -35,92 +35,141 @@ module Analyzer::Php
       endpoints
     end
 
+    # A rule key's verb list: `GET /posts`, `GET,HEAD posts`, or a bare
+    # `POST` (pattern ''), as yii\web\UrlRule::init splits it.
+    RULE_VERB_RE  = /^((?:(?:GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS)\s*,\s*)*(?:GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS))(?:\s+(.*))?$/i
+    RULES_KEY_RE  = /["']rules["']\s*=>\s*(?:\[|array\s*\()/
+    RULE_PAIR_RE  = /['"]([^'"]+)['"]\s*=>\s*['"]([^'"]+)['"]/
+    RULE_OPTIONS  = /['"](pattern|verb|controller|prefix)['"]\s*=>\s*(?:['"]([^'"]*)['"]|(?:\[|array\s*\()([^\])]*))/
+    QUOTED_STRING = /['"]([^'"]+)['"]/
+
+    # yii\rest\UrlRule's default `patterns`, `{id}` standing for
+    # `<id:\d[\d,]*>`. A verb-less entry matches any verb; it serves the
+    # `options` action.
+    REST_RULE_PATTERNS = [
+      {["PUT", "PATCH"], "/{id}"},
+      {["DELETE"], "/{id}"},
+      {["GET", "HEAD"], "/{id}"},
+      {["POST"], ""},
+      {["GET", "HEAD"], ""},
+      {["OPTIONS"], "/{id}"},
+      {["OPTIONS"], ""},
+    ]
+
     # Parse urlManager.rules entries inside Yii2 config files:
     #   "GET /posts" => "post/index"
-    #   "POST /posts" => "post/create"
+    #   "GET,HEAD /posts" => "post/index"
     #   "/posts/<id:\d+>" => "post/view"
+    #   ['pattern' => 'feed/<slug>', 'route' => 'feed/view', 'verb' => 'GET']
+    #   ['class' => 'yii\rest\UrlRule', 'controller' => 'user']
+    #
+    # Only the rules array's own entries are rules: the `'k' => 'v'` pairs
+    # inside an array-style rule are its options, not routes.
     private def analyze_url_manager(path : String, content : String) : Array(Endpoint)
       endpoints = [] of Endpoint
+      key = content.match(RULES_KEY_RE)
+      return endpoints unless key
 
-      rules_section = extract_rules_section(content)
-      return endpoints if rules_section.nil?
+      lexer = Noir::PhpLexer.new(content)
+      open = key.end(0) - 1
+      close = lexer.matching_delimiter(open)
+      return endpoints unless close
 
-      rules_section.scan(/['"]([^'"]+)['"]\s*=>\s*['"]([^'"]+)['"]/) do |match|
-        key = match[1]
-        # value = match[2] — the controller target, currently unused
-
-        method, route = split_rule_key(key)
-        normalized_path = normalize_route(route)
-        params = extract_brace_path_params(normalized_path)
-
-        details = Details.new(PathInfo.new(path))
-        endpoints << Endpoint.new(normalized_path, method, params, details)
+      details = Details.new(PathInfo.new(path))
+      segment_start = open + 1
+      i = segment_start
+      while i < close
+        c = lexer.masked[i]
+        if c == '[' || c == '('
+          nested_close = lexer.matching_delimiter(i) || close
+          endpoints.concat(string_rule_endpoints(lexer.source(segment_start...i), details))
+          endpoints.concat(array_rule_endpoints(lexer.source((i + 1)...nested_close), details))
+          i = nested_close + 1
+          segment_start = i
+        else
+          i += 1
+        end
       end
+      endpoints.concat(string_rule_endpoints(lexer.source(segment_start...close), details)) if segment_start < close
 
       endpoints
     end
 
-    # Note: brace counting may be inaccurate if braces appear inside strings or comments.
-    # A full PHP parser is out of scope; this is a best-effort implementation.
-    #
-    # Byte-level scan for O(1) positional access instead of the previous
-    # `String#[](Int)` per-character loop, which is O(n) on any string
-    # containing a multi-byte UTF-8 character and turned a single call into
-    # O(n^2) — this walks the *entire* `urlManager.rules` array (every
-    # route in the config file), so it's the hot path for a Yii2 config
-    # with non-ASCII content (e.g. CJK comments). `open_char`/`close_char`
-    # are always one of `[`/`]`/`(`/`)`, all ASCII (< 0x80), so they can
-    # never collide with a UTF-8 continuation/lead byte.
-    private def extract_rules_section(content : String) : String?
-      idx = content.index(/["']rules["']\s*=>\s*(?:\[|array\()/)
-      return unless idx
+    private def string_rule_endpoints(segment : String, details : Details) : Array(Endpoint)
+      endpoints = [] of Endpoint
+      segment.scan(RULE_PAIR_RE) do |match|
+        methods, route = split_rule_key(match[1])
+        endpoints.concat(rule_endpoints(methods, route, details))
+      end
+      endpoints
+    end
 
-      open_char, close_char = detect_rules_brackets(content, idx)
-      start = content.index(open_char, idx)
-      return unless start
+    private def array_rule_endpoints(rule : String, details : Details) : Array(Endpoint)
+      options = Hash(String, Array(String)).new
+      rule.scan(RULE_OPTIONS) do |m|
+        next if options.has_key?(m[1])
+        options[m[1]] = if single = m[2]?
+                          [single]
+                        else
+                          m[3].scan(QUOTED_STRING).map(&.[1])
+                        end
+      end
 
-      bytes = content.to_slice
-      byte_start = content.char_index_to_byte_index(start)
-      return unless byte_start
+      if controllers = options["controller"]?
+        rest_rule_endpoints(rule, controllers, options["prefix"]?.try(&.first?) || "", details)
+      elsif pattern = options["pattern"]?.try(&.first?)
+        methods = options["verb"]?.try(&.map(&.upcase)) || [] of String
+        methods = ["GET"] if methods.empty?
+        rule_endpoints(methods, pattern, details)
+      else
+        [] of Endpoint
+      end
+    end
 
-      open_byte = open_char.ord.to_u8
-      close_byte = close_char.ord.to_u8
-      size = bytes.size
-      depth = 1
-      pos = byte_start + 1
-      while pos < size && depth > 0
-        byte = bytes[pos]
-        if byte == open_byte
-          depth += 1
-        elsif byte == close_byte
-          depth -= 1
-          break if depth == 0
+    # `'controller' => 'user'` or `['user', 'v1/post']` serves the pluralized
+    # name; `['u' => 'user']` serves the key as given.
+    private def rest_rule_endpoints(rule : String, controllers : Array(String), prefix : String, details : Details) : Array(Endpoint)
+      url_names = [] of String
+      if list = rule.match(/['"]controller['"]\s*=>\s*(?:\[|array\s*\()([^\])]*)/)
+        list[1].scan(/['"]([^'"]+)['"](?:\s*=>\s*['"][^'"]+['"])?/) do |m|
+          url_names << (m[0].includes?("=>") ? m[1] : pluralize(m[1]))
         end
-        pos += 1
-      end
-
-      return if depth != 0
-      char_pos = content.byte_index_to_char_index(pos)
-      return unless char_pos
-      content[(start + 1)...char_pos]
-    end
-
-    private def detect_rules_brackets(content : String, idx : Int32) : Tuple(Char, Char)
-      bracket_idx = content.index('[', idx)
-      paren_idx = content.index("array(", idx)
-      if paren_idx && (!bracket_idx || paren_idx < bracket_idx)
-        {'(', ')'}
       else
-        {'[', ']'}
+        url_names = controllers.map { |name| pluralize(name) }
+      end
+
+      endpoints = [] of Endpoint
+      url_names.each do |name|
+        base = prefix.empty? ? name : "#{prefix.strip('/')}/#{name}"
+        REST_RULE_PATTERNS.each do |methods, suffix|
+          endpoints.concat(rule_endpoints(methods, base + suffix, details))
+        end
+      end
+      endpoints
+    end
+
+    private def rule_endpoints(methods : Array(String), route : String, details : Details) : Array(Endpoint)
+      normalized_path = normalize_route(route)
+      params = extract_brace_path_params(normalized_path)
+      methods.map { |method| Endpoint.new(normalized_path, method, params, details.dup) }
+    end
+
+    # ponytail: regular English plurals only, unlike yii\helpers\Inflector's
+    # irregular table (person → people).
+    private def pluralize(name : String) : String
+      case name
+      when /[^aeiou]y\z/       then name[0...-1] + "ies"
+      when /(?:s|x|z|ch|sh)\z/ then name + "es"
+      else                          name + "s"
       end
     end
 
-    private def split_rule_key(key : String) : Tuple(String, String)
+    private def split_rule_key(key : String) : Tuple(Array(String), String)
       stripped = key.strip
-      if match = stripped.match(/^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+(.+)$/i)
-        {match[1].upcase, match[2]}
+      if match = stripped.match(RULE_VERB_RE)
+        {match[1].split(',').map(&.strip.upcase), match[2]? || ""}
       else
-        {"GET", stripped}
+        {["GET"], stripped}
       end
     end
 
@@ -174,9 +223,12 @@ module Analyzer::Php
 
       # Scan action*() methods — the standard Yii2 controller action pattern.
       offset = 0
-      content.scan(/(?:^|[\s;{}])(?:public\s+)?function\s+action([A-Z]\w*)\s*\(([^)]*)\)\s*\{/) do |match|
-        action_name = match[1]
-        param_sig = match[2]
+      # Only public methods are actions; Yii never routes to a protected or
+      # private `actionX()`.
+      content.scan(/(?:^|[\s;{}])((?:(?:public|protected|private|static|final|abstract)\s+)*)function\s+action([A-Z]\w*)\s*\(([^)]*)\)\s*\{/) do |match|
+        next if match[1].matches?(/\b(?:protected|private)\b/)
+        action_name = match[2]
+        param_sig = match[3]
         full_match = match[0]
 
         method_start = content.index(full_match, offset)
