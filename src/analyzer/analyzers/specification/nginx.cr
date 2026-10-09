@@ -1,4 +1,5 @@
 require "../../engines/specification_engine"
+require "../../../utils/url_path"
 
 module Analyzer::Specification
   class Nginx < SpecificationEngine
@@ -27,7 +28,7 @@ module Analyzer::Specification
       stack = [] of Frame
       server_names = [] of String
       server_tls = false
-      server_depth = 0
+      owed = 0
 
       content.each_line.with_index do |raw, idx|
         line = strip_template_actions(strip_comment(raw)).strip
@@ -41,18 +42,17 @@ module Analyzer::Specification
           if stack.empty?
             server_names = [] of String
             server_tls = false
-            server_depth = 0
           end
           balanced = balanced[1..].strip
           break if balanced.empty?
         end
         next if balanced.empty?
 
+        depth_before = stack.size
         if balanced.matches?(/^server\s*\{/)
           stack << Frame.new("server", "", idx + 1)
           server_names = [] of String
           server_tls = false
-          server_depth = stack.size
         elsif m = SERVER_NAME_RE.match(balanced)
           m[1].split(/\s+/).reject(&.empty?).each { |n| server_names << n }
         elsif balanced.matches?(LISTEN_RE)
@@ -70,13 +70,20 @@ module Analyzer::Specification
           if loc = current_location(stack)
             emit_location(details, loc.value, "", method, server_names, server_tls, idx + 1)
           end
-          stack << Frame.new("block", "", idx + 1) if balanced.includes?('{')
-        elsif balanced.matches?(/\{\s*$/)
-          stack << Frame.new("block", "", idx + 1)
         end
 
-        # Handle inline closing braces on this same line (after directive).
-        balanced.each_char { |ch| pop_frame(stack) if ch == '}' }
+        # Every `{` opens a frame and every `}` closes one. The handlers above
+        # push the frames that mean something; any other `{` gets a
+        # placeholder, so `if ($bad_ua) { return 403; }`, an `@named`
+        # location, a quoted `'{}'` or a `\d{3}` regex closes only what it
+        # opened. Popping on every `}` without the matching push emptied the
+        # stack early: the location lost its later `$request_method` blocks
+        # and the server's host/TLS reset mid-block. `owed` covers a location
+        # whose `{` sits on the next line.
+        net = balanced.count('{') - (stack.size - depth_before) - owed
+        owed = net < 0 ? -net : 0
+        net.times { stack << Frame.new("block", "", idx + 1) }
+        balanced.count('}').times { pop_frame(stack) }
       end
     end
 

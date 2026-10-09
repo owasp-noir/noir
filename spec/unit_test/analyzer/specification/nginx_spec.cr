@@ -109,4 +109,43 @@ describe "Nginx Analyzer" do
       {"/foo", "a.example.com"},
     ])
   end
+
+  # Each `}` of a one-line block or of an unpushed `@named` location used to
+  # pop a frame it never pushed, closing /admin and then the server early.
+  it "keeps frames balanced across one-line blocks and named locations" do
+    endpoints = analyze_nginx <<-'CONF'
+      server {
+          listen 443 ssl;
+          server_name a.example.com;
+          location /admin {
+              if ($bad_ua) { return 403; }
+              return 200 '{"ok":true}';
+              if ($request_method = POST) {
+                  return 405;
+              }
+          }
+          location @fallback {
+              proxy_pass http://fallback;
+          }
+          location ~ ^/v\d{1,2}/items$ {
+              deny all;
+          }
+          location /api
+          {
+              proxy_pass http://api;
+          }
+      }
+      CONF
+
+    endpoints.map { |e| {e.url, e.method} }.sort!.should eq([
+      {"/admin", "ANY"},
+      {"/admin", "POST"},
+      {"/api", "ANY"},
+      {"/v\\d{1,2}/items", "ANY"},
+    ])
+    endpoints.each do |endpoint|
+      endpoint.protocol.should eq("https")
+      tag_descriptions(endpoint, "nginx-host").should eq(["a.example.com"])
+    end
+  end
 end
