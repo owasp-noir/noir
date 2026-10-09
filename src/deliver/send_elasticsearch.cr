@@ -16,7 +16,7 @@ class SendElasticSearch < Deliver
   # Failures are reported against the URL the user passed: `URI.parse`
   # itself can raise, so the normalized URI may never exist.
   def run(endpoints : Array(Endpoint), es_endpoint : String)
-    post_export(es_endpoint, "Elasticsearch", "Elasticsearch") do
+    post_export(Noir::Redact.url(es_endpoint), "Elasticsearch", "Elasticsearch") do
       uri = SendElasticSearch.normalize_endpoint(es_endpoint)
       {uri.to_s, {"endpoints" => apply_all(endpoints)}.to_json}
     end

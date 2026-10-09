@@ -452,6 +452,19 @@ describe "noir CLI surface (built binary)" do
       urls.empty?.should be_false
       urls.all?(&.starts_with?("http://localhost:3000/")).should be_true
     end
+
+    it "strips a -u/--url suffix from the earlier of `?` and `#`" do
+      # A `||` short-circuit skipped the `#` lookup whenever a `?` was
+      # present, so `/#frag?x=1` was cut at the `?` and kept `#frag`.
+      {"http://localhost:3000/#frag?x=1", "http://localhost:3000/?x=1#frag"}.each do |url|
+        result = run_noir(["scan", FIXTURE, "-u", url, "-f", "json", "--no-log"])
+        result.exit_code.should eq(0)
+        urls = JSON.parse(result.stdout)["endpoints"].as_a.map(&.["url"].as_s)
+        urls.empty?.should be_false
+        urls.none?(&.includes?("#")).should be_true
+        urls.all?(&.starts_with?("http://localhost:3000/")).should be_true
+      end
+    end
   end
 
   describe "stdout purity" do

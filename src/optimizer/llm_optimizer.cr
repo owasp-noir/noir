@@ -228,7 +228,7 @@ class LLMEndpointOptimizer < EndpointOptimizer
       @provider = provider
       @model = model
       @adapter = LLM::AdapterFactory.for(provider, model, api_key)
-      @logger.debug_sub "LLM optimization enabled with #{provider}: #{model}"
+      @logger.debug_sub "LLM optimization enabled with #{Noir::Redact.url(provider)}: #{model}"
     else
       @use_llm = false
       @logger.debug "LLM optimization disabled - missing required configuration"

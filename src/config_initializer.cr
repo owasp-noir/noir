@@ -249,6 +249,12 @@ class ConfigInitializer
       end
 
       final_options = defaults.merge(symbolized_hash) { |_, _, new_val| new_val }
+      # Env beats the file (flag > env > config > default). Older templates
+      # pinned `concurrency:` to the host's CPU count, so without this
+      # NOIR_CONCURRENCY was dead for anyone who had run noir once.
+      if env = env_concurrency
+        final_options["concurrency"] = YAML::Any.new(env)
+      end
       final_options
     rescue e
       # A malformed config used to revert every setting to defaults with
@@ -264,21 +270,22 @@ class ConfigInitializer
   # safe window. The lower bound of 4 keeps low-core CI runners from
   # serializing on a single worker; the upper bound of 32 keeps
   # channel-synchronisation overhead and (under MT) GC pressure in check
-  # on very large boxes. Users who want a specific value still get it
-  # via `--concurrency N` or `concurrency:` in the config file — those
-  # paths overwrite this default.
+  # on very large boxes.
   #
   # NOIR_CONCURRENCY lets container/CI pipelines pin the worker count to
   # the pod's CPU allocation without threading a flag through every noir
-  # invocation. An explicit --concurrency / config value still wins, since
-  # those overwrite this default afterwards.
+  # invocation. Precedence: --concurrency > NOIR_CONCURRENCY > config
+  # `concurrency:` > this CPU-derived default. The env step is re-applied
+  # after the file merge in read_config, since this method only seeds the
+  # defaults the file overwrites.
   def default_concurrency : String
-    if env_value = ENV["NOIR_CONCURRENCY"]?
-      if parsed = env_value.strip.to_i?
-        return parsed.to_s if parsed >= 1
-      end
-    end
-    System.cpu_count.clamp(4, 32).to_s
+    env_concurrency || System.cpu_count.clamp(4, 32).to_s
+  end
+
+  # A valid (>= 1) NOIR_CONCURRENCY, or nil.
+  def env_concurrency : String?
+    parsed = ENV["NOIR_CONCURRENCY"]?.try(&.strip.to_i?)
+    parsed.to_s if parsed && parsed >= 1
   end
 
   def default_options
@@ -366,7 +373,8 @@ class ConfigInitializer
       config_file: "#{options["config_file"]}"
 
       # The number of concurrent operations to perform
-      concurrency: "#{options["concurrency"]}"
+      # Default: CPU count clamped to 4-32 (or NOIR_CONCURRENCY). Uncomment to pin.
+      # concurrency: "#{System.cpu_count.clamp(4, 32)}"
 
       # Whether to enable debug mode
       debug: #{options["debug"]}
@@ -517,7 +525,8 @@ class ConfigInitializer
       ai_agent_max_steps: #{options["ai_agent_max_steps"]}
 
       # Provider allowlist for native tool-calling (comma-separated)
-      ai_native_tools_allowlist: "#{options["ai_native_tools_allowlist"]}"
+      # Commented so the built-in list keeps tracking new releases. Uncomment to pin.
+      # ai_native_tools_allowlist: "#{options["ai_native_tools_allowlist"]}"
 
       # The maximum number of tokens for AI requests (0 = provider/model default)
       ai_max_token: #{options["ai_max_token"]}

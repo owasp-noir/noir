@@ -21,7 +21,7 @@ require "../models/deliver"
 # misconfigured webhook URL doesn't crash the scan.
 class SendWebhook < Deliver
   def run(endpoints : Array(Endpoint), webhook_url : String)
-    post_export(webhook_url, "Webhook", "webhook") do
+    post_export(Noir::Redact.webhook(webhook_url), "Webhook", "webhook") do
       applied_endpoints = apply_all(endpoints)
       body = {
         "endpoints"      => applied_endpoints,

@@ -11,6 +11,7 @@ require "../../diff_gate"
 require "../../techs/techs"
 require "../../llm/cache"
 require "../../llm/prompt_overrides"
+require "../../utils/redact"
 
 # `noir scan [paths...] [flags]`
 #
@@ -167,8 +168,9 @@ module Noir::CLI::ScanCommand
     # path after them produces a malformed URL
     # (`http://x?foo=bar/sign`). The user almost never meant to put
     # them on the base; warn and drop them.
-    if (q = url.index('?')) || (f = url.index('#'))
-      cut = [q, f].compact.min
+    # Both indexes up front: `||` would skip the `#` lookup whenever a `?`
+    # exists, so `/#frag?x=1` cut at the later `?` and kept `#frag`.
+    if cut = [url.index('?'), url.index('#')].compact.min?
       stripped = url[0...cut]
       dropped = url[cut..]
       STDERR.puts "WARNING: -u/--url should be a base URL — query string / fragment '#{dropped}' would corrupt the per-endpoint URL. Stripping.".colorize(WARNING_COLOR)
@@ -591,12 +593,12 @@ module Noir::CLI::ScanCommand
     app.logger.debug("Noir version: #{Noir::VERSION}")
     app.logger.debug("Noir options from arguments:")
     noir_options.each do |k, v|
-      app.logger.debug_sub("#{k}: #{v}")
+      app.logger.debug_sub("#{k}: #{Noir::Redact.option(k, v)}")
     end
 
     app.logger.debug "Initialized Options:"
     app.options.each do |k, v|
-      app.logger.debug_sub "#{k}: #{v}"
+      app.logger.debug_sub "#{k}: #{Noir::Redact.option(k, v)}"
     end
 
     app_diff = nil

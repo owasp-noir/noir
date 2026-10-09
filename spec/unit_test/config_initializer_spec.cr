@@ -262,6 +262,14 @@ describe ConfigInitializer do
       ConfigInitializer.new.generate_config_file.should_not contain("analyze_feign")
     end
 
+    it "leaves host-derived defaults commented so they are not pinned" do
+      # A live `concurrency: "14"` in the template froze the first host's
+      # CPU count into the file and shadowed NOIR_CONCURRENCY forever after.
+      keys = YAML.parse(ConfigInitializer.new.generate_config_file).as_h.keys.map(&.to_s)
+      keys.should_not contain("concurrency")
+      keys.should_not contain("ai_native_tools_allowlist")
+    end
+
     it "emits only keys that exist in default_options" do
       # Guards against a template line drifting from the option set —
       # a key in the generated file that noir doesn't recognize would
@@ -270,6 +278,29 @@ describe ConfigInitializer do
       defaults = ci.default_options
       YAML.parse(ci.generate_config_file).as_h.each_key do |key|
         defaults.has_key?(key.to_s).should be_true
+      end
+    end
+  end
+
+  describe "NOIR_CONCURRENCY" do
+    it "overrides a concurrency pinned in the config file" do
+      saved = ENV["NOIR_CONCURRENCY"]?
+      ENV["NOIR_CONCURRENCY"] = "2"
+      begin
+        with_noir_home("concurrency: \"14\"\n") do |options|
+          options["concurrency"].to_s.should eq("2")
+        end
+        # An invalid value is ignored, so the file still applies.
+        ENV["NOIR_CONCURRENCY"] = "0"
+        with_noir_home("concurrency: \"14\"\n") do |options|
+          options["concurrency"].to_s.should eq("14")
+        end
+      ensure
+        if s = saved
+          ENV["NOIR_CONCURRENCY"] = s
+        else
+          ENV.delete("NOIR_CONCURRENCY")
+        end
       end
     end
   end
