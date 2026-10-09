@@ -74,6 +74,15 @@ module Analyzer::Php
         normalized = Noir::PathScope.normalize_root(File.dirname(file))
         roots << normalized unless roots.includes?(normalized)
       end
+      # A Nextcloud/ownCloud app (`<app>/appinfo/info.xml`) is likewise
+      # served only through the server's front controller, so its own
+      # `.php` files are not URLs.
+      get_files_by_basename("info.xml").each do |file|
+        appinfo = File.dirname(file)
+        next unless File.basename(appinfo) == "appinfo"
+        normalized = Noir::PathScope.normalize_root(File.dirname(appinfo))
+        roots << normalized unless roots.includes?(normalized)
+      end
 
       @php_managed_roots = roots
       roots
