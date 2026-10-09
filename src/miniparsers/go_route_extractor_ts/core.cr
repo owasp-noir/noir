@@ -1072,6 +1072,14 @@ module Noir
       case Noir::TreeSitter.node_type(operand)
       when "identifier"
         {Noir::TreeSitter.node_text(operand, source), ""}
+      when "selector_expression"
+        # A router held in a `Router` field — PocketBase's
+        # `se.Router.GET(...)` inside `OnServe().BindFunc`. Only that field
+        # name, so `c.Request.Get(...)`-style value lookups stay out.
+        field = Noir::TreeSitter.field(operand, "field")
+        if field && Noir::TreeSitter.node_text(field, source) == "Router"
+          {Noir::TreeSitter.node_text(operand, source), ""}
+        end
       when "call_expression"
         group_chain_operand_info(operand, source, groups, group_method, group_aliases, string_values)
       end
