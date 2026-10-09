@@ -24,6 +24,60 @@ describe Noir::TreeSitterKotlinRouteExtractor do
     ])
   end
 
+  it "maps methods under every path of a multi-path class-level mapping" do
+    source = <<-KT
+      package com.example
+
+      @RestController
+      @RequestMapping(value = ["/v1", "/v2"])
+      class A {
+          @GetMapping("/a")
+          fun a(): String = ""
+      }
+
+      @RestController
+      @RequestMapping(["/q1", "/q2"])
+      class B : Api {
+          @GetMapping("/b")
+          fun b(): String = ""
+      }
+      KT
+
+    routes = Noir::TreeSitterKotlinRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([
+      {"GET", "/v1/a"},
+      {"GET", "/v2/a"},
+      {"GET", "/q1/b"},
+      {"GET", "/q2/b"},
+    ])
+
+    Noir::TreeSitter.parse_kotlin(source) do |root|
+      implementations = Noir::TreeSitterKotlinRouteExtractor.extract_controller_interface_implementations_from(root, source)
+      implementations.map { |impl| {impl.class_name, impl.path} }.should eq([
+        {"B", "/q1"},
+        {"B", "/q2"},
+      ])
+    end
+  end
+
+  it "walks nested multi-path classes once and caps the prefix product" do
+    # Each level doubles the prefixes. Re-walking a nested class once per
+    # outer prefix made this 2^40 walks; it must finish at once with the
+    # product capped.
+    source = String.build do |io|
+      40.times { io << "@RequestMapping([\"/a\", \"/b\"])\nclass O {\n" }
+      io << "@GetMapping(\"/x\")\nfun x() = 1\n"
+      40.times { io << "}\n" }
+    end
+
+    elapsed = Time.measure do
+      routes = Noir::TreeSitterKotlinRouteExtractor.extract_routes(source)
+      routes.size.should eq(Noir::TreeSitterKotlinRouteExtractor::MAX_CLASS_PREFIXES)
+      routes.first.path.should eq("#{"/a" * 40}/x")
+    end
+    elapsed.should be < 5.seconds
+  end
+
   it "handles value = / path = keyword arguments" do
     source = <<-KT
       class K {

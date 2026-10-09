@@ -21,6 +21,9 @@ expected_endpoints = [
   Endpoint.new("/svc/create-item", "POST", [Param.new("item", "", "json")]).tap do |ep|
     ep.push_callee(Callee.new("audit.record", line: 16))
   end,
+  # HostileRoutes.kt: a trailing comment and a `"${"/*"}"` template.
+  Endpoint.new("/svc/hk/k1", "GET"),
+  Endpoint.new("/svc/hk/k2", "GET"),
 ]
 
 FunctionalTester.new("fixtures/java/quarkus_kotlin/", {

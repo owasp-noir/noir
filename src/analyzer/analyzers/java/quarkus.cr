@@ -320,13 +320,19 @@ module Analyzer::Java
       return endpoints unless content.includes?("io.quarkus.vertx.web.Route")
 
       http_root_path = (configs[project_root_for(path)]? || QuarkusPathConfig.new).http_root_path
-      route_bases = reactive_route_bases(content)
       method_callees = include_callee ? reactive_route_method_callees(content, path) : [] of ReactiveMethodCallees
+      # The text scans below run on a comment-blanked copy (same char
+      # offsets), so `@Route(...) // note` still reaches its method and a
+      # commented-out `// @Route` is not a route. Callee spans stay on the
+      # raw text they were parsed from. Kotlin needs its own mask: the C
+      # stripper reads the `/*` in `"${"/*"}"` as a comment opener.
+      visible = path.ends_with?(".kt") ? Noir::KotlinSourceMask.code_only(content) : JavaEngine.strip_comments(content)
+      route_bases = reactive_route_bases(visible)
 
-      each_reactive_route_annotation(content) do |offset, end_offset, body|
+      each_reactive_route_annotation(visible) do |offset, end_offset, body|
         next if reactive_failure_route?(body)
 
-        method_name = route_method_name_after(content, end_offset)
+        method_name = route_method_name_after(visible, end_offset)
         next if method_name.empty?
 
         route_path = reactive_route_path(body, method_name)
@@ -334,9 +340,9 @@ module Analyzer::Java
 
         base_path = route_bases.find { |base| offset >= base.start_offset && offset <= base.end_offset }.try(&.path) || ""
         endpoint_path = Noir::URLPath.join_trimmed(http_root_path, Noir::URLPath.join_trimmed(base_path, route_path))
-        line = line_number_for_index(content, offset)
+        line = line_number_for_index(visible, offset)
         details = Details.new(PathInfo.new(path, line))
-        params = reactive_route_params(content, end_offset, endpoint_path)
+        params = reactive_route_params(visible, end_offset, endpoint_path)
 
         reactive_route_methods(body).each do |method|
           next if endpoints.any? { |endpoint| endpoint.url == endpoint_path && endpoint.method == method }

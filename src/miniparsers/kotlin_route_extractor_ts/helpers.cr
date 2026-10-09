@@ -125,6 +125,13 @@ module Noir
       {named ? :keyword : :positional, key, value}
     end
 
+    # Annotation values never legitimately nest more than a few levels
+    # (`[arrayOf("/a")]`). The shared `MAX_AST_DEPTH` backstop is too
+    # loose for the two value walkers below: their frames are ~10KB in a
+    # debug build, so ~900 nested `((...))` / `[[...]]` already overran
+    # the fiber stack and aborted the whole scan.
+    MAX_ANNOTATION_VALUE_DEPTH = 64
+
     # Collect path values from a node. Handles string literals,
     # constants, `PATH + "/suffix"`, collection literals, and
     # `arrayOf("/a", PATH)` call expressions.
@@ -132,12 +139,14 @@ module Noir
                                       source : String,
                                       sink : Array(String),
                                       string_constants : Hash(String, String),
-                                      local_string_constants : Hash(String, String))
+                                      local_string_constants : Hash(String, String),
+                                      depth : Int32 = 0)
+      return if depth > MAX_ANNOTATION_VALUE_DEPTH
       case Noir::TreeSitter.node_type(node)
       when "collection_literal"
         # Kotlin's `[...]` array syntax inside annotations.
         Noir::TreeSitter.each_named_child(node) do |elem|
-          collect_string_values(elem, source, sink, string_constants, local_string_constants)
+          collect_string_values(elem, source, sink, string_constants, local_string_constants, depth + 1)
         end
       when "parenthesized_expression"
         # Stray-annotation case: `@RequestMapping("/x")` gets parsed
@@ -145,7 +154,7 @@ module Noir
         # carrying a bare `string_literal` (no `value_arguments`
         # wrapper).
         Noir::TreeSitter.each_named_child(node) do |elem|
-          collect_string_values(elem, source, sink, string_constants, local_string_constants)
+          collect_string_values(elem, source, sink, string_constants, local_string_constants, depth + 1)
         end
       when "call_expression"
         # `arrayOf("/a", "/b")` — walk the value_arguments.
@@ -156,7 +165,7 @@ module Noir
               Noir::TreeSitter.each_named_child(suf) do |va|
                 next unless Noir::TreeSitter.node_type(va) == "value_argument"
                 Noir::TreeSitter.each_named_child(va) do |v|
-                  collect_string_values(v, source, sink, string_constants, local_string_constants)
+                  collect_string_values(v, source, sink, string_constants, local_string_constants, depth + 1)
                 end
               end
             end
@@ -467,7 +476,8 @@ module Noir
 
     # `RequestMethod.GET` is parsed as `navigation_expression` with a
     # `navigation_suffix` carrying the verb. Array forms recurse.
-    private def collect_request_method_values(node : LibTreeSitter::TSNode, source : String, sink : Array(String))
+    private def collect_request_method_values(node : LibTreeSitter::TSNode, source : String, sink : Array(String), depth : Int32 = 0)
+      return if depth > MAX_ANNOTATION_VALUE_DEPTH
       case Noir::TreeSitter.node_type(node)
       when "navigation_expression"
         # Walk to the final `navigation_suffix` child for the verb name.
@@ -481,7 +491,7 @@ module Noir
         sink << Noir::TreeSitter.node_text(node, source).upcase
       when "collection_literal"
         Noir::TreeSitter.each_named_child(node) do |elem|
-          collect_request_method_values(elem, source, sink)
+          collect_request_method_values(elem, source, sink, depth + 1)
         end
       when "call_expression"
         Noir::TreeSitter.each_named_child(node) do |child|
@@ -491,7 +501,7 @@ module Noir
             Noir::TreeSitter.each_named_child(suf) do |va|
               next unless Noir::TreeSitter.node_type(va) == "value_argument"
               Noir::TreeSitter.each_named_child(va) do |v|
-                collect_request_method_values(v, source, sink)
+                collect_request_method_values(v, source, sink, depth + 1)
               end
             end
           end

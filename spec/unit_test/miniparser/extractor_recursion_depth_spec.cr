@@ -17,6 +17,7 @@ require "../../../src/miniparsers/adonisjs_extractor_ts"
 require "../../../src/miniparsers/jvm_lambda_dsl_extractor_ts"
 require "../../../src/miniparsers/kotlin_ktor_route_extractor_ts"
 require "../../../src/miniparsers/go_route_extractor_ts"
+require "../../../src/miniparsers/kotlin_route_extractor_ts"
 
 private NEST = 3000
 
@@ -113,5 +114,21 @@ describe "extractor recursion depth bounds" do
       io << "} }\n"
     end
     Noir::TreeSitterKotlinKtorRouteExtractor.extract_routes(body)
+  end
+
+  # `walk_classes` recursed through raw `ts_node_named_child` indexing and
+  # the annotation-value walkers have ~10KB debug frames, so each of these
+  # overflowed the stack (a 900-deep `((...))` was already enough).
+  {
+    "a 20000-link call chain outside any class" => "val big = x#{".f()" * 20_000}\n",
+    "20000 nested parentheses in a path"        => "@RestController\nclass P { @GetMapping(#{"(" * 20_000}\"/x\"#{")" * 20_000}) fun x() = 1 }\n",
+    "20000 nested brackets in a path"           => "@RestController\nclass P { @GetMapping(#{"[" * 20_000}\"/x\"#{"]" * 20_000}) fun x() = 1 }\n",
+    "20000 nested brackets in a method array"   => "@RestController\nclass P { @RequestMapping(value = [\"/x\"], method = #{"[" * 20_000}RequestMethod.GET#{"]" * 20_000}) fun x() = 1 }\n",
+  }.each do |label, hostile|
+    it "Kotlin Spring extractor tolerates #{label} and keeps the sibling route" do
+      body = "#{hostile}\n@RestController\nclass C { @GetMapping(\"/ok\") fun ok() = 1 }\n"
+      routes = Noir::TreeSitterKotlinRouteExtractor.extract_routes(body)
+      routes.map(&.path).should contain("/ok")
+    end
   end
 end

@@ -311,7 +311,7 @@ module Analyzer::Java
       java_files.each do |path|
         next unless File.basename(path) == "package-info.java"
 
-        content = read_file_content(path)
+        content = JavaEngine.strip_comments(read_file_content(path))
         package_name = Noir::TreeSitterJavaParameterExtractor.extract_package_name(content)
         next if package_name.empty?
 
@@ -351,7 +351,11 @@ module Analyzer::Java
                                      content : String,
                                      root : LibTreeSitter::TSNode?)
       package_name = Noir::TreeSitterJavaParameterExtractor.extract_package_name(content)
-      classes_in(content, package_name).each do |klass|
+      # Scan a comment-blanked copy (same offsets and lines) so a comment
+      # after or between annotations (`@Action("x") // note`) does not end
+      # the annotation walk; callees keep the raw text `root` came from.
+      visible = JavaEngine.strip_comments(content)
+      classes_in(visible, package_name).each do |klass|
         next if klass.abstract?
 
         package_annotations_for_class = package_annotations[{configured_base_for(path), klass.package_name}]? || ""
@@ -362,7 +366,7 @@ module Analyzer::Java
         class_actions = action_paths_from_annotations(klass.annotations)
         class_action_base = convention_action_name(klass.name, config)
         class_has_action_annotation = !class_actions.empty?
-        methods = methods_in(klass.body, klass.body_offset, content)
+        methods = methods_in(klass.body, klass.body_offset, visible)
 
         namespaces.each do |class_namespace|
           class_actions.each do |action_path|
