@@ -37,6 +37,8 @@ module MobileLaunch
 
   # Control characters become `\xNN` text (`ControlChars`) so a manifest
   # carrying `\e]8;;…` cannot drive the terminal the command is printed to.
+  # Lossy: control chars become literal `\xNN` text in the command, not the
+  # original bytes (no ANSI-C `$'…'` quoting).
   def shell_quote(str : String) : String
     "'#{ControlChars.escape(str).gsub("'", "'\\''")}'"
   end

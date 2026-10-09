@@ -5,7 +5,9 @@ require "./control_chars"
 module CurlCommand
   # Line breaks become `\r`/`\n` text so a command stays on one line, and any
   # other control character `\xNN` (`ControlChars`), so a route carrying
-  # `\e]8;;…` cannot drive the terminal the command is printed to.
+  # `\e]8;;…` cannot drive the terminal the command is printed to. Lossy:
+  # control chars become literal `\xNN` text in the command, not the original
+  # bytes (no ANSI-C `$'…'` quoting).
   def self.shell_quote(str : String) : String
     "'#{ControlChars.escape(str.gsub("\r", "\\r").gsub("\n", "\\n")).gsub("'", "'\\''")}'"
   end
