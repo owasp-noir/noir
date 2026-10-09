@@ -37,14 +37,17 @@ module Analyzer::Python
     # bare-decorator patterns ran per decorator name on every source
     # line. The `.to_s` expansion is byte-identical to the previous
     # inline form, so matching behaviour is unchanged.
-    # Tuple shape: {deco_name, "@deco" guard, bare_re, original_line_re, keyword_path_re}
+    # Tuple shape: {deco_name, "@deco" guard, bare_re, original_line_re, keyword_path_re, path_list_re}
     BARE_DECORATOR_PATTERNS = BARE_DECORATORS.map do |deco_name|
       {deco_name,
        "@#{deco_name}",
        /^@#{deco_name}\([rf]?['"]([^'"]*)['"](.*)/,
        /@#{deco_name}\s*\(\s*[rf]?['"]([^'"]*)['"]/,
-       /^\s*@#{deco_name}\s*\([^)]*\b(?:path|rule|uri)\s*=\s*[rf]?['"]([^'"]*)['"]/m}
+       /^\s*@#{deco_name}\s*\([^)]*\b(?:path|rule|uri)\s*=\s*[rf]?['"]([^'"]*)['"]/m,
+       /^\s*@#{deco_name}\s*\(\s*\[([^\]]*)\](.*)/m}
     end
+    PATH_LIST_ITEM_RE     = /[rf]?['"]([^'"]*)['"]/
+    KEYWORD_ARG_RE        = /\A\s*[A-Za-z_][A-Za-z0-9_]*\s*=(?!=)/
     PROGRAMMATIC_ROUTE_RE = /\b(#{PYTHON_VAR_NAME_REGEX})\.route\s*\((.*)\)\s*$/m
     BOTTLE_INSTANCE_RE    = /^(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:bottle\.)?Bottle\(/
     MOUNT_RE              = /\b(#{PYTHON_VAR_NAME_REGEX})\.mount\s*\(\s*[rf]?['"]([^'"]*)['"]\s*,\s*(#{PYTHON_VAR_NAME_REGEX})/
@@ -69,16 +72,19 @@ module Analyzer::Python
           methods_literal = deco.methods.map { |m| "'#{m}'" }.join(",")
           extra_params = "methods=[#{methods_literal}]"
           prefixes = router_prefixes[deco.router_name]? || [""]
+          # `@app.route(["/a", "/b"])` serves the handler at every path.
           prefixes.each do |prefix|
-            process_route(
-              path,
-              lines,
-              line_index: deco.decorator_line,
-              route_path: Helper.normalized_join(prefix, deco.path),
-              extra_params: extra_params,
-              definition_base_path: current_base_path,
-              source: file_content
-            )
+            deco.paths.each do |deco_path|
+              process_route(
+                path,
+                lines,
+                line_index: deco.decorator_line,
+                route_path: Helper.normalized_join(prefix, deco_path),
+                extra_params: extra_params,
+                definition_base_path: current_base_path,
+                source: file_content
+              )
+            end
           end
         end
 
@@ -92,7 +98,7 @@ module Analyzer::Python
           # necessary condition for either match, so non-decorator lines
           # skip the regex work entirely.
           if stripped.includes?('@')
-            BARE_DECORATOR_PATTERNS.each do |deco_name, deco_guard, bare_re, orig_re, kw_re|
+            BARE_DECORATOR_PATTERNS.each do |deco_name, deco_guard, bare_re, orig_re, kw_re, list_re|
               next unless stripped.includes?(deco_guard)
               # `@route("/foo", method="POST")` or `@get("/foo")` on the stripped line.
               if bare_match = stripped.match(bare_re)
@@ -111,6 +117,20 @@ module Analyzer::Python
                   definition_base_path: current_base_path,
                   source: file_content
                 )
+              elsif list_match = effective_line.match(list_re)
+                # `@route(["/a", "/b"], method="POST")`: one route per path.
+                extra = deco_name == "route" ? list_match[2] : "methods=['#{deco_name.upcase}']"
+                list_match[1].scan(PATH_LIST_ITEM_RE) do |item|
+                  process_route(
+                    path,
+                    lines,
+                    line_index,
+                    item[1],
+                    extra,
+                    definition_base_path: current_base_path,
+                    source: file_content
+                  )
+                end
               elsif kw_path_match = effective_line.match(kw_re)
                 extra = deco_name == "route" ? effective_line : "methods=['#{deco_name.upcase}']"
                 process_route(
@@ -162,8 +182,16 @@ module Analyzer::Python
                    args[0]?.try { |arg| Helper.extract_python_string(arg) }
       return unless route_path
 
-      callback_name = extract_callback_name(args)
+      # Bottle's signature is `route(path, method, callback, ...)`, so the
+      # method and callback may also come positionally.
+      positional = args.take_while { |arg| !arg.matches?(KEYWORD_ARG_RE) }
+      callback_name = extract_callback_name(args) ||
+                      positional[2]?.try(&.strip).try { |arg| arg if arg.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/) }
       return unless callback_name
+
+      extra_params = route_match[2]
+      method_arg = positional[1]?.try(&.strip)
+      extra_params = "method=#{method_arg}" if method_arg && method_arg.starts_with?(/[\['"(]/)
 
       prefixes = router_prefixes[receiver]? || [""]
       prefixes.each do |prefix|
@@ -172,7 +200,7 @@ module Analyzer::Python
           lines,
           line_index,
           Helper.normalized_join(prefix, route_path),
-          route_match[2],
+          extra_params,
           callback_name,
           definition_base_path: definition_base_path,
           source: source

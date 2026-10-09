@@ -200,39 +200,66 @@ module Analyzer::Python
       cloned
     end
 
+    # Record a `register_blueprint(bp, url_prefix=...)` against the file
+    # declaring `bp`. A blueprint registered twice keeps both prefixes.
+    private def add_registered_prefix(registered : Hash(::String, Hash(::String, Array(::String))),
+                                      path : ::String, name : ::String, prefix : ::String) : Nil
+      list = (registered[path] ||= Hash(::String, Array(::String)).new)[name] ||= [] of ::String
+      list << prefix unless list.includes?(prefix)
+    end
+
+    # Prefixes a route on blueprint `name` (declared in `path`) is served
+    # under: every registration's when there are several, else `prefix`.
+    private def route_prefixes(registered : Hash(::String, Hash(::String, Array(::String))),
+                               path : ::String, name : ::String, prefix : ::String) : Array(::String)
+      list = registered[path]?.try(&.[name]?)
+      list && list.size > 1 ? list : [prefix]
+    end
+
     private def apply_nested_blueprint_prefixes(path_api_instances : Hash(::String, Hash(::String, ::String)),
                                                 own_api_instances : Hash(::String, Hash(::String, ::String)),
-                                                blueprint_mounts : Hash(::String, Array(Tuple(::String, ::String, ::String?))))
+                                                blueprint_mounts : Hash(::String, Array(Tuple(::String, ::String, ::String?))),
+                                                registered : Hash(::String, Hash(::String, Array(::String))))
       blueprint_mounts.each do |path, mounts|
         api_instances = path_api_instances[path]?
         next unless api_instances
 
         own_prefixes = own_api_instances[path]? || api_instances
-        changed = true
-        # Bound the fixpoint loop: an acyclic mount graph converges in at most
-        # `mounts.size` propagation passes. A circular mount (A registers B and
-        # B registers A) would otherwise grow the prefix every pass and never
-        # converge -> infinite loop + unbounded memory on cyclic input.
-        iterations = 0
-        max_iterations = mounts.size + 1
-        while changed && iterations < max_iterations
-          iterations += 1
-          changed = false
+        # Each pass recomputes every child's prefixes from the previous
+        # pass, so a parent resolved later leaves no stale prefix behind and
+        # a child registered twice keeps both. Bound the loop: an acyclic
+        # mount graph converges in at most `mounts.size` passes, while a
+        # circular mount (A registers B and B registers A) would grow the
+        # prefix every pass and never converge.
+        resolved = Hash(::String, Array(::String)).new
+        (mounts.size + 1).times do
+          pass = Hash(::String, Array(::String)).new
           mounts.each do |mount|
             parent_name, child_name, mount_prefix = mount
             next unless api_instances.has_key?(child_name)
 
-            parent_prefix = api_instances[parent_name]? || ""
+            # A parent registered more than once from another file mounts
+            # the child under each of its registrations.
+            parent_prefixes = resolved[parent_name]? ||
+                              registered[path]?.try(&.[parent_name]?) ||
+                              [api_instances[parent_name]? || ""]
             # A url_prefix given at registration replaces the child's own
             # url_prefix; the own prefix applies only when it is omitted
             # (nil). An explicit empty url_prefix still drops it.
             child_prefix = mount_prefix || own_prefixes[child_name]? || ""
-            resolved_prefix = File.join(parent_prefix, child_prefix)
-            next if api_instances[child_name] == resolved_prefix
-
-            api_instances[child_name] = resolved_prefix
-            changed = true
+            list = pass[child_name] ||= [] of ::String
+            parent_prefixes.each do |parent_prefix|
+              resolved_prefix = File.join(parent_prefix, child_prefix)
+              list << resolved_prefix unless list.includes?(resolved_prefix)
+            end
           end
+          break if pass == resolved
+          resolved = pass
+        end
+
+        resolved.each do |child_name, prefixes|
+          api_instances[child_name] = prefixes.first
+          (registered[path] ||= Hash(::String, Array(::String)).new)[child_name] = prefixes
         end
       end
     end

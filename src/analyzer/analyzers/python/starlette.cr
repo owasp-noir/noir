@@ -390,29 +390,19 @@ module Analyzer::Python
         end
       end
 
+      nested_edges = [] of Tuple(::String, ::String, ::String)
       mount_edges.each do |parent_route_list, route_list, mount_prefix|
-        next if parent_route_list
-        add_route_list_prefix(prefixes, route_list, mount_prefix)
-      end
-
-      changed = true
-      while changed
-        changed = false
-        mount_edges.each do |parent_route_list, route_list, mount_prefix|
-          next unless parent_route_list
-
-          parent_prefixes = prefixes[parent_route_list]?
-          next unless parent_prefixes
-
-          parent_prefixes.each do |parent_prefix|
-            composed_prefix = normalize_route_prefix(parent_prefix, mount_prefix)
-            next if prefixes[route_list].includes?(composed_prefix)
-
-            prefixes[route_list] << composed_prefix
-            changed = true
-          end
+        if parent_route_list
+          nested_edges << {parent_route_list, mount_prefix, route_list}
+        else
+          add_route_list_prefix(prefixes, route_list, mount_prefix)
         end
       end
+
+      # A list mounted into itself (`routes = [Mount('/v1', routes=routes)]`
+      # rebinding the name) or an `a -> b -> a` cycle is walked once, not
+      # composed forever.
+      propagate_mount_prefixes(prefixes, nested_edges) { |parent_prefix, mount_prefix| normalize_route_prefix(parent_prefix, mount_prefix) }
 
       prefixes
     end
@@ -448,7 +438,7 @@ module Analyzer::Python
         bracket_depth = 0
         index = line_index
         while index < lines.size
-          bracket_depth += lines[index].count('[') - lines[index].count(']')
+          bracket_depth += python_bracket_delta(strip_python_comment(lines[index]))
           end_line = index
           break if bracket_depth <= 0
           index += 1
@@ -541,7 +531,7 @@ module Analyzer::Python
         bracket_depth = 0
         index = line_index
         while index < lines.size
-          bracket_depth += lines[index].count('[') - lines[index].count(']')
+          bracket_depth += python_bracket_delta(strip_python_comment(lines[index]))
           end_line = index
           break if bracket_depth <= 0
           index += 1

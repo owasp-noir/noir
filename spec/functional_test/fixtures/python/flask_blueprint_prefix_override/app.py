@@ -3,6 +3,8 @@
 # does the blueprint's own url_prefix apply.
 from flask import Flask, Blueprint
 
+from views.parent import shared
+
 override = Blueprint("override", __name__, url_prefix="/own")
 parent = Blueprint("parent", __name__, url_prefix="/parent")
 child = Blueprint("child", __name__, url_prefix="/child")
@@ -10,6 +12,7 @@ outer = Blueprint("outer", __name__, url_prefix="/outer")
 inner = Blueprint("inner", __name__, url_prefix="/inner")
 emptied = Blueprint("emptied", __name__, url_prefix="/gone")
 kept = Blueprint("kept", __name__, url_prefix="/kept")
+twice = Blueprint("twice", __name__)
 
 
 @override.route("/o")
@@ -37,6 +40,11 @@ def k():
     return ""
 
 
+@twice.route("/t")
+def t():
+    return ""
+
+
 parent.register_blueprint(child)
 outer.register_blueprint(inner, url_prefix="/mounted-inner")
 
@@ -46,3 +54,8 @@ app.register_blueprint(parent, url_prefix="/api")
 app.register_blueprint(outer)
 app.register_blueprint(emptied, url_prefix="")
 app.register_blueprint(kept)
+# Registered twice: served under both prefixes.
+app.register_blueprint(twice, url_prefix="/v1")
+app.register_blueprint(twice, url_prefix="/v2")
+app.register_blueprint(shared, url_prefix="/s1")
+app.register_blueprint(shared, url_prefix="/s2", name="shared2")

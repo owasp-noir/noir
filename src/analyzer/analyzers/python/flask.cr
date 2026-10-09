@@ -93,7 +93,7 @@ module Analyzer::Python
       flask_instances : Hash(ScopedNameKey, ::String),
       blueprint_prefixes : Hash(ScopedNameKey, ::String),
       path_api_instances : Hash(::String, Hash(::String, ::String)),
-      register_blueprint : Hash(::String, Hash(::String, ::String)),
+      register_blueprint : Hash(::String, Hash(::String, Array(::String))),
       blueprint_mounts : Hash(::String, Array(Tuple(::String, ::String, ::String?))),
       # flask-restx namespaces are module-level singletons: the Api host
       # file (`api/__init__.py`) wires `api.add_namespace(ns, "/x")` with
@@ -108,7 +108,7 @@ module Analyzer::Python
           flask_instances: Hash(ScopedNameKey, ::String).new,
           blueprint_prefixes: Hash(ScopedNameKey, ::String).new,
           path_api_instances: Hash(::String, Hash(::String, ::String)).new,
-          register_blueprint: Hash(::String, Hash(::String, ::String)).new,
+          register_blueprint: Hash(::String, Hash(::String, Array(::String))).new,
           blueprint_mounts: Hash(::String, Array(Tuple(::String, ::String, ::String?))).new,
           namespace_prefixes: Hash(ScopedNameKey, ::String).new,
         )
@@ -413,8 +413,7 @@ module Analyzer::Python
           if parser.@global_variables.has_key?(blueprint_name)
             gv = parser.@global_variables[blueprint_name]
             if gv.type == "Blueprint"
-              state.register_blueprint[gv.path] ||= Hash(::String, ::String).new
-              state.register_blueprint[gv.path][blueprint_name] = url_prefix_match[1]
+              add_registered_prefix(state.register_blueprint, gv.path, blueprint_name, url_prefix_match[1])
               resolved = true
             end
           end
@@ -425,8 +424,7 @@ module Analyzer::Python
             if import_map.has_key?(blueprint_name)
               source_file, _package_type = import_map[blueprint_name]
               if !source_file.empty? && File.exists?(source_file)
-                state.register_blueprint[source_file] ||= Hash(::String, ::String).new
-                state.register_blueprint[source_file][blueprint_name] = url_prefix_match[1]
+                add_registered_prefix(state.register_blueprint, source_file, blueprint_name, url_prefix_match[1])
               end
             end
           end
@@ -750,17 +748,17 @@ module Analyzer::Python
       # Update the API instances with the blueprint prefixes
       own_api_instances = clone_path_api_instances(state.path_api_instances)
       state.register_blueprint.each do |path, blueprint_info|
-        blueprint_info.each do |blueprint_name, blueprint_prefix|
+        blueprint_info.each do |blueprint_name, registered_prefixes|
           if state.path_api_instances.has_key?(path)
             api_instances = state.path_api_instances[path]
             # Flask's `BlueprintSetupState` uses the registration's
             # url_prefix in place of the blueprint's own one; it falls
             # back to the own prefix only when url_prefix is omitted.
-            api_instances[blueprint_name] = blueprint_prefix
+            api_instances[blueprint_name] = registered_prefixes.first
           end
         end
       end
-      apply_nested_blueprint_prefixes(state.path_api_instances, own_api_instances, state.blueprint_mounts)
+      apply_nested_blueprint_prefixes(state.path_api_instances, own_api_instances, state.blueprint_mounts, state.register_blueprint)
     end
 
     # Emit endpoints for the `@<router>.route(...)`-style decorators
@@ -775,8 +773,10 @@ module Analyzer::Python
           api_instances = state.path_api_instances[path]
           route_base_path = python_base_path_for(path)
           namespace_prefix = state.namespace_prefixes[{route_base_path, router_name}]?
+          prefixes = nil
           if api_instances.has_key?(router_name)
             prefix = api_instances[router_name]
+            prefixes = route_prefixes(state.register_blueprint, path, router_name, prefix)
           elsif namespace_prefix
             # flask-restx namespace whose `add_namespace(...)` (with the
             # blueprint url_prefix) was resolved in a different file.
@@ -852,7 +852,7 @@ module Analyzer::Python
             # decorator's synthesized `methods=['GET']` default must not
             # override it (function routers still honour `methods=`).
             method_extra_params = is_class_router ? "" : extra_params
-            get_endpoints(method, route_path, method_extra_params, codeblock_lines, prefix).each do |endpoint|
+            (prefixes || [prefix]).flat_map { |p| get_endpoints(method, route_path, method_extra_params, codeblock_lines, p) }.each do |endpoint|
               details = Details.new(PathInfo.new(path, line_index + 1))
               endpoint.details = details
 
@@ -897,6 +897,7 @@ module Analyzer::Python
 
           api_instances = state.path_api_instances[path]
           prefix = api_instances.has_key?(router_name) ? api_instances[router_name] : ""
+          prefixes = route_prefixes(state.register_blueprint, path, router_name, prefix)
 
           # Try to use parser to find class definition, otherwise assume same file
           class_file = path
@@ -962,28 +963,31 @@ module Analyzer::Python
             next if codeblock.nil?
             codeblock_lines = codeblock.split("\n")
 
-            # Generate endpoint with parameters
-            route_url = "#{prefix}#{route_path}"
-            route_url = "/#{route_url}" unless route_url.starts_with?("/")
-            route_url = route_url.gsub("//", "/")
-
             # Extract parameters from method body
             suspicious_params = extract_request_params(codeblock_lines)
             params = get_filtered_params(http_method, suspicious_params)
-            details = Details.new(PathInfo.new(class_file, method_def_index + 1))
-            endpoint = Endpoint.new(route_url, http_method, params)
-            endpoint.details = details
 
-            push_callees_from(
-              endpoint,
-              codeblock,
-              method_def_index,
-              class_file,
-              definition_base_path: python_base_path_for(class_file),
-              source: fetch_file_content(class_file),
-            )
+            prefixes.each do |route_prefix|
+              # Generate endpoint with parameters
+              route_url = "#{route_prefix}#{route_path}"
+              route_url = "/#{route_url}" unless route_url.starts_with?("/")
+              route_url = route_url.gsub("//", "/")
 
-            result << endpoint
+              details = Details.new(PathInfo.new(class_file, method_def_index + 1))
+              endpoint = Endpoint.new(route_url, http_method, params.dup)
+              endpoint.details = details
+
+              push_callees_from(
+                endpoint,
+                codeblock,
+                method_def_index,
+                class_file,
+                definition_base_path: python_base_path_for(class_file),
+                source: fetch_file_content(class_file),
+              )
+
+              result << endpoint
+            end
           end
         end
       end

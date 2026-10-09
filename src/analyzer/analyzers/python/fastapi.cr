@@ -127,9 +127,9 @@ module Analyzer::Python
       fastapi_base_paths = fastapi_project_roots(fastapi_app_instances)
 
       begin
-        # Seed prefix configuration from every FastAPI app instance,
-        # sharing one `visited` set so a router included by more than
-        # one app is configured exactly once.
+        # Seed prefix configuration from every FastAPI app instance. A
+        # router included more than once (two prefixes, or two parents)
+        # collects one mounted prefix per inclusion path.
         prefix_visited = Set(::String).new
         fastapi_app_instances.each do |app_file, app_instance|
           app_base_path = fastapi_base_path_for(app_file, fastapi_base_paths)
@@ -142,7 +142,7 @@ module Analyzer::Python
           definition_base_path = python_base_path_for(path)
           import_modules = find_fastapi_imported_modules(import_base_path, path, source)
           codelines = source.split("\n")
-          router_map.each do |instance_name, router_class|
+          router_map.flat_map { |name, registered| registered.mounts.map { |router| {name, router} } }.each do |instance_name, router_class|
             codelines.each_with_index do |line, index|
               next if line.lstrip.starts_with?("#")
 
@@ -419,12 +419,16 @@ module Analyzer::Python
       include_router_map[file].each do |instance_name, router_class|
         next if target_instance_name && instance_name != target_instance_name
 
-        # Each (file, router) is configured at most once. Without this
-        # guard the new local-router recursion below (and any app that
-        # includes the same router from two parents) would re-prepend
-        # the inherited prefix and could recurse forever on a cyclic
-        # include graph.
-        next unless visited.add?("#{file}::#{instance_name}")
+        # `visited` holds two kinds of key. The bare router key marks the
+        # routers on the current include path, so a cyclic include graph
+        # stops instead of recursing forever. The router + inherited
+        # prefix key memoises each configuration, so a router included
+        # under two prefixes is configured once per prefix while a
+        # diamond-shaped include graph is not re-walked once per path.
+        visit_key = "#{file}::#{instance_name}"
+        next if visited.includes?(visit_key)
+        next unless visited.add?("#{visit_key}\0#{router_prefix}")
+        visited.add(visit_key)
 
         # PREPEND the inherited prefix to the router's own. The
         # initial pass captures `APIRouter(prefix="/users")`, so
@@ -436,7 +440,8 @@ module Analyzer::Python
         # `items.router` both declare `prefix=...` at construction
         # time, but their routes were surfacing without the
         # `/users` / `/items` segment.
-        router_class.prefix = combine_router_prefixes(router_prefix, router_class.prefix)
+        mounted = Router.new(combine_router_prefixes(router_prefix, router_class.prefix))
+        router_class.mounted_prefixes << mounted.prefix unless router_class.mounted_prefixes.includes?(mounted.prefix)
 
         # Parse `{app}.include_router(...)` calls. Real FastAPI apps
         # often use keyword form (`router=users.router`) and nested
@@ -469,7 +474,7 @@ module Analyzer::Python
           end
 
           # Register router's prefix recursively
-          prefix = router_class.join(prefix)
+          prefix = mounted.join(prefix)
           if router_instance_name.count(".") == 0
             if include_router_map[file].has_key?(router_instance_name)
               # A router included from the SAME file (e.g. dispatch's
@@ -507,6 +512,7 @@ module Analyzer::Python
             configure_router_prefix(import_module_path, include_router_map, app_base_path, prefix, imported_router_instance_name, visited)
           end
         end
+        visited.delete(visit_key)
       end
     end
 
@@ -1374,8 +1380,18 @@ module Analyzer::Python
   # Router class for handling URL prefix joining
   class Router
     property prefix : ::String
+    # Effective prefixes this router is served under, one per inclusion
+    # path from an app (`include_router(r, prefix="/v1")` and again under
+    # "/v2" gives two). Empty when no app includes it.
+    getter mounted_prefixes = [] of ::String
 
     def initialize(@prefix : ::String)
+    end
+
+    # One router per mounted prefix, or itself when never included.
+    def mounts : Array(Router)
+      return [self] if @mounted_prefixes.empty?
+      @mounted_prefixes.map { |mounted_prefix| Router.new(mounted_prefix) }
     end
 
     def join(url : ::String) : ::String
