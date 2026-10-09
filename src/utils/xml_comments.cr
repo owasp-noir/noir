@@ -12,31 +12,50 @@ module Noir::XmlComments
   # `content` with each `<!-- ... -->` replaced by the newlines it spanned,
   # so line numbers still match the source. An unterminated `<!--` runs to
   # the end of the document, as an XML parser reads it. CDATA sections pass
-  # through untouched: a `<!--` inside one is text, not a comment.
+  # through untouched: a `<!--` inside one is text, not a comment. So do
+  # processing instructions and the DOCTYPE (an entity value may hold a
+  # `<!--`); a comment inside the internal subset is left for libxml2.
   def self.strip(content : String) : String
-    open = content.byte_index("<!--")
-    return content unless open
+    return content unless content.includes?("<!--")
 
-    cdata = content.byte_index("<![CDATA[")
+    bytes = content.to_slice
     String.build(content.bytesize) do |io|
       pos = 0
-      while open
-        if cdata && cdata < open
-          close = content.byte_index("]]>", cdata + 9)
-          stop = close ? close + 3 : content.bytesize
-          io.write(content.to_slice[pos, stop - pos])
+      cursor = 0
+      while lt = content.byte_index('<', cursor)
+        if at?(bytes, lt, "<!--")
+          io.write(bytes[pos, lt - pos])
+          stop = past(content, "-->", lt + 4)
+          bytes[lt, stop - lt].each { |byte| io.write_byte(byte) if byte == 10 }
+          pos = cursor = stop
+        elsif at?(bytes, lt, "<![CDATA[")
+          cursor = past(content, "]]>", lt + 9)
+        elsif at?(bytes, lt, "<?")
+          cursor = past(content, "?>", lt + 2)
+        elsif at?(bytes, lt, "<!DOCTYPE")
+          # Up to the first `[` or `>` only: searching for each separately
+          # rescans the file from every repeated `<!DOCTYPE`.
+          i = lt + 9
+          while i < bytes.size && bytes[i] != '['.ord && bytes[i] != '>'.ord
+            i += 1
+          end
+          cursor = i < bytes.size && bytes[i] == '['.ord ? past(content, "]>", i) : i + 1
         else
-          io.write(content.to_slice[pos, open - pos])
-          close = content.byte_index("-->", open + 4)
-          stop = close ? close + 3 : content.bytesize
-          content.to_slice[open, stop - open].each { |byte| io.write_byte(byte) if byte == 10 }
+          cursor = lt + 1
         end
-        pos = stop
-        cdata = content.byte_index("<![CDATA[", pos) if cdata && cdata < pos
-        open = content.byte_index("<!--", pos)
       end
-      io.write(content.to_slice[pos, content.bytesize - pos])
+      io.write(bytes[pos, bytes.size - pos])
     end
+  end
+
+  private def self.at?(bytes : Bytes, index : Int32, token : String) : Bool
+    index + token.bytesize <= bytes.size && bytes[index, token.bytesize] == token.to_slice
+  end
+
+  # Byte offset just past the next `token` from `from`, or the end.
+  private def self.past(content : String, token : String, from : Int32) : Int32
+    found = content.byte_index(token, from)
+    found ? found + token.bytesize : content.bytesize
   end
 
   # `XML.parse` on the comment-free document.

@@ -15,6 +15,16 @@ describe Noir::XmlComments do
     Noir::XmlComments.strip(xml).should eq("<r><![CDATA[<!-- body -->]]><s/></r>")
   end
 
+  # Read as comment openers, these swallowed the rest of the document.
+  it "leaves comment markers inside processing instructions and the DOCTYPE alone" do
+    pi = "<?pi <!-- ?><r><!-- c --><s>x</s></r>"
+    Noir::XmlComments.strip(pi).should eq("<?pi <!-- ?><r><s>x</s></r>")
+
+    doctype = %(<!DOCTYPE r [<!ENTITY e "<!--">]><r><!-- c --><s>x</s></r>)
+    Noir::XmlComments.strip(doctype).should eq(%(<!DOCTYPE r [<!ENTITY e "<!--">]><r><s>x</s></r>))
+    Noir::XmlComments.parse(doctype).xpath_string("string(//s)").should eq("x")
+  end
+
   it "returns comment-free input unchanged" do
     Noir::XmlComments.strip("<a><b/></a>").should eq("<a><b/></a>")
   end
@@ -30,5 +40,8 @@ describe Noir::XmlComments do
       Noir::XmlComments.parse(openers).xpath_string("string(//s)").should eq("x")
     end
     elapsed.should be < 2.seconds
+
+    repeated = "<!-- c -->" + "<!DOCTYPE <?" * 200_000
+    Time.measure { Noir::XmlComments.strip(repeated) }.should be < 1.second
   end
 end
