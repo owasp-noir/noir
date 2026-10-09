@@ -49,6 +49,8 @@ sort_by = "weight"
 | HTTP / REST Client (.http/.rest) | HTTP | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ |
 | HTTP / REST Client (.http/.rest) | REST | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ |
 | Hasura (metadata) | YAML | ☑️ | ☑️ | ✗ | ☑️ | ☑️ | ✗ | ✗ |
+| Hoppscotch | JSON | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ |
+| Hurl | HURL | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ |
 | Insomnia | JSON | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ |
 | Insomnia | YAML | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ |
 | Istio VirtualService | YAML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
@@ -78,6 +80,7 @@ sort_by = "weight"
 | Supabase / PostgREST (migrations) | SQL | ☑️ | ☑️ | ☑️ | ✗ | ☑️ | ☑️ | ✗ |
 | Terraform | TF | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Terraform | JSON | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| Thunder Client | JSON | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ |
 | Traefik Dynamic Config | YAML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Traefik Dynamic Config | TOML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | TypeSpec | TYPESPEC | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ |
