@@ -154,6 +154,31 @@ describe "OutputBuilderMarkdownTable" do
     cell.should eq("| GET /a\\`b\\`c | http | - |")
   end
 
+  it "escapes link, image and emphasis syntax in a text cell" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderMarkdownTable.new(options)
+    builder.io = IO::Memory.new
+
+    # Rendered in a PR comment these were a live link, an embedded image and
+    # bold/italic/strikethrough text.
+    builder.print([
+      Endpoint.new("/a/[Approve](https://evil.example/login)", "GET"),
+      Endpoint.new("/b/![x](https://evil.example/p.png)", "GET"),
+      Endpoint.new("/c/*bold*_it_~~s~~", "GET"),
+    ])
+    lines = builder.io.to_s.split("\n")
+
+    lines[2].should eq("| GET /a/\\[Approve\\](https://evil.example/login) | http | - |")
+    lines[3].should eq("| GET /b/!\\[x\\](https://evil.example/p.png) | http | - |")
+    lines[4].should eq("| GET /c/\\*bold\\*\\_it\\_\\~\\~s\\~\\~ | http | - |")
+  end
+
   it "renders a placeholder for an endpoint with no params" do
     options = {
       "debug"   => YAML::Any.new(false),
