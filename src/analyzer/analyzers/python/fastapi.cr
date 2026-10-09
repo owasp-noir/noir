@@ -419,14 +419,16 @@ module Analyzer::Python
       include_router_map[file].each do |instance_name, router_class|
         next if target_instance_name && instance_name != target_instance_name
 
-        # `visited` holds the routers on the current include path, so a
-        # cyclic include graph stops instead of recursing forever, while
-        # a router reached again by another path (included under two
-        # prefixes) is configured once per path.
-        # ponytail: one walk per include path; a deep diamond-shaped
-        # include graph is exponential, memoise on (router, prefix) if seen.
+        # `visited` holds two kinds of key. The bare router key marks the
+        # routers on the current include path, so a cyclic include graph
+        # stops instead of recursing forever. The router + inherited
+        # prefix key memoises each configuration, so a router included
+        # under two prefixes is configured once per prefix while a
+        # diamond-shaped include graph is not re-walked once per path.
         visit_key = "#{file}::#{instance_name}"
-        next unless visited.add?(visit_key)
+        next if visited.includes?(visit_key)
+        next unless visited.add?("#{visit_key}\0#{router_prefix}")
+        visited.add(visit_key)
 
         # PREPEND the inherited prefix to the router's own. The
         # initial pass captures `APIRouter(prefix="/users")`, so
