@@ -76,35 +76,41 @@ module Analyzer::Rust
           next if seen.includes?(byte)
           seen.add(byte)
 
-          # `warp::path("api").and(backend(config)).or(frontend())` is a
-          # mount/combinator, not a leaf — its real routes live in the
-          # mounted fns (emitted with the composed prefix). Skip it so we
-          # don't surface a phantom `/api`.
-          next if composition_root?(value, source, mounts[:route_fns])
+          # `a.or(b)` is two routes, not one: build each alternative on
+          # its own so their path segments and verbs don't merge.
+          or_alternatives(value, source).each do |branch|
+            next unless warp_chain?(branch, source)
 
-          endpoint = build_endpoint(value, source, path, Noir::TreeSitter.node_start_row(value) + 1)
-          next unless endpoint
+            # `warp::path("api").and(backend(config))` is a mount, not a
+            # leaf — its real routes live in the mounted fns (emitted with
+            # the composed prefix). Skip it so we don't surface a phantom
+            # `/api`.
+            next if composition_root?(branch, source, mounts[:route_fns])
 
-          if include_callee
-            handler_name = find_handler_name(value, source)
-            if handler_name
-              if handler_fn = function_for_handler(function_index, handler_name)
-                attach_handler_callees(handler_fn, source, path, endpoint)
-              else
-                attach_external_handler_callees(handler_name, path, endpoint)
+            endpoint = build_endpoint(branch, source, path, Noir::TreeSitter.node_start_row(branch) + 1)
+            next unless endpoint
+
+            if include_callee
+              handler_name = find_handler_name(branch, source)
+              if handler_name
+                if handler_fn = function_for_handler(function_index, handler_name)
+                  attach_handler_callees(handler_fn, source, path, endpoint)
+                else
+                  attach_external_handler_callees(handler_name, path, endpoint)
+                end
               end
             end
-          end
 
-          prefixes = enclosing_mount_prefixes(value, mounts[:mount_prefix], mounts[:fn_ranges])
-          if prefixes.empty?
-            endpoints << endpoint
-          else
-            base_url = endpoint.url
-            prefixes.each do |pfx|
-              ep = endpoint
-              ep.url = filter_chain_join(pfx, base_url)
-              endpoints << ep
+            prefixes = enclosing_mount_prefixes(branch, mounts[:mount_prefix], mounts[:fn_ranges])
+            if prefixes.empty?
+              endpoints << endpoint
+            else
+              base_url = endpoint.url
+              prefixes.each do |pfx|
+                ep = endpoint
+                ep.url = filter_chain_join(pfx, base_url)
+                endpoints << ep
+              end
             end
           end
         end
@@ -159,6 +165,38 @@ module Analyzer::Rust
       end
 
       {route_fns: route_fns, mount_prefix: mount_prefix, fn_ranges: fn_ranges}
+    end
+
+    # Split a filter chain on the `.or(..)` calls along its receiver spine:
+    # `a.or(b).or(c).recover(h)` → `[a, b, c]`. Combinators after the last
+    # `.or` (`.recover`, `.with`, `.boxed`) add no path or verb, so they
+    # are dropped. An `.or` nested inside an argument (`.and(get().or(head()))`)
+    # is not on the spine and stays part of its branch. A chain without
+    # `.or` is returned as-is.
+    private def or_alternatives(value : LibTreeSitter::TSNode, source : String) : Array(LibTreeSitter::TSNode)
+      branches = [] of LibTreeSitter::TSNode
+      pending = [value]
+      while node = pending.shift?
+        left = nil.as(LibTreeSitter::TSNode?)
+        rights = [] of LibTreeSitter::TSNode
+        cur = node
+        while Noir::TreeSitter.node_type(cur) == "call_expression" && (recv = warp_receiver(cur))
+          if warp_field_name(cur, source) == "or"
+            left = recv
+            if (args = Noir::TreeSitter.field(cur, "arguments")) && (alt = Noir::TreeSitter.first_named_child(args))
+              rights.unshift(alt)
+            end
+          end
+          cur = recv
+        end
+        if left
+          # Alternatives may themselves be `x.or(y)` chains.
+          pending = [left] + rights + pending
+        else
+          branches << node
+        end
+      end
+      branches
     end
 
     # True when `value` combines a local route-bearing fn via `.and(fn())`
