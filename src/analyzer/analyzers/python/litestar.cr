@@ -22,7 +22,12 @@ module Analyzer::Python
     DECORATOR_PATH_KW_REGEX   = /path\s*=\s*[rf]?['"]([^'"]*)['"]/
     DECORATOR_PATH_LIST_REGEX = /^\s*\[([^\]]*)\]/
     DECORATOR_PATH_LIST_KW_RE = /path\s*=\s*\[([^\]]*)\]/
-    HTTP_METHOD_KW_REGEX      = /http_method\s*=\s*(?:\[([^\]]*)\]|['"]([^'"]+)['"])/
+    HTTP_METHOD_KW_REGEX      = /http_method\s*=\s*(?:[\[(]([^\])]*)[\])]|['"]([^'"]+)['"]|HttpMethod\.([A-Za-z]+))/
+    # One verb in an `http_method=[...]` list: `"POST"` or `HttpMethod.POST`.
+    HTTP_METHOD_ITEM_REGEX = /['"]([A-Za-z]+)['"]|HttpMethod\.([A-Za-z]+)/
+    # `Parameter(header="X-Token")` / `cookie=` / `query=`: the location
+    # and wire name, in a default or an `Annotated[...]` hint.
+    PARAMETER_LOCATION_REGEX = /\bParameter\s*\([^)]*?\b(header|cookie|query)\s*=\s*[rf]?['"]([^'"]+)['"]/
     # Router(path="/prefix", route_handlers=[...])
     ROUTER_REGEX = /(#{PYTHON_VAR_NAME_REGEX})\s*=\s*Router\s*\(([^)]*)\)/m
     # Path param: {name} or {name:type}. Litestar uses the :type suffix
@@ -116,8 +121,8 @@ module Analyzer::Python
             http_match = body.match(HTTP_METHOD_KW_REGEX)
             if http_match
               if list_content = http_match[1]?
-                list_content.scan(/['"]([A-Za-z]+)['"]/) { |m| methods << m[1].upcase }
-              elsif single_method = http_match[2]?
+                list_content.scan(HTTP_METHOD_ITEM_REGEX) { |m| methods << (m[1]? || m[2]).upcase }
+              elsif single_method = http_match[2]? || http_match[3]?
                 methods << single_method.upcase
               end
             end
@@ -432,6 +437,11 @@ module Analyzer::Python
           next if litestar_dependency_param?(fp)
 
           type_hint = fp.type.strip
+          if location = "#{type_hint} #{fp.default}".match(PARAMETER_LOCATION_REGEX)
+            add_unique(params, Param.new(location[2], "", location[1]))
+            next
+          end
+
           param_type = classify_param(type_hint)
           next if param_type.nil?
 
