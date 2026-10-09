@@ -117,8 +117,7 @@ module NoirTaggers
     # the selected ones in registry order, which is user-visible: tags are
     # appended in the order taggers run and nothing sorts them before
     # output. A single tagger raising must not abort the rest of the pass
-    # (or, for framework taggers below, tear down the whole program from
-    # inside a fiber) — degrade to "this tagger failed".
+    # (here or in the framework pass below) — degrade to "this tagger failed".
     PLAIN_ENTRIES.each do |entry|
       next unless is_all || use_taggers_arr.includes?(entry.key)
       begin
