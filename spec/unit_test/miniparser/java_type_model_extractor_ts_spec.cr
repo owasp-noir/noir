@@ -34,6 +34,19 @@ describe Noir::TreeSitterJavaTypeModel do
     types[1].supertypes.should eq ["CrudRepository<Person, Long>"]
   end
 
+  it "resolves same-file constants, skips comments and drops unresolved constants" do
+    source = <<-JAVA
+      @Route(value = V.BASE + "/x", // main
+        layout = L.class)
+      @RouteAlias(Routes.OTHER)
+      class V { static final String BASE = "admin"; }
+      JAVA
+
+    decl = Noir::TreeSitterJavaTypeModel.extract(source).first
+    decl.annotation("Route").not_nil!.string.should eq "admin/x"
+    decl.annotation("RouteAlias").not_nil!.strings.should be_empty
+  end
+
   it "splits top-level type arguments" do
     Noir::TreeSitterJavaTypeModel.type_arguments("Repo<Person, Map<K, V>>").should eq ["Person", "Map<K, V>"]
     Noir::TreeSitterJavaTypeModel.type_arguments("Repo").should be_empty

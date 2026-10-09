@@ -8,13 +8,20 @@ import org.springframework.data.rest.core.annotation.RestResource;
 
 // No annotation: exported by default at the pluralized entity name.
 public interface OrderRepository extends CrudRepository<Order, Long> {
+  // Hiding DELETE takes both delete methods.
   @Override
   @RestResource(exported = false)
   void deleteById(Long id);
+
+  @Override
+  @RestResource(exported = false)
+  void delete(Order entity);
 
   @RestResource(path = "byStatus")
   List<Order> findByStatus(@Param("status") String status, Pageable pageable);
 
   @RestResource(exported = false)
   List<Order> findByInternalNote(String note);
+
+  long deleteByStatus(@Param("status") String status);
 }

@@ -16,7 +16,7 @@ expected_endpoints = [
   Endpoint.new("/people/{id}", "DELETE", [Param.new("id", "", "path")]),
   Endpoint.new("/people/search", "GET"),
   Endpoint.new("/people/search/findByLastName", "GET", [Param.new("name", "", "query")]),
-  # Unannotated: pluralized entity path; deleteById exported = false drops DELETE.
+  # Unannotated: pluralized entity path; delete + deleteById exported = false drop DELETE.
   Endpoint.new("/orders", "GET", page_params),
   Endpoint.new("/orders", "POST", order_body),
   Endpoint.new("/orders/{id}", "GET"),
@@ -24,6 +24,11 @@ expected_endpoints = [
   Endpoint.new("/orders/{id}", "PATCH", order_body),
   Endpoint.new("/orders/search", "GET"),
   Endpoint.new("/orders/search/byStatus", "GET", [Param.new("status", "", "query")] + page_params),
+  Endpoint.new("/orders/search/deleteByStatus", "GET", [Param.new("status", "", "query")]),
+  # Selective exposure through a @NoRepositoryBean base that extends Repository.
+  Endpoint.new("/tags/{id}", "GET"),
+  Endpoint.new("/tags/search", "GET"),
+  Endpoint.new("/tags/search/findByName", "GET", [Param.new("name", "", "query")]),
   # Read-only Repository: only declared finders.
   Endpoint.new("/categories", "GET", page_params),
   Endpoint.new("/categories/{id}", "GET"),

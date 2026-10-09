@@ -1,4 +1,5 @@
 require "../ext/tree_sitter/tree_sitter"
+require "./java_route_extractor_ts"
 
 module Noir
   # Framework-neutral model of the types a Java file declares: each
@@ -77,20 +78,30 @@ module Noir
 
     def extract_from(root : LibTreeSitter::TSNode, source : String) : Array(TypeDecl)
       types = [] of TypeDecl
-      Noir::TreeSitter.walk(root) do |node|
-        kind = case Noir::TreeSitter.node_type(node)
+      constants = TreeSitterJavaRouteExtractor.extract_string_constants_from(root, source)
+      collect_types(root, source, constants, types)
+      types
+    end
+
+    # Type declarations at the top level and nested in type bodies; method
+    # bodies are never entered.
+    private def collect_types(node : LibTreeSitter::TSNode, source : String, constants : Hash(String, String), types : Array(TypeDecl))
+      Noir::TreeSitter.each_named_child(node) do |child|
+        kind = case Noir::TreeSitter.node_type(child)
                when "class_declaration"     then "class"
                when "interface_declaration" then "interface"
                end
         next unless kind
-        next unless name_node = Noir::TreeSitter.field(node, "name")
+        next unless name_node = Noir::TreeSitter.field(child, "name")
 
-        modifiers, annotations = modifiers_of(node, source)
+        modifiers, annotations = modifiers_of(child, source, constants)
         types << TypeDecl.new(kind, Noir::TreeSitter.node_text(name_node, source),
-          Noir::TreeSitter.node_start_row(node), modifiers, annotations,
-          supertypes_of(node, source), methods_of(node, source))
+          Noir::TreeSitter.node_start_row(child), modifiers, annotations,
+          supertypes_of(child, source), methods_of(child, source, constants))
+        if body = Noir::TreeSitter.field(child, "body")
+          collect_types(body, source, constants, types)
+        end
       end
-      types
     end
 
     # Simple name of a type text: generics, package and leading
@@ -153,7 +164,7 @@ module Noir
       end
     end
 
-    private def methods_of(decl : LibTreeSitter::TSNode, source : String) : Array(Method)
+    private def methods_of(decl : LibTreeSitter::TSNode, source : String, constants : Hash(String, String)) : Array(Method)
       methods = [] of Method
       return methods unless body = Noir::TreeSitter.field(decl, "body")
 
@@ -161,14 +172,14 @@ module Noir
         next unless Noir::TreeSitter.node_type(member) == "method_declaration"
         next unless name_node = Noir::TreeSitter.field(member, "name")
 
-        modifiers, annotations = modifiers_of(member, source)
+        modifiers, annotations = modifiers_of(member, source, constants)
         methods << Method.new(Noir::TreeSitter.node_text(name_node, source),
-          Noir::TreeSitter.node_start_row(name_node), modifiers, annotations, params_of(member, source))
+          Noir::TreeSitter.node_start_row(name_node), modifiers, annotations, params_of(member, source, constants))
       end
       methods
     end
 
-    private def params_of(method : LibTreeSitter::TSNode, source : String) : Array(MethodParam)
+    private def params_of(method : LibTreeSitter::TSNode, source : String, constants : Hash(String, String)) : Array(MethodParam)
       params = [] of MethodParam
       return params unless list = Noir::TreeSitter.field(method, "parameters")
 
@@ -178,7 +189,7 @@ module Noir
         type_node = Noir::TreeSitter.field(param, "type")
         next unless name_node && type_node
 
-        _, annotations = modifiers_of(param, source)
+        _, annotations = modifiers_of(param, source, constants)
         params << MethodParam.new(Noir::TreeSitter.node_text(name_node, source),
           Noir::TreeSitter.node_text(type_node, source), annotations)
       end
@@ -188,7 +199,7 @@ module Noir
     # Keyword modifiers (`public`, `static`, ...) and annotations of a
     # declaration. Keywords are anonymous children, so they need the
     # unnamed-child walk; the node holds a handful of children at most.
-    private def modifiers_of(decl : LibTreeSitter::TSNode, source : String) : Tuple(Array(String), Array(Annotation))
+    private def modifiers_of(decl : LibTreeSitter::TSNode, source : String, constants : Hash(String, String)) : Tuple(Array(String), Array(Annotation))
       keywords = [] of String
       annotations = [] of Annotation
       Noir::TreeSitter.each_named_child(decl) do |child|
@@ -198,7 +209,7 @@ module Noir
           item = LibTreeSitter.ts_node_child(child, i.to_u32)
           case type = Noir::TreeSitter.node_type(item)
           when "annotation", "marker_annotation"
-            annotations << annotation_of(item, source)
+            annotations << annotation_of(item, source, constants)
           else
             keywords << type unless LibTreeSitter.ts_node_is_named(item)
           end
@@ -207,33 +218,49 @@ module Noir
       {keywords, annotations}
     end
 
-    private def annotation_of(node : LibTreeSitter::TSNode, source : String) : Annotation
+    private def annotation_of(node : LibTreeSitter::TSNode, source : String, constants : Hash(String, String)) : Annotation
       name = Noir::TreeSitter.field(node, "name").try { |n| Noir::TreeSitter.node_text(n, source).split('.').last } || ""
       values = Hash(String, Array(String)).new
       if args = Noir::TreeSitter.field(node, "arguments")
         Noir::TreeSitter.each_named_child(args) do |arg|
-          if Noir::TreeSitter.node_type(arg) == "element_value_pair"
+          case Noir::TreeSitter.node_type(arg)
+          when "line_comment", "block_comment"
+            next
+          when "element_value_pair"
             key = Noir::TreeSitter.field(arg, "key")
             value = Noir::TreeSitter.field(arg, "value")
-            values[Noir::TreeSitter.node_text(key, source)] = element_values(value, source) if key && value
+            values[Noir::TreeSitter.node_text(key, source)] = element_values(value, source, constants) if key && value
           else
-            values["value"] = element_values(arg, source)
+            values["value"] = element_values(arg, source, constants)
           end
         end
       end
       Annotation.new(name, values, Noir::TreeSitter.node_start_row(node))
     end
 
-    private def element_values(node : LibTreeSitter::TSNode, source : String) : Array(String)
+    # A constant that does not resolve within the file yields nothing, so a
+    # `Routes.ADMIN` never reaches a URL as literal text.
+    private def element_values(node : LibTreeSitter::TSNode, source : String, constants : Hash(String, String)) : Array(String)
       case Noir::TreeSitter.node_type(node)
       when "element_value_array_initializer"
         values = [] of String
-        Noir::TreeSitter.each_named_child(node) { |item| values.concat(element_values(item, source)) }
+        Noir::TreeSitter.each_named_child(node) { |item| values.concat(element_values(item, source, constants)) }
         values
       when "string_literal"
         [Noir::TreeSitter.decode_string_literal(node, source)]
       when "class_literal"
         [Noir::TreeSitter.node_text(node, source).rchop(".class").strip]
+      when "identifier", "field_access", "scoped_identifier"
+        constants[Noir::TreeSitter.node_text(node, source)]?.try { |value| [value] } || [] of String
+      when "binary_expression"
+        # `descend` bounds the recursion on a long `"a" + "b" + ...` chain.
+        Noir::TreeSitter.descend do
+          left = Noir::TreeSitter.field(node, "left").try { |child| element_values(child, source, constants).first? }
+          right = Noir::TreeSitter.field(node, "right").try { |child| element_values(child, source, constants).first? }
+          ["#{left}#{right}"] if left && right
+        end || [] of String
+      when "line_comment", "block_comment"
+        [] of String
       else
         [Noir::TreeSitter.node_text(node, source)]
       end

@@ -365,8 +365,9 @@ module Analyzer::Java
     # outright and the module root resolved to a directory outside the
     # scan — `application.properties` was then never found and every
     # `server.servlet.context-path` prefix silently vanished.
-    # Default for includers; the ones with their own module layout
-    # (Helidon MP, Micronaut, ...) override it.
+    # Default for includers; JAX-RS, Quarkus and Helidon MP override it,
+    # and `JavaEngine.project_root_for` above is the absolute-path variant
+    # Micronaut and Dropwizard call.
     private def project_root_for(path : String) : String
       base = configured_base_for(path)
       relative = Noir::PathScope.base_relative(path, base)
