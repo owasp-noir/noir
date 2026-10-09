@@ -1035,8 +1035,8 @@ module Analyzer::AI
     end
 
     # Returns the reply's `list_key` array, or nil when the call failed or the
-    # reply is not a JSON object carrying that array (truncated, prose,
-    # `null`). Only a usable reply is cached: a stored truncation would be
+    # reply is not a JSON object (truncated, prose, `null`) or its list is
+    # not an array. Only a usable reply is cached: a stored truncation would be
     # replayed on every later scan as "no endpoints" without another request.
     private def call_llm_with_cache(kind : String, system_prompt : String, payload : String, format : String, adapter : LLM::Adapter, list_key : String) : Array(JSON::Any)?
       # Fold the system prompt into the cache key. The remote request
@@ -1079,8 +1079,14 @@ module Analyzer::AI
       items
     end
 
+    # A JSON object without the list, or with it null, is the model saying
+    # "nothing here" (`{}`), not a failed reply.
     private def reply_list(response : String, key : String) : Array(JSON::Any)?
-      JSON.parse(LLM.strip_json_fences(response)).as_h?.try(&.[key]?).try(&.as_a?)
+      object = JSON.parse(LLM.strip_json_fences(response)).as_h?
+      return if object.nil?
+      list = object[key]?
+      return [] of JSON::Any if list.nil? || list.raw.nil?
+      list.as_a?
     rescue JSON::ParseException
       nil
     end

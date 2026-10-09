@@ -160,7 +160,7 @@ describe Analyzer::AI::Unified do
     {
       "truncated"         => %({"endpoints":[{"url":"/users","method":"GET"},{"url":"/ord),
       "null"              => "null",
-      "a null list"       => %({"endpoints":null}),
+      "a string list"     => %({"endpoints":"none"}),
       "prose without one" => "I could not find any endpoints.",
     }.each do |label, reply|
       it "is reported as lost coverage when it is #{label}" do
@@ -224,6 +224,20 @@ describe Analyzer::AI::Unified do
 
         Noir::SkippedFiles.failures.should be_empty
         analyzer.__test_result.should be_empty
+      end
+    end
+
+    it "reads an empty object or a null list as nothing found" do
+      ["{}", %({"endpoints":null})].each do |reply|
+        without_llm_cache do
+          analyzer = ai_analyzer
+          bundle = LLM::Bundle.new("- File: \"blank.rb\"\n```\n# nothing\n```\n", 300, ["blank.rb"])
+
+          analyzer.__test_process_bundle(bundle, FixedReplyAdapter.new(reply))
+
+          Noir::SkippedFiles.failures.should be_empty
+          analyzer.__test_result.should be_empty
+        end
       end
     end
   end
