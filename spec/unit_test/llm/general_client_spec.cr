@@ -98,6 +98,20 @@ describe LLM::General do
       parsed["action"].as_s.should eq("finalize")
     end
 
+    it "uses the content when tool_calls is null" do
+      response = JSON.parse(%({"choices":[{"message":{"content":"{\\"action\\":\\"finalize\\"}","tool_calls":null}}]}))
+
+      JSON.parse(LLM::General.extract_agent_action(response))["action"].as_s.should eq("finalize")
+    end
+
+    it "accepts tool arguments sent as a JSON object, and null ones" do
+      object_args = JSON.parse(%({"choices":[{"message":{"tool_calls":[{"function":{"name":"grep","arguments":{"pattern":"route"}}}]}}]}))
+      JSON.parse(LLM::General.extract_agent_action(object_args))["args"]["pattern"].as_s.should eq("route")
+
+      null_args = JSON.parse(%({"choices":[{"message":{"tool_calls":[{"function":{"name":"grep","arguments":null}}]}}]}))
+      JSON.parse(LLM::General.extract_agent_action(null_args))["args"].as_h.should be_empty
+    end
+
     it "wraps malformed tool arguments as raw string" do
       response = build_tool_response("read_file", "{not-json")
 
