@@ -2,7 +2,6 @@ require "./taggers/*"
 require "./framework_taggers/**"
 require "../models/tagger"
 require "../models/framework_tagger"
-require "wait_group"
 
 module NoirTaggers
   # One tagger, as declared by its class's `Noir::TaggerFor` annotation.
@@ -141,33 +140,32 @@ module NoirTaggers
 
     is_all = use_taggers_arr.includes?("all")
 
-    # Collect tagger work items, then run in parallel
-    WaitGroup.wait do |wg|
-      FRAMEWORK_ENTRIES.each do |entry|
-        # The registry key is the tagger's `name`, so selection is decided
-        # before construction — an unselected tagger no longer pays for a
-        # logger and a base-path resolution just to be discarded.
-        next unless is_all || use_taggers_arr.includes?(entry.key)
+    # Sequentially, in registry order, like the plain taggers: several
+    # framework taggers target one tech (`ruby_auth` and `rails_security`
+    # both tag Rails endpoints) and append to the same shared tag arrays.
+    # They used to run one fiber each, so any blocking read reordered them
+    # and an endpoint's tags came out `auth, csrf-protection` on one run and
+    # `csrf-protection, auth` on the next. All fibers shared one thread, so
+    # the fan-out bought no parallelism.
+    FRAMEWORK_ENTRIES.each do |entry|
+      # The registry key is the tagger's `name`, so selection is decided
+      # before construction — an unselected tagger no longer pays for a
+      # logger and a base-path resolution just to be discarded.
+      next unless is_all || use_taggers_arr.includes?(entry.key)
 
-        matching_endpoints = [] of Endpoint
-        target_techs(entry.key).each do |tech|
-          if endpoints_by_tech.has_key?(tech)
-            matching_endpoints.concat(endpoints_by_tech[tech])
-          end
+      matching_endpoints = [] of Endpoint
+      target_techs(entry.key).each do |tech|
+        if endpoints_by_tech.has_key?(tech)
+          matching_endpoints.concat(endpoints_by_tech[tech])
         end
+      end
 
-        next if matching_endpoints.empty?
+      next if matching_endpoints.empty?
 
-        # Bind to local variables to ensure each fiber captures its own copy
-        local_instance = build(entry.key, options)
-        next if local_instance.nil?
-        local_endpoints = matching_endpoints
-
-        wg.spawn do
-          local_instance.perform(local_endpoints)
-        rescue ex
-          logger.warning "Framework tagger '#{local_instance.name}' failed: #{ex.message}"
-        end
+      begin
+        build(entry.key, options).try(&.perform(matching_endpoints))
+      rescue ex
+        logger.warning "Framework tagger '#{entry.key}' failed: #{ex.message}"
       end
     end
   end

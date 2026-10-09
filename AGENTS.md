@@ -165,7 +165,7 @@ Framework taggers detect framework-specific patterns (e.g., auth decorators, mid
    - Override `self.target_techs` to return matching technology strings (e.g., `["python_django"]`)
    - Override `perform(endpoints)` to check and tag endpoints
    - Use `read_file(path)` (cached) and `read_source_context(endpoint)` helpers
-2. Annotate the class: `@[Noir::TaggerFor(key: "{tagger_name}", name: "{Framework} Auth Tagger", desc: "…", order: 270)]` — same annotation and same rules as plain taggers above. Framework taggers run under a `WaitGroup`, so for them `order` only sequences `noir list taggers`.
+2. Annotate the class: `@[Noir::TaggerFor(key: "{tagger_name}", name: "{Framework} Auth Tagger", desc: "…", order: 270)]` — same annotation and same rules as plain taggers above. Framework taggers run sequentially after the plain ones, in `order`, so `order` also fixes the order their tags are appended.
 3. Add unit test: `spec/unit_test/tagger/framework_taggers/{tagger_name}_spec.cr`
 4. Add fixtures: `spec/functional_test/fixtures/{language}/{framework}_auth/`
 
