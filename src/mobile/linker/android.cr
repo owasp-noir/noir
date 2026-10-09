@@ -40,7 +40,10 @@ module NoirMobileLinker
       cls = handler_class(endpoint)
       next if cls.nil?
 
-      resolved = index.resolve(cls[:simple], cls[:package])
+      # The declaring manifest, so a class name shared by two apps in one
+      # repository resolves to the app the deep link belongs to.
+      manifest = endpoint.details.code_paths.first?.try(&.path)
+      resolved = index.resolve(cls[:simple], cls[:package], manifest)
       next unless resolved
 
       begin
@@ -296,13 +299,33 @@ module NoirMobileLinker
       @built = false
     end
 
-    def resolve(simple : String, package : String) : NamedTuple(path: String, lang: Symbol)?
+    # Among files declaring `simple` (in `package` when any match), the one
+    # sharing the longest directory prefix with `near` (the manifest).
+    def resolve(simple : String, package : String, near : String? = nil) : NamedTuple(path: String, lang: Symbol)?
       build unless @built
       entries = @index[simple]?
       return unless entries
 
-      entry = entries.find { |e| !package.empty? && e.package == package } || entries.first
+      candidates = package.empty? ? entries : entries.select { |e| e.package == package }
+      candidates = entries if candidates.empty?
+      entry = if near && candidates.size > 1
+                near_dir = File.dirname(near) + "/"
+                candidates.max_by { |e| shared_dir_bytes(e.path, near_dir) }
+              else
+                candidates.first
+              end
       {path: entry.path, lang: entry.lang}
+    end
+
+    # Bytes of the longest common prefix of `a` and `b` that ends at a `/`.
+    private def shared_dir_bytes(a : String, b : String) : Int32
+      i = 0
+      shared = 0
+      while i < a.bytesize && i < b.bytesize && a.byte_at(i) == b.byte_at(i)
+        i += 1
+        shared = i if a.byte_at(i - 1) == '/'.ord
+      end
+      shared
     end
 
     private def build
