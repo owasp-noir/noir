@@ -363,7 +363,7 @@ module Noir
         # registered via `chi.RegisterMethod`. gitea's `modules/web`
         # wrapper spells the same shape `m.Methods("GET, HEAD", "/x", h)`
         # with a comma-separated method list.
-        return ChiCall::MethodFunc if name == "MethodFunc" || name == "Methods"
+        return ChiCall::MethodFunc if name == "MethodFunc" || name == "Methods" || name == "Method"
         # `r.HandleFunc("/x", h)` / `r.Handle("/x", h)` — match every
         # HTTP method (chi fans these over the full method set).
         return ChiCall::HandleAll if name == "HandleFunc" || name == "Handle"
@@ -502,7 +502,7 @@ module Noir
       last
     end
 
-    # Decode `r.MethodFunc("GET", "/path", handler)` — chi's net/http
+    # Decode `r.MethodFunc("GET", "/path", handler)` / `r.Method(...)` — chi's net/http
     # registration whose FIRST string arg is the HTTP method and second
     # is the route path. The method may be a custom verb registered via
     # `chi.RegisterMethod` (LINK/WOOHOO/...), so it is emitted verbatim.
@@ -526,8 +526,10 @@ module Noir
       Noir::TreeSitter.each_named_child(args) do |arg|
         s = string_expr_text(arg, source, string_values)
         if method.nil?
-          # First arg must be a string method ("GET", "WOOHOO", ...).
-          return if s.nil?
+          # First arg is the method: a string ("GET", "WOOHOO", ...) or an
+          # `http.MethodDelete` constant.
+          s ||= decode_method_token(arg, source)
+          return if s.nil? || s.empty?
           method = s
         elsif raw_path.nil?
           return if s.nil?

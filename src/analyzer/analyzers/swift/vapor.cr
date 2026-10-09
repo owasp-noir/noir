@@ -15,6 +15,12 @@ module Analyzer::Swift
     # `self` (bare `grouped(...)`), or a single identifier (`router.grouped(...)`).
     GROUP_ASSIGN_PATTERN  = /\b(?:let|var)\s+([A-Za-z_]\w*)\s*=\s*(?:([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\.)?grouped\s*\(/
     GROUP_CLOSURE_PATTERN = /([A-Za-z_]\w*)\.group(?:ed)?\s*\(/
+    # `app.grouped("a").grouped("b")` — a group call chained onto the previous
+    # one; `app.grouped("a").get("b")` — a route verb called straight on a
+    # group expression.
+    CHAINED_GROUP_PATTERN = /^\s*\.group(?:ed)?\s*\(/
+    INLINE_GROUP_PATTERN  = /([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\.grouped\s*\(/
+    INLINE_VERB_PATTERN   = /^\s*\.(?:get|post|put|delete|patch|on)\s*\(/
 
     # A function parameter (or binding) typed as a Vapor router:
     # `func routes(_ app: Application)`, `func boot(routes: RoutesBuilder)`,
@@ -78,8 +84,9 @@ module Analyzer::Swift
         end
 
         begin
-          receiver, method, route_args = route
-          route_path = normalized_route_join(prefix_for_receiver(receiver, prefix_by_receiver), parse_route_path(route_args))
+          receiver, method, route_args, inline_prefix = route
+          group_prefix = normalized_route_join(prefix_for_receiver(receiver, prefix_by_receiver), inline_prefix)
+          route_path = normalized_route_join(group_prefix, parse_route_path(route_args))
 
           details = Details.new(PathInfo.new(path, index + 1))
           endpoint = Endpoint.new(route_path, method, details)
@@ -202,8 +209,22 @@ module Analyzer::Swift
       {body_lines.join("\n"), route_index + 1}
     end
 
-    private def route_parts(line : String, prefix_by_receiver : Hash(String, String)) : Tuple(String, String, String)?
+    # The last element is the prefix of a group expression the verb was called
+    # on directly (`app.grouped("a").get("b")`), "" otherwise.
+    private def route_parts(line : String, prefix_by_receiver : Hash(String, String)) : Tuple(String, String, String, String)?
       return unless route_definition_line?(line)
+
+      inline_prefix = ""
+      if group = line.match(INLINE_GROUP_PATTERN)
+        if chain = chain_prefix(line, "", group.end(0) || 0)
+          rest = line[(chain[1] + 1)..]? || ""
+          if rest.matches?(INLINE_VERB_PATTERN)
+            # Re-read the line as if the verb were called on the base receiver.
+            line = "#{line[0...(group.begin(0) || 0)]}#{group[1]}#{rest.lstrip}"
+            inline_prefix = chain[0]
+          end
+        end
+      end
 
       if match = line.match(ON_ROUTE_PATTERN)
         return unless router_like?(match[1], prefix_by_receiver)
@@ -215,7 +236,7 @@ module Analyzer::Swift
         method_match = route_args.match(/^\s*\.(GET|POST|PUT|DELETE|PATCH)\s*,(.*)$/)
         return unless method_match
 
-        return {match[1], method_match[1], method_match[2]}
+        return {match[1], method_match[1], method_match[2], inline_prefix}
       end
 
       if match = line.match(ROUTE_PATTERN)
@@ -224,7 +245,7 @@ module Analyzer::Swift
         args = call_arguments(line, match.end(0) || 0)
         return unless args
 
-        return {match[1], match[2].upcase, args[0]}
+        return {match[1], match[2].upcase, args[0], inline_prefix}
       end
 
       nil
@@ -266,11 +287,30 @@ module Analyzer::Swift
       # `base` is absent for an implicit-`self` `grouped(...)` (a RoutesBuilder
       # extension): the new group then inherits the empty root prefix.
       base_prefix = (base = match[2]?) ? prefix_for_receiver(base, prefix_by_receiver) : ""
-      args = call_arguments(line, match.end(0) || 0)
+      chain = chain_prefix(line, base_prefix, match.end(0) || 0)
+      return unless chain
+
+      prefix_by_receiver[variable] = chain[0]
+    end
+
+    # Accumulates the prefix of a `.grouped(...)`/`.group(...)` call and every
+    # group call chained onto it. `args_start` is just past the first call's
+    # `(`. Returns the joined prefix and the index of the last call's `)`.
+    private def chain_prefix(line : String, base_prefix : String, args_start : Int32) : Tuple(String, Int32)?
+      args = call_arguments(line, args_start)
       return unless args
 
-      prefix = parse_route_path(args[0])
-      prefix_by_receiver[variable] = normalized_route_join(base_prefix, prefix)
+      prefix = normalized_route_join(base_prefix, parse_route_path(args[0]))
+      close = args[1]
+      while (rest = line[(close + 1)..]?) && (next_call = rest.match(CHAINED_GROUP_PATTERN))
+        more = call_arguments(line, close + 1 + (next_call.end(0) || 0))
+        break unless more
+
+        prefix = normalized_route_join(prefix, parse_route_path(more[0]))
+        close = more[1]
+      end
+
+      {prefix, close}
     end
 
     private def register_group_closure(line : String,
@@ -281,15 +321,15 @@ module Analyzer::Swift
       return unless match
 
       base = match[1]
-      args = call_arguments(line, match.end(0) || 0)
-      return unless args
+      chain = chain_prefix(line, prefix_for_receiver(base, prefix_by_receiver), match.end(0) || 0)
+      return unless chain
 
-      after_call = line[(args[1] + 1)..]? || ""
+      after_call = line[(chain[1] + 1)..]? || ""
       closure_match = after_call.match(/^\s*\{\s*([A-Za-z_]\w*)\s+in/)
       return unless closure_match
 
       variable = closure_match[1]
-      prefix_by_receiver[variable] = normalized_route_join(prefix_for_receiver(base, prefix_by_receiver), parse_route_path(args[0]))
+      prefix_by_receiver[variable] = chain[0]
       group_prefix_stack << {variable, brace_depth + 1}
     end
 
