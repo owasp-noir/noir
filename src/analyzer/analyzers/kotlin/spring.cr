@@ -311,26 +311,23 @@ module Analyzer::Kotlin
 
     private def process_static_locations(src_path : String, static_locations : Array(String), webflux_base_path : String)
       static_locations.each do |location|
-        if location.starts_with?("classpath:")
-          resource_path = location.sub("classpath:", "").strip
-          full_resource_path = File.join(src_path, "main/resources", resource_path)
-          emit_static_files(full_resource_path, webflux_base_path) if Dir.exists?(full_resource_path)
-        elsif location.starts_with?("file:")
-          file_path = location.sub("file:", "").strip
-          next unless Dir.exists?(file_path)
-          # A `file:` location is an absolute (or CWD-relative) disk path
-          # taken verbatim from the app's own config, so it can point
-          # anywhere — `file:/etc/` made noir walk the machine's
-          # configuration directory and emit an endpoint per file, with
-          # absolute `code_paths` leaking the scanning machine's layout
-          # into a report that may be shared. The `classpath:` branch is
-          # rooted at `src_path` and has no such reach.
-          unless within_scan_base?(file_path)
-            logger.debug "Skipping static-location #{location}: resolves outside the scan base"
-            next
-          end
-          emit_static_files(file_path, webflux_base_path)
+        dir = if location.starts_with?("classpath:")
+                File.join(src_path, "main/resources", location.sub("classpath:", "").strip)
+              elsif location.starts_with?("file:")
+                location.sub("file:", "").strip
+              end
+        next unless dir && Dir.exists?(dir)
+        # The location comes verbatim from the app's own config, so it can
+        # point anywhere: `file:/etc/` is an absolute path, and a
+        # `classpath:/../../../x/` climbs out of `src/main/resources`.
+        # Walking it emitted an endpoint per file outside the scan, with
+        # `code_paths` leaking the scanning machine's layout into a report
+        # that may be shared.
+        unless within_scan_base?(dir)
+          logger.debug "Skipping static-location #{location}: resolves outside the scan base"
+          next
         end
+        emit_static_files(dir, webflux_base_path)
       end
     end
 
