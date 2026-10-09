@@ -251,4 +251,43 @@ describe Analyzer::Php::Laravel do
       FileUtils.rm_rf(temp_dir)
     end
   end
+
+  describe "array resources and singletons" do
+    it "expands apiResources/resources entries and singleton routes" do
+      temp_dir = File.tempname("laravel_test")
+      routes_dir = File.join(temp_dir, "routes")
+      Dir.mkdir_p(routes_dir)
+      temp_file = File.join(routes_dir, "web.php")
+
+      File.write(temp_file, <<-'PHP')
+        <?php
+        use Illuminate\Support\Facades\Route;
+
+        Route::apiResources(['photos' => PhotoController::class]);
+        Route::resources([
+            'tags' => TagController::class,
+        ], ['except' => ['create', 'edit']]);
+        Route::singleton('profile', ProfileController::class);
+        Route::apiSingleton('settings', SettingsController::class)->creatable();
+        Route::resource('items', ItemController::class, ['only' => ['index']]);
+        PHP
+
+      begin
+        # The analyzer leaves the leading `/` to the optimizer.
+        found = analyzer.analyze_file(temp_file).map { |e| "#{e.method} /#{e.url.lchop('/')} #{e.details.code_paths.first.line}" }
+        found.sort.should eq([
+          "DELETE /photos/{photo} 4", "GET /photos 4", "GET /photos/{photo} 4",
+          "PATCH /photos/{photo} 4", "POST /photos 4", "PUT /photos/{photo} 4",
+          "DELETE /tags/{tag} 6", "GET /tags 6", "GET /tags/{tag} 6",
+          "PATCH /tags/{tag} 6", "POST /tags 6", "PUT /tags/{tag} 6",
+          "GET /profile 8", "GET /profile/edit 8", "PATCH /profile 8", "PUT /profile 8",
+          "DELETE /settings 9", "GET /settings 9", "PATCH /settings 9",
+          "POST /settings 9", "PUT /settings 9",
+          "GET /items 10",
+        ].sort)
+      ensure
+        FileUtils.rm_rf(temp_dir)
+      end
+    end
+  end
 end

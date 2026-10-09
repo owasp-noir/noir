@@ -232,29 +232,22 @@ module Analyzer::Php
         emit_static_route(endpoints, ctx, route_match, chained_full_path(prefix, chain, route_path))
       end
 
-      # 2. Resource routes
-      resource_calls = extract_resource_route_calls(content, "resource", skip_ranges, lexer)
-      resource_calls.each do |call|
-        next if inside_laravel_group_body?(call.start_pos, route_groups) ||
-                inside_php_skip_range?(call.start_pos, skip_ranges)
+      # 2. Resource routes: `resource`/`apiResource`, their plural array forms
+      # (one resource per `'name' => Controller` entry, sharing the call's
+      # options) and the id-less `singleton`/`apiSingleton`.
+      RESOURCE_CALL_RES.each_key do |kind|
+        extract_resource_route_calls(content, kind, skip_ranges, lexer).each do |call|
+          next if inside_laravel_group_body?(call.start_pos, route_groups) ||
+                  inside_php_skip_range?(call.start_pos, skip_ranges)
 
-        resource_name = call.resource
-        route_line = base_line + newline_count_before(content, call.start_pos)
-        actions = resource_actions_for_statement(call.statement, api: false)
-        parameter_overrides = resource_parameter_overrides_for_statement(call.statement)
-        endpoints.concat(create_resource_endpoints(prefix, resource_name, file_path, route_line, actions, parameter_overrides, call.statement, include_callee, imports, resource_controller_cache))
-      end
-
-      api_resource_calls = extract_resource_route_calls(content, "apiResource", skip_ranges, lexer)
-      api_resource_calls.each do |call|
-        next if inside_laravel_group_body?(call.start_pos, route_groups) ||
-                inside_php_skip_range?(call.start_pos, skip_ranges)
-
-        resource_name = call.resource
-        route_line = base_line + newline_count_before(content, call.start_pos)
-        actions = resource_actions_for_statement(call.statement, api: true)
-        parameter_overrides = resource_parameter_overrides_for_statement(call.statement)
-        endpoints.concat(create_api_resource_endpoints(prefix, resource_name, file_path, route_line, actions, parameter_overrides, call.statement, include_callee, imports, resource_controller_cache))
+          actions = resource_actions_for_statement(call.statement, default_resource_actions(kind, call.statement))
+          parameter_overrides = resource_parameter_overrides_for_statement(call.statement)
+          call_line = base_line + newline_count_before(content, call.start_pos)
+          resource_entries(kind, call, lexer, call_line).each do |name, statement, line|
+            templates = resource_route_templates(prefix, name, parameter_overrides, kind)
+            endpoints.concat(create_resource_endpoints(templates, file_path, line, actions, statement, include_callee, imports, resource_controller_cache))
+          end
+        end
       end
 
       # 3. Group routes (recursive). Extract group bodies before scanning nested
@@ -648,23 +641,18 @@ module Analyzer::Php
       groups.any? { |group| pos >= group.body_start && pos < group.body_end }
     end
 
-    private def create_resource_endpoints(prefix : String,
-                                          resource : String,
+    private def create_resource_endpoints(templates : Array(ResourceEndpointTemplate),
                                           file_path : String,
-                                          line : Int32? = nil,
-                                          actions : Array(String) = RESOURCE_ACTIONS,
-                                          parameter_overrides : Hash(String, String) = EMPTY_RESOURCE_PARAMS,
-                                          statement : String? = nil,
-                                          include_callee : Bool = false,
-                                          imports : Hash(String, String) = EMPTY_IMPORTS,
-                                          controller_cache : Hash(String, ControllerActionMap?) = {} of String => ControllerActionMap?) : Array(Endpoint)
+                                          line : Int32,
+                                          actions : Array(String),
+                                          statement : String,
+                                          include_callee : Bool,
+                                          imports : Hash(String, String),
+                                          controller_cache : Hash(String, ControllerActionMap?)) : Array(Endpoint)
       endpoints = [] of Endpoint
       details = Details.new(PathInfo.new(file_path, line))
 
-      # Standard Laravel resource routes
-      resource_routes = resource_route_templates(prefix, resource, parameter_overrides, api: false)
-
-      resource_routes.each do |route_info|
+      templates.each do |route_info|
         action = route_info.action
         path = route_info.path
         method = route_info.method
@@ -672,38 +660,7 @@ module Analyzer::Php
 
         params = extract_brace_path_params(path)
         endpoint = Endpoint.new(path, method, params, details)
-        attach_resource_action_callees(endpoint, statement, action, file_path, imports, controller_cache) if include_callee && statement
-        endpoints << endpoint
-      end
-
-      endpoints
-    end
-
-    private def create_api_resource_endpoints(prefix : String,
-                                              resource : String,
-                                              file_path : String,
-                                              line : Int32? = nil,
-                                              actions : Array(String) = API_RESOURCE_ACTIONS,
-                                              parameter_overrides : Hash(String, String) = EMPTY_RESOURCE_PARAMS,
-                                              statement : String? = nil,
-                                              include_callee : Bool = false,
-                                              imports : Hash(String, String) = EMPTY_IMPORTS,
-                                              controller_cache : Hash(String, ControllerActionMap?) = {} of String => ControllerActionMap?) : Array(Endpoint)
-      endpoints = [] of Endpoint
-      details = Details.new(PathInfo.new(file_path, line))
-
-      # API resource routes (excludes create and edit forms)
-      api_resource_routes = resource_route_templates(prefix, resource, parameter_overrides, api: true)
-
-      api_resource_routes.each do |route_info|
-        action = route_info.action
-        path = route_info.path
-        method = route_info.method
-        next unless actions.includes?(action)
-
-        params = extract_brace_path_params(path)
-        endpoint = Endpoint.new(path, method, params, details)
-        attach_resource_action_callees(endpoint, statement, action, file_path, imports, controller_cache) if include_callee && statement
+        attach_resource_action_callees(endpoint, statement, action, file_path, imports, controller_cache) if include_callee
         endpoints << endpoint
       end
 
@@ -713,25 +670,73 @@ module Analyzer::Php
     RESOURCE_ACTIONS     = ["index", "create", "store", "show", "edit", "update", "destroy"]
     API_RESOURCE_ACTIONS = ["index", "store", "show", "update", "destroy"]
 
-    private def resource_route_templates(prefix : String, resource : String, parameter_overrides : Hash(String, String), api : Bool) : Array(ResourceEndpointTemplate)
+    private def singleton_kind?(kind : String) : Bool
+      kind.ends_with?("ingleton")
+    end
+
+    # Actions a call registers before `only`/`except`. A singleton has no
+    # index; `->creatable()` adds create/store/destroy (no create form for
+    # the API variant) and `->destroyable()` adds destroy.
+    private def default_resource_actions(kind : String, statement : String) : Array(String)
+      api = kind.starts_with?("api")
+      return api ? API_RESOURCE_ACTIONS : RESOURCE_ACTIONS unless singleton_kind?(kind)
+
+      actions = api ? ["show", "update"] : ["show", "edit", "update"]
+      if statement.matches?(/->\s*creatable\s*\(/)
+        actions.concat(api ? ["store", "destroy"] : ["create", "store", "destroy"])
+      elsif statement.matches?(/->\s*destroyable\s*\(/)
+        actions << "destroy"
+      end
+      actions
+    end
+
+    # A singleton acts on the resource path itself; it has no `{id}` member.
+    private def resource_route_templates(prefix : String, resource : String, parameter_overrides : Hash(String, String), kind : String) : Array(ResourceEndpointTemplate)
       collection_path = resource_collection_path(prefix, resource, parameter_overrides)
-      param_name = resource_param_name_for_segment(resource_segments(resource).last, parameter_overrides)
-      member_path = "#{collection_path}/{#{param_name}}"
-      templates = [
+      member_path = if singleton_kind?(kind)
+                      collection_path
+                    else
+                      "#{collection_path}/{#{resource_param_name_for_segment(resource_segments(resource).last, parameter_overrides)}}"
+                    end
+      [
         ResourceEndpointTemplate.new("index", collection_path, "GET"),
+        ResourceEndpointTemplate.new("create", "#{collection_path}/create", "GET"),
         ResourceEndpointTemplate.new("store", collection_path, "POST"),
         ResourceEndpointTemplate.new("show", member_path, "GET"),
+        ResourceEndpointTemplate.new("edit", "#{member_path}/edit", "GET"),
         ResourceEndpointTemplate.new("update", member_path, "PUT"),
         ResourceEndpointTemplate.new("update", member_path, "PATCH"),
         ResourceEndpointTemplate.new("destroy", member_path, "DELETE"),
       ]
+    end
 
-      unless api
-        templates.insert(1, ResourceEndpointTemplate.new("create", "#{collection_path}/create", "GET"))
-        templates.insert(4, ResourceEndpointTemplate.new("edit", "#{member_path}/edit", "GET"))
+    RESOURCES_ENTRY_RE = /['"]([^'"]+)['"]\s*=>\s*(\\?[A-Za-z_][\w\\]*::class|['"][^'"]*['"])/
+
+    # `{name, statement, line}` for each resource a call registers. The
+    # plural forms take a `['photos' => PhotoController::class, ...]` array;
+    # each entry gets a one-resource statement so callee lookup finds its
+    # controller.
+    private def resource_entries(kind : String, call : ResourceRouteCall, lexer : Noir::PhpLexer, call_line : Int32) : Array(Tuple(String, String, Int32))
+      return [{call.resource, call.statement, call_line}] unless kind.ends_with?("esources")
+
+      entries = [] of Tuple(String, String, Int32)
+      head = call.statement.match(RESOURCE_CALL_RES[kind])
+      return entries unless head
+      open = call.start_pos + head.end(0) - 1
+      close = lexer.matching_delimiter(open)
+      return entries unless close
+
+      # Lines counted incrementally over the lexer's char array: per-entry
+      # `newline_count_before` would rescan from the file start each time.
+      line = call_line
+      last = call.start_pos
+      call.statement[head.end(0)...(close - call.start_pos)].scan(RESOURCES_ENTRY_RE) do |m|
+        pos = open + 1 + m.begin(0)
+        (last...pos).each { |i| line += 1 if lexer.masked[i] == '\n' }
+        last = pos
+        entries << {m[1], "Route::resource('#{m[1]}', #{m[2]})", line}
       end
-
-      templates
+      entries
     end
 
     private def resource_collection_path(prefix : String, resource : String, parameter_overrides : Hash(String, String)) : String
@@ -817,6 +822,12 @@ module Analyzer::Php
     RESOURCE_CALL_RES = {
       "resource"    => Regex.new("Route::resource\\s*\\(\\s*['\"]([^'\"]+)['\"]", Regex::Options::IGNORE_CASE | Regex::Options::MULTILINE),
       "apiResource" => Regex.new("Route::apiResource\\s*\\(\\s*['\"]([^'\"]+)['\"]", Regex::Options::IGNORE_CASE | Regex::Options::MULTILINE),
+      # The plural forms end on the array's opening delimiter, which
+      # `resource_entries` walks from.
+      "resources"    => /Route::(resources)\s*\(\s*(?:\[|array\s*\()/i,
+      "apiResources" => /Route::(apiResources)\s*\(\s*(?:\[|array\s*\()/i,
+      "singleton"    => /Route::singleton\s*\(\s*['"]([^'"]+)['"]/i,
+      "apiSingleton" => /Route::apiSingleton\s*\(\s*['"]([^'"]+)['"]/i,
     }
     ACTION_FILTER_RES = {
       "only"   => Regex.new("->\\s*only\\s*\\((.*?)\\)", Regex::Options::IGNORE_CASE | Regex::Options::MULTILINE),
@@ -845,18 +856,18 @@ module Analyzer::Php
       calls
     end
 
-    private def resource_actions_for_statement(statement : String, api : Bool) : Array(String)
-      actions = api ? API_RESOURCE_ACTIONS.dup : RESOURCE_ACTIONS.dup
-
+    # `defaults` filtered by a chained `->only([...])`/`->except([...])`, or by
+    # the `['only' => [...]]` options argument the plural forms share.
+    private def resource_actions_for_statement(statement : String, defaults : Array(String)) : Array(String)
       if only = extract_resource_action_filter(statement, "only")
-        return actions.select { |action| only.includes?(action) }
+        return defaults.select { |action| only.includes?(action) }
       end
 
       if except = extract_resource_action_filter(statement, "except")
-        return actions.reject { |action| except.includes?(action) }
+        return defaults.reject { |action| except.includes?(action) }
       end
 
-      actions
+      defaults.select { |action| resource_action_allowed?(statement, action) }
     end
 
     private def extract_resource_action_filter(statement : String, filter_name : String) : Array(String)?
