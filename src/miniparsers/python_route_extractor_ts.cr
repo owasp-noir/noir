@@ -206,6 +206,45 @@ module Noir
       "#{routers}|#{extras}"
     end
 
+    # A `<receiver>.<attribute>(...)` call: positional arguments (string
+    # literals decoded, anything else as source text) and keywords.
+    record AttributeCall, attribute : String, args : Array(String), keywords : Hash(String, String)
+
+    # Every `<x>.<attribute>(...)` call whose attribute is in `attributes`
+    # — mount calls such as `app.include_router(router, prefix="/v1")`.
+    # Comments and docstrings are not calls, so they never match.
+    def extract_attribute_calls(source : String, attributes : Array(String)) : Array(AttributeCall)
+      calls = [] of AttributeCall
+      Noir::TreeSitter.parse_python(source) do |root|
+        Noir::TreeSitter.walk(root) do |node|
+          next unless Noir::TreeSitter.node_type(node) == "call"
+          function = Noir::TreeSitter.field(node, "function")
+          next unless function && Noir::TreeSitter.node_type(function) == "attribute"
+          attribute = Noir::TreeSitter.field(function, "attribute")
+          next unless attribute && attributes.includes?(name = Noir::TreeSitter.node_text(attribute, source))
+          next unless arguments = Noir::TreeSitter.field(node, "arguments")
+
+          args = [] of String
+          keywords = {} of String => String
+          Noir::TreeSitter.each_named_child(arguments) do |arg|
+            if Noir::TreeSitter.node_type(arg) == "keyword_argument"
+              key = Noir::TreeSitter.field(arg, "name")
+              value = Noir::TreeSitter.field(arg, "value")
+              keywords[Noir::TreeSitter.node_text(key, source)] = argument_text(value, source) if key && value
+            elsif Noir::TreeSitter.node_type(arg) != "comment"
+              args << argument_text(arg, source)
+            end
+          end
+          calls << AttributeCall.new(name, args, keywords)
+        end
+      end
+      calls
+    end
+
+    private def argument_text(node : LibTreeSitter::TSNode, source : String) : String
+      Noir::TreeSitter.node_type(node) == "string" ? decode_string(node, source) : Noir::TreeSitter.node_text(node, source)
+    end
+
     # Walk the `call` node's arguments and return the string value of
     # the `url_prefix` keyword if present, `""` otherwise.
     private def extract_url_prefix(call_node : LibTreeSitter::TSNode, source : String) : String
@@ -341,6 +380,7 @@ module Noir
       # them and pick below, so a leading bare verb is read as the method it
       # is instead of as a path.
       positional_strings = [] of String
+      positional_methods = [] of String
       Noir::TreeSitter.each_named_child(args) do |arg|
         case Noir::TreeSitter.node_type(arg)
         when "string"
@@ -348,7 +388,12 @@ module Noir
         when "list"
           # `@http.route(["/shop", "/shop/page/<int:page>"])` — one handler,
           # several paths. Only the first list counts.
-          list_paths = decode_path_list(arg, source) if list_paths.empty?
+          if list_paths.empty?
+            list_paths = decode_path_list(arg, source)
+            # A positional verb list (`route(PATH, ["GET", "POST"])` in
+            # Bottle, Sanic and Lambda Powertools) is the methods.
+            positional_methods = decode_method_list(arg, source) if list_paths.empty?
+          end
         when "keyword_argument"
           name = Noir::TreeSitter.field(arg, "name")
           value = Noir::TreeSitter.field(arg, "value")
@@ -393,6 +438,12 @@ module Noir
 
       return if path.empty? && !pathless
 
+      # `route(PATH, "POST")` — a bare verb after the path is the method.
+      if methods.empty? && positional_methods.empty? && !leading_verb &&
+         (verb = positional_strings[1]?) && verb != "*" && bare_http_method?(verb)
+        positional_methods = [verb.upcase]
+      end
+      methods = positional_methods if methods.empty?
       if methods.empty?
         if fallback = leading_verb || method_from_attr
           methods = [fallback]

@@ -35,6 +35,11 @@ def keys():
     return []
 
 
+@app.route('/open', authorizer=None)
+def open_route():
+    return {}
+
+
 @app.lambda_function()
 def worker(event, context):
     return {}

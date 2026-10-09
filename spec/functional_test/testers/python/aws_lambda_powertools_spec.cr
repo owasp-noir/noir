@@ -27,8 +27,17 @@ expected_endpoints = [
   ]),
   # Aliased import mounted without a prefix.
   Endpoint.new("/health", "GET"),
+  # Positional `route(rule, method)`; positional `include_router(r, prefix)`
+  # serving its "/" at the bare prefix.
+  Endpoint.new("/legacy", "POST"),
+  Endpoint.new("/bulk", "PUT"),
+  Endpoint.new("/bulk", "PATCH"),
+  Endpoint.new("/v2", "GET"),
 ]
 
+# The app lives in src/ below the scan root, so `from routes import orders`
+# resolves only from the file's own directory. The commented-out
+# `include_router(..., prefix="/old")` mounts nothing.
 FunctionalTester.new("fixtures/python/aws_lambda_powertools/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,

@@ -7,3 +7,8 @@ bp = Blueprint(__name__)
 def daily():
     day = bp.current_request.query_params['day']
     return {'day': day}
+
+
+@bp.route('/')
+def summary():
+    return {}

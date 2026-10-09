@@ -17,8 +17,6 @@ module Analyzer::Python
     # data is read off `app.current_event`.
 
     PATH_PARAM_RE = /<(\w+)>/
-    MOUNT_RE      = /\.include_router\(\s*([^,)\s]+)([^)]*)\)/
-    PREFIX_RE     = /\bprefix\s*=\s*[rf]?['"]([^'"]*)['"]/
     ALIAS_RE      = /\b([A-Za-z_]\w*)\s*=\s*(?:\w+\.)*current_event\b(?!\s*\.)/
     # `current_event.get_query_string_value("q")` / `get_header_value(name="X")`.
     GETTER_RE     = /\.get_(query_string|header)_value\(\s*(?:name\s*=\s*)?['"]([^'"]+)['"]/
@@ -40,28 +38,20 @@ module Analyzer::Python
       source = read_file_content(path)
       return unless source.includes?("aws_lambda_powertools") && source.matches?(Detector::Python::AwsLambdaPowertools::IMPORT_RE)
 
-      mounts = [] of Mount
-      if source.includes?(".include_router(")
-        imports = find_imported_modules(base_path, path, source)
-        source.scan(MOUNT_RE) do |m|
-          prefix = m[2].match(PREFIX_RE).try(&.[1]) || ""
-          resolve_mount(m[1], prefix, path, imports).try { |mount| mounts << mount }
-        end
-      end
+      # `include_router(router, prefix=None)`
+      mounts = collect_mounts(source, path, base_path, "include_router", "router", "prefix", 1)
 
       lines = source.lines
       routes = [] of Route
       Noir::TreeSitterPythonRouteExtractor.extract_decorations(source).each do |deco|
-        def_line = deco.def_line
-        body = def_line >= 0 ? extract_function_body(lines, def_line) : ""
+        body, callees = handler_body(lines, deco.def_line, path, base_path, source)
         path_names = [] of ::String
         url = deco.path.gsub(PATH_PARAM_RE) { path_names << $~[1]; "{#{$~[1]}}" }
         params = path_names.map { |name| Param.new(name, "", "path") }
         params.concat(request_params(body, "current_event", ALIAS_RE, REQUEST_ATTRS))
         body.scan(GETTER_RE) { |m| params << Param.new(m[2], "", m[1] == "header" ? "header" : "query") }
-        callees = def_line >= 0 ? build_callees_from(body, def_line + 1, path, definition_base_path: base_path, source: source) : [] of Callee
 
-        routes << Route.new(deco.router_name, url, deco.methods.uniq, params, deco.decorator_line + 1, callees, [] of Tag)
+        routes << Route.new(deco.router_name, url, deco.methods.uniq, params, deco.decorator_line + 1, callees)
       end
       FileScan.new(path, routes, mounts) unless routes.empty? && mounts.empty?
     end

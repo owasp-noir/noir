@@ -16,12 +16,15 @@ expected_endpoints = [
     Param.new("body", "", "json"),
   ]),
   Endpoint.new("/keys", "GET"),
+  Endpoint.new("/open", "GET"),
   Endpoint.new("/admin/users/{uid}", "DELETE", [
     Param.new("uid", "", "path"),
   ]),
   Endpoint.new("/reports/daily", "GET", [
     Param.new("day", "", "query"),
   ]),
+  # A blueprint's "/" is served at the bare url_prefix.
+  Endpoint.new("/reports", "GET"),
 ]
 
 FunctionalTester.new("fixtures/python/chalice/", {
@@ -50,5 +53,6 @@ describe "Chalice route auth", tags: "functional" do
     auth.call("POST", "/orders").should eq ["Protected by Chalice authorizer=authorizer"]
     auth.call("GET", "/keys").should eq ["Protected by Chalice api_key_required=True"]
     auth.call("GET", "/").should be_empty
+    auth.call("GET", "/open").should be_empty
   end
 end

@@ -25,6 +25,14 @@ describe "Detect Python AWS Lambda Powertools" do
     instance.detect("app.py", "from aws_lambda_powertools.event_handler import AppSyncResolver").should be_false
   end
 
+  it "GraphQL Router only" do
+    instance.detect("app.py", "from aws_lambda_powertools.event_handler.appsync import Router").should be_false
+  end
+
+  it "REST Router in a parenthesised import" do
+    instance.detect("app.py", "from aws_lambda_powertools.event_handler import (\n    Response,\n    Router,\n)").should be_true
+  end
+
   it "non-python extension" do
     instance.detect("app.txt", "from aws_lambda_powertools.event_handler import APIGatewayRestResolver").should be_false
   end
