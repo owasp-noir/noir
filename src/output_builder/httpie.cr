@@ -23,10 +23,10 @@ class OutputBuilderHttpie < OutputBuilder
         endpoint.params.each do |param|
           case param.request_type
           when "form"
-            request_items << CurlCommand.shell_quote("#{param.name}=#{param.value}")
+            request_items << CurlCommand.shell_quote("#{item_name(param.name)}=#{param.value}")
           when "file"
             filename = param.value.empty? ? param.name : param.value
-            request_items << CurlCommand.shell_quote("#{param.name}@#{filename}")
+            request_items << CurlCommand.shell_quote("#{item_name(param.name)}@#{filename}")
           end
         end
       elsif !baked[:body].empty?
@@ -36,9 +36,9 @@ class OutputBuilderHttpie < OutputBuilder
             if json_data.as_h?
               json_data.as_h.each do |key, value|
                 if value.raw.is_a?(String)
-                  request_items << CurlCommand.shell_quote("#{key}=#{value.as_s}")
+                  request_items << CurlCommand.shell_quote("#{item_name(key, json: true)}=#{value.as_s}")
                 else
-                  request_items << CurlCommand.shell_quote("#{key}:=#{value.to_json}")
+                  request_items << CurlCommand.shell_quote("#{item_name(key, json: true)}:=#{value.to_json}")
                 end
               end
             else
@@ -62,7 +62,7 @@ class OutputBuilderHttpie < OutputBuilder
           # shell-quoted item per param is exact.
           endpoint.params.each do |param|
             next unless param.request_type == "form"
-            request_items << CurlCommand.shell_quote("#{param.name}=#{param.value}")
+            request_items << CurlCommand.shell_quote("#{item_name(param.name)}=#{param.value}")
           end
         end
       end
@@ -86,5 +86,16 @@ class OutputBuilderHttpie < OutputBuilder
         ob_puts parts.join(" ")
       end
     end
+  end
+
+  # HTTPie splits a request item at its first `=`, `:`, `@` or `;`, so a
+  # field named `@type` (JSON-LD), `a:b`, `c=d` or `a;b` came out as a file
+  # upload, a header, a truncated field or an "Invalid item" error. A
+  # backslash makes the next separator literal. JSON items also go through
+  # HTTPie's nested-JSON syntax, where `a[b]` builds an object — so there,
+  # and only there, `[`/`]` are escaped too (under `--form` HTTPie would keep
+  # the backslash).
+  private def item_name(name : String, json : Bool = false) : String
+    name.gsub(json ? /[=:@;\[\]]/ : /[=:@;]/) { |sep| "\\#{sep}" }
   end
 end
