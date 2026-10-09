@@ -91,6 +91,32 @@ describe Noir::TextFile do
     end
   end
 
+  {% unless flag?(:win32) %}
+    # Opening a FIFO blocks until a writer appears; analyzers reached one by
+    # probing a well-known name (`application.properties`) and the scan hung.
+    it "reads a FIFO as empty without opening it" do
+      dir = File.tempname("noir-text-file")
+      Dir.mkdir_p(dir)
+      begin
+        path = File.join(dir, "application.properties")
+        Process.run("mkfifo", [path]).success?.should be_true
+        # Unblocks a regressed open after 3s instead of hanging the suite.
+        writer = Process.new("sh", ["-c", "sleep 3; : > \"$0\"", path])
+
+        content = nil
+        elapsed = Time.measure { content = Noir::TextFile.read(path) }
+        writer.terminate rescue nil
+        writer.wait
+
+        content.should eq("")
+        elapsed.should be < 2.seconds
+        expect_raises(File::NotFoundError) { Noir::TextFile.read(File.join(dir, "missing")) }
+      ensure
+        FileUtils.rm_rf(dir)
+      end
+    end
+  {% end %}
+
   it "keeps a BOM-like sequence that is not at the start" do
     dir = File.tempname("noir-text-file")
     Dir.mkdir_p(dir)

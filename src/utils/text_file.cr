@@ -40,7 +40,14 @@ module Noir::TextFile
   # no line number.
   UTF8_BOM = Bytes[0xEF_u8, 0xBB_u8, 0xBF_u8]
 
+  #
+  # A path that exists but is not a regular file (after following symlinks)
+  # reads as empty. Analyzers probe well-known names (`application.properties`,
+  # `package.json`) with `File.exists?`, which is true for a FIFO, and opening
+  # a FIFO blocks until a writer appears — the scan hung with no output. A
+  # missing path still raises, as before.
   def self.read(path : String) : String
+    return "" unless File.info(path).file?
     content = File.read(path)
     return transcode_utf16(content) if utf16_bom?(content)
     content = strip_utf8_bom(content)
