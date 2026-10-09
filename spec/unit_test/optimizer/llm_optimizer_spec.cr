@@ -11,6 +11,10 @@ class LLMEndpointOptimizer
     apply_llm_optimizations(endpoint, response)
   end
 
+  def __test_llm_optimize(endpoints : Array(Endpoint)) : Array(Endpoint)
+    llm_optimize_endpoints(endpoints)
+  end
+
   def __test_adapter : LLM::Adapter?
     @adapter
   end
@@ -24,6 +28,12 @@ class LLMEndpointOptimizer
 
   def __test_request(prompt : String) : String
     request_optimization(prompt, @adapter.as(LLM::Adapter))
+  end
+end
+
+class LLM::Ollama
+  def __test_body(prompt : String, format : String, context : Array(Int32)? = nil) : String
+    build_body(prompt, format, context)
   end
 end
 
@@ -217,6 +227,54 @@ describe "LLMEndpointOptimizer" do
       result = optimizer.__test_apply(endpoint, response)
       result.url.should eq("/users/{id}")
     end
+
+    it "keeps the -u origin when rewriting an absolute URL" do
+      # combine_url_and_endpoints has already prefixed -u by now; a
+      # path-only answer used to drop the host, and a same-origin full URL
+      # was rejected.
+      optimizer = LLMEndpointOptimizer.new(guard_logger, create_test_options)
+      endpoint = Endpoint.new("http://target.example:8080/api/files/*", "GET")
+
+      optimizer.__test_apply(endpoint, %({"optimized_url":"/api/files/{path}","optimized_params":[]})).url
+        .should eq("http://target.example:8080/api/files/{path}")
+      optimizer.__test_apply(endpoint, %({"optimized_url":"http://target.example:8080/api/files/{path}","optimized_params":[]})).url
+        .should eq("http://target.example:8080/api/files/{path}")
+      optimizer.__test_apply(endpoint, %({"optimized_url":"http://evil.example/x","optimized_params":[]})).url
+        .should eq(endpoint.url)
+      optimizer.__test_apply(endpoint, %({"optimized_url":"http://target.example:8080.evil/x","optimized_params":[]})).url
+        .should eq(endpoint.url)
+    end
+
+    it "keeps a -u base path when rewriting" do
+      with_base = create_test_options
+      with_base["url"] = YAML::Any.new("http://h:8080/base/")
+      optimizer = LLMEndpointOptimizer.new(guard_logger, with_base)
+      endpoint = Endpoint.new("http://h:8080/base/API/users", "GET")
+
+      ["/api/users", "/base/api/users", "http://h:8080/base/api/users"].each do |answer|
+        optimizer.__test_apply(endpoint, %({"optimized_url":"#{answer}","optimized_params":[]})).url
+          .should eq("http://h:8080/base/api/users")
+      end
+      # Leaving the base is not a rewrite of this endpoint.
+      optimizer.__test_apply(endpoint, %({"optimized_url":"http://h:8080/other","optimized_params":[]})).url
+        .should eq(endpoint.url)
+    end
+
+    it "rejects a rewrite that collides with another endpoint" do
+      prev_disable = ENV["NOIR_CACHE_DISABLE"]?
+      ENV["NOIR_CACHE_DISABLE"] = "1"
+      begin
+        optimizer = LLMEndpointOptimizer.new(guard_logger, create_test_options)
+        optimizer.__test_install_adapter(CountingAdapter.new(%({"optimized_url":"/api/items","optimized_params":[]})), "openai", "gpt-4o")
+        endpoints = [Endpoint.new("/API/users", "GET"), Endpoint.new("/API/orders", "GET")]
+
+        urls = optimizer.__test_llm_optimize(endpoints).map(&.url)
+        urls.uniq.size.should eq(2)
+        urls.should contain("/api/items")
+      ensure
+        prev_disable ? (ENV["NOIR_CACHE_DISABLE"] = prev_disable) : ENV.delete("NOIR_CACHE_DISABLE")
+      end
+    end
   end
 
   describe "adapter configuration" do
@@ -231,6 +289,16 @@ describe "LLMEndpointOptimizer" do
         adapter = optimizer.__test_adapter.as(LLM::GeneralAdapter)
         adapter.client.__test_api_key.should eq("env-key")
       end
+    end
+
+    it "asks Ollama for the same num_ctx the analyzer did" do
+      # A different num_ctx between the two phases reloads the model.
+      llm_options = create_test_options
+      llm_options["ai_provider"] = YAML::Any.new("ollama")
+      llm_options["ai_model"] = YAML::Any.new("llama3")
+      llm_options["ai_max_token"] = YAML::Any.new(8192)
+      client = LLMEndpointOptimizer.new(logger, llm_options).__test_adapter.as(LLM::OllamaAdapter).client
+      JSON.parse(client.__test_body("hi", "json"))["options"]["num_ctx"].as_i.should eq(8192)
     end
 
     it "stays disabled without an AI provider" do
@@ -261,6 +329,60 @@ describe "LLMEndpointOptimizer" do
 
         optimizer.__test_request("prompt A")
         optimizer.__test_request("prompt B")
+
+        adapter.calls.should eq(2)
+      end
+    end
+
+    it "returns the raw reply, so --debug logs what the model sent" do
+      with_isolated_cache_dir do
+        optimizer = LLMEndpointOptimizer.new(logger, create_test_options)
+        raw = "```json\n{\"optimized_url\":\"/a\",\"optimized_params\":[]}\n```"
+        optimizer.__test_install_adapter(CountingAdapter.new(raw), "openai", "gpt-4o-mini")
+
+        optimizer.__test_request("prompt A").should eq(raw)
+        optimizer.__test_apply(Endpoint.new("/A", "GET"), raw).url.should eq("/a")
+      end
+    end
+
+    it "applies and caches a reply carrying only optimized_params" do
+      with_isolated_cache_dir do
+        optimizer = LLMEndpointOptimizer.new(logger, create_test_options)
+        reply = %({"optimized_params":[{"name":"id","param_type":"path","value":""}]})
+        adapter = CountingAdapter.new(reply)
+        optimizer.__test_install_adapter(adapter, "openai", "gpt-4o-mini")
+
+        optimizer.__test_request("prompt A")
+        optimizer.__test_request("prompt A")
+        adapter.calls.should eq(1)
+
+        result = optimizer.__test_apply(Endpoint.new("/users/USR123", "GET"), reply)
+        result.url.should eq("/users/USR123")
+        result.params.map(&.name).should eq(["id"])
+      end
+    end
+
+    it "does not cache a reply that is not an optimization" do
+      with_isolated_cache_dir do
+        optimizer = LLMEndpointOptimizer.new(logger, create_test_options)
+        adapter = CountingAdapter.new(%({"error":"context length exceeded"}))
+        optimizer.__test_install_adapter(adapter, "openai", "gpt-4o-mini")
+
+        optimizer.__test_request("prompt A")
+        optimizer.__test_request("prompt A")
+
+        adapter.calls.should eq(2)
+      end
+    end
+
+    it "does not cache a truncated reply" do
+      with_isolated_cache_dir do
+        optimizer = LLMEndpointOptimizer.new(logger, create_test_options)
+        adapter = CountingAdapter.new(%({"optimized_url":"/users/{i))
+        optimizer.__test_install_adapter(adapter, "openai", "gpt-4o-mini")
+
+        optimizer.__test_request("prompt A")
+        optimizer.__test_request("prompt A")
 
         adapter.calls.should eq(2)
       end

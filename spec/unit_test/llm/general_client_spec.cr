@@ -98,6 +98,20 @@ describe LLM::General do
       parsed["action"].as_s.should eq("finalize")
     end
 
+    it "uses the content when tool_calls is null" do
+      response = JSON.parse(%({"choices":[{"message":{"content":"{\\"action\\":\\"finalize\\"}","tool_calls":null}}]}))
+
+      JSON.parse(LLM::General.extract_agent_action(response))["action"].as_s.should eq("finalize")
+    end
+
+    it "accepts tool arguments sent as a JSON object, and null ones" do
+      object_args = JSON.parse(%({"choices":[{"message":{"tool_calls":[{"function":{"name":"grep","arguments":{"pattern":"route"}}}]}}]}))
+      JSON.parse(LLM::General.extract_agent_action(object_args))["args"]["pattern"].as_s.should eq("route")
+
+      null_args = JSON.parse(%({"choices":[{"message":{"tool_calls":[{"function":{"name":"grep","arguments":null}}]}}]}))
+      JSON.parse(LLM::General.extract_agent_action(null_args))["args"].as_h.should be_empty
+    end
+
     it "wraps malformed tool arguments as raw string" do
       response = build_tool_response("read_file", "{not-json")
 
@@ -159,6 +173,15 @@ describe LLM::General do
     it "appends /chat/completions to custom path" do
       client = LLM::General.new("http://custom-server.com/api/v1", "test-model", nil)
       client.__test_api.should eq("http://custom-server.com/api/v1/chat/completions")
+    end
+
+    it "keeps a query string after the path instead of appending to it" do
+      azure = "https://r.openai.azure.com/openai/deployments/gpt4/chat/completions?api-version=2024-02-01"
+      LLM::General.new(azure, "m", nil).__test_api.should eq(azure)
+      LLM::General.new("https://r.openai.azure.com/openai/deployments/gpt4?api-version=2024-02-01", "m", nil).__test_api
+        .should eq(azure)
+      LLM::General.new("http://127.0.0.1:8080/?key=1", "m", nil).__test_api
+        .should eq("http://127.0.0.1:8080/v1/chat/completions?key=1")
     end
 
     it "resolves prefix 'openai' to full endpoint URL" do

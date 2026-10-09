@@ -63,8 +63,18 @@ class LLMEndpointOptimizer < EndpointOptimizer
     @logger.debug_sub "Found #{candidate_indexes.size} endpoints that may benefit from LLM optimization."
 
     final_endpoints = endpoints.dup
+    # The dedup pass already ran, so a rewrite onto another endpoint's
+    # (method, url) — a model answering `/api/items` for every route —
+    # would replace distinct routes with duplicates. Keep the original URL.
+    taken = endpoints.map { |endpoint| {endpoint.method, endpoint.url} }.to_set
     candidate_indexes.each do |idx|
-      final_endpoints[idx] = llm_optimize_single_endpoint(final_endpoints[idx])
+      original = final_endpoints[idx]
+      optimized = llm_optimize_single_endpoint(original)
+      if optimized.url != original.url && !taken.add?({optimized.method, optimized.url})
+        @logger.debug_sub "  - URL rewrite #{original.url} → #{optimized.url} rejected: collides with another endpoint"
+        optimized.url = original.url
+      end
+      final_endpoints[idx] = optimized
     end
 
     final_endpoints
@@ -122,10 +132,26 @@ class LLMEndpointOptimizer < EndpointOptimizer
     end
 
     response = adapter.request(prompt, LLM_OPTIMIZE_FORMAT).to_s
-    # An empty response means the request failed; caching it would replay
-    # the failure on every later scan until the cache was cleared by hand.
-    LLM::Cache.store(key, response) unless response.empty?
+    # An empty or unparsable response means the request failed; caching it
+    # would replay the failure on every later scan until the cache was
+    # cleared by hand.
+    LLM::Cache.store(key, response) if optimization_reply(response)
     response
+  end
+
+  # Either field makes it an answer: a model that ignores the schema and
+  # sends only `optimized_params` still has a usable correction.
+  private def optimization_reply(response : String) : Hash(String, JSON::Any)?
+    LLM.json_reply(response, "optimized_url") || LLM.json_reply(response, "optimized_params")
+  end
+
+  # The part of an endpoint URL a rewrite may not change: the -u target
+  # (base path included) when the URL carries it, else an absolute URL's own
+  # scheme and host.
+  private def rewrite_prefix(url : String) : String
+    target = @options["url"]?.to_s.chomp("/")
+    return target if !target.empty? && (url == target || url.starts_with?("#{target}/"))
+    url[URL_ORIGIN_RE]? || ""
   end
 
   # Create LLM prompt for endpoint optimization
@@ -149,21 +175,33 @@ class LLMEndpointOptimizer < EndpointOptimizer
 
   # Apply LLM optimization suggestions to an endpoint
   private def apply_llm_optimizations(endpoint : Endpoint, response : String) : Endpoint
-    optimization_data = JSON.parse(response).as_h
+    optimization_data = optimization_reply(response)
+    return endpoint if optimization_data.nil?
 
     optimized_endpoint = endpoint
 
     # Apply URL optimizations if suggested
     if optimization_data.has_key?("optimized_url")
       new_url = optimization_data["optimized_url"].as_s
+      # With -u the URL is already prefixed. Rewrite only what follows the
+      # prefix: a path-only answer used to drop scheme, host and base path,
+      # and a full URL answer was rejected outright. The model was shown the
+      # full URL, so a path-only answer may repeat the base path.
+      prefix = rewrite_prefix(endpoint.url)
+      base_path = prefix.sub(URL_ORIGIN_RE, "")
+      if !prefix.empty? && new_url.starts_with?("#{prefix}/")
+        new_url = new_url[prefix.size..]
+      elsif !base_path.empty? && new_url.starts_with?("#{base_path}/")
+        new_url = new_url[base_path.size..]
+      end
       # Only accept a rewrite that is a real path. Without this guard a
       # model that returns prose, a code fragment, or a "/GET /x"-style
       # string (anything that merely starts with "/") would clobber a
       # correct URL — corrupting the endpoint (a false positive) and
       # losing the original (a false negative) in one step.
-      if new_url != endpoint.url && !new_url.empty? && new_url.starts_with?("/") && plausible_rewrite_url?(new_url)
-        @logger.debug_sub "  - URL optimized: #{endpoint.url} → #{new_url}"
-        optimized_endpoint.url = new_url
+      if new_url.starts_with?("/") && plausible_rewrite_url?(new_url) && (rewritten = "#{prefix}#{new_url}") != endpoint.url
+        @logger.debug_sub "  - URL optimized: #{endpoint.url} → #{rewritten}"
+        optimized_endpoint.url = rewritten
       end
     end
 
@@ -227,7 +265,12 @@ class LLMEndpointOptimizer < EndpointOptimizer
       @use_llm = true
       @provider = provider
       @model = model
-      @adapter = LLM::AdapterFactory.for(provider, model, api_key)
+      # The same `num_ctx` the analyzer's Ollama client sent: a different
+      # one makes Ollama reload the model between the two phases.
+      context_tokens = if LLM::AdapterFactory.ollama_native?(provider)
+                         LLM.effective_max_tokens(provider, model, @options["ai_max_token"]?.try(&.as_i?) || 0)
+                       end
+      @adapter = LLM::AdapterFactory.for(provider, model, api_key, context_tokens: context_tokens)
       @logger.debug_sub "LLM optimization enabled with #{Noir::Redact.url(provider)}: #{model}"
     else
       @use_llm = false
@@ -238,6 +281,7 @@ class LLMEndpointOptimizer < EndpointOptimizer
   VALID_PARAM_TYPES        = %w[query json form header cookie path]
   MAX_REWRITE_URL_LENGTH   = 2048
   MAX_OPTIMIZED_PARAM_NAME =  128
+  URL_ORIGIN_RE            = /\A[a-zA-Z][a-zA-Z0-9+.\-]*:\/\/[^\/?#]*/
 
   # Coerce an LLM-supplied param_type string to one of the canonical
   # values; anything outside the list falls back to "query".

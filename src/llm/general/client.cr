@@ -15,7 +15,7 @@ module LLM
     def initialize(url : String, model : String, api_key : String?)
       @url = url
       @api = if url.includes?("://")
-               ensure_chat_completions_path(url)
+               self.class.chat_completions_url(url)
              else
                case url.downcase
                when "openai"
@@ -53,15 +53,22 @@ module LLM
     # Otherwise, return cleaned textual content as-is.
     def self.extract_agent_action(response_json : JSON::Any) : String
       message = response_json["choices"][0]["message"]
-      if tool_calls = message["tool_calls"]?
-        first_call = tool_calls.as_a.first?
-        if first_call
-          function = first_call["function"]
-          action = function["name"].as_s
-          arguments_raw = function["arguments"]?.try(&.to_s) || "{}"
-          arguments = parse_tool_arguments(arguments_raw)
-          return build_action_payload(action, arguments)
-        end
+      # `tool_calls: null` is "no tool call", not an error: `as_a` on it
+      # raised and the rescue below turned a usable content reply into "".
+      if first_call = message["tool_calls"]?.try(&.as_a?).try(&.first?)
+        function = first_call["function"]
+        action = function["name"].as_s
+        # Some servers send `arguments` as a JSON object rather than the
+        # spec's string; `to_s` rendered that as a Crystal inspect string.
+        args = function["arguments"]?
+        arguments = if args.nil? || args.raw.nil?
+                      JSON.parse("{}")
+                    elsif text = args.as_s?
+                      parse_tool_arguments(text)
+                    else
+                      args
+                    end
+        return build_action_payload(action, arguments)
       end
 
       LLM.strip_json_fences(message["content"]?.try(&.to_s) || "")
@@ -168,17 +175,17 @@ module LLM
       JSON.parse(%({"raw":#{raw.to_json}}))
     end
 
-    private def ensure_chat_completions_path(url : String) : String
-      normalized = url.chomp("/")
-      return normalized if normalized.ends_with?("/chat/completions")
-
-      uri = URI.parse(normalized)
-      path = uri.path || ""
-      if path.empty? || path == "/"
-        "#{normalized}/v1/chat/completions"
-      else
-        "#{normalized}/chat/completions"
+    # Decided on the URI path, not the whole string: an Azure-style
+    # `...?api-version=2024-02-01` query used to get `/chat/completions`
+    # appended after it.
+    def self.chat_completions_url(url : String) : String
+      uri = URI.parse(url)
+      path = uri.path.chomp("/")
+      unless path.ends_with?("/chat/completions")
+        path = path.empty? ? "/v1/chat/completions" : "#{path}/chat/completions"
       end
+      uri.path = path
+      uri.to_s
     end
 
     def self.parse_tools_cached(tools : String) : JSON::Any

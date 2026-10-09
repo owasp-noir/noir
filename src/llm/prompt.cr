@@ -624,17 +624,31 @@ module LLM
 
     if provider_limits.is_a?(Hash)
       # Get the model-specific limit or fall back to provider default
-      if provider_limits.as(Hash).has_key?(model)
-        provider_limits.as(Hash)[model].as(Int32)
+      if limit = model_token_limit(provider_limits.as(Hash(String, Int32)), model)
+        limit
       else
         default_tokens = provider_limits.as(Hash)["default"].as(Int32)
-        STDERR.puts "WARNING: Unknown model '#{model}' for provider '#{Noir::Redact.url(provider)}'. Using default max_tokens (#{default_tokens}). You can specify --ai-max-token to override."
+        warn_once "WARNING: Unknown model '#{model}' for provider '#{Noir::Redact.url(provider)}'. Using default max_tokens (#{default_tokens}). You can specify --ai-max-token to override."
         default_tokens
       end
     else
-      STDERR.puts "WARNING: Unknown provider '#{Noir::Redact.url(provider)}'. Using global default max_tokens (#{provider_limits}). You can specify --ai-max-token to override."
+      warn_once "WARNING: Unknown provider '#{Noir::Redact.url(provider)}'. Using global default max_tokens (#{provider_limits}). You can specify --ai-max-token to override."
       provider_limits.as(Int32)
     end
+  end
+
+  # `llama3.1:8b` is the `llama3.1` entry: an Ollama tag names a variant of
+  # the model, not a different context window.
+  def self.model_token_limit(limits : Hash(String, Int32), model : String) : Int32?
+    limits[model]? || limits[model.partition(':')[0]]?
+  end
+
+  # The analyzer and the LLM optimizer both size their requests, so the
+  # same unknown-model warning would otherwise print twice.
+  @@budget_warnings = Set(String).new
+
+  private def self.warn_once(message : String) : Nil
+    STDERR.puts message if @@budget_warnings.add?(message)
   end
 
   # One request's worth of bundled source.

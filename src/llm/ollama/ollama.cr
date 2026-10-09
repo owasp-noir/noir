@@ -11,11 +11,19 @@ module LLM
     # `format: "json"` — Ollama's plain JSON mode.
     JSON_MODE = JSON::Any.new("json")
 
-    def initialize(url : String, model : String)
+    # `context_tokens` is the token budget the caller sized its prompts for.
+    # Ollama otherwise runs at its own 2-4k default `num_ctx` and silently
+    # drops the start of anything longer, so a bundle sized for a 128k model
+    # lost most of its files. One fixed value per client, rounded up to
+    # 1024: a `num_ctx` that changes between requests reloads the model.
+    @num_ctx : Int32?
+
+    def initialize(url : String, model : String, context_tokens : Int32? = nil)
       @url = url
       @api = "#{url.chomp("/")}/api/generate"
       @model = model
       @contexts = Hash(String, Array(Int32)).new
+      @num_ctx = context_tokens.try { |tokens| tokens > 0 ? (tokens + 1023) // 1024 * 1024 : nil }
     end
 
     # Make a simple request without context management
@@ -79,6 +87,7 @@ module LLM
           json.field "options" do
             json.object do
               json.field "temperature", TEMPERATURE
+              @num_ctx.try { |num_ctx| json.field "num_ctx", num_ctx }
             end
           end
           if reused = context

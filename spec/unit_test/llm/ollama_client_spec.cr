@@ -52,6 +52,16 @@ describe LLM::Ollama do
       body["temperature"]?.should be_nil
     end
 
+    it "sizes num_ctx to the caller's token budget, rounded up to 1024" do
+      # Without it Ollama runs at its 2-4k default and silently truncates
+      # a bundle sized for the model's full window.
+      sized = LLM::Ollama.new("http://localhost:11434", "llama3.1", 128_000)
+      JSON.parse(sized.__test_body("hi", "json"))["options"]["num_ctx"].as_i.should eq(128_000)
+      odd = LLM::Ollama.new("http://localhost:11434", "llama3", 4000)
+      JSON.parse(odd.__test_body("hi", "json"))["options"]["num_ctx"].as_i.should eq(4096)
+      JSON.parse(client.__test_body("hi", "json"))["options"]["num_ctx"]?.should be_nil
+    end
+
     it "carries the model, prompt and non-streaming flag" do
       body = JSON.parse(client.__test_body("hello", "json"))
       body["model"].as_s.should eq("llama3")
