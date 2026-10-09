@@ -82,9 +82,12 @@ module Analyzer::Swift
       end
     end
 
-    # Extract parameters from function body
-    def extract_function_params(lines : Array(String), start_index : Int32, endpoint : Endpoint)
-      in_function = false
+    # Params read inside a route's trailing closure. `route_index` is the
+    # route line itself, so the closure's own `{` is counted and the scan
+    # ends where that closure closes (on the route line for a one-liner).
+    # Braces are counted on `code_lines` (`strip_code_lines(lines)`, built
+    # once per file: stripping here per route was O(line) per route).
+    def extract_function_params(lines : Array(String), code_lines : Array(String), route_index : Int32, endpoint : Endpoint)
       brace_count = 0
       seen_opening_brace = false
 
@@ -93,28 +96,23 @@ module Analyzer::Swift
         existing_path_params.add(p.name) if p.param_type == "path"
       end
 
-      (start_index...[start_index + LOOKAHEAD_LIMIT, lines.size].min).each do |i|
+      (route_index...[route_index + 1 + LOOKAHEAD_LIMIT, lines.size].min).each do |i|
         line = lines[i]
+        code = code_lines[i]
 
-        if line.includes?(" in ")
-          in_function = true
+        # Outside the closure a `func` or another route starts unrelated
+        # code; inside it, `req.parameters.get(` is a param read.
+        if i > route_index && brace_count <= 0
+          break if code.matches?(FUNCTION_SIGNATURE_PATTERN) || route_definition?(line)
         end
 
-        brace_count += line.count('{')
-        if brace_count > 0
-          seen_opening_brace = true
-        end
-        brace_count -= line.count('}')
+        brace_count += code.count('{')
+        seen_opening_brace = true if brace_count > 0
+        brace_count -= code.count('}')
 
         extract_params_from_line(line, endpoint, existing_path_params)
 
-        if in_function && seen_opening_brace && brace_count == 0 && i > start_index
-          break
-        end
-
-        if i > start_index && route_definition?(line)
-          break
-        end
+        break if seen_opening_brace && brace_count <= 0
       end
     end
 
@@ -261,6 +259,21 @@ module Analyzer::Swift
       end
 
       {body_lines.join("\n"), opening_index + 1}
+    end
+
+    # `lines` with comments and string literals blanked, block-comment and
+    # `"""` state carried across lines.
+    protected def strip_code_lines(lines : Array(String)) : Array(String)
+      block_comment_depth = 0
+      in_multiline_string = false
+      lines.map do |line|
+        stripped, block_comment_depth, in_multiline_string = Noir::SwiftCalleeExtractor.strip_non_code_with_state(
+          line,
+          block_comment_depth,
+          in_multiline_string
+        )
+        stripped
+      end
     end
 
     private def structural_opening_brace(line : String) : Int32?

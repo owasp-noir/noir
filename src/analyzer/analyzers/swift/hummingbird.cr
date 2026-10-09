@@ -67,6 +67,7 @@ module Analyzer::Swift
       # `RouteGroup`, capitalized `Get`/`Post`/... primitives) is invisible to
       # the receiver-based chain scanner, so discover it in a second pass.
       hits.concat(collect_dsl_route_hits(stripped_lines, lines))
+      hits_per_line = hits.tally_by(&.line_index)
 
       hits.each do |hit|
         details = Details.new(PathInfo.new(path, hit.line_index + 1))
@@ -77,7 +78,10 @@ module Analyzer::Swift
           extract_named_handler_params(handler, handler_bodies, endpoint)
           attach_named_handler_callees(handler, handler_bodies, path, endpoint) if include_callee
         else
-          extract_function_params(lines, hit.line_index + 1, endpoint)
+          # Routes sharing a line can't be told apart line-wise (and re-reading
+          # a long shared line per route is quadratic): start below it.
+          start = hits_per_line[hit.line_index] > 1 ? hit.line_index + 1 : hit.line_index
+          extract_function_params(lines, stripped_lines, start, endpoint)
           attach_route_callees(lines, hit.line_index, path, endpoint, handler_bodies) if include_callee
         end
 
@@ -989,19 +993,6 @@ module Analyzer::Swift
     # Strip comments and string contents across the whole file so brace,
     # paren and method scanning never trips over `}` inside a string or a
     # multi-line comment.
-    private def strip_code_lines(lines : Array(String)) : Array(String)
-      block_comment_depth = 0
-      in_multiline_string = false
-      lines.map do |line|
-        stripped, block_comment_depth, in_multiline_string = Noir::SwiftCalleeExtractor.strip_non_code_with_state(
-          line,
-          block_comment_depth,
-          in_multiline_string
-        )
-        stripped
-      end
-    end
-
     private def extract_named_handler_params(handler_name : String,
                                              handler_bodies : Hash(String, Tuple(String, Int32)),
                                              endpoint : Endpoint)

@@ -39,4 +39,35 @@ describe "swift kitura analyzer" do
     File.delete(temp_file) if temp_file && File.exists?(temp_file)
     Dir.delete(temp_dir) if temp_dir && Dir.exists?(temp_dir)
   end
+
+  it "does not leak params from later functions into a named-handler route" do
+    instance = Analyzer::Swift::Kitura.new(create_test_options)
+
+    temp_dir = File.tempname("swift_kitura_leak_test")
+    Dir.mkdir_p(temp_dir)
+    temp_file = File.join(temp_dir, "routes.swift")
+
+    File.write(temp_file, <<-SWIFT)
+      import Kitura
+
+      let router = Router()
+      router.get("/ping", handler: ping)
+      router.get("/live") { request, response, next in
+          let q = request.queryParameters["live"]
+          next()
+      }
+      func ping(request: RouterRequest, response: RouterResponse, next: @escaping () -> Void) { next() }
+      func unrelated(request: RouterRequest, response: RouterResponse, next: @escaping () -> Void) {
+          let q = request.queryParameters["leak"]
+          next()
+      }
+      SWIFT
+
+    params = instance.analyze_file(temp_file).to_h { |e| {e.url, e.params.map(&.name)} }
+    params["/ping"].should eq([] of String)
+    params["/live"].should eq(["live"])
+  ensure
+    File.delete(temp_file) if temp_file && File.exists?(temp_file)
+    Dir.delete(temp_dir) if temp_dir && Dir.exists?(temp_dir)
+  end
 end

@@ -65,6 +65,7 @@ module Analyzer::Swift
       lines = read_file_content(path).lines
       include_callee = callees_needed?
       handler_bodies = named_handler_bodies(lines)
+      stripped_lines = nil.as(Array(String)?)
       prefix_by_receiver = {} of String => String
       group_prefix_stack = [] of Tuple(String, Int32)
       brace_depth = 0
@@ -92,8 +93,12 @@ module Analyzer::Swift
           endpoint = Endpoint.new(route_path, method, details)
 
           extract_path_params(route_path, endpoint)
-          extract_function_params(lines, index + 1, endpoint)
-          extract_named_handler_params(lines[index], handler_bodies, endpoint)
+          # A `use:` handler's params come from its own body; scanning the
+          # lines after the route would read unrelated functions.
+          unless extract_named_handler_params(lines[index], handler_bodies, endpoint)
+            stripped_lines ||= strip_code_lines(lines)
+            extract_function_params(lines, stripped_lines, index, endpoint)
+          end
           attach_route_callees(lines, index, path, endpoint, handler_bodies) if include_callee
 
           endpoints << endpoint
@@ -384,12 +389,12 @@ module Analyzer::Swift
 
     private def extract_named_handler_params(route_line : String,
                                              handler_bodies : Hash(String, Tuple(String, Int32)),
-                                             endpoint : Endpoint)
+                                             endpoint : Endpoint) : Bool
       handler_name = route_handler_name(route_line)
-      return unless handler_name
+      return false unless handler_name
 
       body = handler_bodies[handler_name]?
-      return unless body
+      return true unless body
 
       existing_path_params = Set(String).new
       endpoint.params.each do |p|
@@ -399,6 +404,7 @@ module Analyzer::Swift
       body[0].each_line do |line|
         extract_params_from_line(line, endpoint, existing_path_params)
       end
+      true
     end
 
     private def extract_params_from_line(line : String, endpoint : Endpoint, existing_path_params : Set(String))

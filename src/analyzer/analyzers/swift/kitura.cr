@@ -32,6 +32,7 @@ module Analyzer::Swift
       lines = read_file_content(path).lines
       include_callee = callees_needed?
       handler_bodies = named_handler_bodies(lines)
+      stripped_lines = nil.as(Array(String)?)
       router_receivers = collect_router_receivers(lines)
 
       lines.each_with_index do |line, index|
@@ -51,8 +52,12 @@ module Analyzer::Swift
           endpoint = Endpoint.new(route_path, method, details)
 
           extract_path_params(route_path, endpoint)
-          extract_function_params(lines, index + 1, endpoint)
-          extract_named_handler_params(lines[index], handler_bodies, endpoint)
+          # A `handler:` route's params come from that function's body;
+          # scanning the lines after the route would read unrelated code.
+          unless extract_named_handler_params(lines[index], handler_bodies, endpoint)
+            stripped_lines ||= strip_code_lines(lines)
+            extract_function_params(lines, stripped_lines, index, endpoint)
+          end
           attach_route_callees(lines, index, path, endpoint, handler_bodies) if include_callee
 
           endpoints << endpoint
@@ -78,42 +83,6 @@ module Analyzer::Swift
       end
 
       "/"
-    end
-
-    # Extract parameters from function body
-    def extract_function_params(lines : Array(String), start_index : Int32, endpoint : Endpoint)
-      in_function = false
-      brace_count = 0
-      seen_opening_brace = false
-
-      existing_path_params = Set(String).new
-      endpoint.params.each do |p|
-        existing_path_params.add(p.name) if p.param_type == "path"
-      end
-
-      (start_index...[start_index + LOOKAHEAD_LIMIT, lines.size].min).each do |i|
-        line = lines[i]
-
-        if line.match(/\bin\b/)
-          in_function = true
-        end
-
-        brace_count += line.count('{')
-        if brace_count > 0
-          seen_opening_brace = true
-        end
-        brace_count -= line.count('}')
-
-        extract_params_from_line(line, endpoint, existing_path_params)
-
-        if in_function && seen_opening_brace && brace_count == 0 && i > start_index
-          break
-        end
-
-        if i > start_index && route_definition?(line)
-          break
-        end
-      end
     end
 
     # Check if a line contains a route definition
@@ -201,12 +170,12 @@ module Analyzer::Swift
 
     private def extract_named_handler_params(route_line : String,
                                              handler_bodies : Hash(String, Tuple(String, Int32)),
-                                             endpoint : Endpoint)
+                                             endpoint : Endpoint) : Bool
       handler_name = route_handler_name(route_line)
-      return unless handler_name
+      return false unless handler_name
 
       body = handler_bodies[handler_name]?
-      return unless body
+      return true unless body
 
       existing_path_params = Set(String).new
       endpoint.params.each do |p|
@@ -216,6 +185,7 @@ module Analyzer::Swift
       body[0].each_line do |line|
         extract_params_from_line(line, endpoint, existing_path_params)
       end
+      true
     end
 
     private def extract_params_from_line(line : String, endpoint : Endpoint, existing_path_params : Set(String))
