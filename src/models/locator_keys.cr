@@ -78,6 +78,7 @@ module Noir::LocatorKeys
     {:SWAGGER_YAML, "swagger-yaml", :array, :detect_scoped, "detector/specification/oas2"},
     {:TERRAFORM_SPEC, "terraform-spec", :array, :detect_scoped, "detector/specification/terraform"},
     {:THRIFT_IDL, "thrift-idl", :array, :detect_scoped, "detector/specification/thrift"},
+    {:THUNDER_CLIENT_JSON, "thunder-client-json", :array, :detect_scoped, "detector/specification/thunder_client"},
     {:TRAEFIK_SPEC, "traefik-spec", :array, :detect_scoped, "detector/specification/traefik"},
     {:TYPESPEC_SPEC, "typespec-spec", :array, :detect_scoped, "detector/specification/typespec"},
     {:VERCEL_SPEC, "vercel-spec", :array, :detect_scoped, "detector/specification/vercel"},

@@ -1,0 +1,42 @@
+{
+  "_id": "c0l-0002",
+  "colName": "Orders",
+  "created": "2024-01-01T00:00:00.000Z",
+  "sortNum": 10000,
+  "folders": [{"_id": "f0l-0001", "name": "Admin", "containerId": "", "created": "2024-01-01T00:00:00.000Z", "sortNum": 10000}],
+  "requests": [
+    {
+      "_id": "9f1c2a40-0003",
+      "colId": "c0l-0002",
+      "containerId": "f0l-0001",
+      "name": "Update order",
+      "url": "{{baseUrl}}/orders/:orderId",
+      "method": "PUT",
+      "sortNum": 10000,
+      "created": "2024-01-01T00:00:00.000Z",
+      "modified": "2024-01-01T00:00:00.000Z",
+      "headers": [],
+      "params": [{"name": "orderId", "value": "42", "isPath": true}],
+      "body": {"type": "formencoded", "raw": "", "form": [{"name": "status", "value": "shipped"}, {"name": "note", "value": "x", "isDisabled": true}]},
+      "auth": {"type": "basic", "basic": {"username": "admin", "password": "pw"}},
+      "tests": []
+    },
+    {
+      "_id": "9f1c2a40-0004",
+      "colId": "c0l-0002",
+      "containerId": "",
+      "name": "Upload invoice",
+      "url": "{{baseUrl}}/orders/invoice",
+      "method": "POST",
+      "sortNum": 20000,
+      "created": "2024-01-01T00:00:00.000Z",
+      "modified": "2024-01-01T00:00:00.000Z",
+      "headers": [],
+      "params": [],
+      "body": {"type": "formdata", "raw": "", "form": [{"name": "orderId", "value": "42"}], "files": [{"name": "invoice", "value": "./invoice.pdf"}]},
+      "auth": {"type": "none"},
+      "tests": []
+    }
+  ],
+  "settings": {}
+}
