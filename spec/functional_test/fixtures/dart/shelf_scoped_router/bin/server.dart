@@ -28,12 +28,33 @@ class AdminApi {
   }
 }
 
+// A mixin body is its own scope, like a class.
+mixin ExportRoutes {
+  final reports = Router();
+
+  void registerExports() {
+    reports.get('/export', _stats);
+  }
+}
+
+class Server {
+  final router = Router();
+}
+
 void main() {
   final app = Router();
   app.get('/health', _health);
   app.mount('/users', UsersApi().router);
   app.mount('/posts', PostsApi().router);
   app.mount('/admin', AdminApi().router);
+
+  final reports = Router();
+  reports.get('/daily', _stats);
+  app.mount('/reports', reports);
+
+  // Another object's `router` field, not a local variable of that name.
+  final server = Server();
+  server.router.get('/version', _health);
 }
 
 Response _list(Request request) => Response.ok('list');

@@ -135,7 +135,12 @@ module Analyzer::Dart
         next if var_name.empty?
         end_idx = match.end(0)
         next unless end_idx
-        decls << {name: var_name, pos: end_idx, owner: enclosing_class(classes, end_idx)}
+        owner = enclosing_class(classes, end_idx)
+        # A field sits directly in its class body, not inside a member's braces.
+        range = owner ? classes.find { |r| r[:name] == owner && r[:start] <= end_idx && end_idx <= r[:finish] } : nil
+        body = range ? cleaned[(range[:start] + 1)...end_idx] : nil
+        field = body ? body.count('{') == body.count('}') : false
+        decls << {name: var_name, pos: end_idx, owner: owner, field: field}
       end
 
       decls.each do |decl|
@@ -305,11 +310,15 @@ module Analyzer::Dart
 
     alias ClassRange = NamedTuple(name: String, start: Int32, finish: Int32)
 
-    # Locate every `class Name { ... }` block and its byte range so a
-    # `Router()` instantiation can be attributed to its enclosing class.
+    # A `class`, `mixin` or named `extension` header. `mixin class Foo` is
+    # left to its `class` keyword, and unnamed `extension on T` has no name.
+    CLASS_HEADER_REGEX = /\b(?:class|mixin|extension(?:\s+type)?)\s+(?!(?:on|class)\b)([A-Za-z_]\w*)/
+
+    # Locate every `class Name { ... }` block (and mixin/extension body) and
+    # its byte range so a `Router()` instantiation can be attributed to it.
     private def class_ranges(cleaned : String) : Array(ClassRange)
       ranges = [] of ClassRange
-      cleaned.scan(/\bclass\s+([A-Za-z_]\w*)/) do |m|
+      cleaned.scan(CLASS_HEADER_REGEX) do |m|
         name = m[1]
         header_end = m.end(0) # char offset
         next unless header_end
@@ -386,8 +395,9 @@ module Analyzer::Dart
     end
 
     # A `Router()` bound to a variable: its name, the offset just past the
-    # declaration, and the class it is declared in (nil at top level).
-    alias RouterDecl = NamedTuple(name: String, pos: Int32, owner: String?)
+    # declaration, the class it is declared in (nil at top level) and
+    # whether it is a field of that class.
+    alias RouterDecl = NamedTuple(name: String, pos: Int32, owner: String?, field: Bool)
 
     private def scan_direct_calls(cleaned : String,
                                   decl : RouterDecl,
@@ -399,15 +409,22 @@ module Analyzer::Dart
                                   routes : Array(Route),
                                   mounts : Array(Mount))
       var_name = decl[:name]
-      pattern = @direct_call_regexes[var_name] ||= /(?<![\w$])#{Regex.escape(var_name)}\s*\.\s*([a-zA-Z_]\w*)\s*\(/
+      # Group 1: a `this.` qualifier; group 2: any other `x.` qualifier.
+      pattern = @direct_call_regexes[var_name] ||= /(?:(\bthis\s*\.\s*)|(\.\s*)|(?<![\w$.]))#{Regex.escape(var_name)}\s*\.\s*([a-zA-Z_]\w*)\s*\(/
       cleaned.scan(pattern) do |m|
-        method = m[1]
+        method = m[3]
         next unless relevant_method?(method)
         match_end = m.end(0)
         next unless match_end
-        # Two classes (or a class and main()) may each name a local router
-        # `router`/`app`; a call belongs only to the declaration in its scope.
-        next unless owning_decl(decls, var_name, match_end, classes) == decl
+        if m[2]?
+          # `api.router.get(...)` reaches some object's router field, never a
+          # local or top-level variable of that name.
+          next unless decl[:field]
+        else
+          # Two classes (or a class and main()) may each name a local router
+          # `router`/`app`; a call belongs only to the declaration in its scope.
+          next unless owning_decl(decls, var_name, match_end, classes) == decl
+        end
         open_paren = match_end - 1
         close_paren = Helper.find_matching_paren(cleaned, open_paren)
         next unless close_paren
