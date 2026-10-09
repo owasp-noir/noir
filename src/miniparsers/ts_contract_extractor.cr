@@ -43,25 +43,29 @@ module Noir
       end
 
       private def path_param?(name : String) : Bool
-        @path.includes?(":#{name}") || @path.includes?("{#{name}}")
+        @path.split('/').any? { |segment| segment == ":#{name}" || segment == "{#{name}}" }
       end
     end
+
+    MAX_RESOLVES = 10_000
 
     private class Context
       getter source : String
       getter decls = {} of String => LibTreeSitter::TSNode
       getter used = Set(String).new
       @active = Set(String).new
+      @resolves = 0
 
       def initialize(@source : String)
       end
 
       # Yields a top-level declaration's value, marking it as consumed by
       # an outer router. Re-entry on a cycle (`a = c.router({ b: a })`) is
-      # skipped.
+      # skipped, and the budget stops a file whose routers each reference
+      # the next one several times from re-walking exponentially.
       def resolve(name : String, & : LibTreeSitter::TSNode -> Array(Route)) : Array(Route)
         node = @decls[name]?
-        return [] of Route if node.nil? || @active.includes?(name)
+        return [] of Route if node.nil? || @active.includes?(name) || (@resolves += 1) > MAX_RESOLVES
         @used << name
         @active << name
         begin
@@ -96,7 +100,7 @@ module Noir
     # `<x>.router({ ... }, { pathPrefix })`. The server-side
     # `s.router(contract, impl)` takes an identifier first and is skipped.
     private def ts_rest_routes(node : LibTreeSitter::TSNode, prefix : String, ctx : Context) : Array(Route)
-      if (obj = router_call_object(node, ctx))
+      if obj = router_call_object(node, ctx)
         prefix = URLPath.join(prefix, object_string(second_arg(node), "pathPrefix", ctx) || "")
         return ts_rest_entries(obj, prefix, ctx)
       end
@@ -175,7 +179,14 @@ module Noir
         return orpc_entries(obj, prefix, ctx)
       end
 
-      descend(node) { |child| orpc_routes(child, prefix, ctx) }
+      return descend(node) { |child| orpc_routes(child, prefix, ctx) } if links.empty?
+
+      # Not a procedure: visit the chain head and each link's arguments
+      # once, rather than re-reading the chain from every inner link.
+      routes = [] of Route
+      links.each { |link| each_arg(link[1]) { |arg| routes.concat(orpc_routes(arg, prefix, ctx)) } }
+      head = receiver(links.last[1])
+      head ? routes.concat(orpc_routes(head, prefix, ctx)) : routes
     end
 
     private def orpc_entries(obj : LibTreeSitter::TSNode, prefix : String, ctx : Context) : Array(Route)
@@ -198,9 +209,9 @@ module Noir
     # The links of `a.b(1).c(2)` as {"c", call}, {"b", call}, outermost first.
     private def chain_links(node : LibTreeSitter::TSNode, ctx : Context) : Array(Tuple(String, LibTreeSitter::TSNode))
       links = [] of Tuple(String, LibTreeSitter::TSNode)
-      while (property = call_property(node, ctx))
+      while property = call_property(node, ctx)
         links << {property, node}
-        node = TreeSitter.field(TreeSitter.field(node, "function").not_nil!, "object") || break
+        node = receiver(node) || break
       end
       links
     end
@@ -217,7 +228,7 @@ module Noir
     private def effect_routes(node : LibTreeSitter::TSNode, ctx : Context) : Array(Route)
       return descend(node) { |child| effect_routes(child, ctx) } unless TreeSitter.node_type(node) == "call_expression"
 
-      function = TreeSitter.field(node, "function").not_nil!
+      function = TreeSitter.field(node, "function") || return [] of Route
       args = TreeSitter.field(node, "arguments")
 
       # HttpApiEndpoint.get("remove")`/users/${idParam}`
@@ -225,28 +236,35 @@ module Noir
         return [Route.new(method, template_path(args, ctx), TreeSitter.call_name_row(function) + 1)]
       end
 
-      if method = effect_verb(node, ctx)
-        path = second_arg(node).try { |arg| string_value(arg, ctx) }
-        return path ? [Route.new(method, path, TreeSitter.call_name_row(node) + 1)] : [] of Route
-      end
+      links = chain_links(node, ctx)
+      return descend(node) { |child| effect_routes(child, ctx) } if links.empty?
 
-      property = call_property(node, ctx)
-      return descend(node) { |child| effect_routes(child, ctx) } unless property
+      # Innermost link first, iteratively: a generated chain thousands of
+      # links long must not recurse once per link.
+      routes = receiver(links.last[1]).try { |head| effect_operand(head, ctx) } || [] of Route
+      links.reverse_each do |property, call|
+        if method = effect_verb(call, ctx)
+          path = second_arg(call).try { |arg| string_value(arg, ctx) }
+          routes << Route.new(method, path, TreeSitter.call_name_row(call) + 1) if path
+          next
+        end
 
-      # A group named elsewhere in the file: `.add(UsersGroup)`, `AdminGroup.prefix("/admin")`.
-      resolve = ->(n : LibTreeSitter::TSNode) do
-        TreeSitter.node_type(n) == "identifier" ? ctx.resolve(text(n, ctx)) { |decl| effect_routes(decl, ctx) } : effect_routes(n, ctx)
+        added = [] of Route
+        each_arg(call) { |arg| added.concat(property == "add" ? effect_operand(arg, ctx) : effect_routes(arg, ctx)) }
+        if property == "prefix" && (prefix = first_arg(call).try { |arg| string_value(arg, ctx) })
+          routes.each { |route| route.path = URLPath.join(prefix, route.path) }
+        elsif (type = EFFECT_FIELDS[property]?) && (schema = first_arg(call))
+          routes.each { |route| effect_fields(route, type, schema, ctx) }
+        end
+        routes.concat(added)
       end
-      routes = resolve.call(TreeSitter.field(function, "object").not_nil!)
-      added = [] of Route
-      each_arg(node) { |arg| added.concat(property == "add" ? resolve.call(arg) : effect_routes(arg, ctx)) }
+      routes
+    end
 
-      if property == "prefix" && (prefix = first_arg(node).try { |arg| string_value(arg, ctx) })
-        routes.each { |route| route.path = URLPath.join(prefix, route.path) }
-      elsif (type = EFFECT_FIELDS[property]?) && (schema = first_arg(node))
-        routes.each { |route| effect_fields(route, type, schema, ctx) }
-      end
-      routes + added
+    # A group named elsewhere in the file: `.add(UsersGroup)`, `AdminGroup.prefix("/admin")`.
+    private def effect_operand(node : LibTreeSitter::TSNode, ctx : Context) : Array(Route)
+      return effect_routes(node, ctx) unless TreeSitter.node_type(node) == "identifier"
+      ctx.resolve(text(node, ctx)) { |decl| effect_routes(decl, ctx) }
     end
 
     private def effect_fields(route : Route, type : String, schema : LibTreeSitter::TSNode, ctx : Context)
@@ -256,8 +274,8 @@ module Noir
     end
 
     private def effect_verb(call : LibTreeSitter::TSNode, ctx : Context) : String?
-      return unless (property = call_property(call, ctx))
-      object = TreeSitter.field(TreeSitter.field(call, "function").not_nil!, "object")
+      return unless property = call_property(call, ctx)
+      object = receiver(call)
       return unless object && text(object, ctx) == "HttpApiEndpoint"
       EFFECT_VERBS[property]?
     end
@@ -341,7 +359,7 @@ module Noir
         if property && SCHEMA_OBJECT_CALLS.includes?(property)
           fields = schema_fields(arg, ctx, depth + 1) if arg && TreeSitter.node_type(arg) == "object"
         elsif property
-          fields = schema_fields(TreeSitter.field(TreeSitter.field(node, "function").not_nil!, "object").not_nil!, ctx, depth + 1)
+          fields = receiver(node).try { |object| schema_fields(object, ctx, depth + 1) } || fields
           if arg && TreeSitter.node_type(arg) == "object"
             case property
             when "extend" then fields.concat(schema_fields(arg, ctx, depth + 1))
@@ -393,6 +411,11 @@ module Noir
       function = TreeSitter.field(node, "function")
       return unless function && TreeSitter.node_type(function) == "member_expression"
       TreeSitter.field(function, "property").try { |p| text(p, ctx) }
+    end
+
+    # `a.b(...)` → `a`.
+    private def receiver(call : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
+      TreeSitter.field(call, "function").try { |function| TreeSitter.field(function, "object") }
     end
 
     private def first_arg(call : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?

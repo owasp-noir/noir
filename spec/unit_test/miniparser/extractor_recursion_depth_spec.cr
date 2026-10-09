@@ -23,6 +23,7 @@ require "../../../src/miniparsers/js_callee_extractor"
 require "../../../src/miniparsers/go_callee_extractor"
 require "../../../src/miniparsers/java_callee_extractor"
 require "../../../src/miniparsers/rust_callee_extractor_ts"
+require "../../../src/miniparsers/ts_contract_extractor"
 
 private NEST = 3000
 
@@ -135,6 +136,16 @@ describe "extractor recursion depth bounds" do
       routes = Noir::TreeSitterKotlinRouteExtractor.extract_routes(body)
       routes.map(&.path).should contain("/ok")
     end
+  end
+
+  # Effect's `.add(...).prefix(...)` walk used to recurse once per chain
+  # link through `field(...)`; 5000 links overflowed the stack.
+  it "contract-router extractors tolerate a 20000-link builder chain" do
+    effect = "const g = HttpApiGroup.make('g')#{".add(HttpApiEndpoint.get('a', '/a'))" * 20_000}.prefix('/p')\n"
+    Noir::TSContractExtractor.effect(effect).first.path.should eq("/p/a")
+    orpc = "export const p = os#{".use(m)" * 20_000}.route({ method: 'GET', path: '/x' }).handler(() => 1)\n"
+    Noir::TSContractExtractor.orpc(orpc).map(&.path).should eq(["/x"])
+    Noir::TSContractExtractor.ts_rest("const c = x#{".use(m)" * 20_000}\n").should be_empty
   end
 end
 
