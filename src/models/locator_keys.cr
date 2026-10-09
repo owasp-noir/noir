@@ -32,7 +32,7 @@ module Noir::LocatorKeys
     {:CADDY_SPEC, "caddy-spec", :array, :detect_scoped, "detector/specification/caddy"},
     {:CAIDO_JSON, "caido-json", :array, :detect_scoped, "detector/specification/caido"},
     {:CLOUDFLARE_WRANGLER_SPEC, "cloudflare-wrangler-spec", :array, :detect_scoped, "detector/specification/cloudflare_wrangler"},
-    {:CS_APINET_MVC_ROUTECONFIG, "cs-apinet-mvc-routeconfig", :single, :detect_scoped, "detector/csharp/aspnet_mvc"},
+    {:CS_APINET_MVC_ROUTECONFIG, "cs-apinet-mvc-routeconfig", :array, :detect_scoped, "detector/csharp/aspnet_mvc"},
     {:DIRECTUS_SNAPSHOT, "directus-snapshot", :array, :detect_scoped, "detector/specification/directus"},
     {:ENVOY_JSON, "envoy-json", :array, :detect_scoped, "detector/specification/envoy"},
     {:ENVOY_YAML, "envoy-yaml", :array, :detect_scoped, "detector/specification/envoy"},

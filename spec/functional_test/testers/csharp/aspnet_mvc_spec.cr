@@ -32,6 +32,9 @@ expected_endpoints = [
     Param.new("price", "", "form"),
     Param.new("stock", "", "form"),
   ]),
+  Endpoint.new("/Product/Show", "GET", [
+    Param.new("productId", "", "query"),
+  ]),
   # New ApiController endpoints with attribute-based routing
   Endpoint.new("/api/Api/users/{id}", "GET", [
     Param.new("id", "", "path"),

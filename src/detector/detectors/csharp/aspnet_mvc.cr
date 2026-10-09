@@ -45,7 +45,7 @@ module Detector::CSharp
 
       if file_contents.includes?(".MapRoute")
         locator = CodeLocator.instance
-        locator.set(Noir::LocatorKeys::CS_APINET_MVC_ROUTECONFIG, filename)
+        locator.push(Noir::LocatorKeys::CS_APINET_MVC_ROUTECONFIG, filename)
       end
     end
   end
