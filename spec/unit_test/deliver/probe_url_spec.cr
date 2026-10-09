@@ -141,4 +141,21 @@ describe "Deliver#probe_url" do
 
     probe.url_for(endpoint).should eq("http://h/u/42/1")
   end
+
+  # A fragment never goes on the wire, and a raw space splits the request
+  # line. GraphQL operations are reported as `/graphql#Query.user`.
+  describe "the wire form" do
+    it "cuts a display-only fragment for every verb" do
+      probe.url_for(Endpoint.new("http://h/graphql#Query.user", "POST"), "POST").should eq("http://h/graphql")
+      probe.url_for(path_endpoint("http://h/u/:id#Query.user", "id")).should eq("http://h/u/1")
+    end
+
+    it "percent-encodes whitespace and control bytes" do
+      probe.url_for(Endpoint.new("http://h/sp ace\r\nX: y", "GET")).should eq("http://h/sp%20ace%0D%0AX:%20y")
+    end
+
+    it "leaves an already-clean URL untouched" do
+      probe.url_for(Endpoint.new("http://h/a?b=c", "GET")).should eq("http://h/a?b=c")
+    end
+  end
 end

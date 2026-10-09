@@ -46,13 +46,16 @@ end
 private class CountingServer
   getter address : Socket::IPAddress
   getter paths : Array(String)
+  getter resources : Array(String)
 
   def initialize(@status : Int32 = 200, location : String? = nil)
     @paths = [] of String
+    @resources = [] of String
     @mutex = Mutex.new
     status = @status
     mutex = @mutex
     paths = @paths
+    resources = @resources
     @server = HTTP::Server.new do |ctx|
       resource = ctx.request.resource
       path = if resource.starts_with?("http://") || resource.starts_with?("https://")
@@ -60,7 +63,10 @@ private class CountingServer
              else
                resource
              end
-      mutex.synchronize { paths << path }
+      mutex.synchronize do
+        paths << path
+        resources << resource
+      end
       ctx.response.headers["Location"] = location if location
       ctx.response.status_code = status
       ctx.response.print "ok"
@@ -315,6 +321,21 @@ describe StatusCodeProbe do
         end
       ensure
         final.close
+      end
+    end
+
+    # `/graphql#Query.user` went out with the fragment on the request line,
+    # and the server routed it as a path that does not exist.
+    it "probes the route without the display-only fragment" do
+      server = CountingServer.new(200)
+      begin
+        endpoint = Endpoint.new(server.url_for("/graphql#Query.user"), "POST")
+        result = probe_for(base_probe_options).apply([endpoint])
+
+        server.resources.should eq([server.url_for("/graphql")])
+        result.first.url.should end_with("/graphql#Query.user")
+      ensure
+        server.close
       end
     end
 

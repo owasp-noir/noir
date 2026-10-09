@@ -9,7 +9,8 @@ require "../utils/http_symbols"
 require "../utils/url_origin"
 require "../utils/redact"
 
-# Max concurrent in-flight probe requests and the outbound TLS context, shared
+# Max concurrent in-flight probe requests, the outbound TLS context and the
+# wire form of an endpoint URL, shared
 # by every class that fires requests at discovered endpoints. Bounds the
 # fiber/socket fan-out so a large endpoint set can't exhaust file descriptors. Backed by the validated
 # --concurrency value (already clamped to a sane ceiling).
@@ -37,6 +38,32 @@ module ProbeConcurrency
       OpenSSL::SSL::Context::Client.insecure
     else
       OpenSSL::SSL::Context::Client.new
+    end
+  end
+
+  # `endpoint.url` as it may go on the wire. The catalog keeps display-only
+  # parts that a request target must not carry: synthetic `#Query.user`
+  # fragments (GraphQL, OpenRPC) and literal spaces from source paths. Crest
+  # hands the string to the request line as-is, so `/graphql#Query.user` hit
+  # a route that does not exist (404, then hidden by --exclude-codes 404),
+  # Crest appended `?query` *after* the fragment, and a space split the
+  # request line. The fragment is cut and whitespace/control bytes (CR/LF
+  # included) are percent-encoded. Non-ASCII is left alone: it may sit in an
+  # IDN host, which Crest punycodes itself.
+  protected def wire_url(url : String) : String
+    if hash = url.index('#')
+      url = url[0, hash]
+    end
+    return url unless url.each_byte.any? { |byte| byte <= 0x20 || byte == 0x7f }
+
+    String.build(url.bytesize + 8) do |io|
+      url.each_byte do |byte|
+        if byte <= 0x20 || byte == 0x7f
+          io << '%' << byte.to_s(16, upcase: true).rjust(2, '0')
+        else
+          io.write_byte(byte)
+        end
+      end
     end
   end
 end
@@ -290,7 +317,8 @@ class Deliver
   # for the rest the literal template still reaches an intercepting proxy,
   # where the user can edit and replay it deliberately.
   protected def probe_url(endpoint : Endpoint, request_method : String) : String
-    return endpoint.url unless SAFE_HTTP_METHODS.includes?(request_method.upcase)
+    url = wire_url(endpoint.url)
+    return url unless SAFE_HTTP_METHODS.includes?(request_method.upcase)
 
     fillers = {} of String => String
     endpoint.params.each do |param|
@@ -302,9 +330,9 @@ class Deliver
 
       fillers[param.name] = NUMERIC_PATH_PARAM_RE.matches?(param.name) ? "1" : "noir"
     end
-    return endpoint.url if fillers.empty?
+    return url if fillers.empty?
 
-    url = fill_delimited_path_params(endpoint.url, fillers)
+    url = fill_delimited_path_params(url, fillers)
 
     # Longest name first. The `:name` form has no closing delimiter, so a
     # param whose name merely *starts with* another's used to be eaten by the
