@@ -228,15 +228,13 @@ module Analyzer::Kotlin
       files.select do |path|
         path.ends_with?(".#{KOTLIN_EXTENSION}") &&
           File.exists?(path) &&
-          !KotlinEngine.test_path?(base_relative_path(path)) &&
-          !spring_ignored_path?(path)
+          !KotlinEngine.test_path?(base_relative_path(path))
       end
     end
 
     private def spring_src_dirs(files : Array(String)) : Array(String)
       dirs = Set(String).new
       files.each do |path|
-        next if spring_ignored_path?(path)
         # Scan-base-relative, never absolute: `String#index` takes the
         # FIRST occurrence, so a `src/` directory above the scan base
         # made every module resolve to a source root outside the scan.
@@ -247,19 +245,6 @@ module Analyzer::Kotlin
         dirs << base.rstrip('/') + relative[0, index + 4]
       end
       dirs.to_a
-    end
-
-    # One precompiled `Regex.union` scan (PCRE2 JIT, auto-escapes each
-    # literal, including the `.` in `/.git/`/`/.gradle/`) replaces the six
-    # OR-ed `String#includes?` scans below. Both callers run this over
-    # every file in the configured base (not just Kotlin sources), once
-    # each in spring_kotlin_files and spring_src_dirs.
-    IGNORED_PATH_SEGMENT_RE = Regex.union("/.git/", "/.gradle/", "/build/", "/out/", "/target/", "/node_modules/")
-
-    # Scan-base-relative, never absolute: a `build/` or `target/`
-    # directory ABOVE the scan base is not this project's build output.
-    private def spring_ignored_path?(path : String) : Bool
-      base_relative_path(path).matches?(IGNORED_PATH_SEGMENT_RE)
     end
 
     # Read Spring Webflux base-path + static-locations from

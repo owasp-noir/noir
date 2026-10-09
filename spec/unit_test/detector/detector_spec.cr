@@ -297,6 +297,47 @@ describe "detect_techs file walker" do
       CodeLocator.instance.clear_all
     end
   end
+
+  it "prunes build-output names only next to a project manifest" do
+    temp_dir = File.tempname("noir_detector_manifest_scoped")
+
+    begin
+      kept = [
+        File.join(temp_dir, "routes", "vendor", "products.js"),
+        File.join(temp_dir, "src", "main", "java", "com", "acme", "build", "Ctl.java"),
+        File.join(temp_dir, "src", "main", "java", "com", "acme", "target", "Ctl.java"),
+        File.join(temp_dir, "src", "main", "java", "com", "acme", "out", "Ctl.java"),
+      ]
+      pruned = [
+        File.join(temp_dir, "vendor", "lib.js"),
+        File.join(temp_dir, "build", "Gen.java"),
+        File.join(temp_dir, "target", "Gen.java"),
+        File.join(temp_dir, "node_modules", "x", "index.js"),
+        File.join(temp_dir, "src", "node_modules", "y", "index.js"),
+      ]
+      Dir.mkdir_p(temp_dir)
+      File.write(File.join(temp_dir, "package.json"), %({"name": "x"}))
+      (kept + pruned).each do |path|
+        Dir.mkdir_p(File.dirname(path))
+        File.write(path, "// x\n")
+      end
+
+      options = create_test_options
+      options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+      logger = NoirLogger.new(false, false, false, true)
+      locator = CodeLocator.instance
+      locator.clear_all
+
+      detect_techs([temp_dir], options, [] of PassiveScan, logger)
+      files = locator.all_files
+
+      kept.each { |path| files.should contain(path) }
+      pruned.each { |path| files.should_not contain(path) }
+    ensure
+      FileUtils.rm_rf(temp_dir) if temp_dir
+      CodeLocator.instance.clear_all
+    end
+  end
 end
 
 describe "detect_techs passive results" do
