@@ -123,7 +123,7 @@ class RustSecurityTagger < FrameworkTagger
     [
       "rust_axum", "rust_rocket", "rust_actix_web",
       "rust_loco", "rust_rwf", "rust_tide",
-      "rust_warp", "rust_gotham",
+      "rust_warp", "rust_gotham", "rust_ntex",
     ]
   end
 

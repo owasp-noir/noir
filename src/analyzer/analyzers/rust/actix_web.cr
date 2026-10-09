@@ -243,10 +243,12 @@ module Analyzer::Rust
           receiver_prefix = receiver ? (extract_scope_prefix(receiver, source) || "") : ""
           service_prefix = scoped_route_path(active_prefix, receiver_prefix)
 
-          if handler_name = service_handler_name(named[0], source)
-            push_registration(registrations, handler_name, service_prefix)
-          else
-            collect_service_registrations(named[0], source, test_regions, file_path, service_prefix, registrations, depth + 1)
+          service_items(named[0]).each do |item|
+            if handler_name = service_handler_name(item, source)
+              push_registration(registrations, handler_name, service_prefix)
+            else
+              collect_service_registrations(item, source, test_regions, file_path, service_prefix, registrations, depth + 1)
+            end
           end
 
           collect_service_registrations(receiver, source, test_regions, file_path, active_prefix, registrations, depth + 1) if receiver
@@ -264,6 +266,16 @@ module Analyzer::Rust
                                   prefix : String)
       prefixes = registrations[handler_name] ||= [] of String
       prefixes << prefix unless prefixes.includes?(prefix)
+    end
+
+    # `.service(handler)` takes one service; `.service((a, b, scope(...)))`
+    # registers a tuple of them at once (actix-web 4 and ntex both implement
+    # the service factory for tuples, and ntex code uses the tuple form almost
+    # exclusively). Flatten the tuple so each element is treated like a
+    # single-service argument.
+    private def service_items(node : LibTreeSitter::TSNode) : Array(LibTreeSitter::TSNode)
+      return [node] unless Noir::TreeSitter.node_type(node) == "tuple_expression"
+      named_children(node)
     end
 
     private def service_handler_name(node : LibTreeSitter::TSNode, source : String) : String?
@@ -328,19 +340,20 @@ module Analyzer::Rust
           receiver_prefix = receiver ? (extract_scope_prefix(receiver, source) || "") : ""
           service_prefix = scoped_route_path(active_prefix, receiver_prefix)
 
-          arg = named[0]
-          case Noir::TreeSitter.node_type(arg)
-          when "scoped_identifier"
-            regs << {base: base, ref: Noir::TreeSitter.node_text(arg, source), prefix: service_prefix}
-          when "identifier"
-            unless service_prefix.empty? || glob_contexts.empty?
-              name = Noir::TreeSitter.node_text(arg, source)
-              glob_contexts.each do |context|
-                regs << {base: base, ref: "#{context}::#{name}", prefix: service_prefix}
+          service_items(named[0]).each do |arg|
+            case Noir::TreeSitter.node_type(arg)
+            when "scoped_identifier"
+              regs << {base: base, ref: Noir::TreeSitter.node_text(arg, source), prefix: service_prefix}
+            when "identifier"
+              unless service_prefix.empty? || glob_contexts.empty?
+                name = Noir::TreeSitter.node_text(arg, source)
+                glob_contexts.each do |context|
+                  regs << {base: base, ref: "#{context}::#{name}", prefix: service_prefix}
+                end
               end
+            else
+              collect_qualified_registrations(arg, source, test_regions, service_prefix, base, glob_contexts, regs, depth + 1)
             end
-          else
-            collect_qualified_registrations(arg, source, test_regions, service_prefix, base, glob_contexts, regs, depth + 1)
           end
 
           collect_qualified_registrations(receiver, source, test_regions, active_prefix, base, glob_contexts, regs, depth + 1) if receiver
@@ -665,7 +678,7 @@ module Analyzer::Rust
       function = Noir::TreeSitter.field(call, "function")
       return unless function && Noir::TreeSitter.node_type(function) == "field_expression"
       field = Noir::TreeSitter.field(function, "field")
-      return unless field && Noir::TreeSitter.node_text(field, source) == "to"
+      return unless field && handler_binder?(Noir::TreeSitter.node_text(field, source))
       receiver = Noir::TreeSitter.field(function, "value")
       return unless receiver
       res = find_resource_in_chain(receiver, source)
@@ -781,8 +794,10 @@ module Analyzer::Rust
         field = Noir::TreeSitter.field(fn, "field")
         if field && Noir::TreeSitter.node_text(field, source) == "service"
           if sargs = Noir::TreeSitter.field(cursor, "arguments")
-            Noir::TreeSitter.each_named_child(sargs) do |arg|
-              register_scope_chain(arg, prefix, map, source) if Noir::TreeSitter.node_type(arg) == "call_expression"
+            Noir::TreeSitter.each_named_child(sargs) do |sarg|
+              service_items(sarg).each do |arg|
+                register_scope_chain(arg, prefix, map, source) if Noir::TreeSitter.node_type(arg) == "call_expression"
+              end
             end
           end
         end
@@ -866,7 +881,7 @@ module Analyzer::Rust
         fn = Noir::TreeSitter.field(call, "function")
         next unless fn && Noir::TreeSitter.node_type(fn) == "field_expression"
         field = Noir::TreeSitter.field(fn, "field")
-        next unless field && Noir::TreeSitter.node_text(field, source) == "to"
+        next unless field && handler_binder?(Noir::TreeSitter.node_text(field, source))
         cargs = Noir::TreeSitter.field(call, "arguments")
         next unless cargs
         Noir::TreeSitter.each_named_child(cargs) do |arg|
@@ -881,6 +896,12 @@ module Analyzer::Rust
         end
       end
       found
+    end
+
+    # The builder method that binds a handler to a route or resource:
+    # `web::get().to(handler)` / `web::resource("/p").to(handler)`.
+    protected def handler_binder?(name : String) : Bool
+      name == "to"
     end
 
     private def node_byte(node : LibTreeSitter::TSNode) : Int32
@@ -1187,15 +1208,22 @@ module Analyzer::Rust
     end
 
     private def extract_function_param_text(text : String, endpoint : Endpoint)
-      if text.includes?("web::Query<") || text.includes?(": web::Query")
+      if extractor_param?(text, "Query")
         endpoint.push_param(Param.new("query", "", "query"))
       end
-      if text.includes?("web::Json<") || text.includes?(": web::Json")
+      if extractor_param?(text, "Json")
         endpoint.push_param(Param.new("body", "", "json"))
       end
-      if text.includes?("web::Form<") || text.includes?(": web::Form")
+      if extractor_param?(text, "Form")
         endpoint.push_param(Param.new("form", "", "form"))
       end
+    end
+
+    # Whether a handler parameter's text uses the `kind` extractor
+    # (`Query` / `Json` / `Form`). actix-web exposes them as `web::Query`;
+    # forks that keep them elsewhere (ntex's `web::types::Query`) override.
+    protected def extractor_param?(text : String, kind : String) : Bool
+      text.includes?("web::#{kind}<") || text.includes?(": web::#{kind}")
     end
 
     # Scan the body for `req.headers().get("X")` / `req.cookie("X")`

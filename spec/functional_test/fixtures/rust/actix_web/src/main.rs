@@ -102,7 +102,19 @@ async fn nested_scoped_posts() -> impl Responder {
     HttpResponse::Ok().body("Nested scoped posts")
 }
 
+// actix-web 4 also registers a tuple of services in one `.service(...)`.
+#[get("/tuple-a")]
+async fn tuple_a() -> impl Responder {
+    HttpResponse::Ok().finish()
+}
+
+#[post("/tuple-b")]
+async fn tuple_b() -> impl Responder {
+    HttpResponse::Ok().finish()
+}
+
 fn configure(cfg: &mut web::ServiceConfig) {
+    cfg.service(web::scope("/grouped").service((tuple_a, tuple_b)));
     cfg.service(
         web::scope("/api")
             .service(scoped_posts)

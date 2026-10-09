@@ -1,0 +1,9 @@
+[package]
+name = "ntex-fixture"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ntex = { version = "2", features = ["tokio"] }
+ntex-files = "2"
+serde = { version = "1", features = ["derive"] }

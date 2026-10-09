@@ -16,6 +16,8 @@ expected_endpoints = [
     Param.new("id", "", "path"),
   ]),
   Endpoint.new("/root/api/nested", "GET"),
+  Endpoint.new("/grouped/tuple-a", "GET"),
+  Endpoint.new("/grouped/tuple-b", "POST"),
 ]
 
 FunctionalTester.new("fixtures/rust/actix_web/", {
