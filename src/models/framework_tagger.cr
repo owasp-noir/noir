@@ -3,6 +3,7 @@ require "./endpoint"
 require "./code_locator"
 require "./file_helper"
 require "../utils/text_file"
+require "../utils/media_filter"
 require "../utils/path_scope"
 
 struct SourceContext
@@ -82,10 +83,16 @@ class FrameworkTagger < Tagger
     [] of String
   end
 
+  # The handler source behind each of `endpoint`'s code paths. A path to a
+  # specification document (an `openapi.json` the endpoint was merged with)
+  # is skipped: it is never handler source, and the taggers' backward walks
+  # found no `class`/`def` boundary in it, so each endpoint walked the whole
+  # document, making `-T` cost endpoints x spec lines.
   def read_source_context(endpoint : Endpoint) : Array(SourceContext)
     results = [] of SourceContext
 
     endpoint.details.code_paths.each do |path_info|
+      next if MediaFilter.spec_document?(path_info.path)
       content = read_file(path_info.path)
       next if content.nil?
 
