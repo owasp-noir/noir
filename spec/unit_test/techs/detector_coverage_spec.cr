@@ -161,6 +161,6 @@ describe "detector spec coverage" do
   # Guards the guard: a broken glob would make every example above pass
   # vacuously.
   it "finds every registered detector" do
-    detector_paths.size.should eq 286
+    detector_paths.size.should eq 287
   end
 end
