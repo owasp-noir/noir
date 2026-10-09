@@ -88,4 +88,20 @@ describe "route line attribution" do
     source_line_for(endpoints, "GET", "/api/health", suffix).should contain("HealthR")
     source_line_for(endpoints, "PUT", "/api/users/:user_id", suffix).should contain("UserR")
   end
+
+  it "points each link of a multi-line route chain at its own verb" do
+    # A chained call's node starts at the chain head, so every link of
+    # `app\n  .get(...)\n  .put(...)` used to report the head's line.
+    elysia = scan_fixture("javascript/elysia")
+    source_line_for(elysia, "DELETE", "/sessions/:id", "src/index.ts").should contain(".delete('/sessions/:id'")
+    source_line_for(elysia, "GET", "/health", "src/index.ts").should contain(".all('/health'")
+
+    helidon = scan_fixture("java/helidon_se")
+    suffix = "se/GreetService.java"
+    source_line_for(helidon, "GET", "/greet/{name}", suffix).should contain(".get(\"/{name}\"")
+    source_line_for(helidon, "PUT", "/greet/greeting", suffix).should contain(".put(\"/greeting\"")
+
+    javalin = scan_fixture("java/javalin_kotlin/context-app")
+    source_line_for(javalin, "POST", "/ctx/reload", "ContextApp.kt").should contain(".post(\"/reload\")")
+  end
 end

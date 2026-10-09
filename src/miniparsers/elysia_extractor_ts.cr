@@ -205,7 +205,7 @@ module Noir
       return unless path
 
       full_path = Noir::URLPath.join_trimmed(prefix, path)
-      line = Noir::TreeSitter.node_start_row(call)
+      line = Noir::TreeSitter.call_name_row(call)
 
       query_params = [] of String
       header_params = [] of String

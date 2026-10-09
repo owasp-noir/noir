@@ -302,6 +302,32 @@ module Noir::TreeSitter
     LibTreeSitter.ts_node_start_point(node).row.to_i
   end
 
+  # Row of a call's method name. A chained call node starts at the chain
+  # head, so `app\n  .get(...)\n  .post(...)` would put every link on the
+  # `app` line. JS `member_expression.property`, Java
+  # `method_invocation.name` and Kotlin's trailing `navigation_suffix`
+  # name the link (Kotlin wraps `.post("/x") { }` in a second call for the
+  # trailing lambda); any other shape falls back to the call's own row.
+  def self.call_name_row(call : LibTreeSitter::TSNode) : Int32
+    if name = field(call, "name") || field(call, "function").try { |f| field(f, "property") }
+      return node_start_row(name)
+    end
+
+    node = call
+    while callee = first_named_child(node)
+      case node_type(callee)
+      when "navigation_expression"
+        count = LibTreeSitter.ts_node_named_child_count(callee)
+        return node_start_row(LibTreeSitter.ts_node_named_child(callee, count - 1))
+      when "call_expression"
+        node = callee
+      else
+        break
+      end
+    end
+    node_start_row(node)
+  end
+
   def self.node_end_row(node : LibTreeSitter::TSNode) : Int32
     LibTreeSitter.ts_node_end_point(node).row.to_i
   end

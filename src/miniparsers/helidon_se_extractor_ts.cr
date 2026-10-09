@@ -182,7 +182,7 @@ module Noir
       return unless path_arg
 
       full_path = normalize_path(path_arg)
-      line = Noir::TreeSitter.node_start_row(call)
+      line = Noir::TreeSitter.call_name_row(call)
 
       query_params = [] of String
       header_params = [] of String

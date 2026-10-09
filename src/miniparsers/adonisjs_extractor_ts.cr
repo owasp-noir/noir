@@ -227,7 +227,7 @@ module Noir
       path = first_string_argument(call, source)
       return unless path
       full = Noir::URLPath.join_trimmed(prefix, path)
-      line = Noir::TreeSitter.node_start_row(call)
+      line = Noir::TreeSitter.call_name_row(call)
       callees = include_callees ? route_callees(call, source, line) : [] of JSCalleeExtractor::Entry
       routes << Route.new(verb, full, line, callees)
     end
@@ -236,7 +236,7 @@ module Noir
       name = first_string_argument(call, source)
       return unless name
       base = Noir::URLPath.join_trimmed(prefix, name.starts_with?("/") ? name : "/#{name}")
-      line = Noir::TreeSitter.node_start_row(call)
+      line = Noir::TreeSitter.call_name_row(call)
 
       actions.each do |action|
         verb_path = RESOURCE_ACTIONS[action]?
@@ -338,7 +338,7 @@ module Noir
       path = first_string_argument(call, source)
       return unless path
       full = Noir::URLPath.join_trimmed(prefix, path)
-      line = Noir::TreeSitter.node_start_row(call)
+      line = Noir::TreeSitter.call_name_row(call)
       routes << Route.new("GET", full, line)
     end
 
