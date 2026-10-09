@@ -28,10 +28,11 @@ module Analyzer::Php
     VOLT_RE         = /\bnew\s+class\b[^{;]*?\bextends\s+\\?(?:Livewire\\(?:Volt\\)?)?Component\b[^{;]*\{/
     NAMESPACE_RE    = /\bnamespace\s+([\w\\]+)\s*;/
     UPDATE_ROUTE_RE = /setUpdateRoute\s*\([^;]*?Route::post\s*\(\s*['"]([^'"]+)['"]/
-    LIFECYCLE_RE    = /\A(?:render|exception|placeholder|(?:mount|boot|hydrate|dehydrate|updating|updated|rendering|rendered)\w*|__\w+)\z/
-    LOCKED_RE       = /#\[[^\]]*\b(?:Locked|Reactive)\b/
-    COMPUTED_RE     = /#\[[^\]]*\bComputed\b/
-    VIEW_DIRS       = ["views/livewire/", "views/"]
+    # Lifecycle hooks and the config hooks Livewire itself calls.
+    LIFECYCLE_RE = /\A(?:render|exception|placeholder|getListeners|rules|messages|validationAttributes|queryString|(?:mount|boot|hydrate|dehydrate|updating|updated|rendering|rendered)\w*|__\w+)\z/
+    LOCKED_RE    = /#\[[^\]]*\b(?:Locked|Reactive)\b/
+    COMPUTED_RE  = /#\[[^\]]*\bComputed\b/
+    VIEW_DIRS    = ["views/livewire/", "views/"]
 
     @update_path : String? = nil
     @update_path_lock = Mutex.new
