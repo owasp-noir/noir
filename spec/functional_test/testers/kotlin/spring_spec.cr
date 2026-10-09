@@ -33,6 +33,13 @@ expected_endpoints = [
   Endpoint.new("/mcp", "POST"),
   Endpoint.new("/mcp", "GET"),
   Endpoint.new("/mcp", "DELETE"),
+  # ConstPathControllers.kt: template / `+` constants from RoutePaths.kt,
+  # and a class prefix with a trailing `// comment`.
+  Endpoint.new("/const/paths/template", "GET"),
+  Endpoint.new("/const/paths/concat", "GET"),
+  Endpoint.new("/const/paths/braced", "GET"),
+  Endpoint.new("/const/local/same-file", "GET"),
+  Endpoint.new("/trailing/{id}", "GET", [Param.new("id", "", "path")]),
 ]
 
 FunctionalTester.new("fixtures/kotlin/spring/", {
