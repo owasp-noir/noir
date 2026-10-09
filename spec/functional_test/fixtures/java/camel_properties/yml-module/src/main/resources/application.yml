@@ -1,0 +1,3 @@
+camel:
+  rest:
+    context-path: /yml

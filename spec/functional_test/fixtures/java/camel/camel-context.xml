@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans">
+  <camelContext xmlns="http://camel.apache.org/schema/spring">
+    <!-- <rest path="/commented"><get path="/out"/></rest> -->
+    <rest path="/xml/items">
+      <get path="/{id}">
+        <to uri="direct:getItem"/>
+      </get>
+      <post type="com.example.Item">
+        <param name="dryRun" type="query"/>
+        <to uri="direct:addItem"/>
+      </post>
+    </rest>
+    <route>
+      <from uri="platform-http:/xml/health?httpMethodRestrict=GET"/>
+      <setBody><constant>ok</constant></setBody>
+    </route>
+    <route>
+      <from uri="direct:internal"/>
+      <log message="internal"/>
+    </route>
+  </camelContext>
+</beans>
