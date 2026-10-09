@@ -49,14 +49,16 @@ module Analyzer::Rust
           full_path = apply_nest_prefix(node, route_path, nest_ranges)
 
           details = Details.new(PathInfo.new(path, call_line(node)))
-          endpoint = Endpoint.new(full_path, method, details)
-          extract_path_params(full_path, endpoint)
+          RustEngine.fan_out_verbs(method).each do |verb|
+            endpoint = Endpoint.new(full_path, verb, details)
+            extract_path_params(full_path, endpoint)
 
-          if handler_arg
-            apply_handler(handler_arg, function_index, source, path, endpoint, include_callee)
+            if handler_arg
+              apply_handler(handler_arg, function_index, source, path, endpoint, include_callee)
+            end
+
+            endpoints << endpoint
           end
-
-          endpoints << endpoint
         end
       end
 
@@ -83,6 +85,8 @@ module Analyzer::Rust
           name.upcase
         elsif STATIC_VERBS.includes?(name)
           "GET"
+        elsif name == "all"
+          "ANY"
         end
       return unless method
 
@@ -102,30 +106,41 @@ module Analyzer::Rust
     # Walk a verb call's receiver chain to the `.at("path")` that defines
     # its path (skipping chained verbs), or resolve a route-variable
     # identifier. Returns the path string or `nil`.
+    # Each `.at()` nests under its receiver's path (`api.at("/c")` with
+    # `api = app.at("/api")` is `/api/c`), so every `.at` segment in the
+    # chain is joined, rooted at a route variable when there is one.
     private def resolve_at_path(node : LibTreeSitter::TSNode,
                                 source : String,
                                 var_paths : Hash(String, String)) : String?
       cursor = node
+      path = nil.as(String?)
       256.times do
+        base = nil.as(String?)
         case Noir::TreeSitter.node_type(cursor)
         when "identifier"
-          return var_paths[Noir::TreeSitter.node_text(cursor, source)]?
+          base = var_paths[Noir::TreeSitter.node_text(cursor, source)]?
         when "call_expression"
           cfn = Noir::TreeSitter.field(cursor, "function")
-          return unless cfn && Noir::TreeSitter.node_type(cfn) == "field_expression"
-          cfield = Noir::TreeSitter.field(cfn, "field")
-          fname = cfield ? Noir::TreeSitter.node_text(cfield, source) : ""
-          if fname == "at"
-            return first_string_literal_text(Noir::TreeSitter.field(cursor, "arguments"), source)
+          if cfn && Noir::TreeSitter.node_type(cfn) == "field_expression" && (receiver = Noir::TreeSitter.field(cfn, "value"))
+            cfield = Noir::TreeSitter.field(cfn, "field")
+            if cfield && Noir::TreeSitter.node_text(cfield, source) == "at"
+              segment = first_string_literal_text(Noir::TreeSitter.field(cursor, "arguments"), source)
+              return path unless segment
+              path = path ? join_at(segment, path) : segment
+            end
+            cursor = receiver
+            next
           end
-          receiver = Noir::TreeSitter.field(cfn, "value")
-          return unless receiver
-          cursor = receiver
-        else
-          return
         end
+        return base && path ? join_at(base, path) : base || path
       end
-      nil
+      path
+    end
+
+    # Tide's `Route::at` leaves the path unchanged for `"/"`.
+    private def join_at(prefix : String, path : String) : String
+      return prefix if path.empty? || path == "/"
+      "#{prefix.rstrip('/')}/#{path.lstrip('/')}"
     end
 
     # Collect `app.at("/pre").nest(arg)` mounts as `{arg_byte_range,
@@ -180,7 +195,7 @@ module Analyzer::Rust
 
         value = Noir::TreeSitter.field(node, "value")
         next unless value
-        path = find_at_call_path(value, source)
+        path = resolve_at_path(value, source, vars) || find_at_call_path(value, source)
         vars[name] = path if path
       end
       vars
