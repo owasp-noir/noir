@@ -25,8 +25,10 @@ module Noir
     # Keywords that can precede a regex literal in JavaScript
     REGEX_PRECEDING_KEYWORDS = ["return", "case", "throw", "in", "of", "typeof", "instanceof", "void", "delete", "new"]
 
-    # Characters that can precede a regex literal (operators/punctuation expecting expression)
-    REGEX_PRECEDING_CHARS = Set{'(', '[', '{', ',', ':', ';', '=', '!', '&', '|', '?', '+', '-', '*', '%', '<', '>', '~', '^'}
+    # Characters that can precede a regex literal (operators/punctuation expecting expression).
+    # '<' is deliberately absent: `a < /re/` is never written, while JSX
+    # closing tags (`</div>`) put a '/' after '<' on every other line.
+    REGEX_PRECEDING_CHARS = Set{'(', '[', '{', ',', ':', ';', '=', '!', '&', '|', '?', '+', '-', '*', '%', '>', '~', '^'}
 
     # The regex-context checks only ever look at the tail of the scanned
     # output: the last non-whitespace char, and `ends_with?` against the
@@ -176,57 +178,114 @@ module Noir
 
       # Skip template literals
       if char == '`'
-        emit(io, window, pending_ws, char)
-        pos += 1
-        while pos < size && chr(src, pos) != '`'
-          if chr(src, pos) == '\\' && pos + 1 < size
-            emit(io, window, pending_ws, chr(src, pos))
-            pos += 1
-          end
-          emit(io, window, pending_ws, chr(src, pos)) if pos < size
-          pos += 1
-        end
-        emit(io, window, pending_ws, '`') if pos < size && chr(src, pos) == '`'
-        pos += 1
-        return pos
-      end
-
-      # Skip regex literals
-      if char == '/' && looks_like_regex?(window)
-        emit(io, window, pending_ws, char)
-        pos += 1
-        in_char_class = false
-        while pos < size
-          rc = chr(src, pos)
-          break if rc == '/' && !in_char_class
-          if rc == '\\' && pos + 1 < size
-            emit(io, window, pending_ws, rc)
-            pos += 1
-            emit(io, window, pending_ws, chr(src, pos)) if pos < size
-            pos += 1
-          elsif rc == '[' && !in_char_class
-            in_char_class = true
-            emit(io, window, pending_ws, rc)
-            pos += 1
-          elsif rc == ']' && in_char_class
-            in_char_class = false
-            emit(io, window, pending_ws, rc)
-            pos += 1
-          else
-            emit(io, window, pending_ws, rc)
-            pos += 1
-          end
-        end
-        emit(io, window, pending_ws, '/') if pos < size && chr(src, pos) == '/'
-        pos += 1
-        # Skip regex flags
-        while pos < size && chr(src, pos).in?('g', 'i', 'm', 's', 'u', 'y', 'd')
+        stop = template_literal_end(src, size, pos)
+        while pos < stop
           emit(io, window, pending_ws, chr(src, pos))
           pos += 1
         end
         return pos
       end
 
+      # Skip regex literals
+      if char == '/' && looks_like_regex?(window) && (stop = regex_literal_end(src, size, pos))
+        while pos < stop
+          emit(io, window, pending_ws, chr(src, pos))
+          pos += 1
+        end
+        return pos
+      end
+
+      nil
+    end
+
+    # End (exclusive) of the template literal whose opening backtick is at
+    # `pos`, or `size` when it never closes. `${ … }` substitutions are
+    # tracked with their own brace depth, so a nested template
+    # (`${items.map(i => `<li>${i}</li>`)}`), a string or a `}` inside a
+    # substitution does not end the outer literal early. Each stack entry
+    # is either TEMPLATE_TEXT or the brace depth of an open substitution;
+    # an explicit stack keeps hostile nesting off the call stack.
+    TEMPLATE_TEXT = -1
+
+    def self.template_literal_end(src, size : Int32, pos : Int32) : Int32
+      stack = [TEMPLATE_TEXT]
+      pos += 1
+      while pos < size
+        c = chr(src, pos)
+        if stack.last == TEMPLATE_TEXT
+          if c == '\\'
+            pos += 2
+            next
+          elsif c == '`'
+            stack.pop
+            return pos + 1 if stack.empty?
+          elsif c == '$' && pos + 1 < size && chr(src, pos + 1) == '{'
+            stack << 0
+            pos += 1
+          end
+        else
+          case c
+          when '`'
+            stack << TEMPLATE_TEXT
+          when '\'', '"'
+            pos += 1
+            while pos < size && chr(src, pos) != c && chr(src, pos) != '\n'
+              pos += chr(src, pos) == '\\' ? 2 : 1
+            end
+          when '/'
+            if pos + 1 < size && chr(src, pos + 1) == '/'
+              while pos < size && chr(src, pos) != '\n'
+                pos += 1
+              end
+            elsif pos + 1 < size && chr(src, pos + 1) == '*'
+              pos += 2
+              while pos + 1 < size && !(chr(src, pos) == '*' && chr(src, pos + 1) == '/')
+                pos += 1
+              end
+              pos += 1
+            end
+          when '{'
+            stack[-1] += 1
+          when '}'
+            if stack.last == 0
+              stack.pop
+            else
+              stack[-1] -= 1
+            end
+          end
+        end
+        pos += 1
+      end
+      size
+    end
+
+    # End (exclusive, flags included) of the regex literal whose opening
+    # '/' is at `pos`, or nil when no closing '/' appears before the end of
+    # the line. A regex literal cannot span lines, so a '/' the context
+    # rule misjudged (a JSX `</tag>`, `a++ / 2`) is division, not a regex
+    # that swallows the rest of the file.
+    def self.regex_literal_end(src, size : Int32, pos : Int32) : Int32?
+      pos += 1
+      in_char_class = false
+      while pos < size
+        c = chr(src, pos)
+        return if c == '\n'
+        if c == '\\'
+          pos += 2
+          next
+        elsif c == '[' && !in_char_class
+          in_char_class = true
+        elsif c == ']' && in_char_class
+          in_char_class = false
+        elsif c == '/' && !in_char_class
+          pos += 1
+          while pos < size && chr(src, pos).in?('g', 'i', 'm', 's', 'u', 'y', 'd')
+            pos += 1
+          end
+          return pos
+        end
+        pos += 1
+      end
       nil
     end
 
@@ -261,8 +320,12 @@ module Noir
     # `JSLexer#looks_like_regex?` — and they must agree: a '/' misread as
     # division lets the regex body's quotes and `//` open a string or a
     # comment that runs to EOF, which silently drops every route in the file.
-    def self.regex_context?(last_char : Char?, last_word : String) : Bool
+    #
+    # `before_last` is the raw character just before `last_char`: a '/'
+    # after `i++` / `i--` is division, not a regex.
+    def self.regex_context?(last_char : Char?, last_word : String, before_last : Char? = nil) : Bool
       return false unless last_char
+      return false if (last_char == '+' || last_char == '-') && before_last == last_char
       return true if REGEX_PRECEDING_CHARS.includes?(last_char)
       return false if last_word.empty?
       REGEX_PRECEDING_KEYWORDS.includes?(last_word)
@@ -274,10 +337,10 @@ module Noir
     private def self.looks_like_regex?(window : Array(Char)) : Bool
       last_char = window.last?
       return false unless last_char
-      return true if REGEX_PRECEDING_CHARS.includes?(last_char)
-      return false unless word_char?(last_char)
+      return false unless REGEX_PRECEDING_CHARS.includes?(last_char) || word_char?(last_char)
 
-      regex_context?(last_char, window_tail_word(window))
+      word = word_char?(last_char) ? window_tail_word(window) : ""
+      regex_context?(last_char, word, window.size > 1 ? window[-2] : nil)
     end
 
     private def self.word_char?(char : Char) : Bool
@@ -359,18 +422,7 @@ module Noir
       end
 
       # Skip template literals
-      if char == '`'
-        pos += 1
-        while pos < size && chr(src, pos) != '`'
-          if chr(src, pos) == '\\' && pos + 1 < size
-            pos += 2
-          else
-            pos += 1
-          end
-        end
-        pos += 1
-        return pos
-      end
+      return template_literal_end(src, size, pos) if char == '`'
 
       # Skip regex literals (use simple heuristic based on previous char)
       if char == '/'
@@ -393,29 +445,9 @@ module Noir
                       ""
                     end
 
-        if regex_context?(prev_char, prev_word)
-          pos += 1
-          in_char_class = false
-          while pos < size
-            break if chr(src, pos) == '/' && !in_char_class
-            if chr(src, pos) == '\\' && pos + 1 < size
-              pos += 2
-            elsif chr(src, pos) == '[' && !in_char_class
-              in_char_class = true
-              pos += 1
-            elsif chr(src, pos) == ']' && in_char_class
-              in_char_class = false
-              pos += 1
-            else
-              pos += 1
-            end
-          end
-          pos += 1 if pos < size
-          # Skip regex flags
-          while pos < size && chr(src, pos).in?('g', 'i', 'm', 's', 'u', 'y', 'd')
-            pos += 1
-          end
-          return pos
+        before_prev = prev_idx > 0 ? chr(src, prev_idx - 1) : nil
+        if regex_context?(prev_char, prev_word, before_prev)
+          return regex_literal_end(src, size, pos)
         end
       end
 

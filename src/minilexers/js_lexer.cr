@@ -86,7 +86,7 @@ module Noir
             skip_line_comment
           elsif peek == '*' # Multi line comment
             skip_multiline_comment
-          elsif looks_like_regex? # Regex literal
+          elsif looks_like_regex? && JSLiteralScanner.regex_literal_end(@chars, @size, @position)
             tokenize_regex
           else
             add_token(:operator, "/")
@@ -190,13 +190,19 @@ module Noir
     end
 
     private def tokenize_template_literal
+      # The end comes from the shared scanner, which tracks `${ … }`
+      # nesting: stopping at the first backtick cut
+      # `${items.map(i => `<li>${i}</li>`)}` in two and lexed the rest of
+      # the file out of phase.
+      stop = JSLiteralScanner.template_literal_end(@chars, @size, @position)
+      body_end = stop > @position + 1 && @chars[stop - 1] == '`' ? stop - 1 : stop
       advance # Skip the opening backtick
 
       # Template literals carry the largest payloads (CSS-in-JS, GraphQL,
       # inline HTML can be tens of KB) — per-char `String#+` made them
       # quadratic.
       template_value = String.build do |io|
-        while @current_char != '`' && @current_char != '\0'
+        while @position < body_end
           # Handle escape sequences
           if @current_char == '\\' && (peek == '`' || peek == '\\')
             advance
@@ -208,7 +214,7 @@ module Noir
       end
 
       # Skip the closing backtick
-      advance if @current_char == '`'
+      advance if @position < stop
 
       add_token(:template_literal, template_value)
     end
@@ -270,6 +276,11 @@ module Noir
         false
       when :keyword
         JSLiteralScanner.regex_context?(last_token.value[-1]?, last_token.value)
+      when :plus, :unknown
+        # An adjacent identical operator token makes `i++ /` division.
+        prev = @tokens.size > 1 ? @tokens[-2] : nil
+        before = prev && prev.position + 1 == last_token.position ? prev.value[-1]? : nil
+        JSLiteralScanner.regex_context?(last_token.value[-1]?, "", before)
       else
         # Punctuation, operators and `:unknown` (where '!' and the '>' of
         # '=>' land) each carry a single character; identifiers, numbers and

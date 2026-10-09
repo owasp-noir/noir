@@ -1250,6 +1250,15 @@ module Noir
               next
             end
           end
+          if char == '`'
+            # Shared with JSLiteralScanner so `${ … }` nesting (a template
+            # inside a substitution) does not end the literal early.
+            stop = JSLiteralScanner.template_literal_end(chars, len, i)
+            (i...stop).each { |k| builder << chars[k] }
+            last_sig = stop - 1
+            i = stop
+            next
+          end
           if char == '/' && regex_literal_start?(chars, last_sig)
             state = :regex
             escaped = false
@@ -1260,13 +1269,11 @@ module Noir
               state = :single
             when '"'
               state = :double
-            when '`'
-              state = :template
             end
           end
           builder << char
           last_sig = i unless char.whitespace?
-        when :single, :double, :template
+        when :single, :double
           builder << char
           last_sig = i unless char.whitespace?
           if escaped
@@ -1274,8 +1281,7 @@ module Noir
           elsif char == '\\'
             escaped = true
           elsif (state == :single && char == '\'') ||
-                (state == :double && char == '"') ||
-                (state == :template && char == '`')
+                (state == :double && char == '"')
             state = :code
           end
         when :regex
@@ -1348,7 +1354,7 @@ module Noir
                     ""
                   end
 
-      JSLiteralScanner.regex_context?(prev_char, prev_word)
+      JSLiteralScanner.regex_context?(prev_char, prev_word, last_sig > 0 ? chars[last_sig - 1] : nil)
     end
 
     def self.extract_body_params(handler_body : String, endpoint : Endpoint)
