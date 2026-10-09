@@ -70,4 +70,28 @@ describe "swift kitura analyzer" do
     File.delete(temp_file) if temp_file && File.exists?(temp_file)
     Dir.delete(temp_dir) if temp_dir && Dir.exists?(temp_dir)
   end
+
+  it "ignores commented-out routes" do
+    instance = Analyzer::Swift::Kitura.new(create_test_options)
+
+    temp_dir = File.tempname("swift_kitura_comment_test")
+    Dir.mkdir_p(temp_dir)
+    temp_file = File.join(temp_dir, "routes.swift")
+
+    File.write(temp_file, <<-SWIFT)
+      import Kitura
+
+      let router = Router()
+      router.get("/live") { request, response, next in next() }
+      // router.get("/old-removed") { request, response, next in next() }
+      /*
+      router.post("/block") { request, response, next in next() }
+      */
+      SWIFT
+
+    instance.analyze_file(temp_file).map { |e| "#{e.method} #{e.url}" }.should eq(["GET /live"])
+  ensure
+    File.delete(temp_file) if temp_file && File.exists?(temp_file)
+    Dir.delete(temp_dir) if temp_dir && Dir.exists?(temp_dir)
+  end
 end

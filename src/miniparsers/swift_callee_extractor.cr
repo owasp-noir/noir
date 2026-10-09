@@ -37,9 +37,14 @@ module Noir::SwiftCalleeExtractor
     entries.uniq
   end
 
+  # Blanks comments and string literals to spaces (char positions are kept),
+  # carrying block-comment / `"""` state across lines. `keep_strings` keeps
+  # single-line `"..."` literals verbatim, for route scanners that read the
+  # path out of the stripped line.
   def strip_non_code_with_state(line : String,
                                 block_comment_depth : Int32,
-                                in_multiline_string : Bool) : Tuple(String, Int32, Bool)
+                                in_multiline_string : Bool,
+                                keep_strings : Bool = false) : Tuple(String, Int32, Bool)
     in_string = false
     escaped = false
     chars = line.chars
@@ -81,7 +86,7 @@ module Noir::SwiftCalleeExtractor
         elsif char == '"'
           in_string = false
         end
-        stripped << ' '
+        stripped << (keep_strings ? char : ' ')
       elsif char == '"'
         if next_char == '"' && third_char == '"'
           in_multiline_string = true
@@ -91,7 +96,7 @@ module Noir::SwiftCalleeExtractor
         else
           in_string = true
         end
-        stripped << ' '
+        stripped << (keep_strings ? char : ' ')
       elsif char == '/' && chars[index + 1]? == '/'
         append_spaces(stripped, size - index)
         return {stripped.to_s, block_comment_depth, in_multiline_string}

@@ -261,16 +261,18 @@ module Analyzer::Swift
       {body_lines.join("\n"), opening_index + 1}
     end
 
-    # `lines` with comments and string literals blanked, block-comment and
-    # `"""` state carried across lines.
-    protected def strip_code_lines(lines : Array(String)) : Array(String)
+    # `lines` with comments and `"""` bodies blanked, block-comment state
+    # carried across lines. `keep_strings` keeps `"..."` literals so a
+    # route's path can still be read from the stripped line.
+    protected def strip_code_lines(lines : Array(String), keep_strings : Bool = false) : Array(String)
       block_comment_depth = 0
       in_multiline_string = false
       lines.map do |line|
         stripped, block_comment_depth, in_multiline_string = Noir::SwiftCalleeExtractor.strip_non_code_with_state(
           line,
           block_comment_depth,
-          in_multiline_string
+          in_multiline_string,
+          keep_strings
         )
         stripped
       end

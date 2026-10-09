@@ -32,10 +32,13 @@ module Analyzer::Swift
       lines = read_file_content(path).lines
       include_callee = callees_needed?
       handler_bodies = named_handler_bodies(lines)
+      # Comments (including multi-line `/* */`) and `"""` bodies blanked;
+      # string literals kept so route paths are still readable.
+      code_lines = strip_code_lines(lines, keep_strings: true)
       stripped_lines = nil.as(Array(String)?)
-      router_receivers = collect_router_receivers(lines)
+      router_receivers = collect_router_receivers(code_lines)
 
-      lines.each_with_index do |line, index|
+      code_lines.each_with_index do |line, index|
         next unless route_definition_line?(line)
         match = line.match(ROUTE_PATTERN)
         next unless match

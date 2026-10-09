@@ -65,16 +65,18 @@ module Analyzer::Swift
       lines = read_file_content(path).lines
       include_callee = callees_needed?
       handler_bodies = named_handler_bodies(lines)
+      # Comments (including multi-line `/* */`) and `"""` bodies blanked;
+      # string literals kept so route paths are still readable.
+      code_lines = strip_code_lines(lines, keep_strings: true)
       stripped_lines = nil.as(Array(String)?)
       prefix_by_receiver = {} of String => String
       group_prefix_stack = [] of Tuple(String, Int32)
       brace_depth = 0
 
       # Seed the router-receiver set so route detection is receiver-aware.
-      register_router_params(lines, prefix_by_receiver)
+      register_router_params(code_lines, prefix_by_receiver)
 
-      lines.each_with_index do |line, index|
-        stripped_line = code_line(line)
+      code_lines.each_with_index do |stripped_line, index|
         register_group_assignment(stripped_line, prefix_by_receiver)
         register_group_closure(stripped_line, prefix_by_receiver, group_prefix_stack, brace_depth)
 
@@ -269,9 +271,8 @@ module Analyzer::Swift
     # and `self` inside a `RoutesBuilder`/`Router` extension. (`.grouped(...)`
     # variables — qualified or implicit-`self` — are tracked separately by
     # `register_group_assignment`.)
-    private def register_router_params(lines : Array(String), prefix_by_receiver : Hash(String, String))
-      lines.each do |line|
-        stripped = code_line(line)
+    private def register_router_params(code_lines : Array(String), prefix_by_receiver : Hash(String, String))
+      code_lines.each do |stripped|
         next unless stripped.matches?(ROUTER_TYPE_RE)
 
         stripped.scan(ROUTER_PARAM_PATTERN) do |match|
@@ -351,40 +352,6 @@ module Analyzer::Swift
       end
 
       depth
-    end
-
-    private def code_line(line : String) : String
-      # String-aware: only truncate at a `//` OUTSIDE a string literal, so a path
-      # like "api//v2" or a "https://..." redirect arg isn't cut (which made
-      # call_arguments fail and silently drop the route / group prefix).
-      #
-      # This runs on every scanned line, so per-index `line[index]` matters:
-      # on non-ASCII lines it re-walks from byte 0 each call, making the scan
-      # O(n^2). `chars` gives O(1) indexed access, keeping this O(n).
-      chars = line.chars
-      in_string = false
-      escaped = false
-      quote = '"'
-      index = 0
-      while index < chars.size
-        char = chars[index]
-        if in_string
-          if escaped
-            escaped = false
-          elsif char == '\\'
-            escaped = true
-          elsif char == quote
-            in_string = false
-          end
-        elsif char == '"' || char == '\''
-          in_string = true
-          quote = char
-        elsif char == '/' && chars[index + 1]? == '/'
-          return line[0...index]
-        end
-        index += 1
-      end
-      line
     end
 
     private def extract_named_handler_params(route_line : String,

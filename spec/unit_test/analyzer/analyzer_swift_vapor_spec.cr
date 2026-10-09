@@ -173,4 +173,35 @@ describe "swift vapor analyzer" do
     File.delete(temp_file) if temp_file && File.exists?(temp_file)
     Dir.delete(temp_dir) if temp_dir && Dir.exists?(temp_dir)
   end
+
+  it "ignores routes inside block comments and multi-line strings" do
+    instance = Analyzer::Swift::Vapor.new(create_test_options)
+
+    temp_dir = File.tempname("swift_vapor_comment_test")
+    Dir.mkdir_p(temp_dir)
+    temp_file = File.join(temp_dir, "routes.swift")
+
+    File.write(temp_file, <<-SWIFT)
+      import Vapor
+
+      func routes(_ app: Application) throws {
+          app.get("live") { req in "ok" }
+          /*
+          app.post("block-commented") { req in "x" }
+          */
+          /* app.put("inline-comment") { req in "x" } */ app.patch("after-comment") { req in "y" }
+          // app.delete("line-commented") { req in "x" }
+          let doc = """
+          app.get("in-string") { req in "x" }
+          """
+          app.get("api//v2") { req in "z" }
+      }
+      SWIFT
+
+    instance.analyze_file(temp_file).map { |e| "#{e.method} #{e.url}" }.sort!.should eq(
+      ["GET /api/v2", "GET /live", "PATCH /after-comment"])
+  ensure
+    File.delete(temp_file) if temp_file && File.exists?(temp_file)
+    Dir.delete(temp_dir) if temp_dir && Dir.exists?(temp_dir)
+  end
 end
