@@ -67,10 +67,13 @@ module Analyzer::Javascript
       content.matches?(ON_ROUTE_CALL_PATTERN)
     end
 
-    # `app.on('GET', '/path', …)` (group 1) or `app.on(['GET', 'POST'],
-    # '/path', …)` (group 2); the path is group 3. Any receiver (`books`,
-    # `api`, …): the method-then-path argument shape is the gate.
-    ON_ROUTE_RE = /(?<![\w$])[A-Za-z_$][\w$]*\s*\.\s*on\s*\(\s*(?:['"](\w+)['"]|\[([^\]\n]+)\])\s*,\s*['"]([^'"\n]+)['"]/
+    # `<receiver>.on('GET', '/path', …)` (method in group 2) or
+    # `.on(['GET', 'POST'], '/path', …)` (group 3); the path is group 4. Any
+    # receiver (`books`, `api`, …) with a `/` or `*` path — an event name is
+    # neither — except the usual event-emitter names, whose `.on('get',
+    # '/room/1', cb)` has the same shape.
+    ON_ROUTE_RE            = /(?<![\w$])([A-Za-z_$][\w$]*)\s*\.\s*on\s*\(\s*(?:['"](\w+)['"]|\[([^\]\n]+)\])\s*,\s*['"]([\/*][^'"\n]*)['"]/
+    EVENT_EMITTER_RECEIVER = /\A(?:ee|io|ws|process|knex|proxy|events?|\w*(?:[Ee]mitter|[Ss]ocket|[Ss]tream))\z/
 
     private def extract_on_routes(path : String,
                                   content : String,
@@ -87,16 +90,17 @@ module Analyzer::Javascript
       index = 0
       content.scan(ON_ROUTE_RE) do |match|
         methods = [] of String
-        if single = match[1]?
+        next if match[1].matches?(EVENT_EMITTER_RECEIVER)
+        if single = match[2]?
           method = single.downcase
           methods << method if HTTP_METHODS.includes?(method)
-        elsif list = match[2]?
+        elsif list = match[3]?
           list.scan(/['"](\w+)['"]/) do |m|
             method = m[1].downcase
             methods << method if HTTP_METHODS.includes?(method) && !methods.includes?(method)
           end
         end
-        url = match[3]
+        url = match[4]
         next if methods.empty? || url.empty?
 
         match_byte = match.byte_begin(0)

@@ -73,6 +73,20 @@ describe "Hono app.on routes" do
     endpoints.size.should eq(n)
   end
 
+  it "reads on() on any app but not on event emitters or non-path names" do
+    eps = hono_endpoints(<<-TS)
+      import { Hono } from 'hono'
+      const books = new Hono()
+      books.on('GET', '/books-on', (c) => c.json({}))
+      ee.on('get', 'cache-key', (v) => {})
+      socket.on('delete', '/room/1', () => {})
+      myEmitter.on('options', '/ignored', cb)
+      cache.on(['get', 'set'], 'key', cb)
+      proxy.on('head', '/x', handler)
+      TS
+    eps.map { |e| "#{e.method} #{e.url}" }.should eq(["GET /books-on"])
+  end
+
   it "attaches callees to app.query() routes" do
     route = hono_endpoints(source).find! { |e| e.url == "/search" }
     route.callees.map(&.name).should contain("c.req.json")
