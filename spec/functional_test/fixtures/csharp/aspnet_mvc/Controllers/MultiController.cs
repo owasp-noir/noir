@@ -57,4 +57,43 @@ namespace MyApp.Controllers
     {
         public ActionResult Ignored(string y) { return null; }
     }
+
+    // None of these are routable actions.
+    public abstract class SharedBaseController : Controller
+    {
+        public ActionResult Shared() { return View(); }
+    }
+
+    public class GenericController<T> : Controller where T : class
+    {
+        public ActionResult List() { return View(); }
+    }
+
+    public class CacheController : IDisposable
+    {
+        public ActionResult Bogus() { return null; }
+        public void Dispose() { }
+    }
+
+    public class LegacyApiController : BaseApiController
+    {
+        public IHttpActionResult Get(int id) { return Ok(); }
+    }
+
+    public class FourthController : SharedBaseController
+    {
+        [NonAction]
+        public ActionResult Helper() { return null; }
+
+        [OutputCache(Duration = 60), ChildActionOnly]
+        public ActionResult Menu() { return PartialView(); }
+
+        public static ActionResult Stat() { return null; }
+
+        private ActionResult Priv(string publicKey) { return null; }
+
+        public HttpResponseMessage Raw() { return null; }
+
+        public ActionResult Visible() { return View(); }
+    }
 }

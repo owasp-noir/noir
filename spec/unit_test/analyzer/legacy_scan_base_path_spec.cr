@@ -100,4 +100,33 @@ describe "legacy analyzers and the scan base path" do
       FileUtils.rm_rf(root) if Dir.exists?(root)
     end
   end
+
+  it "leaves an ASP.NET Core project's controllers to the Core analyzer" do
+    root = File.tempname("noir-mvc-mixed")
+
+    begin
+      write_file(File.join(root, "Legacy", "packages.config"), %(<packages><package id="Microsoft.AspNet.Mvc" version="5.2.7" /></packages>))
+      write_file(File.join(root, "Legacy", "Controllers", "LegacyController.cs"), <<-CS)
+        using System.Web.Mvc;
+        public class LegacyController : Controller {
+          public ActionResult Index() { return View(); }
+        }
+        CS
+      # Usings come from GlobalUsings.cs, so the controller names no namespace.
+      write_file(File.join(root, "Core", "Core.csproj"), %(<Project Sdk="Microsoft.NET.Sdk.Web"></Project>))
+      write_file(File.join(root, "Core", "GlobalUsings.cs"), "global using Microsoft.AspNetCore.Mvc;\n")
+      write_file(File.join(root, "Core", "Controllers", "ShopController.cs"), <<-CS)
+        public class ShopController : Controller {
+          public async Task<ViewResult> Details(int id) => View();
+        }
+        CS
+
+      urls = scan_tree(root).select { |endpoint| endpoint.details.technology == "cs_aspnet_mvc" }.map(&.url)
+
+      urls.should contain("/Legacy/Index")
+      urls.any?(&.starts_with?("/Shop")).should be_false
+    ensure
+      FileUtils.rm_rf(root) if Dir.exists?(root)
+    end
+  end
 end

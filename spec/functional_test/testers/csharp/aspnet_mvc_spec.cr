@@ -81,6 +81,7 @@ expected_endpoints = [
     Param.new("id", "", "form"),
     Param.new("continueEditing", "", "form"),
   ]),
+  Endpoint.new("/Fourth/Visible", "GET"),
   Endpoint.new("/second/other", "GET", [
     Param.new("x", "", "query"),
   ]),
@@ -104,5 +105,14 @@ describe "ASP.NET MVC controller discovery", tags: "functional" do
 
   it "leaves Web API / OData controllers alone" do
     tester.app.endpoints.any?(&.url.starts_with?("/Items")).should be_false
+    tester.app.endpoints.any?(&.url.starts_with?("/LegacyApi")).should be_false
+  end
+
+  it "skips non-routable classes and non-action methods" do
+    urls = tester.app.endpoints.map(&.url)
+    %w[/SharedBase/Shared /Generic/List /Cache/Bogus /Fourth/Helper /Fourth/Menu
+      /Fourth/Stat /Fourth/Priv /Fourth/Raw].each do |url|
+      urls.should_not contain(url)
+    end
   end
 end

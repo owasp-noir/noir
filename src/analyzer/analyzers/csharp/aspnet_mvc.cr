@@ -68,17 +68,54 @@ module Analyzer::CSharp
         file.includes?("Controller") && !File.basename(file).includes?("RouteConfig")
       end
 
+      core_projects = aspnet_core_project_roots
+      bases = local_base_classes(controller_files)
       controller_files.each do |file|
-        analyze_controller_file(file, include_callee)
+        next if (root = core_projects[:roots].empty? ? nil : Common.project_root_for(file, core_projects[:roots])) &&
+                core_projects[:core].includes?(root)
+        analyze_controller_file(file, bases, include_callee)
       end
     end
 
-    private def analyze_controller_file(file : String, include_callee : Bool)
+    # Project roots (longest first) and the ones that build ASP.NET Core. A
+    # Core project's controllers can carry no `Microsoft.AspNetCore` using of
+    # their own (`GlobalUsings.cs`, implicit usings), so the project decides.
+    private def aspnet_core_project_roots : NamedTuple(roots: Array(String), core: Set(String))
+      csprojs = get_files_by_extension(".csproj")
+      core = Set(String).new
+      csprojs.each do |csproj|
+        core << File.dirname(csproj) if read_file_content(csproj).matches?(ASPNET_CORE_PROJECT_RE)
+      rescue
+        next
+      end
+      {roots: Common.project_roots(csprojs), core: core}
+    end
+
+    ASPNET_CORE_PROJECT_RE = /Microsoft\.NET\.Sdk\.Web|Microsoft\.AspNetCore/
+    # Types that exist only in ASP.NET Core.
+    ASPNET_CORE_MARKER_RE = /\bIActionResult\b|\[\s*ApiController\b/
+    LOCAL_CLASS_BASE_RE   = /\bclass\s+(\w+)(?:\s*<[^<>]*+>)?\s*:\s*([\w.]+)/
+
+    # `class Name : Base` across the candidate files, so a controller's base
+    # can be followed to a framework one.
+    private def local_base_classes(files : Array(String)) : Hash(String, String)
+      bases = Hash(String, String).new
+      files.each do |file|
+        content = read_file_content(file)
+        next unless content.includes?("class")
+        content.scan(LOCAL_CLASS_BASE_RE) { |m| bases[m[1]] ||= m[2].split('.').last }
+      rescue
+        next
+      end
+      bases
+    end
+
+    private def analyze_controller_file(file : String, bases : Hash(String, String), include_callee : Bool)
       return unless File.exists?(file)
 
       content = read_file_content(file)
       return unless content.includes?("Controller") && content.includes?("Result")
-      return if Common.aspnet_core_source?(content)
+      return if Common.aspnet_core_source?(content) || content.matches?(ASPNET_CORE_MARKER_RE)
       web_api_file = !content.includes?("System.Web.Mvc") && content.matches?(WEB_API_NAMESPACE_RE)
 
       # Comment-blanked, so a commented-out attribute or parameter is not read.
@@ -90,6 +127,7 @@ module Analyzer::CSharp
       http_method = "GET" # Default method for tracking across lines
       action_route = ""   # Track action-level route
       explicit_endpoint_attribute = false
+      non_action = false
       # Open class bodies, innermost last: {body depth, controller name or nil
       # for a non-controller class, route prefix}. A file can declare several
       # controllers, and each action belongs to the class it sits in.
@@ -126,12 +164,15 @@ module Analyzer::CSharp
           action_route = extract_attribute_route(line, "Route")
           explicit_endpoint_attribute = true
         end
+        non_action = true if line.matches?(NON_ACTION_ATTR_RE)
 
         if class_match = CLASS_DECL_RE.match(masked_lines[i])
-          base = class_match[2]? || masked_lines[i + 1]?.try { |next_line| BASE_LIST_LINE_RE.match(next_line).try(&.[1]) }
+          base = class_match[3]? || masked_lines[i + 1]?.try { |next_line| BASE_LIST_LINE_RE.match(next_line).try(&.[1]) }
           before = class_match.pre_match
           body_depth = depth + before.count('{') - before.count('}') + 1
-          scope = {body_depth, controller_class_name(class_match[1], base, web_api_file), controller_route_prefix(lines, masked_lines, i)}
+          routable = class_match[2]?.nil? && !before.matches?(NON_ROUTABLE_CLASS_RE)
+          name = routable ? controller_class_name(class_match[1], base, web_api_file, bases) : nil
+          scope = {body_depth, name, controller_route_prefix(lines, masked_lines, i)}
           # A body opened on the class line can hold an action on that line.
           if class_match.post_match.includes?('{')
             scopes << scope
@@ -143,14 +184,17 @@ module Analyzer::CSharp
           http_method = "GET"
           action_route = ""
           explicit_endpoint_attribute = false
+          non_action = false
         end
 
         # Check for action method definition
         _, controller_name, controller_prefix = scopes.last? || {0, nil, ""}
-        if controller_name && line.includes?("public") && line.includes?("(") &&
+        member = line.includes?("(") && (access = MEMBER_ACCESS_RE.match(masked_lines[i]))
+        if controller_name && member && access.try(&.[1]) == "public" &&
            (line.matches?(ACTION_RESULT_RE) || explicit_endpoint_attribute)
           signature, end_index = build_signature(lines, masked_lines, i)
           action_name = extract_action_name(signature)
+          action_name = "" if non_action || signature.matches?(NON_ACTION_SIGNATURE_RE)
           parameters = extract_parameters(signature, http_method)
 
           unless action_name.empty?
@@ -173,13 +217,19 @@ module Analyzer::CSharp
               attach_csharp_callees(endpoint, body_block, file, end_index + 1, include_callee, skip_first_line: true)
             end
             @result << endpoint
-
-            # Reset to default after processing the method
-            http_method = "GET"
-            action_route = ""
-            explicit_endpoint_attribute = false
           end
+          # Reset to default after processing the method
+          http_method = "GET"
+          action_route = ""
+          explicit_endpoint_attribute = false
+          non_action = false
           i = end_index
+        elsif member
+          # A non-action member ends the attributes that preceded it.
+          http_method = "GET"
+          action_route = ""
+          explicit_endpoint_attribute = false
+          non_action = false
         end
 
         (start_index..i).each do |index|
@@ -197,7 +247,14 @@ module Analyzer::CSharp
       end
     end
 
-    CLASS_DECL_RE = /\bclass\s+(\w+)(?:\s*<[^>]*>)?\s*(?::\s*([\w.]+))?/
+    CLASS_DECL_RE = /\bclass\s+(\w+)(\s*<[^<>]*+>)?\s*(?::\s*([\w.]+))?/
+    # Not routed: `abstract`/`static` classes (an open generic one is caught
+    # by its `<T>`), `[NonAction]`/`[ChildActionOnly]` and `static` methods,
+    # and Web API return types in a file that mixes in Web API controllers.
+    MEMBER_ACCESS_RE        = /\b(public|private|protected|internal)\b/
+    NON_ROUTABLE_CLASS_RE   = /\b(?:abstract|static)\b/
+    NON_ACTION_ATTR_RE      = /[\[,]\s*(?:[\w.]*\.)?(?:NonAction|ChildActionOnly)\b/
+    NON_ACTION_SIGNATURE_RE = /\bstatic\b|\b(?:IHttpActionResult|HttpResponseMessage)\b/
     # The return type ends in `Result` right before the action name:
     # `ActionResult`, `JsonResult`, `FileResult`, `Task<ViewResult>`, ...
     ACTION_RESULT_RE = /Result\s*>?\s+\w+\s*\(/
@@ -206,16 +263,49 @@ module Analyzer::CSharp
 
     WEB_API_NAMESPACE_RE = /\bSystem\.Web\.(?:Http|OData)\b/
 
-    # MVC 5 takes any `*Controller` class with a base list (`: Controller`,
-    # `: BaseController`, ...). Web API 2 controllers (`ApiController`,
-    # OData, and local bases over them in a file that imports Web API but not
-    # MVC) route by verb convention, which this analyzer does not model.
-    private def controller_class_name(name : String, base : String?, web_api_file : Bool) : String?
+    # MVC 5 takes a `*Controller` class whose base is controller-like:
+    # `Controller`, a `*Controller`/`*ControllerBase` from a library, or a
+    # local class that derives from one. Web API 2 controllers (an
+    # `*ApiController`/`ODataController` anywhere up the chain, or a local
+    # base in a file that imports Web API but not MVC) route by verb
+    # convention, which this analyzer does not model.
+    private def controller_class_name(name : String, base : String?, web_api_file : Bool,
+                                      bases : Hash(String, String)) : String?
       return unless base && name.ends_with?("Controller") && name != "Controller"
       base_name = base.split('.').last
-      return if base_name == "ApiController"
       return if web_api_file && base_name != "Controller"
+      return unless controller_base?(base_name, bases)
       name.rchop("Controller")
+    end
+
+    @controller_base_memo = Hash(String, Bool).new
+
+    # Memoized for every name on the walked chain, so a long inheritance
+    # chain is walked once rather than once per class on it.
+    private def controller_base?(base_name : String, bases : Hash(String, String)) : Bool
+      chain = [] of String
+      seen = Set(String).new
+      current = base_name
+      result = false
+      while seen.add?(current)
+        if (known = @controller_base_memo[current]?).is_a?(Bool)
+          result = known
+          break
+        end
+        chain << current
+        if current.ends_with?("ApiController") || current == "ODataController"
+          result = false
+          break
+        end
+        parent = bases[current]?
+        unless parent
+          result = current.ends_with?("Controller") || current.ends_with?("ControllerBase")
+          break
+        end
+        current = parent
+      end
+      chain.each { |name| @controller_base_memo[name] = result }
+      result
     end
 
     ROUTE_PREFIX_ATTR_RE = /\[\s*RoutePrefix\s*\(\s*"([^"]+)"/
