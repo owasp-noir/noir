@@ -29,6 +29,11 @@ module Noir::CLI::Router
     # First, before any code can log: stdout belongs to the report.
     Noir::CLI.route_library_logs_to_stderr!
     Noir::CLI.apply_global_color_flag!(argv)
+    # Regexes run with PCRE2's UTF check off, so an invalid byte in, say,
+    # --pvalue or -u surfaced as an unhandled "UTF-8 error" much later.
+    if bad = argv.find { |arg| !arg.valid_encoding? }
+      Noir::CLI.die("Argument is not valid UTF-8: #{bad.scrub}")
+    end
     argv = Legacy.rewrite(argv)
 
     if argv.empty?

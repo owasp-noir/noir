@@ -237,4 +237,33 @@ describe "Noir::CLI::ConfigCommand.detect_legacy_keys" do
       YAML
     Noir::CLI::ConfigCommand.detect_legacy_keys(body).empty?.should be_true
   end
+
+  it "survives a body that is not valid UTF-8" do
+    body = "send_req: yes\nbase: \"#{String.new(Bytes[0xff, 0xfe])}\"\n"
+    Noir::CLI::ConfigCommand.detect_legacy_keys(body).should eq({"send_req" => "probe"})
+  end
+end
+
+describe "Noir::CLI::ConfigCommand.launch_editor" do
+  it "reports an unparsable editor command" do
+    Noir::CLI::ConfigCommand.launch_editor(%(vi "), "x.yaml").to_s.should contain("Cannot parse editor command")
+  end
+
+  it "reports an editor that is not on PATH" do
+    Noir::CLI::ConfigCommand.launch_editor("/no/such/ed", "x.yaml").to_s.should contain("command not found")
+  end
+
+  {% unless flag?(:windows) %}
+    it "reports an editor that exists but cannot be executed" do
+      # Executable, so find_executable passes, but its interpreter is gone.
+      editor = File.tempname("noir-spec-editor")
+      File.write(editor, "#!/no/such/interp\n")
+      File.chmod(editor, 0o755)
+      begin
+        Noir::CLI::ConfigCommand.launch_editor(editor, "x.yaml").to_s.should contain("could not be started")
+      ensure
+        File.delete(editor)
+      end
+    end
+  {% end %}
 end
