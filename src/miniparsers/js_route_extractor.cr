@@ -1002,6 +1002,7 @@ module Noir
     # is tiny. Fibers are cooperative (no preview_mt), so the plain Hash is
     # safe under the analyzers' parallel file scans.
     @@direct_call_res = Hash(String, Regex).new
+    HANDLER_ANCHOR_RE = /\bfunction\b|=>/
 
     # Equivalent to matching /['"`]<literal>['"`]/ — the literal bracketed by
     # a quote character on each side — without compiling a per-path regex.
@@ -1137,25 +1138,27 @@ module Noir
       return if args_end < args_start
 
       args_slice = content[args_start..args_end]
-      function_idx = args_slice.rindex(/\bfunction\b/)
-      arrow_idx = args_slice.rindex("=>")
 
+      # The handler is the last function argument. Walk the arguments'
+      # functions in order, skipping each one's body: `rindex` over the
+      # whole slice picked an arrow *inside* the handler
+      # (`items.map(i => …)`) and scoped the param scan to that.
       anchor_idx = nil
       anchor_kind = :function
-      if function_idx && arrow_idx
-        if function_idx > arrow_idx
-          anchor_idx = function_idx
-          anchor_kind = :function
-        else
-          anchor_idx = arrow_idx
-          anchor_kind = :arrow
-        end
-      elsif function_idx
-        anchor_idx = function_idx
-        anchor_kind = :function
-      elsif arrow_idx
-        anchor_idx = arrow_idx
-        anchor_kind = :arrow
+      search = 0
+      while anchor = args_slice.match(HANDLER_ANCHOR_RE, search)
+        anchor_idx = anchor.begin(0)
+        anchor_kind = anchor[0] == "=>" ? :arrow : :function
+        body_open = if anchor_kind == :arrow
+                      ws_end = args_slice.index(/\S/, anchor.end(0))
+                      ws_end if ws_end && args_slice[ws_end] == '{'
+                    elsif (params_open = args_slice.index('(', anchor_idx)) &&
+                          (params_close = find_matching_paren(args_slice, params_open))
+                      args_slice.index('{', params_close)
+                    end
+        body_close = body_open && find_matching_brace(args_slice, body_open)
+        # A concise arrow has no body to skip; keep walking past `=>`.
+        search = body_close ? body_close + 1 : anchor.end(0)
       end
 
       return unless anchor_idx
