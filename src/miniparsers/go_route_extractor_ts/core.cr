@@ -353,7 +353,7 @@ module Noir
     private def self_regroups(root : LibTreeSitter::TSNode,
                               source : String,
                               group_method : String) : Tuple(Set(String), Set(String))
-      selfs = Set(String).new
+      rebound = Set(String).new
       others = Set(String).new
       Noir::TreeSitter.walk(root) do |node|
         next unless group_assignment_node?(node)
@@ -377,9 +377,9 @@ module Noir
         next unless grouped
         name = Noir::TreeSitter.node_text(name_node, source)
         self_bound = Noir::TreeSitter.node_type(current) == "identifier" && Noir::TreeSitter.node_text(current, source) == name
-        (self_bound ? selfs : others) << name
+        (self_bound ? rebound : others) << name
       end
-      {selfs, others}
+      {rebound, others}
     end
 
     # Package-level names the file only ever rebinds from themselves
@@ -390,10 +390,10 @@ module Noir
     # which is what lets the package map flag a reused local name as
     # ambiguous; their seed is dropped by `drop_local_self_regroups`.
     private def unexported_self_regroups(root : LibTreeSitter::TSNode, source : String, group_method : String) : Set(String)
-      selfs, others = self_regroups(root, source, group_method)
-      selfs.subtract(others)
-      return selfs if selfs.empty?
-      selfs - function_local_names(root, source)
+      rebound, others = self_regroups(root, source, group_method)
+      rebound.subtract(others)
+      return rebound if rebound.empty?
+      rebound - function_local_names(root, source)
     end
 
     # A self-regrouped name the file binds locally (`func f(r fiber.Router)
@@ -405,11 +405,11 @@ module Noir
                                          groups : Hash(String, String),
                                          group_method : String)
       return if groups.empty?
-      selfs, _ = self_regroups(root, source, group_method)
-      selfs.select! { |name| groups.has_key?(name) }
-      return if selfs.empty?
+      rebound, _ = self_regroups(root, source, group_method)
+      rebound.select! { |name| groups.has_key?(name) }
+      return if rebound.empty?
       locals = function_local_names(root, source)
-      selfs.each { |name| groups.delete(name) if locals.includes?(name) }
+      rebound.each { |name| groups.delete(name) if locals.includes?(name) }
     end
 
     # Parameter and variable names declared inside functions.
