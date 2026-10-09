@@ -20,23 +20,16 @@ module Analyzer::Rust
       name == "to" || name == "to_with_state"
     end
 
-    EXTRACTOR_RES = {
-      "Query" => extractor_re("Query"),
-      "Json"  => extractor_re("Json"),
-      "Form"  => extractor_re("Form"),
-    }
-
     # ntex keeps its extractors in `web::types` (`web::types::Json<T>`,
     # `types::Query<T>`), and its examples import them bare (`Json<T>`) as
     # often as not. The crate gate already limits this to ntex crates, so a
     # bare `Json<` is ntex's extractor here.
-    private def self.extractor_re(kind : String) : Regex
-      Regex.new("(?<![\\w:])(?:(?:ntex::)?web::)?(?:types::)?#{kind}\\s*<")
+    EXTRACTOR_RES = %w[Query Json Form].to_h do |kind|
+      {kind, /(?<![\w:])(?:(?:ntex::)?web::)?(?:types::)?#{kind}\s*</}
     end
 
     protected def extractor_param?(text : String, kind : String) : Bool
-      re = EXTRACTOR_RES[kind]?
-      re ? text.matches?(re) : false
+      text.matches?(EXTRACTOR_RES[kind])
     end
   end
 end
