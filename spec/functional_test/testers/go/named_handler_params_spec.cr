@@ -23,10 +23,10 @@ require "../../func_spec.cr"
 end
 
 # Selector handlers resolve by the qualifier's declared type: `u` and `p` are
-# receivers of `Users` and `Posts`, so neither `List` body may land on the
-# other route (`p` is also bound to `&Users{}` by the multi-assign, so it
-# stays on the legacy path). `handlers.Show` is a package-qualified handler
-# next to an unrelated local `Show`.
+# receivers of `Users` and `Posts` (the `u, p := &Users{}, &Posts{}`
+# multi-assign must not type `p` as `Users`), so neither `List` body may land
+# on the other route. `handlers.Show` is a package-qualified handler next to
+# an unrelated local `Show`.
 ambiguous = FunctionalTester.new("fixtures/go/named_handler_ambiguous/", {
   :techs     => 1,
   :endpoints => 4,
@@ -39,7 +39,7 @@ end
 
 it "never credits a same-named method of another receiver type", tags: "functional" do
   param_names(ambiguous, "/users").should eq(["user_q"])
-  param_names(ambiguous, "/posts").should_not contain("user_q")
+  param_names(ambiguous, "/posts").should eq(["post_q"])
   param_names(ambiguous, "/show").should be_empty
 end
 

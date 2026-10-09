@@ -82,6 +82,37 @@ describe Noir::GoNamedHandler do
     seen["/posts"].join.should_not contain("user_q")
   end
 
+  it "does not type the second name of a multi-assignment by the first value" do
+    # `b` is not an `*X`: crediting `X.List` to `b.List` would be a phantom.
+    attributions(<<-GO).should be_empty
+      package main
+
+      func main() {
+      \ta, b := &X{}, newY()
+      \tr.GET("/b", b.List)
+      }
+
+      func (x *X) List(c *gin.Context) { _ = c.Query("x_only") }
+      GO
+  end
+
+  it "indexes declarations once per file (stays linear in selector routes)" do
+    n = 4000
+    source = String.build do |io|
+      io << "package main\n\nfunc main() {\n\th := &H{}\n"
+      n.times { |i| io << "\tr.GET(\"/r" << i << "\", h.M" << i << ")\n" }
+      io << "}\n\n"
+      n.times { |i| io << "func (h *H) M" << i << "(c *gin.Context) { _ = c.Query(\"q" << i << "\") }\n" }
+    end
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source)
+    routes.size.should eq(n)
+    Noir::GoCalleeExtractor.collect_method_bodies(source, "perf.go")
+
+    elapsed = Time.measure { Noir::GoNamedHandler.new(source, "perf.go", routes) }
+    # Re-scanning the file per qualifier took ~4s here; linear is ~0.1s.
+    elapsed.should be < 2.seconds
+  end
+
   it "does not credit a local method when the qualifier's type is declared elsewhere" do
     attributions(<<-GO).should be_empty
       package main

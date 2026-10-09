@@ -28,18 +28,29 @@ require "./go_route_extractor_ts"
 #     resolves to a local method;
 #   * a function that registers routes itself is never claimed.
 class Noir::GoNamedHandler
-  RECEIVER_RE = /\Afunc\s*\(\s*(?:([A-Za-z_]\w*)\s+)?\*?\s*([A-Za-z_]\w*)/
+  RECEIVER_RE  = /\Afunc\s*\(\s*(?:([A-Za-z_]\w*)\s+)?\*?\s*([A-Za-z_]\w*)/
+  REFERENCE_RE = /\A\s*((?:[A-Za-z_]\w*\s*\.\s*)*)([A-Za-z_]\w*)\s*(?:\(\s*\))?\s*\z/
+
+  # Declarations that pin a name's type, scanned once per file (see
+  # `declared_types`). Assignments are anchored at a statement start, so the
+  # second name of `a, b := &X{}, newY()` is never typed `X`.
+  ASSIGNED_TYPE_RE = /(?:\A|[\n;{(])[ \t]*(?:var[ \t]+)?([A-Za-z_]\w*)[ \t]*:?=[ \t]*(?:&[ \t]*)?(?:[A-Za-z_]\w*\.)?([A-Za-z_]\w*)[ \t]*\{/
+  NEW_TYPE_RE      = /(?:\A|[\n;{(])[ \t]*(?:var[ \t]+)?([A-Za-z_]\w*)[ \t]*:?=[ \t]*new\([ \t]*(?:[A-Za-z_]\w*\.)?([A-Za-z_]\w*)[ \t]*\)/
+  # `name *T` as a parameter, receiver, struct field or `var`.
+  DECLARED_TYPE_RE = /(?:\A|[\n(,]|\bvar)[ \t]*([A-Za-z_]\w*)[ \t]+\*?(?:[A-Za-z_]\w*\.)?([A-Za-z_]\w*)/
 
   @rows = Hash(Int32, Int32).new
   @refs = Hash(String, Int32).new
   @lines = Hash(Int32, Array(String)).new
   @targets = Hash(Int32, Array(Endpoint)).new
+  @declared : Hash(String, Set(String))? = nil
+  @receivers = Hash(String, Array(Tuple(Noir::GoCalleeExtractor::FunctionBody, String?, String))).new
 
   # `listA` -> {"", "listA"}, `h.List` -> {"h", "List"}, `RateLimit()` ->
   # {"", "RateLimit"}. Anything else (closures, calls with arguments,
   # wrapped handlers) is not a plain reference, so nil.
   def self.reference(handler : String) : Tuple(String, String)?
-    if m = handler.match(/\A\s*((?:[A-Za-z_]\w*\s*\.\s*)*)([A-Za-z_]\w*)\s*(?:\(\s*\))?\s*\z/)
+    if m = handler.match(REFERENCE_RE)
       {m[1].gsub(/\s+/, "").rchop('.'), m[2]}
     end
   end
@@ -57,7 +68,7 @@ class Noir::GoNamedHandler
 
     functions = Noir::GoCalleeExtractor.collect_function_bodies(content, path)
     methods = Noir::GoCalleeExtractor.collect_method_bodies(content, path)
-    route_rows = routes.map(&.line)
+    route_rows = routes.map(&.line).sort!
     imports = nil
     spans = Hash(Int32, Range(Int32, Int32)).new
 
@@ -66,12 +77,14 @@ class Noir::GoNamedHandler
                functions[name]?
              elsif (candidates = methods[name]?) && !qualifier.includes?('.')
                imports ||= Noir::GoCalleeExtractor.extract_import_aliases(content)
-               method_for(qualifier, candidates, content) unless imports.has_key?(qualifier)
+               method_for(qualifier, name, candidates, content) unless imports.has_key?(qualifier)
              end
       next unless body
 
       span = spans[body.start_row] ||= body.start_row..(body.start_row + body.source.count('\n'))
-      next if route_rows.any? { |row| span.includes?(row) }
+      # A function that registers routes itself is never claimed.
+      first = route_rows.bsearch { |row| row >= span.begin }
+      next if first && first <= span.end
       @refs[handler] = body.start_row
     end
 
@@ -80,32 +93,37 @@ class Noir::GoNamedHandler
 
   # The one method in `candidates` the selector `qualifier.Name` can mean.
   private def method_for(qualifier : String,
+                         name : String,
                          candidates : Array(Noir::GoCalleeExtractor::FunctionBody),
                          content : String) : Noir::GoCalleeExtractor::FunctionBody?
-    receivers = candidates.compact_map do |fb|
+    receivers = @receivers[name] ||= candidates.compact_map do |fb|
       if m = fb.source.match(RECEIVER_RE)
         {fb, m[1]?, m[2]}
       end
     end
     types = declared_types(qualifier, content)
-    matches = if types.empty?
-                receivers.select { |_, recv_name, _| recv_name == qualifier }
-              else
-                receivers.select { |_, _, recv_type| types.includes?(recv_type) }
-              end
-    matches.size == 1 ? matches.first[0] : nil
+    found = nil
+    receivers.each do |fb, recv_name, recv_type|
+      next unless types.empty? ? recv_name == qualifier : types.includes?(recv_type)
+      return if found
+      found = fb
+    end
+    found
   end
 
   # Type names `name` is declared with in this file: `name := &T{}`,
   # `var name = T{}`, `name := new(T)`, `name *T` (parameter, field or
   # `var`), and a method receiver `(name *T)`. Empty when none is visible.
+  # The whole file is indexed on first use, so each lookup is O(1).
   private def declared_types(name : String, content : String) : Set(String)
-    types = Set(String).new
-    n = Regex.escape(name)
-    content.scan(/\b#{n}\s*:?=\s*&?\s*(?:[A-Za-z_]\w*\.)?([A-Za-z_]\w*)\s*\{/) { |m| types << m[1] }
-    content.scan(/\b#{n}\s*:?=\s*new\(\s*(?:[A-Za-z_]\w*\.)?([A-Za-z_]\w*)\s*\)/) { |m| types << m[1] }
-    content.scan(/(?:^|[(,]|\bvar)[ \t]*#{n}[ \t]+\*?(?:[A-Za-z_]\w*\.)?([A-Za-z_]\w*)/m) { |m| types << m[1] }
-    types
+    declared = @declared ||= begin
+      index = Hash(String, Set(String)).new
+      {ASSIGNED_TYPE_RE, NEW_TYPE_RE, DECLARED_TYPE_RE}.each do |re|
+        content.scan(re) { |m| (index[m[1]] ||= Set(String).new) << m[2] }
+      end
+      index
+    end
+    declared[name]? || Set(String).new
   end
 
   # True when `line` (0-based `index`) is inside the body of a function a
