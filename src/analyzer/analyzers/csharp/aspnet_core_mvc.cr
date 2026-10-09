@@ -740,7 +740,8 @@ module Analyzer::CSharp
       if !has_action_route
         raw_route = prune_optional_placeholders(base_route, parameters)
         routes << normalize_route(raw_route) unless raw_route.empty?
-      elsif action_part.starts_with?("/")
+      elsif action_part.starts_with?("/") || action_part.starts_with?("~/")
+        # `/x` and `~/x` both override the controller's `[Route]` prefix.
         raw_route = prune_optional_placeholders(action_part, parameters)
         routes << normalize_route(raw_route)
       else
@@ -768,6 +769,7 @@ module Analyzer::CSharp
 
     private def normalize_route(route : String) : String
       normalized = route.strip
+      normalized = normalized.lchop('~') if normalized.starts_with?("~/") # app-root marker
       normalized = normalized.gsub(/^\//, "").gsub(/\/+/, "/")
       normalized = "/" + normalized unless normalized.starts_with?("/")
       normalized = "/" if normalized == "//" || normalized == "/"

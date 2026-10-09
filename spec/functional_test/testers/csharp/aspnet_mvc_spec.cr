@@ -68,6 +68,7 @@ expected_endpoints = [
     Param.new("sessionId", "", "cookie"),
     Param.new("preferences", "", "cookie"),
   ]),
+  Endpoint.new("/rooted/ping", "GET"),
 ]
 
 FunctionalTester.new("fixtures/csharp/aspnet_mvc/", {

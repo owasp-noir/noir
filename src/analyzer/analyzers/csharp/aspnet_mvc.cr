@@ -257,7 +257,12 @@ module Analyzer::CSharp
     end
 
     private def build_url(controller_route : String, action_route : String, controller_name : String, action_name : String) : String
-      # Build URL from components
+      # `[Route("~/x")]` is app-rooted: it overrides the `[RoutePrefix]`.
+      if action_route.starts_with?("~/")
+        controller_route = ""
+        action_route = action_route.lchop('~')
+      end
+
       parts = [] of String
 
       # Add controller route if present

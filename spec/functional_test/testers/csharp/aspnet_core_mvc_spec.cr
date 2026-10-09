@@ -59,6 +59,8 @@ expected_endpoints = [
   Endpoint.new("/api/First", "GET", [
     Param.new("k", "", "query"),
   ]),
+  Endpoint.new("/first/health", "GET"),
+  Endpoint.new("/rooted/Tilde/x", "GET"),
   Endpoint.new("/mapped/ping", "GET"),
   Endpoint.new("/mapped/health", "GET"),
   Endpoint.new("/mapped/items/{id}", "POST", [
