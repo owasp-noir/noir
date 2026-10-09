@@ -2,7 +2,7 @@ require "../../../models/detector"
 
 module Detector::Javascript
   class Hono < Detector
-    detector_for "js_hono", extensions: %w[.js .mjs .cjs .jsx .ts .tsx], basenames: %w[package.json]
+    detector_for "js_hono", extensions: %w[.js .mjs .cjs .jsx .ts .mts .cts .tsx], basenames: %w[package.json]
 
     # Single precompiled alternation — one PCRE2 scan instead of three.
     SIGNAL = Regex.union(
@@ -12,7 +12,7 @@ module Detector::Javascript
     )
 
     def detect(filename : String, file_contents : String) : Bool
-      [".js", ".mjs", ".ts", ".jsx", ".tsx", ".cjs"].any? { |ext| filename.ends_with?(ext) } &&
+      [".js", ".mjs", ".ts", ".mts", ".cts", ".jsx", ".tsx", ".cjs"].any? { |ext| filename.ends_with?(ext) } &&
         (file_contents.includes?("hono") || file_contents.includes?("Hono")) &&
         content_matches?(file_contents, SIGNAL)
     end

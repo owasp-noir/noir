@@ -23,7 +23,7 @@ module Analyzer::Javascript
       # instead of a bare `/users`.
       resolve_koa_mount_prefixes
 
-      parallel_file_scan([".js", ".ts", ".mjs"]) do |path|
+      parallel_file_scan([".js", ".ts", ".mts", ".cts", ".mjs", ".cjs"]) do |path|
         content = read_file_content(path)
         next if Noir::JSRouteExtractor.other_shared_extractor_framework?(content, :koa)
         parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug,
@@ -72,7 +72,7 @@ module Analyzer::Javascript
       boundary = @base_path
 
       all_files.each do |path|
-        next unless [".js", ".ts", ".mjs", ".cjs"].any? { |ext| path.ends_with?(ext) }
+        next unless [".js", ".ts", ".mts", ".cts", ".mjs", ".cjs"].any? { |ext| path.ends_with?(ext) }
         content = read_file_content(path)
         # Cheap gate: the mount chain always pairs `.use(` with `.routes(`.
         next unless content.includes?(".use(") && content.includes?(".routes(")

@@ -2,7 +2,7 @@ require "../../../models/detector"
 
 module Detector::Javascript
   class Apollo < Detector
-    detector_for "js_apollo", extensions: %w[.js .mjs .cjs .jsx .ts .tsx]
+    detector_for "js_apollo", extensions: %w[.js .mjs .cjs .jsx .ts .mts .cts .tsx]
 
     # Apollo Server v4 ships as `@apollo/server`; legacy v2/v3 use the
     # `apollo-server` / `apollo-server-*` family. `ApolloServer` shows up

@@ -155,7 +155,7 @@ describe Noir::JSLiteralScanner do
 
   describe "regex_context?" do
     it "accepts operators that expect an expression" do
-      ['(', '[', '{', ',', ':', ';', '=', '!', '&', '|', '?', '>', '<'].each do |ch|
+      ['(', '[', '{', ',', ':', ';', '=', '!', '&', '|', '?', '>'].each do |ch|
         Noir::JSLiteralScanner.regex_context?(ch, "").should be_true
       end
     end
@@ -178,6 +178,58 @@ describe Noir::JSLiteralScanner do
       # a regex and swallow the rest of the expression.
       Noir::JSLiteralScanner.regex_context?('n', "in").should be_true
       Noir::JSLiteralScanner.regex_context?('n', "login").should be_false
+    end
+
+    it "treats '/' after a JSX `<` or a postfix `++` / `--` as division" do
+      Noir::JSLiteralScanner.regex_context?('<', "").should be_false
+      Noir::JSLiteralScanner.regex_context?('+', "", '+').should be_false
+      Noir::JSLiteralScanner.regex_context?('-', "", '-').should be_false
+      Noir::JSLiteralScanner.regex_context?('+', "", ' ').should be_true
+    end
+  end
+
+  describe "template_literal_end" do
+    it "skips a template nested inside a substitution" do
+      src = "`<ul>${items.map(i => `<li>${i}</li>`)}</ul>`;x"
+      Noir::JSLiteralScanner.template_literal_end(src.chars, src.size, 0).should eq(src.index!(';'))
+    end
+
+    it "keeps an apostrophe or a `}` inside a nested template inert" do
+      ["`${a.map(n => `it's ${n}`)}`;", "`${rows.map(r => `}`)}`;", "`${rows.map(r => `{${r.a}}`)}`;"].each do |src|
+        Noir::JSLiteralScanner.template_literal_end(src.chars, src.size, 0).should eq(src.size - 1)
+      end
+    end
+  end
+
+  describe "template_literal_end with a regex in a substitution" do
+    it "keeps a quote or brace inside the regex out of the substitution state" do
+      ["/'/g, ''", %(/"/g, ""), "/{/g, ''", %(/\\${/, "")].each do |re|
+        src = "`a${ x.replace(#{re}) }b`;x"
+        Noir::JSLiteralScanner.template_literal_end(src.chars, src.size, 0).should eq(src.index!(";"))
+      end
+    end
+  end
+
+  describe "failed regex scans" do
+    it "stay linear on one long line of '/' that never closes" do
+      src = "{ var q=" + "a=/[x" * 200_000 + "\n}"
+      elapsed = Time.measure do
+        Noir::JSLiteralScanner.find_matching_brace(src, 0).should eq(src.size - 1)
+        Noir::JSLiteralScanner.extract_paren_content("(" + src + ")", 1).should_not be_nil
+      end
+      elapsed.should be < 2.seconds
+    end
+  end
+
+  describe "find_matching_brace" do
+    it "is not desynced by nested templates, JSX closing tags or postfix division" do
+      [
+        "{ res.send(`${items.map(i => `<li>${i}</li>`)}`); }",
+        "{ const el = <div>{name}</div>;\n }",
+        "{ const half = i++ / 2;\n const s = 'x'; }",
+      ].each do |src|
+        Noir::JSLiteralScanner.find_matching_brace(src, 0).should eq(src.size - 1)
+      end
     end
   end
 end

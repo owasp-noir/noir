@@ -8,7 +8,7 @@ module Analyzer::Javascript
     # only uses `.js`/`.jsx`) pass their own list to `parallel_file_scan`.
     #
     # This list mirrors what the JS detectors declare in `extensions:`
-    # (`.js .mjs .cjs .jsx .ts .tsx`). It has to: detection and analysis
+    # (`.js .mjs .cjs .jsx .ts .mts .cts .tsx`). It has to: detection and analysis
     # read the same tree, so any extension a detector accepts but this
     # list omits produces a project that detects fine and then yields
     # zero endpoints, with nothing logged and nothing for `--strict` to
@@ -18,7 +18,7 @@ module Analyzer::Javascript
     # elysia, feathers, ...) already spelled `.mjs`/`.cjs` out by hand;
     # the six that relied on this default (express, fastify, hono,
     # restify, apollo, graphql_yoga, plus socketio) silently did not.
-    DEFAULT_EXTENSIONS      = [".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx"]
+    DEFAULT_EXTENSIONS      = [".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts", ".cts", ".tsx"]
     JS_PROJECT_ROOT_MARKERS = [
       "package.json",
       "next.config.js", "next.config.ts", "next.config.mjs", "next.config.cjs",
@@ -57,7 +57,7 @@ module Analyzer::Javascript
     end
 
     protected def javascript_source_language(path : String) : Symbol
-      path.ends_with?(".ts") || path.ends_with?(".mts") || path.ends_with?(".tsx") ? :typescript : :javascript
+      path.ends_with?(".ts") || path.ends_with?(".mts") || path.ends_with?(".cts") || path.ends_with?(".tsx") ? :typescript : :javascript
     end
 
     # Endpoint for a file-routed framework (Astro, Fresh, Remix, SvelteKit):
@@ -325,45 +325,22 @@ module Analyzer::Javascript
     # Resolve every router variable's mount prefix(es) from the edge list.
     # A variable that is never mounted into another (a root aggregator like
     # the exported `router`) carries the empty prefix; children inherit the
-    # parent's prefix joined with the edge's own prefix. Iterated to a
-    # fixpoint so a two-level chain (root -> api -> child) fully resolves.
+    # parent's prefix joined with the edge's own prefix. Propagation is
+    # cycle-safe (see `JSRouteExtractor.propagate_mount_prefixes`).
     protected def resolve_mount_edge_prefixes(edges : Array(Tuple(String, String, String))) : Hash(String, Array(String))
       children = edges.map { |_, _, child| child }.to_set
-      prefixes = Hash(String, Array(String)).new { |h, k| h[k] = [] of String }
+      prefixes = Hash(String, Array(String)).new
 
-      # Seed roots (never a mount target) with the empty prefix.
+      # Seed roots (never a mount target) with the empty prefix. Only
+      # resolved parents propagate: defaulting an unresolved parent to ""
+      # would leak a wrong prefix (`/sub` instead of `/api/sub`).
       edges.each do |parent, _, _|
-        prefixes[parent] << "" if !children.includes?(parent) && prefixes[parent].empty?
+        prefixes[parent] = [""] unless children.includes?(parent)
       end
 
-      max_iterations = 16
-      iterations = 0
-      changed = true
-      while changed && iterations < max_iterations
-        changed = false
-        iterations += 1
-        edges.each do |parent, prefix, child|
-          # Propagate only from a resolved parent (a seeded root or an
-          # already-resolved child). Defaulting an unresolved parent to ""
-          # would leak a wrong prefix (`/sub` instead of `/api/sub`).
-          parent_prefixes = prefixes[parent]?
-          next if parent_prefixes.nil? || parent_prefixes.empty?
-          parent_prefixes.each do |pp|
-            combined = if pp.empty?
-                         prefix
-                       elsif prefix.empty?
-                         pp
-                       else
-                         Noir::URLPath.join(pp, prefix)
-                       end
-            unless prefixes[child].includes?(combined)
-              prefixes[child] << combined
-              changed = true
-            end
-          end
-        end
+      if Noir::JSRouteExtractor.propagate_mount_prefixes(edges, prefixes)
+        logger.debug "Mount prefixes capped at #{Noir::JSRouteExtractor::MAX_MOUNT_PREFIXES} per router"
       end
-
       prefixes
     end
 

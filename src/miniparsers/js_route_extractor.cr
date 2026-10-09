@@ -207,29 +207,19 @@ module Noir
           func_name = m[1]
           prefix = m[2]
           next unless function_names.includes?(func_name)
+          # A plugin registering itself is an internal mount (handled
+          # below), not a top-level prefix for the plugin.
+          reg_pos = m.begin(0)
+          next if function_ranges.any? { |name, open_idx, close_idx| name == func_name && open_idx <= reg_pos <= close_idx }
           prefixes_by_function[func_name] << prefix unless prefixes_by_function[func_name].includes?(prefix)
         end
 
-        # Propagate prefixes through internal mounts with max iteration protection
-        changed = true
-        max_iterations = 100 # Prevent infinite loops in case of cyclic references
-        iterations = 0
-        while changed && iterations < max_iterations
-          changed = false
-          iterations += 1
-          internal_mounts.each do |parent, child, mount_prefix|
-            parent_prefixes = prefixes_by_function[parent]
-            if parent_prefixes.empty? && !file_prefixes.empty?
-              parent_prefixes = file_prefixes
-            end
-            parent_prefixes.each do |p|
-              combined = URLPath.join(p, mount_prefix)
-              unless prefixes_by_function[child].includes?(combined)
-                prefixes_by_function[child] << combined
-                changed = true
-              end
-            end
-          end
+        # Propagate prefixes through internal mounts; an unprefixed parent
+        # mounts at the file's own cross-file prefix.
+        if propagate_mount_prefixes(
+             internal_mounts.map { |parent, child, mount_prefix| {parent, mount_prefix, child} },
+             prefixes_by_function, file_prefixes)
+          STDERR.puts "#{file_path}: mount prefixes capped at #{MAX_MOUNT_PREFIXES} per router" if debug
         end
 
         endpoints = [] of Endpoint
@@ -291,6 +281,7 @@ module Noir
           # Handle router.all by expanding to all HTTP methods
           prefixes.each do |prefix|
             path_with_prefix = prefix.empty? ? pattern.path : URLPath.join(prefix, pattern.path)
+            path_with_prefix = "/" if path_with_prefix.empty?
 
             if normalized_method == "ALL"
               all_methods = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
@@ -1001,6 +992,66 @@ module Noir
     # is tiny. Fibers are cooperative (no preview_mt), so the plain Hash is
     # safe under the analyzers' parallel file scans.
     @@direct_call_res = Hash(String, Regex).new
+    HANDLER_ANCHOR_RE = /\bfunction\b|=>/
+
+    # Ceiling on the prefixes one router collects. The (router, prefix)
+    # dedupe already bounds the work; this only stops a diamond lattice of
+    # parallel edges from multiplying without end. A shared router mounted
+    # under many paths stays well below it.
+    MAX_MOUNT_PREFIXES = 1024
+
+    # Pushes mount prefixes along `{parent, prefix, child}` edges into
+    # `prefixes`, starting from each parent's existing prefixes (or
+    # `fallback` when it has none, without recording that on the parent).
+    #
+    # Depth-first with the routers on the current mount path excluded, so a
+    # self-mount (`router.use('/v1', router.routes())`), a plugin that
+    # registers itself, or an a -> b -> a cycle is expanded at most once
+    # instead of growing the prefix list without bound — the fixpoint loops
+    # this replaced appended to the array they were iterating.
+    #
+    # Returns true when some router hit MAX_MOUNT_PREFIXES and lost prefixes.
+    def self.propagate_mount_prefixes(edges : Array(Tuple(String, String, String)),
+                                      prefixes : Hash(String, Array(String)),
+                                      fallback : Array(String) = [] of String) : Bool
+      by_parent = edges.group_by(&.[0])
+      starts = by_parent.keys.map do |parent|
+        own = prefixes[parent]?
+        {parent, own.nil? || own.empty? ? fallback : own.dup}
+      end
+      on_path = Set(String).new
+      capped = false
+      starts.each do |parent, parent_prefixes|
+        on_path << parent
+        parent_prefixes.each do |prefix|
+          capped = true if descend_mounts(parent, prefix, by_parent, prefixes, on_path)
+        end
+        on_path.delete(parent)
+      end
+      capped
+    end
+
+    # Returns true when a router's prefix list was full.
+    private def self.descend_mounts(node : String, prefix : String,
+                                    by_parent : Hash(String, Array(Tuple(String, String, String))),
+                                    prefixes : Hash(String, Array(String)), on_path : Set(String)) : Bool
+      capped = false
+      by_parent[node]?.try &.each do |_, edge_prefix, child|
+        next if on_path.includes?(child)
+        combined = URLPath.join(prefix, edge_prefix)
+        list = prefixes[child]? || (prefixes[child] = [] of String)
+        next if list.includes?(combined)
+        if list.size >= MAX_MOUNT_PREFIXES
+          capped = true
+          next
+        end
+        list << combined
+        on_path << child
+        capped = true if descend_mounts(child, combined, by_parent, prefixes, on_path)
+        on_path.delete(child)
+      end
+      capped
+    end
 
     # Equivalent to matching /['"`]<literal>['"`]/ — the literal bracketed by
     # a quote character on each side — without compiling a per-path regex.
@@ -1136,25 +1187,27 @@ module Noir
       return if args_end < args_start
 
       args_slice = content[args_start..args_end]
-      function_idx = args_slice.rindex(/\bfunction\b/)
-      arrow_idx = args_slice.rindex("=>")
 
+      # The handler is the last function argument. Walk the arguments'
+      # functions in order, skipping each one's body: `rindex` over the
+      # whole slice picked an arrow *inside* the handler
+      # (`items.map(i => …)`) and scoped the param scan to that.
       anchor_idx = nil
       anchor_kind = :function
-      if function_idx && arrow_idx
-        if function_idx > arrow_idx
-          anchor_idx = function_idx
-          anchor_kind = :function
-        else
-          anchor_idx = arrow_idx
-          anchor_kind = :arrow
-        end
-      elsif function_idx
-        anchor_idx = function_idx
-        anchor_kind = :function
-      elsif arrow_idx
-        anchor_idx = arrow_idx
-        anchor_kind = :arrow
+      search = 0
+      while anchor = args_slice.match(HANDLER_ANCHOR_RE, search)
+        anchor_idx = anchor.begin(0)
+        anchor_kind = anchor[0] == "=>" ? :arrow : :function
+        body_open = if anchor_kind == :arrow
+                      ws_end = args_slice.index(/\S/, anchor.end(0))
+                      ws_end if ws_end && args_slice[ws_end] == '{'
+                    elsif (params_open = args_slice.index('(', anchor_idx)) &&
+                          (params_close = find_matching_paren(args_slice, params_open))
+                      args_slice.index('{', params_close)
+                    end
+        body_close = body_open && find_matching_brace(args_slice, body_open)
+        # A concise arrow has no body to skip; keep walking past `=>`.
+        search = body_close ? body_close + 1 : anchor.end(0)
       end
 
       return unless anchor_idx
@@ -1249,6 +1302,15 @@ module Noir
               next
             end
           end
+          if char == '`'
+            # Shared with JSLiteralScanner so `${ … }` nesting (a template
+            # inside a substitution) does not end the literal early.
+            stop = JSLiteralScanner.template_literal_end(chars, len, i)
+            (i...stop).each { |k| builder << chars[k] }
+            last_sig = stop - 1
+            i = stop
+            next
+          end
           if char == '/' && regex_literal_start?(chars, last_sig)
             state = :regex
             escaped = false
@@ -1259,13 +1321,11 @@ module Noir
               state = :single
             when '"'
               state = :double
-            when '`'
-              state = :template
             end
           end
           builder << char
           last_sig = i unless char.whitespace?
-        when :single, :double, :template
+        when :single, :double
           builder << char
           last_sig = i unless char.whitespace?
           if escaped
@@ -1273,8 +1333,7 @@ module Noir
           elsif char == '\\'
             escaped = true
           elsif (state == :single && char == '\'') ||
-                (state == :double && char == '"') ||
-                (state == :template && char == '`')
+                (state == :double && char == '"')
             state = :code
           end
         when :regex
@@ -1347,7 +1406,7 @@ module Noir
                     ""
                   end
 
-      JSLiteralScanner.regex_context?(prev_char, prev_word)
+      JSLiteralScanner.regex_context?(prev_char, prev_word, last_sig > 0 ? chars[last_sig - 1] : nil)
     end
 
     def self.extract_body_params(handler_body : String, endpoint : Endpoint)

@@ -10,7 +10,7 @@ module Detector::Javascript
     # dropping it changes no result, it just stops handing `package.json`
     # to a `detect` that always answered false.
     detector_for "js_express",
-      extensions: %w[.js .mjs .cjs .jsx .ts .tsx]
+      extensions: %w[.js .mjs .cjs .jsx .ts .mts .cts .tsx]
 
     # Single precompiled alternation — one PCRE2 scan over the file
     # instead of up to four separate `.match` passes. Regex.union wraps
@@ -26,7 +26,7 @@ module Detector::Javascript
     # gate admitted `.jsx`/`.tsx`, this guard did not, so a project whose
     # only Express source was a `.jsx` file reported "No technologies
     # detected" while the analyzer was perfectly able to parse it.
-    SOURCE_EXTENSIONS = %w[.js .mjs .cjs .jsx .ts .tsx]
+    SOURCE_EXTENSIONS = %w[.js .mjs .cjs .jsx .ts .mts .cts .tsx]
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless SOURCE_EXTENSIONS.any? { |ext| filename.ends_with?(ext) }

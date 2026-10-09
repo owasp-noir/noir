@@ -3,7 +3,7 @@ require "../../../models/detector"
 module Detector::Javascript
   class Restify < Detector
     detector_for "js_restify",
-      extensions: %w[.js .mjs .cjs .jsx .ts .tsx],
+      extensions: %w[.js .mjs .cjs .jsx .ts .mts .cts .tsx],
       basenames: %w[package.json]
 
     # `.js` accepts either quoting of the require; `.ts` only the double-quoted
@@ -14,7 +14,7 @@ module Detector::Javascript
     def detect(filename : String, file_contents : String) : Bool
       if filename.ends_with?(".js")
         content_matches?(file_contents, JS_MARKERS)
-      elsif filename.ends_with?(".ts")
+      elsif filename.ends_with?(".ts") || filename.ends_with?(".mts") || filename.ends_with?(".cts")
         content_matches?(file_contents, TS_MARKER)
       else
         false

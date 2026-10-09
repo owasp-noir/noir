@@ -2,6 +2,32 @@ require "../../spec_helper"
 require "../../../src/miniparsers/js_parser"
 
 describe Noir::JSParser do
+  describe "empty route paths" do
+    it "keeps '' on app/router receivers, including an inline Fastify plugin's instance" do
+      code = <<-JS
+        const fastify = require('fastify')();
+        fastify.register(async function (f) {
+          f.get('', async () => 'x');
+        }, { prefix: '/items' });
+        const r = express.Router();
+        r.get('', (req, res) => {});
+        app.get('', (req, res) => {});
+        JS
+      routes = Noir::JSParser.new(code).parse_routes
+      routes.count { |route| route.raw_path.empty? && route.method == "GET" }.should eq(3)
+    end
+
+    it "drops '' on cache and HTTP-client receivers" do
+      code = <<-JS
+        const express = require('express');
+        cache.get('', (err, v) => {});
+        client.post('', body);
+        api.post('', payload);
+        JS
+      Noir::JSParser.new(code).parse_routes.should be_empty
+    end
+  end
+
   describe "detect_framework" do
     it "detects express framework" do
       parser = Noir::JSParser.new("const express = require('express');")

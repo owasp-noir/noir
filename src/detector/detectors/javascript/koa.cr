@@ -2,7 +2,7 @@ require "../../../models/detector"
 
 module Detector::Javascript
   class Koa < Detector
-    detector_for "js_koa", extensions: %w[.js .mjs .cjs .jsx .ts .tsx], basenames: %w[package.json]
+    detector_for "js_koa", extensions: %w[.js .mjs .cjs .jsx .ts .mts .cts .tsx], basenames: %w[package.json]
 
     # Single precompiled alternation — one PCRE2 scan instead of six.
     SIGNAL = Regex.union(
@@ -15,7 +15,8 @@ module Detector::Javascript
     )
 
     def detect(filename : String, file_contents : String) : Bool
-      return false unless filename.ends_with?(".js") || filename.ends_with?(".mjs") || filename.ends_with?(".ts")
+      return false unless filename.ends_with?(".js") || filename.ends_with?(".mjs") || filename.ends_with?(".ts") ||
+                          filename.ends_with?(".cjs") || filename.ends_with?(".mts") || filename.ends_with?(".cts")
       # Necessary condition for every marker below, which all spell `koa` or
       # `Koa` literally; a memchr scan is far cheaper than the alternation
       # regex.

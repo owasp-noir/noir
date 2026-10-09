@@ -202,5 +202,33 @@ describe Noir::JSLexer do
         tokens[slash_idx - 1].type.should eq(before_slash)
       end
     end
+
+    it "keeps a template nested in a substitution as one token" do
+      tokens = Noir::JSLexer.new("x(`a${b.map(i => `<li>${i}</li>`)}c`, 'z')").tokenize
+      tokens.map(&.type).should eq([:identifier, :lparen, :template_literal, :comma, :string, :rparen])
+      tokens[2].value.should eq("a${b.map(i => `<li>${i}</li>`)}c")
+    end
+
+    it "keeps a regex with a quote inside a substitution in the template token" do
+      tokens = Noir::JSLexer.new("x(`a${ s.replace(/'/g, '') }b`, 'z')").tokenize
+      tokens.map(&.type).should eq([:identifier, :lparen, :template_literal, :comma, :string, :rparen])
+    end
+
+    it "stays linear when regex scans keep failing on one long line" do
+      src = "var q=" + "a=/[x" * 200_000 + "\n'z'"
+      tokens = [] of Noir::JSToken
+      elapsed = Time.measure { tokens = Noir::JSLexer.new(src).tokenize }
+      elapsed.should be < 2.seconds
+      tokens.last.value.should eq("z")
+    end
+
+    it "lexes '/' after a postfix `++` or a JSX `<` as division" do
+      ["i++ / 2; 'z'", "<div>{n}</div>; 'z'"].each do |code|
+        tokens = Noir::JSLexer.new(code).tokenize
+        tokens.none? { |t| t.type == :regex }.should be_true
+        tokens.last.type.should eq(:string)
+        tokens.last.value.should eq("z")
+      end
+    end
   end
 end

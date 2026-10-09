@@ -218,7 +218,9 @@ module Noir
       # identifiers like "Object" (leaked via `resolve_dynamic_path` from
       # `Promise.all(Object.values(...).map(...))`) get rewritten to
       # "/Object" and sneak past `valid_route_path?`'s "/" check.
-      routes.select! { |r| valid_route_path?(r.path) }
+      # An empty literal path survives only where `route_path_entries_from_args`
+      # accepted it for a routing receiver (it is the mount point itself).
+      routes.select! { |r| valid_route_path?(r.path) || r.raw_path.empty? }
 
       # Strip Express param regex constraints (`:id(\d+)`, `:pk(${UUID_REGEX})`)
       # down to the bare param, then ensure a leading slash. The constraint
@@ -238,7 +240,10 @@ module Noir
               !stripped.includes?("{#{p.name}}")
           end
         end
-        route_item.path = "/#{route_item.path}" unless route_item.path.starts_with?("/")
+        # An empty path (`router.get('', …)`) stays empty so a mount or
+        # `prefix` resolves it to the prefix itself (`/items`, not
+        # `/items/`); `JSRouteExtractor` roots it to `/` when unprefixed.
+        route_item.path = "/#{route_item.path}" unless route_item.path.empty? || route_item.path.starts_with?("/")
       end
 
       # Dedupe by method + path
@@ -262,7 +267,9 @@ module Noir
       return prefixes if visited.includes?(router) # Prevent infinite loops
 
       visited.add(router)
-      parents = router_parents[router]? || [] of String
+      # A parent already on this chain is a self-mount or a cycle; walking
+      # it again joined the cycle's prefixes onto themselves (`/v1/v1`).
+      parents = (router_parents[router]? || [] of String).reject { |parent| visited.includes?(parent) }
       return prefixes if parents.empty?
 
       # Combine with all parent chains
@@ -473,8 +480,13 @@ module Noir
       paths
     end
 
-    private def route_path_entries_from_args(first_arg_idx : Int32, allow_named_route : Bool = false) : Array(PathEntry)
-      paths = path_entries_from_token(first_arg_idx).select { |path| valid_route_path?(path.path) }
+    private def route_path_entries_from_args(first_arg_idx : Int32, allow_named_route : Bool = false,
+                                             receiver : String? = nil) : Array(PathEntry)
+      # `router.get('', …)` routes the mount point itself (Express, Koa,
+      # Fastify, Hono), but `cache.get('', cb)` / `client.post('', body)`
+      # are not routes, so the empty path is kept only on a routing receiver.
+      empty_ok = receiver ? routing_receiver?(receiver) : false
+      paths = path_entries_from_token(first_arg_idx).select { |path| valid_route_path?(path.path) || (empty_ok && path.path.empty?) }
       return paths unless paths.empty? && allow_named_route
 
       # Koa/@koa-router supports named routes:
@@ -685,6 +697,17 @@ module Noir
       HTTP_CLIENT_RECEIVERS.includes?(router_var) && !@explicit_router_vars.includes?(router_var)
     end
 
+    APP_FACTORIES = Set{"express", "fastify", "Fastify", "Koa", "Hono", "Application", "Router", "Elysia"}
+
+    # Receivers conventionally holding an app or router.
+    ROUTING_RECEIVER_NAME = /\A(?:app|router|server|fastify|instance)\z|(?:Router|router|App|Server)\z/
+
+    # A receiver known to be an app or router: built from a framework
+    # factory in this file, or conventionally named like one.
+    private def routing_receiver?(name : String) : Bool
+      @explicit_router_vars.includes?(name) || name.matches?(ROUTING_RECEIVER_NAME)
+    end
+
     private def identify_router_variables(router_variables : Set(String))
       idx = 0
       while idx < @tokens.size - 4
@@ -697,6 +720,42 @@ module Noir
            idx + 4 < @tokens.size && @tokens[idx + 4].value == "Router"
           router_variables.add(@tokens[idx].value)
           @explicit_router_vars.add(@tokens[idx].value)
+        end
+
+        # identifier = [new] express() / fastify() / Koa / Hono / Router /
+        # restify.createServer(): an app or router built in this file.
+        if @tokens[idx].type == :identifier && @tokens[idx + 1].type == :assign
+          factory_idx = idx + 2
+          factory_idx += 1 if @tokens[factory_idx].value == "new"
+          factory = @tokens[factory_idx]?
+          if factory && (APP_FACTORIES.includes?(factory.value) ||
+             (factory.value == "restify" && @tokens[factory_idx + 2]?.try(&.value) == "createServer"))
+            @explicit_router_vars.add(@tokens[idx].value)
+          end
+        end
+
+        # x.register([async] function [name](instance, …) / [async] (instance, …) =>
+        # / [async] instance =>: the inline Fastify plugin's instance.
+        if @tokens[idx].type == :dot && @tokens[idx + 1].value == "register" && @tokens[idx + 2].type == :lparen
+          param_idx = idx + 3
+          inline_fn = false
+          if @tokens[param_idx]?.try(&.value) == "async"
+            param_idx += 1
+            inline_fn = true
+          end
+          if @tokens[param_idx]?.try(&.value) == "function"
+            param_idx += 1
+            param_idx += 1 if @tokens[param_idx]?.try(&.type) == :identifier
+            inline_fn = true
+          end
+          if @tokens[param_idx]?.try(&.type) == :lparen
+            param_idx += 1
+            inline_fn = true
+          end
+          # A bare `register(plugin, …)` names a function, not an instance.
+          if inline_fn && (param = @tokens[param_idx]?) && param.type == :identifier
+            @explicit_router_vars.add(param.value)
+          end
         end
 
         # Pattern 2: identifier.get/post/put/delete/patch/all/head/options(
@@ -845,7 +904,7 @@ module Noir
           end
           router_var = @tokens[idx].value
           method = @tokens[idx + 2].value
-          paths = route_path_entries_from_args(idx + 4, allow_named_route: named_route_receiver?(router_var))
+          paths = route_path_entries_from_args(idx + 4, allow_named_route: named_route_receiver?(router_var), receiver: router_var)
 
           # Create one route for each path with prefix
           start_pos = @tokens[idx].position
@@ -870,7 +929,7 @@ module Noir
           end
           router_var = @tokens[idx].value
           method = @tokens[idx + 2].value
-          paths = route_path_entries_from_args(idx + 5, allow_named_route: named_route_receiver?(router_var))
+          paths = route_path_entries_from_args(idx + 5, allow_named_route: named_route_receiver?(router_var), receiver: router_var)
 
           start_pos = @tokens[idx].position
           each_prefixed_path(paths, router_var, router_prefixes) do |path_entry, prefixed_path|
@@ -903,7 +962,7 @@ module Noir
           # resolve path at idx+4
           paths = [] of PathEntry
           if idx + 4 < limit
-            paths = route_path_entries_from_args(idx + 4)
+            paths = route_path_entries_from_args(idx + 4, receiver: router_var)
           end
 
           start_pos = @tokens[idx].position
@@ -968,7 +1027,7 @@ module Noir
            path_idx + 1 < @tokens.size &&
            route_handler_arg?(path_idx)
           router_var = @tokens[idx].value
-          path_entries = route_path_entries_from_args(path_idx + 1, allow_named_route: named_route_receiver?(router_var))
+          path_entries = route_path_entries_from_args(path_idx + 1, allow_named_route: named_route_receiver?(router_var), receiver: router_var)
           @position = path_idx + 2 unless path_entries.empty?
 
           path_entries.each do |path_entry|
@@ -1123,7 +1182,7 @@ module Noir
            route_handler_arg?(path_idx)
           router_var = @tokens[idx - 1].type == :identifier ? @tokens[idx - 1].value : ""
           return results if http_client_receiver?(router_var)
-          path_entries = route_path_entries_from_args(path_idx + 1, allow_named_route: named_route_receiver?(router_var))
+          path_entries = route_path_entries_from_args(path_idx + 1, allow_named_route: named_route_receiver?(router_var), receiver: router_var)
           @position = path_idx + 2 unless path_entries.empty?
 
           path_entries.each do |path_entry|
