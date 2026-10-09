@@ -241,6 +241,8 @@ module Noir
         string_values = collect_string_values(root, source)
         mux_chained_operands = Set(String).new
 
+        drop_self_regrouped(root, source, group_prefixes, group_method)
+
         # Sub-app mounts (Fiber `app.Mount("/mnt", micro)`) bind the mounted
         # app's variable to the prefix. Collected before the group walk so
         # groups derived from the mounted app inherit it.
@@ -334,12 +336,49 @@ module Noir
       Noir::TreeSitter.parse_go(source) do |root|
         string_values = collect_string_values(root, source)
 
+        drop_self_regrouped(root, source, group_prefixes, group_method)
         Noir::TreeSitter.walk(root) do |node|
           next unless group_assignment_node?(node)
           collect_group(node, source, group_prefixes, group_method, group_aliases, string_values)
         end
       end
       group_prefixes
+    end
+
+    # `r = r.Group("/a")` stacks onto r's current prefix, so re-running it
+    # on a seed that already holds this file's result (the package map
+    # includes the file's own groups) doubles the prefix: `/a/a`. Drop such
+    # names from the seed so the walk rebuilds them from this file alone.
+    # (Zero-arg alias calls bind with `||=` and are already idempotent.)
+    private def drop_self_regrouped(root : LibTreeSitter::TSNode,
+                                    source : String,
+                                    groups : Hash(String, String),
+                                    group_method : String)
+      return if groups.empty?
+      Noir::TreeSitter.walk(root) do |node|
+        next unless Noir::TreeSitter.node_type(node) == "assignment_statement"
+        left = Noir::TreeSitter.field(node, "left")
+        right = Noir::TreeSitter.field(node, "right")
+        next unless left && right
+        name_node = identifier_or_first_child(left)
+        current = Noir::TreeSitter.first_named_child(right)
+        next unless name_node && current && Noir::TreeSitter.node_type(name_node) == "identifier"
+        name = Noir::TreeSitter.node_text(name_node, source)
+        next unless groups.has_key?(name)
+        grouped = false
+        while Noir::TreeSitter.node_type(current) == "call_expression"
+          function = Noir::TreeSitter.field(current, "function")
+          break unless function && Noir::TreeSitter.node_type(function) == "selector_expression"
+          field = Noir::TreeSitter.field(function, "field")
+          operand = Noir::TreeSitter.field(function, "operand")
+          break unless field && operand
+          method = Noir::TreeSitter.node_text(field, source)
+          grouped ||= method == group_method
+          current = operand
+        end
+        next unless grouped && Noir::TreeSitter.node_type(current) == "identifier"
+        groups.delete(name) if Noir::TreeSitter.node_text(current, source) == name
+      end
     end
 
     # A Gin "router-builder" helper — `func F(rg *gin.RouterGroup) {...}`

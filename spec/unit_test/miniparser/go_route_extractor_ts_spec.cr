@@ -275,6 +275,28 @@ describe Noir::TreeSitterGoRouteExtractor do
     routes.map { |r| {r.verb, r.path} }.should eq([{"GET", "/api/v1/users"}])
   end
 
+  it "does not re-stack self-reassigned groups onto the file's own seeded prefix" do
+    source = <<-GO
+      package main
+
+      func main() {
+          app := fiber.New()
+          var r fiber.Router = app
+          r = r.Group("/a")
+          r = r.Group("/b")
+          r.Get("/x", handler)
+      }
+      GO
+
+    # The engine seeds each file with the package map, which already holds
+    # this file's own result for `r`.
+    seed = Noir::TreeSitterGoRouteExtractor.extract_groups(source)
+    seed["r"].should eq("/a/b")
+    Noir::TreeSitterGoRouteExtractor.extract_groups(source, seed)["r"].should eq("/a/b")
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source, seed)
+    routes.map { |r| {r.verb, r.path} }.should eq([{"GET", "/a/b/x"}])
+  end
+
   it "does not loop on reassigned string identifiers" do
     source = <<-GO
       package main
