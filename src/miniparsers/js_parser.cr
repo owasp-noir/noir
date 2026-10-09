@@ -238,7 +238,10 @@ module Noir
               !stripped.includes?("{#{p.name}}")
           end
         end
-        route_item.path = "/#{route_item.path}" unless route_item.path.starts_with?("/")
+        # An empty path (`router.get('', …)`) stays empty so a mount or
+        # `prefix` resolves it to the prefix itself (`/items`, not
+        # `/items/`); `JSRouteExtractor` roots it to `/` when unprefixed.
+        route_item.path = "/#{route_item.path}" unless route_item.path.empty? || route_item.path.starts_with?("/")
       end
 
       # Dedupe by method + path
@@ -1474,7 +1477,9 @@ module Noir
     # Returns false for paths that are clearly not HTTP route paths.
     # Valid route paths never contain "://" (external URLs) or whitespace (SQL, multi-line strings).
     private def valid_route_path?(path : String) : Bool
-      return false if path.empty?
+      # `router.get('', …)` is the mount point itself (Express, Koa,
+      # Fastify all route it).
+      return true if path.empty?
       return false if path.includes?("://")
       return false if path.each_char.any?(&.whitespace?)
       # Relative module specifiers. An HTTP route path is always rooted;

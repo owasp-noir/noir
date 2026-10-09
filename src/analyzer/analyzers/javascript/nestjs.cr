@@ -911,6 +911,9 @@ module Analyzer::Javascript
     end
 
     private def combine_paths(base : String, route : String) : String
+      # `@Controller()` + `@Get()` is the app root; an empty URL would be
+      # dropped by the optimizer.
+      return "/" if base.empty? && route.empty?
       return route if base.empty?
       return base if route.empty?
 

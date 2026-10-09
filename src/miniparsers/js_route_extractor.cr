@@ -291,6 +291,7 @@ module Noir
           # Handle router.all by expanding to all HTTP methods
           prefixes.each do |prefix|
             path_with_prefix = prefix.empty? ? pattern.path : URLPath.join(prefix, pattern.path)
+            path_with_prefix = "/" if path_with_prefix.empty?
 
             if normalized_method == "ALL"
               all_methods = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
