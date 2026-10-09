@@ -29,6 +29,14 @@ class Analyzer::AI::Unified
     @result.map(&.details.code_paths.map(&.path))
   end
 
+  def __test_bundle_labels(paths : Array(String)) : Array(String)
+    prepare_files_for_bundling(paths).map(&.[0])
+  end
+
+  def __test_resolve(file : String) : String?
+    resolve_reported_file(file)
+  end
+
   def __test_agent_paths(reply : String) : Array(Array(String))
     apply_agent_finalize(JSON.parse(reply))
     @result.map(&.details.code_paths.map(&.path))
@@ -39,9 +47,9 @@ private def endpoint_reply(file : String) : String
   {endpoints: [{url: "/x", method: "GET", file: file, line: 1}]}.to_json
 end
 
-private def scope_analyzer(base : String) : Analyzer::AI::Unified
+private def scope_analyzer(*bases : String) : Analyzer::AI::Unified
   options = create_test_options
-  options["base"] = YAML::Any.new([YAML::Any.new(base)])
+  options["base"] = YAML::Any.new(bases.map { |base| YAML::Any.new(base) }.to_a)
   options["ai_provider"] = YAML::Any.new("http://127.0.0.1:1/v1")
   options["ai_model"] = YAML::Any.new("test-model")
   options["ai_max_token"] = YAML::Any.new(4000)
@@ -124,6 +132,31 @@ describe Analyzer::AI::Unified do
         ensure
           File.delete(outside)
         end
+      end
+    end
+
+    it "gives no code path when it does not resolve in a multi-file bundle" do
+      with_scoped_project do |root|
+        scope_analyzer(root).__test_bundle_paths(["f0.js", "f1.js"], endpoint_reply("missing.js")).should eq([[] of String])
+      end
+    end
+
+    it "maps each bundle label back to its own base's file when several bases share names" do
+      with_scoped_project do |root|
+        a = File.join(root, "a", "app0.js")
+        b = File.join(root, "b", "app0.js")
+        [a, b].each do |path|
+          Dir.mkdir_p(File.dirname(path))
+          File.write(path, "app.get('/x', h)\n")
+          CodeLocator.instance.register_path(path)
+        end
+
+        analyzer = scope_analyzer(File.join(root, "a"), File.join(root, "b"))
+        labels = analyzer.__test_bundle_labels([a, b])
+        labels.uniq.size.should eq(2)
+        labels.map { |label| analyzer.__test_resolve(label) }.should eq([a, b])
+        # A bare name both bases hold is ambiguous, not a coin flip.
+        analyzer.__test_resolve("app0.js").should be_nil
       end
     end
 

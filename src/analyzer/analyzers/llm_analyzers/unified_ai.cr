@@ -67,6 +67,8 @@ module Analyzer::AI
     @agent_tool_cache : Hash(String, String)
     @agent_tool_cache_order : Array(String)
     @symlinked_dir_cache = {} of String => Bool
+    # Bundle prompt label => walked path, filled before any bundle is sent.
+    @bundle_labels = {} of String => String
 
     def initialize(options : Hash(String, YAML::Any))
       super(options)
@@ -164,9 +166,13 @@ module Analyzer::AI
       paths.each do |path|
         next if File.directory?(path) || File.symlink?(path) || ignore_extensions.includes?(File.extname(path))
 
-        relative_path = get_relative_path(base_path, path)
+        # The label is what the model echoes back as `file`, so it has to name
+        # one file unambiguously. Base-relative is fine for one base; with
+        # several, `app.js` could be in any of them, so use the walked path.
+        label = @base_paths.size > 1 ? path : get_relative_path(base_path, path)
+        @bundle_labels[label] = path
         content = Noir::TextFile.read(path)
-        files << {relative_path, content}
+        files << {label, content}
       end
       files
     end
@@ -256,9 +262,11 @@ module Analyzer::AI
       if response.empty?
         record_llm_failure(bundle.paths, LLM_NO_RESPONSE_REASON)
       else
-        # An endpoint whose `file` does not resolve is attributed to the
-        # bundle's first file: a real path, never a made-up one.
-        parse_and_store_endpoints(response, bundle.paths.first?.try { |label| resolve_reported_file(label) })
+        # An endpoint whose `file` does not resolve falls back to the
+        # bundle's file only when there is exactly one; in a multi-file
+        # bundle any pick would be a guess, so it gets no code path.
+        fallback = bundle.paths.size == 1 ? resolve_reported_file(bundle.paths[0]) : nil
+        parse_and_store_endpoints(response, fallback)
       end
     end
 
@@ -296,7 +304,7 @@ module Analyzer::AI
         # --exclude-path and subtree pruning; a reply naming any other path
         # (an excluded secret, a hallucination) must never reach the
         # provider. The listed form is returned, not the model's echo.
-        selected = selected.compact_map { |path| walked_path?(Noir::PathScope.expand(path)) }.uniq!
+        selected = selected.compact_map { |path| resolve_reported_file(path) }.uniq!
 
         # Keep only real, in-scope source files. The model sometimes
         # echoes directories or ignorable assets; analyzing those is
@@ -950,18 +958,23 @@ module Analyzer::AI
     # The model's `file` is untrusted — it names whatever the scanned code
     # steered it to, and `--ai-context` later reads that path into the
     # report. Accept it only as a file the detector registered (inside a
-    # base, past --exclude-path), resolving a relative name against each
-    # base the way bundle prompts label files, and return the as-walked
-    # spelling the static analyzers report.
+    # base, past --exclude-path), and return the as-walked spelling the
+    # static analyzers report. A bundle label maps straight to its file;
+    # any other relative name is resolved against each base and rejected
+    # when it names a file in more than one.
     private def resolve_reported_file(file : String) : String?
       file = file.strip
       return if file.empty?
-
-      @expanded_base_paths.each do |base|
-        walked = walked_path?(Noir::PathScope.expand(File.expand_path(file, base)))
-        return walked if walked && path_within_base?(walked)
+      if labelled = @bundle_labels[file]?
+        return labelled
       end
-      nil
+
+      matches = @expanded_base_paths.compact_map do |base|
+        walked = walked_path?(Noir::PathScope.expand(File.expand_path(file, base)))
+        walked if walked && path_within_base?(walked)
+      end
+      matches.uniq!
+      matches.size == 1 ? matches[0] : nil
     end
 
     private def extract_params(params_json : JSON::Any?) : Array(Param)
