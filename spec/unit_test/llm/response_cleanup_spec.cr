@@ -52,6 +52,36 @@ describe LLM do
       LLM.strip_json_fences(input).should eq(%({"endpoints": [{"url": "/a"}]}))
     end
 
+    it "ignores braces in prose after a fenced reply" do
+      input = "```json\n{\"endpoints\": []}\n```\nNote /users/{id} too."
+      LLM.strip_json_fences(input).should eq(%({"endpoints": []}))
+    end
+
+    it "ignores braces in prose after an unfenced reply" do
+      input = %({"endpoints": [{"url": "/users/{id}"}]} Note /users/{id} too.)
+      LLM.strip_json_fences(input).should eq(%({"endpoints": [{"url": "/users/{id}"}]}))
+    end
+
+    it "prefers a json block over a code block before it" do
+      input = "The route:\n```python\n@app.get('/a')\ndef a(): return {}\n```\nResult:\n```json\n{\"endpoints\": []}\n```"
+      LLM.strip_json_fences(input).should eq(%({"endpoints": []}))
+    end
+
+    it "skips a brace in prose before the object" do
+      input = %(Route /users/{id} found: {"endpoints": [{"url": "/users/{id}", "note": "a } in a string"}]})
+      LLM.strip_json_fences(input).should eq(%({"endpoints": [{"url": "/users/{id}", "note": "a } in a string"}]}))
+    end
+
+    it "slices on character boundaries around non-ASCII prose" do
+      input = %(엔드포인트입니다: {"endpoints": [{"url": "/사용자"}]} 감사합니다)
+      LLM.strip_json_fences(input).should eq(%({"endpoints": [{"url": "/사용자"}]}))
+    end
+
+    it "returns a truncated reply unparsed rather than a fragment of it" do
+      input = %({"endpoints":[{"url":"/users","method":"GET"},{"url":"/ord)
+      LLM.strip_json_fences(input).should eq(input)
+    end
+
     it "leaves a reply with no JSON object in it alone" do
       LLM.strip_json_fences("null").should eq("null")
       LLM.strip_json_fences("no endpoints found").should eq("no endpoints found")
