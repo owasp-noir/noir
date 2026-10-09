@@ -248,25 +248,23 @@ module Analyzer::AI
     end
 
     private def process_bundle(bundle : LLM::Bundle, adapter : LLM::Adapter)
-      response = call_llm_with_cache(
+      endpoints = call_llm_with_cache(
         kind: "BUNDLE_ANALYZE",
         system_prompt: LLM::SYSTEM_BUNDLE,
         payload: compose_prompt_payload(LLM::PromptOverrides.bundle_analyze_prompt, bundle.content),
         format: LLM::ANALYZE_FORMAT,
-        adapter: adapter
+        adapter: adapter,
+        list_key: "endpoints"
       )
 
-      logger.debug "Bundle analysis response:"
-      logger.debug_sub response
-
-      if response.empty?
-        record_llm_failure(bundle.paths, LLM_NO_RESPONSE_REASON)
-      else
+      if endpoints
         # An endpoint whose `file` does not resolve falls back to the
         # bundle's file only when there is exactly one; in a multi-file
         # bundle any pick would be a guess, so it gets no code path.
         fallback = bundle.paths.size == 1 ? resolve_reported_file(bundle.paths[0]) : nil
-        parse_and_store_endpoints(response, fallback)
+        store_endpoints(endpoints, fallback)
+      else
+        record_llm_failure(bundle.paths, LLM_NO_RESPONSE_REASON)
       end
     end
 
@@ -286,18 +284,17 @@ module Analyzer::AI
     private def filter_paths_with_llm(all_paths : Array(String), adapter : LLM::Adapter) : Array(String)
       user_payload = all_paths.map { |p| "- #{Noir::PathScope.expand(p)}" }.join("\n")
 
-      response = call_llm_with_cache(
+      files = call_llm_with_cache(
         kind: "FILTER",
         system_prompt: LLM::SYSTEM_FILTER,
         payload: compose_prompt_payload(LLM::PromptOverrides.filter_prompt, user_payload),
         format: LLM::FILTER_FORMAT,
-        adapter: adapter
+        adapter: adapter,
+        list_key: "files"
       )
-      logger.debug_sub response
 
       begin
-        filtered = JSON.parse(response.to_s)
-        selected = filtered["files"].as_a.map(&.as_s)
+        selected = (files || [] of JSON::Any).map(&.as_s)
 
         # Keep only files that were in the listing the model was shown.
         # The listing is the detector-built file set, so it already honours
@@ -360,21 +357,19 @@ module Analyzer::AI
     end
 
     private def process_file_content(content : String, relative_path : String, path : String, adapter : LLM::Adapter)
-      response = call_llm_with_cache(
+      endpoints = call_llm_with_cache(
         kind: "ANALYZE",
         system_prompt: LLM::SYSTEM_ANALYZE,
         payload: compose_prompt_payload(LLM::PromptOverrides.analyze_prompt, content),
         format: LLM::ANALYZE_FORMAT,
-        adapter: adapter
+        adapter: adapter,
+        list_key: "endpoints"
       )
 
-      logger.debug "AI response (#{relative_path}):"
-      logger.debug_sub response
-
-      if response.empty?
-        record_llm_failure([relative_path], LLM_NO_RESPONSE_REASON)
+      if endpoints
+        store_endpoints(endpoints, path)
       else
-        parse_and_store_endpoints(response, path)
+        record_llm_failure([relative_path], LLM_NO_RESPONSE_REASON)
       end
     end
 
@@ -394,15 +389,12 @@ module Analyzer::AI
       paths.each { |path| Noir::SkippedFiles.record("ai", path, reason) }
     end
 
-    private def parse_and_store_endpoints(response : String, default_path : String?)
-      response_json = JSON.parse(response.to_s)
-      response_json["endpoints"].as_a.each do |ep|
+    private def store_endpoints(endpoints : Array(JSON::Any), default_path : String?)
+      endpoints.each do |ep|
         if endpoint = create_endpoint_from_json(ep, default_path)
           @result << endpoint
         end
       end
-    rescue e : Exception
-      logger.debug "Error parsing response: #{e.message}"
     end
 
     private def create_endpoint_from_json(ep : JSON::Any, default_path : String?) : Endpoint?
@@ -1036,7 +1028,11 @@ module Analyzer::AI
       tokens.empty? ? nil : tokens
     end
 
-    private def call_llm_with_cache(kind : String, system_prompt : String, payload : String, format : String, adapter : LLM::Adapter) : String
+    # Returns the reply's `list_key` array, or nil when the call failed or the
+    # reply is not a JSON object carrying that array (truncated, prose,
+    # `null`). Only a usable reply is cached: a stored truncation would be
+    # replayed on every later scan as "no endpoints" without another request.
+    private def call_llm_with_cache(kind : String, system_prompt : String, payload : String, format : String, adapter : LLM::Adapter, list_key : String) : Array(JSON::Any)?
       # Fold the system prompt into the cache key. The remote request
       # is driven by both the system and user prompts, so keying on the
       # payload alone would replay a stale response after a system-prompt
@@ -1045,8 +1041,12 @@ module Analyzer::AI
       # never sent twice.
       disk_key = LLM::Cache.key(@provider, @model, kind, format, "#{system_prompt}\n#{payload}")
 
-      if cached = LLM::Cache.fetch(disk_key)
-        return cached
+      # A cached entry an older version stored without this check may be
+      # unusable too; asking again beats replaying it.
+      if (cached = LLM::Cache.fetch(disk_key)) && (items = reply_list(cached, list_key))
+        logger.debug "AI #{kind} response (cached):"
+        logger.debug_sub cached
+        return items
       end
 
       # BUNDLE_ANALYZE runs one fiber per bundle concurrently and they
@@ -1057,15 +1057,26 @@ module Analyzer::AI
       # Adapters without provider-side context ignore the key.
       ctx_key = kind == "BUNDLE_ANALYZE" ? nil : "#{@provider}:#{@model}:#{kind}"
       response = adapter.request_with_context(system_prompt, payload, format, ctx_key)
+      logger.debug "AI #{kind} response:"
+      logger.debug_sub response
 
-      # Skip caching empty responses. The adapters return "" when the
-      # remote LLM call fails (HTTP error, parse error, timeout). If
-      # we cached that we would replay the failure on every later
-      # scan with the same input until the user manually ran
-      # `noir cache clear` — much harder to recover from than just
-      # retrying the request the next time around.
-      LLM::Cache.store(disk_key, response) unless response.empty?
-      response
+      # The adapters return "" when the remote call fails (HTTP error,
+      # timeout) and have already warned about it.
+      return if response.empty?
+
+      items = reply_list(response, list_key)
+      if items
+        LLM::Cache.store(disk_key, response)
+      else
+        STDERR.puts "WARNING: AI reply is not a JSON object with an \"#{list_key}\" array: #{LLM::HttpTransport.truncate_error_snippet(response)}"
+      end
+      items
+    end
+
+    private def reply_list(response : String, key : String) : Array(JSON::Any)?
+      JSON.parse(LLM.strip_json_fences(response)).as_h?.try(&.[key]?).try(&.as_a?)
+    rescue JSON::ParseException
+      nil
     end
 
     def ignore_extensions

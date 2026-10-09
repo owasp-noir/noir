@@ -41,5 +41,20 @@ describe LLM do
       input = %({"snippet": "trailing ```"})
       LLM.strip_json_fences(input).should eq(input)
     end
+
+    it "pulls a fenced JSON block out of surrounding prose" do
+      input = "Here are the endpoints:\n```json\n{\"endpoints\": []}\n```\nHope this helps."
+      LLM.strip_json_fences(input).should eq(%({"endpoints": []}))
+    end
+
+    it "pulls an unfenced JSON object out of surrounding prose" do
+      input = "Sure! {\"endpoints\": [{\"url\": \"/a\"}]} Let me know."
+      LLM.strip_json_fences(input).should eq(%({"endpoints": [{"url": "/a"}]}))
+    end
+
+    it "leaves a reply with no JSON object in it alone" do
+      LLM.strip_json_fences("null").should eq("null")
+      LLM.strip_json_fences("no endpoints found").should eq("no endpoints found")
+    end
   end
 end
