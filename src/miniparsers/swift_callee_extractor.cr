@@ -37,11 +37,16 @@ module Noir::SwiftCalleeExtractor
     entries.uniq
   end
 
+  # Blanks comments and string literals to spaces (char positions are kept),
+  # carrying block-comment / `"""` state across lines. A literal ends where
+  # Swift ends it: past `\( … )` interpolation (which may hold quotes and
+  # braces) and at the matching `"#` of a raw `#"…"#`. `keep_strings` keeps
+  # single-line literals verbatim, for route scanners that read the path
+  # out of the stripped line.
   def strip_non_code_with_state(line : String,
                                 block_comment_depth : Int32,
-                                in_multiline_string : Bool) : Tuple(String, Int32, Bool)
-    in_string = false
-    escaped = false
+                                in_multiline_string : Bool,
+                                keep_strings : Bool = false) : Tuple(String, Int32, Bool)
     chars = line.chars
     size = chars.size
     index = 0
@@ -73,25 +78,28 @@ module Noir::SwiftCalleeExtractor
           next
         end
         stripped << ' '
-      elsif in_string
-        if escaped
-          escaped = false
-        elsif char == '\\'
-          escaped = true
-        elsif char == '"'
-          in_string = false
-        end
-        stripped << ' '
-      elsif char == '"'
-        if next_char == '"' && third_char == '"'
+      elsif char == '#' && chars[index + (hashes = hash_run(chars, index))]? != '"'
+        # Not a raw string (`#if`, `#selector`): emit the whole run at once.
+        hashes.times { stripped << '#' }
+        index += hashes
+        next
+      elsif char == '"' || char == '#'
+        hashes = char == '"' ? 0 : hash_run(chars, index)
+        quote = index + hashes
+        if chars[quote + 1]? == '"' && chars[quote + 2]? == '"'
           in_multiline_string = true
-          append_spaces(stripped, 3)
-          index += 3
+          append_spaces(stripped, hashes + 3)
+          index = quote + 3
           next
-        else
-          in_string = true
         end
-        stripped << ' '
+        finish = string_literal_end(chars, quote + 1, hashes)
+        if keep_strings
+          (index...finish).each { |i| stripped << chars[i] }
+        else
+          append_spaces(stripped, finish - index)
+        end
+        index = finish
+        next
       elsif char == '/' && chars[index + 1]? == '/'
         append_spaces(stripped, size - index)
         return {stripped.to_s, block_comment_depth, in_multiline_string}
@@ -107,6 +115,68 @@ module Noir::SwiftCalleeExtractor
     end
 
     {stripped.to_s, block_comment_depth, in_multiline_string}
+  end
+
+  # Length of the `#` run at `index`; a raw string opens when `"` follows.
+  private def hash_run(chars : Array(Char), index : Int32) : Int32
+    hashes = 0
+    while chars[index + hashes]? == '#'
+      hashes += 1
+    end
+    hashes
+  end
+
+  # Index just past the literal whose body starts at `index`, honouring
+  # escapes, `\( … )` interpolation (which may itself hold strings, so a
+  # quote or brace in there does not end anything) and raw `#` delimiters
+  # (`\#(` interpolates in `#"…"#`). Frames: a string with N hashes is N
+  # (>= 0); an interpolation at paren depth D is -D. Iterative so hostile
+  # nesting cannot overflow the stack. Unterminated runs to end of line.
+  private def string_literal_end(chars : Array(Char), index : Int32, hashes : Int32) : Int32
+    size = chars.size
+    stack = [hashes]
+    i = index
+    while i < size
+      top = stack.last
+      char = chars[i]
+      if top >= 0
+        if char == '\\' || char == '"'
+          j = i + 1
+          matched = 0
+          while matched < top && chars[j]? == '#'
+            matched += 1
+            j += 1
+          end
+          if matched == top
+            if char == '"'
+              stack.pop
+              return j if stack.empty?
+              i = j
+            elsif chars[j]? == '('
+              stack << -1
+              i = j + 1
+            else
+              i = j + 1 # escaped char
+            end
+            next
+          end
+        end
+        i += 1
+      else
+        if char == '"' || char == '#'
+          raw = char == '#' ? hash_run(chars, i) : 0
+          stack << raw if chars[i + raw]? == '"'
+          i += raw + (chars[i + raw]? == '"' ? 1 : 0)
+          next
+        elsif char == '('
+          stack[-1] = top - 1
+        elsif char == ')'
+          top == -1 ? stack.pop : (stack[-1] = top + 1)
+        end
+        i += 1
+      end
+    end
+    size
   end
 
   private def append_spaces(stripped : String::Builder, count : Int32)

@@ -66,8 +66,10 @@ module Analyzer::Cfml
     ACTION_VERB_RE     = /["']?(\w+)["']?\s*[:=]/
 
     # `var sitePrefix = "/sites/:site"` — referenced as `#siteprefix#`,
-    # case-insensitively.
-    LOCAL_STRING_RE  = /(?:var\s+)?([A-Za-z_]\w*)\s*=\s*["']([^"'#]*)["']\s*;/
+    # case-insensitively. `(?<!\w)` stops PCRE retrying from every offset
+    # inside a long word (a 100 KB run took seconds); no match can start
+    # mid-word anyway.
+    LOCAL_STRING_RE  = /(?<!\w)(?:var\s+)?([A-Za-z_]\w*)\s*=\s*["']([^"'#]*)["']\s*;/
     INTERPOLATION_RE = /#\s*([A-Za-z_]\w*)\s*#/
 
     # `this.allowedMethods = { index : "GET", create : "POST,PUT" }`

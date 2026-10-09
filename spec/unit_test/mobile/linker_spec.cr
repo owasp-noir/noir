@@ -381,3 +381,44 @@ describe "NoirMobileLinker iOS multi-app scoping" do
     end
   end
 end
+
+describe "NoirMobileLinker Android multi-app scoping" do
+  logger = NoirLogger.new(false, false, false, true)
+
+  it "links a deep link to the activity of the app whose manifest declares it" do
+    root = File.tempname("noir-android-multi-app")
+    begin
+      CodeLocator.instance.reset_files
+      endpoints = %w[app1 app2].map do |app|
+        manifest = File.join(root, app, "src", "main", "AndroidManifest.xml")
+        source = File.join(root, app, "src", "main", "java", "com", "example", "app", "MainActivity.java")
+        Dir.mkdir_p(File.dirname(source))
+        File.write(manifest, "")
+        File.write(source, <<-JAVA)
+          package com.example.app;
+
+          public class MainActivity extends Activity {
+              protected void onCreate(Bundle b) {
+                  String t = getIntent().getData().getQueryParameter("#{app}_token");
+              }
+          }
+          JAVA
+        CodeLocator.instance.register_file(source, File.read(source))
+
+        endpoint = Endpoint.new("#{app}://open", "GET", Details.new(PathInfo.new(manifest)))
+        endpoint.protocol = "mobile-scheme"
+        endpoint.metadata = {"via" => ".MainActivity", "package" => "com.example.app"}
+        endpoint
+      end
+
+      linked = NoirMobileLinker.apply(endpoints, logger)
+      %w[app1 app2].each_with_index do |app, i|
+        linked[i].params.map(&.name).should eq(["#{app}_token"])
+        linked[i].details.code_paths.map(&.path).should contain(File.join(root, app, "src", "main", "java", "com", "example", "app", "MainActivity.java"))
+      end
+    ensure
+      FileUtils.rm_rf(root) if root
+      CodeLocator.instance.reset_files
+    end
+  end
+end

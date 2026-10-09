@@ -24,8 +24,10 @@ module Analyzer::Cpp
       "Options" => "OPTIONS",
     }
 
-    # `{Get, Post}` method list: brace block whose first token is a verb.
-    METHOD_BLOCK = /\{\s*((?:drogon::)?(?:Get|Post|Put|Delete|Patch|Head|Options)\b[^{}]*)\}/
+    # `{Get, Post}` method list: a flat brace block holding a verb anywhere,
+    # so filters may precede verbs (`{"LoginFilter", Delete}`) and the block
+    # may follow a type (`std::vector<internal::HttpConstraint>{Patch}`).
+    METHOD_BLOCK = /\{([^{}]*\b(?:Get|Post|Put|Delete|Patch|Head|Options)\b[^{}]*)\}/
 
     REGEX_REGISTER_HANDLER = /app\(\)\s*\.?\s*registerHandler(?:ViaRegex)?\s*\(\s*"([^"]+)"/
 
@@ -97,27 +99,44 @@ module Analyzer::Cpp
     private def extract_register_handler_endpoints(path : String, content : String, lines : Array(String), file_params : Array(Param), include_callee : Bool) : Array(Endpoint)
       endpoints = [] of Endpoint
 
-      # For each registerHandler("/path") occurrence, look ahead in the content
-      # for the nearest method list block `{Get, Post, ...}`. This tolerates
-      # lambda bodies between the path and the method list without needing a
-      # full-blown C++ parser.
-      content.scan(REGEX_REGISTER_HANDLER) do |match|
+      # For each registerHandler("/path") call, the method list `{Get, Post}`
+      # is a top-level argument after the handler. Everything is bounded by
+      # the call's own parentheses so a call without a method list (Drogon
+      # then accepts GET) never borrows the next call's list or lambda.
+      # Each call's scans stop at the next call, so an unclosed `(` costs one
+      # call's worth of text rather than the rest of the file.
+      matches = [] of Regex::MatchData
+      content.scan(REGEX_REGISTER_HANDLER) { |match| matches << match }
+      line_number = 1
+      line_pos = 0
+
+      matches.each_with_index do |match, match_index|
         raw_route = match[1]
         via_regex = (match[0].includes?("registerHandlerViaRegex"))
         clean_path, path_params, query_params = normalize_drogon_path(raw_route, via_regex)
-        rest = match.post_match
-        window = rest.size > 4000 ? rest[0, 4000] : rest
 
-        methods = if block_match = window.match(METHOD_BLOCK)
-                    parse_methods(block_match[1])
-                  else
-                    ["GET"]
-                  end
+        match_start = match.byte_begin(0)
+        limit = matches[match_index + 1]?.try(&.byte_begin(0)) || content.bytesize
+        # The match starts at `app()`; skip to registerHandler's own `(`.
+        call_name = content.byte_index("registerHandler", match_start) || match_start
+        open_paren = Noir::CppCalleeExtractor.find_next_code_char(content, '(', call_name, limit)
+        close_paren = open_paren && Noir::CppCalleeExtractor.find_matching_delimiter(content, open_paren, '(', ')', limit)
+        call_end = close_paren || limit
 
-        match_start = (content.char_index_to_byte_index(match.begin(0) || 0)) || 0
-        line_number = Noir::CppCalleeExtractor.line_number_for(content, match_start)
-        callees = include_callee ? callees_for_block_after(content, path, match_start) : [] of Noir::CppCalleeExtractor::Entry
-        route_params = params_for_register_handler(content, match_start)
+        args = if open_paren && close_paren
+                 split_top_level_args(content.byte_slice(open_paren + 1, close_paren - open_paren - 1))
+               else
+                 [] of String
+               end
+        method_list = args.skip(2).reverse_each.compact_map do |arg|
+          arg.match(METHOD_BLOCK)
+        end.first?
+        methods = method_list ? parse_methods(method_list[1]) : ["GET"]
+
+        line_number += content.to_slice[line_pos, match_start - line_pos].count('\n'.ord.to_u8)
+        line_pos = match_start
+        callees = include_callee ? callees_for_block_after(content, path, match_start, call_end) : [] of Noir::CppCalleeExtractor::Entry
+        route_params = params_for_register_handler(content, match_start, call_end, args)
 
         methods.each do |m|
           details = Details.new(PathInfo.new(path, line_number))
@@ -328,31 +347,24 @@ module Analyzer::Cpp
       found.flat_map { |_, name| name.split("::") }
     end
 
-    private def callees_for_block_after(content : String, path : String, search_start : Int32) : Array(Noir::CppCalleeExtractor::Entry)
-      block = Noir::CppCalleeExtractor.extract_block_after(content, search_start)
+    private def callees_for_block_after(content : String, path : String, search_start : Int32, limit : Int32) : Array(Noir::CppCalleeExtractor::Entry)
+      block = Noir::CppCalleeExtractor.extract_block_after(content, search_start, limit)
       return [] of Noir::CppCalleeExtractor::Entry unless block
 
       body, start_line = block
       Noir::CppCalleeExtractor.callees_for_body(body, path, start_line)
     end
 
-    private def params_for_register_handler(content : String, search_start : Int32) : Array(Param)
-      if params = params_for_inline_register_handler(content, search_start)
+    private def params_for_register_handler(content : String, search_start : Int32, limit : Int32, args : Array(String)) : Array(Param)
+      if block = Noir::CppCalleeExtractor.extract_block_after(content, search_start, limit)
+        params = extract_params(block[0].lines)
         return params unless params.empty?
       end
 
-      handler_target = handler_target_for_register_handler(content, search_start)
+      handler_target = handler_target_for_register_handler(args)
       return [] of Param unless handler_target
 
       params_for_handler(content, handler_target)
-    end
-
-    private def params_for_inline_register_handler(content : String, search_start : Int32) : Array(Param)?
-      block = Noir::CppCalleeExtractor.extract_block_after(content, search_start)
-      return unless block
-
-      body, _ = block
-      extract_params(body.lines)
     end
 
     private def params_for_handler(content : String, handler_target : HandlerTarget) : Array(Param)
@@ -363,19 +375,7 @@ module Analyzer::Cpp
       extract_params(body.lines)
     end
 
-    private def handler_target_for_register_handler(content : String, search_start : Int32) : HandlerTarget?
-      # search_start is a BYTE offset; byte_index keeps it in byte space so the
-      # result feeds the byte-based find_next_code_char below consistently.
-      handler_index = content.byte_index("registerHandler", search_start)
-      return unless handler_index
-
-      open_paren = Noir::CppCalleeExtractor.find_next_code_char(content, '(', handler_index)
-      return unless open_paren
-
-      close_paren = Noir::CppCalleeExtractor.find_matching_delimiter(content, open_paren, '(', ')')
-      return unless close_paren
-
-      args = split_top_level_args(content.byte_slice(open_paren + 1, close_paren - open_paren - 1))
+    private def handler_target_for_register_handler(args : Array(String)) : HandlerTarget?
       return if args.size < 2
 
       raw_handler = args[1].strip

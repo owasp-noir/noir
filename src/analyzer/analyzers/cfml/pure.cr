@@ -115,7 +115,7 @@ module Analyzer::Cfml
       raw = read_file_content(path)
       return unless raw.matches?(REMOTE_HINT_RE)
 
-      content = strip_cfml_comments(raw)
+      content = strip_all_comments(raw)
       base_url = web_root_path(path, WEBROOT_MARKERS)
       # A method may legally carry both spellings (`remote function x()
       # access="remote"`); emit it once.
@@ -180,7 +180,7 @@ module Analyzer::Cfml
 
     # `.cfm` — the file itself is the route; request-scope reads are the params.
     private def analyze_page(path : String)
-      content = mask_client_scripts(strip_cfml_comments(read_file_content(path)))
+      content = mask_client_scripts(strip_cfscript_block_comments(strip_cfml_comments(read_file_content(path))))
       url = web_root_path(path, WEBROOT_MARKERS)
       details = Details.new(PathInfo.new(path, 1))
 
@@ -213,6 +213,26 @@ module Analyzer::Cfml
       return if body.empty?
 
       @result << Endpoint.new(url, "POST", unique_params(body + cookies + headers), details)
+    end
+
+    # A page is markup, where `//` (bare URLs) and apostrophes (prose) are
+    # ordinary text, so script comments are only stripped inside
+    # `<cfscript>` blocks. An unclosed block runs to the end of the file.
+    private def strip_cfscript_block_comments(content : String) : String
+      lower = content.downcase(Unicode::CaseOptions::ASCII)
+      return content unless lower.includes?("<cfscript")
+
+      String.build(content.bytesize) do |io|
+        pos = 0
+        while (open = lower.byte_index("<cfscript", pos)) && (body_start = lower.byte_index('>', open))
+          body_start += 1
+          body_end = lower.byte_index("</cfscript", body_start) || content.bytesize
+          io << content.byte_slice(pos, body_start - pos)
+          io << strip_script_comments(content.byte_slice(body_start, body_end - body_start))
+          pos = body_end
+        end
+        io << content.byte_slice(pos, content.bytesize - pos)
+      end
     end
 
     private def mask_client_scripts(content : String) : String

@@ -39,4 +39,63 @@ describe "swift kitura analyzer" do
     File.delete(temp_file) if temp_file && File.exists?(temp_file)
     Dir.delete(temp_dir) if temp_dir && Dir.exists?(temp_dir)
   end
+
+  it "does not leak params from later functions into a named-handler route" do
+    instance = Analyzer::Swift::Kitura.new(create_test_options)
+
+    temp_dir = File.tempname("swift_kitura_leak_test")
+    Dir.mkdir_p(temp_dir)
+    temp_file = File.join(temp_dir, "routes.swift")
+
+    File.write(temp_file, <<-SWIFT)
+      import Kitura
+
+      let router = Router()
+      router.get("/ping", handler: ping)
+      router.get("/live") { request, response, next in
+          let q = request.queryParameters["live"]
+          next()
+      }
+      func ping(request: RouterRequest, response: RouterResponse, next: @escaping () -> Void) { next() }
+      func unrelated(request: RouterRequest, response: RouterResponse, next: @escaping () -> Void) {
+          let q = request.queryParameters["leak"]
+          next()
+      }
+      router.post("/self", handler: self.unrelated)
+      router.post("/qualified", handler: Handlers.unrelated)
+      SWIFT
+
+    params = instance.analyze_file(temp_file).to_h { |e| {e.url, e.params.map(&.name)} }
+    params["/ping"].should eq([] of String)
+    params["/live"].should eq(["live"])
+    params["/self"].should eq(["leak"])
+    params["/qualified"].should eq(["leak"])
+  ensure
+    File.delete(temp_file) if temp_file && File.exists?(temp_file)
+    Dir.delete(temp_dir) if temp_dir && Dir.exists?(temp_dir)
+  end
+
+  it "ignores commented-out routes" do
+    instance = Analyzer::Swift::Kitura.new(create_test_options)
+
+    temp_dir = File.tempname("swift_kitura_comment_test")
+    Dir.mkdir_p(temp_dir)
+    temp_file = File.join(temp_dir, "routes.swift")
+
+    File.write(temp_file, <<-SWIFT)
+      import Kitura
+
+      let router = Router()
+      router.get("/live") { request, response, next in next() }
+      // router.get("/old-removed") { request, response, next in next() }
+      /*
+      router.post("/block") { request, response, next in next() }
+      */
+      SWIFT
+
+    instance.analyze_file(temp_file).map { |e| "#{e.method} #{e.url}" }.should eq(["GET /live"])
+  ensure
+    File.delete(temp_file) if temp_file && File.exists?(temp_file)
+    Dir.delete(temp_dir) if temp_dir && Dir.exists?(temp_dir)
+  end
 end

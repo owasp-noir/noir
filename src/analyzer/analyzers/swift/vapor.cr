@@ -65,15 +65,18 @@ module Analyzer::Swift
       lines = read_file_content(path).lines
       include_callee = callees_needed?
       handler_bodies = named_handler_bodies(lines)
+      # Comments (including multi-line `/* */`) and `"""` bodies blanked;
+      # string literals kept so route paths are still readable.
+      code_lines = strip_code_lines(lines, keep_strings: true)
+      stripped_lines = nil.as(Array(String)?)
       prefix_by_receiver = {} of String => String
       group_prefix_stack = [] of Tuple(String, Int32)
       brace_depth = 0
 
       # Seed the router-receiver set so route detection is receiver-aware.
-      register_router_params(lines, prefix_by_receiver)
+      register_router_params(code_lines, prefix_by_receiver)
 
-      lines.each_with_index do |line, index|
-        stripped_line = code_line(line)
+      code_lines.each_with_index do |stripped_line, index|
         register_group_assignment(stripped_line, prefix_by_receiver)
         register_group_closure(stripped_line, prefix_by_receiver, group_prefix_stack, brace_depth)
 
@@ -92,8 +95,12 @@ module Analyzer::Swift
           endpoint = Endpoint.new(route_path, method, details)
 
           extract_path_params(route_path, endpoint)
-          extract_function_params(lines, index + 1, endpoint)
-          extract_named_handler_params(lines[index], handler_bodies, endpoint)
+          # A `use:` handler's params come from its own body; scanning the
+          # lines after the route would read unrelated functions.
+          unless extract_named_handler_params(lines[index], handler_bodies, endpoint)
+            stripped_lines ||= strip_code_lines(lines)
+            extract_function_params(lines, stripped_lines, index, endpoint)
+          end
           attach_route_callees(lines, index, path, endpoint, handler_bodies) if include_callee
 
           endpoints << endpoint
@@ -264,9 +271,8 @@ module Analyzer::Swift
     # and `self` inside a `RoutesBuilder`/`Router` extension. (`.grouped(...)`
     # variables — qualified or implicit-`self` — are tracked separately by
     # `register_group_assignment`.)
-    private def register_router_params(lines : Array(String), prefix_by_receiver : Hash(String, String))
-      lines.each do |line|
-        stripped = code_line(line)
+    private def register_router_params(code_lines : Array(String), prefix_by_receiver : Hash(String, String))
+      code_lines.each do |stripped|
         next unless stripped.matches?(ROUTER_TYPE_RE)
 
         stripped.scan(ROUTER_PARAM_PATTERN) do |match|
@@ -348,48 +354,14 @@ module Analyzer::Swift
       depth
     end
 
-    private def code_line(line : String) : String
-      # String-aware: only truncate at a `//` OUTSIDE a string literal, so a path
-      # like "api//v2" or a "https://..." redirect arg isn't cut (which made
-      # call_arguments fail and silently drop the route / group prefix).
-      #
-      # This runs on every scanned line, so per-index `line[index]` matters:
-      # on non-ASCII lines it re-walks from byte 0 each call, making the scan
-      # O(n^2). `chars` gives O(1) indexed access, keeping this O(n).
-      chars = line.chars
-      in_string = false
-      escaped = false
-      quote = '"'
-      index = 0
-      while index < chars.size
-        char = chars[index]
-        if in_string
-          if escaped
-            escaped = false
-          elsif char == '\\'
-            escaped = true
-          elsif char == quote
-            in_string = false
-          end
-        elsif char == '"' || char == '\''
-          in_string = true
-          quote = char
-        elsif char == '/' && chars[index + 1]? == '/'
-          return line[0...index]
-        end
-        index += 1
-      end
-      line
-    end
-
     private def extract_named_handler_params(route_line : String,
                                              handler_bodies : Hash(String, Tuple(String, Int32)),
-                                             endpoint : Endpoint)
+                                             endpoint : Endpoint) : Bool
       handler_name = route_handler_name(route_line)
-      return unless handler_name
+      return false unless handler_name
 
       body = handler_bodies[handler_name]?
-      return unless body
+      return true unless body
 
       existing_path_params = Set(String).new
       endpoint.params.each do |p|
@@ -399,6 +371,7 @@ module Analyzer::Swift
       body[0].each_line do |line|
         extract_params_from_line(line, endpoint, existing_path_params)
       end
+      true
     end
 
     private def extract_params_from_line(line : String, endpoint : Endpoint, existing_path_params : Set(String))
@@ -459,8 +432,9 @@ module Analyzer::Swift
 
     private def route_handler_name(route_line : String) : String?
       stripped, _, _ = Noir::SwiftCalleeExtractor.strip_non_code_with_state(route_line, 0, false)
-      if match = stripped.match(/\buse:\s*([A-Za-z_]\w*)/)
-        return match[1]
+      # `self.create` / `TodoController.index` name the method `create` / `index`.
+      if match = stripped.match(/\buse:\s*(?:self\.)?([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)/)
+        return match[1].split('.').last
       end
 
       nil

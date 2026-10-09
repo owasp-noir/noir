@@ -6,6 +6,11 @@ component extends="taffy.core.resource" taffy:uri="/echo/{parentId}/child/{child
 		return rep({ method: "GET" });
 	}
 
+	// function delete(required string parentId) { return rep({}); }
+	/*
+	function put(string retired) output="false" { return rep({}); }
+	*/
+
 	// Inline per-argument validators follow the default with no comma.
 	function post(string name = "" taffy_minlength="1" taffy_maxlength="255", string value = "") output="false" {
 		return rep({ method: "POST" }).withStatus(201);

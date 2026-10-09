@@ -6,6 +6,20 @@ expected_endpoints = [
     Param.new("name", "", "query"),
     Param.new("age", "", "query"),
   ]),
+  # No method list → GET, not the next call's {Post} / {Get, Delete}.
+  Endpoint.new("/no-methods", "GET", [
+    Param.new("dflt", "", "query"),
+  ]),
+  Endpoint.new("/named-default", "GET", [
+    Param.new("q", "", "query"),
+  ]),
+  # Verb after a filter name; verb list behind a constraint type.
+  Endpoint.new("/filtered", "DELETE", [
+    Param.new("q", "", "query"),
+  ]),
+  Endpoint.new("/typed", "PATCH", [
+    Param.new("q", "", "query"),
+  ]),
   Endpoint.new("/submit", "POST", [
     Param.new("body", "", "json"),
   ]),
@@ -50,5 +64,11 @@ describe "Drogon analyzer edge cases", tags: "functional" do
     ping.should_not be_nil
     ping.as(Endpoint).params.any? { |p| p.name == "body" }.should be_false
     ping.as(Endpoint).params.any? { |p| p.name == "Authorization" }.should be_false
+  end
+
+  it "does not borrow the next registerHandler's method list or lambda" do
+    tester.app.endpoints.select(&.url.in?("/no-methods", "/named-default")).map(&.method).uniq!.should eq(["GET"])
+    named = tester.app.endpoints.find! { |e| e.url == "/named-default" }
+    named.params.map(&.name).should eq(["q"])
   end
 end

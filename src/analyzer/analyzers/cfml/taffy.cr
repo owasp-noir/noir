@@ -51,7 +51,7 @@ module Analyzer::Cfml
       raw = read_file_content(path)
       return unless raw.includes?("taffy") || raw.matches?(RESOURCE_BASE_RE)
 
-      content = strip_cfml_comments(raw)
+      content = strip_all_comments(raw)
       attributes = component_attributes(content)
 
       uris = resource_uris(attributes)

@@ -101,6 +101,7 @@ module Analyzer::Dart
       group_params = groups.map(&.[:param]).to_set
       return [] of Endpoint if top_vars.empty? && groups.empty?
 
+      lines = Helper::LineIndex.new(content)
       endpoints = [] of Endpoint
       seen = Set({String, String}).new
 
@@ -119,7 +120,7 @@ module Analyzer::Dart
         close_paren = Helper.find_matching_paren(cleaned, open_paren)
         next unless close_paren
 
-        handle_call(method, cleaned, open_paren, close_paren, prefix, content, path, include_callee, endpoints, seen)
+        handle_call(method, cleaned, open_paren, close_paren, prefix, content, lines, path, include_callee, endpoints, seen)
       end
 
       endpoints
@@ -247,6 +248,7 @@ module Analyzer::Dart
                             close_paren : Int32,
                             prefix : String,
                             content : String,
+                            lines : Helper::LineIndex,
                             path : String,
                             include_callee : Bool,
                             endpoints : Array(Endpoint),
@@ -259,7 +261,7 @@ module Analyzer::Dart
       return unless literal
 
       url = mount_join(prefix, normalize_path(literal))
-      line = line_number_for_index(content, open_paren)
+      line = lines.line_for(open_paren)
 
       callees = [] of Noir::DartCalleeExtractor::Entry
       if include_callee

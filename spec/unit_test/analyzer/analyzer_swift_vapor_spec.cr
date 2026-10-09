@@ -114,4 +114,94 @@ describe "swift vapor analyzer" do
     File.delete(temp_file) if temp_file && File.exists?(temp_file)
     Dir.delete(temp_dir) if temp_dir && Dir.exists?(temp_dir)
   end
+
+  it "does not leak params from code after the route into it" do
+    instance = Analyzer::Swift::Vapor.new(create_test_options)
+
+    temp_dir = File.tempname("swift_vapor_leak_test")
+    Dir.mkdir_p(temp_dir)
+    temp_file = File.join(temp_dir, "routes.swift")
+
+    File.write(temp_file, <<-SWIFT)
+      import Vapor
+
+      func routes(_ app: Application) throws {
+          app.get("ping", use: ping)
+          app.get("one") { req in req.headers["X-Inline"] }
+          app.get("two") { req -> String in
+              let id = req.parameters.get("id")
+              let payload = try req.content.decode(Payload.self)
+              return "ok"
+          }
+      }
+
+      func ping(req: Request) throws -> String { return "pong" }
+
+      func unrelated(req: Request) throws -> String {
+          let t = req.headers["X-Secret-Token"]
+          let a = req.query["admin"]
+          return "x"
+      }
+
+      struct TodoController: RouteCollection {
+          func boot(routes: RoutesBuilder) throws {
+              let todos = routes.grouped("todos")
+              todos.post(use: self.create)
+              todos.group(":todoID") { todo in
+                  todo.delete(use: delete)
+              }
+          }
+
+          func create(req: Request) async throws -> Todo {
+              let todo = try req.content.decode(Todo.self)
+              return todo
+          }
+
+          func delete(req: Request) async throws -> HTTPStatus {
+              return .noContent
+          }
+      }
+      SWIFT
+
+    params = instance.analyze_file(temp_file).to_h { |e| {"#{e.method} #{e.url}", e.params.map { |p| "#{p.param_type}:#{p.name}" }.sort!} }
+    params["GET /ping"].should eq([] of String)
+    params["GET /one"].should eq(["header:X-Inline"])
+    params["GET /two"].should eq(["json:body", "path:id"])
+    params["POST /todos"].should eq(["json:body"])
+    params["DELETE /todos/:todoID"].should eq(["path:todoID"])
+  ensure
+    File.delete(temp_file) if temp_file && File.exists?(temp_file)
+    Dir.delete(temp_dir) if temp_dir && Dir.exists?(temp_dir)
+  end
+
+  it "ignores routes inside block comments and multi-line strings" do
+    instance = Analyzer::Swift::Vapor.new(create_test_options)
+
+    temp_dir = File.tempname("swift_vapor_comment_test")
+    Dir.mkdir_p(temp_dir)
+    temp_file = File.join(temp_dir, "routes.swift")
+
+    File.write(temp_file, <<-SWIFT)
+      import Vapor
+
+      func routes(_ app: Application) throws {
+          app.get("live") { req in "ok" }
+          /*
+          app.post("block-commented") { req in "x" }
+          */
+          /* app.put("inline-comment") { req in "x" } */ app.patch("after-comment") { req in "y" }
+          // app.delete("line-commented") { req in "x" }
+          let doc = """
+          app.get("in-string") { req in "x" }
+          """
+          app.get("api//v2") { req in "z" }
+      }
+      SWIFT
+
+    instance.analyze_file(temp_file).map { |e| "#{e.method} #{e.url}" }.sort!.should eq(
+      ["GET /api/v2", "GET /live", "PATCH /after-comment"])
+  ensure
+    File.delete(temp_file) if temp_file && File.exists?(temp_file)
+    Dir.delete(temp_dir) if temp_dir && Dir.exists?(temp_dir)
+  end
 end
