@@ -105,9 +105,6 @@ module Analyzer::Specification
           i += 2
         elsif token.in?("-f", "-M")
           i += 2
-        elsif token == "--"
-          values.concat(tokens[(i + 1)..])
-          break
         elsif token.starts_with?('-')
           i += 1
         else
