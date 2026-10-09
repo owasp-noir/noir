@@ -131,7 +131,20 @@ module Analyzer::Python
         # router included more than once (two prefixes, or two parents)
         # collects one mounted prefix per inclusion path.
         prefix_visited = Set(::String).new
+        # An app another app mounts is served only under the mount path,
+        # so it is reached through that mount instead of seeded as a root.
+        mounted_apps = Set(Tuple(::String, ::String)).new
         fastapi_app_instances.each do |app_file, app_instance|
+          source = read_file_content(app_file)
+          import_modules = find_fastapi_imported_modules(fastapi_base_path_for(app_file, fastapi_base_paths), app_file, source)
+          extract_app_mount_calls(source, app_instance).each do |args|
+            next unless mount = parse_app_mount(args, source, import_modules)
+            target = resolve_router_reference(app_file, source, import_modules, include_router_map, mount[1])
+            mounted_apps << target if target && target != {app_file, app_instance}
+          end
+        end
+        fastapi_app_instances.each do |app_file, app_instance|
+          next if mounted_apps.includes?({app_file, app_instance})
           app_base_path = fastapi_base_path_for(app_file, fastapi_base_paths)
           configure_router_prefix(app_file, include_router_map, app_base_path, "", app_instance, prefix_visited)
         end
@@ -473,43 +486,20 @@ module Analyzer::Python
             end
           end
 
-          # Register router's prefix recursively
-          prefix = mounted.join(prefix)
-          if router_instance_name.count(".") == 0
-            if include_router_map[file].has_key?(router_instance_name)
-              # A router included from the SAME file (e.g. dispatch's
-              # `api_router.include_router(authenticated_organization_api_router)`).
-              # Recurse so the included router's OWN `include_router`
-              # calls are processed under the inherited prefix —
-              # previously we only set its prefix and stopped, which
-              # dropped every grand-child route's prefix
-              # (`/{organization}/cases/...` collapsed to `/...`).
-              configure_router_prefix(file, include_router_map, app_base_path, prefix, router_instance_name, visited)
-              next
-            end
+          # Register router's prefix recursively, so the included router's
+          # OWN `include_router` calls are processed under the inherited
+          # prefix too.
+          if target = resolve_router_reference(file, source, import_modules, include_router_map, router_instance_name)
+            configure_router_prefix(target[0], include_router_map, app_base_path, mounted.join(prefix), target[1], visited)
+          end
+        end
 
-            next unless import_modules.has_key?(router_instance_name)
-            import_module_path = import_modules[router_instance_name].first
-
-            next unless include_router_map.has_key?(import_module_path)
-            # The local name is frequently an alias
-            # (`from .api import router as api_router`). The target
-            # file registers the router under its ORIGINAL symbol
-            # (`router`), so translate the alias back before recursing.
-            # Passing the alias straight through made the
-            # `target_instance_name` filter never match, silently
-            # dropping the ENTIRE sub-router prefix tree — the dominant
-            # FastAPI accuracy bug on real apps (fastapi-realworld,
-            # Netflix/dispatch) that lean on `import router as X`.
-            target_name = resolve_original_import_name(source, router_instance_name, include_router_map[import_module_path])
-            configure_router_prefix(import_module_path, include_router_map, app_base_path, prefix, target_name, visited)
-          elsif router_instance_name.count(".") == 1
-            module_name, imported_router_instance_name = router_instance_name.split(".")
-            next unless import_modules.has_key?(module_name)
-            import_module_path = import_modules[module_name].first
-
-            next unless include_router_map.has_key?(import_module_path)
-            configure_router_prefix(import_module_path, include_router_map, app_base_path, prefix, imported_router_instance_name, visited)
+        # `app.mount("/sub", subapi)` serves the sub-application's routes
+        # under the mount path, like an include_router prefix.
+        extract_app_mount_calls(source, instance_name).each do |args|
+          next unless mount = parse_app_mount(args, source, import_modules)
+          if target = resolve_router_reference(file, source, import_modules, include_router_map, mount[1])
+            configure_router_prefix(target[0], include_router_map, app_base_path, mounted.join(mount[0]), target[1], visited)
           end
         end
         visited.delete(visit_key)
@@ -540,27 +530,81 @@ module Analyzer::Python
     end
 
     private def extract_include_router_calls(source : ::String, instance_name : ::String) : Array(::String)
-      calls = [] of ::String
       res = instance_regexes(instance_name)
+      extract_instance_calls(source, "include_router", res.include_router_guard, res.include_router_call)
+    end
+
+    # Argument text of every `<instance>.mount(...)` that mounts an app
+    # rather than `StaticFiles` (those are emitted as static routes).
+    private def extract_app_mount_calls(source : ::String, instance_name : ::String) : Array(::String)
+      res = instance_regexes(instance_name)
+      extract_instance_calls(source, ".mount", res.mount_guard, res.static_mount).reject(&.includes?("StaticFiles"))
+    end
+
+    private def extract_instance_calls(source : ::String, needle : ::String, guard : Regex, call : Regex) : Array(::String)
+      calls = [] of ::String
+      # One scan of the source before splitting it: most instances make
+      # no such call, and this runs once per instance per file.
+      return calls unless source.matches?(guard)
       lines = source.split("\n")
       lines.each_with_index do |line, index|
         stripped = line.lstrip
         next if stripped.starts_with?("#")
-        next unless line.includes?("include_router") && line.matches?(res.include_router_guard)
+        next unless line.includes?(needle) && line.matches?(guard)
 
-        logical_line = coalesce_include_router_call(lines, index, line, instance_name)
-        match = logical_line.match(res.include_router_call)
+        logical_line = join_until_python_call_closes(lines, index, line)
+        match = logical_line.match(call)
         calls << match[1] if match
       end
       calls
     end
 
-    private def coalesce_include_router_call(codelines : Array(::String),
-                                             index : Int32,
-                                             line : ::String,
-                                             instance_name : ::String) : ::String
-      return line unless line.matches?(instance_regexes(instance_name).include_router_guard)
-      join_until_python_call_closes(codelines, index, line)
+    # `{prefix, target}` of an app mount: `mount("/sub", sub)` or
+    # `mount(path="/sub", app=sub)`.
+    private def parse_app_mount(args : ::String, source : ::String,
+                                import_modules : Hash(::String, Tuple(::String, Int32))) : Tuple(::String, ::String)?
+      positional = split_python_arguments(args).map(&.strip).reject(&.empty?).take_while { |arg| !top_level_keyword_argument?(arg) }
+      target = extract_python_keyword_expression(args, "app").try(&.strip) || positional[1]?
+      path_expr = positional[0]? || extract_python_keyword_expression(args, "path")
+      return unless target && path_expr
+      return unless path = resolve_string_expression(path_expr, source, import_modules)
+
+      {path, target}
+    end
+
+    # `{file, instance}` a router or app reference used in `file` is
+    # registered under: a same-file name, an imported name (aliases
+    # translated back) or `module.attr`. Nil when it names nothing known.
+    private def resolve_router_reference(file : ::String,
+                                         source : ::String,
+                                         import_modules : Hash(::String, Tuple(::String, Int32)),
+                                         include_router_map : Hash(::String, Hash(::String, Router)),
+                                         name : ::String) : Tuple(::String, ::String)?
+      case name.count(".")
+      when 0
+        # A router included from the SAME file (e.g. dispatch's
+        # `api_router.include_router(authenticated_organization_api_router)`).
+        return {file, name} if include_router_map[file].has_key?(name)
+        return unless imported = import_modules[name]?
+        import_module_path = imported.first
+        return unless target_map = include_router_map[import_module_path]?
+        # The local name is frequently an alias
+        # (`from .api import router as api_router`). The target
+        # file registers the router under its ORIGINAL symbol
+        # (`router`), so translate the alias back before recursing.
+        # Passing the alias straight through made the
+        # `target_instance_name` filter never match, silently
+        # dropping the ENTIRE sub-router prefix tree — the dominant
+        # FastAPI accuracy bug on real apps (fastapi-realworld,
+        # Netflix/dispatch) that lean on `import router as X`.
+        {import_module_path, resolve_original_import_name(source, name, target_map)}
+      when 1
+        module_name, attr = name.split(".")
+        return unless imported = import_modules[module_name]?
+        import_module_path = imported.first
+        return unless include_router_map.has_key?(import_module_path)
+        {import_module_path, attr}
+      end
     end
 
     # Translate a locally-used router name back to the symbol it is
