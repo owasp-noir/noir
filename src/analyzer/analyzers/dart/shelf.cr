@@ -128,6 +128,7 @@ module Analyzer::Dart
       result = {} of String => RouterInfo
       cleaned = strip_dart_comments(content)
       classes = class_ranges(cleaned)
+      lines = Helper::LineIndex.new(content)
 
       decls = [] of RouterDecl
       cleaned.scan(/(?:^|[;{}=(,\s])(?:final|var|const|late)\s+(?:[A-Za-z_][\w<>,\s\?]*\s+)?([A-Za-z_]\w*)\s*=\s*Router\s*\(\s*\)/) do |match|
@@ -152,12 +153,12 @@ module Analyzer::Dart
         mounts = [] of Mount
 
         # Cascades attached directly to the `Router()` expression.
-        scan_cascades(cleaned, end_idx, cascade_end, content, path, include_callee, routes, mounts)
+        scan_cascades(cleaned, end_idx, cascade_end, content, lines, path, include_callee, routes, mounts)
 
         # Direct method calls referencing the router variable elsewhere
         # in the file. We scan the cleaned source so refs inside
         # strings or comments are ignored.
-        scan_direct_calls(cleaned, decl, decls, classes, content, path, include_callee, routes, mounts)
+        scan_direct_calls(cleaned, decl, decls, classes, content, lines, path, include_callee, routes, mounts)
 
         # A router built inside a class (e.g. a `Router get router =>`
         # getter) is reached from the outside as `ClassName().router`,
@@ -182,7 +183,7 @@ module Analyzer::Dart
       # `shelf_router` also supports a code-gen style where handlers are
       # annotated with `@Route.<verb>('/path')` inside a controller class
       # and wired up by a generated `_$ClassRouter`. Surface those too.
-      scan_route_annotations(cleaned, content, path, include_callee, classes, result)
+      scan_route_annotations(cleaned, content, lines, path, include_callee, classes, result)
 
       result
     end
@@ -197,6 +198,7 @@ module Analyzer::Dart
     # controller class so a parent `mount('/p', Ctrl().router)` lines up.
     private def scan_route_annotations(cleaned : String,
                                        content : String,
+                                       lines : Helper::LineIndex,
                                        path : String,
                                        include_callee : Bool,
                                        classes : Array(ClassRange),
@@ -223,7 +225,7 @@ module Analyzer::Dart
         prefix = owner ? prefixes[owner]? : nil
         route_path = normalize_path(prefix ? mount_join(prefix, normalize_path(literal)) : literal)
 
-        line = line_number_for_index(content, match_begin)
+        line = lines.line_for(match_begin)
         callees = include_callee ? annotation_callees(content, close_paren, path) : [] of Noir::DartCalleeExtractor::Entry
 
         key = owner || "@route:#{path}"
@@ -358,6 +360,7 @@ module Analyzer::Dart
                               start_idx : Int32,
                               end_idx : Int32,
                               file_content : String,
+                              lines : Helper::LineIndex,
                               path : String,
                               include_callee : Bool,
                               routes : Array(Route),
@@ -384,7 +387,7 @@ module Analyzer::Dart
           if j < chars.size && chars[j] == '(' && relevant_method?(name)
             close_paren = Helper.find_matching_paren(cleaned, j)
             if close_paren && close_paren < end_idx
-              handle_call(name, cleaned, j, close_paren, file_content, path, include_callee, routes, mounts)
+              handle_call(name, cleaned, j, close_paren, file_content, lines, path, include_callee, routes, mounts)
               i = close_paren + 1
               next
             end
@@ -404,6 +407,7 @@ module Analyzer::Dart
                                   decls : Array(RouterDecl),
                                   classes : Array(ClassRange),
                                   file_content : String,
+                                  lines : Helper::LineIndex,
                                   path : String,
                                   include_callee : Bool,
                                   routes : Array(Route),
@@ -428,7 +432,7 @@ module Analyzer::Dart
         open_paren = match_end - 1
         close_paren = Helper.find_matching_paren(cleaned, open_paren)
         next unless close_paren
-        handle_call(method, cleaned, open_paren, close_paren, file_content, path, include_callee, routes, mounts)
+        handle_call(method, cleaned, open_paren, close_paren, file_content, lines, path, include_callee, routes, mounts)
       end
     end
 
@@ -453,6 +457,7 @@ module Analyzer::Dart
                             open_paren : Int32,
                             close_paren : Int32,
                             file_content : String,
+                            lines : Helper::LineIndex,
                             path : String,
                             include_callee : Bool,
                             routes : Array(Route),
@@ -465,7 +470,7 @@ module Analyzer::Dart
       literal = Helper.extract_string_literal(args[0])
       return unless literal
 
-      line = line_number_for_index(file_content, open_paren)
+      line = lines.line_for(open_paren)
 
       case method
       when "mount"

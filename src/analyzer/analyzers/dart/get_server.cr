@@ -148,6 +148,7 @@ module Analyzer::Dart
 
     private def collect_pages(cleaned : String, content : String, path : String) : Array(RawPage)
       pages = [] of RawPage
+      lines = Helper::LineIndex.new(content)
       cleaned.scan(GET_PAGE_REGEX) do |m|
         match_begin = m.begin(0)
         open_paren = m.end(0).try &.- 1
@@ -159,7 +160,7 @@ module Analyzer::Dart
         name_arg = args["name"]?
         next unless name_arg
 
-        line = line_number_for_index(content, match_begin)
+        line = lines.line_for(match_begin)
         pages << {
           name_arg:   name_arg,
           method_arg: args["method"]?,

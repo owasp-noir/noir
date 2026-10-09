@@ -63,42 +63,16 @@ module Analyzer::Dart
     # `char_index_to_byte_index` conversions the analyzers use for callee
     # extraction.
     def find_matching_paren(text : String, open_idx : Int32) : Int32?
-      # `String#[]` re-walks from byte 0 on every call once the source
-      # contains any multi-byte char, turning this scan O(n^2); index a
-      # materialized Array(Char) instead (O(1) per access).
-      chars = text.chars
       depth = 0
-      i = open_idx
-      in_string = false
-      string_quote = '\0'
-
-      while i < chars.size
-        c = chars[i]
-        if in_string
-          if c == '\\' && i + 1 < chars.size
-            i += 2
-            next
-          end
-          in_string = false if c == string_quote
-          i += 1
-          next
-        end
-
+      each_code_char(text, open_idx, text.size) do |c, i|
         case c
-        when '"', '\''
-          in_string = true
-          string_quote = c
         when '('
           depth += 1
         when ')'
           depth -= 1
           return i if depth == 0
-        else
-          # ignore
         end
-        i += 1
       end
-
       nil
     end
 
@@ -106,41 +80,63 @@ module Analyzer::Dart
     # between `start` and `limit`, or nil when the call has a single
     # argument.
     def first_top_level_comma(text : String, start : Int32, limit : Int32) : Int32?
-      chars = text.chars
       depth = 0
-      i = start
-      in_string = false
-      string_quote = '\0'
-
-      while i < limit
-        c = chars[i]
-        if in_string
-          if c == '\\' && i + 1 < chars.size
-            i += 2
-            next
-          end
-          in_string = false if c == string_quote
-          i += 1
-          next
-        end
-
+      each_code_char(text, start, limit) do |c, i|
         case c
-        when '"', '\''
-          in_string = true
-          string_quote = c
         when '(', '{', '['
           depth += 1
         when ')', '}', ']'
           depth -= 1 if depth > 0
         when ','
           return i if depth == 0
-        else
-          # ignore
         end
-        i += 1
+      end
+      nil
+    end
+
+    # `Analyzer#line_number_for_index` for many lookups into one file: the
+    # newline offsets are collected once, then each lookup is a binary
+    # search instead of a rescan from the start of the file per route.
+    class LineIndex
+      def initialize(content : String)
+        @newlines = [] of Int32
+        content.each_char_with_index { |char, index| @newlines << index if char == '\n' }
       end
 
-      nil
+      # 1-based line of a CHAR offset.
+      def line_for(char_index : Int32) : Int32
+        return 1 if char_index <= 0
+        (@newlines.bsearch_index { |newline| newline >= char_index } || @newlines.size) + 1
+      end
+    end
+
+    # Yields each char outside string literals, with its CHAR index, from
+    # `start` up to `limit`. Reads from a byte offset: materialising
+    # `text.chars` cost O(file) per call, so a many-route file was O(n^2).
+    private def each_code_char(text : String, start : Int32, limit : Int32, &)
+      byte = text.char_index_to_byte_index(start)
+      return unless byte
+      reader = Char::Reader.new(text, byte)
+      i = start
+      quote = '\0'
+
+      while i < limit && reader.has_next?
+        c = reader.current_char
+        if quote != '\0'
+          if c == '\\' && reader.pos + reader.current_char_width < text.bytesize
+            reader.next_char
+            i += 1
+          elsif c == quote
+            quote = '\0'
+          end
+        elsif c == '"' || c == '\''
+          quote = c
+        else
+          yield c, i
+        end
+        reader.next_char
+        i += 1
+      end
     end
 
     # Each bracket kind (`()`, `{}`, `[]`, `<>`) gets its own counter so a

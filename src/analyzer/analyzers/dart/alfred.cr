@@ -92,6 +92,7 @@ module Analyzer::Dart
     # line up byte-for-byte.
     private def scan_file(content : String, path : String, include_callee : Bool) : Array(Endpoint)
       cleaned = Noir::CComments.strip(content)
+      lines = Helper::LineIndex.new(content)
       bindings = router_bindings(cleaned)
       return [] of Endpoint if bindings.empty?
 
@@ -102,11 +103,11 @@ module Analyzer::Dart
       # variable's prefix is empty for the top-level `Alfred` instance and
       # the composed base for a `route()`-assigned child router.
       bindings.each_key do |var_name|
-        scan_calls(cleaned, var_name, bindings, content, path, include_callee, endpoints, seen)
+        scan_calls(cleaned, var_name, bindings, content, lines, path, include_callee, endpoints, seen)
       end
 
       # Cascade-nested routes: `app.route('/base')..get('sub', h)..post(...)`.
-      scan_route_cascades(cleaned, bindings, content, path, include_callee, endpoints, seen)
+      scan_route_cascades(cleaned, bindings, content, lines, path, include_callee, endpoints, seen)
 
       endpoints
     end
@@ -188,6 +189,7 @@ module Analyzer::Dart
                            var_name : String,
                            bindings : Bindings,
                            content : String,
+                           lines : Helper::LineIndex,
                            path : String,
                            include_callee : Bool,
                            endpoints : Array(Endpoint),
@@ -203,7 +205,7 @@ module Analyzer::Dart
         open_paren = match_end - 1
         close_paren = Helper.find_matching_paren(cleaned, open_paren)
         next unless close_paren
-        handle_call(method, cleaned, open_paren, close_paren, prefix, content, path, include_callee, endpoints, seen)
+        handle_call(method, cleaned, open_paren, close_paren, prefix, content, lines, path, include_callee, endpoints, seen)
       end
     end
 
@@ -214,6 +216,7 @@ module Analyzer::Dart
     private def scan_route_cascades(cleaned : String,
                                     bindings : Bindings,
                                     content : String,
+                                    lines : Helper::LineIndex,
                                     path : String,
                                     include_callee : Bool,
                                     endpoints : Array(Endpoint),
@@ -231,7 +234,7 @@ module Analyzer::Dart
         next unless sub
 
         base_prefix = alfred_compose(base, sub)
-        scan_chain(cleaned, close_paren + 1, base_prefix, content, path, include_callee, endpoints, seen)
+        scan_chain(cleaned, close_paren + 1, base_prefix, content, lines, path, include_callee, endpoints, seen)
       end
     end
 
@@ -244,6 +247,7 @@ module Analyzer::Dart
                            start : Int32,
                            base_prefix : String,
                            content : String,
+                           lines : Helper::LineIndex,
                            path : String,
                            include_callee : Bool,
                            endpoints : Array(Endpoint),
@@ -286,7 +290,7 @@ module Analyzer::Dart
         break unless close_paren && close_paren <= stmt_end
 
         if relevant_method?(name)
-          handle_call(name, cleaned, open_paren, close_paren, prefix, content, path, include_callee, endpoints, seen)
+          handle_call(name, cleaned, open_paren, close_paren, prefix, content, lines, path, include_callee, endpoints, seen)
         elsif name == "route" && !cascade
           # `.route('/x')` (chained, not a cascade) deepens the base.
           inner = Helper.split_top_level_args(cleaned[(open_paren + 1)...close_paren])
@@ -309,6 +313,7 @@ module Analyzer::Dart
                             close_paren : Int32,
                             prefix : String,
                             content : String,
+                            lines : Helper::LineIndex,
                             path : String,
                             include_callee : Bool,
                             endpoints : Array(Endpoint),
@@ -323,7 +328,7 @@ module Analyzer::Dart
       return unless literal
 
       url = prefix.empty? ? normalize_path(literal) : normalize_path(alfred_compose(prefix, literal))
-      line = line_number_for_index(content, open_paren)
+      line = lines.line_for(open_paren)
 
       callees = [] of Noir::DartCalleeExtractor::Entry
       if include_callee
