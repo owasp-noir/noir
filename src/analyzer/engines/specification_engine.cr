@@ -453,8 +453,11 @@ module Analyzer::Specification
     end
 
     # The local file a `$ref` names, or nil when it names one this scan will
-    # not read.
-    private def external_ref_path(from_path : String, file_ref : String) : String?
+    # not read. `base_dir` is the directory `file_ref` is relative to, for a
+    # format (RAML `!include`) whose nested includes resolve against the
+    # including fragment rather than the document being reported.
+    private def external_ref_path(from_path : String, file_ref : String,
+                                  base_dir : String = File.dirname(File.expand_path(from_path))) : String?
       if file_ref.matches?(REMOTE_REF)
         # noir makes no network requests during a scan. A document that hangs
         # its operations off an `https://` ref is reported as unread rather
@@ -468,7 +471,7 @@ module Analyzer::Specification
         return record_ref_gap(from_path, file_ref.gsub('\0', "%00"), "target contains a NUL byte")
       end
 
-      target = File.expand_path(file_ref, File.dirname(File.expand_path(from_path)))
+      target = File.expand_path(file_ref, base_dir)
 
       # Containment rule: a ref target must resolve inside one of the scan
       # bases the user passed, and must not be a path they excluded. A

@@ -37,9 +37,17 @@ module Analyzer::Specification
       seen = {} of Tuple(String, String) => Endpoint
       details = Details.new(PathInfo.new(path))
 
+      index = 0
       root.children.each do |item|
         next unless item.element? && item.name == "item"
-        process_item(item, details, seen)
+        index += 1
+        begin
+          process_item(item, details, seen)
+        rescue e
+          # One malformed item costs only itself, not the whole sitemap, but
+          # the loss still lands in `errors` and `--strict`.
+          record_skipped_entry(path, "item ##{index}", e)
+        end
       end
 
       seen.each_value { |endpoint| @result << endpoint }
@@ -89,7 +97,9 @@ module Analyzer::Specification
       return "" if raw.empty?
       if node["base64"]? == "true"
         begin
-          return Base64.decode_string(raw)
+          # A binary body (a multipart file upload) is not UTF-8, and the
+          # regex scans below raise on invalid UTF-8. Scrub, as Caido does.
+          return Base64.decode_string(raw).scrub
         rescue
           return ""
         end
@@ -220,8 +230,9 @@ module Analyzer::Specification
           endpoint.push_param(Param.new(decoded_name, safe_unescape(value), "form"))
         end
       elsif content_type_lower.includes?("multipart/form-data")
-        # Parameters live in each part's Content-Disposition `name=` attribute.
-        trimmed_body.scan(/name="([^"]+)"/) do |match|
+        # Parameters live in each part's Content-Disposition `name=` attribute
+        # (`\b` keeps a file part's `filename=` from becoming a parameter).
+        trimmed_body.scan(/\bname="([^"]+)"/) do |match|
           name = match[1]
           endpoint.push_param(Param.new(name, "", "form"))
         end

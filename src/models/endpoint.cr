@@ -177,12 +177,35 @@ end
 struct Param
   include JSON::Serializable
   include YAML::Serializable
-  property name, value, param_type, tags
+  getter name, value
+  property param_type, tags
 
   # param_type can be "query", "json", "form", "header", "cookie"
 
-  def initialize(@name : String, @value : String, @param_type : String)
+  # Name and value are scrubbed to valid UTF-8: a percent-decoded `%FF` or a
+  # Latin-1 `r%E9sum%E9` from captured traffic (HAR, Burp, mitmproxy, Postman,
+  # .http) is not, and the YAML emitter traps on it while every JSON-shaped
+  # output emits the raw byte. Assigned in declaration order, which is the
+  # key order of the serialized param.
+  def initialize(name : String, value : String, param_type : String)
+    @name = Param.scrub(name)
+    @value = Param.scrub(value)
+    @param_type = param_type
     @tags = [] of Tag
+  end
+
+  def name=(name : String)
+    @name = Param.scrub(name)
+  end
+
+  def value=(value : String)
+    @value = Param.scrub(value)
+  end
+
+  # `valid_encoding?` first: almost every value is already valid, and
+  # `scrub` walks it char by char to find that out.
+  def self.scrub(s : String) : String
+    s.valid_encoding? ? s : s.scrub
   end
 
   def ==(other : Param) : Bool
