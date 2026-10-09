@@ -12,8 +12,8 @@ type Posts struct{}
 func main() {
 	r := gin.Default()
 	u, p := &Users{}, &Posts{}
-	// Two controllers share the method name `List`, so neither body is
-	// attributed by name: `/users` must never pick up `post_q`.
+	// Two controllers share the method name `List`: each selector resolves
+	// by its receiver's type, so `/users` must never pick up `post_q`.
 	r.GET("/users", u.List)
 	r.GET("/posts", p.List)
 	// `handlers.Show` lives in another package; the local `Show` method

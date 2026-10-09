@@ -80,7 +80,7 @@ module Analyzer::Go
           if ts_hits = routes_by_line[index]?
             ts_hits.each do |route|
               last_endpoint = add_endpoint(route.path, route.verb, details)
-              named.bind(route.handler, last_endpoint)
+              named.bind(route, last_endpoint)
               if entries = callees_by_route[route.line]?
                 entries.each do |entry|
                   name, callee_path, callee_line = entry

@@ -22,17 +22,50 @@ require "../../func_spec.cr"
   end
 end
 
-# Ambiguous references keep the legacy attribution instead of crediting a
-# body to every route that names it: two receivers with a `List` method, and
-# a package-qualified `handlers.Show` next to an unrelated local `Show`.
+# Selector handlers resolve by the qualifier's declared type: `u` and `p` are
+# receivers of `Users` and `Posts`, so neither `List` body may land on the
+# other route (`p` is also bound to `&Users{}` by the multi-assign, so it
+# stays on the legacy path). `handlers.Show` is a package-qualified handler
+# next to an unrelated local `Show`.
 ambiguous = FunctionalTester.new("fixtures/go/named_handler_ambiguous/", {
   :techs     => 1,
   :endpoints => 4,
 }, nil)
 ambiguous.perform_tests
 
-it "does not credit an ambiguous same-named method to every route", tags: "functional" do
-  %w[/users /posts /show].each do |url|
-    ambiguous.endpoints.find! { |endpoint| endpoint.url == url }.params.should be_empty
-  end
+private def param_names(tester : FunctionalTester, url : String) : Array(String)
+  tester.endpoints.find! { |endpoint| endpoint.url == url }.params.map(&.name)
+end
+
+it "never credits a same-named method of another receiver type", tags: "functional" do
+  param_names(ambiguous, "/users").should eq(["user_q"])
+  param_names(ambiguous, "/posts").should_not contain("user_q")
+  param_names(ambiguous, "/show").should be_empty
+end
+
+# `r.GET("/x", RateLimit(), listX)`: the handler comes after the middleware,
+# and its accessors belong to `/x`, not to the inline closure registered last.
+middleware = FunctionalTester.new("fixtures/go/named_handler_middleware/", {
+  :techs     => 1,
+  :endpoints => 3,
+}, [
+  Endpoint.new("/x", "GET", [Param.new("qx", "", "query")]),
+  Endpoint.new("/y", "POST", [Param.new("qy", "", "query")]),
+])
+middleware.perform_tests
+
+it "keeps a middleware-chained handler's params off the last route", tags: "functional" do
+  param_names(middleware, "/z").should be_empty
+end
+
+# `users.List` names `*UserCtl.List` from users.go; the local
+# `func (s *server) List` is another receiver type and must not be credited.
+crossfile = FunctionalTester.new("fixtures/go/named_handler_crossfile_receiver/", {
+  :techs     => 1,
+  :endpoints => 2,
+}, nil)
+crossfile.perform_tests
+
+it "does not credit a local method of another receiver type", tags: "functional" do
+  param_names(crossfile, "/users").should_not contain("server_only")
 end

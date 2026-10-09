@@ -77,7 +77,7 @@ module Analyzer::Go
                 end
                 new_endpoint.add_tag(Tag.new("subdomain", subdomain, "iris_analyzer")) if subdomain
                 result << new_endpoint
-                named.bind(route.handler, new_endpoint)
+                named.bind(route, new_endpoint)
                 last_endpoint = new_endpoint
               end
             end

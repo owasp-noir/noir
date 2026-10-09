@@ -305,7 +305,7 @@ module Analyzer::Go
                 ep.push_callee(Callee.new(name, path: callee_path, line: callee_line))
               end
               result << ep
-              named.bind(route.handler, ep)
+              named.bind(route, ep)
               emitted << ep
             end
           end

@@ -113,7 +113,7 @@ module Analyzer::Go
                   end
                 end
                 result << new_endpoint
-                named.bind(route.handler, new_endpoint) unless beego_router_lines.includes?(route.line)
+                named.bind(route, new_endpoint) unless beego_router_lines.includes?(route.line)
                 last_endpoint = new_endpoint
               end
             end

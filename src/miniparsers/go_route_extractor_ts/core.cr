@@ -173,8 +173,34 @@ module Noir
       getter query_params : Array(String) # query-param constraints extracted from e.g. mux's `.Queries(...)`
 
       def initialize(@router_name, @verb, @path, @raw_path, @handler, @line,
-                     @query_params : Array(String) = [] of String)
+                     @query_params : Array(String) = [] of String,
+                     @handler_args : Array(String) = [] of String)
       end
+
+      # Text of every handler argument after the path, middleware included
+      # (`r.GET("/x", RateLimit(), listX)` -> `["RateLimit()", "listX"]`),
+      # with `append(mw, h)...` spreads flattened. Decoders that don't
+      # record them fall back to the single `handler`.
+      def handler_args : Array(String)
+        @handler_args.empty? ? [@handler] : @handler_args
+      end
+    end
+
+    # Appends the text of a handler argument to `sink`, flattening the
+    # `append(mws, h)...` spread Hertz/Gin apps use for middleware chains.
+    private def collect_handler_arg_texts(arg : LibTreeSitter::TSNode, source : String, sink : Array(String))
+      case Noir::TreeSitter.node_type(arg)
+      when "variadic_argument"
+        Noir::TreeSitter.each_named_child(arg) { |child| collect_handler_arg_texts(child, source, sink) }
+        return
+      when "call_expression"
+        function = Noir::TreeSitter.field(arg, "function")
+        if function && Noir::TreeSitter.node_text(function, source) == "append" && (args = Noir::TreeSitter.field(arg, "arguments"))
+          Noir::TreeSitter.each_named_child(args) { |child| collect_handler_arg_texts(child, source, sink) }
+          return
+        end
+      end
+      sink << Noir::TreeSitter.node_text(arg, source)
     end
 
     # Parses `source` and returns every verb route it can resolve.
@@ -996,6 +1022,7 @@ module Noir
 
       raw_path = nil
       handler_text = ""
+      handler_args = [] of String
       arg_index = 0
       Noir::TreeSitter.each_named_child(args) do |arg|
         if arg_index == 0
@@ -1009,12 +1036,12 @@ module Noir
           # latched onto a later string literal, surfacing phantom routes
           # like `PUT /key` (observed across beego cache examples).
           raw_path = string_expr_text(arg, source, string_values)
-        elsif handler_text.empty?
+        elsif Noir::TreeSitter.node_type(arg) != "interpreted_string_literal" &&
+              Noir::TreeSitter.node_type(arg) != "raw_string_literal"
           # First non-string positional arg after the path is treated as
           # the handler — matches Gin/Echo/Fiber calling conventions.
-          next if Noir::TreeSitter.node_type(arg) == "interpreted_string_literal" ||
-                  Noir::TreeSitter.node_type(arg) == "raw_string_literal"
-          handler_text = Noir::TreeSitter.node_text(arg, source)
+          handler_text = Noir::TreeSitter.node_text(arg, source) if handler_text.empty?
+          collect_handler_arg_texts(arg, source, handler_args)
         end
         arg_index += 1
       end
@@ -1060,6 +1087,7 @@ module Noir
         raw_path,
         handler_text,
         Noir::TreeSitter.node_start_row(call),
+        handler_args: handler_args,
       )
     end
 
@@ -1160,6 +1188,7 @@ module Noir
       method_lit = nil
       path_lit = nil
       handler_text = ""
+      handler_args = [] of String
       Noir::TreeSitter.each_named_child(args) do |arg|
         case Noir::TreeSitter.node_type(arg)
         when "interpreted_string_literal", "raw_string_literal"
@@ -1175,12 +1204,16 @@ module Noir
             candidate = decode_method_token(arg, source)
             method_lit = candidate unless candidate.empty?
           end
+          collect_handler_arg_texts(arg, source, handler_args) unless path_lit.nil?
         else
           if method_lit.nil?
             candidate = decode_method_token(arg, source)
             method_lit = candidate unless candidate.empty?
           end
-          handler_text = Noir::TreeSitter.node_text(arg, source) if handler_text.empty? && !path_lit.nil?
+          unless path_lit.nil?
+            handler_text = Noir::TreeSitter.node_text(arg, source) if handler_text.empty?
+            collect_handler_arg_texts(arg, source, handler_args)
+          end
         end
       end
 
@@ -1198,6 +1231,7 @@ module Noir
         path_lit,
         handler_text,
         Noir::TreeSitter.node_start_row(call),
+        handler_args: handler_args,
       )
     end
 

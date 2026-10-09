@@ -91,7 +91,7 @@ module Analyzer::Go
                         end
                       end
                       result << endpoint
-                      named.bind(route.handler, endpoint)
+                      named.bind(route, endpoint)
                       last_endpoint = endpoint
                     end
                   end
