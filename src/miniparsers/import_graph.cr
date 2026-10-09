@@ -460,9 +460,25 @@ module Noir::ImportGraph::Python
     file_base_path = File.dirname(file_path) if file_path.ends_with? ".py"
 
     import_map = Hash(String, Tuple(String, Int32)).new
-    offset = 0
+    # A parenthesised import still waiting for its `)`: the `from` part
+    # and the names collected so far. Collected per line with comments
+    # cut first, so neither a `(`/`)` in a `#` comment nor a CRLF
+    # terminator can shift where the name list starts or stops.
+    open_from : String? = nil
+    open_names = String::Builder.new
     content.each_line do |line|
-      package_path = app_base_path
+      if from = open_from
+        code = strip_import_comment(line)
+        if close = code.index(')')
+          open_names << code[0, close]
+          add_python_imports(import_map, app_base_path, file_base_path, from, open_names.to_s)
+          open_from = nil
+        else
+          open_names << code << '\n'
+        end
+        next
+      end
+
       from_import = ""
       imports = ""
 
@@ -480,57 +496,66 @@ module Noir::ImportGraph::Python
       end
 
       unless imports.empty?
-        round_bracket_index = line.index('(')
-        unless round_bracket_index.nil?
-          # Parse `import (\n a,\n b,\n c)` pattern — track
-          # bytes from the opening `(` to the matching `)`.
-          index = offset + round_bracket_index + 1
-          # Single index() call instead of an O(n^2) per-char walk over the
-          # remaining file (String#[](Int) is O(n) on multi-byte content).
-          index = content.index(')', index) || content.size
-          imports = content[(offset + round_bracket_index + 1)..(index - 1)].strip
-        end
-
-        # Drop inline comments (`from x import y  # noqa: F401`,
-        # `from . import (\n a,  # used by Z\n b)`). Left in place the
-        # `#…` text became part of the last imported name/alias and
-        # corrupted resolution. Stripping per-line (up to the newline)
-        # keeps the multi-line parenthesised form intact; import
-        # statements never carry a legitimate `#` outside a comment.
-        imports = imports.gsub(/#[^\n]*/, "")
-
-        # `..` resolves to file's parent dir; `.` to file's dir.
-        if from_import.starts_with?("..")
-          package_path = File.join(file_base_path, "..")
-          from_import = from_import[2..]
-        elsif from_import.starts_with?(".")
-          package_path = file_base_path
-          from_import = from_import[1..]
-        end
-
-        imports.split(",").each do |import|
-          import = import.strip
-          if import.starts_with?("..")
-            package_path = File.join(file_base_path, "..")
-          elsif import.starts_with?(".")
-            package_path = file_base_path
+        code = strip_import_comment(imports)
+        if open = code.index('(')
+          rest = code[(open + 1)..]
+          if close = rest.index(')')
+            add_python_imports(import_map, app_base_path, file_base_path, from_import, rest[0, close])
+          else
+            open_from = from_import
+            open_names = String::Builder.new
+            open_names << rest << '\n'
           end
-
-          dotted_as_names = import
-          dotted_as_names = "#{from_import}.#{import}" unless from_import.empty?
-
-          import_package_map = find_imported_package(package_path, dotted_as_names)
-          next if import_package_map.empty?
-          import_package_map.each do |name, filepath, package_type|
-            import_map[name] = {filepath, package_type}
-          end
+        else
+          add_python_imports(import_map, app_base_path, file_base_path, from_import, code)
         end
       end
-
-      offset += line.size + 1
     end
 
     import_map
+  end
+
+  # `line` up to its first `#`. Import statements carry no string
+  # literals, so the first `#` always starts a comment.
+  private def self.strip_import_comment(line : String) : String
+    (hash = line.index('#')) ? line[0, hash] : line
+  end
+
+  # Resolve the comma-separated names of one import statement into
+  # `import_map`. `from_import` is the dotted module after `from`
+  # (empty for a plain `import`).
+  private def self.add_python_imports(import_map : Hash(String, Tuple(String, Int32)),
+                                      app_base_path : String,
+                                      file_base_path : String,
+                                      from_import : String,
+                                      imports : String) : Nil
+    package_path = app_base_path
+    # `..` resolves to file's parent dir; `.` to file's dir.
+    if from_import.starts_with?("..")
+      package_path = File.join(file_base_path, "..")
+      from_import = from_import[2..]
+    elsif from_import.starts_with?(".")
+      package_path = file_base_path
+      from_import = from_import[1..]
+    end
+
+    imports.split(",").each do |import|
+      import = import.strip
+      if import.starts_with?("..")
+        package_path = File.join(file_base_path, "..")
+      elsif import.starts_with?(".")
+        package_path = file_base_path
+      end
+
+      dotted_as_names = import
+      dotted_as_names = "#{from_import}.#{import}" unless from_import.empty?
+
+      import_package_map = find_imported_package(package_path, dotted_as_names)
+      next if import_package_map.empty?
+      import_package_map.each do |name, filepath, package_type|
+        import_map[name] = {filepath, package_type}
+      end
+    end
   end
 
   # Resolve a dotted Python identifier (`a.b.c` or
