@@ -69,21 +69,83 @@ module Noir
       last
     end
 
-    # Advance past whitespace and `;` comments. Clojure reads commas as
-    # whitespace; pass `commas: false` to stop on them.
+    # Advance past whitespace, `;` comments and `#_` discarded forms (the
+    # reader drops the next form entirely, so `#_(GET "/x" ...)` is not code).
+    # Clojure reads commas as whitespace; pass `commas: false` to stop on them.
     def skip_ws_and_comments(source : String, index : Int32, limit : Int32, commas : Bool = true) : Int32
       i = index
+      # Stacked `#_ #_ a b` drops two forms; counted, not recursed, so a long
+      # run of `#_` cannot exhaust the stack.
+      pending_discards = 0
       while i < limit
         char = source.byte_at(i).unsafe_chr
         if char.whitespace? || (commas && char == ',')
           i += 1
         elsif char == ';'
           i = skip_comment(source, i, limit)
+        elsif char == '#' && i + 1 < limit && source.byte_at(i + 1).unsafe_chr == '_'
+          pending_discards += 1
+          i += 2
+        elsif pending_discards > 0
+          pending_discards -= 1
+          i = end_of_form(source, i, limit)
         else
           break
         end
       end
       i
+    end
+
+    # A walker's char loop calls this on `#`: past a `#_` discarded form (and
+    # the whitespace after it), otherwise just past the `#`.
+    def skip_hash(source : String, index : Int32, limit : Int32) : Int32
+      after = skip_ws_and_comments(source, index, limit)
+      after > index ? after : index + 1
+    end
+
+    # `(comment ...)` is a REPL scratch block the compiler drops, so routes in
+    # it never run. A namespaced `(db/comment ...)` is an ordinary call.
+    def comment_form?(symbol : String) : Bool
+      symbol == "comment" || symbol == "clojure.core/comment"
+    end
+
+    # Offset just past the form that starts at `index` (a non-whitespace byte).
+    # Quote/unquote/deref prefixes and the `#{`, `#(`, `#"`, `#?(`, `#?@(`
+    # dispatch forms stay attached to the form they introduce. An
+    # unterminated collection runs to `limit`.
+    def end_of_form(source : String, index : Int32, limit : Int32) : Int32
+      i = index
+      while i < limit && {'\'', '`', '~', '@'}.includes?(source.byte_at(i).unsafe_chr)
+        i += 1
+      end
+      return limit if i >= limit
+
+      char = source.byte_at(i).unsafe_chr
+      if char == '#' && i + 1 < limit
+        j = i + 1
+        if source.byte_at(j).unsafe_chr == '?'
+          j += 1
+          j += 1 if j < limit && source.byte_at(j).unsafe_chr == '@'
+        end
+        if j < limit && {'{', '(', '"'}.includes?(source.byte_at(j).unsafe_chr)
+          i = j
+          char = source.byte_at(i).unsafe_chr
+        end
+      end
+
+      case char
+      when '"'
+        skip_string(source, i, limit) + 1
+      when '\\'
+        skip_char_literal(source, i, limit) + 1
+      when '(', '[', '{'
+        close = char == '(' ? ')' : (char == '[' ? ']' : '}')
+        e = find_matching_delimiter(source, i, char, close, limit)
+        e > i ? e + 1 : limit
+      else
+        _, after = read_symbol(source, i, limit)
+        after > i ? after : i + 1
+      end
     end
 
     # Find the offset of the delimiter closing the one at `index`, skipping over
