@@ -465,7 +465,7 @@ module Analyzer::Javascript
 
       methods = [] of String
       specs.each do |spec|
-        target = Noir::ImportGraph.resolve_relative_import(path, spec, boundary: configured_base_for(path))
+        target = Noir::ImportGraph.resolve_relative_import(path, spec, boundary: import_boundary_for(path))
         next unless target
         begin
           target_content = Noir::JSRouteExtractor.strip_js_comments(read_file_content(target))

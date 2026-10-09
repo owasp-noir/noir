@@ -253,14 +253,23 @@ class Analyzer
     end
   end
 
-  private def longest_configured_base(path : String) : String?
+  # The outermost configured base that owns `path`: the boundary for
+  # resolving its relative imports. With nested bases (`-b T -b T/svc`) a
+  # file under `T/svc` may still import `../shared` from `T`, which the
+  # longest-match base would reject.
+  protected def import_boundary_for(path : String) : String
+    return @base_path if @base_paths.size <= 1
+    longest_configured_base(path, outermost: true) || @base_path
+  end
+
+  private def longest_configured_base(path : String, outermost : Bool = false) : String?
     expanded_path = CodeLocator.instance.expanded_path_for(path)
     best_base = nil.as(String?)
     best_size = -1
 
     @normalized_base_paths.each do |base, normalized|
       next unless Noir::PathScope.under_normalized_root?(expanded_path, normalized)
-      next unless normalized.size > best_size
+      next unless best_size < 0 || (outermost ? normalized.size < best_size : normalized.size > best_size)
 
       best_base = base
       best_size = normalized.size

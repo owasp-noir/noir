@@ -422,7 +422,7 @@ module Analyzer::Javascript
       return unless spec
       return unless spec.starts_with?("./") || spec.starts_with?("../")
 
-      resolved_path = Noir::ImportGraph.resolve_relative_import(path, spec, boundary: configured_base_for(path))
+      resolved_path = Noir::ImportGraph.resolve_relative_import(path, spec, boundary: import_boundary_for(path))
       return unless resolved_path
 
       begin

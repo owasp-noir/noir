@@ -78,8 +78,9 @@ module Analyzer::Javascript
 
         # Map local identifiers to the router file they import.
         imports = Hash(String, String).new
+        boundary = import_boundary_for(path)
         record_import = ->(var : String, spec : String) do
-          resolved = Noir::ImportGraph.resolve_relative_import(path, spec, boundary: configured_base_for(path))
+          resolved = Noir::ImportGraph.resolve_relative_import(path, spec, boundary: boundary)
           imports[var] = resolved if resolved
         end
         content.scan(/(?:const|let|var)\s+(\w+)\s*=\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m|
