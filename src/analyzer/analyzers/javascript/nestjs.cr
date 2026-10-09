@@ -680,6 +680,13 @@ module Analyzer::Javascript
         "All" => ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
       }
 
+      # Materialised once per class: the back-walk and line count below index
+      # it per route decorator, which `class_content[i]` would make O(n) each
+      # on non-ASCII source.
+      chars = class_content.chars
+      previous_body_end = 0
+      line_pos = 0
+      line_count = 0
       class_content.scan(/@(Get|Post|Put|Delete|Del|Patch|Options|Head|QueryMethod|Sse|All)\s*\(/) do |match|
         decorator_start = match.begin(0)
         next unless decorator_start
@@ -688,8 +695,7 @@ module Analyzer::Javascript
         methods = method_map[method_name]? || [] of String
         next if methods.empty?
 
-        open_paren = class_content.index("(", decorator_start)
-        next unless open_paren
+        open_paren = match.end(0) - 1
 
         close_paren = Noir::JSRouteExtractor.find_matching_paren(class_content, open_paren)
         next unless close_paren
@@ -699,7 +705,9 @@ module Analyzer::Javascript
         signature = method_signature_after_decorators(class_content, close_paren + 1)
         next unless signature
 
-        decorator_block_start = method_decorator_block_start(class_content, decorator_start)
+        floor = previous_body_end < decorator_start ? previous_body_end : 0
+        decorator_block_start = method_decorator_block_start(chars, decorator_start, floor)
+        signature[:close_brace].try { |close_brace| previous_body_end = close_brace + 1 }
         decorator_block = class_content[decorator_block_start...signature[:start_pos]]
         method_versions = parse_method_versions(decorator_block)
         effective_base_paths = if method_versions.empty?
@@ -709,9 +717,13 @@ module Analyzer::Javascript
                                end
 
         # Resolve the decorator's line number inside the original
-        # file: walk newlines from the class start to the
-        # `class_content` offset where the decorator matched.
-        decorator_line = controller_start_line + class_content[0...decorator_start].count('\n')
+        # file: count newlines from the previous decorator (they arrive in
+        # order) up to the `class_content` offset where this one matched.
+        while line_pos < decorator_start
+          line_count += 1 if chars.unsafe_fetch(line_pos) == '\n'
+          line_pos += 1
+        end
+        decorator_line = controller_start_line + line_count
 
         effective_base_paths.each do |base_path|
           route_paths.each do |route_path|
@@ -733,39 +745,38 @@ module Analyzer::Javascript
       end
     end
 
-    private def method_decorator_block_start(content : String, route_decorator_start : Int32) : Int32
-      idx = line_start_for_index(content, route_decorator_start)
+    # Start of the decorator block above a route decorator: walk back line
+    # by line until a blank line, a `}` / `;` line, or `floor` — the end of
+    # the previous route method's body. Without the floor, compact one-line
+    # members (`@Version('2') @Get('a') a() { return 1 }`) never present a
+    # bare `}` line, so the walk ran into earlier methods and leaked their
+    # `@Version`. `chars` is the class content materialised once per class:
+    # `content[i]` / `content.chars` per step made this cubic on non-ASCII.
+    private def method_decorator_block_start(chars : Array(Char), route_decorator_start : Int32, floor : Int32) : Int32
+      idx = line_start_for_index(chars, route_decorator_start)
       block_start = idx
 
-      # `content[i]` re-decodes UTF-8 from byte 0 on every call once the
-      # string isn't single_byte_optimizable? (any non-ASCII char). This
-      # walks backward line-by-line over the (possibly large) controller
-      # class content once per route decorator, so index a
-      # pre-materialized Char array instead — same semantics, O(1) lookup.
-      chars = content.chars
-      while idx > 0
+      while idx > floor
         previous_end = idx - 1
         while previous_end >= 0 && chars[previous_end] == '\n'
           previous_end -= 1
         end
         break if previous_end < 0
 
-        previous_start = line_start_for_index(content, previous_end)
-        line = content[previous_start..previous_end].strip
+        previous_start = line_start_for_index(chars, previous_end)
+        break if previous_start < floor
+        line = chars[previous_start..previous_end].join.strip
         break if line.empty? || line == "}" || line.ends_with?(";")
 
         block_start = previous_start
         idx = previous_start
       end
 
-      block_start
+      Math.max(block_start, floor)
     end
 
-    private def line_start_for_index(content : String, index : Int32) : Int32
+    private def line_start_for_index(chars : Array(Char), index : Int32) : Int32
       pos = index
-      # Same non-ASCII O(n^2) risk as above — index a pre-materialized
-      # Char array instead of re-decoding content[pos - 1] every step.
-      chars = content.chars
       while pos > 0 && chars[pos - 1] != '\n'
         pos -= 1
       end
