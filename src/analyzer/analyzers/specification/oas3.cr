@@ -296,6 +296,8 @@ module Analyzer::Specification
       return unless content = request_body["content"]?.try(&.as_h?)
       content.each do |content_type, content_obj|
         next unless param_type = param_type_for_content(content_type.to_s)
+        # `application/json:` left empty declares the media type, no schema.
+        next unless content_obj.as_h?
         if schema = content_obj["schema"]?
           collect_schema_props_json(doc, schema, param_type, params)
         end
@@ -318,6 +320,8 @@ module Analyzer::Specification
       return unless content = content_node.as_h?
       content.each do |content_type, content_obj|
         next unless param_type = param_type_for_content(content_type.to_s)
+        # `application/json:` left empty declares the media type, no schema.
+        next unless content_obj.as_h?
         if schema_node = content_obj[YAML::Any.new("schema")]?
           collect_schema_props_yaml(doc, schema_node, param_type, params)
         end

@@ -412,8 +412,10 @@ describe "OpenAPI malformed entries" do
     end
   end
 
-  it "records an operation it could not fully read" do
-    with_temp_dir("noir_oas3_bad_body") do |dir|
+  it "treats a media type with no object as declaring no schema" do
+    # `application/json:` left empty is not a skipped entry: recording it
+    # failed `--strict` on a document whose endpoints all came out.
+    with_temp_dir("noir_oas3_empty_media") do |dir|
       entry = File.join(dir, "openapi.yaml")
       File.write(entry, <<-YAML)
         openapi: 3.0.1
@@ -423,11 +425,31 @@ describe "OpenAPI malformed entries" do
             post:
               requestBody:
                 content:
-                  application/json: null
+                  application/json:
         YAML
 
       analyze_oas3(dir, entry).map(&.url).should eq(["/x"])
-      skip_messages.join("\n").should contain("parameters of POST /x")
+      skip_messages.should be_empty
+    end
+  end
+
+  it "records a path item that raised and keeps the paths after it" do
+    # `%FF` decodes to a byte that is not UTF-8, which the ref's regex gate
+    # raises on outside the per-ref rescue.
+    with_temp_dir("noir_oas3_bad_ref") do |dir|
+      entry = File.join(dir, "openapi.yaml")
+      File.write(entry, <<-YAML)
+        openapi: 3.0.1
+        info: {title: Ref, version: '1'}
+        paths:
+          /bad:
+            $ref: '%FF.yaml'
+          /after:
+            get: {}
+        YAML
+
+      analyze_oas3(dir, entry).map(&.url).should eq(["/after"])
+      skip_messages.join("\n").should contain("path item /bad")
     end
   end
 
@@ -440,6 +462,7 @@ describe "OpenAPI malformed entries" do
         paths:
           /ok:
             get: {}
+            put: null
           /x:
             parameters: [null]
             post:
@@ -452,6 +475,7 @@ describe "OpenAPI malformed entries" do
       endpoints.map { |e| "#{e.method} #{e.url} #{e.params.map(&.name)}" }.should eq([
         %(GET /ok []), %(POST /x ["q"]),
       ])
+      skip_messages.should be_empty
     end
   end
 end

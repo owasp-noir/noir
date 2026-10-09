@@ -297,6 +297,9 @@ module Analyzer::Specification
 
           path_item_h.each do |method, method_obj|
             next unless HTTP_METHODS.includes?(method.to_s.downcase)
+            # `get: null` declares no operation; it was always dropped, and
+            # recording it as a skip would fail `--strict` for nothing.
+            next unless method_obj.as_h?
             params = [] of Param
             consumes = consumes_json(json_obj, method_obj)
             path_level_params.each do |param_obj|
@@ -371,6 +374,9 @@ module Analyzer::Specification
 
           path_item_h.each do |method, method_obj|
             next unless HTTP_METHODS.includes?(method.to_s.downcase)
+            # `get: null` declares no operation; it was always dropped, and
+            # recording it as a skip would fail `--strict` for nothing.
+            next unless method_obj.as_h?
             params = [] of Param
             consumes = consumes_yaml(yaml_obj, method_obj)
             path_level_params.each do |param_obj|
