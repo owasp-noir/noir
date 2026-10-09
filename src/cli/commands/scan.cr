@@ -539,6 +539,15 @@ module Noir::CLI::ScanCommand
       # `exit` does not unwind `ensure` blocks, and run_scan exits from
       # several places, so the cleanup is tied to the process instead.
       at_exit { FileUtils.rm_rf(snapshot.root) }
+      # at_exit does not run when SIGINT/SIGHUP/SIGTERM kill the process,
+      # which left the whole checkout behind; route them through `exit`.
+      Process.on_terminate do |reason|
+        case reason
+        when .interrupted?           then exit(130)
+        when .terminal_disconnected? then exit(129)
+        else                              exit(143)
+        end
+      end
       logger.info "Checked out #{diff_ref} (#{snapshot.commit[0, 12]}) as the old side of the diff."
       return {snapshot.bases, "--diff-ref #{diff_ref}", snapshot}
     end
