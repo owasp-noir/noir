@@ -31,12 +31,11 @@ module Analyzer::Typescript
     ALL_METHODS        = %w[GET POST PUT DELETE PATCH HEAD OPTIONS]
     HANDLER_EXTENSIONS = %w[.ts .tsx .js .jsx .mts .mjs .cts .cjs]
     ROOT_MARKERS       = %w[.wasproot main.wasp.ts main.wasp]
-    CRUD_ROUTES        = {"get" => "get", "getAll" => "get-all", "create" => "create", "update" => "update", "delete" => "delete"}
-    # `app.auth.methods` key → provider id used in the route.
-    OAUTH_PROVIDERS = {"google" => "google", "gitHub" => "github", "keycloak" => "keycloak",
-                       "slack" => "slack", "discord" => "discord", "microsoft" => "microsoft"}
+    # `app.auth.methods` keys; the route uses the lowercased key.
+    OAUTH_METHODS = %w[google gitHub keycloak slack discord microsoft]
 
     alias Spec = Noir::WaspExtractor::Spec
+    alias Found = NamedTuple(path: String, source: String, name: String, handler: Noir::WaspExtractor::Handler)
     record SpecFile, path : String, root : String, spec : Spec
 
     def analyze
@@ -110,7 +109,7 @@ module Analyzer::Typescript
         # The referenced config may sit in a `*.wasp.ts` that declares
         # nothing itself, so look through every config file of the app.
         files.each do |path|
-          next unless path.starts_with?(root)
+          next unless root == "." || path.starts_with?("#{root}/")
           literal = Noir::WaspExtractor.object_literal_for(read_file_content(path), ref)
           next unless literal
           methods = Noir::WaspExtractor.auth_methods(literal)
@@ -144,7 +143,7 @@ module Analyzer::Typescript
 
     private def emit_operation(file : SpecFile, operation : Noir::WaspExtractor::Operation, auth_enabled : Bool)
       handler = resolve_handler(file, operation.fn)
-      endpoint = Endpoint.new("/operations/#{kebab_case(operation.name)}", "POST", details_for(file, operation.line, handler))
+      endpoint = Endpoint.new("/operations/#{Wasp.kebab_case(operation.name)}", "POST", details_for(file, operation.line, handler))
       if found = handler
         Noir::WaspExtractor.operation_args(found[:handler]).each { |name| endpoint.push_param(Param.new(name, "", "json")) }
         attach_callees(endpoint, found)
@@ -157,7 +156,7 @@ module Analyzer::Typescript
     private def emit_crud(file : SpecFile, crud : Noir::WaspExtractor::Crud, auth_enabled : Bool)
       crud.operations.each do |operation|
         handler = operation.overridden ? resolve_handler(file, operation.fn) : nil
-        url = "/crud/#{crud.name}/#{CRUD_ROUTES[operation.name]}"
+        url = "/crud/#{crud.name}/#{Wasp.kebab_case(operation.name)}"
         endpoint = Endpoint.new(url, "POST", details_for(file, crud.line, handler))
         if found = handler
           Noir::WaspExtractor.operation_args(found[:handler]).each { |name| endpoint.push_param(Param.new(name, "", "json")) }
@@ -204,8 +203,9 @@ module Analyzer::Typescript
           push_auth_route(details, "/auth/email/reset-password", "POST", "email", %w[token password])
           push_auth_route(details, "/auth/email/verify-email", "POST", "email", %w[token])
         else
-          if provider = OAUTH_PROVIDERS[method]?
+          if OAUTH_METHODS.includes?(method)
             oauth = true
+            provider = method.downcase
             push_auth_route(details, "/auth/#{provider}/login", "GET", provider)
             push_auth_route(details, "/auth/#{provider}/callback", "GET", provider, %w[code state], "query")
           end
@@ -230,20 +230,20 @@ module Analyzer::Typescript
       end
     end
 
-    private def details_for(file : SpecFile, line : Int32, handler : NamedTuple(path: String, source: String, name: String, handler: Noir::WaspExtractor::Handler)?) : Details
+    private def details_for(file : SpecFile, line : Int32, handler : Found?) : Details
       details = Details.new(PathInfo.new(file.path, line))
       handler.try { |found| details.add_path(PathInfo.new(found[:path], found[:handler].line)) }
       details
     end
 
-    private def attach_callees(endpoint : Endpoint, found : NamedTuple(path: String, source: String, name: String, handler: Noir::WaspExtractor::Handler))
+    private def attach_callees(endpoint : Endpoint, found : Found)
       return if found[:name] == "default"
       attach_js_callees(endpoint, Noir::JSCalleeExtractor.callees_for_exported_function(found[:source], found[:path], found[:name]))
     end
 
     # Resolves `@src/x` (and the pre-0.12 `@server/x`) against the app
     # root, and relative Wasp Spec imports against the importing file.
-    private def resolve_handler(file : SpecFile, fn : Noir::WaspExtractor::FnRef?)
+    private def resolve_handler(file : SpecFile, fn : Noir::WaspExtractor::FnRef?) : Found?
       return unless fn
       base = if fn.from.starts_with?("@src/")
                File.join(file.root, "src", fn.from.lchop("@src/"))
@@ -288,10 +288,6 @@ module Analyzer::Typescript
           previous = char
         end
       end
-    end
-
-    private def kebab_case(name : String) : String
-      self.class.kebab_case(name)
     end
   end
 end
