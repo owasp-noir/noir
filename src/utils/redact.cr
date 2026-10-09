@@ -8,13 +8,21 @@ module Noir::Redact
   # Options whose whole value is a credential.
   SECRET_KEYS = %w[ai_key]
 
-  # `name: value` / `name=value` lists (probe headers, pvalue rules): the
-  # name stays visible for debugging, the value is hidden.
-  private NAMED_VALUE_LIST = /\A(?:probe_header|set_pvalue(?:_\w+)?)\z/
+  # `name: value` / `name=value` lists that carry credentials (probe
+  # headers, header/cookie pvalue rules): the name stays visible for
+  # debugging, the value is hidden. Other pvalue rules are left alone —
+  # their values are printed in the endpoint output anyway.
+  private NAMED_VALUE_LIST = /\A(?:probe_header|set_pvalue_(?:header|cookie))\z/
 
-  # Userinfo in any URL. Greedy up to the last `@` of the authority, so a
-  # raw `@` inside the password is covered too.
+  # A URL inside free text (an option dump renders lists as `["…"]`).
+  private URL_IN_TEXT = %r{[a-z][a-z0-9+.\-]*://[^\s"',\]]+}i
+
+  # Userinfo of a URL. Greedy up to the last `@` of the authority, so a raw
+  # `@` inside the password is covered too.
   private USERINFO = %r{(?<=://)[^/?#\s]*@}
+
+  # A query value; AI gateways take `?key=` / `?code=` credentials.
+  private QUERY_VALUE = /(?<=[?&])([^=&#]*)=[^&#]*/
 
   # Path, query and fragment of a URL: where webhook tokens live
   # (Slack/Discord put the secret in the path).
@@ -32,9 +40,16 @@ module Noir::Redact
     key == "export_webhook" ? webhook(value.to_s) : url(value.to_s)
   end
 
-  # Strip userinfo from every URL in `text`.
+  # Mask userinfo and query values of every URL in `text`, keeping the
+  # query parameter names.
   def self.url(text : String) : String
-    text.gsub(USERINFO, "#{MASK}@")
+    text.gsub(URL_IN_TEXT) do |match|
+      masked = match.sub(USERINFO, "#{MASK}@")
+      if query = masked.index('?')
+        masked = masked[0...query] + masked[query..].gsub(QUERY_VALUE, "\\1=#{MASK}")
+      end
+      masked
+    end
   end
 
   # A webhook URL down to its origin.
@@ -42,7 +57,16 @@ module Noir::Redact
     url(text).sub(URL_TAIL, "\\1/#{MASK}")
   end
 
-  private def self.named_value(entry : String) : String
-    (sep = entry.index(/[=:]/)) ? "#{entry[0..sep]}#{MASK}" : MASK
+  # `Name: value` → `Name: ***`. Without a separator (a malformed
+  # `--probe-header "Authorization Bearer xyz"`) everything after the first
+  # word is hidden, and a lone word is hidden whole.
+  def self.named_value(entry : String) : String
+    if sep = entry.index(/[=:]/)
+      "#{entry[0..sep]}#{" " if entry[sep + 1]? == ' '}#{MASK}"
+    elsif space = entry.index(' ')
+      "#{entry[0..space]}#{MASK}"
+    else
+      MASK
+    end
   end
 end

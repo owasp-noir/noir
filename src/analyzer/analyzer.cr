@@ -5,6 +5,7 @@ require "../models/analyzer_failure"
 require "../models/locator_keys"
 require "../models/skipped_files"
 require "../techs/techs"
+require "../utils/redact"
 
 def initialize_analyzers(logger : NoirLogger)
   # Initializing analyzers
@@ -150,7 +151,7 @@ def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLo
             else
               raw_model
             end
-    logger.sub "➔ AI Analyzer: Server=#{provider}, Model=#{model}"
+    logger.sub "➔ AI Analyzer: Server=#{Noir::Redact.url(provider)}, Model=#{model}"
     techs << "ai"
   end
 

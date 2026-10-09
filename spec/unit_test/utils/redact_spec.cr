@@ -15,15 +15,32 @@ describe Noir::Redact do
     Noir::Redact.option("ai_key", any("")).should eq("")
   end
 
-  it "keeps header and pvalue names but hides their values" do
+  it "keeps header and cookie names but hides their values" do
     out = Noir::Redact.option("probe_header", list("Authorization: Bearer TOPSECRET", "X-Api-Key=k"))
-    out.should eq(%(["Authorization:***", "X-Api-Key=***"]))
+    out.should eq(%(["Authorization: ***", "X-Api-Key=***"]))
     Noir::Redact.option("set_pvalue_cookie", list("session=abc")).should eq(%(["session=***"]))
-    Noir::Redact.option("set_pvalue", list("TOKEN")).should eq(%(["***"]))
+    Noir::Redact.option("set_pvalue_header", list("X-Tok:abc")).should eq(%(["X-Tok:***"]))
+  end
+
+  it "leaves non-credential pvalue rules readable" do
+    Noir::Redact.option("set_pvalue", list("id=1")).should eq(%(["id=1"]))
+    Noir::Redact.option("set_pvalue_query", list("page=2")).should eq(%(["page=2"]))
+  end
+
+  it "hides the value of a malformed header with no separator" do
+    Noir::Redact.named_value("Authorization Bearer xyz").should eq("Authorization ***")
+    Noir::Redact.named_value("tok123").should eq("***")
+    Noir::Redact.named_value(": xyz").should eq(": ***")
+  end
+
+  it "masks query values of a provider URL but keeps the names" do
+    Noir::Redact.option("ai_provider", any("http://au:PROVPW@127.0.0.1:1/v1?key=PROVKEY&code=C&x")).should eq("http://***@127.0.0.1:1/v1?key=***&code=***&x")
+    Noir::Redact.url("Server=https://gw.test/v1?key=K, Model=m").should eq("Server=https://gw.test/v1?key=***, Model=m")
+    Noir::Redact.option("ai_provider", any("openai")).should eq("openai")
   end
 
   it "strips URL userinfo, including a raw @ in the password" do
-    Noir::Redact.option("url", any("http://user:p@ss@x.com:8080/a?b=1")).should eq("http://***@x.com:8080/a?b=1")
+    Noir::Redact.option("url", any("http://user:p@ss@x.com:8080/a?b=1")).should eq("http://***@x.com:8080/a?b=***")
     Noir::Redact.option("export_es", any("https://elastic:pw@[::1]:9200/idx")).should eq("https://***@[::1]:9200/idx")
     Noir::Redact.option("url", any("http://x.com/a@b")).should eq("http://x.com/a@b")
   end

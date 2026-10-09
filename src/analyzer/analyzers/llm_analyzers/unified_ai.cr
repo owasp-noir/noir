@@ -123,7 +123,7 @@ module Analyzer::AI
         @native_tool_calling_allowlist
       )
       begin
-        logger.info "AI Analysis using #{@provider} with model #{@model} (max tokens: #{@max_tokens})"
+        logger.info "AI Analysis using #{Noir::Redact.url(@provider)} with model #{@model} (max tokens: #{@max_tokens})"
 
         if @use_agentic
           logger.info "AI Agentic workflow is enabled"

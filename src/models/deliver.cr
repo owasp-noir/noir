@@ -74,13 +74,13 @@ class Deliver
         # `--probe-header "X-Auth tok123"` (missing colon) meant the
         # auth never got sent and the user wondered why every probe
         # returned 401.
-        STDERR.puts "WARNING: --probe-header value '#{raw}' is missing a ':' — expected 'Name: value' format. Skipping.".colorize(:yellow)
+        STDERR.puts "WARNING: --probe-header value '#{Noir::Redact.named_value(raw)}' is missing a ':' — expected 'Name: value' format. Skipping.".colorize(:yellow)
         next
       end
 
       name = raw[0...colon_index]
       if name.empty?
-        STDERR.puts "WARNING: --probe-header value '#{raw}' has an empty header name (nothing before ':'). Skipping.".colorize(:yellow)
+        STDERR.puts "WARNING: --probe-header value '#{Noir::Redact.named_value(raw)}' has an empty header name (nothing before ':'). Skipping.".colorize(:yellow)
         next
       end
 
