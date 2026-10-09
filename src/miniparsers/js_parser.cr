@@ -1128,6 +1128,8 @@ module Noir
       nil
     end
 
+    HTTP_CLIENT_OPTION_KEYS = Set{"host", "hostname", "port", "protocol", "agent"}
+
     private def parse_restify_route : JSRoutePattern?
       # Similar to Express but handle restify specific patterns like .del()
       # Only check at current position
@@ -1159,19 +1161,22 @@ module Noir
             # Look for the path property in the object. Restify accepts
             # both `{ path: '/x' }` and `{ url: '/x', name: '...' }` —
             # treat `url` as an alias for `path`.
+            # A `host`/`port`/... key makes it Node's `http.get({ host, path },
+            # cb)` client call rather than a route spec.
             obj_idx = path_idx + 1
-            while obj_idx < @tokens.size && @tokens[obj_idx].type != :rbrace
-              if (@tokens[obj_idx].value == "path" || @tokens[obj_idx].value == "url") &&
-                 obj_idx + 1 < @tokens.size &&
-                 @tokens[obj_idx + 1].type == :colon &&
-                 obj_idx + 2 < @tokens.size &&
-                 @tokens[obj_idx + 2].type == :string
-                path = @tokens[obj_idx + 2].value
-                @position = obj_idx + 3
-                break
+            client_options = false
+            while obj_idx + 2 < @tokens.size && @tokens[obj_idx].type != :rbrace
+              if @tokens[obj_idx + 1].type == :colon
+                key = @tokens[obj_idx].value
+                client_options = true if HTTP_CLIENT_OPTION_KEYS.includes?(key)
+                if path.nil? && (key == "path" || key == "url") && @tokens[obj_idx + 2].type == :string
+                  path = @tokens[obj_idx + 2].value
+                  @position = obj_idx + 3
+                end
               end
               obj_idx += 1
             end
+            path = nil if client_options
           end
 
           # If we found a path, create a route object

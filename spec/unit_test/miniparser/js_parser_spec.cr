@@ -388,6 +388,18 @@ describe Noir::JSParser do
       routes.should contain("OPTIONS /o")
     end
 
+    it "reads { path } specs on any receiver but not Node http client options" do
+      code = <<-JS
+        const restify = require('restify');
+        const http = require('http');
+        const api = restify.createServer();
+        api.get({ path: '/spec', version: '1.0.0' }, (req, res, next) => next());
+        http.get({ host: 'upstream', path: '/remote' }, (res) => res.resume());
+        JS
+      routes = Noir::JSParser.new(code).parse_routes.map { |r| "#{r.method} #{r.path}" }.uniq!
+      routes.should eq(["GET /spec"])
+    end
+
     it "reads { path } routes past the first 10k tokens" do
       n = 2000
       code = String.build do |io|
