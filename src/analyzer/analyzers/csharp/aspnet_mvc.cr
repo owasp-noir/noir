@@ -11,7 +11,7 @@ module Analyzer::CSharp
     # (a full PCRE2 JIT compile). The attribute set is fixed, so precompile
     # the route-extraction matchers once at load time.
     ATTRIBUTE_ROUTE_PATTERNS = ["HttpGet", "HttpPost", "HttpPut", "HttpDelete", "HttpPatch", "Route"].to_h do |attribute|
-      {attribute, /\[#{attribute}[^(]*\(\s*"([^"]+)"/}
+      {attribute, /\b#{attribute}\s*\(\s*"([^"]+)"/}
     end
 
     def analyze
@@ -79,9 +79,12 @@ module Analyzer::CSharp
       content = read_file_content(file)
       return unless content.includes?("Controller") && content.includes?("Result")
       return if Common.aspnet_core_source?(content)
+      web_api_file = !content.includes?("System.Web.Mvc") && content.matches?(WEB_API_NAMESPACE_RE)
 
-      lines = content.lines
-      masked_lines = Noir::CSharpLexer.new(content).masked_lines
+      # Comment-blanked, so a commented-out attribute or parameter is not read.
+      lexer = Noir::CSharpLexer.new(content)
+      lines = lexer.code_lines
+      masked_lines = lexer.masked_lines
 
       i = 0
       http_method = "GET" # Default method for tracking across lines
@@ -128,7 +131,7 @@ module Analyzer::CSharp
           base = class_match[2]? || masked_lines[i + 1]?.try { |next_line| BASE_LIST_LINE_RE.match(next_line).try(&.[1]) }
           before = class_match.pre_match
           body_depth = depth + before.count('{') - before.count('}') + 1
-          scope = {body_depth, controller_class_name(class_match[1], base), controller_route_prefix(lines, masked_lines, i)}
+          scope = {body_depth, controller_class_name(class_match[1], base, web_api_file), controller_route_prefix(lines, masked_lines, i)}
           # A body opened on the class line can hold an action on that line.
           if class_match.post_match.includes?('{')
             scopes << scope
@@ -201,12 +204,17 @@ module Analyzer::CSharp
     # A base list wrapped onto the line after the class name.
     BASE_LIST_LINE_RE = /\A\s*:\s*([\w.]+)/
 
+    WEB_API_NAMESPACE_RE = /\bSystem\.Web\.(?:Http|OData)\b/
+
     # MVC 5 takes any `*Controller` class with a base list (`: Controller`,
-    # `: BaseController`, ...). Web API 2's `ApiController` routes by verb
-    # convention, which this analyzer does not model.
-    private def controller_class_name(name : String, base : String?) : String?
+    # `: BaseController`, ...). Web API 2 controllers (`ApiController`,
+    # OData, and local bases over them in a file that imports Web API but not
+    # MVC) route by verb convention, which this analyzer does not model.
+    private def controller_class_name(name : String, base : String?, web_api_file : Bool) : String?
       return unless base && name.ends_with?("Controller") && name != "Controller"
-      return if base.split('.').last == "ApiController"
+      base_name = base.split('.').last
+      return if base_name == "ApiController"
+      return if web_api_file && base_name != "Controller"
       name.rchop("Controller")
     end
 
@@ -295,10 +303,10 @@ module Analyzer::CSharp
 
         # Extract parameter name (last word before optional default value)
         # Format: "type name" or "type name = default" or "[Attribute] type name"
-        parts = param_def.split(/\s+/)
+        parts = param_def.sub(/\s*=.*/m, "").split(/\s+/)
         next if parts.size < 2
 
-        param_name = parts[-1].gsub(/=.*$/, "").strip
+        param_name = parts[-1]
 
         parameters << Param.new(param_name, "", param_type)
       end
@@ -307,9 +315,12 @@ module Analyzer::CSharp
     end
 
     private def extract_attribute_route(line : String, attribute : String) : String
-      # Extract route from [HttpGet("route")] or [Route("route")]
-      attribute_regex = ATTRIBUTE_ROUTE_PATTERNS[attribute]? || /\[#{attribute}[^(]*\(\s*"([^"]+)"/
-      match = line.match(attribute_regex)
+      # Extract route from [HttpGet("route")] or [Route("route")]. The
+      # attribute's own parens only: in `[HttpPost, ActionName("Delete")]`
+      # the literal belongs to ActionName. `[HttpGet, Route("x")]` still
+      # routes through its Route.
+      attribute_regex = ATTRIBUTE_ROUTE_PATTERNS[attribute]? || /\b#{attribute}\s*\(\s*"([^"]+)"/
+      match = line.match(attribute_regex) || line.match(ATTRIBUTE_ROUTE_PATTERNS["Route"])
       return "" unless match
       match[1]
     end

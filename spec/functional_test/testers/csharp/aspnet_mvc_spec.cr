@@ -77,6 +77,10 @@ expected_endpoints = [
   Endpoint.new("/First/Download", "GET", [
     Param.new("name", "", "query"),
   ]),
+  Endpoint.new("/First/Save", "POST", [
+    Param.new("id", "", "form"),
+    Param.new("continueEditing", "", "form"),
+  ]),
   Endpoint.new("/second/other", "GET", [
     Param.new("x", "", "query"),
   ]),
@@ -85,7 +89,20 @@ expected_endpoints = [
   ]),
 ]
 
-FunctionalTester.new("fixtures/csharp/aspnet_mvc/", {
+tester = FunctionalTester.new("fixtures/csharp/aspnet_mvc/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
-}, expected_endpoints).perform_tests
+}, expected_endpoints)
+
+tester.perform_tests
+
+describe "ASP.NET MVC controller discovery", tags: "functional" do
+  it "names a parameter, not its default value or a trailing comment" do
+    save = tester.app.endpoints.find! { |e| e.url == "/First/Save" }
+    save.params.map(&.name).should eq ["id", "continueEditing"]
+  end
+
+  it "leaves Web API / OData controllers alone" do
+    tester.app.endpoints.any?(&.url.starts_with?("/Items")).should be_false
+  end
+end

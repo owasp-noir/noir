@@ -26,6 +26,13 @@ namespace MyApp.Controllers
         {
             return File(name, "application/octet-stream");
         }
+
+        // The literal belongs to FormValueRequired, not to the route.
+        [HttpPost, FormValueRequired("save-continue")]
+        public ActionResult Save(int id, bool continueEditing = false /* flag */)
+        {
+            return View();
+        }
     }
 
     [RoutePrefix("second")]
