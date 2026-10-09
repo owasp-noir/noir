@@ -22,6 +22,11 @@ describe "Detect Java Vaadin" do
     instance.detect("UserEndpoint.java", "import dev.hilla.Endpoint;").should be_true
   end
 
+  it "android-json exclusion in a plain Spring Boot build" do
+    instance.detect("pom.xml", "<exclusion><groupId>com.vaadin.external.google</groupId><artifactId>android-json</artifactId></exclusion>").should be_false
+    instance.detect("build.gradle", "exclude group: 'com.vaadin.external.google'").should be_false
+  end
+
   it "unrelated java" do
     instance.detect("Health.java", "import org.springframework.boot.actuate.endpoint.annotation.Endpoint;").should be_false
   end

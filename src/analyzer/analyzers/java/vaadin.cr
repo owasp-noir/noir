@@ -2,6 +2,7 @@ require "../../../models/analyzer"
 require "../../engines/java_engine"
 require "../../../miniparsers/java_type_model_extractor_ts"
 require "../../../utils/url_path"
+require "../../../detector/detectors/java/vaadin"
 
 module Analyzer::Java
   # Vaadin Flow navigation targets (`@Route` / `@RouteAlias`, prefixed by
@@ -19,9 +20,19 @@ module Analyzer::Java
     VAADIN_GATE    = Regex.union("com.vaadin", "dev.hilla")
     FLOW_ROUTER_RE = Regex.union("com.vaadin.flow.router")
     # `@Endpoint` is also Spring Boot Actuator's; only Hilla's counts.
-    HILLA_RE          = Regex.union("com.vaadin.hilla", "dev.hilla", "com.vaadin.flow.server.connect", "com.vaadin.fusion")
+    HILLA_RE          = Detector::Java::Vaadin::HILLA_MARKERS
     ROUTE_TEMPLATE_RE = /:([A-Za-z_]\w*)(?:\([^)]*\))?[?*]?/
     MAX_LAYOUT_DEPTH  = 8
+
+    # Hilla's generic services: what a `@BrowserCallable` subclass inherits.
+    LIST_SERVICE_METHODS = {"list" => %w[pageable filter], "get" => %w[id], "exists" => %w[id], "count" => %w[filter]}
+    CRUD_SERVICE_METHODS = LIST_SERVICE_METHODS.merge({"save" => %w[value], "saveAll" => %w[values], "delete" => %w[id], "deleteAll" => %w[ids]})
+    SERVICE_BASES        = {
+      "ListRepositoryService" => LIST_SERVICE_METHODS,
+      "ListService"           => LIST_SERVICE_METHODS,
+      "CrudRepositoryService" => CRUD_SERVICE_METHODS,
+      "CrudService"           => CRUD_SERVICE_METHODS,
+    }
 
     private record Layout, prefix : String?, absolute : Bool, parent : String?
 
@@ -30,17 +41,19 @@ module Analyzer::Java
       layouts = Hash(String, Layout).new
       get_files_by_extension(".java").each do |path|
         next if JavaEngine.test_path?(base_relative_path(path))
-        content = read_file_content(path)
-        next unless content_matches?(content, VAADIN_GATE)
+        isolating_file_errors(path) do
+          content = read_file_content(path)
+          next unless content_matches?(content, VAADIN_GATE)
 
-        types = Model.extract(content)
-        types.each do |decl|
-          prefix = decl.annotation("RoutePrefix")
-          parent = decl.annotation("ParentLayout").try(&.string)
-          next unless prefix || parent
-          layouts[decl.name] ||= Layout.new(prefix.try(&.string), prefix.try(&.string("absolute")) == "true", parent)
+          types = Model.extract(content)
+          types.each do |decl|
+            prefix = decl.annotation("RoutePrefix")
+            parent = decl.annotation("ParentLayout").try(&.string)
+            next unless prefix || parent
+            layouts[decl.name] ||= Layout.new(prefix.try(&.string), prefix.try(&.string("absolute")) == "true", parent)
+          end
+          files << {path, content, types}
         end
-        files << {path, content, types}
       end
 
       configs = Hash(String, Hash(String, String)).new
@@ -82,6 +95,8 @@ module Analyzer::Java
       url_parameter = decl.supertypes.any? { |type| Model.simple_type_name(type) == "HasUrlParameter" }
       tag = access_tag(decl.annotations)
       targets.each do |ann|
+        # A value that is a constant from another file: no route to report.
+        next if ann.values.has_key?("value") && ann.string.nil?
         route = ann.string || (ann.name == "Route" ? derived_route(decl.name) : "")
         segments = ann.string("absolute") == "true" ? [] of String : layout_prefixes(ann.string("layout"), layouts)
         segments << route.gsub(ROUTE_TEMPLATE_RE) { "{#{$~[1]}}" }
@@ -101,6 +116,16 @@ module Analyzer::Java
         params = method.params.map { |param| Param.new(param.name, "", "json") }
         url = Noir::URLPath.join_rooted(prefix, "#{name}/#{method.name}")
         add(url, "POST", method.line + 1, path, params, access_tag(method.annotations) || class_tag)
+      end
+
+      declared = decl.methods.map(&.name).to_set
+      decl.supertypes.each do |type|
+        next unless inherited = SERVICE_BASES[Model.simple_type_name(type)]?
+        inherited.each do |method, args|
+          next if declared.includes?(method)
+          url = Noir::URLPath.join_rooted(prefix, "#{name}/#{method}")
+          add(url, "POST", decl.line + 1, path, args.map { |arg| Param.new(arg, "", "json") }, class_tag)
+        end
       end
     end
 

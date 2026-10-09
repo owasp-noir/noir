@@ -10,10 +10,21 @@ expected_endpoints = [
   Endpoint.new("/reports", "GET"),
   Endpoint.new("/greet/{name}/{id}", "GET", [Param.new("name", "", "path"), Param.new("id", "", "path")]),
   Endpoint.new("/product/{parameter}", "GET", [Param.new("parameter", "", "path")]),
+  # Same-file constant value, comment inside the annotation.
+  Endpoint.new("/app/settings", "GET"),
   # Hilla browser-callable services.
   Endpoint.new("/connect/UserEndpoint/findUser", "POST", [Param.new("name", "", "json")]),
   Endpoint.new("/connect/UserEndpoint/deleteUser", "POST", [Param.new("id", "", "json"), Param.new("hard", "", "json")]),
   Endpoint.new("/connect/orders/list", "POST"),
+  # Inherited from Hilla's CrudRepositoryService.
+  Endpoint.new("/connect/PersonService/list", "POST", [Param.new("pageable", "", "json"), Param.new("filter", "", "json")]),
+  Endpoint.new("/connect/PersonService/get", "POST", [Param.new("id", "", "json")]),
+  Endpoint.new("/connect/PersonService/exists", "POST", [Param.new("id", "", "json")]),
+  Endpoint.new("/connect/PersonService/count", "POST", [Param.new("filter", "", "json")]),
+  Endpoint.new("/connect/PersonService/save", "POST", [Param.new("value", "", "json")]),
+  Endpoint.new("/connect/PersonService/saveAll", "POST", [Param.new("values", "", "json")]),
+  Endpoint.new("/connect/PersonService/delete", "POST", [Param.new("id", "", "json")]),
+  Endpoint.new("/connect/PersonService/deleteAll", "POST", [Param.new("ids", "", "json")]),
 ]
 
 # java_spring + java_vaadin. The actuator @Endpoint, the static and the
@@ -44,6 +55,7 @@ describe "Vaadin access annotations", tags: "functional" do
     tags.call("POST", "/connect/UserEndpoint/findUser").should eq ["anonymous"]
     tags.call("POST", "/connect/UserEndpoint/deleteUser").should eq ["auth"]
     tags.call("POST", "/connect/orders/list").should eq ["auth"]
+    tags.call("POST", "/connect/PersonService/save").should eq ["anonymous"]
     tags.call("GET", "/login").should eq ["anonymous"]
     tags.call("GET", "/app/dashboard").should eq ["auth"]
     tags.call("GET", "/admin/users").should be_empty
