@@ -2,13 +2,13 @@ require "../../../../spec_helper"
 require "../../../../../src/analyzer/analyzers/llm_analyzers/unified_ai"
 require "http/server"
 
-# Records the size of every chat-completions body it is sent.
-private class BodySizeRecorder
-  getter sizes = [] of Int32
+# Records every chat-completions body it is sent.
+private class BodyRecorder
+  getter bodies = [] of String
 
   def initialize
     @server = HTTP::Server.new do |context|
-      @sizes << (context.request.body.try(&.gets_to_end) || "").bytesize
+      @bodies << (context.request.body.try(&.gets_to_end) || "")
       context.response.content_type = "application/json"
       context.response.print({choices: [{message: {content: %({"endpoints":[]})}}]}.to_json)
     end
@@ -31,16 +31,21 @@ describe Analyzer::AI::Unified do
   # file whole: one 1 MB file went out as a single 1 MB request whatever
   # --ai-max-token said.
   it "keeps a small project with one oversized file within --ai-max-token" do
-    server = BodySizeRecorder.new
+    server = BodyRecorder.new
     root = File.tempname("noir-ai-budget")
     prev_disable = ENV["NOIR_CACHE_DISABLE"]?
+    prev_prompt = LLM::PromptOverrides.analyze_prompt
     ENV["NOIR_CACHE_DISABLE"] = "1"
+    LLM::PromptOverrides.analyze_prompt = "CUSTOM-ANALYZE-PROMPT"
     begin
       Dir.mkdir_p(root)
-      path = File.join(root, "routes.js")
-      File.write(path, (0...2000).map { |i| "app.get('/r#{i}', handler)\n" }.join)
+      big = File.join(root, "routes.js")
+      small = File.join(root, "small.js")
+      File.write(big, (0...2000).map { |i| "app.get('/r#{i}', handler)\n" }.join)
+      File.write(small, "app.get('/small', handler)\n")
       CodeLocator.instance.reset_files
-      CodeLocator.instance.register_path(path)
+      CodeLocator.instance.register_path(big)
+      CodeLocator.instance.register_path(small)
 
       options = create_test_options
       options["base"] = YAML::Any.new([YAML::Any.new(root)])
@@ -49,11 +54,17 @@ describe Analyzer::AI::Unified do
       options["ai_max_token"] = YAML::Any.new(4000)
       Analyzer::AI::Unified.new(options).analyze
 
-      server.sizes.size.should be > 1
+      server.bodies.size.should be > 2
       # 4000 tokens at the ~4 chars/token the bundler budgets with, plus
       # the JSON envelope and the response format schema.
-      server.sizes.max.should be < 4000 * 4 + 4096
+      server.bodies.max_of(&.bytesize).should be < 4000 * 4 + 4096
+      # Only the oversized file is bundled; the small one keeps the
+      # per-file prompt the user overrode.
+      overridden = server.bodies.select(&.includes?("CUSTOM-ANALYZE-PROMPT"))
+      overridden.size.should eq(1)
+      overridden[0].should contain("/small")
     ensure
+      LLM::PromptOverrides.analyze_prompt = prev_prompt
       CodeLocator.instance.reset_files
       FileUtils.rm_rf(root)
       server.close

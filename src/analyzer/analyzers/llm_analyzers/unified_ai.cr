@@ -137,12 +137,15 @@ module Analyzer::AI
           return @result
         end
 
-        # The per-file path sends each file whole, so a file over the token
-        # budget has to go through bundling, the only path that splits one.
-        if @max_tokens > 0 && (target_paths.size > 5 || target_paths.any? { |path| over_token_budget?(path) })
+        if @max_tokens > 0 && target_paths.size > 5
           analyze_with_bundling(target_paths, adapter)
         else
-          target_paths.each { |path| analyze_file(path, adapter) }
+          # The per-file path sends each file whole, so a file over the
+          # token budget goes through bundling, the only path that splits
+          # one. The rest stay per-file under --override-analyze-prompt.
+          oversized, small = target_paths.partition { |path| @max_tokens > 0 && over_token_budget?(path) }
+          analyze_with_bundling(oversized, adapter) unless oversized.empty?
+          small.each { |path| analyze_file(path, adapter) }
         end
 
         Fiber.yield
