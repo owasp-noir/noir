@@ -65,6 +65,12 @@ module Noir
       token.type == :http_method || (token.type == :keyword && token.value == "delete")
     end
 
+    # A route verb: an HTTP method, or Restify's `opts` (OPTIONS) in a
+    # Restify file — elsewhere `opts` is far too common a name to read as one.
+    private def route_verb?(token : JSToken) : Bool
+      http_method?(token) || (@framework == :restify && token.value == "opts")
+    end
+
     def initialize(source : String)
       lexer = JSLexer.new(source)
       @tokens = lexer.tokenize
@@ -916,7 +922,7 @@ module Noir
         # Pattern 1: identifier . http_method ( 'path' | `tpl` | identifier/concat )
         if @tokens[idx].type == :identifier &&
            @tokens[idx + 1].type == :dot &&
-           http_method?(@tokens[idx + 2]) &&
+           route_verb?(@tokens[idx + 2]) &&
            @tokens[idx + 3].type == :lparen
           if !route_handler_arg?(idx + 3) || http_client_receiver?(@tokens[idx].value)
             idx += 1
@@ -1124,24 +1130,23 @@ module Noir
       # Only check at current position
       idx = @position
 
-      # Look for server.METHOD patterns
+      # Look for <receiver>.METHOD patterns. Any receiver — a Restify server
+      # is as often `srv` or a function parameter as `server` — gated, like
+      # fast_scan, on a handler argument and on not being an HTTP client.
       if idx < @tokens.size - 2 &&
-         (@tokens[idx].value == "server" ||
-         @tokens[idx].value == "router" ||
-         @tokens[idx].value.ends_with?("Router")) &&
+         @tokens[idx].type == :identifier &&
+         !http_client_receiver?(@tokens[idx].value) &&
          idx + 2 < @tokens.size &&
          @tokens[idx + 1].type == :dot &&
-         http_method?(@tokens[idx + 2])
-        method = @tokens[idx + 2].value
-        # Handle restify's 'del' method which means DELETE
-        method = "DELETE" if method.downcase == "del"
-        method = method.upcase
+         route_verb?(@tokens[idx + 2])
+        method = normalize_verb(@tokens[idx + 2].value)
 
         # Look for the path string in parentheses
         path_idx = idx + 3
         if path_idx < @tokens.size &&
            @tokens[path_idx].type == :lparen &&
-           path_idx + 1 < @tokens.size
+           path_idx + 1 < @tokens.size &&
+           route_handler_arg?(path_idx)
           path = nil
           # Handle both string and object pattern { path: '/route' }
           if @tokens[path_idx + 1].type == :string
@@ -1536,10 +1541,17 @@ module Noir
     end
 
     # Creates a route pattern and adds path params unless it's a regex path.
+    # Restify's `del` and `opts` aliases to their HTTP methods.
+    private def normalize_verb(method : String) : String
+      case m = method.upcase
+      when "DEL"  then "DELETE"
+      when "OPTS" then "OPTIONS"
+      else             m
+      end
+    end
+
     private def create_route_with_params(method : String, path : String, raw_path : String, start_pos : Int32, is_regex : Bool) : JSRoutePattern
-      m = method.upcase
-      m = "DELETE" if m.downcase == "del"
-      route = JSRoutePattern.new(m, path, raw_path, start_pos)
+      route = JSRoutePattern.new(normalize_verb(method), path, raw_path, start_pos)
       unless is_regex
         extract_path_params(path).each { |p| route.push_param(p) }
       end

@@ -1148,6 +1148,8 @@ module Noir
         method_variations << "del"
       elsif method_name == "del"
         method_variations << "delete"
+      elsif method_name == "options"
+        method_variations << "opts" # Restify
       end
 
       # Generate all possible route declarations with different syntax patterns

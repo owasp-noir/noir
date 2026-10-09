@@ -63,15 +63,15 @@ module Analyzer::Javascript
     end
 
     # `app.on('GET', '/path', …)` (group 1) or `app.on(['GET', 'POST'],
-    # '/path', …)` (group 2); the path is group 3.
-    ON_ROUTE_RE = /\b(?:app|router|hono)\s*\.\s*on\s*\(\s*(?:['"](\w+)['"]|\[([^\]\n]+)\])\s*,\s*['"]([^'"\n]+)['"]/
+    # '/path', …)` (group 2); the path is group 3. Any receiver (`books`,
+    # `api`, …): the method-then-path argument shape is the gate.
+    ON_ROUTE_RE = /(?<![\w$])[A-Za-z_$][\w$]*\s*\.\s*on\s*\(\s*(?:['"](\w+)['"]|\[([^\]\n]+)\])\s*,\s*['"]([^'"\n]+)['"]/
 
     private def extract_on_routes(path : String,
                                   content : String,
                                   result : Array(Endpoint),
                                   callees_by_route : Hash(String, Array(Noir::JSCalleeExtractor::Entry)),
                                   include_callee : Bool)
-      lines = content.lines
       bytes = content.to_slice
       # Matches arrive in order, so the line is counted incrementally from
       # the match's own byte offset. Summing `line.bytesize + 1` over
@@ -97,14 +97,14 @@ module Analyzer::Javascript
         index += bytes[line_byte, match_byte - line_byte].count('\n'.ord.to_u8)
         line_byte = match_byte
 
-        # Pre-extract handler-body params once so each method-variant
-        # endpoint gets the same params without re-walking lines.
+        # Handler params, read once for every method variant from the
+        # call's own arguments. Walking the following lines up to a `})`
+        # line skipped a one-line handler and read the next route's instead.
         body_params = [] of Param
-        ((index + 1)...lines.size).each do |i|
-          handler_line = lines[i]
-          break if handler_line =~ /^\s*\}\s*\)\s*$/
-          line_to_params(handler_line).each do |param|
-            body_params << param
+        if (open = content.byte_index('(', match_byte)) &&
+           (close = Noir::JSLiteralScanner.find_matching_paren_at_byte(content, open))
+          content.byte_slice(open + 1, close - open - 1).each_line do |handler_line|
+            body_params.concat(line_to_params(handler_line))
           end
         end
         direct_callees = include_callee ? on_route_callees(content, path, match.begin(0)) : [] of Noir::JSCalleeExtractor::Entry

@@ -243,11 +243,19 @@ module Analyzer::Javascript
       ""
     end
 
+    # `<instance>.route({` / `<instance>.query('/…'` on any receiver: a
+    # plugin's instance is whatever its function names it (`api`, `f`,
+    # `child`). The argument shape is the gate, and it is in the pattern so
+    # the per-call work below never runs for `db.query(sql)` or Express's
+    # `router.route('/x')`.
+    ROUTE_CONFIG_CALL_RE = /(?<![\w$])[A-Za-z_$][\w$]*\s*\.\s*route\s*\(\s*\{/
+    QUERY_CALL_RE        = /(?<![\w$])[A-Za-z_$][\w$]*\s*\.\s*query\s*\(\s*[`'"][\/*]/
+
     # Scans for `fastify.query('/url', ...)` route shorthand calls.
     # Fastify only provides this method when registered via
     # `fastify.addHttpMethod('QUERY')` or the `fastify-http-query` plugin.
     private def extract_query_shorthand_routes(path : String, content : String, result : Array(Endpoint), include_callee : Bool, autoload_prefix : String = "")
-      content.scan(/\b(?:fastify|app|server|instance)\s*\.\s*query\s*\(/) do |m|
+      content.scan(QUERY_CALL_RE) do |m|
         call_start = m.begin(0)
         next unless call_start
 
@@ -265,8 +273,13 @@ module Analyzer::Javascript
         next unless url_match
 
         raw_url = url_match[1]
-        # Ignore non-URL strings (e.g. SQL queries with spaces)
-        next if raw_url.includes?(" ") || raw_url.empty?
+        # Fastify paths start with `/` (or are `*`); anything else is a
+        # client or database call such as `db.query('users', cb)`.
+        next unless raw_url.starts_with?('/') || raw_url == "*"
+        next if raw_url.includes?(" ")
+        # A route takes a handler after the path; `helper.query('/x')` is a
+        # plain call.
+        next unless first_arg[url_match.end(0)..].lstrip.starts_with?(',')
 
         plugin_prefix = plugin_prefix_at(content, call_start)
         url = plugin_prefix.empty? ? raw_url : Noir::URLPath.join(plugin_prefix, raw_url)
@@ -311,7 +324,7 @@ module Analyzer::Javascript
       # Match the call site `instance.route(` and walk the balanced
       # parens to capture the whole config object — line-by-line regex
       # would clip multi-line objects.
-      content.scan(/\b(?:fastify|app|server|instance)\s*\.\s*route\s*\(/) do |m|
+      content.scan(ROUTE_CONFIG_CALL_RE) do |m|
         call_start = m.begin(0)
         next unless call_start
 
