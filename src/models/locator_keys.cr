@@ -55,6 +55,7 @@ module Noir::LocatorKeys
     {:K8S_INGRESS_SPEC, "k8s-ingress-spec", :array, :detect_scoped, "detector/specification/k8s_ingress"},
     {:KAMAL_SPEC, "kamal-spec", :array, :detect_scoped, "detector/specification/kamal"},
     {:KONG_SPEC, "kong-spec", :array, :detect_scoped, "detector/specification/kong"},
+    {:KRAKEND_SPEC, "krakend-spec", :array, :detect_scoped, "detector/specification/krakend"},
     {:MITMPROXY_PATH, "mitmproxy-path", :array, :detect_scoped, "detector/specification/mitmproxy"},
     {:NETLIFY_REDIRECTS, "netlify-redirects", :array, :detect_scoped, "detector/specification/netlify"},
     {:NETLIFY_TOML, "netlify-toml", :array, :detect_scoped, "detector/specification/netlify"},
