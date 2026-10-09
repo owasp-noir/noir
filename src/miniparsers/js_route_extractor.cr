@@ -207,30 +207,18 @@ module Noir
           func_name = m[1]
           prefix = m[2]
           next unless function_names.includes?(func_name)
+          # A plugin registering itself is an internal mount (handled
+          # below), not a top-level prefix for the plugin.
+          reg_pos = m.begin(0)
+          next if function_ranges.any? { |name, open_idx, close_idx| name == func_name && open_idx <= reg_pos <= close_idx }
           prefixes_by_function[func_name] << prefix unless prefixes_by_function[func_name].includes?(prefix)
         end
 
-        # Propagate prefixes through internal mounts with max iteration protection
-        changed = true
-        max_iterations = 100 # Prevent infinite loops in case of cyclic references
-        iterations = 0
-        while changed && iterations < max_iterations
-          changed = false
-          iterations += 1
-          internal_mounts.each do |parent, child, mount_prefix|
-            parent_prefixes = prefixes_by_function[parent]
-            if parent_prefixes.empty? && !file_prefixes.empty?
-              parent_prefixes = file_prefixes
-            end
-            parent_prefixes.each do |p|
-              combined = URLPath.join(p, mount_prefix)
-              unless prefixes_by_function[child].includes?(combined)
-                prefixes_by_function[child] << combined
-                changed = true
-              end
-            end
-          end
-        end
+        # Propagate prefixes through internal mounts; an unprefixed parent
+        # mounts at the file's own cross-file prefix.
+        propagate_mount_prefixes(
+          internal_mounts.map { |parent, child, mount_prefix| {parent, mount_prefix, child} },
+          prefixes_by_function, file_prefixes)
 
         endpoints = [] of Endpoint
         route_patterns.each do |pattern|
@@ -1003,6 +991,50 @@ module Noir
     # safe under the analyzers' parallel file scans.
     @@direct_call_res = Hash(String, Regex).new
     HANDLER_ANCHOR_RE = /\bfunction\b|=>/
+
+    # Ceiling on the prefixes one router collects. Acyclic mount graphs stay
+    # far below it; it only bounds a diamond lattice of parallel edges.
+    MAX_MOUNT_PREFIXES = 64
+
+    # Pushes mount prefixes along `{parent, prefix, child}` edges into
+    # `prefixes`, starting from each parent's existing prefixes (or
+    # `fallback` when it has none, without recording that on the parent).
+    #
+    # Depth-first with the routers on the current mount path excluded, so a
+    # self-mount (`router.use('/v1', router.routes())`), a plugin that
+    # registers itself, or an a -> b -> a cycle is expanded at most once
+    # instead of growing the prefix list without bound — the fixpoint loops
+    # this replaced appended to the array they were iterating.
+    def self.propagate_mount_prefixes(edges : Array(Tuple(String, String, String)),
+                                      prefixes : Hash(String, Array(String)),
+                                      fallback : Array(String) = [] of String) : Nil
+      by_parent = edges.group_by(&.[0])
+      starts = by_parent.keys.map do |parent|
+        own = prefixes[parent]?
+        {parent, own.nil? || own.empty? ? fallback : own.dup}
+      end
+      on_path = Set(String).new
+      starts.each do |parent, parent_prefixes|
+        on_path << parent
+        parent_prefixes.each { |prefix| descend_mounts(parent, prefix, by_parent, prefixes, on_path) }
+        on_path.delete(parent)
+      end
+    end
+
+    private def self.descend_mounts(node : String, prefix : String,
+                                    by_parent : Hash(String, Array(Tuple(String, String, String))),
+                                    prefixes : Hash(String, Array(String)), on_path : Set(String)) : Nil
+      by_parent[node]?.try &.each do |_, edge_prefix, child|
+        next if on_path.includes?(child)
+        combined = URLPath.join(prefix, edge_prefix)
+        list = prefixes[child]? || (prefixes[child] = [] of String)
+        next if list.includes?(combined) || list.size >= MAX_MOUNT_PREFIXES
+        list << combined
+        on_path << child
+        descend_mounts(child, combined, by_parent, prefixes, on_path)
+        on_path.delete(child)
+      end
+    end
 
     # Equivalent to matching /['"`]<literal>['"`]/ — the literal bracketed by
     # a quote character on each side — without compiling a per-path regex.

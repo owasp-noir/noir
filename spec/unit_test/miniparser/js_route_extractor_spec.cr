@@ -5,6 +5,27 @@ require "../../../src/models/endpoint"
 require "../../../src/miniparsers/js_route_extractor"
 
 describe Noir::JSRouteExtractor do
+  describe "propagate_mount_prefixes" do
+    it "expands a self-mount and an a -> b -> a cycle at most once" do
+      edges = [
+        {"root", "/r", "a"},
+        {"a", "/x", "b"}, {"a", "/z", "b"}, {"b", "/y", "a"},
+        {"s", "/v1", "s"},
+      ]
+      prefixes = {"root" => [""], "s" => [""]}
+      Noir::JSRouteExtractor.propagate_mount_prefixes(edges, prefixes)
+      prefixes["a"].should eq(["/r"])
+      prefixes["b"].should eq(["/r/x", "/r/z"])
+      prefixes["s"].should eq([""])
+    end
+
+    it "starts an unprefixed parent from the fallback without recording it" do
+      prefixes = {} of String => Array(String)
+      Noir::JSRouteExtractor.propagate_mount_prefixes([{"p", "/c", "c"}], prefixes, ["/f"])
+      prefixes.should eq({"c" => ["/f/c"]})
+    end
+  end
+
   describe "normalize_http_method" do
     it "normalizes DEL to DELETE" do
       Noir::JSRouteExtractor.normalize_http_method("DEL").should eq("DELETE")

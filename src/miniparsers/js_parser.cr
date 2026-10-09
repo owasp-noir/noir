@@ -265,7 +265,9 @@ module Noir
       return prefixes if visited.includes?(router) # Prevent infinite loops
 
       visited.add(router)
-      parents = router_parents[router]? || [] of String
+      # A parent already on this chain is a self-mount or a cycle; walking
+      # it again joined the cycle's prefixes onto themselves (`/v1/v1`).
+      parents = (router_parents[router]? || [] of String).reject { |parent| visited.includes?(parent) }
       return prefixes if parents.empty?
 
       # Combine with all parent chains
