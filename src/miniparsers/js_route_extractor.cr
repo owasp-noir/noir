@@ -216,9 +216,11 @@ module Noir
 
         # Propagate prefixes through internal mounts; an unprefixed parent
         # mounts at the file's own cross-file prefix.
-        propagate_mount_prefixes(
-          internal_mounts.map { |parent, child, mount_prefix| {parent, mount_prefix, child} },
-          prefixes_by_function, file_prefixes)
+        if propagate_mount_prefixes(
+             internal_mounts.map { |parent, child, mount_prefix| {parent, mount_prefix, child} },
+             prefixes_by_function, file_prefixes)
+          STDERR.puts "#{file_path}: mount prefixes capped at #{MAX_MOUNT_PREFIXES} per router" if debug
+        end
 
         endpoints = [] of Endpoint
         route_patterns.each do |pattern|
@@ -992,9 +994,11 @@ module Noir
     @@direct_call_res = Hash(String, Regex).new
     HANDLER_ANCHOR_RE = /\bfunction\b|=>/
 
-    # Ceiling on the prefixes one router collects. Acyclic mount graphs stay
-    # far below it; it only bounds a diamond lattice of parallel edges.
-    MAX_MOUNT_PREFIXES = 64
+    # Ceiling on the prefixes one router collects. The (router, prefix)
+    # dedupe already bounds the work; this only stops a diamond lattice of
+    # parallel edges from multiplying without end. A shared router mounted
+    # under many paths stays well below it.
+    MAX_MOUNT_PREFIXES = 1024
 
     # Pushes mount prefixes along `{parent, prefix, child}` edges into
     # `prefixes`, starting from each parent's existing prefixes (or
@@ -1005,35 +1009,48 @@ module Noir
     # registers itself, or an a -> b -> a cycle is expanded at most once
     # instead of growing the prefix list without bound — the fixpoint loops
     # this replaced appended to the array they were iterating.
+    #
+    # Returns true when some router hit MAX_MOUNT_PREFIXES and lost prefixes.
     def self.propagate_mount_prefixes(edges : Array(Tuple(String, String, String)),
                                       prefixes : Hash(String, Array(String)),
-                                      fallback : Array(String) = [] of String) : Nil
+                                      fallback : Array(String) = [] of String) : Bool
       by_parent = edges.group_by(&.[0])
       starts = by_parent.keys.map do |parent|
         own = prefixes[parent]?
         {parent, own.nil? || own.empty? ? fallback : own.dup}
       end
       on_path = Set(String).new
+      capped = false
       starts.each do |parent, parent_prefixes|
         on_path << parent
-        parent_prefixes.each { |prefix| descend_mounts(parent, prefix, by_parent, prefixes, on_path) }
+        parent_prefixes.each do |prefix|
+          capped = true if descend_mounts(parent, prefix, by_parent, prefixes, on_path)
+        end
         on_path.delete(parent)
       end
+      capped
     end
 
+    # Returns true when a router's prefix list was full.
     private def self.descend_mounts(node : String, prefix : String,
                                     by_parent : Hash(String, Array(Tuple(String, String, String))),
-                                    prefixes : Hash(String, Array(String)), on_path : Set(String)) : Nil
+                                    prefixes : Hash(String, Array(String)), on_path : Set(String)) : Bool
+      capped = false
       by_parent[node]?.try &.each do |_, edge_prefix, child|
         next if on_path.includes?(child)
         combined = URLPath.join(prefix, edge_prefix)
         list = prefixes[child]? || (prefixes[child] = [] of String)
-        next if list.includes?(combined) || list.size >= MAX_MOUNT_PREFIXES
+        next if list.includes?(combined)
+        if list.size >= MAX_MOUNT_PREFIXES
+          capped = true
+          next
+        end
         list << combined
         on_path << child
-        descend_mounts(child, combined, by_parent, prefixes, on_path)
+        capped = true if descend_mounts(child, combined, by_parent, prefixes, on_path)
         on_path.delete(child)
       end
+      capped
     end
 
     # Equivalent to matching /['"`]<literal>['"`]/ — the literal bracketed by

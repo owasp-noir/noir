@@ -19,6 +19,13 @@ describe Noir::JSRouteExtractor do
       prefixes["s"].should eq([""])
     end
 
+    it "keeps a shared router's fan-in across many mounts" do
+      edges = (1..80).map { |n| {"root", "/m#{n}", "shared"} }
+      prefixes = {"root" => [""]}
+      Noir::JSRouteExtractor.propagate_mount_prefixes(edges, prefixes).should be_false
+      prefixes["shared"].size.should eq(80)
+    end
+
     it "starts an unprefixed parent from the fallback without recording it" do
       prefixes = {} of String => Array(String)
       Noir::JSRouteExtractor.propagate_mount_prefixes([{"p", "/c", "c"}], prefixes, ["/f"])

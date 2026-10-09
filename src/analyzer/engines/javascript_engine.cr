@@ -338,7 +338,9 @@ module Analyzer::Javascript
         prefixes[parent] = [""] unless children.includes?(parent)
       end
 
-      Noir::JSRouteExtractor.propagate_mount_prefixes(edges, prefixes)
+      if Noir::JSRouteExtractor.propagate_mount_prefixes(edges, prefixes)
+        logger.debug "Mount prefixes capped at #{Noir::JSRouteExtractor::MAX_MOUNT_PREFIXES} per router"
+      end
       prefixes
     end
 
