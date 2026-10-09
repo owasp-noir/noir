@@ -373,6 +373,33 @@ describe Noir::JSParser do
     end
   end
 
+  describe "restify second-pass routes" do
+    it "keeps routes after an applyRoutes() call" do
+      code = <<-JS
+        const restify = require('restify');
+        const srv = restify.createServer();
+        userRouter.get('/u', (req, res, next) => next());
+        userRouter.applyRoutes(srv, '/users');
+        srv.post({ path: '/after' }, (req, res, next) => next());
+        srv.opts('/o', (req, res, next) => next());
+        JS
+      routes = Noir::JSParser.new(code).parse_routes.map { |r| "#{r.method} #{r.path}" }
+      routes.should contain("POST /after")
+      routes.should contain("OPTIONS /o")
+    end
+
+    it "reads { path } routes past the first 10k tokens" do
+      n = 2000
+      code = String.build do |io|
+        io << "const restify = require('restify');\nconst srv = restify.createServer();\n"
+        n.times { |i| io << "srv.post({ path: '/r#{i}' }, (req, res, next) => next());\n" }
+      end
+      parser = Noir::JSParser.new(code)
+      parser.parse_routes.map(&.path).uniq!.size.should eq(n)
+      parser.hit_max_iterations?.should be_false
+    end
+  end
+
   describe "nested router prefixes" do
     it "applies each ancestor's prefix once on a three-level chain" do
       code = <<-JS

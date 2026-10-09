@@ -105,7 +105,10 @@ module Noir
       @framework = detect_framework
 
       # Add a maximum iteration count to prevent infinite loops
-      max_iterations = 10000
+      # Every iteration advances at least one token, so this is only a
+      # safety net. A fixed 10000 silently dropped the second-pass routes
+      # (Restify `{ path }` specs) of any file past ~10k tokens.
+      max_iterations = @tokens.size + 10_000
       iterations = 0
 
       # Track router mount paths: router_variable_name => array of prefix_paths (supports multi-mount)
@@ -1434,7 +1437,10 @@ module Noir
               route.push_param(param)
             end
 
-            @position = back_idx + 3
+            # Resume past this `applyRoutes(` call. Jumping back to the route
+            # walked forward onto the same call again, looping until the
+            # iteration budget ran out and dropping every route after it.
+            @position = idx + 4
             return route
           end
           back_idx -= 1
