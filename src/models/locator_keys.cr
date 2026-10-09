@@ -84,6 +84,7 @@ module Noir::LocatorKeys
     {:TYPESPEC_SPEC, "typespec-spec", :array, :detect_scoped, "detector/specification/typespec"},
     {:VERCEL_SPEC, "vercel-spec", :array, :detect_scoped, "detector/specification/vercel"},
     {:WSDL_SPEC, "wsdl-spec", :array, :detect_scoped, "detector/specification/wsdl"},
+    {:YARP_SPEC, "yarp-spec", :array, :detect_scoped, "detector/specification/yarp"},
     {:ZAP_SITES_TREE, "zap-sites-tree", :array, :detect_scoped, "detector/specification/zap_sites_tree"},
   ]
 
