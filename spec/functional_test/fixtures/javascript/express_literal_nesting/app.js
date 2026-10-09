@@ -18,6 +18,8 @@ app.get('/count', (req, res) => {
   res.send(String(half));
 });
 
+const quoted = (v) => `"${String(v).replace(/"/g, '\\"')}" ${v.replace(/'/g, '')}`;
+
 app.get('/after', (req, res) => {
   res.send(req.query.token);
 });

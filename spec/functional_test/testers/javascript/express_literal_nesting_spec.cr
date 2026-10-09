@@ -8,6 +8,8 @@ require "../../func_spec.cr"
 #     file out of phase;
 #   * `i++ / 2` and a JSX `</div>` opened a regex literal that ran on
 #     past the end of the line;
+#   * a regex inside a substitution (`${v.replace(/'/g, '')}`) opened a
+#     string in the template scanner;
 #   * an arrow inside the handler body (`items.map(i => …)`) was taken as
 #     the handler, so the `req.query` reads above it were never scanned.
 expected_endpoints = [

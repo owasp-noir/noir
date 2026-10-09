@@ -104,6 +104,7 @@ module Noir
       pos = start_pos
       window = Array(Char).new(KEYWORD_WINDOW)
       pending_ws = Array(Char).new(KEYWORD_WINDOW)
+      regex_floor = 0
 
       result = String.build do |io|
         while pos < size && paren_depth > 0
@@ -114,6 +115,21 @@ module Noir
           end
 
           char = chr(src, pos)
+
+          # Regex literals. A failed scan raises the floor to its line end,
+          # so the line's other '/'s are division instead of each re-scanning
+          # to the end of the line (quadratic on one long line).
+          if char == '/' && pos >= regex_floor && looks_like_regex?(window)
+            stop, closed = regex_literal_end(src, size, pos)
+            if closed
+              while pos < stop
+                emit(io, window, pending_ws, chr(src, pos))
+                pos += 1
+              end
+              next
+            end
+            regex_floor = stop
+          end
 
           # Track parentheses depth
           if char == '('
@@ -131,8 +147,8 @@ module Noir
       ScanResult.new(result, pos)
     end
 
-    # Skips (and where applicable, appends) one comment/string/template/
-    # regex literal starting at `pos`. Returns the resume position, or nil
+    # Skips (and where applicable, appends) one comment/string/template
+    # literal starting at `pos` (regex literals are the caller's). Returns the resume position, or nil
     # when `pos` does not start a literal. Comments are consumed without
     # appending; string/template/regex text is appended through `emit` so
     # the regex-context window stays in sync with the emitted output.
@@ -186,15 +202,6 @@ module Noir
         return pos
       end
 
-      # Skip regex literals
-      if char == '/' && looks_like_regex?(window) && (stop = regex_literal_end(src, size, pos))
-        while pos < stop
-          emit(io, window, pending_ws, chr(src, pos))
-          pos += 1
-        end
-        return pos
-      end
-
       nil
     end
 
@@ -209,6 +216,7 @@ module Noir
 
     def self.template_literal_end(src, size : Int32, pos : Int32) : Int32
       stack = [TEMPLATE_TEXT]
+      regex_floor = 0
       pos += 1
       while pos < size
         c = chr(src, pos)
@@ -243,6 +251,15 @@ module Noir
                 pos += 1
               end
               pos += 1
+            elsif pos >= regex_floor && regex_start?(src, pos)
+              # `${ s.replace(/'/g, "") }` — the quote or brace in the
+              # regex body must not open a string or shift the depth.
+              stop, closed = regex_literal_end(src, size, pos)
+              if closed
+                pos = stop
+                next
+              end
+              regex_floor = stop
             end
           when '{'
             stack[-1] += 1
@@ -259,17 +276,19 @@ module Noir
       size
     end
 
-    # End (exclusive, flags included) of the regex literal whose opening
-    # '/' is at `pos`, or nil when no closing '/' appears before the end of
-    # the line. A regex literal cannot span lines, so a '/' the context
-    # rule misjudged (a JSX `</tag>`, `a++ / 2`) is division, not a regex
-    # that swallows the rest of the file.
-    def self.regex_literal_end(src, size : Int32, pos : Int32) : Int32?
+    # Scans the regex literal whose opening '/' is at `pos`. Returns
+    # `{end, true}` (end exclusive, flags included) when it closes, or
+    # `{line_end, false}` when no closing '/' appears before the newline (or
+    # EOF) at `line_end`. A regex literal cannot span lines, so a '/' the
+    # context rule misjudged (a JSX `</tag>`, `a++ / 2`) is division, not a
+    # regex that swallows the rest of the file. Callers treat every '/'
+    # before `line_end` as division afterwards.
+    def self.regex_literal_end(src, size : Int32, pos : Int32) : Tuple(Int32, Bool)
       pos += 1
       in_char_class = false
       while pos < size
         c = chr(src, pos)
-        return if c == '\n'
+        return {pos, false} if c == '\n'
         if c == '\\'
           pos += 2
           next
@@ -282,11 +301,11 @@ module Noir
           while pos < size && chr(src, pos).in?('g', 'i', 'm', 's', 'u', 'y', 'd')
             pos += 1
           end
-          return pos
+          return {pos, true}
         end
         pos += 1
       end
-      nil
+      {size, false}
     end
 
     # Appends `char` to the output and keeps the regex-context window
@@ -362,12 +381,24 @@ module Noir
       size = src.size
       count = 1
       idx = open_idx + 1
+      regex_floor = 0
 
       while idx < size && count > 0
         # Try to skip literals
         if skip_idx = simple_literal_end(src, size, idx)
           idx = skip_idx
           next
+        end
+
+        # Regex literals, with the same failed-line floor as
+        # `extract_paren_content_impl`.
+        if chr(src, idx) == '/' && idx >= regex_floor && regex_start?(src, idx)
+          stop, closed = regex_literal_end(src, size, idx)
+          if closed
+            idx = stop
+            next
+          end
+          regex_floor = stop
         end
 
         case chr(src, idx)
@@ -384,7 +415,8 @@ module Noir
       nil
     end
 
-    # Simplified literal skip that doesn't accumulate content - just returns new position
+    # Simplified literal skip that doesn't accumulate content - just returns
+    # new position (regex literals are the caller's).
     private def self.simple_literal_end(src, size : Int32, pos : Int32) : Int32?
       char = chr(src, pos)
 
@@ -424,34 +456,33 @@ module Noir
       # Skip template literals
       return template_literal_end(src, size, pos) if char == '`'
 
-      # Skip regex literals (use simple heuristic based on previous char)
-      if char == '/'
-        # Look back for regex-preceding context
-        prev_idx = pos - 1
-        while prev_idx > 0 && chr(src, prev_idx).whitespace?
-          prev_idx -= 1
-        end
-        prev_char = prev_idx >= 0 ? chr(src, prev_idx) : '('
-
-        # Extract the identifier ending at prev_char so the shared rule can
-        # do the keyword probe; punctuation carries no word.
-        prev_word = if word_char?(prev_char)
-                      word_start = prev_idx
-                      while word_start > 0 && word_char?(chr(src, word_start - 1))
-                        word_start -= 1
-                      end
-                      word_string(src, word_start, prev_idx + 1)
-                    else
-                      ""
-                    end
-
-        before_prev = prev_idx > 0 ? chr(src, prev_idx - 1) : nil
-        if regex_context?(prev_char, prev_word, before_prev)
-          return regex_literal_end(src, size, pos)
-        end
-      end
-
       nil
+    end
+
+    # Does the '/' at `pos` start a regex literal, judged by looking back
+    # at the code before it?
+    private def self.regex_start?(src, pos : Int32) : Bool
+      # Look back for regex-preceding context
+      prev_idx = pos - 1
+      while prev_idx > 0 && chr(src, prev_idx).whitespace?
+        prev_idx -= 1
+      end
+      prev_char = prev_idx >= 0 ? chr(src, prev_idx) : '('
+
+      # Extract the identifier ending at prev_char so the shared rule can
+      # do the keyword probe; punctuation carries no word.
+      prev_word = if word_char?(prev_char)
+                    word_start = prev_idx
+                    while word_start > 0 && word_char?(chr(src, word_start - 1))
+                      word_start -= 1
+                    end
+                    word_string(src, word_start, prev_idx + 1)
+                  else
+                    ""
+                  end
+
+      before_prev = prev_idx > 0 ? chr(src, prev_idx - 1) : nil
+      regex_context?(prev_char, prev_word, before_prev)
     end
   end
 end

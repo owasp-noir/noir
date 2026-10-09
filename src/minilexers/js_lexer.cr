@@ -22,6 +22,9 @@ module Noir
     @position : Int32 = 0
     @current_char : Char = '\0'
     @tokens : Array(JSToken) = [] of JSToken
+    # End of the line on which a regex scan last failed; every '/' before
+    # it is division, so one long line is not re-scanned per '/'.
+    @regex_floor : Int32 = 0
 
     def initialize(source : String)
       # Index an Array(Char) rather than the String directly: `String#[]`
@@ -36,6 +39,7 @@ module Noir
 
     def tokenize : Array(JSToken)
       @tokens.clear
+      @regex_floor = 0
 
       while @current_char != '\0'
         case @current_char
@@ -86,7 +90,7 @@ module Noir
             skip_line_comment
           elsif peek == '*' # Multi line comment
             skip_multiline_comment
-          elsif looks_like_regex? && JSLiteralScanner.regex_literal_end(@chars, @size, @position)
+          elsif regex_literal_here?
             tokenize_regex
           else
             add_token(:operator, "/")
@@ -288,6 +292,14 @@ module Noir
         # same probe covers them without a per-type list.
         JSLiteralScanner.regex_context?(last_token.value[-1]?, "")
       end
+    end
+
+    # A '/' in regex context opens a regex only if it closes on its line.
+    private def regex_literal_here? : Bool
+      return false if @position < @regex_floor || !looks_like_regex?
+      stop, closed = JSLiteralScanner.regex_literal_end(@chars, @size, @position)
+      @regex_floor = stop unless closed
+      closed
     end
 
     # Tokenize a regex literal

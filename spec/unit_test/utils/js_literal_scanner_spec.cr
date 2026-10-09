@@ -201,6 +201,26 @@ describe Noir::JSLiteralScanner do
     end
   end
 
+  describe "template_literal_end with a regex in a substitution" do
+    it "keeps a quote or brace inside the regex out of the substitution state" do
+      ["/'/g, ''", %(/"/g, ""), "/{/g, ''", %(/\\${/, "")].each do |re|
+        src = "`a${ x.replace(#{re}) }b`;x"
+        Noir::JSLiteralScanner.template_literal_end(src.chars, src.size, 0).should eq(src.index!(";"))
+      end
+    end
+  end
+
+  describe "failed regex scans" do
+    it "stay linear on one long line of '/' that never closes" do
+      src = "{ var q=" + "a=/[x" * 200_000 + "\n}"
+      elapsed = Time.measure do
+        Noir::JSLiteralScanner.find_matching_brace(src, 0).should eq(src.size - 1)
+        Noir::JSLiteralScanner.extract_paren_content("(" + src + ")", 1).should_not be_nil
+      end
+      elapsed.should be < 2.seconds
+    end
+  end
+
   describe "find_matching_brace" do
     it "is not desynced by nested templates, JSX closing tags or postfix division" do
       [
