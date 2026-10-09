@@ -303,6 +303,7 @@ module Analyzer::Javascript
           end
         end
       end
+      nil
     end
 
     private def extract_braced_body(content : String, start_pos : Int32) : Tuple(String, Int32)?
