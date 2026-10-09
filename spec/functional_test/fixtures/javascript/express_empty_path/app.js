@@ -9,4 +9,10 @@ local.post('/', (req, res) => res.send('created'));
 app.get('', (req, res) => res.send('home'));
 app.use('/orders', local);
 app.use('/items', items);
+
+// Not routes: an empty path on a cache/HTTP client receiver.
+cache.get('', (err, v) => {});
+client.post('', body);
+api.post('', payload);
+
 app.listen(3000);

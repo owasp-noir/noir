@@ -3,7 +3,9 @@ require "../../func_spec.cr"
 # `router.get('', …)` is the mount point itself. The parser used to reject
 # the empty path outright, so the route was lost both unprefixed (`/`) and
 # under a same-file or cross-file mount (`/orders`, `/items`), while
-# `post('/')` under the same mount still came out as `/orders/`.
+# `post('/')` under the same mount still came out as `/orders/`. The empty
+# path is only a route on an app/router receiver: `cache.get('', cb)` and
+# `client.post('', body)` must not become `/`.
 expected_endpoints = [
   Endpoint.new("/", "GET"),
   Endpoint.new("/orders", "GET"),
