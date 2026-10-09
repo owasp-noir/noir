@@ -37,6 +37,28 @@ describe "Rust nested route prefixes" do
     ])
   end
 
+  it "does not resolve a module-qualified or self-mounting poem .nest to a local fn" do
+    routes_of(Analyzer::Rust::Poem.new(options), <<-RUST).should eq(["GET /", "GET /r", "GET /s/leaf"])
+      pub fn routes() -> Route {
+          Route::new()
+              .at("/", get(index))
+              .nest("/admin", admin::routes())
+      }
+
+      fn rec() -> Route {
+          Route::new().at("/r", get(index)).nest("/again", rec())
+      }
+
+      fn scoped() -> Route {
+          Route::new().nest("/s", self::leaf())
+      }
+
+      fn leaf() -> Route {
+          Route::new().at("/leaf", get(index))
+      }
+      RUST
+  end
+
   it "composes tide .at() with route variables and chained .at() calls" do
     routes_of(Analyzer::Rust::Tide.new(options), <<-RUST).should eq([
       fn main() {

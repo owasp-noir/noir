@@ -330,8 +330,9 @@ module Analyzer::Rust
     # ranges, start-sorted with outer ranges first. The range is the
     # inline argument (`Route::new().at(...)`), or the body of a same-file
     # `fn` it calls (`.nest("/api", api())`) — unless that fn is nested
-    # under more than one prefix. `nest_no_strip` keeps the full path, so
-    # it adds no prefix.
+    # under more than one prefix. `nest_no_strip` hands the inner endpoint
+    # the unstripped request path, so its routes already spell out the
+    # prefix and none is added.
     private def collect_route_nest_ranges(root : LibTreeSitter::TSNode,
                                           source : String,
                                           function_index : Hash(String, LibTreeSitter::TSNode)) : Array(Tuple(Int32, Int32, String))
@@ -351,9 +352,12 @@ module Analyzer::Rust
         prefix = string_content_from_string_literal(named[0], source)
         next unless prefix
         arg = named[1]
-        callee = Noir::TreeSitter.node_type(arg) == "call_expression" ? Noir::TreeSitter.field(arg, "function") : nil
-        name = callee && {"identifier", "scoped_identifier"}.includes?(Noir::TreeSitter.node_type(callee)) ? Noir::TreeSitter.node_text(callee, source).split("::").last : nil
-        if name && function_index.has_key?(name)
+        if name = local_fn_callee(arg, source)
+          function = function_index[name]?
+          next unless function
+          # A fn mounting itself would prefix its own top-level routes.
+          next if LibTreeSitter.ts_node_start_byte(function) <= LibTreeSitter.ts_node_start_byte(n) &&
+                  LibTreeSitter.ts_node_end_byte(n) <= LibTreeSitter.ts_node_end_byte(function)
           (fn_prefixes[name] ||= Set(String).new) << prefix
         else
           ranges << {LibTreeSitter.ts_node_start_byte(arg).to_i, LibTreeSitter.ts_node_end_byte(arg).to_i, prefix}
@@ -365,6 +369,19 @@ module Analyzer::Rust
         ranges << {LibTreeSitter.ts_node_start_byte(function).to_i, LibTreeSitter.ts_node_end_byte(function).to_i, prefixes.first}
       end
       ranges.sort_by! { |s, e, _| {s, -e} }
+    end
+
+    # `api()` / `self::api()` -> "api". A module path (`admin::routes()`)
+    # names another file's fn, never a same-named one in this file.
+    private def local_fn_callee(arg : LibTreeSitter::TSNode, source : String) : String?
+      return unless Noir::TreeSitter.node_type(arg) == "call_expression"
+      callee = Noir::TreeSitter.field(arg, "function")
+      return unless callee
+      text = Noir::TreeSitter.node_text(callee, source)
+      case Noir::TreeSitter.node_type(callee)
+      when "identifier"        then text
+      when "scoped_identifier" then text.lchop?("self::")
+      end
     end
 
     # ── poem-openapi nest prefix composition ─────────────────────────
