@@ -39,16 +39,18 @@ describe "PHP route-file parse failure reporting" do
 
   # Each nested `$routes->group(...)` callback was one more recursion with no
   # bound; ~2300 levels overflowed the stack and killed the whole scan.
-  it "skips a CodeIgniter routes file with runaway group nesting" do
+  it "skips only the CodeIgniter group nesting past the depth limit" do
     dir = File.tempname("noir_php_route_skip")
     path = File.join(dir, "app/Config/Routes.php")
     Dir.mkdir_p(File.dirname(path))
     depth = 3000
-    File.write(path, "<?php\n" + "$routes->group('a', function ($routes) {\n" * depth +
+    File.write(path, "<?php\n$routes->get('top', 'Home::index');\n" +
+                     "$routes->group('a', function ($routes) {\n" * depth +
                      "$routes->get('x', 'Home::index');\n" + "});\n" * depth)
 
     begin
-      Analyzer::Php::CodeIgniter.new(create_test_options).analyze_file(path).should be_empty
+      # The routes outside the runaway nesting are kept.
+      Analyzer::Php::CodeIgniter.new(create_test_options).analyze_file(path).map(&.url).should eq(["/top"])
       Noir::SkippedFiles.count.should eq(1)
       Noir::SkippedFiles.failures(Noir::SkippedFiles::Phase::Analysis).first.message.should contain("nested deeper")
     ensure
