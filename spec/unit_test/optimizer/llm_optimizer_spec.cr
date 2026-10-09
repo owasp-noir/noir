@@ -245,6 +245,21 @@ describe "LLMEndpointOptimizer" do
         .should eq(endpoint.url)
     end
 
+    it "keeps a -u base path when rewriting" do
+      with_base = create_test_options
+      with_base["url"] = YAML::Any.new("http://h:8080/base/")
+      optimizer = LLMEndpointOptimizer.new(guard_logger, with_base)
+      endpoint = Endpoint.new("http://h:8080/base/API/users", "GET")
+
+      ["/api/users", "/base/api/users", "http://h:8080/base/api/users"].each do |answer|
+        optimizer.__test_apply(endpoint, %({"optimized_url":"#{answer}","optimized_params":[]})).url
+          .should eq("http://h:8080/base/api/users")
+      end
+      # Leaving the base is not a rewrite of this endpoint.
+      optimizer.__test_apply(endpoint, %({"optimized_url":"http://h:8080/other","optimized_params":[]})).url
+        .should eq(endpoint.url)
+    end
+
     it "rejects a rewrite that collides with another endpoint" do
       prev_disable = ENV["NOIR_CACHE_DISABLE"]?
       ENV["NOIR_CACHE_DISABLE"] = "1"
@@ -316,6 +331,17 @@ describe "LLMEndpointOptimizer" do
         optimizer.__test_request("prompt B")
 
         adapter.calls.should eq(2)
+      end
+    end
+
+    it "returns the raw reply, so --debug logs what the model sent" do
+      with_isolated_cache_dir do
+        optimizer = LLMEndpointOptimizer.new(logger, create_test_options)
+        raw = "```json\n{\"optimized_url\":\"/a\",\"optimized_params\":[]}\n```"
+        optimizer.__test_install_adapter(CountingAdapter.new(raw), "openai", "gpt-4o-mini")
+
+        optimizer.__test_request("prompt A").should eq(raw)
+        optimizer.__test_apply(Endpoint.new("/A", "GET"), raw).url.should eq("/a")
       end
     end
 

@@ -131,7 +131,7 @@ class LLMEndpointOptimizer < EndpointOptimizer
       return cached
     end
 
-    response = LLM.strip_json_fences(adapter.request(prompt, LLM_OPTIMIZE_FORMAT).to_s)
+    response = adapter.request(prompt, LLM_OPTIMIZE_FORMAT).to_s
     # An empty or unparsable response means the request failed; caching it
     # would replay the failure on every later scan until the cache was
     # cleared by hand.
@@ -140,9 +140,18 @@ class LLMEndpointOptimizer < EndpointOptimizer
   end
 
   private def json_object?(text : String) : Bool
-    !JSON.parse(text).as_h?.nil?
+    !JSON.parse(LLM.strip_json_fences(text)).as_h?.nil?
   rescue JSON::ParseException
     false
+  end
+
+  # The part of an endpoint URL a rewrite may not change: the -u target
+  # (base path included) when the URL carries it, else an absolute URL's own
+  # scheme and host.
+  private def rewrite_prefix(url : String) : String
+    target = @options["url"]?.to_s.chomp("/")
+    return target if !target.empty? && (url == target || url.starts_with?("#{target}/"))
+    url[URL_ORIGIN_RE]? || ""
   end
 
   # Create LLM prompt for endpoint optimization
@@ -166,24 +175,30 @@ class LLMEndpointOptimizer < EndpointOptimizer
 
   # Apply LLM optimization suggestions to an endpoint
   private def apply_llm_optimizations(endpoint : Endpoint, response : String) : Endpoint
-    optimization_data = JSON.parse(response).as_h
+    optimization_data = JSON.parse(LLM.strip_json_fences(response)).as_h
 
     optimized_endpoint = endpoint
 
     # Apply URL optimizations if suggested
     if optimization_data.has_key?("optimized_url")
       new_url = optimization_data["optimized_url"].as_s
-      # With -u the URL is already absolute. Rewrite only its path and keep
-      # the origin: a path-only answer used to drop scheme and host, and a
-      # same-origin full URL was rejected outright.
-      origin = endpoint.url[URL_ORIGIN_RE]? || ""
-      new_url = new_url[origin.size..] if !origin.empty? && new_url.starts_with?(origin)
+      # With -u the URL is already prefixed. Rewrite only what follows the
+      # prefix: a path-only answer used to drop scheme, host and base path,
+      # and a full URL answer was rejected outright. The model was shown the
+      # full URL, so a path-only answer may repeat the base path.
+      prefix = rewrite_prefix(endpoint.url)
+      base_path = prefix.sub(URL_ORIGIN_RE, "")
+      if !prefix.empty? && new_url.starts_with?("#{prefix}/")
+        new_url = new_url[prefix.size..]
+      elsif !base_path.empty? && new_url.starts_with?("#{base_path}/")
+        new_url = new_url[base_path.size..]
+      end
       # Only accept a rewrite that is a real path. Without this guard a
       # model that returns prose, a code fragment, or a "/GET /x"-style
       # string (anything that merely starts with "/") would clobber a
       # correct URL — corrupting the endpoint (a false positive) and
       # losing the original (a false negative) in one step.
-      if new_url.starts_with?("/") && plausible_rewrite_url?(new_url) && (rewritten = "#{origin}#{new_url}") != endpoint.url
+      if new_url.starts_with?("/") && plausible_rewrite_url?(new_url) && (rewritten = "#{prefix}#{new_url}") != endpoint.url
         @logger.debug_sub "  - URL optimized: #{endpoint.url} → #{rewritten}"
         optimized_endpoint.url = rewritten
       end
