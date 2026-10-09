@@ -19,6 +19,7 @@ module Noir::LocatorKeys
     {:ANDROID_ASSETLINKS, "android-assetlinks", :array, :detect_scoped, "detector/mobile/well_known"},
     {:ANDROID_MANIFEST, "android-manifest", :array, :detect_scoped, "detector/mobile/android"},
     {:APACHE_HTTPD_SPEC, "apache-httpd-spec", :array, :detect_scoped, "detector/specification/apache_httpd"},
+    {:APIGEE_PROXY, "apigee-proxy", :array, :detect_scoped, "detector/specification/apigee"},
     {:APISIX_JSON, "apisix-json", :array, :detect_scoped, "detector/specification/apisix"},
     {:APISIX_YAML, "apisix-yaml", :array, :detect_scoped, "detector/specification/apisix"},
     {:APPWRITE_CONFIG, "appwrite-config", :array, :detect_scoped, "detector/specification/appwrite"},
