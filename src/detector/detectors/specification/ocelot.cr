@@ -14,7 +14,15 @@ module Detector::Specification
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
       return false unless content_matches?(file_contents, MARKER)
-      return false unless root = json_any?(strip_jsonc(file_contents)).try(&.as_h?)
+      root = begin
+        parse_json_lenient(strip_jsonc(file_contents)).as_h?
+      rescue e
+        # The marker is Ocelot's own key: a file carrying it that does not
+        # parse is a lost config, not an unrelated document.
+        record_unparsable_document(filename, e)
+        nil
+      end
+      return false unless root
 
       found = {"Routes", "ReRoutes", "Aggregates"}.any? do |key|
         root[key]?.try(&.as_a?).try(&.any? { |route| route.as_h?.try(&.["UpstreamPathTemplate"]?.try(&.as_s?)) })

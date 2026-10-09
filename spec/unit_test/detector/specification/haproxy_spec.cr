@@ -25,5 +25,7 @@ describe "Detect HAProxy config" do
     instance.detect("haproxy.conf", "server {\n  listen 80;\n  location /api { }\n}\n").should be_false
     instance.detect("setup.cfg", "[metadata]\nname = x\n").should be_false
     instance.applicable?("nginx.conf").should be_false
+    instance.applicable?("docs/haproxy.md").should be_false
+    instance.applicable?("deploy/haproxy.cfg.j2").should be_true
   end
 end

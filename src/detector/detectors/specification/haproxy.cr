@@ -13,8 +13,12 @@ module Detector::Specification
     # A path fetch in an ACL definition or an anonymous `{ ... }` ACL.
     PATH_ACL = /(?:^[ \t]*acl[ \t]+\S+|\{)[ \t]+path(?:_beg|_end|_reg|_dir|_sub)?\b/m
 
+    # `haproxy.cfg`, `conf/lb.cfg`, `haproxy.conf`, `haproxy.cfg.j2`; not
+    # `docs/haproxy.md`, whose examples are not a running config.
+    CONFIG_FILE = /(?:\.cfg|\Ahaproxy[\w.-]*\.(?:cfg|conf)(?:\.(?:j2|tmpl|template|erb))?)\z/
+
     def applicable?(filename : String) : Bool
-      filename.ends_with?(".cfg") || File.basename(filename).starts_with?("haproxy")
+      File.basename(filename).matches?(CONFIG_FILE)
     end
 
     def detect(filename : String, file_contents : String) : Bool

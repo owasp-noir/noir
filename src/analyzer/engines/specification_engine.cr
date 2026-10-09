@@ -682,11 +682,12 @@ module Analyzer::Specification
       arr.compact_map(&.as_s?).reject(&.empty?)
     end
 
-    # Line of the first match of `re` for each distinct capture-1 value, in one
-    # pass. `JSON::Any` keeps no positions, so array-shaped configs (Ocelot
-    # `Routes[]`, KrakenD `endpoints[]`) find a route's line by its own value.
-    protected def first_value_lines(content : String, re : Regex) : Hash(String, Int32)
-      lines = {} of String => Int32
+    # Lines of every match of `re`, by capture-1 value, in document order, in
+    # one pass. `JSON::Any` keeps no positions, so array-shaped configs (Ocelot
+    # `Routes[]`, KrakenD `endpoints[]`) find a route's line by its own value;
+    # `take_line` hands out repeats of one value in order.
+    protected def value_lines(content : String, re : Regex) : Hash(String, Array(Int32))
+      lines = {} of String => Array(Int32)
       bytes = content.to_slice
       line = 1
       pos = 0
@@ -694,9 +695,16 @@ module Analyzer::Specification
         start = m.byte_begin(0)
         line += bytes[pos, start - pos].count('\n'.ord.to_u8)
         pos = start
-        lines[m[1]] ||= line
+        (lines[m[1]] ||= [] of Int32) << line
       end
       lines
+    end
+
+    # The next line recorded for `value`; the last one repeats once the
+    # entries run out.
+    protected def take_line(lines : Hash(String, Array(Int32)), value : String) : Int32?
+      return unless list = lines[value]?
+      list.size > 1 ? list.shift : list.first?
     end
 
     # `details` pointed at `line`, or `details` itself when there is none.

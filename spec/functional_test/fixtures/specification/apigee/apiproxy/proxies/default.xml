@@ -15,6 +15,15 @@
         <Flow name="reports">
             <Condition>(proxy.pathsuffix JavaRegex "^/reports/[0-9]+$") or (proxy.pathsuffix ~/ "/exports/**")</Condition>
         </Flow>
+        <Flow name="items">
+            <Condition>(proxy.pathsuffix LikePath "/items/*") and (request.verb = "GET")</Condition>
+        </Flow>
+        <Flow name="paired">
+            <Condition>(proxy.pathsuffix MatchesPath "/a" and request.verb = "GET") or (proxy.pathsuffix MatchesPath "/b" and request.verb = "POST")</Condition>
+        </Flow>
+        <Flow name="notSecret">
+            <Condition>!(proxy.pathsuffix MatchesPath "/secret/**") and (request.verb = "PATCH")</Condition>
+        </Flow>
         <Flow name="unknownResource">
             <Request>
                 <Step><Name>RaiseFault-UnknownResource</Name></Step>

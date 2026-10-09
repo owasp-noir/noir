@@ -14,9 +14,6 @@ module Analyzer::Specification
     CODE_LIST_RE   = /\b(Methods|Hosts)\s*=\s*(?:new\b[^{;]*\{([^}]*)\}|\[([^\]]*)\])/
     QUOTED_RE      = /"([^"]+)"/
     PLACEHOLDER_RE = /\{([^{}]*)\}/
-    # A route-match block is a few lines; the bound only keeps an unbalanced
-    # brace from turning one initializer into a scan of the rest of the file.
-    MAX_BLOCK_BYTES = 4096
 
     def analyze
       each_spec_file_with_details(Noir::LocatorKeys::YARP_SPEC) do |path, details|
@@ -53,15 +50,24 @@ module Analyzer::Specification
       end
     end
 
+    # Scans the comment-blanked source, so a commented-out route is not read,
+    # and closes each initializer with the lexer's string-aware brace match.
     private def process_code(content : String, details : Details)
-      bytes = content.to_slice
+      lexer = Noir::CSharpLexer.new(content)
+      code = lexer.code_source
+      chars = code.chars
+      byte_pos = 0
+      char_pos = 0
       line = 1
-      pos = 0
-      content.scan(ROUTE_MATCH_RE) do |m|
-        start = m.byte_begin(0)
-        line += bytes[pos, start - pos].count('\n'.ord.to_u8)
-        pos = start
-        block = block_after(content, m.byte_end(0))
+      code.scan(ROUTE_MATCH_RE) do |m|
+        open_byte = m.byte_end(0) - 1
+        segment = code.byte_slice(byte_pos, open_byte - byte_pos)
+        char_pos += segment.size
+        line += segment.count('\n')
+        byte_pos = open_byte
+        next unless close = lexer.matching_delimiter(char_pos)
+
+        block = chars[(char_pos + 1)...close].join
         next unless path = CODE_PATH_RE.match(block).try(&.[1]).presence
 
         lists = {"Methods" => [] of String, "Hosts" => [] of String}
@@ -71,24 +77,6 @@ module Analyzer::Specification
         end
         emit(path, lists["Methods"], lists["Hosts"], nil, [] of Param, details_at(details, line))
       end
-    end
-
-    # Text of the `{ ... }` initializer whose opening brace ends at `from`.
-    private def block_after(content : String, from : Int32) : String
-      bytes = content.to_slice
-      limit = Math.min(bytes.size, from + MAX_BLOCK_BYTES)
-      depth = 1
-      i = from
-      while i < limit
-        case bytes[i]
-        when '{'.ord then depth += 1
-        when '}'.ord
-          depth -= 1
-          break if depth == 0
-        end
-        i += 1
-      end
-      String.new(bytes[from, i - from])
     end
 
     private def emit(path : String, methods : Array(String), hosts : Array(String),
@@ -102,7 +90,8 @@ module Analyzer::Specification
 
       methods.each do |method|
         endpoint = Endpoint.new(url, method, params.dup, details)
-        hosts.each { |host| endpoint.add_tag(Tag.new("yarp-host", host, "yarp_analyzer")) }
+        # `add_tag` keeps one tag per name, so the hosts share one.
+        endpoint.add_tag(Tag.new("yarp-host", hosts.join(", "), "yarp_analyzer")) unless hosts.empty?
         if cluster = cluster.presence
           endpoint.add_tag(Tag.new("yarp-cluster", cluster, "yarp_analyzer"))
         end

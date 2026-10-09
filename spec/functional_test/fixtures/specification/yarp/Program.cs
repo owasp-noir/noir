@@ -18,6 +18,8 @@ var routes = new[]
     {
         RouteId = "reports",
         ClusterId = "reports-cluster",
+        // 보고서 경로 { — a brace in a comment must not unbalance the block
+        // Match = new RouteMatch { Path = "/old-reports" },
         Match = new() { Path = "/reports" },
     },
     new RouteConfig

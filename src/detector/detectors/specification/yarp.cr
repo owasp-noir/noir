@@ -20,14 +20,20 @@ module Detector::Specification
       found = if filename.ends_with?(".cs")
                 content_matches?(file_contents, CODE_MARKER)
               else
-                content_matches?(file_contents, JSON_MARKER) && yarp_routes?(file_contents)
+                content_matches?(file_contents, JSON_MARKER) && yarp_routes?(filename, file_contents)
               end
       CodeLocator.instance.push(Noir::LocatorKeys::YARP_SPEC, filename) if found
       found
     end
 
-    private def yarp_routes?(content : String) : Bool
-      return false unless root = json_any?(strip_jsonc(content)).try(&.as_h?)
+    private def yarp_routes?(filename : String, content : String) : Bool
+      root = begin
+        parse_json_lenient(strip_jsonc(content)).as_h?
+      rescue e
+        record_unparsable_document(filename, e)
+        nil
+      end
+      return false unless root
       routes = root["ReverseProxy"]?.try(&.as_h?).try(&.["Routes"]?)
       !!(routes.try(&.as_h?).try(&.present?) || routes.try(&.as_a?).try(&.present?))
     end

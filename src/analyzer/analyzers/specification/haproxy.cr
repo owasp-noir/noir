@@ -15,7 +15,9 @@ module Analyzer::Specification
     SECTION_RE = /^(?:global|defaults|frontend|backend|listen|resolvers|peers|userlist|program|cache|mailers|ring|http-errors)\b/
     FETCH      = /path(?:_beg|_end|_reg|_dir|_sub)?/
     ACL_RE     = /^acl\s+(\S+)\s+(#{FETCH})(?:,\S+)?(?:\s+(.*))?$/
-    ANON_RE    = /(!?)\s*\{\s*(#{FETCH})(?:,\S+)?\s+([^}]*)\}/
+    # HAProxy needs whitespace before an anonymous ACL's closing `}`, so a
+    # regex quantifier (`{1,2}`) inside the pattern does not end it.
+    ANON_RE    = /(!?)\s*\{\s*(#{FETCH})(?:,\S+)?\s+(.*?)\s+\}/
     RULE_RE    = /\s(if|unless)\s+(.+)$/
     BACKEND_RE = /^use_backend\s+(\S+)/
     DENY_RE    = /^(?:http-request\s+(deny|reject|tarpit|silent-drop)|tcp-request\s+\S+\s+(reject)|block)\b/
@@ -78,7 +80,11 @@ module Analyzer::Specification
       recs.each do |rec|
         endpoint = Endpoint.new(rec.path, "ANY", details_at(details, rec.line))
         endpoint.add_tag(Tag.new("haproxy-path-type", rec.path_type, "haproxy_analyzer"))
-        rec.tags.each { |tag| endpoint.add_tag(tag) }
+        # `add_tag` keeps one tag per name: an ACL behind two `use_backend`
+        # rules names both backends in one tag.
+        rec.tags.group_by(&.name).each do |name, group|
+          endpoint.add_tag(Tag.new(name, group.map(&.description).uniq.join(", "), "haproxy_analyzer"))
+        end
         @result << endpoint
       end
     end
@@ -103,7 +109,7 @@ module Analyzer::Specification
         if token == "-m"
           mode = tokens[i + 1]? || mode
           i += 2
-        elsif token.in?("-f", "-M")
+        elsif token.in?("-f", "-u") # take a file / an ACL id; `-M` is a bare flag
           i += 2
         elsif token.starts_with?('-')
           i += 1

@@ -7,7 +7,8 @@ expected_endpoints = [
   Endpoint.new("/healthz", "ANY"),
   # `path_reg` anchors are stripped; `path_end .php` is not a path.
   Endpoint.new("/v2/[a-z]+", "ANY"),
-  # Anonymous ACLs in rules.
+  # Anonymous ACLs in rules; a regex quantifier's `}` does not close one.
+  Endpoint.new("/v[0-9]{1,2}/admin", "ANY"),
   Endpoint.new("/internal", "ANY"),
   Endpoint.new("/public", "ANY"),
   Endpoint.new("/api/admin", "ANY"),
@@ -26,7 +27,7 @@ describe "HAProxy rule tags", tags: "functional" do
     tags.call("/api/admin").should contain({"haproxy-action", "deny"})
     # `deny unless` denies everything *but* /public.
     tags.call("/public").should_not contain({"haproxy-action", "deny"})
-    tags.call("/api/").should contain({"haproxy-backend", "api_servers"})
+    tags.call("/api/").should contain({"haproxy-backend", "static_servers, api_servers"})
     tags.call("/api/").should contain({"haproxy-path-type", "prefix"})
     tags.call("/healthz").should contain({"haproxy-path-type", "exact"})
   end

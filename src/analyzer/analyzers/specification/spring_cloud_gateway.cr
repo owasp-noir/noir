@@ -16,7 +16,7 @@ module Analyzer::Specification
       %w[spring cloud gateway server webmvc routes],
       %w[spring cloud gateway mvc routes],
     ]
-    PROPERTY_RE   = /^\s*spring\.cloud\.gateway(?:\.server\.web(?:flux|mvc)|\.mvc)?\.routes\[(\d+)\]\.(\S+?)\s*[=:]\s*(.*?)\s*$/
+    PROPERTY_RE   = /^\s*spring\.cloud\.gateway((?:\.server\.web(?:flux|mvc)|\.mvc)?\.routes\[\d+\])\.(\S+?)\s*[=:]\s*(.*?)\s*$/
     PREDICATE_KEY = /\Apredicates\[(\d+)\](?:\.(name|args)\b.*)?\z/
     # `- id: users`, for the line a route is declared on.
     ID_LINE = /^[ \t]*-[ \t]*id[ \t]*:[ \t]*["']?([^\s"'#]+)/m
@@ -37,7 +37,7 @@ module Analyzer::Specification
     end
 
     private def yaml_routes(content : String) : Array(Route)
-      lines = first_value_lines(content, ID_LINE)
+      lines = value_lines(content, ID_LINE)
       routes = [] of Route
       YAML.parse_all(content).each do |doc|
         ROUTE_PREFIXES.each do |prefix|
@@ -47,7 +47,7 @@ module Analyzer::Specification
               next unless route_h = route.as_h?
               predicates = (route_h[YAML::Any.new("predicates")]?.try(&.as_a?) || [] of YAML::Any).compact_map { |p| yaml_predicate(p) }
               id = route_h[YAML::Any.new("id")]?.try(&.to_s)
-              routes << Route.new(route_h[YAML::Any.new("uri")]?.try(&.as_s?), predicates, id.try { |i| lines[i]? })
+              routes << Route.new(route_h[YAML::Any.new("uri")]?.try(&.as_s?), predicates, id.try { |i| take_line(lines, i) })
             end
           end
         end
@@ -93,13 +93,13 @@ module Analyzer::Specification
     private def shortcut_predicate(text : String) : Predicate?
       name, sep, args = text.partition('=')
       return if sep.empty?
-      Predicate.new(name.strip, args.split(',').map(&.strip).reject(&.empty?))
+      Predicate.new(name.strip, [args])
     end
 
     private def properties_routes(content : String) : Array(Route)
       uris = {} of String => String
       lines = {} of String => Int32
-      # route index => predicate index => {name, args}
+      # route (prefix + index) => predicate index => {name, args}
       predicates = Hash(String, Hash(String, {String, Array(String)})).new
       content.each_line.with_index(1) do |line, number|
         next unless m = PROPERTY_RE.match(line)
@@ -128,16 +128,23 @@ module Analyzer::Specification
       end
     end
 
+    # Spring binds a comma-separated string to a list argument, in the shortcut
+    # form (`Method=GET,POST`) and the expanded one (`methods: GET,POST`) alike.
+    private def predicate_args(route : Route, name : String) : Array(String)
+      route.predicates.select(&.name.==(name)).flat_map(&.args).flat_map(&.split(',')).map(&.strip).reject(&.empty?)
+    end
+
     private def emit(route : Route, details : Details)
-      paths = route.predicates.select(&.name.==("Path")).flat_map(&.args)
-      methods = route.predicates.select(&.name.==("Method")).flat_map(&.args).map(&.upcase)
+      paths = predicate_args(route, "Path")
+      methods = predicate_args(route, "Method").map(&.upcase)
       methods = ["ANY"] if methods.empty?
-      hosts = route.predicates.select(&.name.==("Host")).flat_map(&.args)
+      hosts = predicate_args(route, "Host")
 
       paths.each do |path|
         methods.each do |method|
           endpoint = Endpoint.new(path, method, details_at(details, route.line))
-          hosts.each { |host| endpoint.add_tag(Tag.new("spring-cloud-gateway-host", host, "spring_cloud_gateway_analyzer")) }
+          # `add_tag` keeps one tag per name, so the hosts share one.
+          endpoint.add_tag(Tag.new("spring-cloud-gateway-host", hosts.join(", "), "spring_cloud_gateway_analyzer")) unless hosts.empty?
           if uri = route.uri.presence
             endpoint.add_tag(Tag.new("spring-cloud-gateway-uri", uri, "spring_cloud_gateway_analyzer"))
           end

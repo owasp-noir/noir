@@ -9,6 +9,9 @@ expected_endpoints = [
   # `.properties` form; no `Method` predicate means any verb.
   Endpoint.new("/reports/**", "ANY"),
   Endpoint.new("/search", "PUT"),
+  # `server.webflux.routes[0]` is not `routes[0]`; `methods: GET,POST` is a list.
+  Endpoint.new("/next/**", "GET"),
+  Endpoint.new("/next/**", "POST"),
 ]
 
 FunctionalTester.new("fixtures/specification/spring_cloud_gateway/", {
