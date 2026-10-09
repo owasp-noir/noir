@@ -303,6 +303,19 @@ describe "LLMEndpointOptimizer" do
       end
     end
 
+    it "does not cache a truncated reply" do
+      with_isolated_cache_dir do
+        optimizer = LLMEndpointOptimizer.new(logger, create_test_options)
+        adapter = CountingAdapter.new(%({"optimized_url":"/users/{i))
+        optimizer.__test_install_adapter(adapter, "openai", "gpt-4o-mini")
+
+        optimizer.__test_request("prompt A")
+        optimizer.__test_request("prompt A")
+
+        adapter.calls.should eq(2)
+      end
+    end
+
     it "does not cache a failed request" do
       with_isolated_cache_dir do
         optimizer = LLMEndpointOptimizer.new(logger, create_test_options)

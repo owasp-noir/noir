@@ -131,11 +131,18 @@ class LLMEndpointOptimizer < EndpointOptimizer
       return cached
     end
 
-    response = adapter.request(prompt, LLM_OPTIMIZE_FORMAT).to_s
-    # An empty response means the request failed; caching it would replay
-    # the failure on every later scan until the cache was cleared by hand.
-    LLM::Cache.store(key, response) unless response.empty?
+    response = LLM.strip_json_fences(adapter.request(prompt, LLM_OPTIMIZE_FORMAT).to_s)
+    # An empty or unparsable response means the request failed; caching it
+    # would replay the failure on every later scan until the cache was
+    # cleared by hand.
+    LLM::Cache.store(key, response) if json_object?(response)
     response
+  end
+
+  private def json_object?(text : String) : Bool
+    !JSON.parse(text).as_h?.nil?
+  rescue JSON::ParseException
+    false
   end
 
   # Create LLM prompt for endpoint optimization
