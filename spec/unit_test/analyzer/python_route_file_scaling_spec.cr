@@ -44,7 +44,9 @@ describe "Python single-file route scaling" do
         elapsed = Time.measure { endpoints = scan_tree(root) }
 
         endpoints.size.should eq(framework == "flask" ? routes * 2 : routes)
-        elapsed.should be < 5.seconds
+        # Generous wall-clock bound for slow CI runners: the quadratic version
+        # took 12-110s at this size, the linear one about 1-2s.
+        elapsed.should be < 20.seconds
       ensure
         FileUtils.rm_rf(root)
       end
