@@ -429,6 +429,17 @@ module Analyzer::Rust
       index
     end
 
+    # 1-based line of a method call's name. A chained call node starts at
+    # the chain's first token, so `Router::new()\n.route("/a", …)\n.route("/b", …)`
+    # would put every route on the `Router::new()` line.
+    protected def call_line(call : LibTreeSitter::TSNode) : Int32
+      fn_node = Noir::TreeSitter.field(call, "function")
+      if fn_node && Noir::TreeSitter.node_type(fn_node) == "field_expression" && (field = Noir::TreeSitter.field(fn_node, "field"))
+        return Noir::TreeSitter.node_start_row(field) + 1
+      end
+      Noir::TreeSitter.node_start_row(call) + 1
+    end
+
     # The callee text of a `call_expression` (`foo`, `Bar::baz`, …).
     protected def call_function_text(call : LibTreeSitter::TSNode, source : String) : String?
       fn_node = Noir::TreeSitter.field(call, "function")

@@ -137,7 +137,7 @@ module Analyzer::Rust
             # SARIF / Postman / OpenAPI consumers see real HTTP
             # methods rather than a non-HTTP "ANY" string.
             RustEngine.fan_out_verbs(raw_verb).each do |verb|
-              details = Details.new(PathInfo.new(path, Noir::TreeSitter.node_start_row(node) + 1))
+              details = Details.new(PathInfo.new(path, call_line(node)))
               endpoint = Endpoint.new(path_str, verb, details)
               extract_path_params(path_str, endpoint)
 
@@ -182,7 +182,7 @@ module Analyzer::Rust
             path_str = nest_join(active_prefix, path_str) unless active_prefix.empty?
             handlers.each do |raw_verb, handler_name|
               RustEngine.fan_out_verbs(raw_verb).each do |verb|
-                details = Details.new(PathInfo.new(path, Noir::TreeSitter.node_start_row(node) + 1))
+                details = Details.new(PathInfo.new(path, call_line(node)))
                 endpoint = Endpoint.new(path_str, verb, details)
                 extract_path_params(path_str, endpoint)
 

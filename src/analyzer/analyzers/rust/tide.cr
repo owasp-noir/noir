@@ -48,7 +48,7 @@ module Analyzer::Rust
           route_path, method, handler_arg = route
           full_path = apply_nest_prefix(node, route_path, nest_ranges)
 
-          details = Details.new(PathInfo.new(path, Noir::TreeSitter.node_start_row(node) + 1))
+          details = Details.new(PathInfo.new(path, call_line(node)))
           endpoint = Endpoint.new(full_path, method, details)
           extract_path_params(full_path, endpoint)
 

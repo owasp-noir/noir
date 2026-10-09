@@ -43,7 +43,7 @@ module Analyzer::Rust
           route_path, method_handler_pairs = at_call
 
           method_handler_pairs.each do |method, handler_name|
-            details = Details.new(PathInfo.new(path, Noir::TreeSitter.node_start_row(node) + 1))
+            details = Details.new(PathInfo.new(path, call_line(node)))
             normalized = normalize_path(route_path)
             endpoint = Endpoint.new(normalized, method, details)
             extract_path_params(route_path, endpoint)
