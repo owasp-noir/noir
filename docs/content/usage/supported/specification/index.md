@@ -49,6 +49,8 @@ Beyond source code analysis, Noir can parse API and data specification formats s
 | HTTP / REST Client (.http/.rest) | HTTP | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ |
 | HTTP / REST Client (.http/.rest) | REST | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ |
 | Hasura (metadata) | YAML | ☑️ | ☑️ | ✗ | ☑️ | ☑️ | ✗ | ✗ |
+| Hoppscotch | JSON | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ |
+| Hurl | HURL | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ |
 | Insomnia | JSON | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ |
 | Insomnia | YAML | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ |
 | Istio VirtualService | YAML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
@@ -78,6 +80,7 @@ Beyond source code analysis, Noir can parse API and data specification formats s
 | Supabase / PostgREST (migrations) | SQL | ☑️ | ☑️ | ☑️ | ✗ | ☑️ | ☑️ | ✗ |
 | Terraform | TF | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Terraform | JSON | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| Thunder Client | JSON | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ |
 | Traefik Dynamic Config | YAML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Traefik Dynamic Config | TOML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | TypeSpec | TYPESPEC | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ |

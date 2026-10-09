@@ -1,0 +1,5 @@
+{
+  "name": "batch-job",
+  "requests": [{"method": "GET", "endpoint": "https://example.com/decoy"}],
+  "variables": [{"key": "a", "value": "b"}]
+}
