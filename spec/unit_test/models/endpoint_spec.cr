@@ -188,6 +188,27 @@ describe "Endpoint equality" do
   end
 end
 
+describe "Param with percent-decoded bytes" do
+  it "scrubs invalid UTF-8 so YAML and JSON stay valid" do
+    param = Param.new(URI.decode_www_form("r%E9sum%E9"), URI.decode_www_form("%FF"), "query")
+
+    param.name.valid_encoding?.should be_true
+    param.value.valid_encoding?.should be_true
+    param.name.should eq("r\uFFFDsum\uFFFD")
+    Endpoint.new("/s", "GET", [param]).to_json.valid_encoding?.should be_true
+    [param].to_yaml.should contain("sum")
+  end
+
+  it "scrubs through the setters too" do
+    param = Param.new("q", "", "query")
+    param.value = URI.decode_www_form("%FF")
+    param.name = URI.decode_www_form("%FE")
+
+    param.value.should eq("�")
+    param.name.should eq("�")
+  end
+end
+
 describe "Details contributing technologies" do
   it "adds technologies once each, sorted, ignoring nil and blank" do
     details = Details.new
