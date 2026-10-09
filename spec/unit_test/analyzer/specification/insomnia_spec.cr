@@ -165,6 +165,41 @@ describe "Insomnia Analyzer" do
     graphql.details.code_paths.map(&.path).should_not contain("UsersController.kt")
   end
 
+  # `[]?` on the null node raised "Expected Array or Hash, not Nil" and the
+  # whole collection was skipped.
+  it "treats a null or scalar v5 environments block as empty" do
+    endpoints = analyze_insomnia_yaml <<-YAML
+      type: collection.insomnia.rest/5.0
+      name: Demo
+      collection:
+        - name: users
+          method: GET
+          url: /users
+      environments:
+      environment: production
+      YAML
+
+    endpoints.map(&.url).should eq(["/users"])
+  end
+
+  it "skips a scalar v5 sub-environment" do
+    endpoints = analyze_insomnia_yaml <<-YAML
+      type: collection.insomnia.rest/5.0
+      name: Demo
+      collection:
+        - name: users
+          method: GET
+          url: "{{ _.base }}/users"
+      environments:
+        data: {}
+        subEnvironments:
+          - null
+          - data: {base: /v1}
+      YAML
+
+    endpoints.map(&.url).should eq(["/v1/users"])
+  end
+
   it "skips absolute request URLs with an empty host" do
     endpoints = analyze_insomnia_json <<-JSON
       {
