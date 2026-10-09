@@ -324,4 +324,68 @@ describe Analyzer::Rust::Axum do
     File.delete(temp_file)
     Dir.delete(temp_dir)
   end
+
+  # A stack overflow is a hard process abort, and a binding cycle used to
+  # recurse forever, so these pin that the walk returns at all.
+  describe "recursion guards" do
+    analyze_source = ->(source : String) do
+      temp_dir = File.tempname("axum_test")
+      Dir.mkdir_p(temp_dir)
+      temp_file = File.join(temp_dir, "test.rs")
+      File.write(temp_file, source)
+      begin
+        Analyzer::Rust::Axum.new(options).analyze_file(temp_file)
+      ensure
+        File.delete(temp_file)
+        Dir.delete(temp_dir)
+      end
+    end
+
+    {"", ".layer(l)"}.each do |link_suffix|
+      it "reports every route of a 6000-link .route()#{link_suffix} chain" do
+        source = String.build do |io|
+          io << "use axum::{routing::get, Router};\n\nfn app() -> Router {\n    Router::new()"
+          6000.times { |i| io << ".route(\"/r#{i}\", get(h))" << link_suffix }
+          io << "\n}\n"
+        end
+
+        analyze_source.call(source).size.should eq(6000)
+      end
+    end
+
+    it "does not resolve a shadowed binding into its own initializer" do
+      endpoints = analyze_source.call(<<-RUST)
+        use axum::{routing::get, Router};
+
+        fn with_prefix(router: Router) -> Router {
+            let router = Router::new().nest("/api", router);
+            router
+        }
+
+        fn app() -> Router {
+            with_prefix(Router::new().route("/health", get(h)))
+        }
+        RUST
+
+      endpoints.map(&.url).should contain("/health")
+    end
+
+    it "terminates on a branching nest cycle between let bindings" do
+      endpoints = analyze_source.call(<<-RUST)
+        use axum::{routing::get, Router};
+
+        fn f1(admin: Router) -> Router {
+            let api = Router::new().route("/ra", get(h)).nest("/a", admin).nest("/b", admin);
+            api
+        }
+
+        fn f2(api: Router) -> Router {
+            let admin = Router::new().route("/rb", get(h)).nest("/c", api).nest("/d", api);
+            admin
+        }
+        RUST
+
+      endpoints.size.should be < 100
+    end
+  end
 end
