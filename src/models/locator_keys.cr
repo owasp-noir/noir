@@ -83,6 +83,7 @@ module Noir::LocatorKeys
     {:THRIFT_IDL, "thrift-idl", :array, :detect_scoped, "detector/specification/thrift"},
     {:THUNDER_CLIENT_JSON, "thunder-client-json", :array, :detect_scoped, "detector/specification/thunder_client"},
     {:TRAEFIK_SPEC, "traefik-spec", :array, :detect_scoped, "detector/specification/traefik"},
+    {:TYK_SPEC, "tyk-spec", :array, :detect_scoped, "detector/specification/tyk"},
     {:TYPESPEC_SPEC, "typespec-spec", :array, :detect_scoped, "detector/specification/typespec"},
     {:VERCEL_SPEC, "vercel-spec", :array, :detect_scoped, "detector/specification/vercel"},
     {:WSDL_SPEC, "wsdl-spec", :array, :detect_scoped, "detector/specification/wsdl"},
