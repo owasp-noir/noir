@@ -19,10 +19,12 @@ end
 # answers with a reply that carries a KV `context`.
 private class FakeOllama
   getter bodies = [] of JSON::Any
+  getter auth = [] of String?
 
   def initialize
     @server = HTTP::Server.new do |ctx|
       @bodies << JSON.parse(ctx.request.body.try(&.gets_to_end) || "{}")
+      @auth << ctx.request.headers["Authorization"]?
       ctx.response.print %({"response":"{}","context":[1,2,3]})
     end
     @address = @server.bind_tcp("127.0.0.1", 0)
@@ -36,6 +38,16 @@ private class FakeOllama
 
   def close
     @server.close
+  end
+end
+
+private def with_ai_key_env(value : String?, &)
+  prev = ENV["NOIR_AI_KEY"]?
+  value ? (ENV["NOIR_AI_KEY"] = value) : ENV.delete("NOIR_AI_KEY")
+  begin
+    yield
+  ensure
+    prev ? (ENV["NOIR_AI_KEY"] = prev) : ENV.delete("NOIR_AI_KEY")
   end
 end
 
@@ -111,6 +123,22 @@ describe LLM::Ollama do
         ollama.request_with_context("sys", "file b", "json").should eq("{}")
         server.bodies.size.should eq(2)
         server.bodies.each(&.["context"]?.should(be_nil))
+      ensure
+        server.close
+      end
+    end
+
+    it "sends the API key as a bearer token, falling back to NOIR_AI_KEY" do
+      server = FakeOllama.new
+      begin
+        with_ai_key_env("env-key") do
+          LLM::Ollama.new(server.url, "llama3", nil, "cli-key").request("p")
+          LLM::Ollama.new(server.url, "llama3", nil, "").request("p")
+        end
+        with_ai_key_env(nil) do
+          LLM::Ollama.new(server.url, "llama3").request("p")
+        end
+        server.auth.should eq(["Bearer cli-key", "Bearer env-key", nil])
       ensure
         server.close
       end

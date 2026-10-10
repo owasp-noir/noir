@@ -213,7 +213,7 @@ module LLM
         acp_model = LLM::ACPClient.default_model(provider, model)
         LLM::ACPClient.new(provider, acp_model, event_sink)
       elsif ollama_native?(prov)
-        OllamaAdapter.new(LLM::Ollama.new(ollama_base_url(provider), model, context_tokens))
+        OllamaAdapter.new(LLM::Ollama.new(ollama_base_url(provider), model, context_tokens, api_key))
       else
         native_tool_calling = native_tool_calling_enabled_for_provider?(provider, native_tool_calling_allowlist)
         GeneralAdapter.new(LLM::General.new(provider, model, api_key), native_tool_calling)

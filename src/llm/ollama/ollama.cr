@@ -17,11 +17,15 @@ module LLM
     # lost most of its files. One fixed value per client, rounded up to
     # 1024: a `num_ctx` that changes between requests reloads the model.
     @num_ctx : Int32?
+    @api_key : String?
 
-    def initialize(url : String, model : String, context_tokens : Int32? = nil)
+    def initialize(url : String, model : String, context_tokens : Int32? = nil, api_key : String? = nil)
       @url = url
       @api = "#{url.chomp("/")}/api/generate"
       @model = model
+      # Same resolution as LLM::General: a hosted Ollama or an
+      # authenticating proxy needs the bearer token.
+      @api_key = api_key.presence || ENV["NOIR_AI_KEY"]?.presence
       @num_ctx = context_tokens.try { |tokens| tokens > 0 ? (tokens + 1023) // 1024 * 1024 : nil }
     end
 
@@ -114,6 +118,7 @@ module LLM
     private def request_headers : HTTP::Headers
       headers = HTTP::Headers.new
       headers["Content-Type"] = "application/json"
+      @api_key.try { |key| headers["Authorization"] = "Bearer #{key}" }
       headers
     end
   end
