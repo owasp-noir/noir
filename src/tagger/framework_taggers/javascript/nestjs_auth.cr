@@ -185,14 +185,15 @@ class NestjsAuthTagger < FrameworkTagger
     end
   end
 
-  # The end of the previous member: a lone `}`, a `;`, or a one-line body
-  # such as `public c() {}`. A multi-line decorator's object lines
-  # (`schema: { type: 'object' }`) are none of these.
+  # The end of the previous member: a lone `}` or a one-line body such as
+  # `public c() {}`. A multi-line decorator's object lines (`schema: {
+  # type: 'object' }`) and callback statements (`cb(null, true);`) are
+  # neither.
   ONE_LINE_BODY = /\)\s*(?::[^{}]*)?\{.*\}\z/
 
   private def member_end?(line : String) : Bool
     return false if line.starts_with?('@')
-    line == "}" || line.ends_with?(';') || line.matches?(ONE_LINE_BODY)
+    line == "}" || line.matches?(ONE_LINE_BODY)
   end
 
   private def collect_decorator_line(current : String, authn_descs : Array(String), authz_descs : Array(String))

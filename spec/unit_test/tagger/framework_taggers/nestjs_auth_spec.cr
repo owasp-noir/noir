@@ -187,6 +187,39 @@ describe "NestjsAuthTagger" do
     FileUtils.rm_rf(tmpdir)
   end
 
+  it "walks past statements inside a multi-line decorator argument" do
+    tmpdir = File.tempname("nest_callback_decorator")
+    Dir.mkdir_p(tmpdir)
+    path = File.join(tmpdir, "files.controller.ts")
+    File.write(path, [
+      "@Controller(\"files\")",                         # 1
+      "export class FilesController {",                 # 2
+      "  @UseGuards(AuthGuard(\"jwt\"))",               # 3
+      "  @UseInterceptors(FileInterceptor(\"file\", {", # 4
+      "    fileFilter: (req, file, cb) => {",           # 5
+      "      cb(null, true);",                          # 6
+      "    },",                                         # 7
+      "  }))",                                          # 8
+      "  @Post(\"upload\")",                            # 9
+      "  upload() {",                                   # 10
+      "    return 1;",                                  # 11
+      "  }",                                            # 12
+      "}",                                              # 13
+    ].join("\n"))
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+
+    upload = Endpoint.new("/files/upload", "POST", [] of Param, Details.new(PathInfo.new(path, 9)))
+    upload.details.technology = "ts_nestjs"
+
+    NestjsAuthTagger.new(noir_options).perform([upload])
+
+    upload.tags.map(&.name).should eq(["auth"])
+
+    FileUtils.rm_rf(tmpdir)
+  end
+
   it "applies a global APP_GUARD auth guard unless the handler or controller is @Public()" do
     tmpdir = File.tempname("nest_global_guard")
     Dir.mkdir_p(tmpdir)
