@@ -330,7 +330,17 @@ module LLM
     JSON
 
   # Map of LLM providers and their models to their max token limits
-  # This helps determine how many files can be bundled together
+  # This helps determine how many files can be bundled together.
+  #
+  # The budget sizes the prompt alone, so where output shares or has its
+  # own cap it is the *input* limit: GPT-5 through 5.3 take 272k of their
+  # 400k window, and the o-series leaves half of 200k for reasoning. A
+  # budget sized at the window ships bundles the API rejects whole. Claude
+  # Sonnet 4/4.5 reach 1M only behind a beta header this client never sends.
+  #
+  # A dated snapshot or channel id (`claude-opus-4-20250514`,
+  # `gemini-3-pro-preview`) resolves to its base entry; a tier variant
+  # (`-mini`, `-fast`) has its own window and needs its own entry.
   MODEL_TOKEN_LIMITS = {
     "openai" => {
       "gpt-3.5-turbo"        => 16385,
@@ -346,18 +356,25 @@ module LLM
       "gpt-4o-mini"          => 128000,
       "o1-preview"           => 128000,
       "o1-mini"              => 128000,
-      "o3-mini"              => 200000,
-      "gpt-5"                => 1000000,
-      "gpt-5-pro"            => 1000000,
-      "gpt-5-mini"           => 1000000,
-      "gpt-5-nano"           => 1000000,
-      "gpt-5-codex"          => 1000000,
-      "gpt-5.1"              => 1000000,
-      "gpt-5.1-codex"        => 1000000,
-      "gpt-5.1-codex-max"    => 1000000,
-      "gpt-5.1-codex-mini"   => 1000000,
-      "gpt-5.2-codex"        => 1000000,
-      "gpt-5.3-codex"        => 1000000,
+      "o1"                   => 100000,
+      "o3"                   => 100000,
+      "o3-mini"              => 100000,
+      "o4-mini"              => 100000,
+      "gpt-4.1"              => 1000000,
+      "gpt-4.1-mini"         => 1000000,
+      "gpt-4.1-nano"         => 1000000,
+      "gpt-5"                => 272000,
+      "gpt-5-pro"            => 272000,
+      "gpt-5-mini"           => 272000,
+      "gpt-5-nano"           => 272000,
+      "gpt-5-codex"          => 272000,
+      "gpt-5.1"              => 272000,
+      "gpt-5.1-codex"        => 272000,
+      "gpt-5.1-codex-max"    => 272000,
+      "gpt-5.1-codex-mini"   => 272000,
+      "gpt-5.2"              => 272000,
+      "gpt-5.2-codex"        => 272000,
+      "gpt-5.3-codex"        => 272000,
       "gpt-5.4"              => 1000000,
       "gpt-5.4-pro"          => 1000000,
       "gpt-5.4-mini"         => 1000000,
@@ -377,7 +394,7 @@ module LLM
       "grok-2-mini"               => 131072,
       "grok-beta"                 => 131072,
       "grok-3"                    => 1000000,
-      "grok-4"                    => 2000000,
+      "grok-4"                    => 256000,
       "grok-4-fast-reasoning"     => 2000000,
       "grok-4-fast-non-reasoning" => 2000000,
       "grok-4.1-fast"             => 2000000,
@@ -396,24 +413,31 @@ module LLM
       "claude-3-haiku"     => 200000,
       "claude-3-5-sonnet"  => 200000,
       "claude-3-5-haiku"   => 200000,
+      "claude-3-7-sonnet"  => 200000,
       "claude-2"           => 100000,
       "claude-2.0"         => 100000,
       "claude-2.1"         => 200000,
       "claude-instant-1.2" => 100000,
-      "claude-sonnet-4"    => 1000000,
-      "claude-sonnet-4-5"  => 1000000,
+      "claude-sonnet-4"    => 200000,
+      "claude-sonnet-4-5"  => 200000,
       "claude-sonnet-4-6"  => 1000000,
       "claude-sonnet-5"    => 1000000,
+      "claude-sonnet-5-5"  => 1000000,
+      "claude-haiku-5-5"   => 1000000,
       "claude-haiku-4-5"   => 200000,
       "claude-opus-4"      => 200000,
       "claude-opus-4-1"    => 200000,
       "claude-opus-4.1"    => 200000,
       "claude-opus-4-5"    => 200000,
-      "claude-opus-4-6"    => 200000,
-      "claude-opus-4-7"    => 200000,
+      "claude-opus-4-6"    => 1000000,
+      "claude-opus-4-7"    => 1000000,
       "claude-opus-4-8"    => 1000000,
+      "claude-opus-5"      => 1000000,
+      "claude-opus-5-5"    => 1000000,
       "claude-fable-5"     => 1000000,
+      "claude-fable-5-1"   => 1000000,
       "claude-mythos-5"    => 1000000,
+      "claude-mythos-5-1"  => 1000000,
       "default"            => 100000,
     },
     "azure" => {
@@ -429,8 +453,8 @@ module LLM
       "o1-preview"           => 128000,
       "o1-mini"              => 128000,
       "gpt-4.1"              => 1000000,
-      "gpt-5"                => 1000000,
-      "gpt-5.1-codex-max"    => 1000000,
+      "gpt-5"                => 272000,
+      "gpt-5.1-codex-max"    => 272000,
       "gpt-5.4"              => 1000000,
       "gpt-5.4-mini"         => 1000000,
       "gpt-5.5"              => 1000000,
@@ -495,22 +519,22 @@ module LLM
       "default"           => 4000,
     },
     "google" => {
-      "gemini-1.5-pro"                => 2097152,
-      "gemini-1.5-flash"              => 1048576,
-      "gemini-1.0-pro"                => 32760,
-      "gemini-pro"                    => 32760,
-      "gemini-pro-vision"             => 16384,
-      "gemini-2.0-flash-exp"          => 1048576,
-      "gemini-2.5-pro"                => 2000000,
-      "gemini-2.5-flash"              => 1048576,
-      "gemini-2.5-flash-lite"         => 1048576,
-      "gemini-3-pro-preview"          => 2000000,
-      "gemini-3.1-pro-preview"        => 2000000,
-      "gemini-3-flash-preview"        => 1048576,
-      "gemini-3.1-flash-preview"      => 1048576,
-      "gemini-3.1-flash-lite-preview" => 1048576,
-      "gemini-3.5-flash"              => 1048576,
-      "default"                       => 32760,
+      "gemini-1.5-pro"        => 2097152,
+      "gemini-1.5-flash"      => 1048576,
+      "gemini-1.0-pro"        => 32760,
+      "gemini-pro"            => 32760,
+      "gemini-pro-vision"     => 16384,
+      "gemini-2.0-flash"      => 1048576,
+      "gemini-2.5-pro"        => 1048576,
+      "gemini-2.5-flash"      => 1048576,
+      "gemini-2.5-flash-lite" => 1048576,
+      "gemini-3-pro"          => 1048576,
+      "gemini-3.1-pro"        => 1048576,
+      "gemini-3-flash"        => 1048576,
+      "gemini-3.1-flash"      => 1048576,
+      "gemini-3.1-flash-lite" => 1048576,
+      "gemini-3.5-flash"      => 1048576,
+      "default"               => 32760,
     },
     "cohere" => {
       "command-r"             => 256000,
@@ -637,10 +661,33 @@ module LLM
     end
   end
 
-  # `llama3.1:8b` is the `llama3.1` entry: an Ollama tag names a variant of
-  # the model, not a different context window.
+  # The model a request names, stripped of how it was addressed: a router
+  # vendor (`anthropic/…`), a registry path, an Ollama tag (`:8b`), a
+  # fine-tune wrapper (`ft:…:org::id`), a Bedrock region prefix
+  # (`us.anthropic.…`) and case. Claude's dotted router spelling
+  # (`claude-opus-4.7`) is folded onto the dashed API id.
+  def self.model_basename(model : String) : String
+    name = model.downcase.rpartition('/')[2].lchop("ft:").partition(':')[0]
+    name = name.sub(/\A(?:[a-z]{2}\.)?anthropic\./, "")
+    name.starts_with?("claude-") ? name.gsub(/(?<=\d)\.(?=\d)/, "-") : name
+  end
+
+  # Suffixes that name a snapshot or release channel of the same model, not
+  # a variant with its own context window.
+  SNAPSHOT_SUFFIX = /\A-(?:\d{4}(?:-\d{2}-\d{2})?|\d{8}|\d{2}-\d{4}|v\d+|latest|(?:preview|exp)(?:-[\w-]+)?)\z/
+
   def self.model_token_limit(limits : Hash(String, Int32), model : String) : Int32?
-    limits[model]? || limits[model.partition(':')[0]]?
+    name = model_basename(model)
+    best = nil.as({Int32, Int32}?)
+    limits.each do |key, limit|
+      next if key == "default"
+      base = model_basename(key)
+      next unless name.starts_with?(base)
+      rest = name[base.size..]
+      next unless rest.empty? || rest.matches?(SNAPSHOT_SUFFIX)
+      best = {base.size, limit} if best.nil? || base.size > best[0]
+    end
+    best.try(&.[1])
   end
 
   # The analyzer and the LLM optimizer both size their requests, so the

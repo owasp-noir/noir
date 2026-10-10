@@ -84,12 +84,21 @@ describe LLM do
         openai["gpt-4o"].should eq(128000)
       end
 
-      it "includes o3-mini with 200000 tokens" do
-        openai["o3-mini"].should eq(200000)
+      it "sizes the o-series at half its 200k window, leaving room to reason" do
+        openai["o3-mini"].should eq(100000)
       end
 
-      it "includes gpt-5.1 with 1000000 tokens" do
-        openai["gpt-5.1"].should eq(1000000)
+      it "sizes gpt-5 through 5.3 at their 272k input cap, not the 400k window" do
+        openai["gpt-5"].should eq(272000)
+        openai["gpt-5.1"].should eq(272000)
+        openai["gpt-5.2"].should eq(272000)
+        openai["gpt-5.3-codex"].should eq(272000)
+      end
+
+      it "includes o3, o4-mini and gpt-4.1" do
+        openai["o3"].should eq(100000)
+        openai["o4-mini"].should eq(100000)
+        openai["gpt-4.1"].should eq(1000000)
       end
 
       it "includes gpt-5.4 with 1000000 tokens" do
@@ -124,8 +133,8 @@ describe LLM do
         xai["grok-3"].should eq(1000000)
       end
 
-      it "includes grok-4 with 2000000 tokens" do
-        xai["grok-4"].should eq(2000000)
+      it "includes grok-4 with 256000 tokens" do
+        xai["grok-4"].should eq(256000)
       end
 
       it "includes grok-4-fast-reasoning with 2000000 tokens" do
@@ -176,12 +185,13 @@ describe LLM do
         anthropic["claude-3-5-sonnet"].should eq(200000)
       end
 
-      it "includes claude-sonnet-4 with 1000000 tokens" do
-        anthropic["claude-sonnet-4"].should eq(1000000)
+      # 1M on Sonnet 4/4.5 needs a beta header the client never sends.
+      it "includes claude-sonnet-4 with 200000 tokens" do
+        anthropic["claude-sonnet-4"].should eq(200000)
       end
 
-      it "includes claude-sonnet-4-5 with 1000000 tokens" do
-        anthropic["claude-sonnet-4-5"].should eq(1000000)
+      it "includes claude-sonnet-4-5 with 200000 tokens" do
+        anthropic["claude-sonnet-4-5"].should eq(200000)
       end
 
       it "includes claude-haiku-4-5 with 200000 tokens" do
@@ -200,12 +210,18 @@ describe LLM do
         anthropic["claude-sonnet-5"].should eq(1000000)
       end
 
-      it "includes claude-opus-4-6 with 200000 tokens" do
-        anthropic["claude-opus-4-6"].should eq(200000)
+      it "includes claude-opus-4-6 with 1000000 tokens" do
+        anthropic["claude-opus-4-6"].should eq(1000000)
       end
 
-      it "includes claude-opus-4-7 with 200000 tokens" do
-        anthropic["claude-opus-4-7"].should eq(200000)
+      it "includes claude-opus-4-7 with 1000000 tokens" do
+        anthropic["claude-opus-4-7"].should eq(1000000)
+      end
+
+      it "includes the Claude 5.x models with 1000000 tokens" do
+        %w[claude-opus-5 claude-opus-5-5 claude-sonnet-5-5 claude-haiku-5-5 claude-fable-5-1 claude-mythos-5-1].each do |m|
+          anthropic[m].should eq(1000000)
+        end
       end
 
       it "includes claude-opus-4-8 with 1000000 tokens" do
@@ -356,16 +372,16 @@ describe LLM do
         google["gemini-1.5-flash"].should eq(1048576)
       end
 
-      it "includes gemini-2.5-pro with 2000000 tokens" do
-        google["gemini-2.5-pro"].should eq(2000000)
+      it "includes gemini-2.5-pro with 1048576 tokens" do
+        google["gemini-2.5-pro"].should eq(1048576)
       end
 
-      it "includes gemini-3.1-pro-preview with 2000000 tokens" do
-        google["gemini-3.1-pro-preview"].should eq(2000000)
+      it "includes gemini-3.1-pro with 1048576 tokens" do
+        google["gemini-3.1-pro"].should eq(1048576)
       end
 
-      it "includes gemini-3-flash-preview with 1048576 tokens" do
-        google["gemini-3-flash-preview"].should eq(1048576)
+      it "includes gemini-3-flash with 1048576 tokens" do
+        google["gemini-3-flash"].should eq(1048576)
       end
 
       it "has default of 32760" do
@@ -421,6 +437,39 @@ describe LLM do
       LLM.model_token_limit(ollama, "llama3.1:8b").should eq(ollama["llama3.1"])
       LLM.model_token_limit(ollama, "llama3.1").should eq(ollama["llama3.1"])
       LLM.model_token_limit(ollama, "no-such-model:7b").should be_nil
+    end
+
+    it "resolves dated snapshots and channel suffixes to the longest key prefix" do
+      limits = LLM::MODEL_TOKEN_LIMITS
+      anthropic = limits["anthropic"].as(Hash(String, Int32))
+      openai = limits["openai"].as(Hash(String, Int32))
+      google = limits["google"].as(Hash(String, Int32))
+      xai = limits["xai"].as(Hash(String, Int32))
+      LLM.model_token_limit(anthropic, "claude-sonnet-4-5-20250929").should eq(anthropic["claude-sonnet-4-5"])
+      LLM.model_token_limit(anthropic, "claude-opus-4-1-20250805").should eq(anthropic["claude-opus-4-1"])
+      LLM.model_token_limit(anthropic, "claude-opus-4-20250514").should eq(anthropic["claude-opus-4"])
+      LLM.model_token_limit(openai, "gpt-4o-mini-2024-07-18").should eq(openai["gpt-4o-mini"])
+      LLM.model_token_limit(xai, "grok-4-0709").should eq(xai["grok-4"])
+      LLM.model_token_limit(anthropic, "us.anthropic.claude-opus-4-7-v1:0").should eq(anthropic["claude-opus-4-7"])
+      LLM.model_token_limit(anthropic, "anthropic/claude-opus-4.7").should eq(anthropic["claude-opus-4-7"])
+      LLM.model_token_limit(openai, "GPT-4o").should eq(openai["gpt-4o"])
+      LLM.model_token_limit(openai, "o3-2025-04-16").should eq(openai["o3"])
+      LLM.model_token_limit(openai, "openai/gpt-5-mini").should eq(openai["gpt-5-mini"])
+      LLM.model_token_limit(google, "gemini-3-pro-preview").should eq(google["gemini-3-pro"])
+      # A dot is not a snapshot separator: gpt-4.5 is not gpt-4.
+      LLM.model_token_limit(openai, "gpt-4.5-preview").should be_nil
+    end
+
+    it "does not lend a base model's window to a tier variant" do
+      openai = LLM::MODEL_TOKEN_LIMITS["openai"].as(Hash(String, Int32))
+      # gpt-5-chat-latest is a 128k model, not gpt-5's 272k.
+      LLM.model_token_limit(openai, "gpt-5-chat-latest").should be_nil
+      LLM.model_token_limit(openai, "default-xyz").should be_nil
+    end
+
+    it "strips a registry path before the Ollama tag" do
+      ollama = LLM::MODEL_TOKEN_LIMITS["ollama"].as(Hash(String, Int32))
+      LLM.model_token_limit(ollama, "localhost:5000/library/llama3.1:8b").should eq(ollama["llama3.1"])
     end
   end
 

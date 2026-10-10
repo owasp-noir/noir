@@ -22,6 +22,10 @@ class LLM::General
   def __test_headers : HTTP::Headers
     request_headers
   end
+
+  def __test_encode(body : Hash) : String
+    encode(body)
+  end
 end
 
 private def with_ai_key_env(value : String?, &)
@@ -230,5 +234,30 @@ describe LLM::GeneralAdapter do
   it "supports native tool-calling" do
     adapter = LLM::GeneralAdapter.new(LLM::General.new("http://localhost:9999/v1/chat/completions", "test-model", "test-key"))
     adapter.supports_native_tool_calling?.should be_true
+  end
+end
+
+describe "LLM::General.sampling_temperature?" do
+  it "omits temperature for models that reject a non-default value" do
+    %w[o1 o3-mini o4-mini-2025-04-16 gpt-5 gpt-5.4-mini claude-opus-4-7 claude-opus-5-5
+      claude-sonnet-5 claude-sonnet-5-5 claude-haiku-5-5 claude-fable-5-1 claude-mythos-5
+      anthropic/claude-opus-4-8 openai/gpt-5].each do |model|
+      LLM::General.sampling_temperature?(model).should be_false
+    end
+  end
+
+  it "keeps temperature for models that accept it" do
+    %w[gpt-4o gpt-4.1 claude-opus-4-6 claude-sonnet-4-6 claude-haiku-4-5 claude-3-5-sonnet
+      gemini-3-pro llama3.1:8b olmo2 grok-4 gpt-oss-20b].each do |model|
+      LLM::General.sampling_temperature?(model).should be_true
+    end
+  end
+end
+
+describe "LLM::General request body" do
+  it "drops temperature for a model that rejects it and keeps it otherwise" do
+    body = {"model" => "x", "temperature" => 0.3}
+    JSON.parse(LLM::General.new("openai", "o3", "k").__test_encode(body.dup))["temperature"]?.should be_nil
+    JSON.parse(LLM::General.new("openai", "gpt-4o", "k").__test_encode(body.dup))["temperature"].as_f.should eq(0.3)
   end
 end
