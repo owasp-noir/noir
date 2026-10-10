@@ -39,6 +39,7 @@ module LLM
 
     @api_key : String?
     @send_temperature : Bool
+    @send_seed = true
 
     # How much of `response_format` the server accepts, learned from its
     # 400s and kept for the rest of the run. Ordered: each step only drops.
@@ -122,12 +123,17 @@ module LLM
       !LLM.model_basename(model).matches?(FIXED_SAMPLING_MODEL)
     end
 
-    # The 400 for a rejected sampling parameter: OpenAI names it in `param`
+    # The 400 for a rejected sampling parameter (`temperature`, or the
+    # `seed` from --ai-seed): OpenAI names it in `param`
     # (`unsupported_value`), Anthropic in the message. Only the error itself
     # is read; a gateway that echoes the request would otherwise match on
     # every 400.
     def self.temperature_rejected?(rejection : HttpTransport::Rejection) : Bool
       rejected_for?(rejection, /temperature/i)
+    end
+
+    def self.seed_rejected?(rejection : HttpTransport::Rejection) : Bool
+      rejected_for?(rejection, /\bseed\b/i)
     end
 
     # A server that implements only `json_object`, or no structured output
@@ -225,6 +231,11 @@ module LLM
         return post(body, raise_overflow)
       end
 
+      if @send_seed && LLM::Sampling.seed && self.class.seed_rejected?(result)
+        @send_seed = false
+        return post(body, raise_overflow)
+      end
+
       if raise_overflow && (overflow = self.class.context_overflow(result))
         raise overflow
       end
@@ -300,7 +311,7 @@ module LLM
 
     private def encode(body : Hash) : String
       body.delete("temperature") unless @send_temperature
-      body.delete("seed") unless LLM::Sampling.seed
+      body.delete("seed") unless @send_seed && LLM::Sampling.seed
       body.to_json
     end
 

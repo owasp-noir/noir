@@ -329,6 +329,22 @@ describe "LLM::General recovering from a rejection" do
     end
   end
 
+  it "drops a seed the provider refuses and keeps it dropped" do
+    provider = RejectingProvider.new do |body|
+      body["seed"]? ? {400, %({"error":{"message":"Unrecognized request argument supplied: seed"}})} : {200, OK_REPLY}
+    end
+    begin
+      LLM::Sampling.seed = 1_i64
+      client = LLM::General.new(provider.url, "gpt-4o", "k")
+      client.request_messages([{"role" => "user", "content" => "x"}]).should eq(%({"endpoints":[]}))
+      client.request_messages([{"role" => "user", "content" => "y"}]).should eq(%({"endpoints":[]}))
+      provider.bodies.map(&.["seed"]?.nil?).should eq([false, true, true])
+    ensure
+      LLM::Sampling.seed = nil
+      provider.close
+    end
+  end
+
   it "raises ContextOverflow only for a caller that can re-split" do
     provider = RejectingProvider.new do |_|
       {400, %({"error":{"message":"This model's maximum context length is 128000 tokens. However, your messages resulted in 130000 tokens.","code":"context_length_exceeded"}})}
