@@ -109,7 +109,7 @@ module Analyzer::Php
             patterns << {pattern, strings(entry[2])}
           end
         end
-        mounts << Mount.new(project_root(path), dir, uri, patterns)
+        mounts << Mount.new(composer_project_root(path), dir, uri, patterns)
       end
       mounts
     end
@@ -118,13 +118,6 @@ module Analyzer::Php
     # the mount (`admin/index.blade.php`).
     private def mount_middleware(mount : Mount, view : String, page : String) : Array(String)
       mount.middleware.select { |(pattern, _)| view.matches?(pattern) || page.matches?(pattern) }.flat_map(&.[1])
-    end
-
-    # Directory (normalized) of the nearest `composer.json` above `path`, or "".
-    private def project_root(path : String) : String
-      expanded = Noir::PathScope.expand(path)
-      get_files_by_basename("composer.json").map { |f| Noir::PathScope.normalize_root(File.dirname(f)) }
-        .select { |dir| Noir::PathScope.under_normalized_root?(expanded, dir) }.max_by?(&.size) || ""
     end
 
     # `middleware(['auth', 'verified'])` inside the page's PHP block.

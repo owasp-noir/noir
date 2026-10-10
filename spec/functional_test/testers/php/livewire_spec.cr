@@ -35,3 +35,15 @@ FunctionalTester.new("fixtures/php/livewire_update_route/", {
 ], {
   "only_techs" => YAML::Any.new("php_livewire"),
 }).perform_tests
+
+# Two Laravel apps under one scan base: only `custom/` calls
+# `setUpdateRoute`, so `plain/`'s component stays on the default route.
+FunctionalTester.new("fixtures/php/livewire_multi_app/", {
+  :techs     => 1,
+  :endpoints => 2,
+}, [
+  Endpoint.new("/custom/livewire/update#counter.increment", "POST", [Param.new("count", "", "json")]),
+  Endpoint.new("/livewire/update#toggle.flip", "POST", [Param.new("on", "", "json")]),
+], {
+  "only_techs" => YAML::Any.new("php_livewire"),
+}).perform_tests

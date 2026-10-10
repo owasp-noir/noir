@@ -113,6 +113,14 @@ module Analyzer::Php
       configured_base_for(path)
     end
 
+    # Directory (normalized) of the nearest `composer.json` above `path`, or
+    # "" — the app a file belongs to in a monorepo.
+    protected def composer_project_root(path : String) : String
+      expanded = Noir::PathScope.expand(path)
+      get_files_by_basename("composer.json").map { |f| Noir::PathScope.normalize_root(File.dirname(f)) }
+        .select { |dir| Noir::PathScope.under_normalized_root?(expanded, dir) }.max_by?(&.size) || ""
+    end
+
     # Route composition helper. Will migrate to a PHP route extractor when that
     # layer is introduced; kept here for now so Laravel/CakePHP/Symfony stop
     # duplicating it.
