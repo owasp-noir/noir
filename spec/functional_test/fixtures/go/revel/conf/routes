@@ -5,6 +5,7 @@
 module:testrunner
 
 GET     /                       App.Index
+GET     /favicon.ico            404
 POST    /users/:id              Users.Update
 GET     /users                  Users.List
 WS      /feed                   App.Feed

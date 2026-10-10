@@ -58,7 +58,8 @@ module Analyzer::Go
       read_file_content(path).each_line.with_index(1) do |line, number|
         next unless match = line.strip.match(ROUTE_RE)
         action = match[3]
-        next if action.starts_with?("module:")
+        # `module:` imports module routes; `404` is a fixed-status route.
+        next if action.starts_with?("module:") || action == "404"
 
         method = case match[1]
                  when "*"  then "ANY"
