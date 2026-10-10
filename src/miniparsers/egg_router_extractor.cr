@@ -31,11 +31,14 @@ module Noir
       code.scan(NAMESPACE) { |m| prefixes[m[1]] = m[3] }
 
       routes = [] of Route
+      # Byte offsets throughout: char-indexed matching and slicing rescan
+      # the file per route once it holds one non-ASCII char.
+      offsets = JSRouteExtractor::ByteOffsets.new(code)
       code.scan(CALL) do |m|
         prefix = prefixes[m[1]]? || next
-        open = m.end(0) - 1
-        close = JSRouteExtractor.find_matching_paren(code, open) || next
-        args = TopLevelSplit.split(code[(open + 1)...close], ',', TopLevelSplit::Rules::JS_POSITIONAL_ARGS)
+        open = m.byte_end(0) - 1
+        close = JSLiteralScanner.find_matching_paren_at_byte(code, open) || next
+        args = TopLevelSplit.split(code.byte_slice(open + 1, close - open - 1), ',', TopLevelSplit::Rules::JS_POSITIONAL_ARGS)
         args.pop if args.last? == "" # trailing comma
         next if args.size < 2
 
@@ -45,7 +48,7 @@ module Noir
         path = string_literal(named ? args[1] : args[0]) || next
         next unless path.starts_with?('/')
 
-        routes << Route.new(m[2], URLPath.join(prefix, path), args.last, JSRouteExtractor.line_for_char_pos(code, m.begin(0)))
+        routes << Route.new(m[2], URLPath.join(prefix, path), args.last, offsets.line(m.byte_begin(0)))
       end
       routes
     end

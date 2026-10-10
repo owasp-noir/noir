@@ -41,4 +41,14 @@ describe Noir::EggRouterExtractor do
       JS
     Noir::EggRouterExtractor.extract(content).should be_empty
   end
+
+  it "reads many routes of a non-ASCII router in linear time, on the right lines" do
+    content = %(module.exports = app => {\n  const title = "한국어";\n) +
+              (0...4000).join { |i| %(  app.router.get("/한/#{i}", controller.a.b#{i});\n) } + "};\n"
+    routes = [] of Noir::EggRouterExtractor::Route
+    elapsed = Time.measure { routes = Noir::EggRouterExtractor.extract(content) }
+    routes.size.should eq 4000
+    {routes.last.path, routes.last.handler, routes.last.line}.should eq({"/한/3999", "controller.a.b3999", 4002})
+    elapsed.should be < 2.seconds
+  end
 end

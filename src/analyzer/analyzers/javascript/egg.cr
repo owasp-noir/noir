@@ -124,9 +124,11 @@ module Analyzer::Javascript
         /(?<![\w$.])(?:(?:public|private|protected|static|async|override)\s+)*(?:(?:module\.)?exports\.)?#{Regex.escape(name)}\s*(?:[:=]\s*(?:async\s+)?(?:function\b\s*\*?\s*)?)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*(?::(?:[^{};=]|\{[^{}]*\}(?=\s*[>|&,\]]))+)?(?:=>\s*)?\{/
       end
       m = content.match(re) || return
-      open = m.end(0) - 1
-      close = Noir::JSRouteExtractor.find_matching_brace(content, open) || return
-      Handler.new(content[(open + 1)...close], file, Noir::JSRouteExtractor.line_for_char_pos(content, m.begin(0)))
+      # Byte offsets: char-indexed matching and slicing materialize the whole
+      # controller per route once it holds one non-ASCII char.
+      open = m.byte_end(0) - 1
+      close = Noir::JSLiteralScanner.find_matching_brace_at_byte(content, open) || return
+      Handler.new(content.byte_slice(open + 1, close - open - 1), file, line_at_byte_offset(content, m.byte_begin(0)))
     end
 
     # Comment-stripped controller source, so a commented-out method is not
