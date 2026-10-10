@@ -107,6 +107,23 @@ describe "run_options_parser" do
     end
   end
 
+  it "reads --ai-key-file into ai_key without the trailing newline" do
+    original_argv = ARGV.dup
+    key_file = File.tempname("noir-key")
+    File.write(key_file, "  sk-test-123\n")
+
+    ARGV.clear
+    ARGV.concat(["--ai-key-file", key_file])
+
+    begin
+      run_options_parser()["ai_key"].to_s.should eq("sk-test-123")
+    ensure
+      File.delete(key_file)
+      ARGV.clear
+      ARGV.concat(original_argv)
+    end
+  end
+
   it "supports --no-spinner" do
     original_argv = ARGV.dup
 

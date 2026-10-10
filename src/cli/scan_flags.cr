@@ -107,6 +107,7 @@ module Noir::CLI::ScanFlags
     Flag.new("--ai-provider", "AI provider prefix or URL", Arg::Value, hint: "provider"),
     Flag.new("--ai-model", "AI model name", Arg::Value, hint: "model"),
     Flag.new("--ai-key", "AI API key", Arg::Value, hint: "key"),
+    Flag.new("--ai-key-file", "Read the AI API key from a file", Arg::File, hint: "path"),
     Flag.new("--ai-agent", "Enable agentic AI workflow"),
     Flag.new("--ai-dry-run", "Show what the AI analyzer would send; send nothing"),
     Flag.new("--ai-include-sensitive", "Also send credentials files to the AI provider"),

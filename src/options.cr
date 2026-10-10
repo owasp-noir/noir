@@ -94,6 +94,16 @@ private def positive_int_or_die!(flag : String, raw : String) : Int32
   value
 end
 
+# `--ai-key-file`: the key without its trailing newline, or a clear error.
+private def read_key_file_or_die!(path : String) : String
+  key = File.read(Path[path].expand(home: true)).strip
+  raise "'#{path}' is empty" if key.empty?
+  key
+rescue e
+  STDERR.puts "ERROR: --ai-key-file: #{e.message}".colorize(:red)
+  exit(1)
+end
+
 private def process_override_flag(
   flag : String, option_key : String,
   noir_options : Hash(String, YAML::Any),
@@ -133,7 +143,7 @@ private def base_help : String
         noir scan ./myapp -P
 
       #{"AI integration".colorize(:yellow)}
-        $ noir scan . --ai-provider openai --ai-model gpt-5.5 --ai-key YOUR_API_KEY
+        $ NOIR_AI_KEY=YOUR_API_KEY noir scan . --ai-provider openai --ai-model gpt-5.5
         $ noir scan . --ai-provider acp:codex
         $ noir scan . --ai-provider acp:claude
 
@@ -588,8 +598,11 @@ def run_options_parser
     parser.on "--ai-model NAME", "Model name (optional for acp:* providers)" do |v|
       noir_options["ai_model"] = YAML::Any.new(v)
     end
-    parser.on "--ai-key KEY", "API key (or set NOIR_AI_KEY env)" do |v|
+    parser.on "--ai-key KEY", "API key (prefer NOIR_AI_KEY or --ai-key-file: argv is visible in the process list)" do |v|
       noir_options["ai_key"] = YAML::Any.new(v)
+    end
+    parser.on "--ai-key-file PATH", "Read the API key from a file" do |v|
+      noir_options["ai_key"] = YAML::Any.new(read_key_file_or_die!(v))
     end
     parser.on "--ai-agent", "Enable agentic AI workflow (iterative tool-calling loop)" do
       noir_options["ai_agent"] = YAML::Any.new(true)
