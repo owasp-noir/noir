@@ -50,7 +50,16 @@ expected_endpoints = [
   Endpoint.new("/static/logo.txt", "GET"),
 ]
 
-FunctionalTester.new("fixtures/javascript/nestjs/", {
+tester = FunctionalTester.new("fixtures/javascript/nestjs/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
-}, expected_endpoints).perform_tests
+}, expected_endpoints)
+tester.perform_tests
+
+# `@Query( 'name')` / `@Headers(/* c */ 'x')` name their key: the bare
+# whole-object param must not be added on top of it.
+it "does not read a spaced named decorator as the whole-object form", tags: "functional" do
+  {"/users/search" => "query", "/protected" => "headers"}.each do |url, bare|
+    tester.endpoints.find! { |endpoint| endpoint.url == url }.params.map(&.name).should_not contain(bare)
+  end
+end

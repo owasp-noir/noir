@@ -870,7 +870,7 @@ module Analyzer::Javascript
         param_name = param_match[1]
         endpoint.push_param(Param.new(param_name, "", "query"))
       end
-      if method_params =~ /@Query\s*\(\s*(?:\)|[^'"`][\s\S]*?\))/
+      if method_params =~ /@Query\s*\(\s*+(?:\)|[^'"`][\s\S]*?\))/
         endpoint.push_param(Param.new("query", "", "query"))
       end
 
@@ -885,7 +885,7 @@ module Analyzer::Javascript
         endpoint.push_param(Param.new(body_match[1], "", "body"))
       end
 
-      if method_params =~ /@Body\s*\(\s*(?:\)|[^'"`][\s\S]*?\))/
+      if method_params =~ /@Body\s*\(\s*+(?:\)|[^'"`][\s\S]*?\))/
         endpoint.push_param(Param.new("body", "", "body"))
       end
 
@@ -894,7 +894,7 @@ module Analyzer::Javascript
         param_name = param_match[1]
         endpoint.push_param(Param.new(param_name, "", "header"))
       end
-      if method_params =~ /@Headers\s*\(\s*(?:\)|[^'"`][\s\S]*?\))/
+      if method_params =~ /@Headers\s*\(\s*+(?:\)|[^'"`][\s\S]*?\))/
         endpoint.push_param(Param.new("headers", "", "header"))
       end
 
