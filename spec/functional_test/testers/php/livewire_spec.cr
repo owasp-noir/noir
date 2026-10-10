@@ -4,10 +4,12 @@ require "../../func_spec.cr"
 # /livewire/update`; the fragment names `<component>.<action>`. Lifecycle
 # hooks, `#[Computed]` methods, `#[Locked]` / static members, abstract base
 # components and Blade view components (`Illuminate\View\Component`) are
-# not endpoints; a commented-out `#[Locked]` does not lock.
+# not endpoints; a commented-out `#[Locked]` does not lock. Volt
+# `Volt::route(...)` full-page components are GET routes, group prefixes
+# included.
 FunctionalTester.new("fixtures/php/livewire/", {
   :techs     => 3,
-  :endpoints => 4,
+  :endpoints => 6,
 }, [
   Endpoint.new("/livewire/update#edit-post.save", "POST", [
     Param.new("title", "", "json"), Param.new("body", "", "json"), Param.new("draftId", "", "json"),
@@ -20,6 +22,8 @@ FunctionalTester.new("fixtures/php/livewire/", {
   Endpoint.new("/livewire/update#counter.increment", "POST", [
     Param.new("count", "", "json"), Param.new("by", "", "json"),
   ]),
+  Endpoint.new("/counter", "GET"),
+  Endpoint.new("/admin/posts/{post}", "GET", [Param.new("post", "", "path")]),
 ]).perform_tests
 
 # `Livewire::setUpdateRoute` moves the endpoint.

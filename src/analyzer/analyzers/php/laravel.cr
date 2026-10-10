@@ -152,6 +152,10 @@ module Analyzer::Php
     # capture 2 the (unread) static verb, capture 3 the path.
     CHAINED_STATIC_ROUTE_REGEX = /Route::((?:\w+\s*\([^;]*?\)\s*->\s*)+)(view|redirect|permanentRedirect)\s*\(\s*['"]([^'"]+)['"]\s*,/mi
 
+    # Livewire Volt full-page components: `Volt::route('/users', 'users.index')`
+    # registers a GET route. Capture 1 is the path.
+    VOLT_ROUTE_REGEX = /\bVolt::route\s*\(\s*['"]([^'"]+)['"]\s*,/mi
+
     # Any `Route::…('path', …` registration, whatever verb or chain precedes
     # it. Used only to locate handler-closure bodies up front; the six scans
     # above are what actually decide which registrations become endpoints.
@@ -230,6 +234,10 @@ module Analyzer::Php
       each_laravel_route(ctx, CHAINED_STATIC_ROUTE_REGEX) do |route_match|
         chain, route_path = route_match[1], route_match[3]
         emit_static_route(endpoints, ctx, route_match, chained_full_path(prefix, chain, route_path))
+      end
+
+      each_laravel_route(ctx, VOLT_ROUTE_REGEX) do |route_match|
+        emit_static_route(endpoints, ctx, route_match, build_full_path(prefix, route_match[1]))
       end
 
       # 2. Resource routes: `resource`/`apiResource`, their plural array forms
