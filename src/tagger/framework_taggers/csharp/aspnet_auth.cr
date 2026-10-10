@@ -1,5 +1,6 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
+require "../../../utils/c_comments"
 
 @[Noir::TaggerFor(key: "aspnet_auth", name: "ASP.NET Auth Tagger", desc: "Identifies ASP.NET authentication patterns ([Authorize], policies)", order: 170)]
 class AspnetAuthTagger < FrameworkTagger
@@ -26,9 +27,15 @@ class AspnetAuthTagger < FrameworkTagger
   # `[AllowAnonymous]` inherits: ASP.NET Core's `FallbackPolicy`, the
   # controller-wide `MapControllers().RequireAuthorization()` / global
   # `AuthorizeFilter`, and MVC 5's `filters.Add(new AuthorizeAttribute())`.
-  FALLBACK_POLICY      = /FallbackPolicy\s*=[^;]*RequireAuthenticatedUser\s*\(/
-  CONTROLLERS_GLOBAL   = /MapControllers\s*\(\s*\)\s*\.RequireAuthorization\s*\(|Filters\.Add\s*(?:<\s*AuthorizeFilter\s*>|\(\s*new\s+AuthorizeFilter\b)|filters\.Add\s*\(\s*new\s+(?:System\.Web\.Mvc\.)?AuthorizeAttribute\b/
-  CONTROLLER_TECHS     = %w[cs_aspnet_mvc cs_aspnet_core_mvc]
+  FALLBACK_POLICY    = /FallbackPolicy\s*=[^;]*RequireAuthenticatedUser\s*\(/
+  CONTROLLERS_GLOBAL = /MapControllers\s*\(\s*\)\s*\.RequireAuthorization\s*\(|Filters\.Add\s*(?:<\s*AuthorizeFilter\s*>|\(\s*new\s+AuthorizeFilter\b)|filters\.Add\s*\(\s*new\s+(?:System\.Web\.Mvc\.)?AuthorizeAttribute\b/
+  CONTROLLER_TECHS   = %w[cs_aspnet_mvc cs_aspnet_core_mvc]
+  CSPROJ             = /\.csproj\z/
+  # Test hosts (`WebApplicationFactory`, a `Foo.Tests` project's Startup)
+  # configure their own auth, which must not leak onto the app. The
+  # conventions of `Analyzer::CSharp::Common.csharp_test_path?`, plus the
+  # `*.Tests` project directory.
+  TEST_PATH            = %r{/(?:[Tt]ests?|testassets|[^/]+\.\w*Tests?)/|Tests?\.cs\z}
   MINIMAL_API_RECEIVER = /^\s*(\w+)\s*\.\s*Map(?:Get|Post|Put|Delete|Patch|Methods|Group)\b/
 
   # ASP.NET Core middleware auth in action body
@@ -44,18 +51,27 @@ class AspnetAuthTagger < FrameworkTagger
 
   def initialize(options : Hash(String, YAML::Any))
     super
-    @fallback_policy = false
-    @controllers_global = false
+    @fallback_roots = Set(String?).new
+    @controllers_global_roots = Set(String?).new
   end
 
+  # Collects the project roots (nearest `.csproj`) whose live, non-test
+  # code turns on app-wide authorization.
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
-    @fallback_policy = false
-    @controllers_global = false
+    @fallback_roots.clear
+    @controllers_global_roots.clear
     collect_files_by_extension(".cs").each do |path|
       content = read_file(path)
       next unless content
-      @fallback_policy ||= content.includes?("FallbackPolicy") && content.matches?(FALLBACK_POLICY)
-      @controllers_global ||= content.includes?("Authorize") && content.matches?(CONTROLLERS_GLOBAL)
+      fallback = content.includes?("FallbackPolicy") && content.matches?(FALLBACK_POLICY)
+      controllers = content.includes?("Authorize") && content.matches?(CONTROLLERS_GLOBAL)
+      next unless fallback || controllers
+      next if base_relative_path(path).matches?(TEST_PATH)
+      code = Noir::CComments.strip(content)
+      next if code.includes?("WebApplicationFactory")
+      root = nearest_project_root(path, CSPROJ)
+      @fallback_roots << root if fallback && code.matches?(FALLBACK_POLICY)
+      @controllers_global_roots << root if controllers && code.matches?(CONTROLLERS_GLOBAL)
     end
     super
   end
@@ -102,11 +118,12 @@ class AspnetAuthTagger < FrameworkTagger
         return
       end
 
-      if @fallback_policy
+      root = nearest_project_root(path_info.path, CSPROJ)
+      if @fallback_roots.includes?(root)
         endpoint.add_tag(Tag.new("auth", "Protected by ASP.NET FallbackPolicy (RequireAuthenticatedUser)", "aspnet_auth"))
         return
       end
-      if @controllers_global && CONTROLLER_TECHS.includes?(endpoint.details.technology)
+      if @controllers_global_roots.includes?(root) && CONTROLLER_TECHS.includes?(endpoint.details.technology)
         endpoint.add_tag(Tag.new("auth", "Protected by ASP.NET global authorization for controllers", "aspnet_auth"))
         return
       end

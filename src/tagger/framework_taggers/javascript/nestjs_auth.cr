@@ -1,5 +1,6 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
+require "../../../utils/c_comments"
 
 @[Noir::TaggerFor(key: "nestjs_auth", name: "NestJS Auth Tagger", desc: "Identifies NestJS-style decorator auth (Nest guards, tsoa @Security, routing-controllers @Authorized, Ts.ED @Authenticate)", order: 150)]
 class NestjsAuthTagger < FrameworkTagger
@@ -59,30 +60,40 @@ class NestjsAuthTagger < FrameworkTagger
   # Global guards are as often throttling or role checks; only a guard
   # named for authentication counts.
   AUTH_GUARD_NAME = /Auth|Jwt|JWT|Session|AccessToken/
+  PACKAGE_JSON    = /\Apackage\.json\z/
+  # Test harnesses (`test/app.e2e-spec.ts`, `*.spec.ts`) bootstrap the app
+  # with their own guards, which must not leak onto real routes.
+  TEST_PATH = %r{/(?:tests?|__tests__|e2e)/|[.-](?:spec|test)\.[cm]?[jt]sx?\z}
 
   def initialize(options : Hash(String, YAML::Any))
     super
-    @global_guard = nil.as(String?)
+    @global_guards = Hash(String?, String).new
   end
 
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
-    @global_guard = find_global_auth_guard
+    find_global_auth_guards
     super
   end
 
-  private def find_global_auth_guard : String?
+  # The global auth guard of each app, keyed by its root (nearest
+  # `package.json`), read from live, non-test code only.
+  private def find_global_auth_guards
+    @global_guards.clear
     {".ts", ".js"}.each do |ext|
       collect_files_by_extension(ext).each do |path|
         content = read_file(path)
         next unless content && (content.includes?("APP_GUARD") || content.includes?("useGlobalGuards"))
+        next if base_relative_path(path).matches?(TEST_PATH)
+        root = nearest_project_root(path, PACKAGE_JSON)
+        next if @global_guards.has_key?(root)
+        code = Noir::CComments.strip(content, quotes: %("'`))
         GLOBAL_GUARD_PATTERNS.each do |pattern|
-          content.scan(pattern) do |m|
-            return m[1] if m[1].matches?(AUTH_GUARD_NAME)
+          code.scan(pattern) do |m|
+            @global_guards[root] ||= m[1] if m[1].matches?(AUTH_GUARD_NAME)
           end
         end
       end
     end
-    nil
   end
 
   def self.target_techs : Array(String)
@@ -113,7 +124,7 @@ class NestjsAuthTagger < FrameworkTagger
       authz_descs = [] of String
       collect_method_decorators(lines, line_idx, authn_descs, authz_descs)
       collect_class_decorators(class_decorators, authn_descs, authz_descs)
-      if authn_descs.empty? && (guard = @global_guard)
+      if authn_descs.empty? && (guard = @global_guards[nearest_project_root(path_info.path, PACKAGE_JSON)]?)
         authn_descs << "NestJS global APP_GUARD (#{guard})"
       end
 

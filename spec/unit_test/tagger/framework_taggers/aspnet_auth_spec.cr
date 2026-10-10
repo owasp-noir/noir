@@ -178,4 +178,66 @@ describe "AspnetAuthTagger" do
       CodeLocator.instance.clear_all
     end
   end
+
+  it "reads app-wide auth only from live, non-test code of the endpoint's own project" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("aspnet_global_scope")
+    files = {
+      "Web/Web.csproj" => "<Project />",
+      "Web/Program.cs" => <<-CS,
+        // options.FallbackPolicy = new AuthorizationPolicyBuilder().RequireAuthenticatedUser().Build();
+        /* builder.Services.AddControllers(o => o.Filters.Add(new AuthorizeFilter())); */
+        var app = builder.Build();
+        CS
+      "Web/Controllers/Home.cs" => <<-CS,
+        public class HomeController : Controller
+        {
+            [HttpGet("home")]
+            public IActionResult Index() => Ok();
+        }
+        CS
+      "Web.Tests/Web.Tests.csproj" => "<Project />",
+      "Web.Tests/AuthFactory.cs"   => <<-CS,
+        public class AuthFactory : WebApplicationFactory<Program>
+        {
+            void Configure(IServiceCollection services) =>
+                services.AddAuthorization(o => o.FallbackPolicy = new AuthorizationPolicyBuilder().RequireAuthenticatedUser().Build());
+        }
+        CS
+      "Admin/Admin.csproj" => "<Project />",
+      "Admin/Program.cs"   => <<-CS,
+        builder.Services.AddAuthorization(o => o.FallbackPolicy = new AuthorizationPolicyBuilder().RequireAuthenticatedUser().Build());
+        CS
+      "Admin/Controllers/Dashboard.cs" => <<-CS,
+        public class DashboardController : Controller
+        {
+            [HttpGet("dash")]
+            public IActionResult Index() => Ok();
+        }
+        CS
+    }
+    files.each do |rel, body|
+      path = File.join(tmpdir, rel)
+      Dir.mkdir_p(File.dirname(path))
+      File.write(path, body)
+      CodeLocator.instance.register_path(path)
+    end
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      home = Endpoint.new("/home", "GET", [] of Param, Details.new(PathInfo.new(File.join(tmpdir, "Web/Controllers/Home.cs"), 4)))
+      home.details.technology = "cs_aspnet_core_mvc"
+      dash = Endpoint.new("/dash", "GET", [] of Param, Details.new(PathInfo.new(File.join(tmpdir, "Admin/Controllers/Dashboard.cs"), 4)))
+      dash.details.technology = "cs_aspnet_core_mvc"
+
+      AspnetAuthTagger.new(noir_options).perform([home, dash])
+
+      home.tags.should be_empty
+      dash.tags.map(&.description).should eq(["Protected by ASP.NET FallbackPolicy (RequireAuthenticatedUser)"])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
 end
