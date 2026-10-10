@@ -89,6 +89,17 @@ describe LLM::Ollama do
       body["temperature"]?.should be_nil
     end
 
+    it "sends --ai-temperature and --ai-seed under options" do
+      LLM::Sampling.temperature = 0.0
+      LLM::Sampling.seed = 7_i64
+      options = JSON.parse(client.__test_body("hello", "json"))["options"]
+      options["temperature"].as_f.should eq(0.0)
+      options["seed"].as_i64.should eq(7)
+    ensure
+      LLM::Sampling.temperature = nil
+      LLM::Sampling.seed = nil
+    end
+
     it "sizes num_ctx to the caller's token budget, rounded up to 1024" do
       # Without it Ollama runs at its 2-4k default and silently truncates
       # a bundle sized for the model's full window.

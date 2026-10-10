@@ -604,6 +604,12 @@ def run_options_parser
     parser.on "--ai-key-file PATH", "Read the API key from a file" do |v|
       noir_options["ai_key"] = YAML::Any.new(read_key_file_or_die!(v))
     end
+    parser.on "--ai-temperature N", "Sampling temperature, 0-2 (default: 0.3; 0 for repeatable runs)" do |v|
+      noir_options["ai_temperature"] = YAML::Any.new(v)
+    end
+    parser.on "--ai-seed N", "Sampling seed, sent where the provider supports one" do |v|
+      noir_options["ai_seed"] = YAML::Any.new(v)
+    end
     parser.on "--ai-agent", "Enable agentic AI workflow (iterative tool-calling loop)" do
       noir_options["ai_agent"] = YAML::Any.new(true)
     end

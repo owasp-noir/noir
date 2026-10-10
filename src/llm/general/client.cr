@@ -4,6 +4,7 @@ require "http/client"
 require "../response_cleanup"
 require "../http_transport"
 require "../prompt"
+require "../sampling"
 
 module LLM
   # A request whose prompt is over the model's context window, raised for a
@@ -244,7 +245,8 @@ module LLM
       body = {
         "model"           => @model,
         "messages"        => messages,
-        "temperature"     => 0.3,
+        "temperature"     => LLM::Sampling.temperature || 0.3,
+        "seed"            => LLM::Sampling.seed,
         "stream"          => false,
         "response_format" => format == "json" ? {"type" => "json_object"} : JSON.parse(format),
       }
@@ -277,7 +279,8 @@ module LLM
       body = {
         "model"       => @model,
         "messages"    => messages,
-        "temperature" => 0.0,
+        "temperature" => LLM::Sampling.temperature || 0.0,
+        "seed"        => LLM::Sampling.seed,
         "stream"      => false,
         "tools"       => parsed_tools,
         "tool_choice" => "auto",
@@ -297,6 +300,7 @@ module LLM
 
     private def encode(body : Hash) : String
       body.delete("temperature") unless @send_temperature
+      body.delete("seed") unless LLM::Sampling.seed
       body.to_json
     end
 

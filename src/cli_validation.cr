@@ -26,6 +26,7 @@ module Noir::CliValidation
     validate_passive_scan_paths!(options)
     validate_passive_scan_severity!(options)
     validate_ai_integer_options!(options)
+    validate_ai_sampling!(options)
     validate_ai_provider_pair!(options)
     validate_ai_native_tools_allowlist!(options)
     validate_fail_on!(options)
@@ -191,6 +192,19 @@ module Noir::CliValidation
         raise Error.new("Invalid #{flag} '#{number}'. Must be #{minimum == 0 ? "0 or greater (0 = provider/model default)" : "a positive integer"}.")
       end
     end
+  end
+
+  # `--ai-temperature` / `--ai-seed` and their config keys arrive as text;
+  # "" (the default) means unset.
+  def self.validate_ai_sampling!(options : Hash(String, YAML::Any))
+    temperature = options["ai_temperature"]?.to_s.strip
+    unless temperature.empty? || temperature.to_f?.try(&.in?(0.0..2.0))
+      raise Error.new("Invalid --ai-temperature '#{temperature}'. Must be a number from 0 to 2.")
+    end
+
+    seed = options["ai_seed"]?.to_s.strip
+    return if seed.empty? || seed.to_i64?
+    raise Error.new("Invalid --ai-seed '#{seed}'. Must be an integer.")
   end
 
   # `--probe-match` and `--probe-skip` only run inside the Deliver

@@ -1,6 +1,7 @@
 require "json"
 require "../http_transport"
 require "../response_cleanup"
+require "../sampling"
 
 module LLM
   # Ollama LLM client (native `/api/generate`)
@@ -89,7 +90,8 @@ module LLM
           # more invented endpoints than the 0.3 we asked for.
           json.field "options" do
             json.object do
-              json.field "temperature", TEMPERATURE
+              json.field "temperature", LLM::Sampling.temperature || TEMPERATURE
+              LLM::Sampling.seed.try { |seed| json.field "seed", seed }
               @num_ctx.try { |num_ctx| json.field "num_ctx", num_ctx }
             end
           end

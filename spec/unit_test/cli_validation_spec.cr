@@ -237,6 +237,27 @@ describe Noir::CliValidation do
     end
   end
 
+  describe "validate_ai_sampling!" do
+    it "accepts unset, in-range and integer values" do
+      options = create_test_options
+      Noir::CliValidation.validate_ai_sampling!(options)
+      options["ai_temperature"] = YAML::Any.new("0")
+      options["ai_seed"] = YAML::Any.new("42")
+      Noir::CliValidation.validate_ai_sampling!(options)
+    end
+
+    it "rejects an out-of-range temperature and a non-integer seed" do
+      options = create_test_options
+      options["ai_temperature"] = YAML::Any.new("hot")
+      expect_raises(Noir::CliValidation::Error, /--ai-temperature/) { Noir::CliValidation.validate_ai_sampling!(options) }
+      options["ai_temperature"] = YAML::Any.new("2.5")
+      expect_raises(Noir::CliValidation::Error, /--ai-temperature/) { Noir::CliValidation.validate_ai_sampling!(options) }
+      options["ai_temperature"] = YAML::Any.new("")
+      options["ai_seed"] = YAML::Any.new("1.5")
+      expect_raises(Noir::CliValidation::Error, /--ai-seed/) { Noir::CliValidation.validate_ai_sampling!(options) }
+    end
+  end
+
   describe "validate_passive_scan_paths!" do
     it "passes when no --passive-scan-path is set" do
       options = create_test_options
