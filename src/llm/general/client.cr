@@ -35,6 +35,9 @@ module LLM
       "azure"      => "https://models.inference.ai.azure.com/chat/completions",
       "github"     => "https://models.github.ai/inference/chat/completions",
       "openrouter" => "https://openrouter.ai/api/v1/chat/completions",
+      "gemini"     => "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+      # Served by `LLM::Anthropic`, which speaks the native Messages API.
+      "anthropic" => "https://api.anthropic.com/v1/messages",
     }
 
     @api_key : String?
@@ -68,11 +71,7 @@ module LLM
 
     def initialize(url : String, model : String, api_key : String?)
       @url = url
-      @api = if url.includes?("://")
-               self.class.chat_completions_url(url)
-             else
-               PRESETS[url.downcase]? || url
-             end
+      @api = url.includes?("://") ? self.class.api_url(url) : PRESETS[url.downcase]? || url
 
       @model = model
       @send_temperature = self.class.sampling_temperature?(model)
@@ -139,7 +138,12 @@ module LLM
     # A server that implements only `json_object`, or no structured output
     # at all, answers every `json_schema` request with a 400 naming it.
     def self.response_format_rejected?(rejection : HttpTransport::Rejection) : Bool
-      rejected_for?(rejection, /response_format|json_schema|json_object/i)
+      rejected_for?(rejection, /response_format|output_config|json_schema|json_object|structured output/i)
+    end
+
+    # The body field that carries the structured-output request.
+    private def format_key : String
+      "response_format"
     end
 
     private def self.rejected_for?(rejection : HttpTransport::Rejection, pattern : Regex) : Bool
@@ -195,10 +199,11 @@ module LLM
     private def post(body : Hash, raise_overflow : Bool = false) : String?
       return if @fatal_streak.get >= MAX_FATAL_STREAK
 
-      if body.has_key?("response_format")
+      key = format_key
+      if body.has_key?(key)
         case @response_format
-        when .json_object? then body["response_format"] = JSON_OBJECT_FORMAT
-        when .omitted?     then body.delete("response_format")
+        when .json_object? then body[key] = JSON_OBJECT_FORMAT
+        when .omitted?     then body.delete(key)
         end
       end
 
@@ -220,13 +225,14 @@ module LLM
         return post(body, raise_overflow)
       end
 
-      if (sent = body["response_format"]?) && self.class.response_format_rejected?(result)
+      if (sent = body[key]?) && self.class.response_format_rejected?(result)
         # Stepped from what was sent, not from the current setting: requests
         # in flight concurrently all come back rejected at the old level.
-        step = sent.to_json.includes?("json_schema") ? ResponseFormat::JsonObject : ResponseFormat::Omitted
+        # Only `response_format` has a `json_object` step to land on.
+        step = key == "response_format" && sent.to_json.includes?("json_schema") ? ResponseFormat::JsonObject : ResponseFormat::Omitted
         if step > @response_format
           @response_format = step
-          STDERR.puts "WARNING: AI provider rejected the response_format; retrying with #{step.json_object? ? %("json_object") : "none"} for the rest of the run"
+          STDERR.puts "WARNING: AI provider rejected the #{key}; retrying with #{step.json_object? ? %("json_object") : "none"} for the rest of the run"
         end
         return post(body, raise_overflow)
       end
@@ -365,6 +371,12 @@ module LLM
       JSON.parse(text)
     rescue Exception
       JSON.parse(%({"raw":#{raw.to_json}}))
+    end
+
+    # The request URL for a provider given as a URL; `LLM::Anthropic`
+    # resolves it to the Messages endpoint instead.
+    def self.api_url(url : String) : String
+      chat_completions_url(url)
     end
 
     # Decided on the URI path, not the whole string: an Azure-style

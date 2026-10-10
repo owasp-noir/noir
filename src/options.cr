@@ -584,6 +584,8 @@ def run_options_parser
         github     → https://models.github.ai/inference
         azure      → https://models.inference.ai.azure.com
         openrouter → https://openrouter.ai/api/v1
+        anthropic  → https://api.anthropic.com/v1 (native Messages API)
+        gemini     → https://generativelanguage.googleapis.com/v1beta/openai
         ollama     → http://localhost:11434/v1
         lmstudio   → http://localhost:1234/v1
         vllm       → http://localhost:8000/v1

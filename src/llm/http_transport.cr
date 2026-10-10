@@ -148,9 +148,13 @@ module LLM
     @@secrets_mutex = Mutex.new
 
     def self.remember_secret(headers : HTTP::Headers) : Nil
-      return unless auth = headers["Authorization"]?
-      key = auth.sub(/\A\w+\s+/, "")
+      return unless key = credential(headers)
       @@secrets_mutex.synchronize { @@secrets << key }
+    end
+
+    # The key a request carries: a bearer token, or Anthropic's `x-api-key`.
+    def self.credential(headers : HTTP::Headers) : String?
+      headers["Authorization"]?.try(&.sub(/\A\w+\s+/, "")) || headers["x-api-key"]?
     end
 
     @@cleartext_warned = Atomic(Bool).new(false)
@@ -159,7 +163,7 @@ module LLM
     # the path. Local servers (ollama, vLLM, LM Studio) are the normal http
     # case and stay quiet.
     def self.warn_cleartext_key(uri : URI, headers : HTTP::Headers) : Nil
-      return unless uri.scheme == "http" && headers.has_key?("Authorization")
+      return unless uri.scheme == "http" && credential(headers)
       return if loopback?(uri.hostname.to_s)
       return if @@cleartext_warned.swap(true)
       STDERR.puts "WARNING: The AI API key is sent unencrypted over http:// to #{uri.hostname}; use https:// for a remote provider."

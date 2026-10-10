@@ -35,7 +35,7 @@ describe "default_options" do
 
   it "has default native tool-calling allowlist" do
     noir_options = create_test_options
-    noir_options["ai_native_tools_allowlist"].to_s.should eq("openai,xai,github")
+    noir_options["ai_native_tools_allowlist"].to_s.should eq("openai,xai,github,anthropic")
   end
 
   it "has ai_context disabled by default" do

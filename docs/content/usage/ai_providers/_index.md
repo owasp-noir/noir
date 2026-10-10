@@ -15,6 +15,8 @@ Noir's LLM analysis supports cloud APIs, local runtimes for offline or private u
 | [OpenAI](openai/) | Cloud | Required | Required | High accuracy, latest models |
 | [xAI](xai/) | Cloud | Required | Required | Grok models |
 | [Azure AI](azure/) | Cloud | Required | Required | Enterprise, compliance |
+| [Anthropic](anthropic/) | Cloud | Required | Required | Claude models, native API |
+| [Google Gemini](gemini/) | Cloud | Required | Required | Gemini models |
 | [OpenRouter](openrouter/) | Cloud | Required | Required | Access to multiple models via one API |
 | [Ollama](ollama/) | Local | Not needed | Not needed | Privacy, offline, free |
 | [vLLM](vllm/) | Local | Not needed | Not needed | High-performance local inference |
@@ -27,6 +29,8 @@ Noir's LLM analysis supports cloud APIs, local runtimes for offline or private u
     *   [OpenAI](openai/)
     *   [xAI](xai/)
     *   [Azure AI](azure/)
+    *   [Anthropic](anthropic/)
+    *   [Google Gemini](gemini/)
     *   [OpenRouter](openrouter/)
 *   **Local Model Providers**:
     *   [Ollama](ollama/)

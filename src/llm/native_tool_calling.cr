@@ -1,12 +1,12 @@
 require "uri"
 
 module LLM::NativeToolCalling
-  DEFAULT_ALLOWLIST = ["openai", "xai", "github"]
+  DEFAULT_ALLOWLIST = ["openai", "xai", "github", "anthropic"]
 
   # Providers for which native tool-calling is actually wired up. Used to
   # validate --ai-native-tools-allowlist so a typo (e.g. `opena`) surfaces
   # a warning instead of silently never matching.
-  KNOWN_PROVIDERS = ["openai", "xai", "github", "azure", "ollama", "vllm", "lmstudio"]
+  KNOWN_PROVIDERS = ["openai", "xai", "github", "azure", "ollama", "vllm", "lmstudio", "anthropic", "google"]
 
   def self.known_provider?(provider : String) : Bool
     KNOWN_PROVIDERS.includes?(canonical_provider(provider))
@@ -18,6 +18,8 @@ module LLM::NativeToolCalling
 
   def self.canonical_provider(provider : String) : String
     p = provider.downcase.strip
+    # The `gemini` preset shares the `google` token table and allowlist key.
+    return "google" if p == "gemini"
     return p unless p.includes?("://") || p.includes?(".")
 
     # Match on the host, not on the whole URL. The path is chosen by whoever
