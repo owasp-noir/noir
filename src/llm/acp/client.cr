@@ -2,6 +2,7 @@ require "acp"
 require "json"
 require "log"
 require "../response_cleanup"
+require "../http_transport"
 require "./targets"
 
 module LLM
@@ -13,12 +14,12 @@ module LLM
     getter args : Array(String)
 
     @client : ACP::Client?
-    @session : ACP::Session?
     @agent_stderr : IO?
     @session_lock : Mutex
     @request_lock : Mutex
     @response_lock : Mutex
     @response_buffer : String
+    @sessions_on_client = 0
 
     @@logs_muted = false
     @@logs_mutex = Mutex.new
@@ -30,7 +31,8 @@ module LLM
     class UnsupportedACPTargetError < Exception; end
 
     # Escape hatch for power users running their own ACP agent binary. Off by
-    # default so a poisoned `.noir.yml` can't silently spawn a process.
+    # default so an untrusted `$NOIR_HOME/config.yaml` (or a provider value
+    # pasted from elsewhere) can't silently spawn a process.
     def self.custom_command_allowed? : Bool
       ENV["NOIR_ACP_ALLOW_CUSTOM_COMMAND"]? == "1"
     end
@@ -92,6 +94,33 @@ module LLM
         @event_sink.try(&.call("ACP: cancelled permission request (#{tool}) — no #{allow ? "allow" : "reject"} option offered"))
         JSON.parse(%({"outcome":{"outcome":"cancelled"}}))
       end
+    end
+
+    # Non-prompt requests (initialize, session/new) get a longer default than
+    # the HTTP connect timeout: the first `npx` run downloads the agent
+    # package before it can answer `initialize`, which easily exceeds 30 s.
+    DEFAULT_REQUEST_TIMEOUT = 120.seconds
+
+    # Claude/Codex adapters hold a subprocess or heavy state per session.
+    MAX_SESSIONS_PER_AGENT = 8
+
+    def self.request_timeout : Time::Span
+      HttpTransport.duration_from_env(HttpTransport::CONNECT_TIMEOUT_ENV) || DEFAULT_REQUEST_TIMEOUT
+    end
+
+    # A prompt turn is the generation itself, so it takes the same budget
+    # as an HTTP provider's read timeout (`NOIR_AI_TIMEOUT`).
+    def self.prompt_timeout : Time::Span
+      HttpTransport.timeout
+    end
+
+    # Anything but `end_turn` means the answer is cut short or absent
+    # (refusal, max_tokens, max_turn_requests, cancelled). Say so, or the
+    # caller reads it as "this code defines no endpoints".
+    def report_stop_reason(stop_reason : String) : Nil
+      return if stop_reason == "end_turn"
+      STDERR.puts "WARNING: ACP agent stopped with #{stop_reason}; its answer may be empty or truncated"
+      @event_sink.try(&.call("ACP: turn stopped with #{stop_reason}"))
     end
 
     def initialize(@provider : String, @model : String, @event_sink : Proc(String, Nil)? = nil)
@@ -161,7 +190,7 @@ module LLM
     end
 
     def request(prompt : String, format : String = "json") : String
-      # One session, one response buffer. Two fibers prompting at once —
+      # One client, one response buffer. Two fibers prompting at once —
       # which is exactly what the bundle analyzer does when it fans out —
       # interleaved their streamed chunks into that single buffer, and each
       # read back a blend of both answers: unparsable at best, endpoints
@@ -169,11 +198,20 @@ module LLM
       # clear -> prompt -> read window. `session.prompt` blocks until the
       # agent's turn ends anyway, so overlapping them never bought
       # concurrency to begin with.
+      #
+      # Each request gets a fresh session: one `session/new` round trip is
+      # cheap next to a prompt turn, and a shared session let earlier
+      # bundles leak into later answers, making results order-dependent.
+      # ACP v1 has no session/close, so the agent keeps every session until
+      # it exits; restart it every MAX_SESSIONS_PER_AGENT requests.
       @request_lock.synchronize do
-        session = ensure_session
+        close if @sessions_on_client >= MAX_SESSIONS_PER_AGENT
+        session = ACP::Session.create(ensure_client, cwd: (ENV["NOIR_ACP_CWD"]? || Dir.current))
+        @sessions_on_client += 1
+        @event_sink.try(&.call("ACP: session #{session.id} created"))
         clear_response_buffer
         final_prompt = append_format_instruction(prompt, format)
-        session.prompt(final_prompt)
+        report_stop_reason(session.prompt(final_prompt).stop_reason)
         LLM.strip_json_fences(read_response_buffer)
       end
     rescue e : Exception
@@ -204,18 +242,18 @@ module LLM
       rescue Exception
       ensure
         @client = nil
-        @session = nil
+        @sessions_on_client = 0
         @agent_stderr = nil
       end
     end
 
-    private def ensure_session : ACP::Session
-      if session = @session
-        return session
+    private def ensure_client : ACP::Client
+      if client = @client
+        return client
       end
 
       @session_lock.synchronize do
-        if @session.nil?
+        if @client.nil?
           agent_stderr = if ENV["NOIR_ACP_RAW_LOG"]? == "1"
                            STDERR
                          else
@@ -227,6 +265,8 @@ module LLM
             stderr: agent_stderr
           )
           client = ACP::Client.new(transport, client_name: "noir")
+          client.request_timeout = self.class.request_timeout.total_seconds
+          client.prompt_timeout = self.class.prompt_timeout.total_seconds
           client.on_update = ->(update : ACP::Protocol::SessionUpdateParams) do
             case u = update.update
             when ACP::Protocol::AgentMessageChunkUpdate
@@ -247,19 +287,13 @@ module LLM
           else
             @event_sink.try(&.call("ACP: connected"))
           end
-          session = ACP::Session.create(client, cwd: (ENV["NOIR_ACP_CWD"]? || Dir.current))
-          @event_sink.try(&.call("ACP: session #{session.id} created"))
 
           @client = client
-          @session = session
           @agent_stderr = agent_stderr.same?(STDERR) ? nil : agent_stderr
         end
       end
 
-      session = @session
-      return session unless session.nil?
-
-      raise "ACP session initialization failed"
+      @client || raise "ACP client initialization failed"
     end
 
     def self.mute_acp_logs : Nil

@@ -167,6 +167,88 @@ describe LLM::ACPClient do
   end
 end
 
+describe LLM::ACPClient do
+  describe "timeouts" do
+    it "follows NOIR_AI_TIMEOUT for prompts and NOIR_AI_CONNECT_TIMEOUT for other requests" do
+      ENV["NOIR_AI_TIMEOUT"] = "42"
+      ENV["NOIR_AI_CONNECT_TIMEOUT"] = "7"
+      begin
+        LLM::ACPClient.prompt_timeout.should eq(42.seconds)
+        LLM::ACPClient.request_timeout.should eq(7.seconds)
+      ensure
+        ENV.delete("NOIR_AI_TIMEOUT")
+        ENV.delete("NOIR_AI_CONNECT_TIMEOUT")
+      end
+    end
+
+    it "gives initialize room for a first-run npx download by default" do
+      ENV.delete("NOIR_AI_CONNECT_TIMEOUT")
+      (LLM::ACPClient.request_timeout > 30.seconds).should be_true
+    end
+  end
+
+  describe "#report_stop_reason" do
+    it "stays quiet on end_turn and reports anything else" do
+      events = [] of String
+      sink = ->(msg : String) { events << msg; nil }
+      client = LLM::ACPClient.new("acp:gemini", "gemini", sink)
+
+      client.report_stop_reason("end_turn")
+      events.should be_empty
+
+      client.report_stop_reason("refusal")
+      events.should eq(["ACP: turn stopped with refusal"])
+    end
+  end
+
+  describe "#request" do
+    # A minimal ACP agent: answers each prompt with the id of the session it
+    # was sent on, and ends every turn with `refusal`.
+    fake_agent = <<-'SH'
+      n=0
+      while IFS= read -r line; do
+        id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+        case "$line" in
+          *'"initialize"'*)
+            printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentCapabilities":{}}}\n' "$id" ;;
+          *'"session/new"'*)
+            n=$((n+1))
+            printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"s%s"}}\n' "$id" "$n" ;;
+          *'"session/prompt"'*)
+            printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s%s","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"s%s"}}}}\n' "$n" "$n"
+            printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"refusal"}}\n' "$id" ;;
+        esac
+      done
+      SH
+
+    it "opens a fresh session per request, restarts the agent past the cap and reports a non-end_turn stop" do
+      {% if flag?(:windows) %}
+        pending! "fake agent is a POSIX shell script"
+      {% end %}
+      script = File.tempname("fake_acp_agent", ".sh")
+      File.write(script, fake_agent)
+      ENV["NOIR_ACP_ALLOW_CUSTOM_COMMAND"] = "1"
+      events = [] of String
+      sink = ->(msg : String) { events << msg; nil }
+      client = LLM::ACPClient.new("acp:sh #{script}", "acp", sink)
+      begin
+        client.request("bundle one", "").should eq("s1")
+        client.request("bundle two", "").should eq("s2")
+        events.count(&.includes?("turn stopped with refusal")).should eq(2)
+
+        max = LLM::ACPClient::MAX_SESSIONS_PER_AGENT
+        (3..max).each { |i| client.request("bundle", "").should eq("s#{i}") }
+        # Past the cap the agent is restarted, so its session ids start over.
+        client.request("bundle", "").should eq("s1")
+      ensure
+        client.close
+        ENV.delete("NOIR_ACP_ALLOW_CUSTOM_COMMAND")
+        File.delete?(script)
+      end
+    end
+  end
+end
+
 describe LLM::AdapterFactory do
   it "returns ACP adapter for acp providers" do
     adapter = LLM::AdapterFactory.for("acp:codex", "", nil)
