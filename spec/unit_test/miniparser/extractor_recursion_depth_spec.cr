@@ -147,6 +147,16 @@ describe "extractor recursion depth bounds" do
     Noir::TSContractExtractor.orpc(orpc).map(&.path).should eq(["/x"])
     Noir::TSContractExtractor.ts_rest("const c = x#{".use(m)" * 20_000}\n").should be_empty
   end
+
+  # Each link's receiver is the whole chain before it; reading its text
+  # to match `HttpApiEndpoint` copied O(n) bytes per link.
+  it "Effect stays linear on a long `.add` chain" do
+    effect = "const g = HttpApiGroup.make('g')#{".add(HttpApiEndpoint.get('a', '/a'))" * 60_000}\n"
+    routes = [] of Noir::TSContractExtractor::Route
+    elapsed = Time.measure { routes = Noir::TSContractExtractor.effect(effect) }
+    routes.size.should eq(60_000)
+    elapsed.should be < 3.seconds
+  end
 end
 
 # The callee extractors rebuild an `a.b.c` receiver by recursing once per

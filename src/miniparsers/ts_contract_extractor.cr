@@ -280,7 +280,9 @@ module Noir
     private def effect_verb(call : LibTreeSitter::TSNode, ctx : Context) : String?
       return unless property = call_property(call, ctx)
       object = receiver(call)
-      return unless object && text(object, ctx) == "HttpApiEndpoint"
+      # Type first: every link of a long chain has the whole chain before
+      # it as its receiver, and copying that text per link went quadratic.
+      return unless object && TreeSitter.node_type(object) == "identifier" && text(object, ctx) == "HttpApiEndpoint"
       EFFECT_VERBS[property]?
     end
 
