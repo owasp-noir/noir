@@ -44,4 +44,16 @@ describe "Detect TypeScript Wasp" do
   it "generated copies under .wasp/" do
     instance.detect("app/.wasp/out/types/spec/main.wasp.ts", "import { app } from \"@wasp.sh/spec\";").should be_false
   end
+
+  it "judges node_modules below the scan base only" do
+    locator = CodeLocator.instance
+    previous_bases = locator.scan_base_paths
+    begin
+      locator.scan_base_paths = ["/srv/node_modules/todo"]
+      instance.detect("/srv/node_modules/todo/main.wasp.ts", "import { app } from \"@wasp.sh/spec\";").should be_true
+      instance.detect("/srv/node_modules/todo/node_modules/x/main.wasp.ts", "import { app } from \"@wasp.sh/spec\";").should be_false
+    ensure
+      locator.scan_base_paths = previous_bases
+    end
+  end
 end

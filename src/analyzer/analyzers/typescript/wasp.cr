@@ -52,7 +52,8 @@ module Analyzer::Typescript
     private def wasp_config_file?(path : String) : Bool
       return false unless path.ends_with?(".wasp") || path.ends_with?(".wasp.ts")
       # `.wasp/` holds the generated app (and its copy of the spec types).
-      !path.includes?("/.wasp/") && !path.includes?("/node_modules/")
+      relative = base_relative_path(path)
+      !relative.includes?("/.wasp/") && !relative.includes?("/node_modules/")
     end
 
     private def parse(path : String) : SpecFile?

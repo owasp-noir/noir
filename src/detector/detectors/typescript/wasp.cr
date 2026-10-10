@@ -14,7 +14,8 @@ module Detector::Typescript
       base = File.basename(filename)
       # `wasp new` writes this marker at the project root.
       return true if base == ".wasproot"
-      return false if filename.includes?("/.wasp/") || filename.includes?("/node_modules/")
+      relative = base_relative_path(filename)
+      return false if relative.includes?("/.wasp/") || relative.includes?("/node_modules/")
 
       if filename.ends_with?(".wasp")
         file_contents.matches?(DSL_APP) && file_contents.matches?(DSL_VERSION)
