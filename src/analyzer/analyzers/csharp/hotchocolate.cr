@@ -129,6 +129,8 @@ module Analyzer::CSharp
       files.each do |path|
         content = read_file_content(path)
         next unless content_matches?(content, WIRING_GATE)
+        # Comments blanked: `MapGraphQL(/* x */ "/api/graphql")` must match.
+        content = Noir::CSharpLexer.new(content).code_source
         content.scan(ADD_ROOT) { |m| registered[m[2].split('.').last] = m[1] }
         mount ||= content.match(MOUNT).try(&.[1])
         content.scan(MUTATION_CON) { |m| conventions ||= !m[1].includes?("false") }
