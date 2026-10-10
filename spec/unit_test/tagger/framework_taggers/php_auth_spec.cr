@@ -222,4 +222,59 @@ describe "PhpAuthTagger (expanded targets)" do
       FileUtils.rm_rf(tmpdir)
     end
   end
+
+  it "tags every route inside a Laravel middleware group, not only the first" do
+    tmpdir = File.tempname("php_group_auth")
+    Dir.mkdir_p(tmpdir)
+    routes = File.join(tmpdir, "web.php")
+    File.write(routes, <<-PHP)
+      <?php
+      Route::middleware('auth')->group(function () {
+          Route::get('/profile', [ProfileController::class, 'edit']);
+          Route::patch('/profile', [ProfileController::class, 'update']);
+          Route::delete('/profile/{id}', [ProfileController::class, 'destroy']);
+      });
+
+      Route::middleware('guest')->group(function () {
+          Route::get('register', [RegisteredUserController::class, 'create']);
+          Route::post('register', [RegisteredUserController::class, 'store']);
+      });
+
+      Route::middleware([
+          'auth:sanctum',
+          config('jetstream.auth_session'),
+      ])->group(function () {
+          Route::get('/teams', fn () => view('teams'));
+          Route::get('/billing', fn () => view('billing'));
+      });
+
+      Route::group(['middleware' => ['web', 'auth']], function () {
+          Route::get('/legacy', 'LegacyController@index');
+          Route::get('/legacy/2', 'LegacyController@two');
+      });
+
+      Route::get('/about', fn () => view('about'));
+      PHP
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(line : Int32) { Endpoint.new("/#{line}", "GET", [] of Param, Details.new(PathInfo.new(routes, line))) }
+      protected_lines = [4, 5, 17, 18, 22, 23]
+      public_lines = [9, 10, 26]
+      endpoints = (protected_lines + public_lines).map { |line| at.call(line) }
+
+      PhpAuthTagger.new(noir_options).perform(endpoints)
+
+      endpoints.each_with_index do |endpoint, i|
+        if i < protected_lines.size
+          endpoint.tags.map(&.name).should eq(["auth"])
+        else
+          endpoint.tags.should be_empty
+        end
+      end
+    ensure
+      FileUtils.rm_rf(tmpdir)
+    end
+  end
 end
