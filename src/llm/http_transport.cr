@@ -79,12 +79,12 @@ module LLM
 
     # A provider that tells us when to come back (429s usually do) knows
     # better than the fixed backoff, as long as it stays within our cap.
+    # Either form the RFC allows: delay-seconds or an HTTP-date.
     def self.retry_after(response : HTTP::Client::Response?) : Time::Span?
-      raw = response.try(&.headers["Retry-After"]?)
+      raw = response.try(&.headers["Retry-After"]?).try(&.strip)
       return if raw.nil?
-      seconds = raw.strip.to_f?
-      return if seconds.nil? || seconds <= 0
-      span = seconds.seconds
+      span = raw.to_f?.try(&.seconds) || HTTP.parse_time(raw).try { |time| time - Time.utc }
+      return if span.nil? || span <= Time::Span.zero
       span > MAX_RETRY_AFTER ? MAX_RETRY_AFTER : span
     end
 
@@ -164,21 +164,28 @@ module LLM
         response = nil
         error = nil
 
+        retryable = true
         begin
           io = connect(uri, proxy)
           begin
             response = execute(io, uri, proxy, body, headers)
+          rescue e : IO::TimeoutError
+            # Connected, then timed out: the model was still generating.
+            # Another attempt waits the whole budget again and may pay for
+            # the same generation twice, so only connect failures retry.
+            error = e
+            retryable = false
           ensure
             io.close rescue nil
           end
-          return response.body if response.success?
+          return response.body if response && response.success?
         rescue e : IO::Error
-          # Connect/read timeouts, refused connections and resets all
-          # arrive as IO::Error subclasses.
+          # Refused connections, connect timeouts and resets all arrive
+          # as IO::Error subclasses.
           error = e
         end
 
-        retryable = !error.nil? || (response && retryable_status?(response.status_code))
+        retryable &&= !error.nil? || (response && retryable_status?(response.status_code))
         if retryable && attempt < MAX_ATTEMPTS
           sleep retry_delay(response, attempt)
           next

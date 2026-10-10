@@ -136,14 +136,44 @@ describe LLM::HttpTransport do
       LLM::HttpTransport.retry_after(response).should eq(LLM::HttpTransport::MAX_RETRY_AFTER)
     end
 
-    it "ignores a missing or non-numeric hint" do
+    it "ignores a missing, unparsable or past hint" do
       LLM::HttpTransport.retry_after(nil).should be_nil
-      response = HTTP::Client::Response.new(429, body: "", headers: HTTP::Headers{"Retry-After" => "Wed, 21 Oct 2015 07:28:00 GMT"})
-      LLM::HttpTransport.retry_after(response).should be_nil
+      ["soon", "Wed, 21 Oct 2015 07:28:00 GMT"].each do |raw|
+        response = HTTP::Client::Response.new(429, body: "", headers: HTTP::Headers{"Retry-After" => raw})
+        LLM::HttpTransport.retry_after(response).should be_nil
+      end
+    end
+
+    it "reads an HTTP-date hint" do
+      date = HTTP.format_time(Time.utc + 10.seconds)
+      response = HTTP::Client::Response.new(429, body: "", headers: HTTP::Headers{"Retry-After" => date})
+      span = LLM::HttpTransport.retry_after(response).not_nil!
+      span.should be > 5.seconds
+      span.should be <= 10.seconds
     end
 
     it "falls back to the backoff schedule" do
       LLM::HttpTransport.retry_delay(nil, 2).should eq(2.seconds)
+    end
+  end
+
+  describe ".post_json_result" do
+    it "does not retry a read timeout" do
+      server = TCPServer.new("127.0.0.1", 0)
+      accepted = 0
+      spawn do
+        while client = server.accept?
+          accepted += 1
+          spawn { sleep 2.seconds; client.close }
+        end
+      end
+      with_env(LLM::HttpTransport::TIMEOUT_ENV, "0.2") do
+        url = "http://127.0.0.1:#{server.local_address.port}/v1/chat/completions"
+        LLM::HttpTransport.post_json_result(url, "{}", HTTP::Headers.new).should be_nil
+      end
+      accepted.should eq(1)
+    ensure
+      server.try &.close
     end
   end
 
