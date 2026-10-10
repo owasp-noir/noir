@@ -1,3 +1,4 @@
+require "../../utils/char_offsets"
 require "../../models/analyzer"
 require "../../miniparsers/js_callee_extractor"
 
@@ -324,6 +325,15 @@ module Analyzer::Javascript
     protected def skip_whitespace(content : String, pos : Int32) : Int32
       i = pos
       while i < content.size && content[i].whitespace?
+        i += 1
+      end
+      i
+    end
+
+    # Same walk without `content[i]`, which is O(i) on a non-ASCII string.
+    protected def skip_whitespace(offsets : Noir::CharOffsets, pos : Int32) : Int32
+      i = pos
+      while (char = offsets.char_at(i)) && char.whitespace?
         i += 1
       end
       i

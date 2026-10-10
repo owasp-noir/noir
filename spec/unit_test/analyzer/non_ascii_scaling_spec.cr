@@ -126,6 +126,41 @@ describe "non-ASCII route files" do
     }, "server/router.ts", "ts_trpc")
   end
 
+  it "keeps Egg router scans linear" do
+    routes = (1..1500).join { |i| "  router.get('/items#{i}/:id', controller.home.index);\n" }
+    assert_linear_on_non_ascii({
+      "package.json"  => %({"name":"x","dependencies":{"egg":"*"}}),
+      "app/router.js" => "const title = 'COMMENT';\nmodule.exports = app => {\n  const { router, controller } = app;\n#{routes}};\n",
+    }, "app/router.js", "js_egg")
+  end
+
+  it "keeps Firebase Functions export scans linear" do
+    exports = (1..1500).join { |i| "exports.api#{i} = onRequest((req, res) => { res.send(req.query.q); });\n" }
+    assert_linear_on_non_ascii({
+      "package.json" => %({"name":"x","dependencies":{"firebase-functions":"*"}}),
+      "index.js"     => "const { onRequest } = require('firebase-functions/v2/https');\nconst title = 'COMMENT';\n#{exports}",
+    }, "index.js", "js_firebase_functions")
+  end
+
+  it "keeps Encore TypeScript API scans linear" do
+    apis = (1..1000).join do |i|
+      "interface Req#{i} { id: string }\nexport const get#{i} = api({ expose: true, method: 'GET', path: '/items#{i}/:id' }, async (req: Req#{i}): Promise<void> => {});\n"
+    end
+    assert_linear_on_non_ascii({
+      "package.json" => %({"name":"x","dependencies":{"encore.dev":"*"}}),
+      "encore.app"   => %({"id":"x"}),
+      "svc/api.ts"   => "import { api } from 'encore.dev/api';\nconst title = 'COMMENT';\n#{apis}",
+    }, "svc/api.ts", "ts_encore")
+  end
+
+  it "keeps Sails route scans linear" do
+    routes = (1..2000).join { |i| "  'POST /fn#{i}': function (req, res) { const n = req.body.name; res.ok(); },\n" }
+    assert_linear_on_non_ascii({
+      "package.json"     => %({"name":"x","dependencies":{"sails":"*"}}),
+      "config/routes.js" => "const title = 'COMMENT';\nmodule.exports.routes = {\n#{routes}};\n",
+    }, "config/routes.js", "js_sails")
+  end
+
   it "keeps node:http handler collection linear" do
     helpers = (1..800).join { |i| "const helper#{i} = (req, res) => { res.end('#{i}'); };\nfunction fn#{i}(req, res) { return 1; }\n" }
     assert_linear_on_non_ascii({

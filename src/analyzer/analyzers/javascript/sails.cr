@@ -115,18 +115,20 @@ module Analyzer::Javascript
     private def analyze_routes_file(routes_file : String, result : Array(Endpoint))
       raw_content = read_file_content(routes_file)
       content = Noir::JSRouteExtractor.strip_js_comments(raw_content)
+      # Char positions through one offsets map: the `String` forms are
+      # O(file) per route once the file holds a multi-byte char.
+      offsets = Noir::CharOffsets.new(content)
 
       content.scan(ADDRESS_LINE_RE) do |m|
         next unless m.size >= 2
-        match_start = m.begin(0)
-        match_end = m.end(0)
-        next unless match_start && match_end
+        match_start = offsets.begin(m)
+        match_end = offsets.end(m)
 
         methods, url = parse_sails_address(m[1].strip)
         next if methods.empty? || url.empty?
 
-        line = line_number_for_index(content, match_start)
-        value_start = skip_whitespace(content, match_end)
+        line = offsets.line(match_start)
+        value_start = skip_whitespace(offsets, match_end)
 
         methods.each do |method|
           details = Details.new(PathInfo.new(routes_file, line))
@@ -134,7 +136,7 @@ module Analyzer::Javascript
           url.scan(/:(\w+)/) do |pm|
             endpoint.push_param(Param.new(pm[1], "", "path")) if pm.size > 0
           end
-          apply_inline_handler_params(content, value_start, endpoint)
+          apply_inline_handler_params(offsets, value_start, endpoint)
           result << endpoint
         end
       end
@@ -162,17 +164,16 @@ module Analyzer::Javascript
     # res) {...} }`). String/redirect/view targets and policy-chain arrays
     # carry no handler body to inspect and are left with address-derived
     # params only.
-    private def apply_inline_handler_params(content : String, value_start : Int32, endpoint : Endpoint)
-      return if value_start >= content.size
-      ch = content[value_start]?
+    private def apply_inline_handler_params(offsets : Noir::CharOffsets, value_start : Int32, endpoint : Endpoint)
+      ch = offsets.char_at(value_start)
       return unless ch
 
       body =
         if ch == '{'
-          close = Noir::JSRouteExtractor.find_matching_brace(content, value_start)
-          close ? content[value_start..close] : nil
+          close = Noir::JSLiteralScanner.find_matching_brace(offsets, value_start)
+          close ? offsets.slice(value_start, close + 1) : nil
         else
-          function_target_body(content, value_start)
+          function_target_body(offsets, value_start)
         end
       return unless body
 
@@ -186,9 +187,9 @@ module Analyzer::Javascript
     # (`(req, res) => {...}`, `async (req, res) => {...}`) starting exactly
     # at `value_start`. Concise arrow bodies without braces are not
     # modeled -- the endpoint is still emitted, just without extra params.
-    private def function_target_body(content : String, value_start : Int32) : String?
-      window_end = Math.min(content.size, value_start + 80)
-      window = content[value_start...window_end]
+    private def function_target_body(offsets : Noir::CharOffsets, value_start : Int32) : String?
+      window_end = Math.min(offsets.content.size, value_start + 80)
+      window = offsets.slice(value_start, window_end)
 
       brace_search_from =
         if window.starts_with?("function")
@@ -199,12 +200,12 @@ module Analyzer::Javascript
           return
         end
 
-      open_brace = content.index("{", brace_search_from)
+      open_brace = offsets.index('{', brace_search_from)
       return unless open_brace
       return if open_brace - value_start > 120
 
-      close_brace = Noir::JSRouteExtractor.find_matching_brace(content, open_brace)
-      close_brace ? content[open_brace..close_brace] : nil
+      close_brace = Noir::JSLiteralScanner.find_matching_brace(offsets, open_brace)
+      close_brace ? offsets.slice(open_brace, close_brace + 1) : nil
     end
 
     # ---------------------------------------------------------------------
