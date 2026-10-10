@@ -80,6 +80,86 @@ describe "ElixirAuthTagger" do
     end
   end
 
+  it "tags only the phx.gen.auth blocks that require a user" do
+    dir = File.tempname("noir_elixir_auth")
+    Dir.mkdir_p(dir)
+    router = File.join(dir, "router.ex")
+    File.write(router, <<-EX)
+      defmodule AppWeb.Router do
+        use AppWeb, :router
+        import AppWeb.UserAuth
+
+        pipeline :browser do
+          plug :fetch_session
+          plug :fetch_current_user
+        end
+
+        pipeline :api_protected do
+          plug Guardian.Plug.EnsureAuthenticated
+        end
+
+        scope "/", AppWeb do
+          pipe_through :browser
+          get "/", PageController, :home
+        end
+
+        scope "/", AppWeb do
+          pipe_through [:browser, :redirect_if_user_is_authenticated]
+          get "/users/log_in", UserSessionController, :new
+        end
+
+        scope "/", AppWeb do
+          pipe_through [:browser, :require_authenticated_user]
+          get "/users/settings", UserSettingsController, :edit
+        end
+
+        scope "/", AppWeb do
+          pipe_through :browser
+
+          live_session :require_authenticated_user,
+            on_mount: [{AppWeb.UserAuth, :ensure_authenticated}] do
+            live "/users/profile", ProfileLive, :edit
+          end
+
+          live_session :current_user,
+            on_mount: [{AppWeb.UserAuth, :mount_current_user}] do
+            live "/users/confirm", ConfirmLive, :new
+          end
+        end
+
+        scope "/api", AppWeb do
+          pipe_through :api_protected
+          get "/me", ApiController, :me
+        end
+      end
+      EX
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(dir)
+      CodeLocator.instance.register_path(router)
+
+      at = ->(url : String, line : Int32) { Endpoint.new(url, "GET", [] of Param, Details.new(PathInfo.new(router, line))) }
+      home = at.call("/", 16)
+      log_in = at.call("/users/log_in", 21)
+      settings = at.call("/users/settings", 26)
+      profile = at.call("/users/profile", 34)
+      confirm = at.call("/users/confirm", 39)
+      me = at.call("/api/me", 45)
+
+      ElixirAuthTagger.new(noir_options).perform([home, log_in, settings, profile, confirm, me])
+
+      home.tags.should be_empty
+      log_in.tags.should be_empty
+      confirm.tags.should be_empty
+      settings.tags.map(&.description).should eq(["Protected by Phoenix :require_authenticated_user pipeline"])
+      profile.tags.map(&.description).should eq(["Protected by Phoenix live_session :ensure_authenticated on_mount"])
+      me.tags.map(&.description).should eq(["Protected by Phoenix :api_protected pipeline"])
+    ensure
+      FileUtils.rm_rf(dir)
+    end
+  end
+
   it "does not tag public controller" do
     noir_options = create_test_options
     noir_options["base"] = YAML::Any.new(fixture_base)
