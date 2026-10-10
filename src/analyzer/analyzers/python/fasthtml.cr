@@ -14,10 +14,15 @@ module Analyzer::Python
     # `@app.get/post/...` work as in Starlette. Handler arguments that are
     # not path params are query (GET/HEAD) or form params; the ones FastHTML
     # injects by name or type (`req`, `session`, `auth`, `htmx`, ...) are not.
+    # FastHTML only reads request data into annotated arguments: an
+    # unannotated one is a special name (`r` -> request, `hdrs`, `body`, ...)
+    # or is ignored with a warning, so it is never a param.
 
-    VERBS         = %w[get post put delete patch head options trace]
-    INJECTED      = %w[self req request session sess auth htmx app scope]
-    PATH_PARAM_RE = /\{([A-Za-z_]\w*)(?::[^}]*)?\}/
+    VERBS    = %w[get post put delete patch head options trace]
+    INJECTED = %w[self req request session sess auth htmx app scope]
+    # Annotations FastHTML fills from the request itself.
+    INJECTED_TYPE_RE = /\b(?:Request|HtmxHeaders|Starlette|FastHTML)\b/
+    PATH_PARAM_RE    = /\{([A-Za-z_]\w*)(?::[^}]*)?\}/
     # `app, rt = fast_app()` may name the route decorator something else.
     RT_NAME_RE = /^\s*\w+\s*,\s*(\w+)\s*=\s*fast_app\s*\(/m
     # `@app.ws("/ws")`: a WebSocket route, emitted as GET + protocol "ws".
@@ -69,7 +74,7 @@ module Analyzer::Python
         arg_names = [] of ::String
         parse_function_def(lines, def_line).try &.params.each do |param|
           next if ws
-          next if param.name.starts_with?('*') || INJECTED.includes?(param.name) || param.type.includes?("Request")
+          next if param.name.starts_with?('*') || param.type.empty? || INJECTED.includes?(param.name) || param.type.matches?(INJECTED_TYPE_RE)
           arg_names << param.name
         end
         body = extract_function_body(lines, def_line)

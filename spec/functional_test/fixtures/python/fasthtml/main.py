@@ -52,3 +52,10 @@ def upload(file: UploadFile):
 @app.ws("/ws/{room}")
 async def ws(msg: str, send, room: str):
     await send(msg)
+
+
+# Only annotated arguments read request data: `r`, `hdrs`, `body` and an
+# unannotated `name` are not params.
+@rt("/greet")
+def get(r, hdrs, body, name, lang: str, htmx: HtmxHeaders):
+    return ""

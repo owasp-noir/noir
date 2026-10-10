@@ -23,6 +23,8 @@ expected_endpoints = [
     Param.new("name", "", "form"),
   ]),
   Endpoint.new("/upload", "POST", [Param.new("file", "", "form")]),
+  # Unannotated arguments never carry request data.
+  Endpoint.new("/greet", "GET", [Param.new("lang", "", "query")]),
   # `APIRouter(prefix=...)` routes in products.py.
   Endpoint.new("/products/all", "GET"),
   Endpoint.new("/products/details", "GET", [Param.new("pid", "", "query")]),
@@ -42,7 +44,15 @@ end
 expected_endpoints << ws.call("/ws/{room}", [Param.new("room", "", "path")])
 expected_endpoints << ws.call("/products/live", [] of Param)
 
-FunctionalTester.new("fixtures/python/fasthtml/", {
+tester = FunctionalTester.new("fixtures/python/fasthtml/", {
   :techs     => 2,
   :endpoints => expected_endpoints.size,
-}, expected_endpoints).perform_tests
+}, expected_endpoints)
+tester.perform_tests
+
+describe "FastHTML handler arguments", tags: "functional" do
+  it "reports only annotated arguments as params" do
+    greet = tester.endpoints.find! { |ep| ep.url == "/greet" }
+    greet.params.map(&.name).should eq(["lang"])
+  end
+end
