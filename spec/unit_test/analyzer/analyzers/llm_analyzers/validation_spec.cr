@@ -116,5 +116,10 @@ describe Analyzer::AI::Unified do
       Analyzer::AI::Unified.grounded?("/admin.php", source).should be_true
       Analyzer::AI::Unified.grounded?("/users.json", source).should be_true
     end
+
+    it "grounds a file-routed path on the quoted, tag-wrapped bundle label" do
+      bundle = LLM.bundle_files([{"pages/user-profile.tsx", "export default function Page() {}"}], 100_000)[0]
+      Analyzer::AI::Unified.grounded?("/user-profile", bundle.content.downcase.delete("-_")).should be_true
+    end
   end
 end
