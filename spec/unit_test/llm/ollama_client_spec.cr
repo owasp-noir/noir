@@ -1,4 +1,5 @@
 require "spec"
+require "http/server"
 require "../../../src/llm/ollama/ollama"
 require "../../../src/llm/prompt"
 
@@ -9,8 +10,44 @@ class LLM::Ollama
     @api
   end
 
-  def __test_body(prompt : String, format : String, context : Array(Int32)? = nil) : String
-    build_body(prompt, format, context)
+  def __test_body(prompt : String, format : String) : String
+    build_body(prompt, format)
+  end
+end
+
+# A local stand-in for `ollama serve` that records each request and
+# answers with a reply that carries a KV `context`.
+private class FakeOllama
+  getter bodies = [] of JSON::Any
+  getter auth = [] of String?
+
+  def initialize
+    @server = HTTP::Server.new do |ctx|
+      @bodies << JSON.parse(ctx.request.body.try(&.gets_to_end) || "{}")
+      @auth << ctx.request.headers["Authorization"]?
+      ctx.response.print %({"response":"{}","context":[1,2,3]})
+    end
+    @address = @server.bind_tcp("127.0.0.1", 0)
+    spawn { @server.listen }
+    Fiber.yield
+  end
+
+  def url : String
+    "http://#{@address.address}:#{@address.port}"
+  end
+
+  def close
+    @server.close
+  end
+end
+
+private def with_ai_key_env(value : String?, &)
+  prev = ENV["NOIR_AI_KEY"]?
+  value ? (ENV["NOIR_AI_KEY"] = value) : ENV.delete("NOIR_AI_KEY")
+  begin
+    yield
+  ensure
+    prev ? (ENV["NOIR_AI_KEY"] = prev) : ENV.delete("NOIR_AI_KEY")
   end
 end
 
@@ -73,11 +110,38 @@ describe LLM::Ollama do
       body = JSON.parse(client.__test_body("hello", LLM::ANALYZE_FORMAT))
       body["format"]["type"].as_s.should eq("object")
     end
+  end
 
-    it "omits context unless one is being reused" do
-      JSON.parse(client.__test_body("hello", "json"))["context"]?.should be_nil
-      body = JSON.parse(client.__test_body("hello", "json", [1, 2, 3]))
-      body["context"].as_a.map(&.as_i).should eq([1, 2, 3])
+  describe "requests" do
+    it "does not chain the KV context between independent requests" do
+      # Feeding file N's context into file N+1 made each answer depend on
+      # which files were analyzed before it.
+      server = FakeOllama.new
+      begin
+        ollama = LLM::Ollama.new(server.url, "llama3")
+        ollama.request_with_context("sys", "file a", "json").should eq("{}")
+        ollama.request_with_context("sys", "file b", "json").should eq("{}")
+        server.bodies.size.should eq(2)
+        server.bodies.each(&.["context"]?.should(be_nil))
+      ensure
+        server.close
+      end
+    end
+
+    it "sends the API key as a bearer token, falling back to NOIR_AI_KEY" do
+      server = FakeOllama.new
+      begin
+        with_ai_key_env("env-key") do
+          LLM::Ollama.new(server.url, "llama3", nil, "cli-key").request("p")
+          LLM::Ollama.new(server.url, "llama3", nil, "").request("p")
+        end
+        with_ai_key_env(nil) do
+          LLM::Ollama.new(server.url, "llama3").request("p")
+        end
+        server.auth.should eq(["Bearer cli-key", "Bearer env-key", nil])
+      ensure
+        server.close
+      end
     end
   end
 

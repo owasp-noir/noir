@@ -32,8 +32,8 @@ class LLMEndpointOptimizer
 end
 
 class LLM::Ollama
-  def __test_body(prompt : String, format : String, context : Array(Int32)? = nil) : String
-    build_body(prompt, format, context)
+  def __test_body(prompt : String, format : String) : String
+    build_body(prompt, format)
   end
 end
 

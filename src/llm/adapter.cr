@@ -2,7 +2,7 @@
 #
 # Supports:
 # - LLM::General (OpenAI-compatible chat APIs)
-# - LLM::Ollama (Ollama local API with optional KV context reuse)
+# - LLM::Ollama (Ollama native API)
 # - LLM::ACPClient (ACP agents; includes Adapter directly)
 
 require "uri"
@@ -50,9 +50,8 @@ module LLM
       request_messages(messages, "json")
     end
 
-    # Context-aware request. Adapters that support provider-side context can reuse it using a cache_key.
-    # Default implementation falls back to request_messages without context reuse.
-    def request_with_context(system : String?, user : String, format : String = "json", cache_key : String? = nil) : String
+    # A single system + user request.
+    def request_with_context(system : String?, user : String, format : String = "json") : String
       request_messages(Adapter.messages(system, user), format)
     end
 
@@ -60,7 +59,7 @@ module LLM
     # tell raises `LLM::ContextOverflow` instead of returning "", so the
     # bundle can be re-split rather than lost.
     def request_bundle(system : String, user : String, format : String) : String
-      request_with_context(system, user, format, nil)
+      request_with_context(system, user, format)
     end
 
     def self.messages(system : String?, user : String) : Messages
@@ -107,7 +106,7 @@ module LLM
     end
   end
 
-  # Adapter for Ollama (LLM::Ollama) with optional context reuse.
+  # Adapter for Ollama (LLM::Ollama).
   class OllamaAdapter
     include Adapter
 
@@ -118,36 +117,37 @@ module LLM
 
     def request_messages(messages : Messages, format : String = "json") : String
       system_msg, user_payload = self.class.flatten_messages(messages)
-      client.request_with_context(system_msg, user_payload, format, nil)
+      client.request_with_context(system_msg, user_payload, format)
     end
 
     def request(prompt : String, format : String = "json") : String
       client.request(prompt, format)
     end
 
-    def request_with_context(system : String?, user : String, format : String = "json", cache_key : String? = nil) : String
-      client.request_with_context(system, user, format, cache_key)
+    def request_with_context(system : String?, user : String, format : String = "json") : String
+      client.request_with_context(system, user, format)
     end
 
-    # Promoted to a class-level pure function so the flattening rule
-    # (system messages joined with \n\n, non-system/non-user roles
-    # dropped, nil system when no system messages were present) is
-    # unit-testable without standing up a real Ollama client.
+    # `/api/generate` takes one prompt, so a conversation is flattened:
+    # system messages are joined into the system slot (nil when absent);
+    # user and assistant turns stay in order, assistant ones labelled so
+    # the agent loop still sees the actions it already took. Other roles
+    # are dropped.
     def self.flatten_messages(messages : Messages) : {String?, String}
       systems = [] of String
-      users = [] of String
+      turns = [] of String
       messages.each do |m|
         role = m["role"]?
         content = m["content"]?
         next unless role && content
         case role
-        when "system" then systems << content
-        when "user"   then users << content
+        when "system"    then systems << content
+        when "user"      then turns << content
+        when "assistant" then turns << "ASSISTANT:\n#{content}"
         end
       end
       sys = systems.empty? ? nil : systems.join("\n\n")
-      usr = users.join("\n\n")
-      {sys, usr}
+      {sys, turns.join("\n\n")}
     end
   end
 
@@ -214,7 +214,7 @@ module LLM
         acp_model = LLM::ACPClient.default_model(provider, model)
         LLM::ACPClient.new(provider, acp_model, event_sink)
       elsif ollama_native?(prov)
-        OllamaAdapter.new(LLM::Ollama.new(ollama_base_url(provider), model, context_tokens))
+        OllamaAdapter.new(LLM::Ollama.new(ollama_base_url(provider), model, context_tokens, api_key))
       else
         native_tool_calling = native_tool_calling_enabled_for_provider?(provider, native_tool_calling_allowlist)
         GeneralAdapter.new(LLM::General.new(provider, model, api_key), native_tool_calling)

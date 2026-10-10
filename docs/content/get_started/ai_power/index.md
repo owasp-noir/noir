@@ -110,7 +110,7 @@ flowchart TB
     InitAdapter --> ProviderCheck{Provider Type?}
     
     ProviderCheck -->|OpenAI/xAI/etc| GeneralAdapter[General Adapter<br/>OpenAI-compatible API]
-    ProviderCheck -->|Ollama/Local| OllamaAdapter[Ollama Adapter<br/>with Context Reuse]
+    ProviderCheck -->|Ollama/Local| OllamaAdapter[Ollama Adapter]
     ProviderCheck -->|ACP Agent| ACPAdapter[ACP Adapter<br/>Codex/Gemini/Claude/Custom]
     
     GeneralAdapter --> FileSelection
@@ -190,7 +190,7 @@ flowchart TB
 ### Key Components
 
 #### LLM Adapter Layer
-Provider-agnostic adapters: **General** (OpenAI-compatible APIs), **Ollama** (with server-side context reuse), and **ACP** (agent runtimes like `acp:codex`).
+Provider-agnostic adapters: **General** (OpenAI-compatible APIs), **Ollama** (native `/api/generate`), and **ACP** (agent runtimes like `acp:codex`).
 
 #### LLM File Filtering
 For projects with more than 10 files, the LLM filters the file list to identify likely endpoint files before analysis.

@@ -1090,16 +1090,12 @@ module Analyzer::AI
         return items
       end
 
-      # BUNDLE_ANALYZE runs one fiber per bundle concurrently and they
-      # would all share this one key — reusing a single KV-context
-      # across independent bundles contaminates results (and races the
-      # adapter's @contexts Hash). Disable context reuse for that kind;
-      # each request already carries the full system + bundle prompt.
-      # Adapters without provider-side context ignore the key.
+      # Each request carries its full system + user prompt; nothing is
+      # chained between files or bundles.
       response = if kind == "BUNDLE_ANALYZE"
                    adapter.request_bundle(system_prompt, payload, format)
                  else
-                   adapter.request_with_context(system_prompt, payload, format, "#{@provider}:#{@model}:#{kind}")
+                   adapter.request_with_context(system_prompt, payload, format)
                  end
       logger.debug "AI #{kind} response:"
       logger.debug_sub response

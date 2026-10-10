@@ -110,7 +110,7 @@ flowchart TB
     InitAdapter --> ProviderCheck{제공자 타입?}
 
     ProviderCheck -->|OpenAI/xAI/등| GeneralAdapter[General Adapter<br/>OpenAI 호환 API]
-    ProviderCheck -->|Ollama/Local| OllamaAdapter[Ollama Adapter<br/>컨텍스트 재사용]
+    ProviderCheck -->|Ollama/Local| OllamaAdapter[Ollama Adapter]
     ProviderCheck -->|ACP 에이전트| ACPAdapter[ACP Adapter<br/>Codex/Gemini/Claude/Custom]
 
     GeneralAdapter --> FileSelection
@@ -190,7 +190,7 @@ flowchart TB
 ### 주요 구성 요소
 
 #### LLM 어댑터 레이어
-제공자 독립적 어댑터: **General** (OpenAI 호환 API), **Ollama** (서버 측 컨텍스트 재사용), **ACP** (`acp:codex` 등 에이전트 런타임).
+제공자 독립적 어댑터: **General** (OpenAI 호환 API), **Ollama** (네이티브 `/api/generate`), **ACP** (`acp:codex` 등 에이전트 런타임).
 
 #### LLM 파일 필터링
 파일이 10개를 넘는 프로젝트에서는 LLM이 엔드포인트를 포함할 가능성이 높은 파일을 먼저 골라냅니다.
