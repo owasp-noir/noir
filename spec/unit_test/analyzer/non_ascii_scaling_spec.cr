@@ -61,4 +61,15 @@ describe "non-ASCII route files" do
       "index.php"     => "<?php\nuse Phalcon\\Mvc\\Router;\n$title = 'COMMENT';\n#{routes}",
     }, "index.php", "php_phalcon")
   end
+
+  it "keeps Laravel route scans linear" do
+    routes = (1..1000).join do |i|
+      "Route::get('/items#{i}/{id}', [ItemController::class, 'show']);\nRoute::post('/save#{i}', function (Request $request) { return $request->input('name'); });\n"
+    end
+    assert_linear_on_non_ascii({
+      "composer.json"  => %({"require":{"laravel/framework":"^11.0"}}),
+      "artisan"        => "#!/usr/bin/env php\n",
+      "routes/web.php" => "<?php\nuse Illuminate\\Support\\Facades\\Route;\n$title = 'COMMENT';\n#{routes}",
+    }, "routes/web.php", "php_laravel")
+  end
 end

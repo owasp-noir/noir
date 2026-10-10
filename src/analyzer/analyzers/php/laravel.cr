@@ -1,5 +1,6 @@
 require "../../engines/php_engine"
 require "../../../minilexers/php_lexer"
+require "../../../utils/char_offsets"
 
 module Analyzer::Php
   class Laravel < PhpEngine
@@ -18,7 +19,7 @@ module Analyzer::Php
     # recursive pass. Bundled so the shared scan helpers below take the body
     # once instead of threading eight arguments through every call.
     private record RouteScanContext,
-      content : String,
+      offsets : Noir::CharOffsets,
       file_path : String,
       include_callee : Bool,
       base_line : Int32,
@@ -176,6 +177,7 @@ module Analyzer::Php
       # file starts outside `<?php`; a group body handed back by the recursive
       # pass below was already carved out of a PHP region.
       lexer = Noir::PhpLexer.new(content, php_mode: php_mode)
+      offsets = Noir::CharOffsets.new(content)
       route_groups = extract_route_groups(content, lexer)
       resource_controller_cache = {} of String => ControllerActionMap?
       # Character ranges that are inside PHP comments (`//`, `#`, `/* */`),
@@ -185,7 +187,7 @@ module Analyzer::Php
       # `"Try Route::get(...)"` string, or a `<<<SQL … SQL` heredoc doesn't
       # surface as a real endpoint.
       skip_ranges = lexer.skip_ranges
-      ctx = RouteScanContext.new(content, file_path, include_callee, base_line, lexer, imports, route_groups, skip_ranges, collect_handler_bodies(content, base_line, lexer))
+      ctx = RouteScanContext.new(offsets, file_path, include_callee, base_line, lexer, imports, route_groups, skip_ranges, collect_handler_bodies(offsets, base_line, lexer))
 
       # 1. Verb routes. Every scan below walks the body the same way, with the
       # same guards — `each_laravel_route` holds that walk once. What differs
@@ -244,13 +246,13 @@ module Analyzer::Php
       # (one resource per `'name' => Controller` entry, sharing the call's
       # options) and the id-less `singleton`/`apiSingleton`.
       RESOURCE_CALL_RES.each_key do |kind|
-        extract_resource_route_calls(content, kind, skip_ranges, lexer).each do |call|
+        extract_resource_route_calls(offsets, kind, skip_ranges, lexer).each do |call|
           next if inside_laravel_group_body?(call.start_pos, route_groups) ||
                   inside_php_skip_range?(call.start_pos, skip_ranges)
 
           actions = resource_actions_for_statement(call.statement, default_resource_actions(kind, call.statement))
           parameter_overrides = resource_parameter_overrides_for_statement(call.statement)
-          call_line = base_line + newline_count_before(content, call.start_pos)
+          call_line = base_line + offsets.line(call.start_pos) - 1
           resource_entries(kind, call, lexer, call_line).each do |name, statement, line|
             templates = resource_route_templates(prefix, name, parameter_overrides, kind)
             endpoints.concat(create_resource_endpoints(templates, file_path, line, actions, statement, include_callee, imports, resource_controller_cache))
@@ -262,7 +264,7 @@ module Analyzer::Php
       # routes so prefixed groups do not also emit unprefixed endpoints.
       route_groups.each do |group|
         new_prefix = group.prefix.empty? ? prefix : build_full_path(prefix, group.prefix)
-        group_base_line = base_line + newline_count_before(content, group.body_start)
+        group_base_line = base_line + offsets.line(group.body_start) - 1
         endpoints.concat(analyze_routes_content(group.body, new_prefix, file_path, include_callee, group_base_line, imports, php_mode: true))
       end
 
@@ -283,14 +285,15 @@ module Analyzer::Php
     # resume scanning from, which is how far a match consumes: past an inline
     # closure body for handler routes, past the match itself otherwise.
     private def each_laravel_route(ctx : RouteScanContext, regex : Regex, &) : Nil
-      content = ctx.content
+      offsets = ctx.offsets
       pos = 0
 
-      while route_match = content.match(regex, pos)
-        pos = if inside_laravel_group_body?(route_match.begin(0), ctx.route_groups) ||
-                 inside_php_skip_range?(route_match.begin(0), ctx.skip_ranges) ||
-                 inside_handler_body?(route_match.begin(0), ctx.handler_bodies)
-                route_match.end(0)
+      while route_match = offsets.match(regex, pos)
+        start = offsets.begin(route_match)
+        pos = if inside_laravel_group_body?(start, ctx.route_groups) ||
+                 inside_php_skip_range?(start, ctx.skip_ranges) ||
+                 inside_handler_body?(start, ctx.handler_bodies)
+                offsets.end(route_match)
               else
                 yield route_match
               end
@@ -325,19 +328,17 @@ module Analyzer::Php
     # Collecting the ranges once, up front, makes the skip a property of the
     # content rather than of scan ordering — the same shape `skip_ranges`
     # already uses for strings, comments and heredocs.
-    private def collect_handler_bodies(content : String, base_line : Int32, lexer : Noir::PhpLexer) : Array(Range(Int32, Int32))
+    private def collect_handler_bodies(offsets : Noir::CharOffsets, base_line : Int32, lexer : Noir::PhpLexer) : Array(Range(Int32, Int32))
       bodies = [] of Range(Int32, Int32)
       pos = 0
 
-      while route_match = content.match(ROUTE_REGISTRATION_RE, pos)
-        action_pos = route_match.end(0)
-        if lexer.in_code?(route_match.begin(0))
-          _body, next_pos, _line = extract_inline_closure_body(content, action_pos, base_line, lexer)
+      while route_match = offsets.match(ROUTE_REGISTRATION_RE, pos)
+        action_pos = offsets.end(route_match)
+        if lexer.in_code?(offsets.begin(route_match))
+          _body, next_pos, _line = extract_inline_closure_body(offsets, action_pos, base_line, lexer)
           bodies << (action_pos...next_pos) if next_pos > action_pos
-          pos = action_pos
-        else
-          pos = route_match.end(0)
         end
+        pos = action_pos
       end
 
       bodies
@@ -352,16 +353,16 @@ module Analyzer::Php
                                    route_match : Regex::MatchData,
                                    methods : Array(String),
                                    full_path : String) : Int32
-      content = ctx.content
-      action_pos = route_match.end(0)
-      route_line = ctx.base_line + newline_count_before(content, route_match.begin(0))
-      handler_body, next_pos, body_start_line = extract_inline_closure_body(content, action_pos, ctx.base_line, ctx.lexer)
+      offsets = ctx.offsets
+      action_pos = offsets.end(route_match)
+      route_line = ctx.base_line + offsets.line(offsets.begin(route_match)) - 1
+      handler_body, next_pos, body_start_line = extract_inline_closure_body(offsets, action_pos, ctx.base_line, ctx.lexer)
       params = extract_brace_path_params(full_path)
 
       methods.each do |http_method|
         details = Details.new(PathInfo.new(ctx.file_path, route_line))
         endpoint = Endpoint.new(full_path, http_method, params, details.dup)
-        attach_route_callees(endpoint, handler_body, body_start_line, content, action_pos, ctx.file_path, ctx.imports) if ctx.include_callee
+        attach_route_callees(endpoint, handler_body, body_start_line, offsets, action_pos, ctx.file_path, ctx.imports) if ctx.include_callee
         endpoints << endpoint
       end
 
@@ -376,11 +377,11 @@ module Analyzer::Php
                                   ctx : RouteScanContext,
                                   route_match : Regex::MatchData,
                                   full_path : String) : Int32
-      route_line = ctx.base_line + newline_count_before(ctx.content, route_match.begin(0))
+      route_line = ctx.base_line + ctx.offsets.line(ctx.offsets.begin(route_match)) - 1
       params = extract_brace_path_params(full_path)
       details = Details.new(PathInfo.new(ctx.file_path, route_line))
       endpoints << Endpoint.new(full_path, "GET", params, details.dup)
-      route_match.end(0)
+      ctx.offsets.end(route_match)
     end
 
     # Path for a route registered behind a fluent chain. The chain is fed back
@@ -401,7 +402,7 @@ module Analyzer::Php
     private def attach_route_callees(endpoint : Endpoint,
                                      body : String?,
                                      start_line : Int32?,
-                                     content : String,
+                                     offsets : Noir::CharOffsets,
                                      action_pos : Int32,
                                      routes_file_path : String,
                                      imports : Hash(String, String))
@@ -411,7 +412,7 @@ module Analyzer::Php
         return
       end
 
-      action = extract_route_action(content, action_pos)
+      action = extract_route_action(offsets, action_pos)
       return unless action
 
       resolved = resolve_controller_action_body(action[0], action[1], routes_file_path, imports)
@@ -425,27 +426,25 @@ module Analyzer::Php
     # Parse the controller reference that follows a route's path argument.
     # Returns {class, method} where `class` may be a short name (resolved
     # later via `use` imports) or a fully-qualified `\App\...` name.
-    private def extract_route_action(content : String, pos : Int32) : Tuple(String, String)?
+    private def extract_route_action(offsets : Noir::CharOffsets, pos : Int32) : Tuple(String, String)?
       scan_pos = pos
-      while scan_pos < content.size && content[scan_pos].ascii_whitespace?
+      while offsets.ascii_whitespace?(scan_pos)
         scan_pos += 1
       end
-      return unless scan_pos < content.size
-
-      rest = content[scan_pos..]
+      return unless scan_pos < offsets.content.size
 
       # [Controller::class, 'method']
-      if m = rest.match(/\A\[\s*([A-Za-z_\\][\w\\]*)::class\s*,\s*['"]([A-Za-z_]\w*)['"]/)
+      if m = offsets.match(/\G\[\s*([A-Za-z_\\][\w\\]*)::class\s*,\s*['"]([A-Za-z_]\w*)['"]/, scan_pos)
         return {m[1], m[2]}
       end
 
       # 'Controller@method' / "App\\...\\Controller@method"
-      if m = rest.match(/\A['"]([\w\\]+)@([A-Za-z_]\w*)['"]/)
+      if m = offsets.match(/\G['"]([\w\\]+)@([A-Za-z_]\w*)['"]/, scan_pos)
         return {m[1], m[2]}
       end
 
       # Single-action (`__invoke`) controller: Controller::class
-      if m = rest.match(/\A([A-Za-z_\\][\w\\]*)::class\s*\)/)
+      if m = offsets.match(/\G([A-Za-z_\\][\w\\]*)::class\s*\)/, scan_pos)
         return {m[1], "__invoke"}
       end
 
@@ -537,49 +536,53 @@ module Analyzer::Php
       imports
     end
 
-    private def extract_inline_closure_body(content : String, pos : Int32, base_line : Int32, lexer : Noir::PhpLexer) : Tuple(String?, Int32, Int32?)
-      return {nil, pos, nil} unless pos < content.size
+    private def extract_inline_closure_body(offsets : Noir::CharOffsets, pos : Int32, base_line : Int32, lexer : Noir::PhpLexer) : Tuple(String?, Int32, Int32?)
+      size = offsets.content.size
+      return {nil, pos, nil} unless pos < size
 
       scan_pos = pos
-      while scan_pos < content.size && content[scan_pos].ascii_whitespace?
+      while offsets.ascii_whitespace?(scan_pos)
         scan_pos += 1
       end
-      return {nil, pos, nil} unless scan_pos < content.size
+      return {nil, pos, nil} unless scan_pos < size
 
-      closure_regex = /\A(?:static\s+)?function\s*\([^)]*\)\s*(?:use\s*\([^)]*\)\s*)?(?::\s*[^{=]+)?\{/i
-      match = content[scan_pos..].match(closure_regex)
-      return extract_arrow_closure_body(content, scan_pos, pos, base_line, lexer) unless match
+      closure_regex = /\G(?:static\s+)?function\s*\([^)]*\)\s*(?:use\s*\([^)]*\)\s*)?(?::\s*[^{=]+)?\{/i
+      match = offsets.match(closure_regex, scan_pos)
+      return extract_arrow_closure_body(offsets, scan_pos, pos, base_line, lexer) unless match
 
-      brace_pos = scan_pos + match[0].size - 1
+      brace_pos = offsets.end(match) - 1
       body_end = lexer.matching_delimiter(brace_pos)
       return {nil, pos, nil} unless body_end
 
-      body_start_line = base_line + newline_count_before(content, brace_pos)
-      {content[(brace_pos + 1)...body_end], body_end + 1, body_start_line}
+      body_start_line = base_line + offsets.line(brace_pos) - 1
+      {offsets.slice(brace_pos + 1, body_end), body_end + 1, body_start_line}
     end
 
-    private def extract_arrow_closure_body(content : String,
+    private def extract_arrow_closure_body(offsets : Noir::CharOffsets,
                                            scan_pos : Int32,
                                            fallback_pos : Int32,
                                            base_line : Int32,
                                            lexer : Noir::PhpLexer) : Tuple(String?, Int32, Int32?)
-      arrow_regex = /\A(?:static\s+)?fn\s*\([^)]*\)\s*(?::\s*[^=]+)?=>/i
-      match = content[scan_pos..].match(arrow_regex)
+      arrow_regex = /\G(?:static\s+)?fn\s*\([^)]*\)\s*(?::\s*[^=]+)?=>/i
+      match = offsets.match(arrow_regex, scan_pos)
       return {nil, fallback_pos, nil} unless match
 
-      body_start = scan_pos + match[0].size
+      body_start = offsets.end(match)
       body_end = lexer.expression_end(body_start)
       return {nil, fallback_pos, nil} unless body_end > body_start
 
-      body_start_line = base_line + newline_count_before(content, body_start)
-      {content[body_start...body_end], body_end, body_start_line}
+      body_start_line = base_line + offsets.line(body_start) - 1
+      {offsets.slice(body_start, body_end), body_end, body_start_line}
     end
 
     # True when `pos` falls inside any skip range (PHP comment, string
     # literal or heredoc/nowdoc body — see `PhpLexer#skip_ranges`). Cheap on
     # the ~few-hundred-range count seen in real Laravel routes files.
     private def inside_php_skip_range?(pos : Int32, ranges : Array(Range(Int32, Int32))) : Bool
-      ranges.any?(&.covers?(pos))
+      # The lexer records its ranges in one left-to-right pass, so they are
+      # sorted and disjoint: the only candidate is the first ending at/after `pos`.
+      range = ranges.bsearch { |r| r.end >= pos }
+      !range.nil? && range.covers?(pos)
     end
 
     private def extract_route_groups(content : String, lexer : Noir::PhpLexer) : Array(RouteGroup)
@@ -842,7 +845,7 @@ module Analyzer::Php
       "except" => Regex.new("->\\s*except\\s*\\((.*?)\\)", Regex::Options::IGNORE_CASE | Regex::Options::MULTILINE),
     }
 
-    private def extract_resource_route_calls(content : String,
+    private def extract_resource_route_calls(offsets : Noir::CharOffsets,
                                              method_name : String,
                                              skip_ranges : Array(Range(Int32, Int32)),
                                              lexer : Noir::PhpLexer) : Array(ResourceRouteCall)
@@ -850,14 +853,16 @@ module Analyzer::Php
       regex = RESOURCE_CALL_RES[method_name]
       pos = 0
 
-      while route_match = content.match(regex, pos)
-        if inside_php_skip_range?(route_match.begin(0), skip_ranges)
-          pos = route_match.end(0)
+      while route_match = offsets.match(regex, pos)
+        start = offsets.begin(route_match)
+        match_end = offsets.end(route_match)
+        if inside_php_skip_range?(start, skip_ranges)
+          pos = match_end
         else
-          statement_end = lexer.statement_end(route_match.begin(0))
-          statement = content[route_match.begin(0)...statement_end]
-          calls << ResourceRouteCall.new(route_match[1], statement, route_match.begin(0))
-          pos = statement_end > route_match.end(0) ? statement_end : route_match.end(0)
+          statement_end = lexer.statement_end(start)
+          statement = offsets.slice(start, statement_end)
+          calls << ResourceRouteCall.new(route_match[1], statement, start)
+          pos = statement_end > match_end ? statement_end : match_end
         end
       end
 
