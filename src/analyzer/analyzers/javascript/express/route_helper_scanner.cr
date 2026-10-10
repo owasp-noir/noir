@@ -166,7 +166,7 @@ module Analyzer::Javascript
     TEST_TREE_RE = %r{(?:\A|/)(?:tests?|specs?|e2e|e2e-tests|__tests__|__mocks__|cypress|playwright)/|[.\-](?:test|spec)\.[jt]sx?\z}
 
     NAMED_IMPORT_RES = [
-      /(?:const|let|var)\s*\{\s*([\s\S]*?)\s*\}\s*=\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)/,
+      /(?:const|let|var)\s*\{\s*([^{}]*?)\s*\}\s*=\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)/,
       /import\s*\{\s*([\s\S]*?)\s*\}\s*from\s*['"]([^'"]+)['"]/,
     ]
 
@@ -547,7 +547,10 @@ module Analyzer::Javascript
       # NodeBB writes it this way in every one of its 15 write-API route
       # modules, so the one-step `= require(...)` form above is not enough.
       unless module_specs.empty?
-        content.scan(/(?:const|let|var)\s*\{\s*([\s\S]*?)\s*\}\s*=\s*([A-Za-z_$][\w$]*)\s*[;\n]/) do |m|
+        # Brace-free body: with `[\s\S]*?` an earlier `const { id } = req.params;`
+        # failed at `.params`, then stretched to the next `}` and swallowed
+        # this destructuring.
+        content.scan(/(?:const|let|var)\s*\{\s*([^{}]*?)\s*\}\s*=\s*([A-Za-z_$][\w$]*)\s*[;\n]/) do |m|
           specs = module_specs[m[2]]?
           next unless specs
           destructured_names(m[1]).each do |local, source|

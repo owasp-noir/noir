@@ -1,5 +1,5 @@
 'use strict';
-
+const { API_VERSION } = process.env;
 const Write = module.exports;
 const { setupApiRoute } = require('../helpers');
 const controllers = require('../../controllers');

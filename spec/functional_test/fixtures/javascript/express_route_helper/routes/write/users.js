@@ -1,5 +1,5 @@
 'use strict';
-
+const { NODE_ENV } = process.env;
 const router = require('express').Router();
 const controllers = require('../../controllers');
 const routeHelpers = require('../helpers');
