@@ -652,10 +652,12 @@ module Analyzer::Python
           end
         end
 
-        # Extract Tornado parameter patterns
-        extract_tornado_params(stripped, params)
-
         i += 1
+      end
+
+      # Extract Tornado parameter patterns, with wrapped calls folded.
+      fold_python_continuations(lines[method_line_index + 1...i]).each do |body_line|
+        extract_tornado_params(body_line.strip, params)
       end
 
       params

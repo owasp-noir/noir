@@ -1124,9 +1124,58 @@ module Analyzer::Python
       {depth, triple}
     end
 
+    # `lines` with each call or subscript left open at a line end folded
+    # onto the line that opens it, so a per-line accessor regex sees
+    # black's wrap of a long call (`request.args.get(` / `"q"` / `)`) as
+    # `request.args.get("q")`. The result has the same size as `lines`: a
+    # folded line's continuations become `""`, so indexes (and the line
+    # numbers derived from them) still line up. Folded pieces are cut at
+    # their `#` comment and stripped; a line that closes on its own comes
+    # back verbatim. Triple-quoted strings are tracked across the block,
+    # so a `(` in a docstring opens nothing.
+    def fold_python_continuations(lines : Array(::String)) : Array(::String)
+      folded = Array(::String).new(lines.size)
+      triple : Char? = nil
+      i = 0
+      while i < lines.size
+        delta, triple, comment = python_call_line_scan(lines[i], triple, brackets: true)
+        head = lines[i]
+        i += 1
+        if delta <= 0
+          folded << head
+          next
+        end
+        head = head.byte_slice(0, comment).rstrip
+        joined = String.build do |io|
+          io << head
+          last = head[-1]? || ' '
+          while i < lines.size && delta > 0
+            line_delta, triple, comment = python_call_line_scan(lines[i], triple, brackets: true)
+            piece = lines[i].byte_slice(0, comment).strip
+            unless piece.empty?
+              # Glue the tokens back together, but keep `a` / `and b` two words.
+              io << ' ' if python_word_char?(last) && python_word_char?(piece[0])
+              io << piece
+              last = piece[-1]
+            end
+            delta += line_delta
+            i += 1
+          end
+        end
+        folded << joined
+        (i - folded.size).times { folded << "" }
+      end
+      folded
+    end
+
+    private def python_word_char?(ch : Char) : Bool
+      ch.alphanumeric? || ch == '_'
+    end
+
     # `python_call_line_delta` plus the byte offset where the line's `#`
-    # comment starts (`line.bytesize` when it has none).
-    private def python_call_line_scan(line : ::String, triple : Char?) : Tuple(Int32, Char?, Int32)
+    # comment starts (`line.bytesize` when it has none). `brackets` also
+    # counts `[` / `]`, for a subscript wrapped like a call.
+    private def python_call_line_scan(line : ::String, triple : Char?, brackets : Bool = false) : Tuple(Int32, Char?, Int32)
       depth = 0
       in_quote : Char? = nil
       escaped = false
@@ -1157,9 +1206,9 @@ module Analyzer::Python
           end
         elsif ch == '#'
           return {depth, triple, i}
-        elsif ch == '('
+        elsif ch == '(' || (brackets && ch == '[')
           depth += 1
-        elsif ch == ')'
+        elsif ch == ')' || (brackets && ch == ']')
           depth -= 1
         end
         i += 1

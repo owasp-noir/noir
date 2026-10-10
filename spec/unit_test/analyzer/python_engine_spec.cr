@@ -157,6 +157,30 @@ describe Analyzer::Python::PythonEngine do
     harness.join_until_python_call_closes(lines, 0, lines[0]).should eq("app.add_api_route(       \"/items\",       list_items, )")
   end
 
+  it "folds wrapped calls and subscripts onto their opening line" do
+    harness = PythonEngineSpecHarness.new(create_test_options)
+    lines = [
+      "    a = request.args.get(  # long (call",
+      "        \"q\"",
+      "    )",
+      "    b = request.form[",
+      "        \"f\"",
+      "    ]",
+      "    \"\"\"see (docs\"\"\"",
+      "    c = f(x",
+      "          and y)",
+      "    # d = request.args.get(",
+      "    #     \"commented\")",
+    ]
+    harness.fold_python_continuations(lines).should eq([
+      "    a = request.args.get(\"q\")", "", "",
+      "    b = request.form[\"f\"]", "", "",
+      lines[6],
+      "    c = f(x and y)", "",
+      lines[9], lines[10],
+    ])
+  end
+
   it "parses a long non-ASCII parameter default in linear time" do
     harness = PythonEngineSpecHarness.new(create_test_options)
     default = "가" * 60_000

@@ -1642,6 +1642,7 @@ module Analyzer::Python
     # Extracts request parameters from a code block by detecting JSON variable
     # assignments and scanning for request.field access patterns.
     private def extract_request_params(codeblock_lines : Array(::String)) : Array(Param)
+      codeblock_lines = fold_python_continuations(codeblock_lines)
       params = [] of Param
       json_variable_names = [] of ::String
 

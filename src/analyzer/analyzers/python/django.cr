@@ -1432,7 +1432,7 @@ module Analyzer::Python
             end
           end
 
-          lines.each do |line|
+          fold_python_continuations(lines).each do |line|
             # Check if line has 'request.method == "GET"' similar pattern
             if line.includes? "request.method"
               suspicious_code = line.split("request.method")[1].strip
@@ -1522,7 +1522,9 @@ module Analyzer::Python
           end
           current_http_methods : Array(String)? = nil
 
-          # Check HTTP methods in class methods
+          # Check HTTP methods in class methods. Params are read off the
+          # folded view so a wrapped `request.GET.get(` call still counts.
+          folded_lines = fold_python_continuations(lines)
           lines.each_with_index do |line, offset|
             method_function_match = line.match(REGEX_CBV_METHOD_DEF)
             any_method_function_match = line.match(/\s+(?:async\s+)?def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/)
@@ -1555,14 +1557,14 @@ module Analyzer::Python
 
             if method_names = current_http_methods
               scan_methods = method_names.dup
-              extract_params_from_line(line, scan_methods).each do |param|
+              extract_params_from_line(folded_lines[offset], scan_methods).each do |param|
                 method_names.each do |mapped_method_name|
                   next unless suspicious_http_methods.includes?(mapped_method_name)
                   method_params[mapped_method_name] << param
                 end
               end
             else
-              extract_params_from_line(line, suspicious_http_methods).each do |param|
+              extract_params_from_line(folded_lines[offset], suspicious_http_methods).each do |param|
                 common_params << param
               end
             end
@@ -1666,7 +1668,7 @@ module Analyzer::Python
         method_actions.each do |drf_action|
           drf_action.definition_line = body_start_line + offset + 2
           if codeblock
-            codeblock.split("\n").each do |body_line|
+            fold_python_continuations(codeblock.split("\n")).each do |body_line|
               extract_params_from_line(body_line, [drf_action.method]).each do |param|
                 drf_action.params << param
               end

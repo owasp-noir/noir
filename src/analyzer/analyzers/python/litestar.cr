@@ -460,7 +460,7 @@ module Analyzer::Python
       end
 
       if codeblock
-        codeblock.split("\n").each do |cl|
+        fold_python_continuations(codeblock.split("\n")).each do |cl|
           collect_request_attr_params(cl, "query_params", "query", params)
           collect_request_attr_params(cl, "path_params", "path", params)
           collect_request_attr_params(cl, "headers", "header", params)
