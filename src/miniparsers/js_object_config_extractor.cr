@@ -39,10 +39,12 @@ module Noir
     # Typed handlers inside the config (`handler(this: T, ctx: Context<P>):
     # string {`, `httpAction(async (ctx, req): Promise<Response> => …)`)
     # break the JS parse badly enough to lose the enclosing object. Only a
-    # single-line, ternary-free `(...)` directly followed by an optional
-    # return type and `{` / `=>` is a signature, so object literals keep
-    # their values.
-    TS_SIGNATURE  = /\(((?:[^()\n?]|\?:)*)\)(\s*:\s*[A-Za-z_$][\w$.<>\[\]|, ]*?)?(?=\s*(?:\{|=>))/
+    # single-line `(...)` followed by an optional return type and `{` / `=>`
+    # is a signature, and only one free of strings, braces, `=`, brackets
+    # (other than `[]`) and `?` (other than `?:`). A condition
+    # (`if (k === "a:b") {`), a destructuring or default parameter, or a
+    # ternary branch (group 1) is left alone.
+    TS_SIGNATURE  = /(\?\s*)?\(((?:[^()\n?'"`{}\[\]=]|\?:|\[\])*)\)(\s*:\s*[A-Za-z_$][\w$.<>\[\]|, ]*?)?(?=\s*(?:\{|=>))/
     TS_THIS_PARAM = /\bthis\s*:\s*(?:[^,<>]|<[^<>\n]*>)+(?:,\s*)?/
     TS_PARAM_TYPE = /(?<=[\w$}\]])\??\s*:\s*(?:[^,<>=]|<[^<>\n]*>)+/
 
@@ -52,8 +54,8 @@ module Noir
     # `{ path, handler }` and every value is lost. Only the strips above
     # are safe on declarative config; all keep line numbers.
     private def normalize(source : String) : String
-      source.gsub(DECLARATION_ANNOTATION, "\\1 =").gsub(SATISFIES_ASSERTION, "").gsub(TS_SIGNATURE) do
-        "(#{$~[1].gsub(TS_THIS_PARAM, "").gsub(TS_PARAM_TYPE, "")})"
+      source.gsub(DECLARATION_ANNOTATION, "\\1 =").gsub(SATISFIES_ASSERTION, "").gsub(TS_SIGNATURE) do |match|
+        $~[1]? ? match : "(#{$~[2].gsub(TS_THIS_PARAM, "").gsub(TS_PARAM_TYPE, "")})"
       end
     end
 

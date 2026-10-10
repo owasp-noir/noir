@@ -310,6 +310,21 @@ describe Noir::JSObjectConfigExtractor do
       configs[0].line.should eq(1)
     end
 
+    it "leaves colons in conditions, destructuring, defaults and ternaries alone" do
+      source = <<-TS
+        const PostsService: ServiceSchema = {
+          name: "posts",
+          actions: {
+            list: { params: { page: "number" }, handler: async (ctx) => { if (ctx.meta.kind === "a:b") { return []; } } },
+            get: { handler: ({ params: p }, opts = { limit: 10 }) => (ok ? (a) : b => c) },
+          },
+        };
+        TS
+      config = Noir::JSObjectConfigExtractor.extract(source, ["name"])[0]
+      list = config.hash("actions").not_nil!["list"].as(Hash(String, Noir::JSObjectConfigExtractor::ConfigValue))
+      list["params"].should eq({"page" => "number"})
+    end
+
     it "keeps method-shorthand keys with an unknown value" do
       source = %(const s = { aliases: { "GET hi"(req, res) { res.end("hi"); }, "POST x": "a.b" } })
       aliases = Noir::JSObjectConfigExtractor.extract(source, ["aliases"])[0].hash("aliases").not_nil!

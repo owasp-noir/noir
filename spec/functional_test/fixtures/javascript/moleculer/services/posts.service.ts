@@ -4,7 +4,7 @@ import type { ServiceSchema } from "moleculer";
 const PostsService: ServiceSchema = {
   name: "posts",
   actions: {
-    list: { params: { page: "number" }, handler: async () => [] },
+    list: { params: { page: "number" }, handler: async (ctx) => { if (ctx.meta.kind === "a:b") { return []; } } },
     get: { params: { id: "string" }, handler: async () => null },
     create: { params: { title: "string", body: "string" }, handler: async () => null },
     update: { handler(this: PostsThis, ctx: Context<UpdateParams>): Promise<null> { return null; } },
