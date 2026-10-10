@@ -36,7 +36,7 @@ module Analyzer::Javascript
       services = ordered_scan_files(get_files_by_extensions(DEFAULT_EXTENSIONS)) do |path|
         content = read_file_content(path)
         next unless content.matches?(SERVICE_HINT) && owned_by_js_package?(path, owners)
-        next if Noir::JSRouteExtractor.test_stub_only?(path, content, false)
+        next if js_test_file?(path)
         # The gateway mixin is what serves `settings.routes`; a look-alike
         # object elsewhere is not routed.
         gateway = content.matches?(GATEWAY_IMPORT)
