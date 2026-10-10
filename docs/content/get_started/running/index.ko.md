@@ -174,7 +174,7 @@ signals를 명시적으로 선택했을 때만 포함됩니다.
 | `--export-webhook <url>` | 엔드포인트 카탈로그를 JSON 으로 웹훅에 POST |
 | `--ai-provider`        | AI 제공업체 접두사 또는 전체 URL ([AI 파워](@/get_started/ai_power/index.ko.md) 참고) |
 | `--ai-model NAME`     | AI 모델 이름 |
-| `--ai-key KEY`        | AI API 키 (`NOIR_AI_KEY` 환경 변수로도 가능) |
+| `--ai-key KEY`        | AI API 키 (프로세스 목록에 노출되므로 `NOIR_AI_KEY` 또는 `--ai-key-file PATH` 권장) |
 | `--diff-path <path>`  | [Diff 모드](@/usage/more_features/diff/index.ko.md)용 이전 코드 경로 |
 | `--diff-ref <ref>`    | 비교할 git 리비전 (예: `main`, `HEAD~1`; [Diff 모드](@/usage/more_features/diff/index.ko.md) 참고) |
 | `--fail-on <list>`    | diff에 `added`, `removed`, `changed`, `auth-removed` 중 하나라도 있으면 종료 코드 `3` |
