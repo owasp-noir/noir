@@ -192,6 +192,10 @@ module Noir::CliValidation
       if number < minimum
         raise Error.new("Invalid #{flag} '#{number}'. Must be #{minimum == 0 ? "0 or greater (0 = #{key == "ai_max_requests" ? "unlimited" : "provider/model default"})" : "a positive integer"}.")
       end
+      # Read back with `as_i?`, which raises past Int32.
+      if number > Int32::MAX
+        raise Error.new("Invalid #{flag} '#{number}'. Must be at most #{Int32::MAX}.")
+      end
     end
   end
 

@@ -447,11 +447,15 @@ describe Noir::CliValidation do
   # `positive_int_or_die!` on the CLI side; their config twins had no bound at
   # all. ConfigInitializer coerces the value to an Int, this checks the range.
   describe "ai integer options" do
-    it "rejects a negative request budget" do
+    it "rejects a negative or Int32-overflowing request budget" do
       options = create_test_options
       options["ai_max_requests"] = YAML::Any.new(-1)
-
       expect_raises(Noir::CliValidation::Error, /Invalid --ai-max-requests '-1'/) do
+        Noir::CliValidation.validate_ai_integer_options!(options)
+      end
+
+      options["ai_max_requests"] = YAML::Any.new(3_000_000_000_i64)
+      expect_raises(Noir::CliValidation::Error, /at most 2147483647/) do
         Noir::CliValidation.validate_ai_integer_options!(options)
       end
     end
