@@ -1,0 +1,16 @@
+# Routes Config
+#
+# This file defines all application routes (Higher priority routes first)
+
+module:testrunner
+
+GET     /                       App.Index
+POST    /users/:id              Users.Update
+GET     /users                  Users.List
+WS      /feed                   App.Feed
+
+# Map static resources from the /app/public folder to the /public path
+GET     /public/*filepath       Static.Serve("public")
+
+# Catch all
+*       /:controller/:action    :controller.:action
