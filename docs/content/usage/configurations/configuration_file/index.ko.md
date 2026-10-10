@@ -178,6 +178,7 @@ noir scan /path/to/my/project -f json -u https://api.example.com --exclude-codes
 | `ai_key` | string | `--ai-key` / `NOIR_AI_KEY` | 공유 설정에서는 환경 변수 권장 |
 | `ai_agent` | bool | `--ai-agent` | 에이전트형 tool-calling 루프 활성화 |
 | `ai_agent_max_steps` | int | `--ai-agent-max-steps` | 에이전트 루프 상한 |
+| `ai_no_optimize` | bool | `--ai-no-optimize` | LLM 옵티마이저 단계를 건너뜀 |
 | `ai_native_tools_allowlist` | CSV | `--ai-native-tools-allowlist` | 네이티브 툴 사용을 허용할 제공업체 |
 | `ai_max_token` | int | `--ai-max-token` | 요청당 최대 토큰 (`0` = 제공업체 기본값) |
 | `cache_disable` | bool | `--cache-disable` | LLM 응답 캐시 비활성화 |

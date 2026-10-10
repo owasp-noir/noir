@@ -598,6 +598,9 @@ def run_options_parser
       validated = positive_int_or_die!("--ai-agent-max-steps", v)
       noir_options["ai_agent_max_steps"] = YAML::Any.new(validated)
     end
+    parser.on "--ai-no-optimize", "Skip the LLM rewrite pass over AI-found endpoints" do
+      noir_options["ai_no_optimize"] = YAML::Any.new(true)
+    end
     parser.on "--ai-native-tools-allowlist LIST", "Provider allowlist for native tool-calling (comma-separated; repeatable; default: #{LLM::NativeToolCalling.default_allowlist_csv})" do |v|
       # Accumulate so users can layer providers across multiple
       # `--ai-native-tools-allowlist` invocations the same way they

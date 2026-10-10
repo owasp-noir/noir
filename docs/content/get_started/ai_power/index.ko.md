@@ -57,6 +57,7 @@ noir scan . --ai-provider acp:codex
 | `--ai-key` | API 키 (`NOIR_AI_KEY` 환경 변수로도 설정 가능) |
 | `--ai-agent` | 에이전트 기반 AI 워크플로우 활성화 (반복적 도구 호출 루프) |
 | `--ai-agent-max-steps` | AI 에이전트 루프 최대 단계 수 (기본값: `20`) |
+| `--ai-no-optimize` | LLM 옵티마이저 단계를 건너뜀 |
 | `--ai-native-tools-allowlist` | 네이티브 도구 호출 허용 제공업체 목록 (쉼표 구분, 기본값: `openai,xai,github`) |
 | `--ai-max-token` | AI 요청 최대 토큰 수 (선택 사항) |
 | `--cache-disable` | LLM 응답 캐시 비활성화 |
@@ -202,4 +203,4 @@ flowchart TB
 LLM 응답은 디스크에 캐시됩니다 (SHA256 키). 위치는 `~/.config/noir/cache/ai/`(또는 `$NOIR_HOME/cache/ai/`, Windows 는 `%APPDATA%\noir\cache\ai\`)이며 `noir cache info` 로 확인할 수 있습니다. `--cache-disable` 또는 `--cache-clear`로 제어합니다.
 
 #### LLM 옵티마이저
-URL과 파라미터 이름을 정규화하고 RESTful 규칙을 적용하여 엔드포인트 품질을 개선하는 선택적 후처리 단계입니다.
+AI 분석기만 찾은 엔드포인트에 대한 후처리 단계입니다. 경로 파라미터 문법을 정규화하고(`:id`를 `{id}`로) 파라미터 타입을 바로잡습니다. 리터럴 경로나 파라미터 이름을 바꾸는 재작성은 버립니다. 정적 분석기가 찾은 라우트는 보내지 않습니다. 요청은 동시에 최대 4개, 스캔당 최대 100개입니다. `--ai-no-optimize`로 끌 수 있습니다.

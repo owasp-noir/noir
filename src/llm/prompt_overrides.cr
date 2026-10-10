@@ -5,19 +5,19 @@ module LLM::PromptOverrides
   class_property analyze_prompt : String = LLM::ANALYZE_PROMPT
   class_property bundle_analyze_prompt : String = LLM::BUNDLE_ANALYZE_PROMPT
   class_property llm_optimize_prompt : String = <<-PROMPT
-    Analyze the provided endpoint and optimize it for better structure, naming conventions, and parameter handling.
+    Normalize the provided endpoint without changing which route it names.
 
-    Focus on:
-    - Normalizing unusual URL patterns
-    - Improving parameter naming conventions
-    - Standardizing path structures
-    - Removing redundant or confusing elements
+    Allowed:
+    - Rewriting path-parameter syntax to {name} (e.g. :id or <int:id> becomes {id})
+    - Naming an unnamed wildcard (e.g. * becomes {path})
+    - Correcting parameter types (query, json, form, header, cookie, path)
+
+    Not allowed (such answers are discarded):
+    - Changing, adding, removing, or re-casing any literal path text
+    - Renaming parameters
 
     Guidelines:
-    - Keep the core functionality and meaning intact
-    - Use RESTful conventions where appropriate
-    - Ensure parameter types are accurate
-    - Maintain endpoint uniqueness
+    - Return the URL and parameters unchanged when nothing needs normalizing
     - Do not include explanations or comments
     - Output only the JSON result according to the schema
     PROMPT
