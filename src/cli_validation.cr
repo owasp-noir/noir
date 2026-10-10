@@ -195,7 +195,7 @@ module Noir::CliValidation
   end
 
   # `--ai-temperature` / `--ai-seed` and their config keys arrive as text;
-  # "" (the default) means unset.
+  # "" (the default) means unset. `ai_scope` rides along.
   def self.validate_ai_sampling!(options : Hash(String, YAML::Any))
     temperature = options["ai_temperature"]?.to_s.strip
     unless temperature.empty? || temperature.to_f?.try(&.in?(0.0..2.0))
@@ -203,8 +203,14 @@ module Noir::CliValidation
     end
 
     seed = options["ai_seed"]?.to_s.strip
-    return if seed.empty? || seed.to_i64?
-    raise Error.new("Invalid --ai-seed '#{seed}'. Must be an integer.")
+    unless seed.empty? || seed.to_i64?
+      raise Error.new("Invalid --ai-seed '#{seed}'. Must be an integer.")
+    end
+
+    # The --ai-scope flag checks its value; the config key did not.
+    scope = options["ai_scope"]?.to_s
+    return if scope.empty? || scope.in?("all", "unmatched")
+    raise Error.new("Invalid --ai-scope '#{scope}'. Valid: all, unmatched")
   end
 
   # `--probe-match` and `--probe-skip` only run inside the Deliver

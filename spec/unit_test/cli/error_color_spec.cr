@@ -28,7 +28,7 @@ describe "early CLI error colors" do
       File.read_lines(path).select(&.includes?(%q(STDERR.puts "ERROR:)))
     end
 
-    error_lines.size.should eq(15)
+    error_lines.size.should eq(16)
     error_lines.each(&.should contain(".colorize(:red)"))
   end
 

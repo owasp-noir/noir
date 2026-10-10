@@ -255,6 +255,9 @@ describe Noir::CliValidation do
       options["ai_temperature"] = YAML::Any.new("")
       options["ai_seed"] = YAML::Any.new("1.5")
       expect_raises(Noir::CliValidation::Error, /--ai-seed/) { Noir::CliValidation.validate_ai_sampling!(options) }
+      options["ai_seed"] = YAML::Any.new("")
+      options["ai_scope"] = YAML::Any.new("some")
+      expect_raises(Noir::CliValidation::Error, /--ai-scope/) { Noir::CliValidation.validate_ai_sampling!(options) }
     end
   end
 
