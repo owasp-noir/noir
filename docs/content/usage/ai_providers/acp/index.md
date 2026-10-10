@@ -74,5 +74,7 @@ NOIR_ACP_ALLOW_TOOL_PERMISSIONS=1 noir scan ./myapp --ai-provider=acp:codex
 ## Notes
 
 - `--ai-key` is not required for `acp:*` providers.
+- `NOIR_AI_TIMEOUT` bounds each prompt turn (default `300` seconds). `NOIR_AI_CONNECT_TIMEOUT` bounds starting the agent and opening a session (default `120` seconds, enough for the first `npx` download).
+- ACP requests are not retried and do not count toward `--ai-max-requests`.
 - Cache flags (`--cache-disable`, `--cache-clear`) work the same as other AI providers.
 - `acp:claude-code` is accepted as an alias of `acp:claude`.

@@ -460,6 +460,11 @@ jobs:
             echo "::error::bin/noir_spec exports $count dynamic symbols; --no-export-dynamic is not taking effect"
             exit 1
           fi
+      # The CLI specs (spec/unit_test/cli/binary_surface_spec.cr and the AI
+      # fake-provider spec) run the real `bin/noir` and mark themselves
+      # pending when it is missing, which it always was in this job.
+      - name: Build noir for the CLI specs
+        run: shards build --no-debug
       # Spec files load in directory order, which differs between macOS and
       # Linux, so an example that depends on state another example left behind
       # passes locally and fails here, on an unrelated PR. Four such couplings
