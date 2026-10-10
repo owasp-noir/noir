@@ -17,6 +17,8 @@ class UserController @Inject()(
 
   prefix("/admin") {
     delete("/users/:id") { request: Request => "x" }
+    // A brace char literal must not keep this prefix block open.
+    get("/raw") { request: Request => request.contentString.indexOf('{') }
 
     prefix("/v2") {
       put[Request, String]("/settings") { request: Request =>

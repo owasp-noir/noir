@@ -115,6 +115,16 @@ module Noir::ScalaCalleeExtractor
         else
           stripped.write_byte(' '.ord.to_u8)
         end
+      elsif char == '\'' && (length = char_literal_length(chars, index))
+        # `'{'` / `'\''`, as `ScalaLexer` reads them: a brace in a char
+        # literal must not count toward block nesting.
+        if preserve_strings
+          length.times { |k| stripped << chars[index + k] }
+        else
+          append_spaces(stripped, length)
+        end
+        index += length
+        next
       elsif char == '/' && next_char == '/'
         append_spaces(stripped, size - index)
         return {stripped.to_s, block_comment_depth, in_multiline_string}
@@ -130,6 +140,16 @@ module Noir::ScalaCalleeExtractor
     end
 
     {stripped.to_s, block_comment_depth, in_multiline_string}
+  end
+
+  # Length of the char literal (`'x'` or `'\x'`) opening at `index`, nil
+  # for a `'symbol` literal.
+  private def char_literal_length(chars : Array(Char), index : Int32) : Int32?
+    if chars[index + 1]? == '\\'
+      4 if chars[index + 3]? == '\''
+    elsif chars[index + 1]? != '\''
+      3 if chars[index + 2]? == '\''
+    end
   end
 
   private def append_spaces(stripped : String::Builder, count : Int32)
