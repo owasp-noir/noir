@@ -47,7 +47,7 @@ This matrix lists frameworks where Noir supports per-endpoint callee extraction.
 | R | Plumber |
 | Ruby | Grape, Hanami, Padrino, Rails, Roda, Sinatra, WEBrick |
 | Rust | Actix Web, Axum, Dioxus, Gotham, Leptos, Loco, Poem, RWF, Rocket, Salvo, Tide, Warp, ntex |
-| Scala | Akka HTTP / Pekko HTTP, Play Framework, Scalatra, Tapir, ZIO HTTP, http4s |
+| Scala | Akka HTTP / Pekko HTTP, Finatra, Play Framework, Scalatra, Tapir, ZIO HTTP, http4s |
 | Swift | Hummingbird, Kitura, Vapor |
 | TypeScript | LoopBack, Midway, NestJS, TanStack Router, Ts.ED, Wasp, inversify-express-utils, routing-controllers, tRPC, tsoa |
 | Zig | Jetzig, Tokamak, Zap, httpz, std.http.Server |
