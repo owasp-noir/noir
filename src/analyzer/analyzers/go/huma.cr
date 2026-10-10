@@ -137,7 +137,7 @@ module Analyzer::Go
             # huma.Get(api, "/path", handler) — path@1, handler@2.
             method = sugar_verb
             arg_index = 0
-            Noir::TreeSitter.each_named_child(args) do |arg|
+            Noir::TreeSitter.each_named_arg(args) do |arg|
               case arg_index
               when 1 then route_path = decode_string_value(arg, source) || ""
               when 2 then handler_node = arg
@@ -149,7 +149,7 @@ module Analyzer::Go
             # Operation literal@1, handler@2.
             op_node : LibTreeSitter::TSNode? = nil
             arg_index = 0
-            Noir::TreeSitter.each_named_child(args) do |arg|
+            Noir::TreeSitter.each_named_arg(args) do |arg|
               case arg_index
               when 1 then op_node = arg
               when 2 then handler_node = arg
