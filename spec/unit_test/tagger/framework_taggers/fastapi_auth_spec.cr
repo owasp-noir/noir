@@ -1,3 +1,4 @@
+require "file_utils"
 require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
@@ -60,5 +61,69 @@ describe "FastAPIAuthTagger" do
     tagger.perform([endpoint])
 
     endpoint.tags.empty?.should be_true
+  end
+
+  it "reads Annotated auth aliases, wrapped signatures and router dependencies" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("fastapi_aliases")
+    Dir.mkdir_p(tmpdir)
+    deps = File.join(tmpdir, "deps.py")
+    users = File.join(tmpdir, "users.py")
+    admin = File.join(tmpdir, "admin.py")
+    File.write(deps, <<-PY)
+      SessionDep = Annotated[Session, Depends(get_db)]
+      CurrentUser = Annotated[User, Depends(get_current_user)]
+      PY
+    File.write(users, <<-PY)
+      router = APIRouter(prefix="/users")
+
+      @router.get(
+          "/",
+          dependencies=[Depends(get_current_active_superuser)],
+      )
+      def read_users(session: SessionDep):
+          return []
+
+      @router.patch("/me/password")
+      def update_password_me(
+          *, session: SessionDep, body: dict, current_user: CurrentUser
+      ):
+          return None
+
+      @router.post("/signup")
+      def register_user(session: SessionDep, email: str):
+          return None
+      PY
+    File.write(admin, <<-PY)
+      router = APIRouter(
+          prefix="/admin",
+          dependencies=[Depends(get_current_active_superuser)],
+      )
+
+      @router.get("/metrics")
+      def metrics():
+          return {}
+      PY
+    [deps, users, admin].each { |path| CodeLocator.instance.register_path(path) }
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(path : String, line : Int32) { Endpoint.new("/#{line}", "GET", [] of Param, Details.new(PathInfo.new(path, line))) }
+      read_users = at.call(users, 3)
+      password = at.call(users, 10)
+      signup = at.call(users, 16)
+      metrics = at.call(admin, 6)
+
+      FastAPIAuthTagger.new(noir_options).perform([read_users, password, signup, metrics])
+
+      read_users.tags.map(&.description).should eq(["Protected by FastAPI Depends(get_current_active_superuser)"])
+      password.tags.map(&.description).should eq(["Protected by FastAPI Depends(get_current_user) (CurrentUser)"])
+      signup.tags.should be_empty
+      metrics.tags.map(&.description).should eq(["Protected by FastAPI Depends(get_current_active_superuser)"])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
   end
 end
