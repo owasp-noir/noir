@@ -103,4 +103,21 @@ describe LLM do
       LLM.json_reply("```json\n{}\n```", "endpoints").should eq({} of String => JSON::Any)
     end
   end
+
+  describe ".salvage_list" do
+    it "keeps the complete items before the cut" do
+      reply = %(```json\n{"endpoints": [ {"url":"/a","params":[{"name":"q"}]}, {"url":"/b}"} ,{"url":"/ord)
+      LLM.salvage_list(reply, "endpoints").try(&.map(&.["url"].as_s)).should eq(["/a", "/b}"])
+    end
+
+    it "stops at the end of the list" do
+      LLM.salvage_list(%({"endpoints":[{"url":"/a"}],"note":{"url":"/x"}, "more":), "endpoints").try(&.size).should eq(1)
+    end
+
+    it "finds nothing without a complete item" do
+      LLM.salvage_list(%({"endpoints":[{"url":"/a), "endpoints").should be_nil
+      LLM.salvage_list(%({"files":[{"url":"/a"}), "endpoints").should be_nil
+      LLM.salvage_list("prose", "endpoints").should be_nil
+    end
+  end
 end

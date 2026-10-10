@@ -77,6 +77,31 @@ module LLM
     first_object_with(text, key) || parse_object(stripped).try { |empty| empty if empty.empty? }
   end
 
+  # The complete objects at the head of a `"key": [` list that never closes,
+  # or nil: what is left of a reply cut off by the output limit. Stops at
+  # the first item that is not a whole object, so nothing past the cut (or
+  # past the list's end) is taken.
+  def self.salvage_list(text : String, key : String) : Array(JSON::Any)?
+    match = text.match(/"#{Regex.escape(key)}"\s*:\s*\[/) || return
+    bytes = text.to_slice
+    pos = match.byte_end(0)
+    items = [] of JSON::Any
+    loop do
+      while pos < bytes.size && (bytes[pos].unsafe_chr.ascii_whitespace? || ',' === bytes[pos])
+        pos += 1
+      end
+      break unless pos < bytes.size && '{' === bytes[pos]
+      stop = balanced_end(bytes, pos) || break
+      begin
+        items << JSON.parse(text.byte_slice(pos, stop - pos + 1))
+      rescue JSON::ParseException
+        break
+      end
+      pos = stop + 1
+    end
+    items unless items.empty?
+  end
+
   private def self.parse_object(text : String) : Hash(String, JSON::Any)?
     return if text.empty?
     JSON.parse(text).as_h?
