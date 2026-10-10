@@ -303,16 +303,20 @@ describe "noir CLI surface (built binary)" do
   end
 
   describe "scan" do
-    it "rejects a non-UTF-8 argument instead of crashing in a regex" do
-      bad = String.new(Bytes[0xff, 0xfe])
-      [["--pvalue", bad], ["-u", "http://#{bad}"]].each do |flag|
-        result = run_noir(["scan", FIXTURE, "-f", "json", "--no-log"] + flag)
-        result.stdout.should be_empty
-        result.stderr.should_not contain("Unhandled exception")
-        result.stderr.should contain("not valid UTF-8")
-        result.exit_code.should eq(1)
+    # Windows hands argv over as UTF-16, so invalid bytes arrive as U+FFFD
+    # and a non-UTF-8 argument can't reach noir there.
+    {% unless flag?(:win32) %}
+      it "rejects a non-UTF-8 argument instead of crashing in a regex" do
+        bad = String.new(Bytes[0xff, 0xfe])
+        [["--pvalue", bad], ["-u", "http://#{bad}"]].each do |flag|
+          result = run_noir(["scan", FIXTURE, "-f", "json", "--no-log"] + flag)
+          result.stdout.should be_empty
+          result.stderr.should_not contain("Unhandled exception")
+          result.stderr.should contain("not valid UTF-8")
+          result.exit_code.should eq(1)
+        end
       end
-    end
+    {% end %}
 
     it "rejects a -u/--url with no host" do
       result = run_noir(["scan", FIXTURE, "-u", "http://", "-f", "json", "--no-log"])

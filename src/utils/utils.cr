@@ -42,9 +42,12 @@ end
 
 # `Dir.glob(File.join(dir, pattern))` with `dir` taken literally: a project
 # under `proj [old]/` or `br[1]/` must not have its own path read as a glob
-# character class and silently match nothing.
+# character class and silently match nothing. Joined by hand, not with
+# `File.join`: on Windows that rewrites every `\` to `/`
+# (src/ext/windows_paths.cr), escapes included.
 def glob_under(dir : String, pattern : String) : Array(String)
-  Dir.glob(File.join(escape_glob_path(dir), pattern))
+  return Dir.glob(pattern) if dir.empty?
+  Dir.glob("#{escape_glob_path(dir.chomp('/'))}/#{pattern}")
 end
 
 # Matches `regex` against `input`, treating a backtracking blow-up as "no

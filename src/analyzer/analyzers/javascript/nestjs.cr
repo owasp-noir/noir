@@ -292,6 +292,7 @@ module Analyzer::Javascript
       if prefix = extract_global_prefix_config(sanitized, path)
         global_prefix_mutex.synchronize do
           global_prefix_holder << {path, prefix}
+          nil # Crystal 1.20 can't infer the `<<` result type here
         end
       end
 

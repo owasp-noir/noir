@@ -256,7 +256,7 @@ module Noir
     # unreadable entries in some edge cases; swallow those so one bad
     # sibling doesn't sink the whole walk.
     private def self.safe_glob(dir : String, pattern : String, &block : String ->) : Nil
-      Dir.glob(File.join(escape_glob_path(dir), pattern)) { |p| block.call(p) }
+      glob_under(dir, pattern).each { |p| block.call(p) }
     rescue
     end
 
