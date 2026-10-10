@@ -16,6 +16,7 @@ class PostsController < ApplicationController
       request.headers['X-API-KEY']
       page = params.fetch(:page, 1)
       status = params.dig(:filter, :status)
+      theme = settings_params.fetch(:theme, nil)
     end
   
     # GET /posts/new
