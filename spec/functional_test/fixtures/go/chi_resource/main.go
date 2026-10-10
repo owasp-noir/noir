@@ -18,7 +18,8 @@ func main() {
 
 	// Mount struct value-method routers (chi's REST "resource" pattern).
 	r.Mount(/* resource */ "/todos", todosResource{}.Routes())
-	r.Mount("/users", usersResource{}.Routes())
+	r.Mount("/users",
+		usersResource{}.Routes())
 
 	http.ListenAndServe(":3333", r)
 }
