@@ -192,6 +192,13 @@ describe Noir::JSObjectConfigExtractor do
         config["fields"].should be_nil
       end
 
+      it "records a shorthand property as a present key" do
+        source = "http.route({ path: '/short', method: 'GET', handler })"
+        config = Noir::JSObjectConfigExtractor.extract(source, ["method", "handler"])[0]
+        config.data.has_key?("handler").should be_true
+        config.string("path").should eq("/short")
+      end
+
       it "decodes a quoted key" do
         source = "const c = { 'slug': 'posts', \"fields\": [] }"
         Noir::JSObjectConfigExtractor.extract(source, ["slug", "fields"])[0]

@@ -131,6 +131,11 @@ module Noir
       return data if depth > MAX_VALUE_DEPTH
 
       Noir::TreeSitter.each_named_child(node) do |pair|
+        # `{ path: "/x", handler }`: the key is present, its value unknown.
+        if Noir::TreeSitter.node_type(pair) == "shorthand_property_identifier"
+          data[Noir::TreeSitter.node_text(pair, source)] = nil
+          next
+        end
         next unless Noir::TreeSitter.node_type(pair) == "pair"
         key, value = pair_key_value(pair, source)
         next if key.empty?
