@@ -19,6 +19,7 @@ module LLM
     @request_lock : Mutex
     @response_lock : Mutex
     @response_buffer : String
+    @sessions_on_client = 0
 
     @@logs_muted = false
     @@logs_mutex = Mutex.new
@@ -99,6 +100,9 @@ module LLM
     # the HTTP connect timeout: the first `npx` run downloads the agent
     # package before it can answer `initialize`, which easily exceeds 30 s.
     DEFAULT_REQUEST_TIMEOUT = 120.seconds
+
+    # Claude/Codex adapters hold a subprocess or heavy state per session.
+    MAX_SESSIONS_PER_AGENT = 8
 
     def self.request_timeout : Time::Span
       HttpTransport.duration_from_env(HttpTransport::CONNECT_TIMEOUT_ENV) || DEFAULT_REQUEST_TIMEOUT
@@ -198,11 +202,12 @@ module LLM
       # Each request gets a fresh session: one `session/new` round trip is
       # cheap next to a prompt turn, and a shared session let earlier
       # bundles leak into later answers, making results order-dependent.
-      # ponytail: ACP v1 has no session/close, so the agent keeps every
-      # session until it exits; restart the agent every N requests if an
-      # agent's per-session memory ever matters on large scans.
+      # ACP v1 has no session/close, so the agent keeps every session until
+      # it exits; restart it every MAX_SESSIONS_PER_AGENT requests.
       @request_lock.synchronize do
+        close if @sessions_on_client >= MAX_SESSIONS_PER_AGENT
         session = ACP::Session.create(ensure_client, cwd: (ENV["NOIR_ACP_CWD"]? || Dir.current))
+        @sessions_on_client += 1
         @event_sink.try(&.call("ACP: session #{session.id} created"))
         clear_response_buffer
         final_prompt = append_format_instruction(prompt, format)
@@ -237,6 +242,7 @@ module LLM
       rescue Exception
       ensure
         @client = nil
+        @sessions_on_client = 0
         @agent_stderr = nil
       end
     end

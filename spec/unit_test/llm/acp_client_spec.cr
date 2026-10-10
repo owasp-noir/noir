@@ -221,7 +221,7 @@ describe LLM::ACPClient do
       done
       SH
 
-    it "opens a fresh session per request and reports a non-end_turn stop" do
+    it "opens a fresh session per request, restarts the agent past the cap and reports a non-end_turn stop" do
       {% if flag?(:windows) %}
         pending! "fake agent is a POSIX shell script"
       {% end %}
@@ -235,6 +235,11 @@ describe LLM::ACPClient do
         client.request("bundle one", "").should eq("s1")
         client.request("bundle two", "").should eq("s2")
         events.count(&.includes?("turn stopped with refusal")).should eq(2)
+
+        max = LLM::ACPClient::MAX_SESSIONS_PER_AGENT
+        (3..max).each { |i| client.request("bundle", "").should eq("s#{i}") }
+        # Past the cap the agent is restarted, so its session ids start over.
+        client.request("bundle", "").should eq("s1")
       ensure
         client.close
         ENV.delete("NOIR_ACP_ALLOW_CUSTOM_COMMAND")
