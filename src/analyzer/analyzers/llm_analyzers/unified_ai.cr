@@ -494,7 +494,7 @@ module Analyzer::AI
     # paths have nothing to check and pass.
     def self.grounded?(url : String, haystack : String) : Bool
       path = url.sub(URL_AUTHORITY_RE, "").split(/[?#]/, 2).first
-      literal = path.split('/').reverse.find { |seg| !seg.empty? && !seg.matches?(PLACEHOLDER_SEGMENT_RE) }
+      literal = path.split('/').reverse_each.find { |seg| !seg.empty? && !seg.matches?(PLACEHOLDER_SEGMENT_RE) }
       literal.nil? || haystack.includes?(literal.downcase)
     end
 
