@@ -125,8 +125,8 @@ describe "AI analyzer against a fake provider (built binary)" do
       provider.bodies.any?(&.includes?("filter_files")).should be_true
       provider.bodies.each do |body|
         body.should_not contain(SECRET)
-        body.should_not contain(".env")
-        body.should_not contain("id_rsa")
+        # As a path in the FILTER list or a bundle label, not prompt prose.
+        body.should_not match(/[\\\/"](?:\.env|id_rsa)\b/)
       end
 
       urls = JSON.parse(result.stdout)["endpoints"].as_a.map(&.["url"].as_s)
@@ -143,7 +143,7 @@ describe "AI analyzer against a fake provider (built binary)" do
       provider.status = 401
       result = run_scan(dir, provider, ["--strict"])
 
-      # FILTER plus two bundles; the other ten bundles are never sent.
+      # FILTER plus two bundles, then the cutoff; the rest are never sent.
       provider.bodies.size.should eq(3)
       result.stderr.should contain("failed its first 3 requests")
       result.exit_code.should eq(2)
