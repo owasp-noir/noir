@@ -38,14 +38,18 @@ module LLM
 
     @response_format = ResponseFormat::AsAsked
 
-    # A bad key, a missing model or an unreachable host fails every request
-    # the same way. After this many in a row the client stops sending, so a
-    # 1000-file scan does not repeat the same failure 1000 times; the files
-    # it skips are reported as unanalyzed by the caller.
+    # A bad key, a missing model, a wrong URL or an unreachable host fails
+    # every request the same way. After this many in a row, before the
+    # provider has answered once, the client stops sending, so a 1000-file
+    # scan does not repeat the same failure 1000 times; the files it skips are
+    # reported as unanalyzed by the caller. Once it has answered, a failure is
+    # an outage or a slow prompt (a read timeout looks the same as a refused
+    # connection here) and every request keeps its own chance.
     MAX_FATAL_STREAK = 3
     FATAL_STATUS     = Set{401, 403, 404}
 
     @fatal_streak = Atomic(Int32).new(0)
+    @answered = false
 
     def initialize(url : String, model : String, api_key : String?)
       @url = url
@@ -200,6 +204,7 @@ module LLM
       result = LLM::HttpTransport.post_json_result(@api, encode(body), request_headers)
       case result
       when String
+        @answered = true
         @fatal_streak.set(0)
         return result
       when nil
@@ -217,7 +222,10 @@ module LLM
         # Stepped from what was sent, not from the current setting: requests
         # in flight concurrently all come back rejected at the old level.
         step = sent.to_json.includes?("json_schema") ? ResponseFormat::JsonObject : ResponseFormat::Omitted
-        @response_format = step if step > @response_format
+        if step > @response_format
+          @response_format = step
+          STDERR.puts "WARNING: AI provider rejected the response_format; retrying with #{step.json_object? ? %("json_object") : "none"} for the rest of the run"
+        end
         return post(body, raise_overflow)
       end
 
@@ -225,13 +233,13 @@ module LLM
         raise overflow
       end
       LLM::HttpTransport.report(result)
-      count_fatal_failure if FATAL_STATUS.includes?(result.status)
+      count_fatal_failure if result.status < 400 || FATAL_STATUS.includes?(result.status)
       nil
     end
 
     private def count_fatal_failure : Nil
-      return unless @fatal_streak.add(1) == MAX_FATAL_STREAK - 1
-      STDERR.puts "WARNING: AI provider failed #{MAX_FATAL_STREAK} requests in a row (bad key, unknown model or unreachable host); skipping the remaining AI requests"
+      return if @answered || @fatal_streak.add(1) != MAX_FATAL_STREAK - 1
+      STDERR.puts "WARNING: AI provider failed its first #{MAX_FATAL_STREAK} requests (bad key, unknown model, wrong URL or unreachable host); skipping the remaining AI requests"
     end
 
     # Make a request with chat-style messages

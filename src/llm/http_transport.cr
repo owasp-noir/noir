@@ -235,7 +235,7 @@ module LLM
     def self.report(rejection : Rejection) : Nil
       # A redirect has no body worth showing; where it points is the fix
       # (usually an http:// provider URL that should be https://).
-      detail = rejection.location.try { |loc| "redirected to #{Noir::Redact.url(loc)}; use that as the provider URL" }
+      detail = rejection.location.try { |loc| "redirected to #{Noir::Redact.url(loc)}; check the provider URL" } if (300..399).includes?(rejection.status)
       STDERR.puts "WARNING: AI API error (HTTP #{rejection.status}): #{detail || truncate_error_snippet(rejection.body)}"
     end
 

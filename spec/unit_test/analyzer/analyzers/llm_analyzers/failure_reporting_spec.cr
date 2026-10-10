@@ -199,7 +199,7 @@ describe Analyzer::AI::Unified do
         ai_analyzer.__test_process_bundle(bundle, adapter)
 
         analyzer.__test_result.map(&.url).should eq(["/users"])
-        Noir::SkippedFiles.failures.map(&.message).join.should contain("cut off")
+        Noir::SkippedFiles.failures.map(&.message).join.should contain("incomplete")
         adapter.calls.should eq(2)
       end
     end
