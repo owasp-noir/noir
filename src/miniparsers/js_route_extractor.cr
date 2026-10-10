@@ -332,7 +332,13 @@ module Noir
             end
           end
           if prefixes.empty? && start_byte >= 0 && !prefixes_by_binding.empty?
-            if receiver = offsets.window(start_byte, 128).match(ROUTE_RECEIVER_RE)
+            # Some parser paths report a position inside the receiver token
+            # (`usersRouter` at its last char); back up to the token start.
+            receiver_start = start_byte
+            while receiver_start > 0 && identifier_byte?(content.to_unsafe[receiver_start - 1])
+              receiver_start -= 1
+            end
+            if receiver = offsets.window(receiver_start, 128).match(ROUTE_RECEIVER_RE)
               prefixes = prefixes_by_binding[receiver[1]]? || prefixes
             end
           end
@@ -1081,6 +1087,10 @@ module Noir
     EXPORT_KEY_VALUE_RE    = /\A([A-Za-z_$][\w$]*)\s*:\s*([A-Za-z_$][\w$]*)\z/
     EXPORT_IDENT_RE        = /\A[A-Za-z_$][\w$]*\z/
     ROUTE_RECEIVER_RE      = /\A([A-Za-z_$][\w$]*)\s*\./
+
+    private def self.identifier_byte?(byte : UInt8) : Bool
+      byte.unsafe_chr.ascii_alphanumeric? || byte === '_' || byte === '$'
+    end
 
     # Local binding => the names it is exported under. An importer that
     # takes a router by name (`const { usersRouter } = require('./users')`,

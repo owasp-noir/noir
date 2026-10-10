@@ -91,6 +91,18 @@ module Analyzer::Javascript
         content.scan(/import\s+(\w+)\s+from\s+['"]([^'"]+)['"]/) do |m|
           record_import.call(m[1], m[2]) if m.size >= 3
         end
+        # Routers imported by name (`const { usersRouter } = require(…)`,
+        # `import { router as users } from …`) keep the exported name: the
+        # route extractor maps it back to the binding the routes are on.
+        named_imports = Hash(String, Tuple(String, String)).new
+        content.scan(/(?:(?:const|let|var)\s*\{([^}]*)\}\s*=\s*require\s*\(|import\s*\{([^}]*)\}\s*from)\s*['"]([^'"]+)['"]/) do |m|
+          resolved = Noir::ImportGraph.resolve_relative_import(path, m[3], boundary: boundary)
+          next unless resolved
+          (m[1]? || m[2]).split(',').each do |item|
+            parts = item.strip.split(/\s*:\s*|\s+as\s+/)
+            named_imports[parts.last] = {resolved, parts.first} if parts.all?(&.matches?(/\A[A-Za-z_$][\w$]*\z/))
+          end
+        end
 
         # Collect mount edges: parent.use('/prefix', child[.routes()]) and
         # the no-prefix parent.use(child[.routes()]). A bare `child` or a
@@ -108,9 +120,12 @@ module Analyzer::Javascript
         prefixes = resolve_mount_edge_prefixes(edges)
 
         prefixes.each do |router_var, router_prefixes|
-          file = imports[router_var]?
-          next unless file
-          key = Analyzer::Javascript::ExpressConstants.file_key(Noir::PathScope.expand(file))
+          key = if file = imports[router_var]?
+                  Analyzer::Javascript::ExpressConstants.file_key(Noir::PathScope.expand(file))
+                elsif named = named_imports[router_var]?
+                  Analyzer::Javascript::ExpressConstants.function_key(Noir::PathScope.expand(named[0]), named[1])
+                end
+          next unless key
           router_prefixes.each do |prefix|
             next if prefix.empty?
             locator.push(key, prefix) unless locator.all(key).includes?(prefix)
