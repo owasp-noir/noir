@@ -100,6 +100,13 @@ module LLM
     @@requests = Atomic(Int32).new(0)
     @@cap_warned = Atomic(Bool).new(false)
 
+    # False once --ai-max-requests is used up: a skipped request, not a
+    # provider failure.
+    def self.requests_left? : Bool
+      max = max_requests
+      max <= 0 || @@requests.get < max
+    end
+
     def self.claim_request : Bool
       max = max_requests
       return true if @@requests.add(1) < max || max <= 0
@@ -178,7 +185,7 @@ module LLM
     # A provider's final answer that was not a success and not worth
     # another attempt (a 400 naming a bad parameter, a prompt over the
     # context window). Handed back so the caller can read why.
-    record Rejection, status : Int32, body : String
+    record Rejection, status : Int32, body : String, location : String? = nil
 
     # POSTs a JSON body and returns the response body, or nil when the
     # request could not be completed. Failures are reported here so every
@@ -226,14 +233,17 @@ module LLM
         if error
           STDERR.puts "WARNING: AI API request failed after #{attempt} attempt(s): #{error.class} (#{truncate_error_snippet(error.message.to_s)})"
         elsif response
-          return Rejection.new(response.status_code, response.body)
+          return Rejection.new(response.status_code, response.body, response.headers["Location"]?)
         end
         return
       end
     end
 
     def self.report(rejection : Rejection) : Nil
-      STDERR.puts "WARNING: AI API error (HTTP #{rejection.status}): #{truncate_error_snippet(rejection.body)}"
+      # A redirect has no body worth showing; where it points is the fix
+      # (usually an http:// provider URL that should be https://).
+      detail = rejection.location.try { |loc| "redirected to #{truncate_error_snippet(loc)}; check the provider URL" } if (300..399).includes?(rejection.status)
+      STDERR.puts "WARNING: AI API error (HTTP #{rejection.status}): #{detail || truncate_error_snippet(rejection.body)}"
     end
 
     # The proxy `HTTPS_PROXY` / `HTTP_PROXY` name for this request (lowercase

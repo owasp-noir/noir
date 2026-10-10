@@ -37,6 +37,21 @@ module LLM
     stripped.sub(LEADING_FENCE, "").sub(TRAILING_FENCE, "").strip
   end
 
+  # Why a reply that did not end normally is unusable, or nil. `reason` is
+  # OpenAI's `finish_reason` or Ollama's `done_reason`; both say `length`
+  # for a reply cut off by the output limit. An empty reply is otherwise
+  # silent: the caller would read it as "no endpoints".
+  def self.unfinished_reply(reason : String?, content : String) : String?
+    case reason
+    when "length"
+      "AI reply was truncated by the model's output limit; endpoints after the cut are lost (a lower --ai-max-token sends smaller bundles)"
+    when "content_filter"
+      "AI reply was blocked by the provider's content filter"
+    else
+      "AI provider returned an empty reply#{" (finish reason: #{reason})" if reason}" if content.blank?
+    end
+  end
+
   # The JSON object in an LLM reply that carries `key`, or nil.
   #
   # A model wraps its JSON in prose ("Here are the endpoints: ...", "Note
@@ -60,6 +75,31 @@ module LLM
     end
 
     first_object_with(text, key) || parse_object(stripped).try { |empty| empty if empty.empty? }
+  end
+
+  # The complete objects at the head of a `"key": [` list that never closes,
+  # or nil: what is left of a reply cut off by the output limit. Stops at
+  # the first item that is not a whole object, so nothing past the cut (or
+  # past the list's end) is taken.
+  def self.salvage_list(text : String, key : String) : Array(JSON::Any)?
+    match = text.match(/"#{Regex.escape(key)}"\s*:\s*\[/) || return
+    bytes = text.to_slice
+    pos = match.byte_end(0)
+    items = [] of JSON::Any
+    loop do
+      while pos < bytes.size && (bytes[pos].unsafe_chr.ascii_whitespace? || ',' === bytes[pos])
+        pos += 1
+      end
+      break unless pos < bytes.size && '{' === bytes[pos]
+      stop = balanced_end(bytes, pos) || break
+      begin
+        items << JSON.parse(text.byte_slice(pos, stop - pos + 1))
+      rescue JSON::ParseException
+        break
+      end
+      pos = stop + 1
+    end
+    items unless items.empty?
   end
 
   private def self.parse_object(text : String) : Hash(String, JSON::Any)?

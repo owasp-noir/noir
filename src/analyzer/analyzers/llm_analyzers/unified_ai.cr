@@ -50,11 +50,12 @@ module Analyzer::AI
       "...", "<url>", "<endpoint>", "<path>",
     }
     # Every adapter maps a call it could not complete — an HTTP error the
-    # retries did not clear, a provider error body, a dead ACP agent, a reply
-    # that would not parse — to an empty string, and each one already prints
-    # its own WARNING naming the cause. The empty string is what reaches here,
-    # so this is the reason the *analyzer* can attach to the lost coverage.
-    LLM_NO_RESPONSE_REASON = "the AI provider returned no usable response (see the WARNING lines above for the cause)"
+    # retries did not clear, a provider error body, a refused or empty reply,
+    # a dead ACP agent, a request skipped after repeated failures — to an
+    # empty string, usually after a WARNING naming the cause. The empty string
+    # is what reaches here, so this is the reason the *analyzer* can attach to
+    # the lost coverage; it must stay true when no warning was printed.
+    LLM_NO_RESPONSE_REASON = "the AI provider returned no usable response (an error, a refused or empty reply, or a request skipped after repeated failures)"
 
     IGNORE_EXTENSIONS = [".css", ".xml", ".json", ".yml", ".yaml", ".md", ".jpg", ".jpeg", ".png", ".gif", ".svg", ".ico",
                          ".eot", ".ttf", ".woff", ".woff2", ".otf", ".mp3", ".mp4", ".avi", ".mov", ".webm", ".zip", ".tar",
@@ -278,7 +279,8 @@ module Analyzer::AI
         payload: compose_prompt_payload(LLM::PromptOverrides.bundle_analyze_prompt, bundle.content),
         format: LLM::ANALYZE_FORMAT,
         adapter: adapter,
-        list_key: "endpoints"
+        list_key: "endpoints",
+        salvage_for: bundle.paths
       )
 
       if endpoints
@@ -418,7 +420,8 @@ module Analyzer::AI
         payload: compose_prompt_payload(LLM::PromptOverrides.analyze_prompt, content),
         format: LLM::ANALYZE_FORMAT,
         adapter: adapter,
-        list_key: "endpoints"
+        list_key: "endpoints",
+        salvage_for: [relative_path]
       )
 
       if endpoints
@@ -1115,7 +1118,10 @@ module Analyzer::AI
     # reply is not a JSON object (truncated, prose, `null`) or its list is
     # not an array. Only a usable reply is cached: a stored truncation would be
     # replayed on every later scan as "no endpoints" without another request.
-    private def call_llm_with_cache(kind : String, system_prompt : String, payload : String, format : String, adapter : LLM::Adapter, list_key : String) : Array(JSON::Any)?
+    #
+    # With `salvage_for`, a reply cut off mid-list still yields the complete
+    # items before the cut; those files are reported as partly analyzed.
+    private def call_llm_with_cache(kind : String, system_prompt : String, payload : String, format : String, adapter : LLM::Adapter, list_key : String, salvage_for : Array(String)? = nil) : Array(JSON::Any)?
       # Fold the system prompt into the cache key. The remote request
       # is driven by both the system and user prompts, so keying on the
       # payload alone would replay a stale response after a system-prompt
@@ -1149,6 +1155,8 @@ module Analyzer::AI
       items = reply_list(response, list_key)
       if items
         LLM::Cache.store(disk_key, response)
+      elsif salvage_for && (items = LLM.salvage_list(response, list_key))
+        record_llm_failure(salvage_for, "the AI reply was incomplete; only the #{items.size} complete item(s) before the break were kept")
       else
         STDERR.puts "WARNING: AI reply is not a JSON object with an \"#{list_key}\" array: #{LLM::HttpTransport.truncate_error_snippet(response)}"
       end

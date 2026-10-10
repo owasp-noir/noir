@@ -26,6 +26,31 @@ module LLM
     @api_key : String?
     @send_temperature : Bool
 
+    # How much of `response_format` the server accepts, learned from its
+    # 400s and kept for the rest of the run. Ordered: each step only drops.
+    enum ResponseFormat
+      AsAsked
+      JsonObject
+      Omitted
+    end
+
+    JSON_OBJECT_FORMAT = JSON.parse(%({"type":"json_object"}))
+
+    @response_format = ResponseFormat::AsAsked
+
+    # A bad key, a missing model, a wrong URL or an unreachable host fails
+    # every request the same way. After this many in a row, before the
+    # provider has answered once, the client stops sending, so a 1000-file
+    # scan does not repeat the same failure 1000 times; the files it skips are
+    # reported as unanalyzed by the caller. Once it has answered, a failure is
+    # an outage or a slow prompt (a read timeout looks the same as a refused
+    # connection here) and every request keeps its own chance.
+    MAX_FATAL_STREAK = 3
+    FATAL_STATUS     = Set{401, 403, 404}
+
+    @fatal_streak = Atomic(Int32).new(0)
+    @answered = false
+
     def initialize(url : String, model : String, api_key : String?)
       @url = url
       @api = if url.includes?("://")
@@ -107,12 +132,22 @@ module LLM
     # is read; a gateway that echoes the request would otherwise match on
     # every 400.
     def self.temperature_rejected?(rejection : HttpTransport::Rejection) : Bool
+      rejected_for?(rejection, /temperature/i)
+    end
+
+    # A server that implements only `json_object`, or no structured output
+    # at all, answers every `json_schema` request with a 400 naming it.
+    def self.response_format_rejected?(rejection : HttpTransport::Rejection) : Bool
+      rejected_for?(rejection, /response_format|json_schema|json_object/i)
+    end
+
+    private def self.rejected_for?(rejection : HttpTransport::Rejection, pattern : Regex) : Bool
       return false unless rejection.status == 400
       error = JSON.parse(rejection.body).as_h?.try(&.["error"]?)
       text = error.try { |e| e.as_h? ? "#{e["param"]?} #{e["message"]?}" : e.to_s } || rejection.body
-      text.downcase.includes?("temperature")
+      text.matches?(pattern)
     rescue JSON::ParseException
-      rejection.body.downcase.includes?("temperature")
+      rejection.body.matches?(pattern)
     end
 
     CONTEXT_OVERFLOW = /context_length_exceeded|context length|context window|prompt is too long|maximum number of tokens|too many (?:input )?tokens|exceed[s]? the (?:configured )?limit/i
@@ -151,15 +186,47 @@ module LLM
 
     # Sends a request body, recovering from the rejections a model name
     # cannot predict: a `temperature` the model refuses is dropped for the
-    # rest of the run and the request resent. A prompt over the context
-    # window raises `ContextOverflow` when the caller can re-split it, and is
-    # reported like any other failure when it cannot.
+    # rest of the run and the request resent, and a refused `json_schema`
+    # steps down to `json_object`, then to no `response_format` (the prompt
+    # already asks for JSON only). A prompt over the context window raises
+    # `ContextOverflow` when the caller can re-split it, and is reported like
+    # any other failure when it cannot.
     private def post(body : Hash, raise_overflow : Bool = false) : String?
+      return if @fatal_streak.get >= MAX_FATAL_STREAK
+
+      if body.has_key?("response_format")
+        case @response_format
+        when .json_object? then body["response_format"] = JSON_OBJECT_FORMAT
+        when .omitted?     then body.delete("response_format")
+        end
+      end
+
       result = LLM::HttpTransport.post_json_result(@api, encode(body), request_headers)
-      return result unless result.is_a?(HttpTransport::Rejection)
+      case result
+      when String
+        @answered = true
+        @fatal_streak.set(0)
+        return result
+      when nil
+        # The transport already reported the connection failure, or the
+        # request was over --ai-max-requests and never sent.
+        count_fatal_failure if LLM::HttpTransport.requests_left?
+        return
+      end
 
       if @send_temperature && self.class.temperature_rejected?(result)
         @send_temperature = false
+        return post(body, raise_overflow)
+      end
+
+      if (sent = body["response_format"]?) && self.class.response_format_rejected?(result)
+        # Stepped from what was sent, not from the current setting: requests
+        # in flight concurrently all come back rejected at the old level.
+        step = sent.to_json.includes?("json_schema") ? ResponseFormat::JsonObject : ResponseFormat::Omitted
+        if step > @response_format
+          @response_format = step
+          STDERR.puts "WARNING: AI provider rejected the response_format; retrying with #{step.json_object? ? %("json_object") : "none"} for the rest of the run"
+        end
         return post(body, raise_overflow)
       end
 
@@ -167,7 +234,13 @@ module LLM
         raise overflow
       end
       LLM::HttpTransport.report(result)
+      count_fatal_failure if result.status < 400 || FATAL_STATUS.includes?(result.status)
       nil
+    end
+
+    private def count_fatal_failure : Nil
+      return if @answered || @fatal_streak.add(1) != MAX_FATAL_STREAK - 1
+      STDERR.puts "WARNING: AI provider failed its first #{MAX_FATAL_STREAK} requests (bad key, unknown model, wrong URL or unreachable host); skipping the remaining AI requests"
     end
 
     # Make a request with chat-style messages
@@ -188,7 +261,14 @@ module LLM
       response_json = JSON.parse(raw)
       return "" if report_api_error(response_json)
 
-      LLM.strip_json_fences(response_json["choices"][0]["message"]["content"].to_s)
+      choice = response_json["choices"][0]
+      if refusal = choice["message"]["refusal"]?.try(&.as_s?).presence
+        STDERR.puts "WARNING: AI model refused the request: #{LLM::HttpTransport.truncate_error_snippet(refusal)}"
+        return ""
+      end
+      content = choice["message"]["content"]?.to_s
+      LLM.unfinished_reply(choice["finish_reason"]?.try(&.as_s?), content).try { |warning| STDERR.puts "WARNING: #{warning}" }
+      LLM.strip_json_fences(content)
     rescue e : ContextOverflow
       raise e
     rescue e : Exception

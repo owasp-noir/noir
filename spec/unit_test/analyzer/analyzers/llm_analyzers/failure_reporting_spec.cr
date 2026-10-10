@@ -190,6 +190,20 @@ describe Analyzer::AI::Unified do
       end
     end
 
+    it "keeps the endpoints before a cut, reports the files and does not cache it" do
+      with_isolated_llm_cache do
+        bundle = LLM::Bundle.new("- File: \"a.rb\"\n```\nget '/users'\n```\n", 300, ["a.rb"])
+        adapter = FixedReplyAdapter.new(%({"endpoints":[{"url":"/users","method":"GET"},{"url":"/ord))
+        analyzer = ai_analyzer
+        analyzer.__test_process_bundle(bundle, adapter)
+        ai_analyzer.__test_process_bundle(bundle, adapter)
+
+        analyzer.__test_result.map(&.url).should eq(["/users"])
+        Noir::SkippedFiles.failures.map(&.message).join.should contain("incomplete")
+        adapter.calls.should eq(2)
+      end
+    end
+
     it "finds the answer after a complete preamble object" do
       without_llm_cache do
         analyzer = ai_analyzer
