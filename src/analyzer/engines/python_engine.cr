@@ -81,13 +81,13 @@ module Analyzer::Python
     PROJECT_MARKERS = %w[pyproject.toml setup.py setup.cfg manage.py requirements.txt Pipfile]
     @python_project_dirs : Array(String)?
 
-    # Deepest directory above `path` holding a Python project marker, or ""
+    # Deepest directory above `path` holding a Python project marker, else its scan base
     # — the app a file belongs to in a monorepo.
     protected def python_project_root(path : String) : String
       dirs = @python_project_dirs ||= PROJECT_MARKERS.flat_map { |m| get_files_by_basename(m) }
         .map { |f| Noir::PathScope.normalize_root(File.dirname(f)) }.uniq!
       expanded = Noir::PathScope.expand(path)
-      dirs.select { |dir| Noir::PathScope.under_normalized_root?(expanded, dir) }.max_by?(&.size) || ""
+      dirs.select { |dir| Noir::PathScope.under_normalized_root?(expanded, dir) }.max_by?(&.size) || configured_base_for(path)
     end
 
     private def self.path_for_test_convention_match(path : String, base_path : String?) : String

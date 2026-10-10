@@ -43,3 +43,18 @@ FunctionalTester.new("fixtures/typescript/tsoa_multi_app/", {
   Endpoint.new("/health", "GET"),
   Endpoint.new("/v1/items/{itemId}", "GET", [Param.new("itemId", "", "path")]),
 ]).perform_tests
+
+# The same split given as two `-b` bases, where `tsoa_basepath/` has no
+# package.json to mark it as its own app: the base itself is the boundary.
+FunctionalTester.new("fixtures/typescript/tsoa/", {
+  :techs     => 1,
+  :endpoints => 4,
+}, [
+  Endpoint.new("/users/{userId}", "GET", [Param.new("userId", "", "path")]),
+  Endpoint.new("/v1/items/{itemId}", "GET", [Param.new("itemId", "", "path")]),
+], {
+  "base" => YAML::Any.new([
+    YAML::Any.new("./spec/functional_test/fixtures/typescript/tsoa"),
+    YAML::Any.new("./spec/functional_test/fixtures/typescript/tsoa_basepath"),
+  ]),
+}).perform_tests

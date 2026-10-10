@@ -129,6 +129,10 @@ module Analyzer::Javascript
       # completion order, which is not stable across runs.
       sorted = entries.sort_by { |(path, _)| path }
       roots = discover_js_project_roots(app_root_markers, NEST_CONFIG_BASENAMES)
+      # Separate `-b` bases are separate apps even without a marker.
+      if @normalized_base_paths.size > 1
+        @normalized_base_paths.each { |(_, base)| roots << base unless roots.includes?(base) }
+      end
 
       by_root = {} of String => GlobalPrefixConfig
       sorted.each do |(path, config)|

@@ -87,3 +87,18 @@ FunctionalTester.new("fixtures/python/graphene_multi_app/", {
 ], {
   "only_techs" => YAML::Any.new("python_graphene"),
 }).perform_tests
+
+# Two marker-less apps given as separate `-b` bases: each base is its own app.
+FunctionalTester.new("fixtures/python/graphene_composed/", {
+  :techs     => 1,
+  :endpoints => 12,
+}, [
+  Endpoint.new("/graphql#Query.product", "POST", [Param.new("slug", "", "json")]),
+  Endpoint.new("/api/graphql/#Query.allRecipes", "POST"),
+], {
+  "only_techs" => YAML::Any.new("python_graphene"),
+  "base"       => YAML::Any.new([
+    YAML::Any.new("./spec/functional_test/fixtures/python/graphene_composed"),
+    YAML::Any.new("./spec/functional_test/fixtures/python/graphene"),
+  ]),
+}).perform_tests

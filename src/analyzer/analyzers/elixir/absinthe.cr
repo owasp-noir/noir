@@ -94,11 +94,11 @@ module Analyzer::Elixir
       result
     end
 
-    # Shallowest directory above `path` holding a `mix.exs`, or "": an
+    # Shallowest directory above `path` holding a `mix.exs`, else its scan base: an
     # umbrella's apps share its root, side-by-side projects do not.
     private def mix_project_root(path : String) : String
       expanded = Noir::PathScope.expand(path)
-      @mix_dirs.select { |dir| Noir::PathScope.under_normalized_root?(expanded, dir) }.min_by?(&.size) || ""
+      @mix_dirs.select { |dir| Noir::PathScope.under_normalized_root?(expanded, dir) }.min_by?(&.size) || configured_base_for(path)
     end
 
     # Collection replaces the per-file walk; `analyze` drives everything.
