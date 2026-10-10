@@ -119,4 +119,63 @@ describe "AspnetAuthTagger" do
       FileUtils.rm_rf(tmpdir)
     end
   end
+
+  it "applies FallbackPolicy and MapGroup auth, honouring [AllowAnonymous] in attribute lists and on controllers" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("aspnet_fallback")
+    Dir.mkdir_p(tmpdir)
+    program = File.join(tmpdir, "Program.cs")
+    controllers = File.join(tmpdir, "Controllers.cs")
+    File.write(program, <<-CS)
+      builder.Services.AddAuthorization(options =>
+      {
+          options.FallbackPolicy = new AuthorizationPolicyBuilder()
+              .RequireAuthenticatedUser()
+              .Build();
+      });
+      var app = builder.Build();
+      var api = app.MapGroup("/api").RequireAuthorization("admin");
+      api.MapGet("/stats", () => "stats");
+      app.MapGet("/ping", () => "pong").AllowAnonymous();
+      app.MapGet("/me", () => "me");
+      CS
+    File.write(controllers, <<-CS)
+      public class AccountController : ControllerBase
+      {
+          [HttpPost("login"), AllowAnonymous]
+          public IActionResult Login() => Ok();
+      }
+
+      [AllowAnonymous]
+      public class PublicController : ControllerBase
+      {
+          [HttpGet("info")]
+          public IActionResult Info() => Ok();
+      }
+      CS
+    CodeLocator.instance.register_path(program)
+    CodeLocator.instance.register_path(controllers)
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(path : String, line : Int32) { Endpoint.new("/#{line}", "GET", [] of Param, Details.new(PathInfo.new(path, line))) }
+      stats = at.call(program, 9)
+      ping = at.call(program, 10)
+      me = at.call(program, 11)
+      login = at.call(controllers, 4)
+      info = at.call(controllers, 11)
+
+      AspnetAuthTagger.new(noir_options).perform([stats, ping, me, login, info])
+
+      stats.tags.map(&.description).should eq(["Protected by ASP.NET .RequireAuthorization()"])
+      ping.tags.should be_empty
+      me.tags.map(&.description).should eq(["Protected by ASP.NET FallbackPolicy (RequireAuthenticatedUser)"])
+      login.tags.should be_empty
+      info.tags.should be_empty
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
 end
