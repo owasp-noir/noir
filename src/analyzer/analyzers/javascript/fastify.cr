@@ -23,7 +23,9 @@ module Analyzer::Javascript
       autoload_roots = collect_autoload_roots
 
       parallel_file_scan do |path|
-        content = read_file_content(path)
+        # The plugin-prefix, route-config and QUERY passes below read the
+        # text with their own regexes; blanking comments keeps lines.
+        content = Noir::JSRouteExtractor.strip_js_comments(read_file_content(path))
         next if Noir::JSRouteExtractor.other_shared_extractor_framework?(content, :fastify)
         autoload_prefix = autoload_prefix_for(path, autoload_roots, content)
         parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug,
@@ -127,6 +129,7 @@ module Analyzer::Javascript
         content = read_file_content(path)
         next unless content.matches?(AUTOLOAD_MARKERS_RE)
         next unless content.includes?("dir")
+        content = Noir::JSRouteExtractor.strip_js_comments(content)
 
         base_dir = File.dirname(Noir::PathScope.expand(path))
         # Scan each `register(...)` call's argument list as a unit so the
@@ -194,12 +197,17 @@ module Analyzer::Javascript
       /\baddHttpMethod\s*\(\s*['"]QUERY['"]/i,
       /fastify-http-query/
     )
+    # Cheap per-file gate ahead of the comment strip the markers are read from.
+    QUERY_METHOD_GATE_RE = /\baddHttpMethod\b|fastify-http-query/
 
     private def has_query_http_method? : Bool
       all_files.any? do |path|
         next false unless ExpressConstants::JS_EXTENSIONS.any? { |ext| path.ends_with?(ext) } || path.ends_with?("package.json")
         content = read_file_content(path)
-        content.matches?(QUERY_METHOD_MARKERS_RE)
+        # Read with comments blanked, so `addHttpMethod(/* x */ 'QUERY')`
+        # counts and `// app.addHttpMethod('QUERY')` does not.
+        content.matches?(QUERY_METHOD_GATE_RE) &&
+          Noir::JSRouteExtractor.strip_js_comments(content).matches?(QUERY_METHOD_MARKERS_RE)
       end
     end
 

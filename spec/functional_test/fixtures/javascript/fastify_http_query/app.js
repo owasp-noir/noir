@@ -1,7 +1,7 @@
 const fastify = require('fastify')({ logger: true });
 
 // Register HTTP QUERY method
-fastify.addHttpMethod('QUERY', { hasBody: true });
+fastify.addHttpMethod(/* RFC 10008 */ 'QUERY', { hasBody: true });
 
 // Shorthand route after registration
 fastify.query('/search', async (request, reply) => {
