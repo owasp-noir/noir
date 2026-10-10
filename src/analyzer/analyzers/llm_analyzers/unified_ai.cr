@@ -1156,7 +1156,7 @@ module Analyzer::AI
       if items
         LLM::Cache.store(disk_key, response)
       elsif salvage_for && (items = LLM.salvage_list(response, list_key))
-        record_llm_failure(salvage_for, "the AI reply was cut off; kept the #{items.size} #{list_key} before the cut, any after it are missing")
+        record_llm_failure(salvage_for, "the AI reply was cut off; only the #{items.size} complete item(s) before the cut were kept")
       else
         STDERR.puts "WARNING: AI reply is not a JSON object with an \"#{list_key}\" array: #{LLM::HttpTransport.truncate_error_snippet(response)}"
       end
