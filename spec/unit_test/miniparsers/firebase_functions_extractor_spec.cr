@@ -21,4 +21,14 @@ describe Noir::FirebaseFunctionsExtractor do
     Noir::FirebaseFunctionsExtractor.extract(%(require("firebase-functions");\nexports.x = functions.firestore.document("a").onCreate(h);\n// exports.y = functions.https.onRequest(h);)).should be_empty
     Noir::FirebaseFunctionsExtractor.extract(%(exports.y = https.onRequest(h);)).should be_empty
   end
+
+  it "reads many triggers of a non-ASCII file in linear time, on the right lines" do
+    content = %(const functions = require("firebase-functions");\nconst title = "한국어";\n) +
+              (0...4000).join { |i| %(exports.f#{i} = functions.https.onRequest((req, res) => res.send("한 #{i}"));\n) }
+    triggers = [] of Noir::FirebaseFunctionsExtractor::Trigger
+    elapsed = Time.measure { triggers = Noir::FirebaseFunctionsExtractor.extract(content) }
+    triggers.size.should eq 4000
+    {triggers.last.name, triggers.last.args, triggers.last.line}.should eq({"f3999", %((req, res) => res.send("한 3999")), 4002})
+    elapsed.should be < 2.seconds
+  end
 end
