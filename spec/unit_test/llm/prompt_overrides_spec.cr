@@ -58,7 +58,7 @@ describe LLM::PromptOverrides do
 
     it "returns default llm optimize prompt when no override is set" do
       default_prompt = LLM::PromptOverrides.llm_optimize_prompt
-      default_prompt.should contain("Analyze the provided endpoint and optimize it")
+      default_prompt.should contain("Normalize the provided endpoint without changing which route it names")
     end
 
     it "returns overridden llm optimize prompt when set" do
