@@ -185,7 +185,7 @@ module Noir
       return unless Noir::TreeSitter.node_type(node) == "new_expression"
       ctor = Noir::TreeSitter.field(node, "constructor")
       return unless ctor && Noir::TreeSitter.node_text(ctor, source) == "Elysia"
-      options = Noir::TreeSitter.field(node, "arguments").try { |args| Noir::TreeSitter.first_named_child(args) }
+      options = Noir::TreeSitter.field(node, "arguments").try { |args| Noir::TreeSitter.first_named_arg(args) }
       return unless options && Noir::TreeSitter.node_type(options) == "object"
       Noir::TreeSitter.each_named_child(options) do |pair|
         next unless Noir::TreeSitter.node_type(pair) == "pair"

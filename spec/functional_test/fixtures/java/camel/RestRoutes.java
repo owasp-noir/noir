@@ -8,7 +8,7 @@ public class RestRoutes extends RouteBuilder {
 
   @Override public void configure() {
     restConfiguration().component("servlet").contextPath("/api");
-    rest("/users")
+    rest(/* base */ "/users")
       .get("/{id}").to("direct:getUser")
       .post().type(User.class).to("direct:createUser")
       .delete("/{id}").to("direct:deleteUser");
@@ -16,7 +16,7 @@ public class RestRoutes extends RouteBuilder {
 
     rest(ORDERS)
       .get()
-        .param().name("status").type(RestParamType.query).endParam()
+        .param().name(/* query */ "status").type(RestParamType.query).endParam()
         .to("direct:listOrders")
       .put("/{id}")
         .param().name("X-Token").type(RestParamType.header).endParam()
