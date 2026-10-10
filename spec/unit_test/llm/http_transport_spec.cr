@@ -67,6 +67,17 @@ describe LLM::HttpTransport do
     end
   end
 
+  describe ".loopback?" do
+    it "keeps local providers quiet and flags remote hosts" do
+      %w[localhost LOCALHOST app.localhost 127.0.0.1 127.8.9.1 ::1].each do |host|
+        LLM::HttpTransport.loopback?(host).should be_true
+      end
+      %w[10.0.0.5 192.168.1.10 llm.internal example.com localhost.example.com].each do |host|
+        LLM::HttpTransport.loopback?(host).should be_false
+      end
+    end
+  end
+
   describe ".backoff" do
     it "grows exponentially from one second" do
       LLM::HttpTransport.backoff(1).should eq(1.second)

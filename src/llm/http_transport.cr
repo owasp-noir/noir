@@ -104,6 +104,24 @@ module LLM
       @@secrets_mutex.synchronize { @@secrets << key }
     end
 
+    @@cleartext_warned = Atomic::Flag.new
+
+    # A key over plain http:// to another machine is readable by anything on
+    # the path. Local servers (ollama, vLLM, LM Studio) are the normal http
+    # case and stay quiet.
+    def self.warn_cleartext_key(uri : URI, headers : HTTP::Headers) : Nil
+      return unless uri.scheme == "http" && headers.has_key?("Authorization")
+      return if loopback?(uri.hostname.to_s)
+      return unless @@cleartext_warned.test_and_set
+      STDERR.puts "WARNING: The AI API key is sent unencrypted over http:// to #{uri.hostname}; use https:// for a remote provider."
+    end
+
+    def self.loopback?(host : String) : Bool
+      host = host.downcase
+      return true if host == "localhost" || host.ends_with?(".localhost")
+      Socket::IPAddress.valid?(host) && Socket::IPAddress.new(host, 0).loopback?
+    end
+
     def self.redact(text : String) : String
       Noir::Redact.secret(text, @@secrets_mutex.synchronize { @@secrets.dup })
     end
@@ -136,6 +154,8 @@ module LLM
     # that can recover from some of them.
     def self.post_json_result(url : String, body : String, headers : HTTP::Headers) : (String | Rejection)?
       remember_secret(headers)
+      uri = URI.parse(url)
+      warn_cleartext_key(uri, headers)
       attempt = 0
       loop do
         attempt += 1
