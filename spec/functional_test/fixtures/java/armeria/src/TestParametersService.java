@@ -24,7 +24,7 @@ public class TestParametersService {
             .builder()
             .service(API_PREFIX + USERS_PATH + "/{userId}", new UserService())
             .service(API_PREFIX + PRODUCTS_PATH + "/{productId}/reviews", new ReviewService())
-            .route().get("/items/{itemId}").build(new ItemService())
+            .route().get(/* item */ "/items/{itemId}").build(new ItemService())
             .route().post("/orders/{orderId}/confirm").build(new OrderService())
             .route().put("/accounts/{accountId}/settings").build(new AccountService())
             .route().delete("/comments/{commentId}").build(new CommentService())
@@ -41,7 +41,7 @@ public class TestParametersService {
                     .build(), new RouteBuilderService())
             .service(new CatalogRoutesService())
             .serviceUnder("/catalog-prefix", new CatalogRoutesService())
-            .annotatedService("/mounted", new MountedAnnotatedService())
+            .annotatedService(/* prefix */ "/mounted", new MountedAnnotatedService())
             .build()
             .start();
     }
@@ -56,7 +56,7 @@ class CatalogRoutesService implements HttpServiceWithRoutes {
     @Override
     public Set<Route> routes() {
         return Set.of(
-            Route.builder().get("/catalog/{catalogId}").build(),
+            Route.builder().get(/* catalog */ "/catalog/{catalogId}").build(),
             Route.builder().path("/catalog/{catalogId}/status").methods(HttpMethod.PATCH).build()
         );
     }
