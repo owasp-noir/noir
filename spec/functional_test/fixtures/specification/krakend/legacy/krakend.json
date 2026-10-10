@@ -1,0 +1,13 @@
+{
+  "version": 2,
+  "endpoints": [
+    {
+      "endpoint": "/v1/search",
+      "querystring_params": [ "q", "page" ],
+      "headers_to_pass": [ "X-Tenant" ],
+      "backend": [
+        { "host": [ "http://search:8000" ], "url_pattern": "/search" }
+      ]
+    }
+  ]
+}

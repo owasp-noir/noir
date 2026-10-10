@@ -26,8 +26,11 @@ module Analyzer::Specification
       return unless url = entry_h["endpoint"]?.try(&.as_s?).presence
 
       params = [] of Param
-      json_strings(entry_h["input_query_strings"]?).each { |name| add_param(params, name, "query") unless name == "*" }
-      json_strings(entry_h["input_headers"]?).each { |name| add_param(params, name, "header") unless name == "*" }
+      # KrakenD 1.x (config `version: 2`) named them `querystring_params` / `headers_to_pass`.
+      query = entry_h["input_query_strings"]? || entry_h["querystring_params"]?
+      headers = entry_h["input_headers"]? || entry_h["headers_to_pass"]?
+      json_strings(query).each { |name| add_param(params, name, "query") unless name == "*" }
+      json_strings(headers).each { |name| add_param(params, name, "header") unless name == "*" }
       method = entry_h["method"]?.try(&.as_s?).presence.try(&.upcase) || "GET"
 
       endpoint = Endpoint.new(url, method, params, details_at(details, take_line(lines, url)))
