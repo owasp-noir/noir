@@ -44,6 +44,12 @@ class ElixirAuthTagger < FrameworkTagger
 
   ALL_PLUG_PATTERNS = PLUG_AUTH_PATTERNS + PLUG_MODULE_PATTERNS
 
+  # A plug that rejects an unauthenticated request, which is what makes a
+  # pipeline an auth pipeline. Loading plugs (`Guardian.Plug.VerifyHeader`,
+  # `LoadResource, allow_blank: true`, `:fetch_current_user`) and the
+  # `Ueberauth` OAuth login flow let anonymous callers through.
+  ENFORCING_PLUG = /plug\s+(?::require_\w+|:ensure_\w*auth\w*|:authenticate\w*|(?:\w+\.)*(?:EnsureAuthenticated|RequireAuthenticated|RequireAuth\w*)\b)/
+
   def initialize(options : Hash(String, YAML::Any))
     super
     # Router file -> per-line description of the auth pipeline covering it.
@@ -120,7 +126,7 @@ class ElixirAuthTagger < FrameworkTagger
     covered
   end
 
-  # Pipelines whose own body plugs an auth check, so `pipe_through :api_v1`
+  # Pipelines whose own body plugs an enforcing auth check, so `pipe_through :api_v1`
   # counts when `pipeline :api_v1` plugs `Guardian.Plug.EnsureAuthenticated`.
   private def pipelines_with_auth_plugs(cut : Array(String)) : Set(String)
     names = Set(String).new
@@ -130,7 +136,7 @@ class ElixirAuthTagger < FrameworkTagger
         current = m[1]
       elsif line == "end"
         current = nil
-      elsif (name = current) && ALL_PLUG_PATTERNS.any? { |pattern, _| line.matches?(pattern) }
+      elsif (name = current) && line.matches?(ENFORCING_PLUG)
         names << name
       end
     end

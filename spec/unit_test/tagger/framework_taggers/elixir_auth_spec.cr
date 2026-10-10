@@ -179,4 +179,74 @@ describe "ElixirAuthTagger" do
 
     endpoint.tags.empty?.should be_true
   end
+
+  it "counts only enforcing plugs when deciding a pipeline is an auth pipeline" do
+    dir = File.tempname("noir_elixir_pipeline_plugs")
+    Dir.mkdir_p(dir)
+    router = File.join(dir, "router.ex")
+    File.write(router, <<-EX)
+      defmodule AppWeb.Router do
+        use AppWeb, :router
+
+        pipeline :maybe_user do
+          plug Guardian.Plug.VerifyHeader, realm: "Bearer"
+          plug Guardian.Plug.LoadResource, allow_blank: true
+        end
+
+        pipeline :oauth do
+          plug Ueberauth
+        end
+
+        pipeline :api_secure do
+          plug Guardian.Plug.VerifyHeader
+          plug Guardian.Plug.EnsureAuthenticated
+        end
+
+        pipeline :members do
+          plug :require_logged_in_user
+        end
+
+        scope "/", AppWeb do
+          pipe_through :maybe_user
+          get "/posts", PostController, :index
+        end
+
+        scope "/auth", AppWeb do
+          pipe_through :oauth
+          get "/:provider", AuthController, :request
+        end
+
+        scope "/api", AppWeb do
+          pipe_through :api_secure
+          get "/me", ApiController, :me
+        end
+
+        scope "/members", AppWeb do
+          pipe_through :members
+          get "/", MemberController, :index
+        end
+      end
+      EX
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(dir)
+      CodeLocator.instance.register_path(router)
+
+      at = ->(url : String, line : Int32) { Endpoint.new(url, "GET", [] of Param, Details.new(PathInfo.new(router, line))) }
+      posts = at.call("/posts", 24)
+      provider = at.call("/auth/:provider", 29)
+      me = at.call("/api/me", 34)
+      members = at.call("/members", 39)
+
+      ElixirAuthTagger.new(noir_options).perform([posts, provider, me, members])
+
+      posts.tags.should be_empty
+      provider.tags.should be_empty
+      me.tags.map(&.description).should eq(["Protected by Phoenix :api_secure pipeline"])
+      members.tags.map(&.description).should eq(["Protected by Phoenix :members pipeline"])
+    ensure
+      FileUtils.rm_rf(dir)
+    end
+  end
 end
