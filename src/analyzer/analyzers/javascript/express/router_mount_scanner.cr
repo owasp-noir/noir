@@ -122,6 +122,7 @@ module Analyzer::Javascript
     def scan
       locator = CodeLocator.instance
       main_files = collect_js_files
+      return scan_register_mounts(main_files, locator) if @framework == :fastify
       seed_firebase_function_mounts(main_files, locator) if @framework == :express
 
       # Global collections for two-pass processing
@@ -135,6 +136,74 @@ module Analyzer::Javascript
 
       # PASS 2: Process all deferred nested mounts now that all top-level mounts are known
       process_deferred_mounts(global_deferred_mounts, file_contexts, locator)
+    end
+
+    REGISTER_CALL_RE    = /\.register\s*\(/
+    REGISTER_PREFIX_RE  = /\bprefix\s*:\s*(?:['"]([^'"]+)['"]|`([^`$]+)`)/
+    REGISTER_MODULE_RE  = /\A(?:await\s+)?(?:require|import)\s*\(\s*['"]([^'"]+)['"]\s*\)(?:\.default)?\z/
+    REGISTER_BINDING_RE = /\A([A-Za-z_$][\w$]*)(?:\.([A-Za-z_$][\w$]*))?\z/
+
+    # Fastify `<instance>.register(<plugin>, { prefix: '/p' })` where the
+    # plugin lives in another file: `require('./users')`, `import('./users')`
+    # or an imported binding. Every route the plugin file registers is served
+    # under the prefix, and so is every plugin it registers in turn, so the
+    # register calls form a tree whose roots are the files nothing registers.
+    # Same-file plugins are the route extractor's job (function ranges).
+    private def scan_register_mounts(main_files : Array(String), locator : CodeLocator)
+      # from_file => [{prefix, target key, target module file}]
+      edges = Hash(String, Array(Tuple(String, Noir::LocatorKey(Array(String)), String))).new
+      main_files.each do |file|
+        content = CodeLocator.instance.content_for(file) || Noir::TextFile.read(file)
+        next unless content.includes?(".register")
+        next if Noir::JSRouteExtractor.other_shared_extractor_framework?(content, @framework)
+        content = Noir::JSRouteExtractor.strip_js_comments(content)
+        imports = nil.as(NamedTuple(require_map: Hash(String, String), function_map: Hash(String, String), var_to_function: Hash(String, String))?)
+
+        content.scan(REGISTER_CALL_RE) do |m|
+          args = extract_use_call_args(content, m.byte_end(0))
+          plugin = first_top_level_argument(args)
+          prefix_match = args[plugin.size..].match(REGISTER_PREFIX_RE)
+          next unless prefix_match
+          prefix = prefix_match[1]? || prefix_match[2]
+          next unless mount_prefix?(prefix)
+
+          plugin = plugin.strip
+          target = if module_match = plugin.match(REGISTER_MODULE_RE)
+                     resolve_require_path(file, module_match[1]).try { |t| {ExpressConstants.file_key(t), t} }
+                   elsif binding = plugin.match(REGISTER_BINDING_RE)
+                     imports ||= parse_imports(content, file)
+                     local, prop = binding[1], binding[2]?
+                     if t = imports[:require_map][local]?
+                       {prop ? named_export_key(t, prop) : ExpressConstants.file_key(t), t}
+                     elsif t = imports[:function_map][local]?
+                       {named_export_key(t, exported_name(file, local)), t} unless prop
+                     end
+                   end
+          next unless target
+          (edges[Noir::PathScope.expand(file)] ||= [] of Tuple(String, Noir::LocatorKey(Array(String)), String)) << {prefix, target[0], target[1]}
+        end
+      rescue e : File::Error | IO::Error
+        @logger.debug "Error scanning #{file} for Fastify register mounts (#{e.class}): #{e.message}"
+      end
+
+      registered = edges.values.flat_map(&.map(&.[2])).to_set
+      edges.each_key do |root|
+        next if registered.includes?(root)
+        descend_register_mounts(root, "", edges, locator, Set{root})
+      end
+    end
+
+    private def descend_register_mounts(file : String, parent : String,
+                                        edges : Hash(String, Array(Tuple(String, Noir::LocatorKey(Array(String)), String))),
+                                        locator : CodeLocator, on_path : Set(String))
+      edges[file]?.try &.each do |prefix, key, target|
+        next if on_path.includes?(target)
+        combined = Noir::URLPath.join(parent, prefix)
+        push_prefix_to_locator(locator, key, combined, "Mapped Fastify register prefix: #{target} => #{combined}")
+        on_path << target
+        descend_register_mounts(target, combined, edges, locator, on_path)
+        on_path.delete(target)
+      end
     end
 
     # The handler is the last argument: `onRequest(app)` / `onRequest({ region }, app)`.

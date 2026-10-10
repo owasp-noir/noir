@@ -2,6 +2,7 @@ require "../../engines/javascript_engine"
 require "../../../miniparsers/js_callee_extractor"
 require "../../../miniparsers/js_route_extractor"
 require "../../../utils/url_path"
+require "./express/router_mount_scanner"
 
 module Analyzer::Javascript
   class Fastify < JavascriptEngine
@@ -21,6 +22,9 @@ module Analyzer::Javascript
       # `/api/tasks/:id`. Resolve those directory roots once up front so
       # the per-file pass can prepend the convention-derived prefix.
       autoload_roots = collect_autoload_roots
+      # Cross-file `register(require('./x'), { prefix })` prefixes, read back
+      # by the shared route extractor through `CodeLocator`.
+      RouterMountScanner.new(all_files, @base_paths, base_path, logger, :fastify).scan
 
       parallel_file_scan do |path|
         # The plugin-prefix, route-config and QUERY passes below read the
@@ -74,9 +78,15 @@ module Analyzer::Javascript
         # never a real config — issue #1903).
         unless Noir::JSRouteExtractor.test_stub_only?(path, content) ||
                Noir::JSRouteExtractor.minified_content?(content)
-          extract_route_configs(path, content, result, recorded, include_callee, autoload_prefix)
-          if has_query_method
-            extract_query_shorthand_routes(path, content, result, recorded, include_callee, autoload_prefix)
+          # A file registered from another file is served under that
+          # register's prefix(es), which the shared extractor applied above.
+          mounts = CodeLocator.instance.all(ExpressConstants.file_key(Noir::PathScope.expand(path)))
+          (mounts.empty? ? [""] : mounts).each do |mount|
+            prefix = Noir::URLPath.join(autoload_prefix, mount)
+            extract_route_configs(path, content, result, recorded, include_callee, prefix)
+            if has_query_method
+              extract_query_shorthand_routes(path, content, result, recorded, include_callee, prefix)
+            end
           end
         end
 
