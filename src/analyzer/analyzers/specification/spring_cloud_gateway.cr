@@ -116,7 +116,7 @@ module Analyzer::Specification
           name, args = slots[pm[1]]? || {"", [] of String}
           case pm[2]?
           when "name" then name = value
-          when "args" then args << value unless FLAG_ARGS.any? { |flag| key.ends_with?(flag) }
+          when "args" then args << value unless FLAG_ARGS.any? { |flag| key.rchop("]").ends_with?(flag) }
           else
             if shortcut = shortcut_predicate(value)
               name, args = shortcut.name, shortcut.args

@@ -36,13 +36,27 @@ module Noir
     # grammar has no `satisfies` operator.
     SATISFIES_ASSERTION = /\bsatisfies\s+[A-Za-z_$][\w$.]*(?:<[^>\n]*>)?/
 
+    # Typed handlers inside the config (`handler(this: T, ctx: Context<P>):
+    # string {`, `httpAction(async (ctx, req): Promise<Response> => …)`)
+    # break the JS parse badly enough to lose the enclosing object. Only a
+    # single-line `(...)` followed by an optional return type and `{` / `=>`
+    # is a signature, and only one free of strings, braces, `=`, brackets
+    # (other than `[]`) and `?` (other than `?:`). A condition
+    # (`if (k === "a:b") {`), a destructuring or default parameter, or a
+    # ternary branch (group 1) is left alone.
+    TS_SIGNATURE  = /(\?\s*)?\(((?:[^()\n?'"`{}\[\]=]|\?:|\[\])*)\)(\s*:\s*[A-Za-z_$][\w$.<>\[\]|, ]*?)?(?=\s*(?:\{|=>))/
+    TS_THIS_PARAM = /\bthis\s*:\s*(?:[^,<>]|<[^<>\n]*>)+(?:,\s*)?/
+    TS_PARAM_TYPE = /(?<=[\w$}\]])\??\s*:\s*(?:[^,<>=]|<[^<>\n]*>)+/
+
     # Deliberately NOT reusing `JSCalleeExtractor`'s normalizer: its
     # function-parameter rules cannot tell a signature from an object
     # literal, so `{ path: '/x', handler: 'y' }` is rewritten to
-    # `{ path, handler }` and every value is lost. Only the two strips
-    # above are safe on declarative config.
+    # `{ path, handler }` and every value is lost. Only the strips above
+    # are safe on declarative config; all keep line numbers.
     private def normalize(source : String) : String
-      source.gsub(DECLARATION_ANNOTATION, "\\1 =").gsub(SATISFIES_ASSERTION, "")
+      source.gsub(DECLARATION_ANNOTATION, "\\1 =").gsub(SATISFIES_ASSERTION, "").gsub(TS_SIGNATURE) do |match|
+        $~[1]? ? match : "(#{$~[2].gsub(TS_THIS_PARAM, "").gsub(TS_PARAM_TYPE, "")})"
+      end
     end
 
     alias ConfigValue = String | Float64 | Bool | Array(ConfigValue) | Hash(String, ConfigValue)?
@@ -134,6 +148,14 @@ module Noir
         # `{ path: "/x", handler }`: the key is present, its value unknown.
         if Noir::TreeSitter.node_type(pair) == "shorthand_property_identifier"
           data[Noir::TreeSitter.node_text(pair, source)] = nil
+          next
+        end
+        # `"GET /hi"(req, res) { … }`: method shorthand, value unknown.
+        if Noir::TreeSitter.node_type(pair) == "method_definition"
+          if name = Noir::TreeSitter.field(pair, "name")
+            key = Noir::TreeSitter.node_type(name) == "string" ? decode_string(name, source) : Noir::TreeSitter.node_text(name, source)
+            data[key] = nil unless key.empty?
+          end
           next
         end
         next unless Noir::TreeSitter.node_type(pair) == "pair"

@@ -23,9 +23,10 @@ expected_endpoints = [
   # `from routes import orders` + `include_router(orders.router, prefix=...)`.
   Endpoint.new("/orders/{order_id}", "PUT", [
     Param.new("order_id", "", "path"),
+    Param.new("note", "", "json"),
     Param.new("sku", "", "json"),
   ]),
-  # Aliased import mounted without a prefix.
+  # Aliased import mounted without a usable prefix (an env lookup).
   Endpoint.new("/health", "GET"),
   # Positional `route(rule, method)`; positional `include_router(r, prefix)`
   # serving its "/" at the bare prefix.

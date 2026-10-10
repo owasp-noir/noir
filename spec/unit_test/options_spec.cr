@@ -107,10 +107,10 @@ describe "run_options_parser" do
     end
   end
 
-  it "reads --ai-key-file into ai_key without the trailing newline" do
+  it "reads --ai-key-file into ai_key without a BOM or the trailing newline" do
     original_argv = ARGV.dup
     key_file = File.tempname("noir-key")
-    File.write(key_file, "  sk-test-123\n")
+    File.write(key_file, "\uFEFF  sk-test-123\n")
 
     ARGV.clear
     ARGV.concat(["--ai-key-file", key_file])

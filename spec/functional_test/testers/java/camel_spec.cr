@@ -39,11 +39,14 @@ FunctionalTester.new("fixtures/java/camel/", {
 
 # `camel.rest.context-path` prefixes REST DSL routes of its own module only
 # (application.properties at the root, application.yml in yml-module); plain
-# HTTP consumers stay at the server root.
+# HTTP consumers stay at the server root. `camel.servlet.mapping.context-path`
+# (servlet-module) prefixes REST routes and `servlet:` consumers.
 properties_endpoints = [
   Endpoint.new("/svc/v1/status", "GET"),
   Endpoint.new("/raw", "ANY"),
   Endpoint.new("/yml/items", "GET"),
+  Endpoint.new("/api/users/{id}", "GET", [Param.new("id", "", "path")]),
+  Endpoint.new("/api/hello", "ANY"),
 ]
 
 FunctionalTester.new("fixtures/java/camel_properties/", {

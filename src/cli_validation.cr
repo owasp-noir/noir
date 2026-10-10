@@ -4,6 +4,7 @@ require "yaml"
 require "./tagger/tagger"
 require "./techs/techs"
 require "./llm/acp/targets"
+require "./llm/adapter"
 require "./llm/general/client"
 require "./llm/native_tool_calling"
 require "./output_builder/formats"
@@ -176,7 +177,7 @@ module Noir::CliValidation
   # and the generated template's own value, documented as "provider/model
   # default" — so it is accepted here even though `--ai-max-token 0` is not.
   def self.validate_ai_integer_options!(options : Hash(String, YAML::Any))
-    {"ai_max_token" => 0, "ai_agent_max_steps" => 1}.each do |key, minimum|
+    {"ai_max_token" => 0, "ai_agent_max_steps" => 1, "ai_max_requests" => 0}.each do |key, minimum|
       value = options[key]?
       next if value.nil?
 
@@ -189,7 +190,11 @@ module Noir::CliValidation
       end
 
       if number < minimum
-        raise Error.new("Invalid #{flag} '#{number}'. Must be #{minimum == 0 ? "0 or greater (0 = provider/model default)" : "a positive integer"}.")
+        raise Error.new("Invalid #{flag} '#{number}'. Must be #{minimum == 0 ? "0 or greater (0 = #{key == "ai_max_requests" ? "unlimited" : "provider/model default"})" : "a positive integer"}.")
+      end
+      # Read back with `as_i?`, which raises past Int32.
+      if number > Int32::MAX
+        raise Error.new("Invalid #{flag} '#{number}'. Must be at most #{Int32::MAX}.")
       end
     end
   end
@@ -198,8 +203,11 @@ module Noir::CliValidation
   # "" (the default) means unset. `ai_scope` rides along.
   def self.validate_ai_sampling!(options : Hash(String, YAML::Any))
     temperature = options["ai_temperature"]?.to_s.strip
-    unless temperature.empty? || temperature.to_f?.try(&.in?(0.0..2.0))
-      raise Error.new("Invalid --ai-temperature '#{temperature}'. Must be a number from 0 to 2.")
+    # The Messages API caps temperature at 1; above it the request 400s and
+    # the client drops temperature for the rest of the run.
+    max = LLM::AdapterFactory.anthropic_native?(options["ai_provider"]?.to_s) ? 1.0 : 2.0
+    unless temperature.empty? || temperature.to_f?.try(&.in?(0.0..max))
+      raise Error.new("Invalid --ai-temperature '#{temperature}'. Must be a number from 0 to #{max.to_i}.")
     end
 
     seed = options["ai_seed"]?.to_s.strip

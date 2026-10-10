@@ -14,6 +14,19 @@ module Analyzer::Scala
       get_files_by_extension(".scala")
     end
 
+    # One precompiled `Regex.union` scan (PCRE2 JIT) replaces two separate
+    # `String#includes?` scans of the same path -- Crystal's `includes?` is
+    # not Boyer-Moore accelerated, so a single regex pass is cheaper than
+    # two. Equivalent to the OR-of-substrings it replaces (union escapes
+    # each literal).
+    SBT_TEST_PATH_RE = Regex.union("/src/test/", "/src/sbt-test/")
+
+    # Scan-base-relative, never absolute: a `src/test/` directory ABOVE
+    # the scan base is not this project's test tree.
+    protected def sbt_test_path?(path : String) : Bool
+      base_relative_path(path).matches?(SBT_TEST_PATH_RE)
+    end
+
     protected def attach_scala_callees(endpoint : Endpoint, callees : Array(Noir::ScalaCalleeExtractor::Entry))
       Noir::ScalaCalleeExtractor.attach_to(endpoint, callees)
     end

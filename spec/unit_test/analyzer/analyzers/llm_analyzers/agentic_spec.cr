@@ -121,10 +121,10 @@ describe Analyzer::AI::Unified do
         File.write(File.join(temp_dir, "secrets.go"), "TOKEN=route")
 
         analyzer = Analyzer::AI::Unified.new(build_ai_options(temp_dir))
-        {".env", ".env.local", "id_ed25519.pub", "server.KEY", "credentials", "secrets.yml", ".npmrc", "x.tfstate", "serviceAccountKey.json", "gcp-credentials.json"}.each do |name|
+        {".env", ".env.local", "id_ed25519.pub", "server.KEY", "credentials", "secrets.yml", ".npmrc", "x.tfstate", "serviceAccountKey.json", "gcp-credentials.json", "prod.env", "id_ed25519_sk", ".s3cfg", "AuthKey_AB12.p8", ".kube/config"}.each do |name|
           analyzer.sensitive?("/repo/#{name}").should be_true
         end
-        {"secrets.go", "credentials_controller.rb", "environment.ts", "keys.py"}.each do |name|
+        {"secrets.go", "credentials_controller.rb", "environment.ts", "keys.py", "config", ".git/hooks/config"}.each do |name|
           analyzer.sensitive?("/repo/#{name}").should be_false
         end
 

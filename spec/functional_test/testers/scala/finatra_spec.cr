@@ -14,6 +14,7 @@ expected_endpoints = [
   Endpoint.new("/secured", "GET", [Param.new("token", "", "query")]),
   Endpoint.new("/audited", "POST"),
   Endpoint.new("/me/profile", "GET"),
+  Endpoint.new("/orders/:id", "GET", [Param.new("id", "", "path")]),
 ]
 
 FunctionalTester.new("fixtures/scala/finatra/", {

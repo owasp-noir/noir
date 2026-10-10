@@ -17,6 +17,7 @@ module Analyzer::Scala
     PARAM_READ_RE = /request\.(?:params(?:\.\w+)?|get(?:Int|Long|Short|Boolean)?Param)\s*\(\s*"([^"]+)"/
 
     def analyze_file(path : String) : Array(Endpoint)
+      return [] of Endpoint if sbt_test_path?(path)
       content = read_file_content(path)
       return [] of Endpoint unless content.includes?("com.twitter.finatra.http")
 
@@ -32,7 +33,13 @@ module Analyzer::Scala
       code.each_with_index do |line, index|
         prefixes.reject! { |entry| entry[1] < index }
         if index > controller_end && line.matches?(CONTROLLER_RE)
-          controller_end = extract_scala_brace_block_with_end(lines, index).try(&.[2]) || -1
+          # scalafmt / Allman wraps put the body `{` a line or two below
+          # `extends Controller`.
+          controller_end = (index...Math.min(index + 4, lines.size)).each do |j|
+            if block = extract_scala_brace_block_with_end(lines, j)
+              break block[2]
+            end
+          end || -1
           next
         end
         next if index > controller_end

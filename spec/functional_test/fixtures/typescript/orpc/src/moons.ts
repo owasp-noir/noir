@@ -21,3 +21,4 @@ export const moons = {
 
 // A Hapi/Fastify-style route config carries a handler and is not oRPC.
 server.route({ method: 'GET', path: '/not-orpc', handler: () => 1 });
+server.route({ method: 'DELETE', path: '/not-orpc-either', options: { handler: () => 1 } });

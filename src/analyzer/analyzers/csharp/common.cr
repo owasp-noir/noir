@@ -215,6 +215,8 @@ module Analyzer::CSharp::Common
     Noir::TopLevelSplit.split(param_list, ',', Noir::TopLevelSplit::Rules::CSHARP_PARAMS)
   end
 
+  PARAM_LIST_CLAUSES = Set{"where", "As", "Handles", "Implements"}
+
   # Returns the substring inside the first balanced parameter-list parens of
   # a method signature. Unlike a greedy `\((.*)\)`, this stops at the matching
   # close paren so an expression body (`(int id) => Repo.Find(id)`) doesn't
@@ -241,20 +243,32 @@ module Analyzer::CSharp::Common
         break if depth == 0
       end
     end
+    # A `(...)` group followed by more of the declaration (a name, `>`, `,`,
+    # `?`, `[`) is a tuple type, not the parameter list: `static (A, B)
+    # Post(Cmd c)`, `Task<(IResult, E)> Ship(...)`. C# `where` and VB
+    # `As` / `Handles` / `Implements` follow a real parameter list.
     open = masked.index('(', start)
-    return unless open
-
-    depth = 0
-    i = open
-    while i < masked.size
-      case masked[i]
-      when '('
-        depth += 1
-      when ')'
-        depth -= 1
-        return signature[(open + 1)...i] if depth == 0
+    while open
+      depth = 0
+      close = (open...masked.size).find do |i|
+        depth += 1 if masked[i] == '('
+        depth -= 1 if masked[i] == ')'
+        depth == 0
       end
-      i += 1
+      return unless close
+      k = close + 1
+      while masked[k]?.try(&.whitespace?)
+        k += 1
+      end
+      after = masked[k]?
+      word_end = k
+      while masked[word_end]?.try { |c| c.alphanumeric? || c == '_' }
+        word_end += 1
+      end
+      clause = PARAM_LIST_CLAUSES.includes?(masked[k...word_end].join)
+      type = after && (after.alphanumeric? || after.in?('_', '>', ',', '?', '[')) && !clause
+      return signature[(open + 1)...close] unless type
+      open = masked.index('(', close + 1)
     end
     nil
   end

@@ -37,6 +37,7 @@ expected_endpoints = [
     Param.new("Name", "", "json"),
     Param.new("BirthDate", "", "json"),
   ]),
+  Endpoint.new("/api/app/author/stats", "GET"),
 
   # A second assembly registered with `RootPath = "reporting"`.
   Endpoint.new("/api/reporting/sales-report/summary", "GET", [Param.new("year", "", "query")]),

@@ -19,6 +19,9 @@ expected_endpoints = [
   ws.call("/ws/chat/<str:room_name>/", [Param.new("room_name", "", "path")]),
   ws.call("/game/play/<int:match_id>/", [Param.new("match_id", "", "path")]),
   ws.call("/game/lobby/chat/", [] of Param),
+  # `from game import routing` names game/routing.py, not chat/routing.py.
+  ws.call("/arena/play/<int:match_id>/", [Param.new("match_id", "", "path")]),
+  ws.call("/arena/lobby/chat/", [] of Param),
   ws.call("/live/{feed}/", [Param.new("feed", "", "path")]),
   ws.call("/ws/notes/", [] of Param),
   ws.call("/ws/secure/lobby/", [] of Param),
@@ -38,6 +41,6 @@ describe "Django Channels route lines", tags: "functional" do
     end
     lines["/ws/chat/<str:room_name>/"].should eq("routing.py:12")
     lines["/game/lobby/chat/"].should eq("routing.py:9")
-    lines["/live/{feed}/"].should eq("asgi.py:31")
+    lines["/live/{feed}/"].should eq("asgi.py:33")
   end
 end

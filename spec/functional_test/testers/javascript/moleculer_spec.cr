@@ -1,15 +1,17 @@
 require "../../func_spec.cr"
 
 # lib/fake-gateway.js has gateway-shaped `routes[].aliases` without the
-# moleculer-web mixin, so `/nope/leak` is not reported.
+# moleculer-web mixin, so `/nope/leak` is not reported; test/api.spec.js
+# is a test, so `/test-only/secret` is not either.
 FunctionalTester.new("fixtures/javascript/moleculer/", {
   :techs     => 1,
-  :endpoints => 16,
+  :endpoints => 17,
 }, [
   Endpoint.new("/api/users", "GET", [Param.new("limit", "", "query")]),
   Endpoint.new("/api/users", "POST", [Param.new("name", "", "json"), Param.new("email", "", "json")]),
   Endpoint.new("/api/users/:id", "GET", [Param.new("id", "", "path")]),
   Endpoint.new("/api/health", "ANY"),
+  Endpoint.new("/api/hi", "GET"),
   # `REST posts` expands to the six CRUD routes.
   Endpoint.new("/api/posts", "GET", [Param.new("page", "", "query")]),
   Endpoint.new("/api/posts", "POST", [Param.new("title", "", "json"), Param.new("body", "", "json")]),

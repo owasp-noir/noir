@@ -9,7 +9,7 @@ namespace OrderApi;
 public static class OrderEndpoints
 {
     [WolverinePost("/orders")]
-    public static OrderCreated Post(CreateOrder command, IDocumentSession session) => new(1);
+    public static (OrderCreated, OrderPlaced) Post(CreateOrder command, IDocumentSession session) => (new(1), new());
 
     [WolverineGet("/orders/{id}")]
     public static Order Get(int id, IQuerySession session) => new();
@@ -29,7 +29,7 @@ public static class OrderEndpoints
     public static void Delete([Document] Order order, IDocumentSession session) => session.Delete(order);
 
     [WolverinePatch("/orders/{id}/note")]
-    public static void Note(int id, [FromQuery] string reason, NotePatch patch) { }
+    public static void Note (int id, [FromQuery(Name = "reason")] string why, NotePatch patch) { }
 
     // An attribute list split over several lines.
     [WolverinePost("/orders/{id}/refund",

@@ -13,15 +13,10 @@ module Analyzer::Scala
       {method, /(?<![.\w])#{method}\s*\(\s*"([^"]+)"/}
     end
 
-    # One precompiled `Regex.union` scan (PCRE2 JIT) replaces two separate
-    # `String#includes?` scans of the same path -- Crystal's `includes?` is
-    # not Boyer-Moore accelerated, so a single regex pass is cheaper than
-    # two. Equivalent to the OR-of-substrings it replaces (union escapes
-    # each literal).
-    TEST_PATH_RE = Regex.union("/src/test/", "/src/sbt-test/")
-
-    # Same rationale: replaces the three `includes?` calls gating the
-    # `class`/`object`/`trait` declaration scan in `single_mount_prefix`.
+    # One precompiled `Regex.union` scan replaces the three `includes?`
+    # calls gating the `class`/`object`/`trait` declaration scan in
+    # `single_mount_prefix` (Crystal's `includes?` is not Boyer-Moore
+    # accelerated).
     CLASS_OBJECT_TRAIT_RE = Regex.union("class", "object", "trait")
 
     # Servlet/filter class name -> mount prefix, harvested from
@@ -37,7 +32,7 @@ module Analyzer::Scala
     end
 
     def analyze_file(path : String) : Array(Endpoint)
-      return [] of Endpoint if scalatra_test_path?(path)
+      return [] of Endpoint if sbt_test_path?(path)
       content = read_file_content(path)
       # Finatra controllers share the `get("/x") { ... }` DSL; scala_finatra owns them.
       return [] of Endpoint if content.includes?("com.twitter.finatra.http")
@@ -51,7 +46,7 @@ module Analyzer::Scala
       map = {} of String => String
       all_files.each do |path|
         next unless File.exists?(path) && File.extname(path) == ".scala"
-        next if scalatra_test_path?(path)
+        next if sbt_test_path?(path)
         begin
           content = read_file_content(path)
         rescue
@@ -72,12 +67,6 @@ module Analyzer::Scala
 
     private def normalize_mount_prefix(prefix : String) : String
       prefix.rstrip("/*")
-    end
-
-    # Scan-base-relative, never absolute: a `src/test/` directory ABOVE
-    # the scan base is not this project's test tree.
-    private def scalatra_test_path?(path : String) : Bool
-      base_relative_path(path).matches?(TEST_PATH_RE)
     end
 
     # Extract routes from Scalatra DSL

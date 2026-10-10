@@ -215,7 +215,10 @@ module Noir
 
     # A `<receiver>.<attribute>(...)` call: positional arguments (string
     # literals decoded, anything else as source text) and keywords.
-    record AttributeCall, attribute : String, args : Array(String), keywords : Hash(String, String)
+    # `literals` names the string arguments: keyword names, and `#<index>`
+    # for positional ones.
+    record AttributeCall, attribute : String, args : Array(String), keywords : Hash(String, String),
+      literals : Set(String) = Set(String).new
 
     # Every `<x>.<attribute>(...)` call whose attribute is in `attributes`
     # — mount calls such as `app.include_router(router, prefix="/v1")`.
@@ -235,16 +238,21 @@ module Noir
 
           args = [] of String
           keywords = {} of String => String
+          literals = Set(String).new
           Noir::TreeSitter.each_named_child(arguments) do |arg|
             if Noir::TreeSitter.node_type(arg) == "keyword_argument"
               key = Noir::TreeSitter.field(arg, "name")
               value = Noir::TreeSitter.field(arg, "value")
-              keywords[Noir::TreeSitter.node_text(key, source)] = argument_text(value, source) if key && value
+              next unless key && value
+              key_name = Noir::TreeSitter.node_text(key, source)
+              keywords[key_name] = argument_text(value, source)
+              literals << key_name if Noir::TreeSitter.node_type(value) == "string"
             elsif Noir::TreeSitter.node_type(arg) != "comment"
+              literals << "##{args.size}" if Noir::TreeSitter.node_type(arg) == "string"
               args << argument_text(arg, source)
             end
           end
-          calls << AttributeCall.new(name, args, keywords)
+          calls << AttributeCall.new(name, args, keywords, literals)
         end
       end
       calls

@@ -262,6 +262,15 @@ module Analyzer::Javascript
     end
 
     # Whether the closest package.json above `path` names the framework.
+    # A test file by name (`*.test.ts`, `*.spec.js`) or under a dedicated
+    # test tree (`__tests__/`, `e2e/`, ...). Unlike
+    # `JSRouteExtractor.test_stub_only?`, imports are not consulted, so a
+    # service that calls axios is not taken for a test.
+    protected def js_test_file?(path : String) : Bool
+      File.basename(path).matches?(Noir::JSRouteExtractor::TEST_STUB_FILENAME_MARKER) ||
+        base_relative_path(path).matches?(Noir::JSRouteExtractor::STRICT_TEST_PATH_MARKER)
+    end
+
     protected def owned_by_js_package?(path : String, owners : Hash(String, Bool)) : Bool
       js_package_dir(path, owners).try { |dir| owners[dir] } || false
     end

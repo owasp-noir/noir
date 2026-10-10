@@ -81,6 +81,9 @@ module Noir
     # call chain. Blank generic arguments in front of a call, keeping
     # every line where it was.
     GENERIC_ARGS = /(?<=[\w$])(?<g><(?:[^<>()\n;]++|(?&g))*>)(?=\s*\()/
+    # `const BASE: string = '/v1'` is an ERROR node to the JS grammar, so the
+    # constant never resolves; the annotation is blanked the same way.
+    DECLARATION_ANNOTATION = /(\b(?:const|let|var)\s+[A-Za-z_$][\w$]*)(\s*:\s*[^=\n]+)=/
 
     # Curried schema classes: `Schema.Class<X>("X")({ ...fields })`.
     SCHEMA_CLASS_CALLS = Set{"Class", "TaggedClass", "TaggedRequest", "TaggedError"}
@@ -89,6 +92,7 @@ module Noir
 
     SCHEMA_OBJECT_CALLS = Set{"object", "strictObject", "looseObject", "Struct"}
     QUERY_METHODS       = Set{"GET", "HEAD"}
+    NOT_ORPC_KEYS       = {"handler", "options", "config"}
     ORPC_WILDCARD       = /\{\+(\w+)\}/
     EFFECT_VERBS        = {
       "get" => "GET", "post" => "POST", "put" => "PUT", "patch" => "PATCH",
@@ -168,8 +172,9 @@ module Noir
     private def orpc_routes(node : LibTreeSitter::TSNode, prefix : String, ctx : Context) : Array(Route)
       links = chain_links(node, ctx)
       if (route_call = links.find { |l| l[0] == "route" }) && (config = first_arg(route_call[1]))
-        # A `handler` key is Hapi's / Fastify's `server.route({...})`, not oRPC.
-        if TreeSitter.node_type(config) == "object" && (path = object_string(config, "path", ctx)) && !object_key?(config, "handler", ctx)
+        # A `handler` / `options` / `config` key is Hapi's / Fastify's
+        # `server.route({...})`, not oRPC.
+        if TreeSitter.node_type(config) == "object" && (path = object_string(config, "path", ctx)) && NOT_ORPC_KEYS.none? { |key| object_key?(config, key, ctx) }
           method = (object_string(config, "method", ctx) || "POST").upcase
           # `{+rest}` is oRPC's catch-all segment, a path param like `{id}`.
           path = path.gsub(ORPC_WILDCARD, "{\\1}")
@@ -315,6 +320,7 @@ module Noir
       return result if source.empty?
 
       normalized = source.gsub(GENERIC_ARGS) { |m| " " * m.size }
+        .gsub(DECLARATION_ANNOTATION) { "#{$~[1]}#{" " * $~[2].size}=" }
       TreeSitter.parse_javascript(normalized) do |root|
         ctx = Context.new(normalized)
         roots = [] of Tuple(String?, LibTreeSitter::TSNode)

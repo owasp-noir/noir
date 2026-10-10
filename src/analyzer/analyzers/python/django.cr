@@ -232,11 +232,18 @@ module Analyzer::Python
           end
         end
       end
+      # An unmounted `websocket_urlpatterns` serves at the root; one already
+      # mounted under any prefix is not repeated there, and a file that only
+      # imports the name is not its home.
       sources.each do |file, content|
+        next unless content.matches?(WS_PATTERNS_ASSIGN)
+        next if visited.any? { |(seen, key)| seen == file && key.ends_with?("\0websocket_urlpatterns") }
         channels_list_endpoints(file, content, "websocket_urlpatterns", "", visited, endpoints)
       end
       endpoints
     end
+
+    WS_PATTERNS_ASSIGN = /^\s*websocket_urlpatterns\s*(?::[^=\n]*)?\+?=/m
 
     # `content` with comments cut and docstring lines blanked (line count
     # kept), so a commented-out or documented `URLRouter(...)` is not a route.
@@ -254,29 +261,40 @@ module Analyzer::Python
     end
 
     private def channels_list_endpoints(file : ::String, content : ::String, arg : ::String, prefix : ::String,
-                                        visited : Set(Tuple(::String, ::String)), endpoints : Array(Endpoint)) : Nil
+                                        visited : Set(Tuple(::String, ::String)), endpoints : Array(Endpoint),
+                                        active = Set(Tuple(::String, ::String)).new) : Nil
       terms = split_python_expression_terms(arg)
       if terms.size > 1 # `a.websocket_urlpatterns + [...]`
-        terms.each { |term| channels_list_endpoints(file, content, term.strip, prefix, visited, endpoints) }
+        terms.each { |term| channels_list_endpoints(file, content, term.strip, prefix, visited, endpoints, active) }
         return
       end
+      entered = nil
 
       list = arg
       unless arg.starts_with?('[')
         module_name, _, name = arg.rpartition('.')
-        return unless visited.add?({file, arg})
+        # Keyed by prefix too: one list mounted under two prefixes serves
+        # both. `active` holds the lists being expanded, so a list that
+        # mounts itself (directly or through another) stops there.
+        return unless visited.add?({file, "#{prefix}\0#{arg}"})
+        return unless active.add?({file, arg})
+        entered = {file, arg}
         if module_name.empty?
           if local = extract_urlpattern_lists(content)[name]?
             list = local
-          elsif import = content.match(/^\s*from\s+([\w.]+)\s+import\s+[^\n]*\b#{Regex.escape(name)}\b/m)
-            module_name = import[1]
+          elsif target = channels_import_target(content, name)
+            module_name, _, name = target.rpartition('.')
           else
             return
           end
+        elsif target = channels_import_target(content, module_name.partition('.')[0])
+          # `from chat import routing` + `routing.websocket_urlpatterns`.
+          rest = module_name.partition('.')[2]
+          module_name = rest.empty? ? target : "#{target}.#{rest}"
         end
         unless module_name.empty?
           target = channels_module_file(file, module_name) || return
-          return channels_list_endpoints(target, channels_code(read_file_content(target)), name, prefix, visited, endpoints)
+          return channels_list_endpoints(target, channels_code(read_file_content(target)), name, prefix, visited, endpoints, active)
         end
       end
 
@@ -286,13 +304,33 @@ module Analyzer::Python
         line = route.empty? ? nil : content.index(route, list_start).try { |idx| content[0, idx].count('\n') + 1 }
         if router = view.index("URLRouter(")
           inner = channels_router_arg(view, router + "URLRouter".size)
-          channels_list_endpoints(file, content, inner, url, visited, endpoints) if inner
+          channels_list_endpoints(file, content, inner, url, visited, endpoints, active) if inner
         else
           endpoint = Endpoint.new(url, "GET", Details.new(PathInfo.new(file, line)))
           endpoint.protocol = "ws"
           endpoints << endpoint
         end
       end
+    ensure
+      active.delete(entered) if entered
+    end
+
+    # The dotted path `name` is bound to by this file's imports:
+    # `from chat import routing` -> `chat.routing`, `import game.routing as
+    # gr` -> `game.routing`, `from chat.routing import urls as ws` ->
+    # `chat.routing.urls`.
+    private def channels_import_target(content : ::String, name : ::String) : ::String?
+      escaped = Regex.escape(name)
+      if m = content.match(/^\s*from\s+([\w.]+)\s+import\s+[^\n]*?\b(\w+)\s+as\s+#{escaped}\b/m)
+        module_name, imported = m[1], m[2]
+      elsif m = content.match(/^\s*import\s+([\w.]+)\s+as\s+#{escaped}\b/m)
+        return m[1]
+      elsif m = content.match(/^\s*from\s+([\w.]+)\s+import\s+[^\n]*\b#{escaped}\b/m)
+        module_name, imported = m[1], name
+      else
+        return
+      end
+      module_name.ends_with?('.') ? "#{module_name}#{imported}" : "#{module_name}.#{imported}"
     end
 
     # `chat.routing` -> `chat/routing.py` (or a package `__init__.py`); a
