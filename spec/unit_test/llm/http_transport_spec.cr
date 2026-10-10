@@ -177,6 +177,32 @@ describe LLM::HttpTransport do
     end
   end
 
+  describe ".claim_request" do
+    it "stops at --ai-max-requests and counts only requests it let through" do
+      LLM::HttpTransport.max_requests = 0
+      LLM::HttpTransport.claim_request.should be_true
+      before = LLM::HttpTransport.usage_summary(0).not_nil!
+      count = before[/(\d+) request/, 1].to_i
+      LLM::HttpTransport.max_requests = count + 1
+      LLM::HttpTransport.claim_request.should be_true
+      LLM::HttpTransport.claim_request.should be_false
+      LLM::HttpTransport.post_json_result("http://127.0.0.1:1/v1", "{}", HTTP::Headers.new).should be_nil
+      LLM::HttpTransport.usage_summary(0).not_nil!.should start_with("AI usage: #{count + 1} request(s)")
+    ensure
+      LLM::HttpTransport.max_requests = 0
+    end
+  end
+
+  describe ".usage_summary" do
+    it "adds provider-reported tokens, ignoring keys inside the model's text" do
+      LLM::HttpTransport.record_usage(%({"choices":[{"message":{"content":"{\\"prompt_tokens\\": 999}"}}],"usage":{"prompt_tokens":120,"completion_tokens":30}}))
+      LLM::HttpTransport.record_usage(%({"response":"x","prompt_eval_count":5,"eval_count":2}))
+      line = LLM::HttpTransport.usage_summary(3).not_nil!
+      line.should contain("3 cache hit(s)")
+      line.should contain("~125 input / 32 output tokens")
+    end
+  end
+
   describe ".truncate_error_snippet" do
     it "caps oversized error bodies" do
       snippet = LLM::HttpTransport.truncate_error_snippet("x" * 5000)

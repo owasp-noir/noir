@@ -181,6 +181,7 @@ noir scan /path/to/my/project -f json -u https://api.example.com --exclude-codes
 | `ai_no_optimize` | bool | `--ai-no-optimize` | Skip the LLM optimizer pass |
 | `ai_native_tools_allowlist` | CSV | `--ai-native-tools-allowlist` | Providers allowed to use native tools |
 | `ai_max_token` | int | `--ai-max-token` | Max tokens per request (`0` = provider default) |
+| `ai_max_requests` | int | `--ai-max-requests` | Max AI HTTP requests per run, retries included (`0` = unlimited) |
 | `cache_disable` | bool | `--cache-disable` | Disable the LLM response cache |
 | `cache_clear` | bool | `--cache-clear` | Clear the cache before the run |
 

@@ -613,6 +613,10 @@ def run_options_parser
       validated = positive_int_or_die!("--ai-max-token", v)
       noir_options["ai_max_token"] = YAML::Any.new(validated)
     end
+    parser.on "--ai-max-requests N", "Max AI HTTP requests per run, retries included (default: unlimited)" do |v|
+      validated = positive_int_or_die!("--ai-max-requests", v)
+      noir_options["ai_max_requests"] = YAML::Any.new(validated)
+    end
 
     parser.separator "\n DIFF:".colorize(:blue)
     parser.on "--diff-path PATH", "Old code version for diff" do |v|

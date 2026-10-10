@@ -60,6 +60,7 @@ noir scan . --ai-provider acp:codex
 | `--ai-no-optimize` | Skip the LLM optimizer pass |
 | `--ai-native-tools-allowlist` | Provider allowlist for native tool-calling (comma-separated, default: `openai,xai,github`) |
 | `--ai-max-token` | Max tokens for AI requests (optional) |
+| `--ai-max-requests` | Max AI HTTP requests per run, retries included (default: unlimited). Files left over are listed as coverage gaps |
 | `--cache-disable` | Disable LLM response cache |
 | `--cache-clear` | Clear LLM cache before run |
 
@@ -100,10 +101,14 @@ For raw ACP and agent stderr logs, set `NOIR_ACP_RAW_LOG=1`.
 | `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` | Send AI requests through a proxy (lowercase names work too). Loopback hosts always go direct |
 | `SSL_CERT_FILE` | CA bundle to trust, for a provider or TLS-intercepting proxy signed by a private CA |
 
-Requests that time out, hit a rate limit (HTTP 429), or fail with a
+Requests that cannot connect, hit a rate limit (HTTP 429), or fail with a
 transient gateway error are retried up to three times with backoff, honoring
-`Retry-After` when the provider sends it. Raise `NOIR_AI_TIMEOUT` if a large
-bundle against a slow local model needs more than five minutes to generate.
+`Retry-After` when the provider sends it. A request that connected and then
+timed out is not retried, since the model was still generating. Raise
+`NOIR_AI_TIMEOUT` if a large bundle against a slow local model needs more than
+five minutes to generate. The scan ends with an `AI usage:` line giving the
+request count, cache hits and, when the provider reports them, approximate
+input and output tokens.
 
 ## How AI-Powered Analysis Works
 

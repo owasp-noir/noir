@@ -92,6 +92,47 @@ module LLM
       retry_after(response) || backoff(attempt)
     end
 
+    # `--ai-max-requests`: a hard bound on how many HTTP requests (retries
+    # included) one run may send. 0 is unlimited. A request past the cap
+    # fails like any other, so the files it was for are listed as coverage
+    # gaps instead of silently dropped.
+    class_property max_requests : Int32 = 0
+    @@requests = Atomic(Int32).new(0)
+    @@cap_warned = Atomic(Bool).new(false)
+
+    def self.claim_request : Bool
+      max = max_requests
+      return true if @@requests.add(1) < max || max <= 0
+      @@requests.sub(1)
+      STDERR.puts "WARNING: --ai-max-requests #{max} reached; the remaining AI requests are skipped." unless @@cap_warned.swap(true)
+      false
+    end
+
+    # Token counts as the provider reports them: OpenAI-style `usage`
+    # (`prompt_tokens` / `completion_tokens`, or Anthropic-style
+    # `input_tokens` / `output_tokens`) and Ollama's eval counts. Read
+    # with a regex rather than parsed: the model's own text is a JSON
+    # string, where these keys would appear with escaped quotes.
+    INPUT_TOKENS  = /"(?:prompt_tokens|input_tokens|prompt_eval_count)"\s*:\s*(\d+)/
+    OUTPUT_TOKENS = /"(?:completion_tokens|output_tokens|eval_count)"\s*:\s*(\d+)/
+    @@input_tokens = Atomic(Int64).new(0)
+    @@output_tokens = Atomic(Int64).new(0)
+
+    def self.record_usage(body : String) : Nil
+      body.match(INPUT_TOKENS).try { |m| @@input_tokens.add(m[1].to_i64) }
+      body.match(OUTPUT_TOKENS).try { |m| @@output_tokens.add(m[1].to_i64) }
+    end
+
+    # One line for the end of a run, nil when it made no AI requests.
+    def self.usage_summary(cache_hits : Int32) : String?
+      requests = @@requests.get
+      return if requests == 0 && cache_hits == 0
+      line = "AI usage: #{requests} request(s), #{cache_hits} cache hit(s)"
+      input, output = @@input_tokens.get, @@output_tokens.get
+      line += ", ~#{input} input / #{output} output tokens" if input + output > 0
+      line
+    end
+
     # Credentials this run has sent, so provider text that echoes one back
     # (some gateways quote the whole bearer token in a 401) never reaches
     # stderr or a CI log. Taken from the request headers rather than the
@@ -161,6 +202,7 @@ module LLM
       attempt = 0
       loop do
         attempt += 1
+        return unless claim_request
         response = nil
         error = nil
 
@@ -178,7 +220,10 @@ module LLM
           ensure
             io.close rescue nil
           end
-          return response.body if response && response.success?
+          if response && response.success?
+            record_usage(response.body)
+            return response.body
+          end
         rescue e : IO::Error
           # Refused connections, connect timeouts and resets all arrive
           # as IO::Error subclasses.

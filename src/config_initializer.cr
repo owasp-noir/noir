@@ -346,6 +346,7 @@ class ConfigInitializer
       "ai_no_optimize"               => YAML::Any.new(false),
       "ai_native_tools_allowlist"    => YAML::Any.new(LLM::NativeToolCalling.default_allowlist_csv),
       "ai_max_token"                 => YAML::Any.new(0),
+      "ai_max_requests"              => YAML::Any.new(0),
       "cache_disable"                => YAML::Any.new(false),
       "cache_clear"                  => YAML::Any.new(false),
     }
@@ -534,6 +535,9 @@ class ConfigInitializer
 
       # The maximum number of tokens for AI requests (0 = provider/model default)
       ai_max_token: #{options["ai_max_token"]}
+
+      # The maximum number of AI HTTP requests per run, retries included (0 = unlimited)
+      ai_max_requests: #{options["ai_max_requests"]}
 
       # CACHE:
       # Disable LLM disk cache for this run

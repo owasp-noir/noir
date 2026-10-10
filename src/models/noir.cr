@@ -87,6 +87,7 @@ class NoirRunner
     # onto STDERR like every other Noir diagnostic — they used to be
     # written to Crystal's global `Log`, whose backend is STDOUT.
     LLM::Cache.logger = @logger
+    LLM::HttpTransport.max_requests = @options["ai_max_requests"]?.try(&.as_i?) || 0
 
     if ai_context_enabled?
       @options["include_callee"] = YAML::Any.new(true)
