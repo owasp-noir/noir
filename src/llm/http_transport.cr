@@ -94,11 +94,25 @@ module LLM
       body.size > MAX_ERROR_SNIPPET_SIZE ? "#{body[0, MAX_ERROR_SNIPPET_SIZE]}..." : body
     end
 
+    # A provider's final answer that was not a success and not worth
+    # another attempt (a 400 naming a bad parameter, a prompt over the
+    # context window). Handed back so the caller can read why.
+    record Rejection, status : Int32, body : String
+
     # POSTs a JSON body and returns the response body, or nil when the
     # request could not be completed. Failures are reported here so every
     # provider path surfaces them the same way instead of each client
     # inventing its own (or, in Ollama's case, staying silent).
     def self.post_json(url : String, body : String, headers : HTTP::Headers) : String?
+      result = post_json_result(url, body, headers)
+      return result unless result.is_a?(Rejection)
+      report(result)
+      nil
+    end
+
+    # `post_json`, except a rejection is returned unreported, for a caller
+    # that can recover from some of them.
+    def self.post_json_result(url : String, body : String, headers : HTTP::Headers) : (String | Rejection)?
       attempt = 0
       loop do
         attempt += 1
@@ -123,10 +137,14 @@ module LLM
         if error
           STDERR.puts "WARNING: AI API request failed after #{attempt} attempt(s): #{error.class} (#{error.message})"
         elsif response
-          STDERR.puts "WARNING: AI API error (HTTP #{response.status_code}): #{truncate_error_snippet(response.body)}"
+          return Rejection.new(response.status_code, response.body)
         end
         return
       end
+    end
+
+    def self.report(rejection : Rejection) : Nil
+      STDERR.puts "WARNING: AI API error (HTTP #{rejection.status}): #{truncate_error_snippet(rejection.body)}"
     end
 
     private def self.execute(url : String, body : String, headers : HTTP::Headers) : HTTP::Client::Response
