@@ -1383,6 +1383,8 @@ module Noir
       endpoint.push_param(param)
     end
 
+    COMMENT_OPENER_RE = %r{/[/*]}
+
     # Replace JS/TS comments with whitespace of the same shape.
     # Preserves newlines and column offsets so downstream line/column
     # math (`controller_start_line`, regex `.begin(0)`, etc.) stays
@@ -1398,6 +1400,10 @@ module Noir
     # bodies were scanned as code, so a `//` or `/*` inside a string opened
     # a comment that swallowed every route below it.
     def self.strip_js_comments(content : String) : String
+      # No `//` or `/*` anywhere means no comment: return the input as is.
+      # Callers that hand already-blanked text on to `extract_routes` then
+      # pay one scan instead of a second char-by-char rebuild.
+      return content unless content.matches?(COMMENT_OPENER_RE)
       builder = String::Builder.new(content.bytesize)
       state = :code
       escaped = false
