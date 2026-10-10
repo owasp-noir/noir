@@ -240,4 +240,37 @@ describe "AspnetAuthTagger" do
       CodeLocator.instance.clear_all
     end
   end
+
+  it "inherits RequireAuthorization through nested MapGroup declarations" do
+    tmpdir = File.tempname("aspnet_nested_group")
+    Dir.mkdir_p(tmpdir)
+    program = File.join(tmpdir, "Program.cs")
+    File.write(program, <<-CS)
+      var app = builder.Build();
+      var api = app.MapGroup("/api").RequireAuthorization();
+      var v1 = api.MapGroup("/v1");
+      RouteGroupBuilder admin = v1.MapGroup("/admin");
+      v1.MapGet("/items", () => "items");
+      admin.MapGet("/stats", () => "stats");
+      var pub = app.MapGroup("/public");
+      pub.MapGet("/ping", () => "pong");
+      CS
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(line : Int32) { Endpoint.new("/#{line}", "GET", [] of Param, Details.new(PathInfo.new(program, line))) }
+      items = at.call(5)
+      stats = at.call(6)
+      ping = at.call(8)
+
+      AspnetAuthTagger.new(noir_options).perform([items, stats, ping])
+
+      items.tags.map(&.description).should eq(["Protected by ASP.NET .RequireAuthorization()"])
+      stats.tags.map(&.description).should eq(["Protected by ASP.NET .RequireAuthorization()"])
+      ping.tags.should be_empty
+    ensure
+      FileUtils.rm_rf(tmpdir)
+    end
+  end
 end

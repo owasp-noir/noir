@@ -37,6 +37,8 @@ class AspnetAuthTagger < FrameworkTagger
   # `*.Tests` project directory.
   TEST_PATH            = %r{/(?:[Tt]ests?|testassets|[^/]+\.\w*Tests?)/|Tests?\.cs\z}
   MINIMAL_API_RECEIVER = /^\s*(\w+)\s*\.\s*Map(?:Get|Post|Put|Delete|Patch|Methods|Group)\b/
+  # `var v1 = api.MapGroup("/v1")`: a nested group, which inherits `api`'s.
+  GROUP_DECLARATION_RECEIVER = /=\s*(\w+)\s*\.\s*MapGroup\b/
 
   # ASP.NET Core middleware auth in action body
   ACTION_AUTH_PATTERNS = [
@@ -178,7 +180,7 @@ class AspnetAuthTagger < FrameworkTagger
     return "ASP.NET .RequireAuthorization()" if statement.matches?(MINIMAL_API_REQUIRE_AUTH)
     return if depth >= 5
 
-    receiver = statement.match(MINIMAL_API_RECEIVER).try(&.[1])
+    receiver = (statement.match(MINIMAL_API_RECEIVER) || statement.match(GROUP_DECLARATION_RECEIVER)).try(&.[1])
     return unless receiver && receiver != "app"
     declaration = /\b#{Regex.escape(receiver)}\s*=\s*[\w.]*MapGroup\s*\(/
     (0...route_line).reverse_each do |idx|
