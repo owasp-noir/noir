@@ -17,6 +17,11 @@ describe "Detect HAProxy config" do
     instance.detect("conf/lb.cfg", "listen api\n    http-request deny if { path_beg /internal }\n").should be_true
   end
 
+  it "detects url_beg ACLs" do
+    instance.detect("haproxy.cfg", "frontend web\n    acl is_blog url_beg /blog\n").should be_true
+    instance.detect("haproxy.cfg", "frontend web\n    acl t url_param(token) -m found\n").should be_false
+  end
+
   it "rejects configs without path matching" do
     instance.detect("haproxy.cfg", "frontend web\n    bind *:80\n    default_backend app\n").should be_false
   end
