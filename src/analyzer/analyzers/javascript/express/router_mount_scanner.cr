@@ -699,6 +699,8 @@ module Analyzer::Javascript
       candidates.last
     end
 
+    ROUTE_CALL_RE = /\.(get|post|put|delete|patch|all|head|options)\s*\(/
+
     # Check if a file contains route definitions (get/post/put/delete/patch/all)
     private def file_has_routes?(file_path : String) : Bool
       return false unless File.file?(file_path)
@@ -707,7 +709,10 @@ module Analyzer::Javascript
         content = CodeLocator.instance.content_for(file_path) || Noir::TextFile.read(file_path)
         # Look for common route definition patterns
         # Matches: router.get(, router.post(, .get(, .post(, etc.
-        content.matches?(/\.(get|post|put|delete|patch|all|head|options)\s*\(/)
+        # A commented-out `// router.get(...)` in a middleware module must not
+        # make it the mounted router; strip only once the raw text matches.
+        content.matches?(ROUTE_CALL_RE) &&
+          Noir::JSRouteExtractor.strip_js_comments(content).matches?(ROUTE_CALL_RE)
       rescue
         false
       end
