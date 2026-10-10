@@ -52,6 +52,23 @@ module Analyzer::Javascript
     )
     end
 
+    # Per importing file: local binding => the name it was imported under,
+    # for renamed imports only (`const { router: usersRouter } = require(…)`,
+    # `import { router as usersRouter } from …`). The prefix belongs to the
+    # exported name — that is what the router's own file registers routes on.
+    @import_names = Hash(String, Hash(String, String)).new
+
+    RENAMED_IMPORT_RE = /([A-Za-z_$][\w$]*)\s*(?::|\s+as\s+)\s*([A-Za-z_$][\w$]*)/
+
+    # Per scanned file: local binding => the names the file exports it
+    # under, so a router imported by name can carry its prefix on to the
+    # routers it mounts in turn.
+    @export_bindings = Hash(String, Hash(String, Array(String))).new
+
+    private def exported_name(main_file : String, local : String) : String
+      @import_names[main_file]?.try(&.[local]?) || local
+    end
+
     # Main entry point: scan all files for router mount patterns
     def scan
       locator = CodeLocator.instance
@@ -136,6 +153,7 @@ module Analyzer::Javascript
       content = Noir::JSRouteExtractor.strip_js_comments(content)
 
       # Parse imports
+      @export_bindings[main_file] = Noir::JSRouteExtractor.export_bindings(content)
       imports = parse_imports(content, main_file)
       require_map = imports[:require_map]
       function_map = imports[:function_map]
@@ -560,6 +578,7 @@ module Analyzer::Javascript
             parse_destructured_names(names).each do |name|
               function_map[name] = resolved_path unless name.empty?
             end
+            names.scan(RENAMED_IMPORT_RE) { |r| (@import_names[main_file] ||= {} of String => String)[r[2]] = r[1] }
           end
         end
       end
@@ -584,6 +603,7 @@ module Analyzer::Javascript
             parse_destructured_names(names).each do |name|
               function_map[name] = resolved_path unless name.empty?
             end
+            names.scan(RENAMED_IMPORT_RE) { |r| (@import_names[main_file] ||= {} of String => String)[r[2]] = r[1] }
           end
         end
       end
@@ -735,10 +755,19 @@ module Analyzer::Javascript
           parent_prefixes = locator.all(ExpressConstants.file_key(caller_file)).dup
         elsif caller_func = var_to_function[caller]?
           if caller_file = function_map[caller_func]?
-            parent_prefixes = locator.all(ExpressConstants.function_key(caller_file, caller_func)).dup
+            parent_prefixes = locator.all(ExpressConstants.function_key(caller_file, exported_name(main_file, caller_func))).dup
           end
         elsif caller_file = function_map[caller]?
-          parent_prefixes = locator.all(ExpressConstants.function_key(caller_file, caller)).dup
+          parent_prefixes = locator.all(ExpressConstants.function_key(caller_file, exported_name(main_file, caller))).dup
+        end
+      end
+
+      # A router this file exports by name carries the prefix its importer
+      # recorded under that name.
+      if parent_prefixes.empty?
+        @export_bindings[main_file]?.try(&.[caller]?).try &.each do |exported|
+          key = ExpressConstants.function_key(Noir::PathScope.expand(main_file), exported)
+          locator.all(key).each { |p| parent_prefixes << p unless parent_prefixes.includes?(p) }
         end
       end
 
@@ -809,7 +838,7 @@ module Analyzer::Javascript
       if func_name = var_to_function[router_var]?
         router_file = function_map[func_name]?
         return unless router_file
-        return {key:  ExpressConstants.function_key(router_file, func_name),
+        return {key:  ExpressConstants.function_key(router_file, exported_name(main_file, func_name)),
                 note: " (factory var): #{router_file}:#{func_name}",
                 var:  router_var}
       end
@@ -818,7 +847,7 @@ module Analyzer::Javascript
       # Note: We do NOT store file-level keys here to avoid prefix bleed to other
       # factory functions in the same file that were not mounted.
       if router_file = function_map[router_var]?
-        return {key:  ExpressConstants.function_key(router_file, router_var),
+        return {key:  ExpressConstants.function_key(router_file, exported_name(main_file, router_var)),
                 note: " (factory direct): #{router_file}:#{router_var}",
                 var:  router_var}
       end

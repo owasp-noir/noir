@@ -262,6 +262,16 @@ module Noir
           end
         end
 
+        # Routers imported by name: prefixes recorded under the exported
+        # name apply to routes registered on the local binding.
+        prefixes_by_binding = Hash(String, Array(String)).new
+        export_bindings(content).each do |local, exported_names|
+          list = exported_names.flat_map do |exported|
+            locator.all(Analyzer::Javascript::ExpressConstants.function_key(absolute_file_path, exported))
+          end.uniq!.reject!(&.empty?)
+          prefixes_by_binding[local] = list unless list.empty?
+        end
+
         # Seed same-file Fastify plugin registrations from top-level mounts.
         content.scan(/\b\w+\.register\s*\(\s*(\w+)\s*,\s*\{[^}]*prefix\s*:\s*['"]([^'"]+)['"]/) do |m|
           next unless m.size >= 3
@@ -319,6 +329,11 @@ module Noir
               containing_registers.sort_by! { |_, span| span }
               anonymous_prefix = containing_registers.first[0]
               prefixes = [anonymous_prefix]
+            end
+          end
+          if prefixes.empty? && start_byte >= 0 && !prefixes_by_binding.empty?
+            if receiver = offsets.window(start_byte, 128).match(ROUTE_RECEIVER_RE)
+              prefixes = prefixes_by_binding[receiver[1]]? || prefixes
             end
           end
           if prefixes.empty? && !file_prefixes.empty?
@@ -1057,6 +1072,49 @@ module Noir
     # under many paths stays well below it. Shared with JSParser's
     # same-file router resolution.
     MAX_MOUNT_PREFIXES = JSParser::MAX_MOUNT_PREFIXES
+
+    EXPORT_DECL_RE         = /\bexport\s+(?:const|let|var)\s+([A-Za-z_$][\w$]*)/
+    EXPORT_LIST_RE         = /\bexport\s*\{([^}]*)\}(?!\s*from\b)/
+    CJS_EXPORT_OBJECT_RE   = /\bmodule\.exports\s*=\s*\{([^}]*)\}/
+    CJS_EXPORT_PROPERTY_RE = /\b(?:module\.)?exports\.([A-Za-z_$][\w$]*)\s*=\s*([A-Za-z_$][\w$]*)\s*[;\n]/
+    EXPORT_ALIAS_RE        = /\A([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)\z/
+    EXPORT_KEY_VALUE_RE    = /\A([A-Za-z_$][\w$]*)\s*:\s*([A-Za-z_$][\w$]*)\z/
+    EXPORT_IDENT_RE        = /\A[A-Za-z_$][\w$]*\z/
+    ROUTE_RECEIVER_RE      = /\A([A-Za-z_$][\w$]*)\s*\./
+
+    # Local binding => the names it is exported under. An importer that
+    # takes a router by name (`const { usersRouter } = require('./users')`,
+    # `import { usersRouter } from './users'`, `users.router`) records the
+    # mount prefix under that *exported* name, and the routes are registered
+    # on the *local* binding, so the two have to be joined here. Covers
+    # `export const x = …`, `export { a as b }`, `module.exports = { a, b: c }`
+    # and `(module.)exports.b = a`.
+    def self.export_bindings(content : String) : Hash(String, Array(String))
+      bindings = Hash(String, Array(String)).new { |h, k| h[k] = [] of String }
+      content.scan(EXPORT_DECL_RE) { |m| bindings[m[1]] << m[1] }
+      content.scan(CJS_EXPORT_PROPERTY_RE) { |m| bindings[m[2]] << m[1] }
+      content.scan(EXPORT_LIST_RE) do |m|
+        m[1].split(',').each do |item|
+          item = item.strip
+          if alias_match = item.match(EXPORT_ALIAS_RE)
+            bindings[alias_match[1]] << alias_match[2]
+          elsif item.matches?(EXPORT_IDENT_RE)
+            bindings[item] << item
+          end
+        end
+      end
+      content.scan(CJS_EXPORT_OBJECT_RE) do |m|
+        m[1].split(',').each do |item|
+          item = item.strip
+          if pair = item.match(EXPORT_KEY_VALUE_RE)
+            bindings[pair[2]] << pair[1]
+          elsif item.matches?(EXPORT_IDENT_RE)
+            bindings[item] << item
+          end
+        end
+      end
+      bindings
+    end
 
     # Pushes mount prefixes along `{parent, prefix, child}` edges into
     # `prefixes`, starting from each parent's existing prefixes (or
