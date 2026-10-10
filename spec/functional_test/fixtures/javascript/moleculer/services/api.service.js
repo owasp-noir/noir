@@ -17,6 +17,10 @@ module.exports = {
           "REST posts": "posts",
           // No method: any verb.
           "health": "api.health",
+          // Method shorthand: an inline handler.
+          "GET hi"(req, res) {
+            res.end("hi");
+          },
         },
       },
       {

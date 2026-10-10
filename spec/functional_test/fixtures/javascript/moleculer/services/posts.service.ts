@@ -7,7 +7,7 @@ const PostsService: ServiceSchema = {
     list: { params: { page: "number" }, handler: async () => [] },
     get: { params: { id: "string" }, handler: async () => null },
     create: { params: { title: "string", body: "string" }, handler: async () => null },
-    update: { handler: async () => null },
+    update: { handler(this: PostsThis, ctx: Context<UpdateParams>): Promise<null> { return null; } },
     patch: { handler: async () => null },
     remove: { handler: async () => null },
   },

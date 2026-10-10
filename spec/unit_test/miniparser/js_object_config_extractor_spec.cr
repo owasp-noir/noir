@@ -285,5 +285,36 @@ describe Noir::JSObjectConfigExtractor do
         configs[0].string("slug").should eq("posts")
       end
     end
+
+    it "keeps objects whose handlers carry TypeScript signatures" do
+      source = <<-TS
+        http.route({
+          path: "/clerk-users-webhook",
+          method: "POST",
+          handler: httpAction(async (ctx, request: Request): Promise<Response> => {
+            const event = await validateRequest(request);
+            if (!event) {
+              return new Response("Error occured", { status: 400 });
+            }
+            switch (event.type) {
+              case "user.created":
+                await ctx.runMutation(internal.users.upsertFromClerk, { data: event.data as any });
+                break;
+            }
+            return new Response(null, { status: 200 });
+          }),
+        });
+        TS
+      configs = Noir::JSObjectConfigExtractor.extract(source, ["method", "handler"])
+      configs.map(&.string("path")).should eq(["/clerk-users-webhook"])
+      configs[0].line.should eq(1)
+    end
+
+    it "keeps method-shorthand keys with an unknown value" do
+      source = %(const s = { aliases: { "GET hi"(req, res) { res.end("hi"); }, "POST x": "a.b" } })
+      aliases = Noir::JSObjectConfigExtractor.extract(source, ["aliases"])[0].hash("aliases").not_nil!
+      aliases.keys.should eq(["GET hi", "POST x"])
+      aliases["GET hi"].should be_nil
+    end
   end
 end
