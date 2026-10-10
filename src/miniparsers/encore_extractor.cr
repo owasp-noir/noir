@@ -154,10 +154,13 @@ module Noir
       code = JSRouteExtractor.strip_js_comments(content)
       types = nil
       apis = [] of TsApi
+      # Byte offsets throughout: char-indexed matching and slicing rescan
+      # the file per api once it holds one non-ASCII char.
+      offsets = JSRouteExtractor::ByteOffsets.new(code)
       code.scan(TS_API) do |m|
-        open = m.end(0) - 1
-        close = JSRouteExtractor.find_matching_paren(code, open) || next
-        args = TopLevelSplit.split(code[(open + 1)...close], ',', JS_RULES)
+        open = m.byte_end(0) - 1
+        close = JSLiteralScanner.find_matching_paren_at_byte(code, open) || next
+        args = TopLevelSplit.split(code.byte_slice(open + 1, close - open - 1), ',', JS_RULES)
         config = args[0]? || next
         next unless config.starts_with?('{')
 
@@ -183,7 +186,7 @@ module Noir
             end
           end
         end
-        apis << TsApi.new(m[1], kind, object_entries(config), fields, request_import, JSRouteExtractor.line_for_char_pos(code, m.begin(0)))
+        apis << TsApi.new(m[1], kind, object_entries(config), fields, request_import, offsets.line(m.byte_begin(0)))
       end
       apis
     end
@@ -216,9 +219,9 @@ module Noir
     private def type_bodies(code : String) : Hash(String, String)
       bodies = Hash(String, String).new
       code.scan(TS_TYPE) do |m|
-        open = m.end(0) - 1
-        close = JSRouteExtractor.find_matching_brace(code, open) || next
-        bodies[m[1]? || m[2]] ||= code[open..close]
+        open = m.byte_end(0) - 1
+        close = JSLiteralScanner.find_matching_brace_at_byte(code, open) || next
+        bodies[m[1]? || m[2]] ||= code.byte_slice(open, close - open + 1)
       end
       bodies
     end
