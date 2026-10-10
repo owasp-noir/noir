@@ -164,15 +164,11 @@ module LLM
       Socket::IPAddress.valid?(host) && Socket::IPAddress.new(host, 0).loopback?
     end
 
-    def self.redact(text : String) : String
-      Noir::Redact.secret(text, @@secrets_mutex.synchronize { @@secrets.dup })
-    end
-
     # Every provider error text that reaches stderr goes through here, so
     # it is also where the key is masked — before the cut, so a key
     # straddling it cannot leak its prefix.
     def self.truncate_error_snippet(body : String) : String
-      body = redact(body)
+      body = Noir::Redact.secret(body, @@secrets_mutex.synchronize { @@secrets.dup })
       body.size > MAX_ERROR_SNIPPET_SIZE ? "#{body[0, MAX_ERROR_SNIPPET_SIZE]}..." : body
     end
 
