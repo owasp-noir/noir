@@ -1081,7 +1081,7 @@ module Noir
 
     EXPORT_DECL_RE         = /\bexport\s+(?:const|let|var)\s+([A-Za-z_$][\w$]*)/
     EXPORT_LIST_RE         = /\bexport\s*\{([^}]*)\}(?!\s*from\b)/
-    CJS_EXPORT_OBJECT_RE   = /\bmodule\.exports\s*=\s*\{([^}]*)\}/
+    CJS_EXPORT_OBJECT_RE   = /(?:\bmodule\.exports\s*=|\bexport\s+default)\s*\{([^}]*)\}/
     CJS_EXPORT_PROPERTY_RE = /\b(?:module\.)?exports\.([A-Za-z_$][\w$]*)\s*=\s*([A-Za-z_$][\w$]*)\s*[;\n]/
     EXPORT_ALIAS_RE        = /\A([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)\z/
     EXPORT_KEY_VALUE_RE    = /\A([A-Za-z_$][\w$]*)\s*:\s*([A-Za-z_$][\w$]*)\z/
@@ -1097,7 +1097,8 @@ module Noir
     # `import { usersRouter } from './users'`, `users.router`) records the
     # mount prefix under that *exported* name, and the routes are registered
     # on the *local* binding, so the two have to be joined here. Covers
-    # `export const x = …`, `export { a as b }`, `module.exports = { a, b: c }`
+    # `export const x = …`, `export { a as b }`, `module.exports = { a, b: c }`,
+    # `export default { a, b: c }`
     # and `(module.)exports.b = a`.
     def self.export_bindings(content : String) : Hash(String, Array(String))
       bindings = Hash(String, Array(String)).new { |h, k| h[k] = [] of String }
