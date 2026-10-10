@@ -11,6 +11,9 @@ module Noir
     getter content : String
 
     def initialize(@content : String)
+      # PCRE2 re-validates the whole subject as UTF-8 on every match unless
+      # told not to; done once here, so a per-route `match` stays O(match).
+      @match_options = content.valid_encoding? ? Regex::MatchOptions::NO_UTF_CHECK : Regex::MatchOptions::None
       bytes = content.to_slice
       @newlines = [] of Int32
       i = 0
@@ -59,7 +62,7 @@ module Noir
 
     # `content.match(regex, char_pos)`.
     def match(regex : Regex, char_pos : Int32, options : Regex::MatchOptions = Regex::MatchOptions::None) : Regex::MatchData?
-      regex.match_at_byte_index(@content, byte(char_pos), options)
+      regex.match_at_byte_index(@content, byte(char_pos), options | @match_options)
     end
 
     # `content.index(regex, char_pos)`.
