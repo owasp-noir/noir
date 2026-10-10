@@ -1,5 +1,6 @@
 require "digest/sha256"
 require "../utils/redact"
+require "./native_tool_calling"
 
 # LLM prompts and formats for AI-powered endpoint analysis
 
@@ -620,56 +621,38 @@ module LLM
 
   # Get the maximum token limit for a given provider and model
   def self.get_max_tokens(provider : String, model : String) : Int32
-    provider = provider.downcase
-
     # ACP agent providers don't appear in MODEL_TOKEN_LIMITS; give them
     # a generous, model-agnostic bundling budget instead of the tiny
     # global default.
-    if acp = acp_max_tokens?(provider)
-      return acp
+    acp_max_tokens?(provider) || table_max_tokens(provider, model)
+  end
+
+  # The MODEL_TOKEN_LIMITS lookup behind `get_max_tokens`, split out because
+  # the analyzer specs monkeypatch that method.
+  #
+  # A URL names its provider by host only (the path is the gateway's
+  # choice). A custom or gateway URL names no provider at all, but the model
+  # usually still does: `gpt-5.5` behind a corporate gateway has the same
+  # window as at OpenAI, so the whole table is searched before falling back
+  # to the 4000-token global default.
+  def self.table_max_tokens(provider : String, model : String) : Int32
+    provider = NativeToolCalling.canonical_provider(provider)
+
+    unless provider_limits = MODEL_TOKEN_LIMITS[provider]?.as?(Hash(String, Int32))
+      MODEL_TOKEN_LIMITS.each_value do |limits|
+        limits.as?(Hash(String, Int32)).try { |h| model_token_limit(h, model) }.try { |limit| return limit }
+      end
+      default_tokens = MODEL_TOKEN_LIMITS["default"].as(Int32)
+      warn_once "WARNING: Unknown provider '#{Noir::Redact.url(provider)}' and model '#{model}'. Using global default max_tokens (#{default_tokens}). You can specify --ai-max-token to override."
+      return default_tokens
     end
 
-    # Extract just the provider name if URL was provided
-    if provider.includes?("://") || provider.includes?(".")
-      # For URLs like "https://api.openai.com" or "openai.com"
-      if provider.includes?("openai")
-        provider = "openai"
-      elsif provider.includes?("anthropic")
-        provider = "anthropic"
-      elsif provider.includes?("x.ai") || provider.includes?("xai")
-        provider = "xai"
-      elsif provider.includes?("github")
-        provider = "github"
-      elsif provider.includes?("azure")
-        provider = "azure"
-      elsif provider.includes?("ollama")
-        provider = "ollama"
-      elsif provider.includes?("vllm")
-        provider = "vllm"
-      elsif provider.includes?("lmstudio")
-        provider = "lmstudio"
-      elsif provider.includes?("google") || provider.includes?("gemini")
-        provider = "google"
-      elsif provider.includes?("cohere")
-        provider = "cohere"
-      end
-    end
-
-    # Get the provider-specific limits or fall back to default
-    provider_limits = MODEL_TOKEN_LIMITS[provider]? || MODEL_TOKEN_LIMITS["default"]
-
-    if provider_limits.is_a?(Hash)
-      # Get the model-specific limit or fall back to provider default
-      if limit = model_token_limit(provider_limits.as(Hash(String, Int32)), model)
-        limit
-      else
-        default_tokens = provider_limits.as(Hash)["default"].as(Int32)
-        warn_once "WARNING: Unknown model '#{model}' for provider '#{Noir::Redact.url(provider)}'. Using default max_tokens (#{default_tokens}). You can specify --ai-max-token to override."
-        default_tokens
-      end
+    if limit = model_token_limit(provider_limits, model)
+      limit
     else
-      warn_once "WARNING: Unknown provider '#{Noir::Redact.url(provider)}'. Using global default max_tokens (#{provider_limits}). You can specify --ai-max-token to override."
-      provider_limits.as(Int32)
+      default_tokens = provider_limits["default"]
+      warn_once "WARNING: Unknown model '#{model}' for provider '#{Noir::Redact.url(provider)}'. Using default max_tokens (#{default_tokens}). You can specify --ai-max-token to override."
+      default_tokens
     end
   end
 

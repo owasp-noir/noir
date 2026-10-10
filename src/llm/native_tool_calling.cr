@@ -34,6 +34,10 @@ module LLM::NativeToolCalling
     return "ollama" if haystack.includes?("ollama")
     return "vllm" if haystack.includes?("vllm")
     return "lmstudio" if haystack.includes?("lmstudio")
+    return "openrouter" if haystack.includes?("openrouter")
+    return "anthropic" if haystack.includes?("anthropic")
+    return "google" if haystack.includes?("google") || haystack.includes?("gemini")
+    return "cohere" if haystack.includes?("cohere")
 
     p
   end
