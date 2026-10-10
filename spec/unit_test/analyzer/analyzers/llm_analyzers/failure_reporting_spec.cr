@@ -140,7 +140,7 @@ describe Analyzer::AI::Unified do
     it "leaves the endpoints of the bundles that did succeed alone" do
       without_llm_cache do
         analyzer = ai_analyzer
-        good = LLM::Bundle.new("- File: \"ok.rb\"\n```\nget '/ok'\n```\n", 300, ["ok.rb"])
+        good = LLM::Bundle.new("- File: \"ok.rb\"\n```\nget '/ai/found'\n```\n", 300, ["ok.rb"])
         bad = LLM::Bundle.new("- File: \"bad.rb\"\n```\nget '/bad'\n```\n", 300, ["bad.rb"])
 
         analyzer.__test_process_bundle(good, WorkingAdapter.new)
@@ -222,7 +222,7 @@ describe Analyzer::AI::Unified do
     it "reports no failure at all, so --strict still passes" do
       without_llm_cache do
         analyzer = ai_analyzer
-        bundle = LLM::Bundle.new("- File: \"ok.rb\"\n```\nget '/ok'\n```\n", 300, ["ok.rb"])
+        bundle = LLM::Bundle.new("- File: \"ok.rb\"\n```\nget '/ai/found'\n```\n", 300, ["ok.rb"])
 
         analyzer.__test_process_bundle(bundle, WorkingAdapter.new)
 

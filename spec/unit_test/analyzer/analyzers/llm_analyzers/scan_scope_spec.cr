@@ -25,7 +25,7 @@ class Analyzer::AI::Unified
   end
 
   def __test_bundle_paths(labels : Array(String), reply : String) : Array(Array(String))
-    process_bundle(LLM::Bundle.new("bundle", 10, labels), ScriptedAdapter.new(reply))
+    process_bundle(LLM::Bundle.new("app.get('/x', h)", 10, labels), ScriptedAdapter.new(reply))
     @result.map(&.details.code_paths.map(&.path))
   end
 
