@@ -30,6 +30,11 @@ expected_endpoints = [
     Param.new("reason", "", "query"),
     Param.new("patch", "", "json"),
   ]),
+  Endpoint.new("/orders/{id}/refund", "POST", [
+    Param.new("id", "", "path"),
+    Param.new("Amount", "", "json"),
+    Param.new("Reason", "", "json"),
+  ]),
   Endpoint.new("/status", "HEAD"),
 ]
 

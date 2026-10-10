@@ -33,9 +33,15 @@ module Analyzer::CSharp
         masked = lexer.masked_lines
         lines.each_with_index do |line, i|
           attr = ROUTE_ATTR_RE.match(line) || next
-          # The method follows its attribute list, or shares the line with it.
+          # The method follows its attribute lists (which may span lines), or
+          # shares the line with the last one.
           j = i
-          while j < masked.size && (stripped = masked[j].strip).starts_with?('[') && stripped.ends_with?(']')
+          depth = 0
+          while j < masked.size
+            stripped = masked[j].strip
+            break if depth == 0 && !stripped.starts_with?('[')
+            depth += stripped.count('[') - stripped.count(']')
+            break if depth <= 0 && !stripped.ends_with?(']')
             j += 1
           end
           signature, sig_end = build_signature(lines, masked, j)

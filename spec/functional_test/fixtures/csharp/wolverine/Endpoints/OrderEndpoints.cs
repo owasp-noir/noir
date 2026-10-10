@@ -31,6 +31,11 @@ public static class OrderEndpoints
     [WolverinePatch("/orders/{id}/note")]
     public static void Note(int id, [FromQuery] string reason, NotePatch patch) { }
 
+    // An attribute list split over several lines.
+    [WolverinePost("/orders/{id}/refund",
+        Name = "RefundOrder")]
+    public static void Refund(int id, RefundOrder command) { }
+
     // [WolverineGet("/ghost")]
     // public static string Ghost() => "commented out";
 }
