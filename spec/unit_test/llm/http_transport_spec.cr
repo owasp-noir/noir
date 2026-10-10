@@ -169,21 +169,22 @@ describe LLM::HttpTransport do
 
   describe ".post_json_result" do
     it "does not retry a read timeout" do
+      # Accepts and never answers.
       server = TCPServer.new("127.0.0.1", 0)
-      accepted = 0
+      accepted = [] of TCPSocket
       spawn do
         while client = server.accept?
-          accepted += 1
-          spawn { sleep 2.seconds; client.close }
+          accepted << client
         end
       end
       with_env(LLM::HttpTransport::TIMEOUT_ENV, "0.2") do
         url = "http://127.0.0.1:#{server.local_address.port}/v1/chat/completions"
         LLM::HttpTransport.post_json_result(url, "{}", HTTP::Headers.new).should be_nil
       end
-      accepted.should eq(1)
+      accepted.size.should eq(1)
     ensure
       server.try &.close
+      accepted.try &.each(&.close)
     end
   end
 
