@@ -192,7 +192,7 @@ describe Analyzer::AI::Unified do
 
     it "keeps the endpoints before a cut, reports the files and does not cache it" do
       with_isolated_llm_cache do
-        bundle = LLM::Bundle.new("- File: \"a.rb\"\n```\nget '/a'\n```\n", 300, ["a.rb"])
+        bundle = LLM::Bundle.new("- File: \"a.rb\"\n```\nget '/users'\n```\n", 300, ["a.rb"])
         adapter = FixedReplyAdapter.new(%({"endpoints":[{"url":"/users","method":"GET"},{"url":"/ord))
         analyzer = ai_analyzer
         analyzer.__test_process_bundle(bundle, adapter)
