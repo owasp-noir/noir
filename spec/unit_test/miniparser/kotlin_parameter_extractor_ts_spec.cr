@@ -169,6 +169,24 @@ describe Noir::TreeSitterKotlinParameterExtractor do
       params.map(&.param_type).should eq(["form"])
     end
 
+    it "does not let a preceding param's format leak into @RequestBody or an un-annotated arg" do
+      source = <<-KT
+        class C {
+            @PostMapping("/d")
+            fun d(plain: String, @RequestBody body: String): String = ""
+            @PostMapping("/h")
+            fun h(@RequestHeader("X-T") t: String, @CookieValue("sid") sid: String, plain: String): String = ""
+        }
+        KT
+
+      extract(source, "C", "d", "POST").map { |p| {p.name, p.param_type} }.should eq([
+        {"plain", "form"}, {"body", "json"},
+      ])
+      extract(source, "C", "h", "POST").map { |p| {p.name, p.param_type} }.should eq([
+        {"X-T", "header"}, {"sid", "cookie"}, {"plain", "form"},
+      ])
+    end
+
     it "skips @PathVariable parameters" do
       source = <<-KT
         class C {
