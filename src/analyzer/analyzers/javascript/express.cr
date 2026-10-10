@@ -107,6 +107,9 @@ module Analyzer::Javascript
       # regex across a multi-MB minified single line that merely packs a
       # `this.route(` substring from library code.
       return if Noir::JSRouteExtractor.minified_content?(content)
+      # `this.route(/* x */ 'GET', …)` and a commented-out call: blanked in
+      # place, so offsets and lines stay put.
+      content = Noir::JSRouteExtractor.strip_js_comments(content)
       pattern = /(^|[^.\w])this\.route\(\s*['"]([A-Z]+)['"]\s*,\s*['"]([^'"]+)['"]/m
       seen = Set(Tuple(String, String)).new
       content.scan(pattern) do |m|
