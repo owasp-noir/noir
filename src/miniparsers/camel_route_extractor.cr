@@ -48,10 +48,12 @@ module Noir
       getter line : Int32
       # REST DSL / `rest:` routes sit under `restConfiguration().contextPath`.
       getter? rest : Bool
+      # `servlet:` consumers sit under the CamelServlet mapping.
+      getter? servlet : Bool
       getter params = [] of Tuple(String, String)
       property body_type : String? = nil
 
-      def initialize(@verb, @path, @line, @rest)
+      def initialize(@verb, @path, @line, @rest, @servlet = false)
       end
     end
 
@@ -74,7 +76,7 @@ module Noir
       restrict = method_restrict || query.match(METHOD_RESTRICT).try(&.[1])
       verbs = restrict.try(&.split(',').map(&.strip.upcase).reject(&.empty?)) || [] of String
       verbs = ["ANY"] if verbs.empty?
-      verbs.map { |verb| Route.new(verb, path, line, false) }
+      verbs.map { |verb| Route.new(verb, path, line, false, match[1] == "servlet") }
     end
 
     # ---- Java DSL ------------------------------------------------------
