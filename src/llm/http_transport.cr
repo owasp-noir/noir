@@ -127,7 +127,7 @@ module LLM
     def self.usage_summary(cache_hits : Int32) : String?
       requests = @@requests.get
       return if requests == 0 && cache_hits == 0
-      line = "AI usage: #{requests} request(s), #{cache_hits} cache hit(s)"
+      line = "AI usage: #{requests} HTTP request(s), #{cache_hits} cache hit(s)"
       input, output = @@input_tokens.get, @@output_tokens.get
       line += ", ~#{input} input / #{output} output tokens" if input + output > 0
       line
@@ -161,7 +161,10 @@ module LLM
     def self.loopback?(host : String) : Bool
       host = host.downcase
       return true if host == "localhost" || host.ends_with?(".localhost")
-      Socket::IPAddress.valid?(host) && Socket::IPAddress.new(host, 0).loopback?
+      return false unless Socket::IPAddress.valid?(host)
+      ip = Socket::IPAddress.new(host, 0)
+      # 0.0.0.0 dials this machine (OLLAMA_HOST=0.0.0.0 setups use it).
+      ip.loopback? || ip.unspecified?
     end
 
     # Every provider error text that reaches stderr goes through here, so
@@ -221,7 +224,7 @@ module LLM
         end
 
         if error
-          STDERR.puts "WARNING: AI API request failed after #{attempt} attempt(s): #{error.class} (#{error.message})"
+          STDERR.puts "WARNING: AI API request failed after #{attempt} attempt(s): #{error.class} (#{truncate_error_snippet(error.message.to_s)})"
         elsif response
           return Rejection.new(response.status_code, response.body)
         end
@@ -253,19 +256,21 @@ module LLM
       list.split(',').any? do |raw|
         entry = raw.strip.downcase
         next true if entry == "*"
-        entry = entry.lchop("*").lchop('.')
+        entry = entry.lchop("*").lchop('.').sub(/:\d+\z/, "")
         !entry.empty? && (host == entry || host.ends_with?(".#{entry}"))
       end
     end
 
-    # A timeout once connected means the model was still generating:
-    # another attempt waits the whole budget again and may pay for the same
-    # generation twice. Only a connect timeout is worth retrying.
-    # ponytail: told apart by the event loop's message ("Connect timed out",
-    # libevent's "connect timed out"); a loop that words it differently
-    # just loses the connect retry.
+    # A read/write timeout runs out the long budget: usually the model was
+    # still generating, and another attempt waits it out again and may pay
+    # for the same generation twice. Only a connect timeout is worth
+    # retrying. Matched on the message because the proxy shard re-wraps
+    # the error as a plain IO::Error ("... (Read timed out)").
+    # ponytail: event loops word it "Connect timed out" / "connect timed
+    # out"; one that words it differently just loses the connect retry.
     def self.read_timeout?(error : Exception) : Bool
-      error.is_a?(IO::TimeoutError) && !error.message.to_s.downcase.starts_with?("connect")
+      message = error.message.to_s.downcase
+      message.includes?("timed out") && !message.includes?("connect timed out")
     end
 
     # `HTTP::Client` has no proxy support of its own; the `http_proxy` shard

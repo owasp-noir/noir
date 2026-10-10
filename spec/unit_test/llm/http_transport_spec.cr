@@ -69,7 +69,7 @@ describe LLM::HttpTransport do
 
   describe ".loopback?" do
     it "keeps local providers quiet and flags remote hosts" do
-      %w[localhost LOCALHOST app.localhost 127.0.0.1 127.8.9.1 ::1].each do |host|
+      %w[localhost LOCALHOST app.localhost 127.0.0.1 127.8.9.1 ::1 0.0.0.0].each do |host|
         LLM::HttpTransport.loopback?(host).should be_true
       end
       %w[10.0.0.5 192.168.1.10 llm.internal example.com localhost.example.com].each do |host|
@@ -102,7 +102,7 @@ describe LLM::HttpTransport do
     it "goes direct for loopback and NO_PROXY hosts" do
       with_env("https_proxy", "http://proxy.corp:3128") do
         with_env("no_proxy", nil) do
-          with_env("NO_PROXY", ".corp.example, *.internal,api.x.ai") do
+          with_env("NO_PROXY", ".corp.example, *.internal,api.x.ai:443") do
             LLM::HttpTransport.proxy_for(URI.parse("https://localhost:8443")).should be_nil
             LLM::HttpTransport.proxy_for(URI.parse("https://llm.corp.example/v1")).should be_nil
             LLM::HttpTransport.proxy_for(URI.parse("https://a.b.internal/v1")).should be_nil
@@ -164,6 +164,9 @@ describe LLM::HttpTransport do
       LLM::HttpTransport.read_timeout?(IO::TimeoutError.new("Connect timed out")).should be_false
       LLM::HttpTransport.read_timeout?(IO::TimeoutError.new("connect timed out")).should be_false
       LLM::HttpTransport.read_timeout?(IO::Error.new("Connection reset by peer")).should be_false
+      # The proxy shard re-wraps a stalled CONNECT as a plain IO::Error.
+      LLM::HttpTransport.read_timeout?(IO::Error.new("Failed to open TCP connection to a:443 (Read timed out)")).should be_true
+      LLM::HttpTransport.read_timeout?(IO::Error.new("Failed to open TCP connection to a:443 (Connect timed out)")).should be_false
     end
   end
 
@@ -193,12 +196,12 @@ describe LLM::HttpTransport do
       LLM::HttpTransport.max_requests = 0
       LLM::HttpTransport.claim_request.should be_true
       before = LLM::HttpTransport.usage_summary(0).not_nil!
-      count = before[/(\d+) request/, 1].to_i
+      count = before[/(\d+) HTTP request/, 1].to_i
       LLM::HttpTransport.max_requests = count + 1
       LLM::HttpTransport.claim_request.should be_true
       LLM::HttpTransport.claim_request.should be_false
       LLM::HttpTransport.post_json_result("http://127.0.0.1:1/v1", "{}", HTTP::Headers.new).should be_nil
-      LLM::HttpTransport.usage_summary(0).not_nil!.should start_with("AI usage: #{count + 1} request(s)")
+      LLM::HttpTransport.usage_summary(0).not_nil!.should start_with("AI usage: #{count + 1} HTTP request(s)")
     ensure
       LLM::HttpTransport.max_requests = 0
     end

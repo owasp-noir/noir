@@ -38,6 +38,10 @@ dependencies:
   har:
     github: NeuraLegion/har
     version: ~> 1.2
+  # Proxy support for the AI transport (also pulled in by crest).
+  http_proxy:
+    github: mamantoha/http_proxy
+    version: ~> 0.15.1
   sarif:
     github: hahwul/sarif.cr
     version: ~> 0.2.0

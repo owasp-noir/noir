@@ -98,7 +98,7 @@ GitHub Models는 2026년 7월 30일 종료되었습니다. 기존 설정을 위�
 | `NOIR_AI_TIMEOUT` | 제공업체 응답 대기 시간(초, 기본값 `300`) |
 | `NOIR_AI_CONNECT_TIMEOUT` | 연결 자체의 대기 시간(초, 기본값 `10`) |
 | `NOIR_ACP_RAW_LOG` | `1`이면 원본 ACP/에이전트 stderr 로그를 출력 |
-| `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` | AI 요청을 프록시로 보냅니다(소문자 이름도 인식). 루프백 호스트는 항상 직접 연결합니다 |
+| `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` | AI 요청을 `http://` 프록시로 보냅니다(소문자 이름도 인식). 루프백 호스트는 항상 직접 연결합니다 |
 | `SSL_CERT_FILE` | 신뢰할 CA 번들. 사설 CA로 서명된 제공업체나 TLS 가로채기 프록시에 사용합니다 |
 
 연결 실패, 요청 한도 초과(HTTP 429), 일시적인 게이트웨이 오류가 발생한 요청은

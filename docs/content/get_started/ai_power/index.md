@@ -98,7 +98,7 @@ For raw ACP and agent stderr logs, set `NOIR_ACP_RAW_LOG=1`.
 | `NOIR_AI_TIMEOUT` | Seconds to wait for a provider response (default: `300`) |
 | `NOIR_AI_CONNECT_TIMEOUT` | Seconds to wait for the connection itself (default: `10`) |
 | `NOIR_ACP_RAW_LOG` | `1` to show raw ACP and agent stderr logs |
-| `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` | Send AI requests through a proxy (lowercase names work too). Loopback hosts always go direct |
+| `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` | Send AI requests through an `http://` proxy (lowercase names work too). Loopback hosts always go direct |
 | `SSL_CERT_FILE` | CA bundle to trust, for a provider or TLS-intercepting proxy signed by a private CA |
 
 Requests that cannot connect, hit a rate limit (HTTP 429), or fail with a
