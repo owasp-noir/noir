@@ -151,6 +151,12 @@ describe Analyzer::Python::PythonEngine do
     harness.def_line_after(lines, 0).should eq(4)
   end
 
+  it "drops comments from the lines it joins" do
+    harness = PythonEngineSpecHarness.new(create_test_options)
+    lines = ["app.add_api_route(  # v2 (beta", "    \"/items\",  # list", "    list_items,", ")"]
+    harness.join_until_python_call_closes(lines, 0, lines[0]).should eq("app.add_api_route(       \"/items\",       list_items, )")
+  end
+
   it "parses a long non-ASCII parameter default in linear time" do
     harness = PythonEngineSpecHarness.new(create_test_options)
     default = "가" * 60_000

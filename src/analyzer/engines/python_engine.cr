@@ -1084,13 +1084,17 @@ module Analyzer::Python
     def join_until_python_call_closes(lines : Array(::String),
                                       index : Int32,
                                       line : ::String) : ::String
-      pieces = [line]
-      delta, triple = python_call_line_delta(line, nil)
+      # Each piece is cut at its `#` comment: joined onto one line, the
+      # comment text glued onto the next argument (`add_api_route(  # v2`
+      # made the path argument `# v2 "/x"`).
+      delta, triple, comment = python_call_line_scan(line, nil)
+      return line unless delta > 0
+      pieces = [line.byte_slice(0, comment)]
       i = index + 1
       while i < lines.size && delta > 0
         nxt = lines[i]
-        pieces << nxt
-        line_delta, triple = python_call_line_delta(nxt, triple)
+        line_delta, triple, comment = python_call_line_scan(nxt, triple)
+        pieces << nxt.byte_slice(0, comment)
         delta += line_delta
         i += 1
       end
@@ -1104,6 +1108,13 @@ module Analyzer::Python
     # not keep the call open) from a `#` inside a multi-line string
     # (`Returns things (see issue #12)`, which is text).
     private def python_call_line_delta(line : ::String, triple : Char?) : Tuple(Int32, Char?)
+      depth, triple, _ = python_call_line_scan(line, triple)
+      {depth, triple}
+    end
+
+    # `python_call_line_delta` plus the byte offset where the line's `#`
+    # comment starts (`line.bytesize` when it has none).
+    private def python_call_line_scan(line : ::String, triple : Char?) : Tuple(Int32, Char?, Int32)
       depth = 0
       in_quote : Char? = nil
       escaped = false
@@ -1133,7 +1144,7 @@ module Analyzer::Python
             in_quote = ch
           end
         elsif ch == '#'
-          break
+          return {depth, triple, i}
         elsif ch == '('
           depth += 1
         elsif ch == ')'
@@ -1141,7 +1152,7 @@ module Analyzer::Python
         end
         i += 1
       end
-      {depth, triple}
+      {depth, triple, bytes.size}
     end
 
     # `line` up to its first `#` outside a single-line quoted string.
