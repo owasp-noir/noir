@@ -198,6 +198,9 @@ module LLM
       # Each request gets a fresh session: one `session/new` round trip is
       # cheap next to a prompt turn, and a shared session let earlier
       # bundles leak into later answers, making results order-dependent.
+      # ponytail: ACP v1 has no session/close, so the agent keeps every
+      # session until it exits; restart the agent every N requests if an
+      # agent's per-session memory ever matters on large scans.
       @request_lock.synchronize do
         session = ACP::Session.create(ensure_client, cwd: (ENV["NOIR_ACP_CWD"]? || Dir.current))
         @event_sink.try(&.call("ACP: session #{session.id} created"))
