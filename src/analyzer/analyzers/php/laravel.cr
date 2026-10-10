@@ -77,7 +77,7 @@ module Analyzer::Php
         # resolution can locate the controller file. Only parsed when
         # callees/ai-context are requested.
         imports = include_callee ? parse_use_imports(content) : EMPTY_IMPORTS
-        endpoints = analyze_routes_content(content, "", path, include_callee, imports: imports)
+        endpoints = analyze_routes_content(php_code(content), "", path, include_callee, imports: imports)
       rescue e
         logger.debug "Error analyzing routes file #{path}: #{e}"
         Noir::SkippedFiles.record(tech, path, e.message.presence || e.class.name)
