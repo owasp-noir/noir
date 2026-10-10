@@ -66,6 +66,11 @@ describe "Deliver#probe_url" do
       probe.url_for(path_endpoint("http://h/f/:a+b", "a+b")).should eq("http://h/f/noir")
     end
 
+    it "fills params joined by - or . in one segment" do
+      probe.url_for(path_endpoint("http://h/flights/:from-:to", "from", "to")).should eq("http://h/flights/noir-noir")
+      probe.url_for(path_endpoint("http://h/plantae/:genus.:species", "genus", "species")).should eq("http://h/plantae/noir.noir")
+    end
+
     it "keeps the port colon and mid-segment text out of it" do
       endpoint = path_endpoint("http://host:8080/profiles/celeb_:USERNAME", "USERNAME")
       probe.url_for(endpoint).should eq("http://host:8080/profiles/celeb_:USERNAME")

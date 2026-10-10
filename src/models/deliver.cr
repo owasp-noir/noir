@@ -366,8 +366,9 @@ class Deliver
       # example text like `/profiles/celeb_:USERNAME` out of it. The trailing
       # lookahead ends the name at the first character that can't be part of
       # one, so `:id` no longer matches the head of `:idx` while Play-style
-      # `/:lang.json` and `/:id-suffix` still fill.
-      url = url.gsub(/(\A|\/):#{escaped}(?![A-Za-z0-9_])/) { "#{$1}#{filler}" }
+      # `/:lang.json` and `/:id-suffix` still fill. A `-` or `.` also opens
+      # one: Express joins params as `/:from-:to` and `/:genus.:species`.
+      url = url.gsub(/(\A|[\/.\-]):#{escaped}(?![A-Za-z0-9_])/) { "#{$1}#{filler}" }
     end
 
     url
