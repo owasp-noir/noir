@@ -202,4 +202,16 @@ describe Noir::AzureFunctionsExtractor do
       Noir::AzureFunctionsExtractor.code_first?("a.rb", "[HttpTrigger(]").should be_false
     end
   end
+
+  it "reads many triggers of a non-ASCII file in linear time, on the right lines" do
+    js = %(const { app } = require("@azure/functions");\nconst title = "한국어";\n) +
+         (0...3000).join { |i| %(app.get("f#{i}", { route: "한/#{i}", handler: async () => ({ body: "한" }) });\n) }
+    cs = %(// 한국어\n) +
+         (0...3000).join { |i| %([Function("F#{i}")] public R F#{i}([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "한/#{i}")] HttpRequestData r) { }\n) }
+    elapsed = Time.measure do
+      triggers("index.js", js).last.should eq({"f2999", "한/2999", ["GET"], nil, 3002})
+      triggers("F.cs", cs).last.should eq({"F2999", "한/2999", ["GET"], "anonymous", 3001})
+    end
+    elapsed.should be < 2.seconds
+  end
 end

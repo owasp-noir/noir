@@ -89,19 +89,19 @@ module Noir
       newlines = newline_offsets(code)
 
       names = [] of {Int32, String?}
-      code.scan(CS_FUNCTION_NAME) { |m| names << {m.begin(0), m[1]? || m[2]?} }
+      code.scan(CS_FUNCTION_NAME) { |m| names << {m.byte_begin(0), m[1]? || m[2]?} }
 
       previous_trigger = -1
       code.scan(CS_TRIGGER) do |m|
         # The `[Function]` attribute of this method sits between the previous
         # trigger and this one; anything earlier belongs to another method.
-        start = m.begin(0)
+        start = m.byte_begin(0)
         name = names.reverse_each.find { |(pos, _)| pos > previous_trigger && pos < start }.try(&.[1])
         previous_trigger = start
         next unless m[1] == "Http"
 
         # A bare `[HttpTrigger]` takes every default.
-        args = m[0].ends_with?('(') ? (call_args(code, m.end(0) - 1, ARGS) || next) : [] of String
+        args = m[0].ends_with?('(') ? (call_args(code, m.byte_end(0) - 1, ARGS) || next) : [] of String
         route = nil
         methods = [] of String
         auth_level = nil
@@ -158,7 +158,7 @@ module Noir
       newlines = newline_offsets(code)
 
       code.scan(JS_CALL) do |m|
-        args = call_args(code, m.end(0) - 1, JS_ARGS) || next
+        args = call_args(code, m.byte_end(0) - 1, JS_ARGS) || next
         name = args[0]?.try { |v| literal(v) }
         verb = m[1]
         methods = verb == "http" ? JS_DEFAULT_METHODS.dup : [verb == "deleteRequest" ? "DELETE" : verb.upcase]
@@ -298,10 +298,12 @@ module Noir
       JS_EXTENSIONS.includes?(File.extname(path))
     end
 
-    # Top-level arguments of the call whose `(` sits at char index `open`.
+    # Top-level arguments of the call whose `(` sits at byte offset `open`.
+    # Char offsets would rescan the file per call once it holds one
+    # non-ASCII char.
     private def call_args(code : String, open : Int32, rules : TopLevelSplit::Rules) : Array(String)?
-      close = JSLiteralScanner.find_matching_paren(code, open) || return
-      TopLevelSplit.split(code[(open + 1)...close], ',', rules)
+      close = JSLiteralScanner.find_matching_paren_at_byte(code, open) || return
+      TopLevelSplit.split(code.byte_slice(open + 1, close - open - 1), ',', rules)
     end
 
     # A string literal's value. An interpolated one (`$"{x}"`, `f"{x}"`,
