@@ -20,8 +20,8 @@ namespace Senparc.Weixin.MP.Sample
             );
 
             routes.MapRoute(
-                name: "Default",
-                url: "data/default",
+                name: "Default", // Route name
+                url: "data/default", // URL with parameters
                 defaults: new { controller = "Home", action = "Index", id = UrlParameter.Optional }
             );
         }

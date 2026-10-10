@@ -32,7 +32,9 @@ module Analyzer::CSharp
       maproute_buffer = ""
       maproute_line = 0
 
-      read_file_content(route_config_path).each_line.with_index do |line, index|
+      # Comments blanked: the stock template trails each argument with one
+      # (`name: "Default", // Route name`), which fused into the next item.
+      Noir::CSharpLexer.new(read_file_content(route_config_path)).code_source.each_line.with_index do |line, index|
         if line.includes? ".MapRoute("
           maproute_check = true
           maproute_buffer = line
