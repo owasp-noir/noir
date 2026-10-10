@@ -55,4 +55,9 @@ describe Noir::Redact do
     Noir::Redact.option("base", list("./app")).should eq(%(["./app"]))
     Noir::Redact.option("debug", YAML::Any.new(true)).should eq("true")
   end
+
+  it "masks every occurrence of a secret in free text, but not tiny ones" do
+    Noir::Redact.secret("key sk-abc123 again sk-abc123", ["sk-abc123"]).should eq("key *** again ***")
+    Noir::Redact.secret("abc", ["ab", ""]).should eq("abc")
+  end
 end

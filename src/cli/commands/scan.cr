@@ -744,6 +744,8 @@ module Noir::CLI::ScanCommand
       diff_result = app.diff_report(app_diff)
     end
 
+    LLM::HttpTransport.usage_summary(LLM::Cache.hits).try { |line| app.logger.info line }
+
     # After the report, never before: a degraded scan still has results, and
     # the point of `--strict` is to flag them, not to withhold them.
     code = scan_exit_code(app, app_diff)

@@ -60,6 +60,7 @@ noir scan . --ai-provider acp:codex
 | `--ai-no-optimize` | LLM 옵티마이저 단계를 건너뜀 |
 | `--ai-native-tools-allowlist` | 네이티브 도구 호출 허용 제공업체 목록 (쉼표 구분, 기본값: `openai,xai,github`) |
 | `--ai-max-token` | AI 요청 최대 토큰 수 (선택 사항) |
+| `--ai-max-requests` | 실행당 최대 AI HTTP 요청 수, 재시도 포함 (기본값: 무제한). 남은 파일은 커버리지 공백으로 보고됩니다 |
 | `--cache-disable` | LLM 응답 캐시 비활성화 |
 | `--cache-clear` | 실행 전 LLM 캐시 삭제 |
 
@@ -97,11 +98,16 @@ GitHub Models는 2026년 7월 30일 종료되었습니다. 기존 설정을 위�
 | `NOIR_AI_TIMEOUT` | 제공업체 응답 대기 시간(초, 기본값 `300`) |
 | `NOIR_AI_CONNECT_TIMEOUT` | 연결 자체의 대기 시간(초, 기본값 `10`) |
 | `NOIR_ACP_RAW_LOG` | `1`이면 원본 ACP/에이전트 stderr 로그를 출력 |
+| `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` | AI 요청을 `http://` 프록시로 보냅니다(소문자 이름도 인식). 루프백 호스트는 항상 직접 연결합니다 |
+| `SSL_CERT_FILE` | 신뢰할 CA 번들. 사설 CA로 서명된 제공업체나 TLS 가로채기 프록시에 사용합니다 |
 
-시간 초과, 요청 한도 초과(HTTP 429), 일시적인 게이트웨이 오류가 발생한 요청은
+연결 실패, 요청 한도 초과(HTTP 429), 일시적인 게이트웨이 오류가 발생한 요청은
 백오프를 두고 최대 3회까지 재시도하며, 제공업체가 `Retry-After`를 보내면 그 값을
-따릅니다. 느린 로컬 모델에서 큰 번들 생성에 5분 이상 걸린다면
-`NOIR_AI_TIMEOUT`을 늘리세요.
+따릅니다. 연결된 뒤 응답 대기 시간이 초과된 요청은 모델이 아직 생성 중이었다는
+뜻이므로 재시도하지 않습니다. 느린 로컬 모델에서 큰 번들 생성에 5분 이상 걸린다면
+`NOIR_AI_TIMEOUT`을 늘리세요. 스캔이 끝나면 요청 수, 캐시 적중 수, 그리고
+제공업체가 알려 준 경우 대략적인 입력/출력 토큰 수를 담은 `AI usage:` 줄이
+출력됩니다.
 
 ## 작동 방식
 

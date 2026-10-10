@@ -57,6 +57,12 @@ module LLM
     end
 
     @@enabled = true
+    @@hits = Atomic(Int32).new(0)
+
+    # Responses served from disk this run, for the end-of-run usage line.
+    def self.hits : Int32
+      @@hits.get
+    end
 
     def self.enabled? : Bool
       @@enabled && !disabled_by_env?
@@ -115,7 +121,9 @@ module LLM
       return unless enabled?
       path = path_for(key)
       return unless File.exists?(path)
-      File.read(path)
+      content = File.read(path)
+      @@hits.add(1)
+      content
     rescue e
       debug("Cache fetch failed for #{key}: #{e.message}")
       nil

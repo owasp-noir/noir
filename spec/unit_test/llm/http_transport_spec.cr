@@ -67,6 +67,56 @@ describe LLM::HttpTransport do
     end
   end
 
+  describe ".loopback?" do
+    it "keeps local providers quiet and flags remote hosts" do
+      %w[localhost LOCALHOST app.localhost 127.0.0.1 127.8.9.1 ::1 0.0.0.0].each do |host|
+        LLM::HttpTransport.loopback?(host).should be_true
+      end
+      %w[10.0.0.5 192.168.1.10 llm.internal example.com localhost.example.com].each do |host|
+        LLM::HttpTransport.loopback?(host).should be_false
+      end
+    end
+  end
+
+  describe ".proxy_for" do
+    it "picks the scheme's proxy variable, lowercase first" do
+      with_env("https_proxy", nil) do
+        with_env("HTTPS_PROXY", "proxy.corp:3128") do
+          with_env("NO_PROXY", nil) do
+            with_env("no_proxy", nil) do
+              LLM::HttpTransport.proxy_for(URI.parse("https://api.openai.com/v1")).to_s.should eq("http://proxy.corp:3128")
+              with_env("https_proxy", "http://lower:8080") do
+                LLM::HttpTransport.proxy_for(URI.parse("https://api.openai.com/v1")).to_s.should eq("http://lower:8080")
+              end
+              with_env("http_proxy", nil) do
+                with_env("HTTP_PROXY", nil) do
+                  LLM::HttpTransport.proxy_for(URI.parse("http://llm.internal/v1")).should be_nil
+                end
+              end
+            end
+          end
+        end
+      end
+    end
+
+    it "goes direct for loopback and NO_PROXY hosts" do
+      with_env("https_proxy", "http://proxy.corp:3128") do
+        with_env("no_proxy", nil) do
+          with_env("NO_PROXY", ".corp.example, *.internal,api.x.ai:443") do
+            LLM::HttpTransport.proxy_for(URI.parse("https://localhost:8443")).should be_nil
+            LLM::HttpTransport.proxy_for(URI.parse("https://llm.corp.example/v1")).should be_nil
+            LLM::HttpTransport.proxy_for(URI.parse("https://a.b.internal/v1")).should be_nil
+            LLM::HttpTransport.proxy_for(URI.parse("https://api.x.ai/v1")).should be_nil
+            LLM::HttpTransport.proxy_for(URI.parse("https://api.openai.com/v1")).should_not be_nil
+          end
+          with_env("NO_PROXY", "*") do
+            LLM::HttpTransport.proxy_for(URI.parse("https://api.openai.com/v1")).should be_nil
+          end
+        end
+      end
+    end
+  end
+
   describe ".backoff" do
     it "grows exponentially from one second" do
       LLM::HttpTransport.backoff(1).should eq(1.second)
@@ -86,14 +136,84 @@ describe LLM::HttpTransport do
       LLM::HttpTransport.retry_after(response).should eq(LLM::HttpTransport::MAX_RETRY_AFTER)
     end
 
-    it "ignores a missing or non-numeric hint" do
+    it "ignores a missing, unparsable or past hint" do
       LLM::HttpTransport.retry_after(nil).should be_nil
-      response = HTTP::Client::Response.new(429, body: "", headers: HTTP::Headers{"Retry-After" => "Wed, 21 Oct 2015 07:28:00 GMT"})
-      LLM::HttpTransport.retry_after(response).should be_nil
+      ["soon", "Wed, 21 Oct 2015 07:28:00 GMT"].each do |raw|
+        response = HTTP::Client::Response.new(429, body: "", headers: HTTP::Headers{"Retry-After" => raw})
+        LLM::HttpTransport.retry_after(response).should be_nil
+      end
+    end
+
+    it "reads an HTTP-date hint" do
+      date = HTTP.format_time(Time.utc + 10.seconds)
+      response = HTTP::Client::Response.new(429, body: "", headers: HTTP::Headers{"Retry-After" => date})
+      span = LLM::HttpTransport.retry_after(response).not_nil!
+      span.should be > 5.seconds
+      span.should be <= 10.seconds
     end
 
     it "falls back to the backoff schedule" do
       LLM::HttpTransport.retry_delay(nil, 2).should eq(2.seconds)
+    end
+  end
+
+  describe ".read_timeout?" do
+    it "retries only connect failures" do
+      LLM::HttpTransport.read_timeout?(IO::TimeoutError.new("Read timed out")).should be_true
+      LLM::HttpTransport.read_timeout?(IO::TimeoutError.new("Write timed out")).should be_true
+      LLM::HttpTransport.read_timeout?(IO::TimeoutError.new("Connect timed out")).should be_false
+      LLM::HttpTransport.read_timeout?(IO::TimeoutError.new("connect timed out")).should be_false
+      LLM::HttpTransport.read_timeout?(IO::Error.new("Connection reset by peer")).should be_false
+      # The proxy shard re-wraps a stalled CONNECT as a plain IO::Error.
+      LLM::HttpTransport.read_timeout?(IO::Error.new("Failed to open TCP connection to a:443 (Read timed out)")).should be_true
+      LLM::HttpTransport.read_timeout?(IO::Error.new("Failed to open TCP connection to a:443 (Connect timed out)")).should be_false
+    end
+  end
+
+  describe ".post_json_result" do
+    it "does not retry a read timeout" do
+      # Accepts and never answers.
+      server = TCPServer.new("127.0.0.1", 0)
+      accepted = [] of TCPSocket
+      spawn do
+        while client = server.accept?
+          accepted << client
+        end
+      end
+      with_env(LLM::HttpTransport::TIMEOUT_ENV, "0.2") do
+        url = "http://127.0.0.1:#{server.local_address.port}/v1/chat/completions"
+        LLM::HttpTransport.post_json_result(url, "{}", HTTP::Headers.new).should be_nil
+      end
+      accepted.size.should eq(1)
+    ensure
+      server.try &.close
+      accepted.try &.each(&.close)
+    end
+  end
+
+  describe ".claim_request" do
+    it "stops at --ai-max-requests and counts only requests it let through" do
+      LLM::HttpTransport.max_requests = 0
+      LLM::HttpTransport.claim_request.should be_true
+      before = LLM::HttpTransport.usage_summary(0).not_nil!
+      count = before[/(\d+) HTTP request/, 1].to_i
+      LLM::HttpTransport.max_requests = count + 1
+      LLM::HttpTransport.claim_request.should be_true
+      LLM::HttpTransport.claim_request.should be_false
+      LLM::HttpTransport.post_json_result("http://127.0.0.1:1/v1", "{}", HTTP::Headers.new).should be_nil
+      LLM::HttpTransport.usage_summary(0).not_nil!.should start_with("AI usage: #{count + 1} HTTP request(s)")
+    ensure
+      LLM::HttpTransport.max_requests = 0
+    end
+  end
+
+  describe ".usage_summary" do
+    it "adds provider-reported tokens, ignoring keys inside the model's text" do
+      LLM::HttpTransport.record_usage(%({"choices":[{"message":{"content":"{\\"prompt_tokens\\": 999}"}}],"usage":{"prompt_tokens":120,"completion_tokens":30}}))
+      LLM::HttpTransport.record_usage(%({"response":"x","prompt_eval_count":5,"eval_count":2}))
+      line = LLM::HttpTransport.usage_summary(3).not_nil!
+      line.should contain("3 cache hit(s)")
+      line.should contain("~125 input / 32 output tokens")
     end
   end
 
@@ -106,6 +226,12 @@ describe LLM::HttpTransport do
 
     it "leaves short bodies alone" do
       LLM::HttpTransport.truncate_error_snippet("boom").should eq("boom")
+    end
+
+    it "masks a key the run has sent when the provider echoes it" do
+      LLM::HttpTransport.remember_secret(HTTP::Headers{"Authorization" => "Bearer sk-test-KEY-1234"})
+      snippet = LLM::HttpTransport.truncate_error_snippet(%({"error":{"message":"Incorrect API key provided: sk-test-KEY-1234"}}))
+      snippet.should eq(%({"error":{"message":"Incorrect API key provided: ***"}}))
     end
   end
 end

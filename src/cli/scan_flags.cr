@@ -112,6 +112,7 @@ module Noir::CLI::ScanFlags
     Flag.new("--ai-no-optimize", "Skip the LLM optimizer pass"),
     Flag.new("--ai-native-tools-allowlist", "Provider allowlist for native tool-calling", Arg::Value, hint: "list"),
     Flag.new("--ai-max-token", "Max tokens per request", Arg::Value, hint: "n"),
+    Flag.new("--ai-max-requests", "Max AI HTTP requests per run", Arg::Value, hint: "n"),
     Flag.new("--diff-path", "Old code version for diff", Arg::File, hint: "path"),
     Flag.new("--diff-ref", "Git revision to diff against", Arg::Value, hint: "ref"),
     Flag.new("--fail-on", "Exit 3 on these diff findings", Arg::Value, hint: "list"),
