@@ -130,6 +130,8 @@ module Analyzer::Python
         endpoints << endpoint
       end
 
+      endpoints.concat(extract_channels_endpoints)
+
       # Find static files
       begin
         base_paths.each do |base|
@@ -200,6 +202,99 @@ module Analyzer::Python
       end
 
       endpoints
+    end
+
+    # Django Channels: the lists handed to `URLRouter(...)` (normally the
+    # `"websocket"` branch of a `ProtocolTypeRouter`) are WebSocket routes,
+    # separate from `urlpatterns`. Roots are `URLRouter` calls that are not a
+    # `path(prefix, URLRouter(...))` view; nested ones are expanded under
+    # their prefix. A `websocket_urlpatterns` list no root reached (an app
+    # scanned without its `asgi.py`) is reported app-relative.
+    private def extract_channels_endpoints : Array(Endpoint)
+      endpoints = [] of Endpoint
+      sources = [] of Tuple(::String, ::String)
+      python_source_files.each do |file|
+        content = read_file_content(file) rescue next
+        sources << {file, content} if content.includes?("URLRouter") || content.includes?("websocket_urlpatterns")
+      end
+      return endpoints if sources.empty?
+
+      visited = Set(Tuple(::String, ::String)).new
+      sources.each do |file, content|
+        content.scan(/URLRouter\s*\(/) do |match|
+          next if content[0, match.begin(0)].rstrip.ends_with?(',')
+          if arg = channels_router_arg(content, match.end(0) - 1)
+            channels_list_endpoints(file, content, arg, "", visited, endpoints)
+          end
+        end
+      end
+      sources.each do |file, content|
+        channels_list_endpoints(file, content, "websocket_urlpatterns", "", visited, endpoints)
+      end
+      endpoints
+    end
+
+    # The argument text of the `URLRouter(` whose `(` sits at char `open`.
+    private def channels_router_arg(text : ::String, open : Int32) : ::String?
+      byte_open = text.char_index_to_byte_index(open) || return
+      close = python_close_paren_byte(text.to_slice, byte_open) || return
+      text.byte_slice(byte_open + 1, close - byte_open - 1).strip
+    end
+
+    private def channels_list_endpoints(file : ::String, content : ::String, arg : ::String, prefix : ::String,
+                                        visited : Set(Tuple(::String, ::String)), endpoints : Array(Endpoint)) : Nil
+      terms = split_python_expression_terms(arg)
+      if terms.size > 1 # `a.websocket_urlpatterns + [...]`
+        terms.each { |term| channels_list_endpoints(file, content, term.strip, prefix, visited, endpoints) }
+        return
+      end
+
+      list = arg
+      unless arg.starts_with?('[')
+        module_name, _, name = arg.rpartition('.')
+        return unless visited.add?({file, arg})
+        if module_name.empty?
+          if local = extract_urlpattern_lists(content)[name]?
+            list = local
+          elsif import = content.match(/^\s*from\s+([\w.]+)\s+import\s+[^\n]*\b#{Regex.escape(name)}\b/m)
+            module_name = import[1]
+          else
+            return
+          end
+        end
+        unless module_name.empty?
+          target = channels_module_file(file, module_name) || return
+          return channels_list_endpoints(target, read_file_content(target), name, prefix, visited, endpoints)
+        end
+      end
+
+      route_path = PathInfo.new(file)
+      extract_route_mappings(list).each do |route, view|
+        url = join_url_parts(prefix, normalize_django_route(route))
+        if router = view.index("URLRouter(")
+          inner = channels_router_arg(view, router + "URLRouter".size)
+          channels_list_endpoints(file, content, inner, url, visited, endpoints) if inner
+        else
+          endpoint = Endpoint.new(url, "GET", Details.new(route_path))
+          endpoint.protocol = "ws"
+          endpoints << endpoint
+        end
+      end
+    end
+
+    # `chat.routing` -> `chat/routing.py` (or a package `__init__.py`); a
+    # relative `.routing` resolves beside `file`.
+    private def channels_module_file(file : ::String, module_name : ::String) : ::String?
+      relative = module_name.lstrip('.').gsub('.', '/')
+      if module_name.starts_with?('.')
+        candidate = File.join(File.dirname(file), "#{relative}.py")
+        return candidate if File.file?(candidate)
+      end
+      {"#{relative}.py", "#{relative}/__init__.py"}.each do |path|
+        found = get_files_by_relative_path(path, python_base_path_for(file)).first?
+        return found if found
+      end
+      nil
     end
 
     # Find all root Django URLs
@@ -826,8 +921,8 @@ module Analyzer::Python
           mappings << {route, view_expr}
         end
 
-        if mappings.size > mapped_before && line.includes?("include([")
-          include_start = line.index("include([") || 0
+        # Same for a nested Channels `path(prefix, URLRouter([...]))` body.
+        if mappings.size > mapped_before && (include_start = line.index("include([") || line.index("URLRouter(["))
           inline_include_depth = python_bracket_delta(line[include_start..])
         end
       end

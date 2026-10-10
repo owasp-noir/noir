@@ -18,7 +18,7 @@ module NoirTechs::Catalog::Python
           :cookie => true,
         },
         :static_path => true,
-        :websocket   => false,
+        :websocket   => true,
       },
       :context => {:callee => true, :guards => true},
     },
