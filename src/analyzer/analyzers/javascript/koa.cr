@@ -130,7 +130,8 @@ module Analyzer::Javascript
       return unless strapi_route_candidate?(content)
 
       seen = Set(Tuple(String, String, Int32)).new
-      lines = content.lines
+      # `path: /* x */ '/p'` and commented-out entries; lines are kept.
+      lines = Noir::JSRouteExtractor.strip_js_comments(content).lines
       lines.each_with_index do |line, index|
         next unless m = line.match(/^\s*method:\s*['"]([A-Z]+)['"]\s*,?/)
         method = m[1].upcase
