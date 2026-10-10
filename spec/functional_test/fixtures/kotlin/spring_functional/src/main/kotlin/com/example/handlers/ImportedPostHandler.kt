@@ -16,7 +16,7 @@ class ImportedPostHandler(private val importedPosts: ImportedPostRepository) {
         java.util.UUID.fromString("00000000-0000-0000-0000-000000000000").toString()
         Thread.sleep(1)
         Random.nextLong()
-        return ok().bodyValueAndAwait(importedPosts.load(req.queryParam("id")).let { it })
+        return ok().bodyValueAndAwait(importedPosts.load(req.queryParam(/* optional */ "id")).let { it })
     }
 }
 

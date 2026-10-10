@@ -17,7 +17,7 @@ module Noir
     private def collect_webflux_functional_routes(source : String, routes : Array(Route))
       handler_types = functional_handler_types(source)
       visible_lines = visible_kotlin_code(source).lines
-      lines = source.lines
+      lines = Noir::KotlinSourceMask.code_only(source).lines
 
       router_depth : Int32? = nil
       depth = 0

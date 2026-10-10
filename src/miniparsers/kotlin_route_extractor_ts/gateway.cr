@@ -30,7 +30,7 @@ module Noir
                                           visible_source : String,
                                           string_constants : Hash(String, String)) : Hash(String, GatewayRoute)
       helpers = Hash(String, GatewayRoute).new
-      lines = source.lines
+      lines = Noir::KotlinSourceMask.code_only(source).lines
       visible_lines = visible_source.lines
       i = 0
 

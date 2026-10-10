@@ -292,6 +292,7 @@ module Noir
     end
 
     private def top_level_arguments(args : String) : Array(String)
+      args = Noir::KotlinSourceMask.code_only(args)
       result = [] of String
       start = 0
       depth = 0
