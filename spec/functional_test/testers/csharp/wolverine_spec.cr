@@ -35,6 +35,7 @@ expected_endpoints = [
     Param.new("Amount", "", "json"),
     Param.new("Reason", "", "json"),
   ]),
+  Endpoint.new("/orders/{id}/receipt", "GET", [Param.new("id", "", "path")]),
   Endpoint.new("/status", "HEAD"),
 ]
 

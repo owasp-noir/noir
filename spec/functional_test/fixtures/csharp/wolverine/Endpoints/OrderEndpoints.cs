@@ -36,6 +36,9 @@ public static class OrderEndpoints
         Name = "RefundOrder")]
     public static void Refund(int id, RefundOrder command) { }
 
+    [AllowAnonymous, WolverineGet("/orders/{id}/receipt")]
+    public static string Receipt(int id) => "receipt";
+
     // [WolverineGet("/ghost")]
     // public static string Ghost() => "commented out";
 }

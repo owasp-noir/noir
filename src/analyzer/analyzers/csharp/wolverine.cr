@@ -13,7 +13,8 @@ module Analyzer::CSharp
 
     include Common
 
-    ROUTE_ATTR_RE = /\[\s*(?:Wolverine\.Http\.)?Wolverine(Get|Post|Put|Patch|Delete|Head|Options)(?:Attribute)?\s*\(\s*@?"([^"]*)"/
+    # First in its attribute list or after a comma (`[AllowAnonymous, WolverineGet(...)]`).
+    ROUTE_ATTR_RE = /[\[,]\s*(?:Wolverine\.Http\.)?Wolverine(Get|Post|Put|Patch|Delete|Head|Options)(?:Attribute)?\s*\(\s*@?"([^"]*)"/
     PLACEHOLDER   = /\{([^{}]+)\}/
     # Loaded from storage by the route id (Marten/EF), or explicitly not the
     # body: never request input of their own.
