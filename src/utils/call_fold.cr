@@ -46,7 +46,7 @@ module Noir
         end
         next if depth > 0 # unclosed: resume at the next line, which may open its own read
 
-        folded[start] = joined
+        folded[start] = drop_trailing_commas(joined)
         i = j
       end
       folded
@@ -76,6 +76,15 @@ module Noir
       end
       depth
     end
+
+    # `x["q",]` → `x["q"]`: formatters (`crystal tool format`, black,
+    # prettier) add a trailing comma to a wrapped argument list, which the
+    # accessor regexes would read as part of the name.
+    def drop_trailing_commas(joined : String) : String
+      joined.includes?(',') ? joined.gsub(TRAILING_COMMA_RE, "\\1") : joined
+    end
+
+    TRAILING_COMMA_RE = /,\s*([)\]])/
 
     private def word_char?(ch : Char) : Bool
       ch.alphanumeric? || ch == '_'

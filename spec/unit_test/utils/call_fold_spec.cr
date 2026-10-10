@@ -24,6 +24,14 @@ describe Noir::CallFold do
     ])
   end
 
+  it "drops a formatter's trailing comma before the closing bracket" do
+    lines = ["  env.params.query[", "    \"q\",", "  ]", "  f(", "    a,", "    b,", "  )"]
+    Noir::CallFold.fold(lines) { |l| l }.should eq([
+      "  env.params.query[\"q\"]", "    \"q\",", "  ]",
+      "  f(a,b)", "    a,", "    b,", "  )",
+    ])
+  end
+
   it "leaves comments, strings and long calls unfolded" do
     lines = ["  # params.fetch(", "  #   :ghost)", "  x = \"(\" + y", "  z"]
     Noir::CallFold.fold(lines) { |l| cut_hash_comment(l) }.should eq(["", "", "  x = \"(\" + y", "  z"])

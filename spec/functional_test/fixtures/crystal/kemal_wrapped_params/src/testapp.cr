@@ -7,19 +7,19 @@ end
 
 post "/split" do |env|
   env.params.query[
-    "q2"
+    "q2",
   ]
   env.params.body[
-    "f2"
+    "f2",
   ]
   env.request.headers[
-    "X-H2"
+    "X-H2",
   ]
   env.params.json[
-    "j2"
+    "j2",
   ]
   env.request.cookies[
-    "c2"
+    "c2",
   ]
 end
 

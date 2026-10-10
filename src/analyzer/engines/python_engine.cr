@@ -1167,7 +1167,7 @@ module Analyzer::Python
         end
         next if delta > 0 # unclosed: resume at the next line, which may open its own read
 
-        folded[start] = joined
+        folded[start] = Noir::CallFold.drop_trailing_commas(joined)
         (i...j).each { |k| folded[k] = "" }
         i = j
         triple = inner_triple
