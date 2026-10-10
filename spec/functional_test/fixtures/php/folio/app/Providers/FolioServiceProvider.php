@@ -17,6 +17,8 @@ class FolioServiceProvider extends ServiceProvider
             '*' => 'throttle:docs',
         ]);
 
+        Folio::domain('{account}.example.com')->path(resource_path('views/tenant'))->uri('/tenant');
+
         // Folio::path(resource_path('views/old'));
     }
 }

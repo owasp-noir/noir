@@ -25,8 +25,10 @@ module Analyzer::Php
     # scan has no `composer.json` to anchor on.
     record Mount, root : String, dir : String, uri : String, middleware : Array(Tuple(Regex, Array(String)))
 
-    DEFAULT_DIR          = "resources/views/pages"
-    PATH_CALL_RE         = /\bFolio::path\s*\(\s*(resource_path|base_path|app_path)\s*\(\s*['"]([^'"]*)['"]\s*\)/
+    DEFAULT_DIR = "resources/views/pages"
+    # `Folio::path(...)`, or `Folio::domain('admin.example.com')->path(...)`
+    # for a subdomain mount.
+    PATH_CALL_RE         = /\bFolio::(?:domain\s*\(\s*(?:'[^']*'|"[^"]*")\s*\)\s*->\s*)?path\s*\(\s*(resource_path|base_path|app_path)\s*\(\s*['"]([^'"]*)['"]\s*\)/
     URI_RE               = /->\s*uri\s*\(\s*['"]([^'"]*)['"]/
     MOUNT_MIDDLEWARE_RE  = /->\s*middleware\s*\(\s*\[/
     PATTERN_ENTRY_RE     = /['"]([^'"]+)['"]\s*=>\s*(\[[^\]]*\]|'[^']*'|"[^"]*")/
@@ -41,7 +43,7 @@ module Analyzer::Php
       found = ordered_file_scan do |path|
         next if path.ends_with?(".blade.php")
         content = read_file_content(path)
-        mounts_in(path, content) if content.includes?("Folio::path")
+        mounts_in(path, content) if content.includes?("Folio::")
       end.flatten
       if found.empty?
         roots = get_files_by_basename("composer.json").select { |f| read_file_content(f).includes?(%("laravel/folio")) }.map { |f| Noir::PathScope.normalize_root(File.dirname(f)) }
