@@ -243,15 +243,17 @@ module Analyzer::Javascript
       return routes if test_tree?(file)
       return routes if Noir::JSRouteExtractor.test_stub_only?(file, content)
 
+      # Blank out comments before looking for imports and call sites. NodeBB
+      # parks a commented-out `// setupApiRoute(router, 'post', '/', …)` in
+      # src/routes/write/search.js, and without this it becomes an endpoint;
+      # a comment inside `const {\n  // v3\n  setupApiRoute } = helpers`
+      # hid the import. `strip_js_comments` replaces comment characters in
+      # place, so every offset and line number below still refers to the
+      # real file.
+      content = Noir::JSRouteExtractor.strip_js_comments(content)
+
       callables = callable_helpers(file, content)
       return routes if callables.empty?
-
-      # Blank out comments before looking for call sites. NodeBB parks a
-      # commented-out `// setupApiRoute(router, 'post', '/', …)` in
-      # src/routes/write/search.js, and without this it becomes an endpoint.
-      # `strip_js_comments` replaces comment characters in place, so every
-      # offset and line number below still refers to the real file.
-      content = Noir::JSRouteExtractor.strip_js_comments(content)
 
       prefixes = file_prefixes(file)
       lines = LineIndex.new(content)
