@@ -1,12 +1,12 @@
-# NoirTechs catalog entry: python_django.
+# NoirTechs catalog entry: python_fasthtml.
 # One file per technology; `NoirTechs::TECHS` in src/techs/techs.cr is
 # macro-derived from every constant under `NoirTechs::Catalog`.
 module NoirTechs::Catalog::Python
-  DJANGO = {
-    :python_django => {
-      :framework => "Django",
+  FASTHTML = {
+    :python_fasthtml => {
+      :framework => "FastHTML",
       :language  => "Python",
-      :similar   => ["django", "python-django", "python_django"],
+      :similar   => ["fasthtml", "python-fasthtml", "python_fasthtml"],
       :supported => {
         :endpoint => true,
         :method   => true,
@@ -14,13 +14,13 @@ module NoirTechs::Catalog::Python
           :query  => true,
           :path   => true,
           :body   => true,
-          :header => true,
-          :cookie => true,
+          :header => false,
+          :cookie => false,
         },
-        :static_path => true,
-        :websocket   => true,
+        :static_path => false,
+        :websocket   => false,
       },
-      :context => {:callee => true, :guards => true},
+      :context => {:callee => true},
     },
   }
 end

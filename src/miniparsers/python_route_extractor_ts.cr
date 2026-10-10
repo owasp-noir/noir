@@ -77,19 +77,25 @@ module Noir
     # `pathless` keeps a decorator that names no path (Frappe's
     # `@frappe.whitelist()`, whose URL comes from the module); its `path`
     # is empty.
+    #
+    # `bare_routers` names identifiers that are route decorators themselves,
+    # called or not: FastHTML's `@rt("/x")` and a path-less `@rt` (its
+    # `path` is empty; the URL comes from the function name).
     def extract_decorations(source : String,
                             router_names : Array(String)? = nil,
                             extra_attributes : Hash(String, String)? = nil,
                             bare_route : Bool = false,
-                            pathless : Bool = false) : Array(Decoration)
+                            pathless : Bool = false,
+                            bare_routers : Array(String)? = nil) : Array(Decoration)
       tag = decoration_options_tag(router_names, extra_attributes)
       tag += "|bare" if bare_route
       tag += "|pathless" if pathless
+      tag += "|br=#{bare_routers.join(",")}" if bare_routers
       key = ExtractionResultCache.key(source, "decorations", tag)
       ExtractionResultCache.fetch(@@decoration_memo, key, mutex: @@memo_mutex) do
         results = [] of Decoration
         Noir::TreeSitter.parse_python(source) do |root|
-          extract_decorations_from(root, source, router_names, extra_attributes, results, bare_route, pathless)
+          extract_decorations_from(root, source, router_names, extra_attributes, results, bare_route, pathless, bare_routers)
         end
         results
       end
@@ -104,10 +110,11 @@ module Noir
                                  extra_attributes : Hash(String, String)? = nil,
                                  results : Array(Decoration) = [] of Decoration,
                                  bare_route : Bool = false,
-                                 pathless : Bool = false) : Array(Decoration)
+                                 pathless : Bool = false,
+                                 bare_routers : Array(String)? = nil) : Array(Decoration)
       Noir::TreeSitter.walk(root) do |node|
         next unless Noir::TreeSitter.node_type(node) == "decorated_definition"
-        collect_decorations(node, source, router_names, extra_attributes, results, bare_route, pathless)
+        collect_decorations(node, source, router_names, extra_attributes, results, bare_route, pathless, bare_routers)
       end
       results
     end
@@ -273,7 +280,8 @@ module Noir
                                     extra_attributes : Hash(String, String)?,
                                     sink : Array(Decoration),
                                     bare_route : Bool = false,
-                                    pathless : Bool = false)
+                                    pathless : Bool = false,
+                                    bare_routers : Array(String)? = nil)
       # A decorated_definition has one or more `decorator` named children
       # followed by a `function_definition` / `class_definition` in the
       # `definition` field.
@@ -287,8 +295,17 @@ module Noir
       Noir::TreeSitter.each_named_child(deco_def) do |child|
         next unless Noir::TreeSitter.node_type(child) == "decorator"
         call = find_call_inside_decorator(child)
-        next unless call
-        if deco = decode_route_call(call, source, router_names, extra_attributes, bare_route, pathless)
+        unless call
+          # Uncalled `@rt`: a GET route at an empty path.
+          Noir::TreeSitter.each_named_child(child) do |ident|
+            next unless bare_routers && Noir::TreeSitter.node_type(ident) == "identifier"
+            name = Noir::TreeSitter.node_text(ident, source)
+            next unless bare_routers.includes?(name)
+            sink << Decoration.new(name, "route", "", ["GET"], Noir::TreeSitter.node_start_row(child), def_line, def_name, [""])
+          end
+          next
+        end
+        if deco = decode_route_call(call, source, router_names, extra_attributes, bare_route, pathless, bare_routers)
           router_name, attribute_name, paths, methods, keywords = deco
           sink << Decoration.new(
             router_name,
@@ -332,13 +349,17 @@ module Noir
                                   router_names : Array(String)?,
                                   extra_attributes : Hash(String, String)? = nil,
                                   bare_route : Bool = false,
-                                  pathless : Bool = false) : Tuple(String, String, Array(String), Array(String), Hash(String, String))?
+                                  pathless : Bool = false,
+                                  bare_routers : Array(String)? = nil) : Tuple(String, String, Array(String), Array(String), Hash(String, String))?
       function = Noir::TreeSitter.field(call, "function")
       return unless function
 
-      if bare_route && Noir::TreeSitter.node_type(function) == "identifier" &&
-         Noir::TreeSitter.node_text(function, source) == "route"
+      ident = Noir::TreeSitter.node_type(function) == "identifier" ? Noir::TreeSitter.node_text(function, source) : nil
+      if bare_route && ident == "route"
         router_name = ""
+        attr_name = "route"
+      elsif ident && bare_routers.try(&.includes?(ident))
+        router_name = ident
         attr_name = "route"
       else
         return unless Noir::TreeSitter.node_type(function) == "attribute"
