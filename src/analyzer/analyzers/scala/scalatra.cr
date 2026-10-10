@@ -39,6 +39,8 @@ module Analyzer::Scala
     def analyze_file(path : String) : Array(Endpoint)
       return [] of Endpoint if scalatra_test_path?(path)
       content = read_file_content(path)
+      # Finatra controllers share the `get("/x") { ... }` DSL; scala_finatra owns them.
+      return [] of Endpoint if content.includes?("com.twitter.finatra.http")
       extract_routes_from_content(path, content, callees_needed?)
     end
 

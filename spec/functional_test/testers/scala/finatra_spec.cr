@@ -1,0 +1,18 @@
+require "../../func_spec.cr"
+
+expected_endpoints = [
+  Endpoint.new("/users/:id", "GET", [
+    Param.new("id", "", "path"),
+    Param.new("fields", "", "query"),
+  ]),
+  Endpoint.new("/users", "POST"),
+  Endpoint.new("/admin/users/:id", "DELETE", [Param.new("id", "", "path")]),
+  Endpoint.new("/admin/v2/settings", "PUT", [Param.new("mode", "", "query")]),
+  Endpoint.new("/files/:*", "GET", [Param.new("*", "", "path")]),
+  Endpoint.new("/ping", "ANY"),
+]
+
+FunctionalTester.new("fixtures/scala/finatra/", {
+  :techs     => 1,
+  :endpoints => expected_endpoints.size,
+}, expected_endpoints).perform_tests
