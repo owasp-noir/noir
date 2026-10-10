@@ -23,6 +23,6 @@ FunctionalTester.new("fixtures/javascript/moleculer/", {
   Endpoint.new("/auto/users/:id", "GET", [Param.new("id", "", "path")]),
   Endpoint.new("/auto/v2/orders/find", "ANY"),
   # `settings.rest` as an array mounts the service under each base path.
-  Endpoint.new("/auto/items/:sku", "GET", [Param.new("sku", "", "path")]),
-  Endpoint.new("/auto/things/:sku", "GET", [Param.new("sku", "", "path")]),
+  Endpoint.new("/auto/items/:sku", "GET", [Param.new("sku", "", "path"), Param.new("s", "", "query")]),
+  Endpoint.new("/auto/things/:sku", "GET", [Param.new("sku", "", "path"), Param.new("s", "", "query")]),
 ]).perform_tests

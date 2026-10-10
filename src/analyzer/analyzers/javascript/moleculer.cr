@@ -133,8 +133,10 @@ module Analyzer::Javascript
       if action
         # moleculer-web merges query, body and path params into `ctx.params`.
         type = method.in?("GET", "HEAD", "ANY") ? "query" : "json"
+        # Whole names: `:idx` in the path must not swallow param `id`.
+        path_params = url.scan(/:(\w+)/).map(&.[1])
         action.params.each do |param|
-          endpoint.push_param(Param.new(param, "", type)) unless url.includes?(":#{param}")
+          endpoint.push_param(Param.new(param, "", type)) unless path_params.includes?(param)
         end
       end
       @result << endpoint
