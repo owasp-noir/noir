@@ -222,7 +222,11 @@ module Analyzer::Python
       visited = Set(Tuple(::String, ::String)).new
       sources.each do |file, content|
         content.scan(/URLRouter\s*\(/) do |match|
-          next if content[0, match.begin(0)].rstrip.ends_with?(',')
+          # A `path(prefix, URLRouter(...))` view, also behind a middleware
+          # wrapper (`path(prefix, AuthMiddlewareStack(URLRouter(...)))`),
+          # is expanded under its prefix by the router that holds it.
+          before = content[0, match.begin(0)]
+          next if before.rstrip.ends_with?(',') || before[(before.rindex('\n') || -1) + 1..].matches?(/\b(?:re_)?path\s*\(/)
           if arg = channels_router_arg(content, match.end(0) - 1)
             channels_list_endpoints(file, content, arg, "", visited, endpoints)
           end
