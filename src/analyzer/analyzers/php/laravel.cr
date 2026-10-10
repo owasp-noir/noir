@@ -6,7 +6,22 @@ module Analyzer::Php
   class Laravel < PhpEngine
     analyzer_for "php_laravel"
 
-    @method_def_regexes = Hash(String, Regex).new
+    # A controller file parsed once and shared by every route that names it:
+    # its `use` imports and each `function name(` signature in source order.
+    # Re-deriving these per route was O(routes x controller size).
+    private record ControllerSource,
+      offsets : Noir::CharOffsets,
+      imports : Hash(String, String),
+      methods : Array(Regex::MatchData),
+      first_methods : Hash(String, Regex::MatchData)
+
+    METHOD_DEF_RE = /(?:public|protected|private)\s+(?:static\s+)?function\s+([A-Za-z_]\w*)\s*\(/
+    SIGNATURE_RE  = /\G[^)]*/
+
+    # Filled by the parallel file workers, hence the mutex.
+    @controller_sources = {} of String => ControllerSource
+    @form_request_params = {} of String => Array(Param)
+    @source_cache_mutex = Mutex.new
 
     private record RouteGroup, prefix : String, body : String, body_start : Int32, body_end : Int32
 
@@ -529,25 +544,69 @@ module Analyzer::Php
     # Request params of the controller action whose `(` ends at `sig_pos` in
     # `content`: reads in its body plus the `rules()` keys of every
     # FormRequest it type-hints (`store(StorePostRequest $request)`).
-    private def controller_action_params(content : String,
-                                         sig_pos : Int32,
+    private def controller_action_params(source : ControllerSource,
+                                         signature_match : Regex::MatchData,
                                          body : String,
                                          routes_file_path : String) : Array(Param)
       params = illuminate_request_params(body)
-      signature = content.match(/\G[^)]*/, sig_pos).try(&.[0]) || ""
+      signature = SIGNATURE_RE.match_at_byte_index(source.offsets.content, signature_match.byte_end(0)).try(&.[0]) || ""
       return params unless signature.includes?("Request")
 
-      imports = parse_use_imports(content)
       signature.scan(FORM_REQUEST_HINT_RE) do |m|
         next if m[1].split('\\').last == "Request"
-        request_path = resolve_controller_path(m[1], routes_file_path, imports)
+        request_path = resolve_controller_path(m[1], routes_file_path, source.imports)
         next unless request_path && File.exists?(request_path)
-        request_content = read_file_content(request_path)
-        next unless rules = request_content.match(RULES_METHOD_RE)
-        next unless rules_body = extract_php_method_body_after(request_content, rules.begin(0))
-        params.concat(rule_key_params(rules_body[0]))
+        params.concat(form_request_rule_params(request_path))
       end
       dedup_params(params)
+    end
+
+    # `rules()` keys of one FormRequest file, read once per scan.
+    private def form_request_rule_params(path : String) : Array(Param)
+      if cached = @source_cache_mutex.synchronize { @form_request_params[path]? }
+        return cached
+      end
+
+      content = read_file_content(path)
+      params = [] of Param
+      if (rules = content.match(RULES_METHOD_RE)) && (rules_body = extract_php_method_body_after(content, rules.begin(0)))
+        params = rule_key_params(rules_body[0])
+      end
+      @source_cache_mutex.synchronize { @form_request_params[path] ||= params }
+    end
+
+    private def controller_source(path : String) : ControllerSource
+      if cached = @source_cache_mutex.synchronize { @controller_sources[path]? }
+        return cached
+      end
+
+      content = read_file_content(path)
+      methods = [] of Regex::MatchData
+      first_methods = {} of String => Regex::MatchData
+      content.scan(METHOD_DEF_RE) do |m|
+        methods << m
+        first_methods[m[1]] ||= m
+      end
+      source = ControllerSource.new(Noir::CharOffsets.new(content), parse_use_imports(content), methods, first_methods)
+      @source_cache_mutex.synchronize { @controller_sources[path] ||= source }
+    end
+
+    # The action whose signature is `signature_match`, as
+    # `extract_php_method_body_after` would cut it, but in O(body): no copy of
+    # the rest of the file and no newline count from the top.
+    private def controller_action(source : ControllerSource,
+                                  signature_match : Regex::MatchData,
+                                  controller_path : String,
+                                  routes_file_path : String) : ControllerActionBody?
+      content = source.offsets.content
+      brace = content.byte_index('{'.ord.to_u8, signature_match.byte_end(0))
+      return unless brace
+      close = find_matching_php_close_brace_at_byte(content, brace)
+      return unless close && close > brace + 1
+
+      body = content.byte_slice(brace + 1, close - brace - 1)
+      start_line = source.offsets.line(source.offsets.char(brace))
+      {body, controller_path, start_line, controller_action_params(source, signature_match, body, routes_file_path)}
     end
 
     # Parse the controller reference that follows a route's path argument.
@@ -585,18 +644,9 @@ module Analyzer::Php
       controller_path = resolve_controller_path(class_ref, routes_file_path, imports)
       return unless controller_path && File.exists?(controller_path)
 
-      content = read_file_content(controller_path)
-      # Memoized: an interpolated regex literal recompiles (PCRE2 JIT) on
-      # every evaluation, and action names repeat across controllers.
-      method_regex = @method_def_regexes[method_name] ||= /(?:public|protected|private)\s+(?:static\s+)?function\s+#{Regex.escape(method_name)}\s*\(/
-      method_match = content.match(method_regex)
-      return unless method_match
-
-      body_info = extract_php_method_body_after(content, method_match.begin(0))
-      return unless body_info
-
-      body, start_line = body_info
-      {body, controller_path, start_line, controller_action_params(content, method_match.end(0), body, routes_file_path)}
+      source = controller_source(controller_path)
+      return unless method_match = source.first_methods[method_name]?
+      controller_action(source, method_match, controller_path, routes_file_path)
     rescue e
       logger.debug "Error resolving Laravel handler #{class_ref}::#{method_name}: #{e}"
       nil
@@ -931,16 +981,13 @@ module Analyzer::Php
       controller_path = resolve_controller_path(class_ref, routes_file_path, imports)
       return unless controller_path && File.exists?(controller_path)
 
-      content = read_file_content(controller_path)
+      source = controller_source(controller_path)
       actions = ControllerActionMap.new
-      content.scan(/(?:public|protected|private)\s+(?:static\s+)?function\s+([A-Za-z_]\w*)\s*\(/) do |method_match|
+      source.methods.each do |method_match|
         method_name = method_match[1]
         next unless RESOURCE_ACTIONS.includes?(method_name)
-        body_info = extract_php_method_body_after(content, method_match.begin(0))
-        next unless body_info
-
-        body, start_line = body_info
-        actions[method_name] = {body, controller_path, start_line, controller_action_params(content, method_match.end(0), body, routes_file_path)}
+        next unless action = controller_action(source, method_match, controller_path, routes_file_path)
+        actions[method_name] = action
       end
 
       actions
