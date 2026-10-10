@@ -1,6 +1,7 @@
 require "../../engines/php_engine"
 require "../../../minilexers/php_lexer"
 require "../../../utils/char_offsets"
+require "../../../utils/http_symbols"
 
 module Analyzer::Php
   class Laravel < PhpEngine
