@@ -552,6 +552,13 @@ describe "LLM::General with --ai-stream" do
     LLM::General.collect_stream(sse(%({"error":{"message":"overloaded"}})))["error"]["message"].as_s.should eq("overloaded")
   end
 
+  it "folds CR-only framing and an event split over several data lines" do
+    cr = LLM::General.collect_stream(sse(%({"choices":[{"delta":{"content":"{}"},"finish_reason":"stop"}]})).gsub('\n', '\r'))
+    cr["choices"][0]["message"]["content"].as_s.should eq("{}")
+    split = LLM::General.collect_stream(%(data: {"choices":[{"delta":\ndata: {"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n))
+    split["choices"][0]["message"]["content"].as_s.should eq("ok")
+  end
+
   it "ignores a null error field, flags a stream cut before its finish reason and rejects a non-SSE body" do
     ok = LLM::General.collect_stream(sse(%({"error":null,"choices":[{"delta":{"content":"{}"},"finish_reason":"stop"}]})))
     ok["choices"][0]["message"]["content"].as_s.should eq("{}")

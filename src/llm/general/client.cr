@@ -307,9 +307,7 @@ module LLM
       refusal = String::Builder.new
       finish = nil
       usage = nil
-      raw.each_line do |line|
-        next unless line.starts_with?("data:")
-        data = line.lchop("data:").strip
+      each_stream_data(raw) do |data|
         next if data.empty? || data == "[DONE]"
         chunk = JSON.parse(data)
         return chunk unless chunk["error"]?.try(&.raw).nil?
@@ -325,6 +323,22 @@ module LLM
         "choices" => [{"message" => {"content" => content.to_s, "refusal" => refusal.to_s.presence}, "finish_reason" => finish || "incomplete"}],
         "usage"   => usage,
       }.to_json)
+    end
+
+    # Each event's `data:` payload. Events end at a blank line under any of
+    # SSE's three line endings, and an event's `data:` lines join with
+    # newlines; when the joined text is not JSON, the lines are back-to-back
+    # one-line chunks with no blank line between them and stay separate.
+    private def self.each_stream_data(raw : String, &)
+      raw.gsub(/\r\n?/, "\n").split(/\n{2,}/).each do |event|
+        lines = event.split('\n').compact_map { |line| line.lchop("data:").lchop(' ') if line.starts_with?("data:") }
+        joined = lines.join('\n').strip
+        if lines.size > 1 && (JSON.parse(joined) rescue nil)
+          yield joined
+        else
+          lines.each { |line| yield line.strip }
+        end
+      end
     end
 
     # Request next action with provider-native tool-calling.
