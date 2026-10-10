@@ -16,6 +16,10 @@ class PhpEngineSpecHarness < Analyzer::Php::PhpEngine
   def interpolate(path : String) : String
     normalize_php_interpolation(path)
   end
+
+  def request_params(body : String) : Array(Param)
+    illuminate_request_params(body)
+  end
 end
 
 describe Analyzer::Php::PhpEngine do
@@ -60,5 +64,17 @@ describe Analyzer::Php::PhpEngine do
     # Plain text and existing braces stay untouched.
     harness.interpolate("/static/path").should eq("/static/path")
     harness.interpolate("/items/{id}").should eq("/items/{id}")
+  end
+
+  it "reads validation rule keys but not custom-message keys" do
+    body = <<-PHP
+      $request->validate(['title' => 'required', 'author.name' => 'string'], ['required' => 'Missing :attribute']);
+      $this->validate($request, ['tags' => 'array']);
+      Validator::make($request->only(['ignored']), ['slug' => 'alpha_dash'], ['slug.alpha_dash' => 'Bad slug']);
+      // $request->validate(['commented' => 'required']);
+      PHP
+
+    names = PhpEngineSpecHarness.new(create_test_options).request_params(body).map(&.name)
+    names.should eq(["title", "author", "tags", "slug"])
   end
 end

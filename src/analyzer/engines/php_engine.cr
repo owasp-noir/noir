@@ -266,6 +266,54 @@ module Analyzer::Php
       end
     end
 
+    # `Illuminate\Http\Request` reads (Laravel, Lumen): `$request->input('x')`,
+    # `request()->query('x')`, `$request->header('X-Token')`, ... Capture 1 is
+    # the accessor, capture 2 the input name.
+    ILLUMINATE_REQUEST_READ_RE = /(?:\$request|\brequest\(\s*\))\s*->\s*(input|post|get|query|header|cookie|file|string|integer|boolean|float|date|enum|array)\s*\(\s*['"]([^'"]+)['"]/
+    ILLUMINATE_READ_TYPES      = {"get" => "query", "query" => "query", "header" => "header", "cookie" => "cookie"}
+    # Calls taking a validation rules array: `$request->validate([...])`,
+    # `$this->validate($request, [...])`, `Validator::make($data, [...])`.
+    ILLUMINATE_VALIDATE_RE = /(?:->\s*validate(?:WithBag)?|\bValidator::make)\s*\(/
+    # A rules-array key: `'title' =>`, `'author.name' =>` (input `author`).
+    RULE_KEY_RE = /['"]([\w-]+)(?:\.[^'"]*)?['"]\s*=>/
+
+    # Input an `Illuminate\Http\Request` handler body reads: accessor calls
+    # plus the keys of its validation rules. Body inputs come back as "form".
+    protected def illuminate_request_params(body : String) : Array(Param)
+      params = [] of Param
+      body.scan(ILLUMINATE_REQUEST_READ_RE) do |m|
+        params << Param.new(m[2], "", ILLUMINATE_READ_TYPES[m[1]]? || "form")
+      end
+      if body.matches?(ILLUMINATE_VALIDATE_RE)
+        lexer = Noir::PhpLexer.new(body, php_mode: true)
+        body.scan(ILLUMINATE_VALIDATE_RE) do |m|
+          open = m.end(0) - 1
+          next unless lexer.in_code?(open) && (close = lexer.matching_delimiter(open))
+          # The rules are the first array literal among the call's own
+          # arguments; a later one is custom messages (keyed by rule name).
+          depth = 0
+          (open + 1...close).each do |i|
+            case lexer.masked[i]
+            when '(' then depth += 1
+            when ')' then depth -= 1
+            when '['
+              next unless depth == 0
+              if array_close = lexer.matching_delimiter(i)
+                params.concat(rule_key_params(body[i..array_close]))
+              end
+              break
+            end
+          end
+        end
+      end
+      dedup_params(params)
+    end
+
+    # One "form" param per key of a validation rules array or `rules()` body.
+    protected def rule_key_params(rules : String) : Array(Param)
+      rules.scan(RULE_KEY_RE).map { |m| Param.new(m[1], "", "form") }
+    end
+
     # ASCII byte values for the structural delimiters scanned below.
     # All are < 0x80, so they can never collide with a UTF-8 multi-byte
     # continuation/lead byte (>= 0x80) — see `find_matching_php_close_brace`.

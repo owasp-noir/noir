@@ -29,7 +29,8 @@ module Analyzer::Php
       skip_ranges : Array(Range(Int32, Int32)),
       handler_bodies : Array(Range(Int32, Int32))
 
-    alias ControllerActionBody = Tuple(String, String, Int32)
+    # {body, controller file, body start line, request params}
+    alias ControllerActionBody = Tuple(String, String, Int32, Array(Param))
     alias ControllerActionMap = Hash(String, ControllerActionBody)
     EMPTY_RESOURCE_PARAMS = {} of String => String
 
@@ -83,10 +84,9 @@ module Analyzer::Php
       begin
         content = read_file_content(path)
         # `use App\Http\Controllers\...;` imports map the short class
-        # names used in route handlers back to their FQCNs so callee
-        # resolution can locate the controller file. Only parsed when
-        # callees/ai-context are requested.
-        imports = include_callee ? parse_use_imports(content) : EMPTY_IMPORTS
+        # names used in route handlers back to their FQCNs so the
+        # controller file (params, callees) can be located.
+        imports = parse_use_imports(content)
         prefix = @route_file_prefixes[Noir::PathScope.expand(path)]? || default_route_file_prefix(path)
         endpoints = analyze_routes_content(php_code(content), prefix, path, include_callee, imports: imports)
       rescue e
@@ -442,12 +442,18 @@ module Analyzer::Php
       action_pos = offsets.end(route_match)
       route_line = ctx.base_line + offsets.line(offsets.begin(route_match)) - 1
       handler_body, next_pos, body_start_line = extract_inline_closure_body(offsets, action_pos, ctx.base_line, ctx.lexer)
-      params = extract_brace_path_params(full_path)
+      action = handler_body ? nil : resolve_route_action(offsets, action_pos, ctx.file_path, ctx.imports)
+      input_params = if handler_body
+                       illuminate_request_params(handler_body)
+                     else
+                       action.try(&.[3]) || [] of Param
+                     end
 
       methods.each do |http_method|
         details = Details.new(PathInfo.new(ctx.file_path, route_line))
-        endpoint = Endpoint.new(full_path, http_method, params, details.dup)
-        attach_route_callees(endpoint, handler_body, body_start_line, offsets, action_pos, ctx.file_path, ctx.imports) if ctx.include_callee
+        params = extract_brace_path_params(full_path) + params_for_method(input_params, http_method)
+        endpoint = Endpoint.new(full_path, http_method, dedup_params(params), details.dup)
+        attach_route_callees(endpoint, handler_body, body_start_line, action, ctx.file_path) if ctx.include_callee
         endpoints << endpoint
       end
 
@@ -487,25 +493,61 @@ module Analyzer::Php
     private def attach_route_callees(endpoint : Endpoint,
                                      body : String?,
                                      start_line : Int32?,
-                                     offsets : Noir::CharOffsets,
-                                     action_pos : Int32,
-                                     routes_file_path : String,
-                                     imports : Hash(String, String))
+                                     action : ControllerActionBody?,
+                                     routes_file_path : String)
       if body && start_line
         callees = Noir::PhpCalleeExtractor.callees_for_body(body, routes_file_path, start_line)
         attach_php_callees(endpoint, callees)
         return
       end
-
-      action = extract_route_action(offsets, action_pos)
       return unless action
 
-      resolved = resolve_controller_action_body(action[0], action[1], routes_file_path, imports)
-      return unless resolved
-
-      action_body, controller_path, controller_line = resolved
-      callees = Noir::PhpCalleeExtractor.callees_for_body(action_body, controller_path, controller_line)
+      callees = Noir::PhpCalleeExtractor.callees_for_body(action[0], action[1], action[2])
       attach_php_callees(endpoint, callees)
+    end
+
+    # The controller action a route's handler argument names, resolved to
+    # its body, file, line and request params.
+    private def resolve_route_action(offsets : Noir::CharOffsets,
+                                     action_pos : Int32,
+                                     routes_file_path : String,
+                                     imports : Hash(String, String)) : ControllerActionBody?
+      action = extract_route_action(offsets, action_pos)
+      return unless action
+      resolve_controller_action_body(action[0], action[1], routes_file_path, imports)
+    end
+
+    # A GET (or HEAD) request carries its input in the query string.
+    private def params_for_method(params : Array(Param), http_method : String) : Array(Param)
+      return params unless http_method.in?("GET", "HEAD")
+      params.map { |param| param.param_type == "form" ? Param.new(param.name, param.value, "query") : param }
+    end
+
+    FORM_REQUEST_HINT_RE = /([A-Za-z_\\][\w\\]*Request)\s+\$/
+    RULES_METHOD_RE      = /(?:public|protected|private)\s+function\s+rules\s*\(/
+
+    # Request params of the controller action whose `(` ends at `sig_pos` in
+    # `content`: reads in its body plus the `rules()` keys of every
+    # FormRequest it type-hints (`store(StorePostRequest $request)`).
+    private def controller_action_params(content : String,
+                                         sig_pos : Int32,
+                                         body : String,
+                                         routes_file_path : String) : Array(Param)
+      params = illuminate_request_params(body)
+      signature = content.match(/\G[^)]*/, sig_pos).try(&.[0]) || ""
+      return params unless signature.includes?("Request")
+
+      imports = parse_use_imports(content)
+      signature.scan(FORM_REQUEST_HINT_RE) do |m|
+        next if m[1].split('\\').last == "Request"
+        request_path = resolve_controller_path(m[1], routes_file_path, imports)
+        next unless request_path && File.exists?(request_path)
+        request_content = read_file_content(request_path)
+        next unless rules = request_content.match(RULES_METHOD_RE)
+        next unless rules_body = extract_php_method_body_after(request_content, rules.begin(0))
+        params.concat(rule_key_params(rules_body[0]))
+      end
+      dedup_params(params)
     end
 
     # Parse the controller reference that follows a route's path argument.
@@ -539,7 +581,7 @@ module Analyzer::Php
     private def resolve_controller_action_body(class_ref : String,
                                                method_name : String,
                                                routes_file_path : String,
-                                               imports : Hash(String, String)) : Tuple(String, String, Int32)?
+                                               imports : Hash(String, String)) : ControllerActionBody?
       controller_path = resolve_controller_path(class_ref, routes_file_path, imports)
       return unless controller_path && File.exists?(controller_path)
 
@@ -554,7 +596,7 @@ module Analyzer::Php
       return unless body_info
 
       body, start_line = body_info
-      {body, controller_path, start_line}
+      {body, controller_path, start_line, controller_action_params(content, method_match.end(0), body, routes_file_path)}
     rescue e
       logger.debug "Error resolving Laravel handler #{class_ref}::#{method_name}: #{e}"
       nil
@@ -754,9 +796,13 @@ module Analyzer::Php
         method = route_info.method
         next unless actions.includes?(action)
 
+        resolved = resource_action_body(statement, action, file_path, imports, controller_cache)
         params = extract_brace_path_params(path)
-        endpoint = Endpoint.new(path, method, params, details)
-        attach_resource_action_callees(endpoint, statement, action, file_path, imports, controller_cache) if include_callee
+        params.concat(params_for_method(resolved[3], method)) if resolved
+        endpoint = Endpoint.new(path, method, dedup_params(params), details)
+        if include_callee && resolved
+          attach_php_callees(endpoint, Noir::PhpCalleeExtractor.callees_for_body(resolved[0], resolved[1], resolved[2]))
+        end
         endpoints << endpoint
       end
 
@@ -851,12 +897,12 @@ module Analyzer::Php
       build_full_path(prefix, expanded.join("/"))
     end
 
-    private def attach_resource_action_callees(endpoint : Endpoint,
-                                               statement : String?,
-                                               action : String,
-                                               routes_file_path : String,
-                                               imports : Hash(String, String),
-                                               controller_cache : Hash(String, ControllerActionMap?))
+    # The resolved body of resource `action` on the statement's controller.
+    private def resource_action_body(statement : String?,
+                                     action : String,
+                                     routes_file_path : String,
+                                     imports : Hash(String, String),
+                                     controller_cache : Hash(String, ControllerActionMap?)) : ControllerActionBody?
       return unless statement
       class_ref = extract_resource_controller(statement)
       return unless class_ref
@@ -868,14 +914,7 @@ module Analyzer::Php
                      controller_cache[class_ref] = resolved_actions
                      resolved_actions
                    end
-      return unless action_map
-
-      resolved = action_map[action]?
-      return unless resolved
-
-      action_body, controller_path, controller_line = resolved
-      callees = Noir::PhpCalleeExtractor.callees_for_body(action_body, controller_path, controller_line)
-      attach_php_callees(endpoint, callees)
+      action_map.try(&.[action]?)
     end
 
     private def extract_resource_controller(statement : String) : String?
@@ -901,7 +940,7 @@ module Analyzer::Php
         next unless body_info
 
         body, start_line = body_info
-        actions[method_name] = {body, controller_path, start_line}
+        actions[method_name] = {body, controller_path, start_line, controller_action_params(content, method_match.end(0), body, routes_file_path)}
       end
 
       actions
