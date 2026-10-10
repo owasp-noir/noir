@@ -10,6 +10,12 @@ class ExpressAuthTagger < FrameworkTagger
     /passport\.authenticate\s*\(/,
   ]
 
+  # Passport strategies that *are* the login flow — `local` checks the
+  # submitted password on `POST /login`, the OAuth/OIDC/SAML ones start or
+  # finish a provider redirect. The route they sit on is the anonymous entry
+  # point, not a protected resource.
+  PASSPORT_LOGIN_STRATEGY = /\A(?:local\w*|google\w*|github|gitlab|facebook|twitter|linkedin\w*|microsoft|azuread-openidconnect|apple|discord|slack|auth0|okta|oauth2?|openidconnect|oidc|saml)\z/i
+
   JWT_MIDDLEWARE_PATTERNS = [
     /expressjwt\s*\(/,
     /expressJwt\s*\(/,
@@ -117,10 +123,12 @@ class ExpressAuthTagger < FrameworkTagger
       # Check for passport.authenticate in route definition
       PASSPORT_PATTERNS.each do |pattern|
         if route_text.matches?(pattern)
-          match = route_text.match(/passport\.authenticate\s*\(\s*['"]([^'"]+)['"]/)
-          strategy = match ? match[1] : "unknown"
-          endpoint.add_tag(Tag.new("auth", "Protected by Passport.js #{strategy} strategy", "express_auth"))
-          return
+          strategies = route_text.scan(/passport\.authenticate\s*\(\s*['"]([^'"]+)['"]/).map(&.[1])
+          strategy = strategies.empty? ? "unknown" : strategies.find { |name| !name.matches?(PASSPORT_LOGIN_STRATEGY) }
+          if strategy
+            endpoint.add_tag(Tag.new("auth", "Protected by Passport.js #{strategy} strategy", "express_auth"))
+            return
+          end
         end
       end
 
