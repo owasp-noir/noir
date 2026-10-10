@@ -1,0 +1,8 @@
+{
+  "name": "honox-app",
+  "type": "module",
+  "dependencies": {
+    "hono": "^4.6.0",
+    "honox": "^0.1.26"
+  }
+}

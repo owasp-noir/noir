@@ -163,8 +163,12 @@ module Analyzer::Javascript
       converted = segments.map { |seg| convert_segment(seg) }
 
       url = "/" + converted.join("/")
-      url = normalize_url(url)
+      analyze_route_handler_file(path, normalize_url(url), result, mutex, include_callee)
+    end
 
+    # Verb-exported Web `Request` handlers in one module, served at `url`.
+    # Shared with Expo Router's `+api` files, which use the same shape.
+    private def analyze_route_handler_file(path : String, url : String, result : Array(Endpoint), mutex : Mutex, include_callee : Bool)
       begin
         content = read_file_content(path)
       rescue e

@@ -104,7 +104,7 @@ module Analyzer::Javascript
     DENO_ENV  = /\bDeno\.env\.get\s*\(\s*['"]([^'"]+)['"]/
     BUN_ENV   = /\bBun\.env\.([A-Za-z_][A-Za-z0-9_]*)/
 
-    WEB_FRAMEWORK_RE = /(?:require\s*\(\s*|from\s+)['"](?:express|fastify|koa|@hapi\/hapi|@nestjs\/[\w-]+|next|nuxt|hono|@hono\/[\w-]+|restify|@adonisjs\/[\w-]+|elysia|polka|connect|h3|@sveltejs\/[\w-]+|@remix-run\/[\w-]+|@react-router\/[\w-]+|(?:@solidjs\/start|@builder\.io\/qwik-city|@qwik\.dev\/router)(?:\/[\w\/-]+)?|apollo-server|@apollo\/server)['"]/
+    WEB_FRAMEWORK_RE = /(?:require\s*\(\s*|from\s+)['"](?:express|fastify|koa|@hapi\/hapi|@nestjs\/[\w-]+|next|nuxt|hono|@hono\/[\w-]+|restify|@adonisjs\/[\w-]+|elysia|polka|connect|h3|@sveltejs\/[\w-]+|@remix-run\/[\w-]+|@react-router\/[\w-]+|(?:@solidjs\/start|@builder\.io\/qwik-city|@qwik\.dev\/router|honox)(?:\/[\w\/-]+)?|apollo-server|@apollo\/server)['"]/
     WEB_LISTEN_RE    = /\.\s*listen\s*\(|\bcreateServer\s*\(/
 
     # Precompiled once — a single PCRE2-JIT scan replaces up to eleven
