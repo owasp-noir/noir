@@ -200,6 +200,46 @@ describe LLM::ACPClient do
       events.should eq(["ACP: turn stopped with refusal"])
     end
   end
+
+  describe "#request" do
+    # A minimal ACP agent: answers each prompt with the id of the session it
+    # was sent on, and ends every turn with `refusal`.
+    fake_agent = <<-'SH'
+      n=0
+      while IFS= read -r line; do
+        id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+        case "$line" in
+          *'"initialize"'*)
+            printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentCapabilities":{}}}\n' "$id" ;;
+          *'"session/new"'*)
+            n=$((n+1))
+            printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"s%s"}}\n' "$id" "$n" ;;
+          *'"session/prompt"'*)
+            printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s%s","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"s%s"}}}}\n' "$n" "$n"
+            printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"refusal"}}\n' "$id" ;;
+        esac
+      done
+      SH
+
+    it "opens a fresh session per request and reports a non-end_turn stop" do
+      script = File.tempname("fake_acp_agent", ".sh")
+      File.write(script, fake_agent)
+      ENV["NOIR_ACP_ALLOW_CUSTOM_COMMAND"] = "1"
+      begin
+        events = [] of String
+        sink = ->(msg : String) { events << msg; nil }
+        client = LLM::ACPClient.new("acp:sh #{script}", "acp", sink)
+
+        client.request("bundle one", "").should eq("s1")
+        client.request("bundle two", "").should eq("s2")
+        events.count(&.includes?("turn stopped with refusal")).should eq(2)
+        client.close
+      ensure
+        ENV.delete("NOIR_ACP_ALLOW_CUSTOM_COMMAND")
+        File.delete?(script)
+      end
+    end
+  end
 end
 
 describe LLM::AdapterFactory do

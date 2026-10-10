@@ -14,7 +14,6 @@ module LLM
     getter args : Array(String)
 
     @client : ACP::Client?
-    @session : ACP::Session?
     @agent_stderr : IO?
     @session_lock : Mutex
     @request_lock : Mutex
@@ -195,8 +194,13 @@ module LLM
       # clear -> prompt -> read window. `session.prompt` blocks until the
       # agent's turn ends anyway, so overlapping them never bought
       # concurrency to begin with.
+      #
+      # Each request gets a fresh session: one `session/new` round trip is
+      # cheap next to a prompt turn, and a shared session let earlier
+      # bundles leak into later answers, making results order-dependent.
       @request_lock.synchronize do
-        session = ensure_session
+        session = ACP::Session.create(ensure_client, cwd: (ENV["NOIR_ACP_CWD"]? || Dir.current))
+        @event_sink.try(&.call("ACP: session #{session.id} created"))
         clear_response_buffer
         final_prompt = append_format_instruction(prompt, format)
         report_stop_reason(session.prompt(final_prompt).stop_reason)
@@ -230,18 +234,17 @@ module LLM
       rescue Exception
       ensure
         @client = nil
-        @session = nil
         @agent_stderr = nil
       end
     end
 
-    private def ensure_session : ACP::Session
-      if session = @session
-        return session
+    private def ensure_client : ACP::Client
+      if client = @client
+        return client
       end
 
       @session_lock.synchronize do
-        if @session.nil?
+        if @client.nil?
           agent_stderr = if ENV["NOIR_ACP_RAW_LOG"]? == "1"
                            STDERR
                          else
@@ -275,19 +278,13 @@ module LLM
           else
             @event_sink.try(&.call("ACP: connected"))
           end
-          session = ACP::Session.create(client, cwd: (ENV["NOIR_ACP_CWD"]? || Dir.current))
-          @event_sink.try(&.call("ACP: session #{session.id} created"))
 
           @client = client
-          @session = session
           @agent_stderr = agent_stderr.same?(STDERR) ? nil : agent_stderr
         end
       end
 
-      session = @session
-      return session unless session.nil?
-
-      raise "ACP session initialization failed"
+      @client || raise "ACP client initialization failed"
     end
 
     def self.mute_acp_logs : Nil
