@@ -69,7 +69,7 @@ module Analyzer::AI
     # and agent tools — unless `--ai-include-sensitive` is given. Source-code
     # extensions are deliberately absent from `secrets.*`: `secrets.go` is as
     # likely a route file as a vault.
-    SENSITIVE_FILE = /\A(?:\.env(?:\..*)?|\.envrc|\.npmrc|\.pypirc|\.netrc|_netrc|\.pgpass|\.htpasswd|\.git-credentials|\.dockercfg|id_(?:rsa|dsa|ecdsa|ed25519)(?:\..*)?|credentials(?:\.(?:json|ya?ml|xml|ini|toml|csv|enc|yml\.enc))?|[\w.-]*[-_]credentials\.json|service[-_]?account[\w.-]*\.json|kubeconfig|secrets?\.(?:json|ya?ml|xml|ini|toml|env|enc|txt|properties)|.*\.(?:pem|key|p12|pfx|jks|keystore|kdbx|ppk|asc|gpg|tfvars|tfvars\.json|tfstate|tfstate\.backup))\z/i
+    SENSITIVE_FILE = /\A(?:\.env(?:\..*)?|[\w.-]+\.env|\.s3cfg|\.boto|\.envrc|\.npmrc|\.pypirc|\.netrc|_netrc|\.pgpass|\.htpasswd|\.git-credentials|\.dockercfg|id_(?:rsa|dsa|ecdsa|ed25519)(?:_sk)?(?:\..*)?|credentials(?:\.(?:json|ya?ml|xml|ini|toml|csv|enc|yml\.enc))?|[\w.-]*[-_]credentials\.json|service[-_]?account[\w.-]*\.json|kubeconfig|secrets?\.(?:json|ya?ml|xml|ini|toml|env|enc|txt|properties)|.*\.(?:pem|key|p12|pfx|jks|keystore|kdbx|ppk|p8|asc|gpg|tfvars|tfvars\.json|tfstate|tfstate\.backup))\z/i
 
     @provider : String
     @model : String
@@ -1226,7 +1226,9 @@ module Analyzer::AI
 
     # The one gate on credentials files leaving the machine; see SENSITIVE_FILE.
     def sensitive?(path : String) : Bool
-      !@include_sensitive && File.basename(path).matches?(SENSITIVE_FILE)
+      return false if @include_sensitive
+      name = File.basename(path)
+      name.matches?(SENSITIVE_FILE) || (name == "config" && File.basename(File.dirname(path)) == ".kube")
     end
 
     def max_tokens
