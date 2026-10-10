@@ -62,6 +62,24 @@ class CountingAdapter
   end
 end
 
+private def ai_endpoint(url : String, params = [] of Param, tech = "ai") : Endpoint
+  endpoint = Endpoint.new(url, "GET", params)
+  details = endpoint.details
+  details.technology = tech
+  endpoint.details = details
+  endpoint
+end
+
+private def with_cache_disabled(&)
+  prev_disable = ENV["NOIR_CACHE_DISABLE"]?
+  ENV["NOIR_CACHE_DISABLE"] = "1"
+  begin
+    yield
+  ensure
+    prev_disable ? (ENV["NOIR_CACHE_DISABLE"] = prev_disable) : ENV.delete("NOIR_CACHE_DISABLE")
+  end
+end
+
 private def with_isolated_cache_dir(&)
   prev_home = ENV["NOIR_HOME"]?
   prev_disable = ENV["NOIR_CACHE_DISABLE"]?
@@ -211,7 +229,7 @@ describe "LLMEndpointOptimizer" do
 
     it "applies a clean URL rewrite and drops garbage params" do
       optimizer = LLMEndpointOptimizer.new(guard_logger, create_test_options)
-      endpoint = Endpoint.new("/users/USR123", "GET")
+      endpoint = Endpoint.new("/users/:id", "GET")
       response = %({"optimized_url":"/users/{id}","optimized_params":[{"name":"id","param_type":"path","value":""},{"name":"bad name","param_type":"query","value":""}]})
 
       result = optimizer.__test_apply(endpoint, response)
@@ -249,11 +267,11 @@ describe "LLMEndpointOptimizer" do
       with_base = create_test_options
       with_base["url"] = YAML::Any.new("http://h:8080/base/")
       optimizer = LLMEndpointOptimizer.new(guard_logger, with_base)
-      endpoint = Endpoint.new("http://h:8080/base/API/users", "GET")
+      endpoint = Endpoint.new("http://h:8080/base/files/*", "GET")
 
-      ["/api/users", "/base/api/users", "http://h:8080/base/api/users"].each do |answer|
+      ["/files/{path}", "/base/files/{path}", "http://h:8080/base/files/{path}"].each do |answer|
         optimizer.__test_apply(endpoint, %({"optimized_url":"#{answer}","optimized_params":[]})).url
-          .should eq("http://h:8080/base/api/users")
+          .should eq("http://h:8080/base/files/{path}")
       end
       # Leaving the base is not a rewrite of this endpoint.
       optimizer.__test_apply(endpoint, %({"optimized_url":"http://h:8080/other","optimized_params":[]})).url
@@ -261,18 +279,51 @@ describe "LLMEndpointOptimizer" do
     end
 
     it "rejects a rewrite that collides with another endpoint" do
-      prev_disable = ENV["NOIR_CACHE_DISABLE"]?
-      ENV["NOIR_CACHE_DISABLE"] = "1"
-      begin
+      with_cache_disabled do
         optimizer = LLMEndpointOptimizer.new(guard_logger, create_test_options)
-        optimizer.__test_install_adapter(CountingAdapter.new(%({"optimized_url":"/api/items","optimized_params":[]})), "openai", "gpt-4o")
-        endpoints = [Endpoint.new("/API/users", "GET"), Endpoint.new("/API/orders", "GET")]
+        optimizer.__test_install_adapter(CountingAdapter.new(%({"optimized_url":"/FILES/{path}","optimized_params":[]})), "openai", "gpt-4o")
+        endpoints = [ai_endpoint("/FILES/*"), ai_endpoint("/FILES/:path")]
 
         urls = optimizer.__test_llm_optimize(endpoints).map(&.url)
         urls.uniq.size.should eq(2)
-        urls.should contain("/api/items")
-      ensure
-        prev_disable ? (ENV["NOIR_CACHE_DISABLE"] = prev_disable) : ENV.delete("NOIR_CACHE_DISABLE")
+        urls.should contain("/FILES/{path}")
+      end
+    end
+
+    it "only accepts a rewrite derivable from the original route" do
+      optimizer = LLMEndpointOptimizer.new(guard_logger, create_test_options)
+      apply = ->(url : String, answer : String) do
+        optimizer.__test_apply(Endpoint.new(url, "GET"), %({"optimized_url":"#{answer}","optimized_params":[]})).url
+      end
+
+      apply.call("/users/<int:id>", "/users/{id}").should eq("/users/{id}")
+      apply.call("/users/:id/posts/{post_id:\\d+}", "/users/{id}/posts/{post_id}").should eq("/users/{id}/posts/{post_id}")
+      # Literal text and param names are the route; changing either is a guess.
+      apply.call("/api/getUserByID/:userID", "/api/get-user-by-id/{userID}").should eq("/api/getUserByID/:userID")
+      apply.call("/api/getUserByID/:userID", "/api/getUserByID/{user_id}").should eq("/api/getUserByID/:userID")
+      apply.call("/users/USR123", "/users/{id}").should eq("/users/USR123")
+      apply.call("/files/{path}", "/files/*").should eq("/files/{path}")
+    end
+
+    it "keeps params in sync with the URL" do
+      optimizer = LLMEndpointOptimizer.new(guard_logger, create_test_options)
+      endpoint = Endpoint.new("/api/u/:userID", "GET", [Param.new("userID", "", "path"), Param.new("q", "", "json")])
+      response = %({"optimized_url":"/api/u/{user_id}","optimized_params":[{"name":"user_id","param_type":"path","value":""},{"name":"userID","param_type":"query","value":""},{"name":"q","param_type":"query","value":""}]})
+
+      result = optimizer.__test_apply(endpoint, response)
+      result.url.should eq("/api/u/:userID")
+      result.params.map { |param| {param.name, param.param_type} }.should eq([{"userID", "path"}, {"q", "query"}])
+    end
+
+    it "leaves statically analyzed endpoints alone" do
+      with_cache_disabled do
+        optimizer = LLMEndpointOptimizer.new(guard_logger, create_test_options)
+        adapter = CountingAdapter.new(%({"optimized_url":"/api/get-user-by-id/{user_id}","optimized_params":[{"name":"user_id","param_type":"path","value":""}]}))
+        optimizer.__test_install_adapter(adapter, "openai", "gpt-4o")
+        endpoints = [ai_endpoint("/api/getUserByID/:userID", [Param.new("userID", "", "path")], tech: "js_express")]
+
+        optimizer.__test_llm_optimize(endpoints).should eq(endpoints)
+        adapter.calls.should eq(0)
       end
     end
   end
@@ -337,11 +388,11 @@ describe "LLMEndpointOptimizer" do
     it "returns the raw reply, so --debug logs what the model sent" do
       with_isolated_cache_dir do
         optimizer = LLMEndpointOptimizer.new(logger, create_test_options)
-        raw = "```json\n{\"optimized_url\":\"/a\",\"optimized_params\":[]}\n```"
+        raw = "```json\n{\"optimized_url\":\"/{a}\",\"optimized_params\":[]}\n```"
         optimizer.__test_install_adapter(CountingAdapter.new(raw), "openai", "gpt-4o-mini")
 
         optimizer.__test_request("prompt A").should eq(raw)
-        optimizer.__test_apply(Endpoint.new("/A", "GET"), raw).url.should eq("/a")
+        optimizer.__test_apply(Endpoint.new("/:a", "GET"), raw).url.should eq("/{a}")
       end
     end
 
@@ -356,8 +407,8 @@ describe "LLMEndpointOptimizer" do
         optimizer.__test_request("prompt A")
         adapter.calls.should eq(1)
 
-        result = optimizer.__test_apply(Endpoint.new("/users/USR123", "GET"), reply)
-        result.url.should eq("/users/USR123")
+        result = optimizer.__test_apply(Endpoint.new("/users/{id}", "GET"), reply)
+        result.url.should eq("/users/{id}")
         result.params.map(&.name).should eq(["id"])
       end
     end
