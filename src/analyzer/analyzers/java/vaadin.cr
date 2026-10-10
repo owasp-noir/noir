@@ -48,7 +48,7 @@ module Analyzer::Java
           types = Model.extract(content)
           types.each do |decl|
             prefix = decl.annotation("RoutePrefix")
-            parent = decl.annotation("ParentLayout").try(&.string)
+            parent = decl.annotation("ParentLayout").try(&.string).try { |name| Model.simple_type_name(name) }
             next unless prefix || parent
             layouts[decl.name] ||= Layout.new(prefix.try(&.string), prefix.try(&.string("absolute")) == "true", parent)
           end
@@ -98,7 +98,7 @@ module Analyzer::Java
         # A value that is a constant from another file: no route to report.
         next if ann.values.has_key?("value") && ann.string.nil?
         route = ann.string || (ann.name == "Route" ? derived_route(decl.name) : "")
-        segments = ann.string("absolute") == "true" ? [] of String : layout_prefixes(ann.string("layout"), layouts)
+        segments = ann.string("absolute") == "true" ? [] of String : layout_prefixes(ann.string("layout").try { |name| Model.simple_type_name(name) }, layouts)
         segments << route.gsub(ROUTE_TEMPLATE_RE) { "{#{$~[1]}}" }
         segments << "{parameter}" if url_parameter
         url = segments.reduce(base) { |acc, segment| Noir::URLPath.join_absorbing(acc, segment) }
