@@ -9,7 +9,7 @@ const importedRouter = require('./routes/imported');
 const PUBLIC_PREFIX = '/public-api';
 const API_PREFIX = '/api/v1';
 
-router['get']('/bracket-literal', (req, res) => {
+router['get']( '/bracket-literal', (req, res) => {
   const mode = req.query['mode'];
   const requestId = req.get('X-Request-Id');
   res.json({ mode, requestId });
