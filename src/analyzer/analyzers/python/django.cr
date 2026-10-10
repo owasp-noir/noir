@@ -232,11 +232,18 @@ module Analyzer::Python
           end
         end
       end
+      # An unmounted `websocket_urlpatterns` serves at the root; one already
+      # mounted under any prefix is not repeated there, and a file that only
+      # imports the name is not its home.
       sources.each do |file, content|
+        next unless content.matches?(WS_PATTERNS_ASSIGN)
+        next if visited.any? { |(seen, key)| seen == file && key.ends_with?("\0websocket_urlpatterns") }
         channels_list_endpoints(file, content, "websocket_urlpatterns", "", visited, endpoints)
       end
       endpoints
     end
+
+    WS_PATTERNS_ASSIGN = /^\s*websocket_urlpatterns\s*(?::[^=\n]*)?\+?=/m
 
     # `content` with comments cut and docstring lines blanked (line count
     # kept), so a commented-out or documented `URLRouter(...)` is not a route.
@@ -264,15 +271,22 @@ module Analyzer::Python
       list = arg
       unless arg.starts_with?('[')
         module_name, _, name = arg.rpartition('.')
-        return unless visited.add?({file, arg})
+        # Keyed by prefix too: one list mounted under two prefixes serves
+        # both. The size cap ends a cycle whose prefix grows every lap.
+        return if visited.size > 1000
+        return unless visited.add?({file, "#{prefix}\0#{arg}"})
         if module_name.empty?
           if local = extract_urlpattern_lists(content)[name]?
             list = local
-          elsif import = content.match(/^\s*from\s+([\w.]+)\s+import\s+[^\n]*\b#{Regex.escape(name)}\b/m)
-            module_name = import[1]
+          elsif target = channels_import_target(content, name)
+            module_name, _, name = target.rpartition('.')
           else
             return
           end
+        elsif target = channels_import_target(content, module_name.partition('.')[0])
+          # `from chat import routing` + `routing.websocket_urlpatterns`.
+          rest = module_name.partition('.')[2]
+          module_name = rest.empty? ? target : "#{target}.#{rest}"
         end
         unless module_name.empty?
           target = channels_module_file(file, module_name) || return
@@ -293,6 +307,24 @@ module Analyzer::Python
           endpoints << endpoint
         end
       end
+    end
+
+    # The dotted path `name` is bound to by this file's imports:
+    # `from chat import routing` -> `chat.routing`, `import game.routing as
+    # gr` -> `game.routing`, `from chat.routing import urls as ws` ->
+    # `chat.routing.urls`.
+    private def channels_import_target(content : ::String, name : ::String) : ::String?
+      escaped = Regex.escape(name)
+      if m = content.match(/^\s*from\s+([\w.]+)\s+import\s+[^\n]*?\b(\w+)\s+as\s+#{escaped}\b/m)
+        module_name, imported = m[1], m[2]
+      elsif m = content.match(/^\s*import\s+([\w.]+)\s+as\s+#{escaped}\b/m)
+        return m[1]
+      elsif m = content.match(/^\s*from\s+([\w.]+)\s+import\s+[^\n]*\b#{escaped}\b/m)
+        module_name, imported = m[1], name
+      else
+        return
+      end
+      module_name.ends_with?('.') ? "#{module_name}#{imported}" : "#{module_name}.#{imported}"
     end
 
     # `chat.routing` -> `chat/routing.py` (or a package `__init__.py`); a
