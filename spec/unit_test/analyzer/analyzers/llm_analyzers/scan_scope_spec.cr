@@ -29,6 +29,10 @@ class Analyzer::AI::Unified
     @result.map(&.details.code_paths.map(&.path))
   end
 
+  def __test_select_target_paths(adapter : LLM::Adapter) : Array(String)
+    select_target_paths(adapter)
+  end
+
   def __test_bundle_labels(paths : Array(String)) : Array(String)
     prepare_files_for_bundling(paths).map(&.[0])
   end
@@ -80,6 +84,22 @@ private def with_scoped_project(&)
 end
 
 describe Analyzer::AI::Unified do
+  describe "--ai-scope unmatched" do
+    it "skips files a static analyzer already found endpoints in" do
+      with_scoped_project do |root|
+        options = create_test_options
+        options["base"] = YAML::Any.new([YAML::Any.new(root)])
+        options["ai_provider"] = YAML::Any.new("http://127.0.0.1:1/v1")
+        options["ai_model"] = YAML::Any.new("test-model")
+        covered = (0..10).map { |i| YAML::Any.new(File.join(root, "f#{i}.js")) }
+        options[Analyzer::AI::Unified::COVERED_FILES_OPTION] = YAML::Any.new(covered)
+
+        analyzer = Analyzer::AI::Unified.new(options)
+        analyzer.__test_select_target_paths(ScriptedAdapter.new("{}")).should eq([File.join(root, "f11.js")])
+      end
+    end
+  end
+
   describe "the LLM file filter" do
     it "drops a selected path that is not in the scanned file set" do
       with_scoped_project do |root|

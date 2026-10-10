@@ -239,6 +239,21 @@ describe "run_options_parser" do
     end
   end
 
+  it "supports --ai-scope flag" do
+    original_argv = ARGV.dup
+
+    ARGV.clear
+    ARGV.concat(["-b", "./single_app", "--ai-scope", "unmatched"])
+
+    begin
+      noir_options = run_options_parser()
+      noir_options["ai_scope"].as_s.should eq("unmatched")
+    ensure
+      ARGV.clear
+      ARGV.concat(original_argv)
+    end
+  end
+
   # ---------- v1 flag-consolidation surface (Phase 6) ----------
 
   it "supports positional path arguments (v1 scan idiom)" do

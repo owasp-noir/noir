@@ -61,6 +61,7 @@ noir scan . --ai-provider acp:codex
 | `--ai-native-tools-allowlist` | 네이티브 도구 호출 허용 제공업체 목록 (쉼표 구분, 기본값: `openai,xai,github`) |
 | `--ai-max-token` | AI 요청 최대 토큰 수 (선택 사항) |
 | `--ai-max-requests` | 실행당 최대 AI HTTP 요청 수, 재시도 포함 (기본값: 무제한). 남은 파일은 커버리지 공백으로 보고됩니다 |
+| `--ai-scope` | AI 분석기로 보낼 파일: `all` (기본값) 또는 정적 분석기가 이미 엔드포인트를 찾은 파일을 건너뛰는 `unmatched`. `--ai-agent` 에는 적용되지 않음 |
 | `--cache-disable` | LLM 응답 캐시 비활성화 |
 | `--cache-clear` | 실행 전 LLM 캐시 삭제 |
 

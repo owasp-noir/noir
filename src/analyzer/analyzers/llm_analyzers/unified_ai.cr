@@ -29,7 +29,10 @@ module Analyzer::AI
     VALID_PARAM_TYPES                  = ["query", "json", "form", "header", "cookie", "path"]
     MAX_ENDPOINT_URL_LENGTH            = 2048
     MAX_PARAM_NAME_LENGTH              =  128
-    URL_AUTHORITY_RE                   = /\A[a-zA-Z][a-zA-Z0-9+.\-]*:\/\/[^\/]*/
+    # Expanded code paths of the static endpoints, set by
+    # `analysis_endpoints` under `--ai-scope unmatched`.
+    COVERED_FILES_OPTION = "ai_covered_files"
+    URL_AUTHORITY_RE     = /\A[a-zA-Z][a-zA-Z0-9+.\-]*:\/\/[^\/]*/
     # `:id`, `{id}`, `<int:id>`, `[id]`, `*`: not literal text to look for.
     PLACEHOLDER_SEGMENT_RE = /[:{}<>\[\]*]/
     # Ceiling on simultaneous bundle requests, independent of a high
@@ -72,6 +75,7 @@ module Analyzer::AI
     @symlinked_dir_cache = {} of String => Bool
     # Bundle prompt label => walked path, filled before any bundle is sent.
     @bundle_labels = {} of String => String
+    @covered_files = Set(String).new
 
     def initialize(options : Hash(String, YAML::Any))
       super(options)
@@ -107,6 +111,7 @@ module Analyzer::AI
       @native_tool_calling_allowlist = parse_native_tool_allowlist(options["ai_native_tools_allowlist"]?.try(&.as_s))
       @agent_tool_cache = {} of String => String
       @agent_tool_cache_order = [] of String
+      options[COVERED_FILES_OPTION]?.try(&.as_a?).try &.each { |path| @covered_files << path.as_s }
     end
 
     def analyze
@@ -313,15 +318,22 @@ module Analyzer::AI
 
     private def select_target_paths(adapter : LLM::Adapter) : Array(String)
       locator = CodeLocator.instance
-      all_paths = locator.all_files
+      all_paths = locator.all_files.reject { |path| covered?(path) }
 
-      if all_paths.size > 10
-        logger.debug_sub "AI::Filtering files using LLM"
-        filter_paths_with_llm(all_paths, adapter)
-      else
-        logger.debug_sub "AI::Analyzing all files"
-        get_all_source_files
-      end
+      paths = if all_paths.size > 10
+                logger.debug_sub "AI::Filtering files using LLM"
+                filter_paths_with_llm(all_paths, adapter)
+              else
+                logger.debug_sub "AI::Analyzing all files"
+                get_all_source_files
+              end
+      paths.reject { |path| covered?(path) }
+    end
+
+    # `--ai-scope unmatched`: a file a static analyzer already found an
+    # endpoint in is not sent to the provider.
+    private def covered?(path : String) : Bool
+      !@covered_files.empty? && @covered_files.includes?(Noir::PathScope.expand(path))
     end
 
     private def filter_paths_with_llm(all_paths : Array(String), adapter : LLM::Adapter) : Array(String)
