@@ -139,7 +139,9 @@ module Analyzer::Javascript
       # One app (the overwhelmingly common case, and every project without a
       # discoverable root) keeps the original whole-scan behaviour, including
       # for endpoints that carry no source file such as static-directory ones.
-      if by_root.size <= 1
+      # A single config inside one of several discovered apps is not that
+      # case: it governs its own app only, not the apps that set no prefix.
+      if by_root.size <= 1 && (roots.size <= 1 || by_root.has_key?(""))
         apply_global_prefix(result, sorted.first[1])
         return
       end

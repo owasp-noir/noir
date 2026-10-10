@@ -33,3 +33,13 @@ FunctionalTester.new("fixtures/typescript/tsoa_basepath/", {
   :techs     => 1,
   :endpoints => basepath_endpoints.size,
 }, basepath_endpoints).perform_tests
+
+# Two tsoa apps under one scan base: only `prefixed/` sets
+# `routes.basePath`, so `plain/` keeps its routes unprefixed.
+FunctionalTester.new("fixtures/typescript/tsoa_multi_app/", {
+  :techs     => 1,
+  :endpoints => 2,
+}, [
+  Endpoint.new("/health", "GET"),
+  Endpoint.new("/v1/items/{itemId}", "GET", [Param.new("itemId", "", "path")]),
+]).perform_tests
