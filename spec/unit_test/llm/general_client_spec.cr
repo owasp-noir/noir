@@ -368,3 +368,44 @@ describe "LLM::General.temperature_rejected?" do
     rejected.call(%({"error":{"message":"invalid model"},"request":{"temperature":0.3}})).should be_false
   end
 end
+
+private SCHEMA_FORMAT = %({"type":"json_schema","json_schema":{"name":"x","schema":{"type":"object"}}})
+
+describe "LLM::General falling back from a rejected response_format" do
+  it "steps json_schema down to json_object, then to none, and remembers it" do
+    provider = RejectingProvider.new do |body|
+      if body["response_format"]?
+        {400, %({"error":{"message":"This response_format type is unavailable now"}})}
+      else
+        {200, OK_REPLY}
+      end
+    end
+    begin
+      client = LLM::General.new(provider.url, "gpt-4o", "k")
+      messages = [{"role" => "user", "content" => "x"}]
+      client.request_messages(messages, SCHEMA_FORMAT).should eq(%({"endpoints":[]}))
+      client.request_messages(messages, SCHEMA_FORMAT).should eq(%({"endpoints":[]}))
+      provider.bodies.map(&.["response_format"]?.try(&.["type"].as_s)).should eq(["json_schema", "json_object", nil, nil])
+    ensure
+      provider.close
+    end
+  end
+
+  it "stops at json_object when the server accepts it" do
+    provider = RejectingProvider.new do |body|
+      if body["response_format"]?.try(&.["type"]) == "json_schema"
+        {400, %({"error":{"message":"json_schema is not supported","param":"response_format"}})}
+      else
+        {200, OK_REPLY}
+      end
+    end
+    begin
+      client = LLM::General.new(provider.url, "gpt-4o", "k")
+      client.request_messages([{"role" => "user", "content" => "x"}], SCHEMA_FORMAT).should eq(%({"endpoints":[]}))
+      client.request_messages([{"role" => "user", "content" => "y"}], SCHEMA_FORMAT).should eq(%({"endpoints":[]}))
+      provider.bodies.map(&.["response_format"]["type"].as_s).should eq(["json_schema", "json_object", "json_object"])
+    ensure
+      provider.close
+    end
+  end
+end

@@ -26,6 +26,18 @@ module LLM
     @api_key : String?
     @send_temperature : Bool
 
+    # How much of `response_format` the server accepts, learned from its
+    # 400s and kept for the rest of the run. Ordered: each step only drops.
+    enum ResponseFormat
+      AsAsked
+      JsonObject
+      Omitted
+    end
+
+    JSON_OBJECT_FORMAT = JSON.parse(%({"type":"json_object"}))
+
+    @response_format = ResponseFormat::AsAsked
+
     def initialize(url : String, model : String, api_key : String?)
       @url = url
       @api = if url.includes?("://")
@@ -107,12 +119,22 @@ module LLM
     # is read; a gateway that echoes the request would otherwise match on
     # every 400.
     def self.temperature_rejected?(rejection : HttpTransport::Rejection) : Bool
+      rejected_for?(rejection, /temperature/i)
+    end
+
+    # A server that implements only `json_object`, or no structured output
+    # at all, answers every `json_schema` request with a 400 naming it.
+    def self.response_format_rejected?(rejection : HttpTransport::Rejection) : Bool
+      rejected_for?(rejection, /response_format|json_schema|json_object/i)
+    end
+
+    private def self.rejected_for?(rejection : HttpTransport::Rejection, pattern : Regex) : Bool
       return false unless rejection.status == 400
       error = JSON.parse(rejection.body).as_h?.try(&.["error"]?)
       text = error.try { |e| e.as_h? ? "#{e["param"]?} #{e["message"]?}" : e.to_s } || rejection.body
-      text.downcase.includes?("temperature")
+      text.matches?(pattern)
     rescue JSON::ParseException
-      rejection.body.downcase.includes?("temperature")
+      rejection.body.matches?(pattern)
     end
 
     CONTEXT_OVERFLOW = /context_length_exceeded|context length|context window|prompt is too long|maximum number of tokens|too many (?:input )?tokens|exceed[s]? the (?:configured )?limit/i
@@ -151,15 +173,32 @@ module LLM
 
     # Sends a request body, recovering from the rejections a model name
     # cannot predict: a `temperature` the model refuses is dropped for the
-    # rest of the run and the request resent. A prompt over the context
-    # window raises `ContextOverflow` when the caller can re-split it, and is
-    # reported like any other failure when it cannot.
+    # rest of the run and the request resent, and a refused `json_schema`
+    # steps down to `json_object`, then to no `response_format` (the prompt
+    # already asks for JSON only). A prompt over the context window raises
+    # `ContextOverflow` when the caller can re-split it, and is reported like
+    # any other failure when it cannot.
     private def post(body : Hash, raise_overflow : Bool = false) : String?
+      if body.has_key?("response_format")
+        case @response_format
+        when .json_object? then body["response_format"] = JSON_OBJECT_FORMAT
+        when .omitted?     then body.delete("response_format")
+        end
+      end
+
       result = LLM::HttpTransport.post_json_result(@api, encode(body), request_headers)
       return result unless result.is_a?(HttpTransport::Rejection)
 
       if @send_temperature && self.class.temperature_rejected?(result)
         @send_temperature = false
+        return post(body, raise_overflow)
+      end
+
+      if (sent = body["response_format"]?) && self.class.response_format_rejected?(result)
+        # Stepped from what was sent, not from the current setting: requests
+        # in flight concurrently all come back rejected at the old level.
+        step = sent.to_json.includes?("json_schema") ? ResponseFormat::JsonObject : ResponseFormat::Omitted
+        @response_format = step if step > @response_format
         return post(body, raise_overflow)
       end
 
