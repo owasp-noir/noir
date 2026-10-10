@@ -86,28 +86,38 @@ module Analyzer::Javascript
     end
 
     # `actions.<name>.rest`: `"GET /path"`, `"/path"`, `{ method, path, basePath }`,
-    # `true`, or an array of those, under the service's `settings.rest` or
-    # its dotted full name.
+    # or an array of those, under each of the service's `settings.rest`
+    # base paths or its dotted full name. Like moleculer-web's
+    # `regenerateAutoAliases`, any other `rest` value (`true`) and a
+    # non-published action add nothing.
     private def auto_aliases(prefix : String, services : Array(Service), actions : Hash(String, Action))
       services.each do |service|
         name = full_name(service.schema) || next
-        base = service.schema.hash("settings").try(&.["rest"]?).as?(String) || name.gsub('.', '/')
+        bases = case rest_base = service.schema.hash("settings").try(&.["rest"]?)
+                when String then [rest_base]
+                when Array  then rest_base.compact_map(&.as?(String))
+                else             [name.gsub('.', '/')]
+                end
         service.schema.hash("actions").try &.each do |action_name, definition|
-          rest = definition.as?(ConfigHash).try(&.["rest"]?)
-          (rest.is_a?(Array) ? rest : [rest]).each do |entry|
-            method, path, root = "*", action_name, base
-            case entry
-            when String
-              parts = entry.strip.split(/\s+/, 2)
-              method, path = parts.size == 2 ? {parts[0].upcase, parts[1]} : {"*", parts[0]}
-            when Hash
-              method = entry["method"]?.as?(String).try(&.upcase) || "*"
-              path = entry["path"]?.as?(String) || action_name
-              root = entry["basePath"]?.as?(String) || base
-            when true
-            else next
+          definition = definition.as?(ConfigHash) || next
+          visibility = definition["visibility"]?
+          next unless visibility.nil? || visibility == "published"
+          rest = definition["rest"]?
+          bases.each do |base|
+            (rest.is_a?(Array) ? rest : [rest]).each do |entry|
+              root = base
+              case entry
+              when String
+                parts = entry.strip.split(/\s+/, 2)
+                method, path = parts.size == 2 ? {parts[0].upcase, parts[1]} : {"*", parts[0]}
+              when Hash
+                method = entry["method"]?.as?(String).try(&.upcase) || "*"
+                path = entry["path"]?.as?(String) || action_name
+                root = entry["basePath"]?.as?(String) || base
+              else next
+              end
+              emit(service.path, service.schema.line, Noir::URLPath.absolute_join(prefix, root, path), method, actions["#{name}.#{action_name}"]?)
             end
-            emit(service.path, service.schema.line, Noir::URLPath.absolute_join(prefix, root, path), method, actions["#{name}.#{action_name}"]?)
           end
         end
       end
