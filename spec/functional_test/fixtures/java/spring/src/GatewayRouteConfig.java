@@ -21,6 +21,6 @@ public class GatewayRouteConfig {
     }
 
     private PredicateSpec isGetReportRoute(PredicateSpec predicateSpec) {
-        return predicateSpec.method(HttpMethod.GET).and().path("/gateway/reports/{id}");
+        return predicateSpec.method(HttpMethod.GET).and().path(/* reports */ "/gateway/reports/{id}");
     }
 }

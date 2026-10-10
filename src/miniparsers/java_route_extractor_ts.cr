@@ -1,5 +1,6 @@
 require "../utils/url_path"
 require "../ext/tree_sitter/tree_sitter"
+require "../utils/c_comments"
 require "./extraction_result_cache"
 require "../models/endpoint"
 
@@ -623,6 +624,9 @@ module Noir
                     source.includes?("org.springframework.cloud.gateway")
 
       visible_source = visible_java_code(source)
+      # Slices of this are what get parsed, so a comment inside `.path(...)`
+      # must not read as an argument. Char-aligned with `visible_source`.
+      source = Noir::CComments.strip(source)
       helpers = gateway_predicate_helpers(source, visible_source, constants)
 
       scan_gateway_route_calls(source, visible_source) do |expr, line|
