@@ -36,9 +36,12 @@ var serveCmd = &cobra.Command{
 
 func init() {
 	rootCmd.PersistentFlags().BoolVar(&verbose, "verbose", false, "verbose output")
-	serveCmd.Flags().IntVar(&port, "port", 8080, "listen port")
+	// Wrapped calls: the flag / env name sits on the continuation line.
+	serveCmd.Flags().IntVar(&port,
+		"port", 8080, "listen port")
 	// rootCmd.Flags().StringVar(&secret, "secret-token", "", "never registered")
-	viper.BindEnv("api_key", "COBRA_API_KEY")
+	viper.BindEnv("api_key",
+		"COBRA_API_KEY")
 	rootCmd.AddCommand(serveCmd)
 	// rootCmd.AddCommand(migrateCmd)
 }
