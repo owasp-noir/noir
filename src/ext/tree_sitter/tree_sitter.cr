@@ -468,6 +468,12 @@ module Noir::TreeSitter
     each_named_child(node) { |child| yield child unless node_type(child).ends_with?("comment") }
   end
 
+  # First argument with comments skipped, see `each_named_arg`.
+  def self.first_named_arg(node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
+    each_named_arg(node) { |child| return child }
+    nil
+  end
+
   # Argument count with comments skipped, see `each_named_arg`.
   def self.named_arg_count(node : LibTreeSitter::TSNode) : Int32
     count = 0

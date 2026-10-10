@@ -473,7 +473,7 @@ module Noir
       return unless args
       Noir::TreeSitter.each_named_arg(args) do |arg|
         next unless Noir::TreeSitter.node_type(arg) == "lambda_expression"
-        Noir::TreeSitter.each_named_child(arg) do |child|
+        Noir::TreeSitter.each_named_arg(arg) do |child|
           ty = Noir::TreeSitter.node_type(child)
           next if ty == "identifier" || ty == "formal_parameters" || ty == "inferred_parameters"
           return child
