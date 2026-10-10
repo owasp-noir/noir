@@ -179,4 +179,54 @@ describe "DjangoAuthTagger" do
       CodeLocator.instance.clear_all
     end
   end
+
+  it "reads project-wide defaults only from live MIDDLEWARE / settings, not tests or mentions" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("django_settings_scope")
+    files = {
+      "proj/settings/base.py" => <<-PY,
+        MIDDLEWARE = ["django.contrib.auth.middleware.AuthenticationMiddleware"]
+        REST_FRAMEWORK = {"DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"]}
+        PY
+      "proj/settings/dev.py" => <<-PY,
+        REST_FRAMEWORK = {"DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.AllowAny"]}
+        PY
+      "tests/settings.py" => <<-PY,
+        MIDDLEWARE = ["django.contrib.auth.middleware.LoginRequiredMiddleware"]
+        REST_FRAMEWORK = {"DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"]}
+        PY
+      "proj/checks.py" => <<-PY,
+        HINT = "add django.contrib.auth.middleware.LoginRequiredMiddleware to MIDDLEWARE"
+        PY
+      "proj/views.py" => <<-PY,
+        def dashboard(request):
+            pass
+
+        class ItemViewSet(viewsets.ModelViewSet):
+            queryset = None
+        PY
+    }
+    files.each do |rel, body|
+      path = File.join(tmpdir, rel)
+      Dir.mkdir_p(File.dirname(path))
+      File.write(path, body)
+      CodeLocator.instance.register_path(path)
+    end
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      views = File.join(tmpdir, "proj/views.py")
+      dashboard = Endpoint.new("/dashboard", "GET", [] of Param, Details.new(PathInfo.new(views, 1)))
+      items = Endpoint.new("/items", "GET", [] of Param, Details.new(PathInfo.new(views, 4)))
+
+      DjangoAuthTagger.new(noir_options).perform([dashboard, items])
+
+      dashboard.tags.should be_empty
+      items.tags.should be_empty
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
 end

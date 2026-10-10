@@ -33,6 +33,11 @@ class DjangoAuthTagger < FrameworkTagger
   LOGIN_NOT_REQUIRED      = /\blogin_not_required\b/
   LOGIN_NOT_REQUIRED_BASE = /\b(?:LoginView|PasswordReset\w*View)\b/
 
+  LOGIN_REQUIRED_MIDDLEWARE = "django.contrib.auth.middleware.LoginRequiredMiddleware"
+  MIDDLEWARE_ASSIGNMENT     = /^\s*MIDDLEWARE\s*\+?=/m
+  # Test settings and docs configure throwaway projects.
+  TEST_OR_DOCS_PATH = %r{/(?:tests?|docs?)/|/(?:test_[^/]*|[^/]*_tests?|tests|conftest)\.py\z}
+
   def self.target_techs : Array(String)
     ["python_django"]
   end
@@ -40,18 +45,25 @@ class DjangoAuthTagger < FrameworkTagger
   def initialize(options : Hash(String, YAML::Any))
     super
     @login_required_middleware = false
-    @drf_default_permissions = nil.as(String?)
+    @drf_default_permissions = [] of String
   end
 
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
     @login_required_middleware = false
-    @drf_default_permissions = nil
+    @drf_default_permissions.clear
     scan_settings
     super
   end
 
   # Project-wide auth defaults from settings: `LoginRequiredMiddleware` in
-  # MIDDLEWARE, and REST_FRAMEWORK's `DEFAULT_PERMISSION_CLASSES`.
+  # MIDDLEWARE, and REST_FRAMEWORK's `DEFAULT_PERMISSION_CLASSES`. Test and
+  # docs settings are skipped, and the middleware counts only inside a
+  # `MIDDLEWARE = [...]` / `+= [...]` value, not wherever it is mentioned.
+  #
+  # Split settings (`base.py`, `dev.py`, `prod.py`) can each set their own
+  # DRF default, and which one runs is decided at deploy time. Every value
+  # is kept, and the default protects a method only if all of them agree
+  # (`check_drf_permissions`), so the answer never depends on file order.
   private def scan_settings
     collect_files_by_extension(".py").each do |path|
       content = read_file(path)
@@ -59,19 +71,33 @@ class DjangoAuthTagger < FrameworkTagger
       has_middleware = content.includes?("LoginRequiredMiddleware")
       has_drf_default = content.includes?("DEFAULT_PERMISSION_CLASSES")
       next unless has_middleware || has_drf_default
+      next if base_relative_path(path).matches?(TEST_OR_DOCS_PATH)
       code = content.lines.map(&.sub(/#.*/, "")).join("\n")
-      if has_middleware && code.includes?("django.contrib.auth.middleware.LoginRequiredMiddleware")
+      if has_middleware && bracketed_values_after(code, MIDDLEWARE_ASSIGNMENT).any?(&.includes?(LOGIN_REQUIRED_MIDDLEWARE))
         @login_required_middleware = true
       end
       if has_drf_default && (perms = bracketed_after(code, /DEFAULT_PERMISSION_CLASSES['"]\s*:/))
-        @drf_default_permissions = perms
+        @drf_default_permissions << perms
       end
     end
   end
 
+  # The `[...]` / `(...)` value following every match of `key`.
+  private def bracketed_values_after(text : String, key : Regex) : Array(String)
+    values = [] of String
+    pos = 0
+    while match = text.match(key, pos)
+      pos = match.end
+      if value = bracketed_after(text, key, match.begin)
+        values << value
+      end
+    end
+    values
+  end
+
   # The `[...]` / `(...)` value following `key`, across lines.
-  private def bracketed_after(text : String, key : Regex) : String?
-    match = text.match(key)
+  private def bracketed_after(text : String, key : Regex, from : Int32 = 0) : String?
+    match = text.match(key, from)
     return unless match
     open = text.index(/[\[(]/, match.end)
     return unless open
@@ -244,7 +270,11 @@ class DjangoAuthTagger < FrameworkTagger
     end
     return unless drf
     defaults = @drf_default_permissions
-    (defaults && drf_permission_desc(defaults, method, "DRF DEFAULT_PERMISSION_CLASSES")) || ""
+    if !defaults.empty? && defaults.all? { |perms| drf_permission_desc(perms, method, "") }
+      "Protected by DRF DEFAULT_PERMISSION_CLASSES"
+    else
+      ""
+    end
   end
 
   private def drf_permission_desc(perms : String, method : String, source : String) : String?
