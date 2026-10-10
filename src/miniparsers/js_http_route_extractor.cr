@@ -291,6 +291,11 @@ module Noir
 
     # Brace of `const NAME = { ... }`, for `routes: NAME` / `{ routes }`.
     private def self.object_literal_for(content : String, name : String) : Int32?
+      # Callers pass any argument that is not a `{` literal, e.g. a whole
+      # inline arrow handler; escaped into the pattern below, a large one
+      # failed to compile ("regular expression is too large") and lost the
+      # file.
+      return unless name.matches?(/\A[A-Za-z_$][\w$]*\z/)
       match = content.match(/(?:const|let|var)\s+#{Regex.escape(name)}\s*(?::[^=;]+)?=\s*\{/)
       match.end(0) - 1 if match
     end
