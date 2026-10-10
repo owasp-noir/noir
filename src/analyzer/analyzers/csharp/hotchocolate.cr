@@ -180,8 +180,11 @@ module Analyzer::CSharp
     # body depth (nested blocks and types never leak fields).
     private def collect_file(content : String, path : String, names : Set(String), markers : Bool,
                              classes : Hash(String, Array(ClassInfo)))
-      lines = content.lines
-      masked = Noir::CSharpLexer.new(content).masked_lines
+      # Comments blanked in both views: after `[GraphQLName("x")] // note`
+      # the comment read as the declaration and the attribute was dropped.
+      lexer = Noir::CSharpLexer.new(content)
+      lines = lexer.code_lines
+      masked = lexer.masked_lines
       frames = [] of Frame
       opened = [] of Bool
       attrs = ""

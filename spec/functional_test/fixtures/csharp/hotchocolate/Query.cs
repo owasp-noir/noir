@@ -19,14 +19,14 @@ public class Query
         return await service.Search(title, cancellationToken);
     }
 
-    [GraphQLName("whoAmI")]
+    [GraphQLName("whoAmI")] // exposed name
     public string CurrentUser(ClaimsPrincipal user, [GraphQLName("verbose")] bool includeRoles) => user.Identity!.Name!;
 
     public string Version => "1.0";
 
     public string APIStatus { get; } = "ok";
 
-    [GraphQLIgnore]
+    [GraphQLIgnore] // internal only
     public string Secret() => "hidden";
 
     public static string StaticHelper() => "not bound";
