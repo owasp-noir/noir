@@ -246,7 +246,7 @@ module Noir
       if TreeSitter.node_type(node) == "decorated_definition"
         TreeSitter.each_named_child(node) do |child|
           next unless TreeSitter.node_type(child) == "decorator"
-          TreeSitter.first_named_child(child).try { |expr| decorators << TreeSitter.node_text(expr, source) }
+          TreeSitter.first_named_child(child).try { |expr| decorators << code_text(expr, source) }
         end
         node = TreeSitter.field(node, "definition") || return
       end
@@ -299,9 +299,26 @@ module Noir
       while right && TreeSitter.node_type(right) == "parenthesized_expression"
         right = TreeSitter.first_named_child(right)
       end
-      value = right.try { |r| TreeSitter.node_text(r, source) }
+      value = right.try { |r| code_text(r, source) }
       Member.new(path, TreeSitter.node_text(left, source), TreeSitter.node_start_row(stmt) + 1,
         [] of String, hint, value, nil, nil)
+    end
+
+    # Node text with its comments cut out. A call wrapped over several lines
+    # carries `# note`s that would otherwise glue onto the next argument
+    # when the text is split on commas, losing every argument after it.
+    private def code_text(node : LibTreeSitter::TSNode, source : String) : String
+      pos = LibTreeSitter.ts_node_start_byte(node).to_i
+      stop = LibTreeSitter.ts_node_end_byte(node).to_i
+      String.build do |io|
+        TreeSitter.walk(node) do |n|
+          next unless TreeSitter.node_type(n) == "comment"
+          from = LibTreeSitter.ts_node_start_byte(n).to_i
+          io << source.byte_slice(pos, from - pos)
+          pos = LibTreeSitter.ts_node_end_byte(n).to_i
+        end
+        io << source.byte_slice(pos, stop - pos)
+      end
     end
 
     private def param(node : LibTreeSitter::TSNode, source : String) : Param?
