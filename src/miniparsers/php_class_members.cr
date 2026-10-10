@@ -21,9 +21,10 @@ module Noir
       prelude : String,
       line : Int32
 
-    MEMBER_RE = /(?:\b(static|readonly)\s+)?\bpublic\s+(static\s+)?(?:function\s+&?\s*([A-Za-z_]\w*)\s*\(|(?!function\b|const\b)(readonly\s+)?(?:\??[\w\\]+(?:\s*\|\s*\??[\w\\]+)*\s+)?\$([A-Za-z_]\w*))/
-    ARG_RE    = /\$([A-Za-z_]\w*)/
-    CLASS_RE  = /(?<!::)\bclass\b[^{;]*\{/
+    MEMBER_RE    = /(?:\b(static|readonly)\s+)?\bpublic\s+((?:(?:static|final|abstract)\s+)*)(?:function\s+&?\s*([A-Za-z_]\w*)\s*\(|(?!function\b|const\b)(readonly\s+)?(?:\??[\w\\]+(?:\s*\|\s*\??[\w\\]+)*\s+)?\$([A-Za-z_]\w*))/
+    ARG_RE       = /\$([A-Za-z_]\w*)/
+    LIST_NAME_RE = /\G,\s*\$([A-Za-z_]\w*)/
+    CLASS_RE     = /(?<!::)\bclass\b[^{;]*\{/
 
     # `{open brace index, close brace index}` of every top-level class body
     # in the file, in source order. Anonymous classes nested in a method are
@@ -51,7 +52,7 @@ module Noir
         prelude = code[prelude_start(chars, start, open)...start].join
         (counted...start).each { |i| line += 1 if chars[i] == '\n' }
         counted = start
-        static = m[1]? == "static" || !m[2]?.nil?
+        static = m[1]? == "static" || m[2].includes?("static")
         if name = m[3]?
           paren = m.end(0) - 1
           paren_close = lexer.matching_delimiter(paren) || break
@@ -64,8 +65,24 @@ module Noir
           break if body >= close
           pos = chars[body] == '{' ? (lexer.matching_delimiter(body) || break) + 1 : body + 1
         else
-          yield Member.new(m[5], false, static, m[1]? == "readonly" || !m[4]?.nil?, [] of String, prelude, line)
+          readonly = m[1]? == "readonly" || !m[4]?.nil?
+          yield Member.new(m[5], false, static, readonly, [] of String, prelude, line)
+          # `public $a, $b = [1, 2];` declares every name in the list. Stop at
+          # the `;`, or at a property-hook `{` (PHP 8.4).
           pos = m.end(0)
+          depth = 0
+          while pos < close
+            c = chars[pos]
+            break if c == '{' || (c == ';' && depth <= 0)
+            if c == '(' || c == '['
+              depth += 1
+            elsif c == ')' || c == ']'
+              depth -= 1
+            elsif c == ',' && depth == 0 && (n = LIST_NAME_RE.match(masked, pos))
+              yield Member.new(n[1], false, static, readonly, [] of String, prelude, line)
+            end
+            pos += 1
+          end
         end
       end
     end

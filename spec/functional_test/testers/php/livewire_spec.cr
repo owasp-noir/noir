@@ -9,7 +9,7 @@ require "../../func_spec.cr"
 # included.
 FunctionalTester.new("fixtures/php/livewire/", {
   :techs     => 3,
-  :endpoints => 6,
+  :endpoints => 7,
 }, [
   Endpoint.new("/livewire/update#edit-post.save", "POST", [
     Param.new("title", "", "json"), Param.new("body", "", "json"), Param.new("draftId", "", "json"),
@@ -21,6 +21,11 @@ FunctionalTester.new("fixtures/php/livewire/", {
   Endpoint.new("/livewire/update#posts.search-posts", "POST", [Param.new("query", "", "json")]),
   Endpoint.new("/livewire/update#counter.increment", "POST", [
     Param.new("count", "", "json"), Param.new("by", "", "json"),
+  ]),
+  # `public $a, $b = [...], $c;` declares all three; `public final function` is an action.
+  Endpoint.new("/livewire/update#tag-picker.pick", "POST", [
+    Param.new("tags", "", "json"), Param.new("options", "", "json"), Param.new("selected", "", "json"),
+    Param.new("tag", "", "json"),
   ]),
   Endpoint.new("/counter", "GET"),
   Endpoint.new("/admin/posts/{post}", "GET", [Param.new("post", "", "path")]),
