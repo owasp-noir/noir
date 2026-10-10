@@ -3,6 +3,9 @@ require "../../../minilexers/csharp_lexer"
 require "../../../utils/top_level_split"
 
 module Analyzer::CSharp::Common
+  # Longest method signature `build_signature` reads.
+  MAX_SIGNATURE_LINES = 256
+
   # Standard .NET test-source conventions:
   #
   #   * `/test/` and `/tests/` parent directories — Microsoft's
@@ -191,20 +194,21 @@ module Analyzer::CSharp::Common
     # every remaining line). Bail out instead of indexing out of bounds.
     return {"", start_index} if start_index < 0 || start_index >= lines.size
 
-    signature = lines[start_index]
     start_mask = masked[start_index]?
     paren_count = start_mask ? start_mask.count('(') - start_mask.count(')') : 0
     index = start_index + 1
 
-    while paren_count > 0 && index < lines.size
-      signature += " " + lines[index]
+    # Parens still open after MAX_SIGNATURE_LINES never balance: without the
+    # cap every declaration below an unbalanced one re-read the rest of the file.
+    limit = Math.min(lines.size, start_index + MAX_SIGNATURE_LINES)
+    while paren_count > 0 && index < limit
       if m = masked[index]?
         paren_count += m.count('(') - m.count(')')
       end
       index += 1
     end
 
-    {signature, index - 1}
+    {lines[start_index...index].join(' '), index - 1}
   end
 
   protected def split_csharp_parameters(param_list : String) : Array(String)
