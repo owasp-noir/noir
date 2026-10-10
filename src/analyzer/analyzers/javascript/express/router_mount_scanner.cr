@@ -65,6 +65,55 @@ module Analyzer::Javascript
     # routers it mounts in turn.
     @export_bindings = Hash(String, Hash(String, Array(String))).new
 
+    REEXPORT_LIST_RE   = /\bexport\s*\{([^}]*)\}\s*from\s*['"]([^'"]+)['"]/
+    CJS_REEXPORT_RE    = /(?:\b([A-Za-z_$][\w$]*)\s*:|\bexports\.([A-Za-z_$][\w$]*)\s*=)\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)/
+    MAX_REEXPORT_DEPTH = 5
+
+    # The locator key for `name` as exported by `file`, followed through
+    # re-export barrels to the module that defines it:
+    #   export { default as users } from './users.js'
+    #   module.exports = { users: require('./users') }
+    #   import users from './users'; export { users }
+    # A barrel's routes live in the module it forwards to, so a prefix keyed
+    # on the barrel would never reach them. A module default lands on the
+    # file key — the key a default import of that module uses.
+    private def named_export_key(file : String, name : String, depth : Int32 = 0) : Noir::LocatorKey(Array(String))
+      return ExpressConstants.function_key(file, name) if depth >= MAX_REEXPORT_DEPTH
+      content = CodeLocator.instance.content_for(file) || Noir::TextFile.read(file)
+      return ExpressConstants.function_key(file, name) unless content.includes?("export")
+      content = Noir::JSRouteExtractor.strip_js_comments(content)
+
+      content.scan(REEXPORT_LIST_RE) do |m|
+        m[1].split(',').each do |item|
+          parts = item.strip.split(/\s+as\s+/)
+          next unless (parts[1]? || parts[0]) == name
+          target = resolve_require_path(file, m[2])
+          next unless target
+          return parts[0] == "default" ? ExpressConstants.file_key(target) : named_export_key(target, parts[0], depth + 1)
+        end
+      end
+
+      content.scan(CJS_REEXPORT_RE) do |m|
+        next unless (m[1]? || m[2]?) == name
+        target = resolve_require_path(file, m[3])
+        return ExpressConstants.file_key(target) if target
+      end
+
+      Noir::JSRouteExtractor.export_bindings(content).each do |local, exported_names|
+        next unless exported_names.includes?(name)
+        imports = parse_imports(content, file)
+        if target = imports[:require_map][local]?
+          return ExpressConstants.file_key(target)
+        elsif target = imports[:function_map][local]?
+          return named_export_key(target, exported_name(file, local), depth + 1)
+        end
+      end
+
+      ExpressConstants.function_key(file, name)
+    rescue File::Error | IO::Error
+      ExpressConstants.function_key(file, name)
+    end
+
     private def exported_name(main_file : String, local : String) : String
       @import_names[main_file]?.try(&.[local]?) || local
     end
@@ -584,7 +633,8 @@ module Analyzer::Javascript
       end
 
       # Pattern: import varName from './path/to/file'
-      content.scan(/import\s+(\w+)\s+from\s+['"]([^'"]+)['"]/) do |m|
+      # (and `import * as routes from …`: `routes.users` is a named export)
+      content.scan(/import\s+(?:\*\s*as\s+)?(\w+)\s+from\s+['"]([^'"]+)['"]/) do |m|
         if m.size >= 3
           var_name = m[1]
           require_path = m[2]
@@ -755,10 +805,10 @@ module Analyzer::Javascript
           parent_prefixes = locator.all(ExpressConstants.file_key(caller_file)).dup
         elsif caller_func = var_to_function[caller]?
           if caller_file = function_map[caller_func]?
-            parent_prefixes = locator.all(ExpressConstants.function_key(caller_file, exported_name(main_file, caller_func))).dup
+            parent_prefixes = locator.all(named_export_key(caller_file, exported_name(main_file, caller_func))).dup
           end
         elsif caller_file = function_map[caller]?
-          parent_prefixes = locator.all(ExpressConstants.function_key(caller_file, exported_name(main_file, caller))).dup
+          parent_prefixes = locator.all(named_export_key(caller_file, exported_name(main_file, caller))).dup
         end
       end
 
@@ -838,7 +888,7 @@ module Analyzer::Javascript
       if func_name = var_to_function[router_var]?
         router_file = function_map[func_name]?
         return unless router_file
-        return {key:  ExpressConstants.function_key(router_file, exported_name(main_file, func_name)),
+        return {key:  named_export_key(router_file, exported_name(main_file, func_name)),
                 note: " (factory var): #{router_file}:#{func_name}",
                 var:  router_var}
       end
@@ -847,7 +897,7 @@ module Analyzer::Javascript
       # Note: We do NOT store file-level keys here to avoid prefix bleed to other
       # factory functions in the same file that were not mounted.
       if router_file = function_map[router_var]?
-        return {key:  ExpressConstants.function_key(router_file, exported_name(main_file, router_var)),
+        return {key:  named_export_key(router_file, exported_name(main_file, router_var)),
                 note: " (factory direct): #{router_file}:#{router_var}",
                 var:  router_var}
       end
@@ -861,7 +911,7 @@ module Analyzer::Javascript
         prop_name = parts[1]?
         if prop_name
           if router_file = require_map[base_obj]? || function_map[base_obj]?
-            return {key:  ExpressConstants.function_key(router_file, prop_name),
+            return {key:  named_export_key(router_file, prop_name),
                     note: " (property): #{router_file}:#{prop_name}",
                     var:  router_var}
           end
