@@ -409,3 +409,31 @@ describe "LLM::General falling back from a rejected response_format" do
     end
   end
 end
+
+describe "LLM::General stopping after repeated fatal failures" do
+  it "stops sending after three 401s in a row" do
+    provider = RejectingProvider.new { |_| {401, %({"error":{"message":"Incorrect API key provided"}})} }
+    begin
+      client = LLM::General.new(provider.url, "gpt-4o", "bad")
+      5.times { client.request_messages([{"role" => "user", "content" => "x"}]).should eq("") }
+      provider.bodies.size.should eq(LLM::General::MAX_FATAL_STREAK)
+    ensure
+      provider.close
+    end
+  end
+
+  it "resets the streak on a success" do
+    count = 0
+    provider = RejectingProvider.new do |_|
+      count += 1
+      count.even? ? {200, OK_REPLY} : {404, %({"error":{"message":"model not found"}})}
+    end
+    begin
+      client = LLM::General.new(provider.url, "gpt-4o", "k")
+      6.times { client.request_messages([{"role" => "user", "content" => "x"}]) }
+      provider.bodies.size.should eq(6)
+    ensure
+      provider.close
+    end
+  end
+end

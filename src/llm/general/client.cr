@@ -38,6 +38,15 @@ module LLM
 
     @response_format = ResponseFormat::AsAsked
 
+    # A bad key, a missing model or an unreachable host fails every request
+    # the same way. After this many in a row the client stops sending, so a
+    # 1000-file scan does not repeat the same failure 1000 times; the files
+    # it skips are reported as unanalyzed by the caller.
+    MAX_FATAL_STREAK = 3
+    FATAL_STATUS     = Set{401, 403, 404}
+
+    @fatal_streak = Atomic(Int32).new(0)
+
     def initialize(url : String, model : String, api_key : String?)
       @url = url
       @api = if url.includes?("://")
@@ -179,6 +188,8 @@ module LLM
     # `ContextOverflow` when the caller can re-split it, and is reported like
     # any other failure when it cannot.
     private def post(body : Hash, raise_overflow : Bool = false) : String?
+      return if @fatal_streak.get >= MAX_FATAL_STREAK
+
       if body.has_key?("response_format")
         case @response_format
         when .json_object? then body["response_format"] = JSON_OBJECT_FORMAT
@@ -187,7 +198,15 @@ module LLM
       end
 
       result = LLM::HttpTransport.post_json_result(@api, encode(body), request_headers)
-      return result unless result.is_a?(HttpTransport::Rejection)
+      case result
+      when String
+        @fatal_streak.set(0)
+        return result
+      when nil
+        # The transport already reported the connection failure.
+        count_fatal_failure
+        return
+      end
 
       if @send_temperature && self.class.temperature_rejected?(result)
         @send_temperature = false
@@ -206,7 +225,13 @@ module LLM
         raise overflow
       end
       LLM::HttpTransport.report(result)
+      count_fatal_failure if FATAL_STATUS.includes?(result.status)
       nil
+    end
+
+    private def count_fatal_failure : Nil
+      return unless @fatal_streak.add(1) == MAX_FATAL_STREAK - 1
+      STDERR.puts "WARNING: AI provider failed #{MAX_FATAL_STREAK} requests in a row (bad key, unknown model or unreachable host); skipping the remaining AI requests"
     end
 
     # Make a request with chat-style messages
