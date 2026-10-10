@@ -32,6 +32,10 @@ module Detector::Specification
     COLLECTION_MARKER = /\bCollectionConfig\b/
     GLOBAL_MARKER     = /\bGlobalConfig\b/
     BUILD_CONFIG      = /\bbuildConfig\s*\(/
+    # `buildConfig` is a common function name (Superset's websocket config,
+    # Discourse's rolldown config), so it only counts when the file imports
+    # from `payload` (v3) or `payload/config` (v2).
+    PAYLOAD_IMPORT = /(?:\bfrom|\brequire\s*\()\s*['"]payload(?:\/config)?['"]/
 
     # A config object always declares both.
     SLUG_MARKER   = /\bslug\s*:\s*['"]/
@@ -55,7 +59,7 @@ module Detector::Specification
         detected = true
       end
 
-      if content_matches?(file_contents, BUILD_CONFIG)
+      if content_matches?(file_contents, BUILD_CONFIG) && content_matches?(file_contents, PAYLOAD_IMPORT)
         CodeLocator.instance.push(Noir::LocatorKeys::PAYLOAD_CONFIG, filename)
         detected = true
       end
