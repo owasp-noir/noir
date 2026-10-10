@@ -149,7 +149,9 @@ module Noir
       key = ""
       value : LibTreeSitter::TSNode? = nil
 
-      Noir::TreeSitter.each_named_child(pair) do |child|
+      # Comments are named extras: `path: /* x */ "/p"` would take the
+      # comment for the value.
+      Noir::TreeSitter.each_named_arg(pair) do |child|
         case Noir::TreeSitter.node_type(child)
         when "property_identifier", "identifier"
           if key.empty?
@@ -187,7 +189,7 @@ module Noir
         nil
       when "array"
         items = [] of ConfigValue
-        Noir::TreeSitter.each_named_child(node) do |elem|
+        Noir::TreeSitter.each_named_arg(node) do |elem|
           items << decode_value(elem, source, depth + 1)
         end
         items
