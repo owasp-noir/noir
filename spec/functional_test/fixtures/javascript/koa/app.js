@@ -11,7 +11,7 @@ const r = new Router();
 
 app.use(router.routes());
 app.use(userRoutes.routes());
-app.use('/api/v1', apiV1Routes.routes());
+app.use(/* current */ '/api/v1', apiV1Routes.routes());
 app.use(adminRoutes.routes()); // adminRoutes has prefix defined in itself
 app.use('/app_prefix', appRouter.routes());
 
