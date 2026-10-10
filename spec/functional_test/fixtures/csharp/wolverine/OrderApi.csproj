@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <ItemGroup>
+    <PackageReference Include="WolverineFx.Http" Version="3.6.0" />
+    <PackageReference Include="WolverineFx.Http.Marten" Version="3.6.0" />
+  </ItemGroup>
+</Project>

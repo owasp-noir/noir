@@ -28,7 +28,7 @@ class AspnetAuthTagger < FrameworkTagger
   ]
 
   def self.target_techs : Array(String)
-    ["cs_aspnet_mvc", "cs_aspnet_core_mvc", "cs_aspnet_core_minimal_api", "cs_carter"]
+    ["cs_aspnet_mvc", "cs_aspnet_core_mvc", "cs_aspnet_core_minimal_api", "cs_carter", "cs_wolverine"]
   end
 
   private def check_endpoint(endpoint : Endpoint)
