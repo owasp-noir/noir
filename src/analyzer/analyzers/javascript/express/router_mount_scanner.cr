@@ -122,7 +122,7 @@ module Analyzer::Javascript
     def scan
       locator = CodeLocator.instance
       main_files = collect_js_files
-      return scan_register_mounts(main_files, locator) if @framework == :fastify
+      return scan_register_mounts(main_files, locator) if @framework.in?(:fastify, :restify)
       seed_firebase_function_mounts(main_files, locator) if @framework == :express
 
       # Global collections for two-pass processing
@@ -142,29 +142,30 @@ module Analyzer::Javascript
     REGISTER_PREFIX_RE  = /\bprefix\s*:\s*(?:['"]([^'"]+)['"]|`([^`$]+)`)/
     REGISTER_MODULE_RE  = /\A(?:await\s+)?(?:require|import)\s*\(\s*['"]([^'"]+)['"]\s*\)(?:\.default)?\z/
     REGISTER_BINDING_RE = /\A([A-Za-z_$][\w$]*)(?:\.([A-Za-z_$][\w$]*))?\z/
+    # restify-router: `usersRouter.applyRoutes(server, '/users')` and the
+    # nested `router.add('/v1', v1Router)`.
+    APPLY_ROUTES_RE = /((?:require\s*\(\s*['"][^'"]+['"]\s*\))|[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?)\s*\.applyRoutes\s*\(\s*[\w$.]+\s*,\s*(?:['"]([^'"]+)['"]|`([^`$]+)`)/
+    RESTIFY_ADD_RE  = /\.add\s*\(\s*(?:['"]([^'"]+)['"]|`([^`$]+)`)\s*,\s*((?:require\s*\(\s*['"][^'"]+['"]\s*\))|[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?)\s*\)/
 
-    # Fastify `<instance>.register(<plugin>, { prefix: '/p' })` where the
-    # plugin lives in another file: `require('./users')`, `import('./users')`
-    # or an imported binding. Every route the plugin file registers is served
-    # under the prefix, and so is every plugin it registers in turn, so the
-    # register calls form a tree whose roots are the files nothing registers.
-    # Same-file plugins are the route extractor's job (function ranges).
+    # Plugin/router mounts whose child lives in another file:
+    #   Fastify  `<instance>.register(<plugin>, { prefix: '/p' })`
+    #   Restify  `<router>.applyRoutes(server, '/p')`, `router.add('/p', <router>)`
+    # where the child is `require('./users')`, `import('./users')` or an
+    # imported binding. Every route the child file registers is served under
+    # the prefix, and so is every child it mounts in turn, so the mounts form
+    # a tree whose roots are the files nothing mounts. Same-file children are
+    # the route extractor's job.
     private def scan_register_mounts(main_files : Array(String), locator : CodeLocator)
       # from_file => [{prefix, target key, target module file}]
       edges = Hash(String, Array(Tuple(String, Noir::LocatorKey(Array(String)), String))).new
       main_files.each do |file|
         content = CodeLocator.instance.content_for(file) || Noir::TextFile.read(file)
-        next unless content.includes?(".register")
+        next unless @framework == :fastify ? content.includes?(".register") : content.includes?(".applyRoutes") || content.includes?(".add")
         next if Noir::JSRouteExtractor.other_shared_extractor_framework?(content, @framework)
         content = Noir::JSRouteExtractor.strip_js_comments(content)
         imports = nil.as(NamedTuple(require_map: Hash(String, String), function_map: Hash(String, String), var_to_function: Hash(String, String))?)
 
-        content.scan(REGISTER_CALL_RE) do |m|
-          args = extract_use_call_args(content, m.byte_end(0))
-          plugin = first_top_level_argument(args)
-          prefix_match = args[plugin.size..].match(REGISTER_PREFIX_RE)
-          next unless prefix_match
-          prefix = prefix_match[1]? || prefix_match[2]
+        each_plugin_mount(content) do |plugin, prefix|
           next unless mount_prefix?(prefix)
 
           plugin = plugin.strip
@@ -183,7 +184,7 @@ module Analyzer::Javascript
           (edges[Noir::PathScope.expand(file)] ||= [] of Tuple(String, Noir::LocatorKey(Array(String)), String)) << {prefix, target[0], target[1]}
         end
       rescue e : File::Error | IO::Error
-        @logger.debug "Error scanning #{file} for Fastify register mounts (#{e.class}): #{e.message}"
+        @logger.debug "Error scanning #{file} for plugin mounts (#{e.class}): #{e.message}"
       end
 
       registered = edges.values.flat_map(&.map(&.[2])).to_set
@@ -193,13 +194,28 @@ module Analyzer::Javascript
       end
     end
 
+    # Yields each cross-file mount site as {child expression, prefix}.
+    private def each_plugin_mount(content : String, &)
+      if @framework == :fastify
+        content.scan(REGISTER_CALL_RE) do |m|
+          args = extract_use_call_args(content, m.byte_end(0))
+          plugin = first_top_level_argument(args)
+          prefix_match = args[plugin.size..].match(REGISTER_PREFIX_RE)
+          yield plugin, prefix_match[1]? || prefix_match[2] if prefix_match
+        end
+      else
+        content.scan(APPLY_ROUTES_RE) { |m| yield m[1], m[2]? || m[3] }
+        content.scan(RESTIFY_ADD_RE) { |m| yield m[3], m[1]? || m[2] }
+      end
+    end
+
     private def descend_register_mounts(file : String, parent : String,
                                         edges : Hash(String, Array(Tuple(String, Noir::LocatorKey(Array(String)), String))),
                                         locator : CodeLocator, on_path : Set(String))
       edges[file]?.try &.each do |prefix, key, target|
         next if on_path.includes?(target)
         combined = Noir::URLPath.join(parent, prefix)
-        push_prefix_to_locator(locator, key, combined, "Mapped Fastify register prefix: #{target} => #{combined}")
+        push_prefix_to_locator(locator, key, combined, "Mapped plugin mount prefix: #{target} => #{combined}")
         on_path << target
         descend_register_mounts(target, combined, edges, locator, on_path)
         on_path.delete(target)
