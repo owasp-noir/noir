@@ -21,6 +21,7 @@
           "ignored": [
             { "path": "/health", "method_actions": { "GET": { "action": "no_action", "code": 200 } } }
           ],
+          "cache": [ "/v1/catalog" ],
           "url_rewrites": [
             { "path": "/v1/profile", "method": "PUT", "match_pattern": "/v1/profile", "rewrite_to": "/profile" }
           ]
