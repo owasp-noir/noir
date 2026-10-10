@@ -119,7 +119,7 @@ module Noir
       private def emit(call : LibTreeSitter::TSNode, parent : String, absorb : Bool) : Nil
         args = [] of LibTreeSitter::TSNode
         if arguments = Noir::TreeSitter.field(call, "arguments")
-          Noir::TreeSitter.each_named_child(arguments) { |arg| args << arg }
+          Noir::TreeSitter.each_named_arg(arguments) { |arg| args << arg }
         end
         line = Noir::TreeSitter.node_start_row(call) + 1
 
