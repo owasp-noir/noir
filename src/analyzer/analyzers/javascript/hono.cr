@@ -15,8 +15,12 @@ module Analyzer::Javascript
       static_dirs = [] of Hash(String, String)
 
       scan_for_router_mounts
+      # HonoX mounts a route module's `new Hono()` app at the module's file
+      # path (js_honox); read here, its routes would lose that prefix.
+      honox = js_package_owners(["\"honox\""])
 
       parallel_file_scan do |path|
+        next if base_relative_path(path).includes?("/app/routes/") && owned_by_js_package?(path, honox)
         content = read_file_content(path)
         next if Noir::JSRouteExtractor.other_shared_extractor_framework?(content, :hono)
         include_callee = callees_needed?
