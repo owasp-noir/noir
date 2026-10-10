@@ -1,4 +1,5 @@
 require "../../engines/php_engine"
+require "json"
 require "../../../miniparsers/php_class_members"
 
 module Analyzer::Php
@@ -24,7 +25,10 @@ module Analyzer::Php
     DEFAULT_UPDATE_PATH = "/livewire/update"
     # Livewire 2 posts each component to its own `/livewire/message/<name>`.
     V2_MESSAGE_PATH = "/livewire/message/"
-    V2_CONSTRAINT   = /"livewire\/livewire"\s*:\s*"[^"0-9]*2\./
+    # A `require` constraint naming major 2 and no later one (`^2.12`, not
+    # `^2.0 || ^3.0`).
+    V2_MAJOR    = /(?<![\d.])2\./
+    LATER_MAJOR = /(?<![\d.])(?:[3-9]|\d\d)\./
 
     IMPORT_RE       = /Livewire\\(?:Volt\\)?Component\b/
     CLASS_RE        = /(?<!::)\b(abstract\s+)?(?:(?:final|readonly)\s+)*class\s+([A-Za-z_]\w*)\s+extends\s+\\?(?:Livewire\\(?:Volt\\)?)?Component\b[^{;]*\{/
@@ -43,9 +47,9 @@ module Analyzer::Php
     @update_paths = {} of String => String
     @update_path_lock = Mutex.new
     @v2_roots = {} of String => Bool
-    # Project classes extending `Component` by short name, with their
-    # writable props and actions, so `class UsersTable extends BaseTable`
-    # is a component that inherits them.
+    # Project classes extending `Component` by fully qualified name, with
+    # their writable props and actions, so `class UsersTable extends
+    # BaseTable` is a component that inherits them.
     # ponytail: one level deep; a base of a base is not followed.
     alias Members = Tuple(Array(Param), Array(Noir::PhpClassMembers::Member))
     @bases = {} of String => Members
@@ -57,12 +61,14 @@ module Analyzer::Php
         next if path.ends_with?(".blade.php") || !content.matches?(IMPORT_RE)
         lexer = Noir::PhpLexer.new(content)
         masked = lexer.masked.join
+        namespace = NAMESPACE_RE.match(masked).try { |m| "#{m[1]}\\" } || ""
         found = [] of Tuple(String, Members)
-        masked.scan(CLASS_RE) { |m| members(lexer, masked, m).try { |members| found << {m[2], members} } }
+        masked.scan(CLASS_RE) { |m| members(lexer, masked, m).try { |members| found << {namespace + m[2], members} } }
         found
       end.each { |found| found.each { |name, members| @bases[name] = members } }
       unless @bases.empty?
-        @subclass_re = /(?<!::)\b(abstract\s+)?(?:(?:final|readonly)\s+)*class\s+([A-Za-z_]\w*)\s+extends\s+\\?(?:[\w\\]+\\)?(#{@bases.keys.join('|')})\b[^{;]*\{/
+        names = @bases.keys.map(&.split('\\').last).uniq!.join('|')
+        @subclass_re = /(?<!::)\b(abstract\s+)?(?:(?:final|readonly)\s+)*class\s+([A-Za-z_]\w*)\s+extends\s+(\\?(?:[\w\\]+\\)?(?:#{names}))\b[^{;]*\{/
       end
 
       super
@@ -85,7 +91,7 @@ module Analyzer::Php
         @update_path_lock.synchronize { @update_paths[root] = "/" + m[1].lstrip('/') }
       end
       imports = content.matches?(IMPORT_RE)
-      subclass_re = @subclass_re if content.includes?("extends")
+      subclass_re = @subclass_re.try { |re| re if content.matches?(re) }
       return endpoints unless imports || subclass_re
 
       lexer = Noir::PhpLexer.new(content)
@@ -100,7 +106,11 @@ module Analyzer::Php
           next unless class_re
           masked.scan(class_re) do |decl|
             # Abstract base components are never mounted.
-            emit(endpoints, lexer, masked, decl, prefix + kebab(decl[2]), path, decl[3]?.try { |base| @bases[base]? }) unless decl[1]?
+            next if decl[1]?
+            # A same-named class from another namespace is not the base.
+            inherited = decl[3]?.try { |base| @bases[qualified_name(masked, base)]? }
+            next if decl[3]? && inherited.nil?
+            emit(endpoints, lexer, masked, decl, prefix + kebab(decl[2]), path, inherited)
           end
         end
       end
@@ -158,12 +168,27 @@ module Analyzer::Php
       end
     end
 
+    USE_RE = /^\s*use\s+\\?([\w\\]+)(?:\s+as\s+(\w+))?\s*;/m
+
+    # `written` as PHP resolves it in this file: `\A\B` as is, else through
+    # a `use` import of its first segment, else under the file's namespace.
+    private def qualified_name(masked : String, written : String) : String
+      return written.lchop('\\') if written.starts_with?('\\')
+      head, sep, rest = written.partition('\\')
+      masked.scan(USE_RE) do |m|
+        next unless (m[2]? || m[1].split('\\').last) == head
+        return sep.empty? ? m[1] : "#{m[1]}\\#{rest}"
+      end
+      NAMESPACE_RE.match(masked).try { |m| "#{m[1]}\\#{written}" } || written
+    end
+
     private def livewire_v2?(path : String) : Bool
       root = composer_project_root(path)
       return false if root.empty?
       @update_path_lock.synchronize do
         @v2_roots.fetch(root) do
-          @v2_roots[root] = (read_file_content(File.join(root, "composer.json")).matches?(V2_CONSTRAINT) rescue false)
+          constraint = (JSON.parse(read_file_content(File.join(root, "composer.json")))["require"]["livewire/livewire"].as_s rescue "")
+          @v2_roots[root] = constraint.matches?(V2_MAJOR) && !constraint.matches?(LATER_MAJOR)
         end
       end
     end
