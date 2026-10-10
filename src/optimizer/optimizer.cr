@@ -20,6 +20,8 @@ class EndpointOptimizer
   # imported collection when they sort before the implementation endpoint.
   SPECIFICATION_TECHNOLOGIES = Set{"oas2", "oas3", "grpc", "thrift", "graphql_sdl", "graphql_operation"}
 
+  AI_FOLD_PLACEHOLDER_RE = /\A(?::\w+|\{[^}]*\}|<[^>]*>|\[[^\]]*\])\z/
+
   @logger : NoirLogger
   @options : Hash(String, YAML::Any)
   @pvalue_rules : Hash(String, Array(PValueRule))
@@ -88,6 +90,7 @@ class EndpointOptimizer
     final_map = {} of Tuple(String, String, String) => Endpoint
     duplicate_count = 0
     allowed_methods = get_allowed_methods
+    endpoints = fold_ai_into_static(endpoints)
     cross_tech_keys = cross_technology_duplicate_keys(endpoints, allowed_methods)
 
     # `parallel_analyze` does not preserve input order: files go to N
@@ -219,6 +222,34 @@ class EndpointOptimizer
     @logger.verbose_sub "➔ Total duplicated endpoints: #{duplicate_count}"
     merged = merge_concrete_example_endpoints(final_map.values)
     prune_collection_graphql_transport_endpoints(merged)
+  end
+
+  # An AI endpoint that names a static route under any path-param spelling
+  # (`:id`, `{id}`, `<int:id>`, `[id]`) folds into the static one: its
+  # technology, code path and params stay primary, the AI's non-path params
+  # and its `ai` technology ride along as evidence. Only AI-vs-static pairs
+  # are compared, so static-vs-static dedup is unchanged.
+  private def fold_ai_into_static(endpoints : Array(Endpoint)) : Array(Endpoint)
+    ai, static = endpoints.partition { |endpoint| endpoint.details.technology == "ai" }
+    return endpoints if ai.empty? || static.empty?
+
+    static = static.sort_by { |endpoint| endpoint_order_key(endpoint) }
+    index = {} of Tuple(String, String) => Int32
+    static.each_with_index { |endpoint, idx| index[ai_fold_key(endpoint)] ||= idx }
+
+    unmatched = ai.reject do |endpoint|
+      next false unless idx = index[ai_fold_key(endpoint)]?
+      endpoint.params = endpoint.params.reject { |param| param.param_type == "path" }
+      merge_params(static[idx], endpoint)
+      static[idx] = absorb_technologies(static[idx], endpoint)
+      true
+    end
+    static + unmatched
+  end
+
+  private def ai_fold_key(endpoint : Endpoint) : Tuple(String, String)
+    segments = endpoint.url.split('?').first.split('/').reject(&.empty?)
+    {endpoint.method.upcase, "/" + segments.map { |seg| seg.matches?(AI_FOLD_PLACEHOLDER_RE) ? "{}" : seg }.join('/')}
   end
 
   private def merge_params(target : Endpoint, source : Endpoint, drop_collection_noise : Bool = false) : Nil

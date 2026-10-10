@@ -22,6 +22,29 @@ describe "EndpointOptimizer" do
   end
 
   describe "optimize_endpoints" do
+    it "folds an AI endpoint into the static route under a different param spelling" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      static = tech_endpoint("/users/:id", "GET", "js_express", "server.js", 4)
+      ai = Endpoint.new("/users/{id}", "GET", [Param.new("id", "", "path"), Param.new("q", "", "query")], Details.new(PathInfo.new("server.js")))
+      ai_details = ai.details
+      ai_details.technology = "ai"
+      ai.details = ai_details
+      login_ai = Endpoint.new("/login", "POST", [] of Param, ai_details)
+      login = tech_endpoint("/login", "POST", "js_express", "server.js", 5)
+      other_ai = Endpoint.new("/only/ai", "GET", [] of Param, ai_details)
+
+      result = optimizer.optimize_endpoints([ai, static, login_ai, login, other_ai])
+      result.size.should eq(3)
+      user = result.find!(&.url.==("/users/:id"))
+      user.details.technology.should eq("js_express")
+      user.details.technologies.should eq(["ai", "js_express"])
+      user.details.code_paths.map(&.line).should eq([4])
+      user.params.map(&.name).should eq(["q"])
+      result.find!(&.url.==("/login")).details.technology.should eq("js_express")
+      result.find!(&.url.==("/login")).details.code_paths.size.should eq(1)
+      result.find!(&.url.==("/only/ai")).details.technology.should eq("ai")
+    end
+
     it "removes duplicated endpoints" do
       optimizer = EndpointOptimizer.new(logger, options)
       endpoints = [
