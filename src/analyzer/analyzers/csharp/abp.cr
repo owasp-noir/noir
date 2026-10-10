@@ -59,7 +59,8 @@ module Analyzer::CSharp
     NON_ACTION_RE  = /\[\s*NonAction\b/
     HTTP_ATTR_RE   = /\bHttp(Get|Post|Put|Delete|Patch|Head|Options)(?:Attribute)?\s*(?:\(\s*@?"([^"]*)")?/
     ROUTE_ATTR_RE  = /\bRoute(?:Attribute)?\s*\(\s*@?"([^"]*)"/
-    METHOD_RE      = /^\s*public\s+(?:(?:virtual|override|async|new|sealed)\s+)*(?!static\b|abstract\b|class\b|record\b|struct\b|interface\b|enum\b|event\b|const\b|delegate\b)[\w<>\[\],.?\s]+?\s+(\w+)\s*(?:<[^()]*>)?\s*\(/
+    # The return type may be a tuple: `Task<(int Count, string Name)>`.
+    METHOD_RE = /^\s*public\s+(?:(?:virtual|override|async|new|sealed)\s+)*(?!static\b|abstract\b|class\b|record\b|struct\b|interface\b|enum\b|event\b|const\b|delegate\b)(?:[\w<>\[\],.?\s]|\([^()]*\))+?\s+(\w+)\s*(?:<[^()]*>)?\s*\(/
 
     PRIMITIVE_TYPES = Set{
       "string", "int", "long", "short", "byte", "sbyte", "uint", "ulong", "ushort",

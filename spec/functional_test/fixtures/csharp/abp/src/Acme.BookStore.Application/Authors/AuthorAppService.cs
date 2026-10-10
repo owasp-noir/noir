@@ -27,6 +27,12 @@ public class AuthorAppService :
     {
         return base.DeleteAsync(id);
     }
+
+    // A tuple return type.
+    public async Task<(int Count, string Name)> GetStatsAsync()
+    {
+        return (0, "");
+    }
 }
 
 // Not exposed: the whole service opts out of remoting.
