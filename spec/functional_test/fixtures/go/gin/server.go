@@ -9,7 +9,7 @@ import (
 func main() {
 	r := gin.Default()
 	r.GET("/ping", func(c *gin.Context) {
-		_ = c.DefaultQuery("name", "Guest")
+		_ = c.DefaultQuery(/* display name */ "name", "Guest")
 		_ = c.Query("age")
 
 		c.JSON(http.StatusOK, gin.H{

@@ -17,7 +17,7 @@ func main() {
 
 	app.Post("/update", func(c *fiber.Ctx) error {
 		msg := "Hello, World!"
-		c.Cookies("auth")
+		c.Cookies(/* session */ "auth")
 		c.FormValue("name")
 		c.GetRespHeader("X-API-Key")
 		c.Vary("Origin")

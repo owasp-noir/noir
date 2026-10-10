@@ -26,7 +26,7 @@ module Analyzer::Go
         content = file_contents[path]? || read_file_content(path)
         dir = File.dirname(path)
         next unless framework_route_source_candidate?(content, dir, framework_dirs, IMPORT_MARKER, ["Add", "Static"])
-        lines = content.lines
+        lines = GoEngine.strip_comments(content).lines
         last_endpoint = Endpoint.new("", "")
 
         # Tree-sitter pre-pass for Fiber's verb-method routes.
@@ -129,14 +129,14 @@ module Analyzer::Go
       end
 
       if line.includes?("GetRespHeader(")
-        match = line.match(/GetRespHeader\(\"(.*)\"\)/)
+        match = line.match(/GetRespHeader\(\s*\"(.*)\"\s*\)/)
         if match
           ep.params << Param.new(match[1], "", "header")
         end
       end
 
       if line.includes?("Vary(")
-        match = line.match(/Vary\(\"(.*)\"\)/)
+        match = line.match(/Vary\(\s*\"(.*)\"\s*\)/)
         if match
           ep.params << Param.new("Vary", match[1], "header")
         end
@@ -144,7 +144,7 @@ module Analyzer::Go
 
       if line.includes?("Cookies(") &&
          !line.includes?("Header.Get") && !line.includes?("Cookie.Get")
-        match = line.match(/Cookies\(\"(.*)\"\)/)
+        match = line.match(/Cookies\(\s*\"(.*)\"\s*\)/)
         if match
           ep.params << Param.new(match[1], "", "cookie")
         end

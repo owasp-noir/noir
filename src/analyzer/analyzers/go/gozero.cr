@@ -45,7 +45,7 @@ module Analyzer::Go
         # `.api` files are gozero's DSL (no Go imports);
         # only gate `.go` files on the import marker.
         next if File.extname(path) == ".go" && !content_matches?(content, IMPORT_MARKER_RE)
-        lines = content.lines
+        lines = GoEngine.strip_comments(content).lines
         last_endpoint = Endpoint.new("", "")
 
         # Go files: tree-sitter pre-pass (same verb-on-identifier

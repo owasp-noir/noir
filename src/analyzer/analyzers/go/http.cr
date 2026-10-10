@@ -75,7 +75,7 @@ module Analyzer::Go
         # splitting the file into lines.
         next if ts_routes.empty?
 
-        lines = content.lines
+        lines = GoEngine.strip_comments(content).lines
         last_endpoint = Endpoint.new("", "")
 
         routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new

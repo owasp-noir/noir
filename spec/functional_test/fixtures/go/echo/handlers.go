@@ -25,7 +25,7 @@ func setupRoutes(e *echo.Echo) {
 
 	// Multiple query params in one handler
 	e.GET("/search", func(c echo.Context) error {
-		_ = c.QueryParam("q")
+		_ = c.QueryParam(/* search */ "q")
 		_ = c.QueryParam("page")
 		_ = c.QueryParam("limit")
 		return c.JSON(http.StatusOK, nil)
