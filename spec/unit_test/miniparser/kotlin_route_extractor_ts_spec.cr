@@ -867,4 +867,19 @@ describe Noir::TreeSitterKotlinRouteExtractor do
     source = "@RestController\nclass Deep {\n    @GetMapping(#{nested})\n    fun deep(): String = \"\"\n}\n"
     Noir::TreeSitterKotlinRouteExtractor.extract_routes(source).should be_a(Array(Noir::TreeSitterKotlinRouteExtractor::Route))
   end
+
+  it "decodes escapes in plain strings but not in raw strings" do
+    source = <<-'KT'
+      @RestController
+      class K {
+          @GetMapping("/say/\"hi\"")
+          fun a(): String = ""
+
+          @GetMapping("""/raw/\d""")
+          fun b(): String = ""
+      }
+      KT
+
+    Noir::TreeSitterKotlinRouteExtractor.extract_routes(source).map(&.path).should eq([%(/say/"hi"), %(/raw/\\d)])
+  end
 end

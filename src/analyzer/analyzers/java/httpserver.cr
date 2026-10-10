@@ -629,7 +629,12 @@ module Analyzer::Java
     private def decode_string_literal(node : LibTreeSitter::TSNode, content : String) : String
       String.build do |io|
         Noir::TreeSitter.each_named_child(node) do |child|
-          io << Noir::TreeSitter.node_text(child, content) if Noir::TreeSitter.node_type(child) == "string_fragment"
+          case Noir::TreeSitter.node_type(child)
+          when "string_fragment"
+            io << Noir::TreeSitter.node_text(child, content)
+          when "escape_sequence"
+            io << Noir::TreeSitter.unescape(Noir::TreeSitter.node_text(child, content))
+          end
         end
       end
     end

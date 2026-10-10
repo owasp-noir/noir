@@ -660,7 +660,7 @@ module Noir
       buf = String.build do |io|
         Noir::TreeSitter.each_named_child(node) do |child|
           if Noir::TreeSitter.node_type(child) == "string_content"
-            io << Noir::TreeSitter.node_text(child, source)
+            io << Noir::TreeSitter.kotlin_string_content(child, node, source)
           end
         end
       end

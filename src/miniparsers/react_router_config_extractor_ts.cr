@@ -169,6 +169,7 @@ module Noir
           Noir::TreeSitter.each_named_child(node) do |child|
             case Noir::TreeSitter.node_type(child)
             when "string_fragment"       then io << text(child)
+            when "escape_sequence"       then io << Noir::TreeSitter.unescape(text(child))
             when "template_substitution" then return
             end
           end

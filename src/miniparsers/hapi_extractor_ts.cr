@@ -315,15 +315,16 @@ module Noir
     end
 
     # tree-sitter-javascript wraps string contents in
-    # `string_fragment` named children — template literals included.
-    # Escapes get additional siblings we skip, which keeps the simple
-    # case correct without choking on the rest.
+    # `string_fragment` named children — template literals included —
+    # with each escape as an `escape_sequence` sibling.
     private def decode_string(node : LibTreeSitter::TSNode, source : String) : String
       buf = String.build do |io|
         Noir::TreeSitter.each_named_child(node) do |child|
           case Noir::TreeSitter.node_type(child)
           when "string_fragment"
             io << Noir::TreeSitter.node_text(child, source)
+          when "escape_sequence"
+            io << Noir::TreeSitter.unescape(Noir::TreeSitter.node_text(child, source))
           when "template_substitution"
             # `` `/users/${id}` `` — keep the hole as a `{id}` placeholder
             # rather than dropping it, which would collapse the path to

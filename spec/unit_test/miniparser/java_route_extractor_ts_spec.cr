@@ -562,4 +562,15 @@ describe Noir::TreeSitterJavaRouteExtractor do
       {"CatalogController", ["CatalogApi", "BaseController"], ["/api"]},
     ])
   end
+
+  it "decodes escape sequences in string literals" do
+    source = <<-'JAVA'
+      public class K {
+          @GetMapping("/caf\u00e9/tab\\path\"quoted")
+          public String a() { return ""; }
+      }
+      JAVA
+
+    Noir::TreeSitterJavaRouteExtractor.extract_routes(source).map(&.path).should eq([%(/café/tab\\path"quoted)])
+  end
 end

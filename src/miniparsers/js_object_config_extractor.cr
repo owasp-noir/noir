@@ -207,6 +207,7 @@ module Noir
         Noir::TreeSitter.each_named_child(node) do |child|
           type = Noir::TreeSitter.node_type(child)
           io << Noir::TreeSitter.node_text(child, source) if type == "string_fragment" || type == "template_string_fragment"
+          io << Noir::TreeSitter.unescape(Noir::TreeSitter.node_text(child, source)) if type == "escape_sequence"
         end
       end
       return buf unless buf.empty?

@@ -420,6 +420,8 @@ module Noir
           case Noir::TreeSitter.node_type(child)
           when "string_fragment"
             io << Noir::TreeSitter.node_text(child, source)
+          when "escape_sequence"
+            io << Noir::TreeSitter.unescape(Noir::TreeSitter.node_text(child, source))
           when "template_substitution"
             # `` `/users/${id}` `` — keep the hole as a `{id}` placeholder
             # rather than dropping it, which would collapse the path to

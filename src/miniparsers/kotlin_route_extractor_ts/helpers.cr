@@ -527,7 +527,7 @@ module Noir
         Noir::TreeSitter.each_named_child(node) do |child|
           case Noir::TreeSitter.node_type(child)
           when "string_content"
-            io << Noir::TreeSitter.node_text(child, source)
+            io << Noir::TreeSitter.kotlin_string_content(child, node, source)
           when "interpolated_identifier", "interpolated_expression"
             ident = Noir::TreeSitter.node_text(child, source).strip
             resolved = (local_constants.try &.[ident]?) || (constants.try &.[ident]?)
