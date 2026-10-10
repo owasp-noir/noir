@@ -73,3 +73,17 @@ FunctionalTester.new("fixtures/python/graphene_composed/", {
     Param.new("force", "", "json"),
   ]),
 ]).perform_tests
+
+# Two apps under one scan base: `billing/` binds its root with
+# `graphene.Schema` and mounts it at /billing/graphql/; `catalog/` relies on
+# the conventional `Query` name and the default mount. Neither app's binding
+# or mount applies to the other.
+FunctionalTester.new("fixtures/python/graphene_multi_app/", {
+  :techs     => 1,
+  :endpoints => 2,
+}, [
+  Endpoint.new("/billing/graphql/#Query.invoice", "POST", [Param.new("number", "", "json")]),
+  Endpoint.new("/graphql#Query.product", "POST", [Param.new("slug", "", "json")]),
+], {
+  "only_techs" => YAML::Any.new("python_graphene"),
+}).perform_tests

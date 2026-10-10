@@ -68,9 +68,9 @@ module Noir
         outline(klass.path).library?
       end
 
-      # The one mount path every file agrees on, else nil.
-      def mount_path : String?
-        paths = @outlines.flat_map(&.mounts).uniq!
+      # The one mount path every file of `group` (one app) agrees on, else nil.
+      def mount_path(group : Array(FileOutline) = @outlines) : String?
+        paths = group.flat_map(&.mounts).uniq!
         paths.first if paths.size == 1
       end
 
@@ -85,9 +85,11 @@ module Noir
       # Root kind, class and camelCase flag of every `Schema(query=...,
       # mutation=..., subscription=...)` binding. With none resolved, the
       # classes named Query / Mutation / Subscription that `accept` takes.
-      def roots(& : ClassDecl -> Bool) : Array({String, ClassDecl, Bool})
+      # Both are looked for in `group` (one app) only; references still
+      # resolve across every outline.
+      def roots(group : Array(FileOutline) = @outlines, & : ClassDecl -> Bool) : Array({String, ClassDecl, Bool})
         roots = [] of {String, ClassDecl, Bool}
-        @outlines.each do |outline|
+        group.each do |outline|
           outline.schema_calls.each do |call|
             ROOT_KINDS.each_with_index do |(keyword, kind), i|
               ref = call.keywords[keyword]? || call.positional[i]?
@@ -97,8 +99,9 @@ module Noir
           end
         end
         return roots unless roots.empty?
+        paths = group.map(&.path).to_set
         ROOT_KINDS.each_value do |kind|
-          @classes[kind]?.try &.each { |c| roots << {kind, c, true} if yield c }
+          @classes[kind]?.try &.each { |c| roots << {kind, c, true} if paths.includes?(c.path) && yield c }
         end
         roots
       end
