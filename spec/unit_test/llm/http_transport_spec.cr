@@ -157,6 +157,16 @@ describe LLM::HttpTransport do
     end
   end
 
+  describe ".read_timeout?" do
+    it "retries only connect failures" do
+      LLM::HttpTransport.read_timeout?(IO::TimeoutError.new("Read timed out")).should be_true
+      LLM::HttpTransport.read_timeout?(IO::TimeoutError.new("Write timed out")).should be_true
+      LLM::HttpTransport.read_timeout?(IO::TimeoutError.new("Connect timed out")).should be_false
+      LLM::HttpTransport.read_timeout?(IO::TimeoutError.new("connect timed out")).should be_false
+      LLM::HttpTransport.read_timeout?(IO::Error.new("Connection reset by peer")).should be_false
+    end
+  end
+
   describe ".post_json_result" do
     it "does not retry a read timeout" do
       server = TCPServer.new("127.0.0.1", 0)

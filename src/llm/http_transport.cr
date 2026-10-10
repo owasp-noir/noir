@@ -1,4 +1,4 @@
-require "base64"
+require "http_proxy"
 require "http/client"
 require "uri"
 require "../utils/redact"
@@ -206,31 +206,19 @@ module LLM
         response = nil
         error = nil
 
-        retryable = true
         begin
-          io = connect(uri, proxy)
-          begin
-            response = execute(io, uri, proxy, body, headers)
-          rescue e : IO::TimeoutError
-            # Connected, then timed out: the model was still generating.
-            # Another attempt waits the whole budget again and may pay for
-            # the same generation twice, so only connect failures retry.
-            error = e
-            retryable = false
-          ensure
-            io.close rescue nil
-          end
-          if response && response.success?
+          response = execute(uri, proxy, body, headers)
+          if response.success?
             record_usage(response.body)
             return response.body
           end
         rescue e : IO::Error
-          # Refused connections, connect timeouts and resets all arrive
-          # as IO::Error subclasses.
+          # Refused connections, timeouts and resets all arrive as
+          # IO::Error subclasses.
           error = e
         end
 
-        retryable &&= !error.nil? || (response && retryable_status?(response.status_code))
+        retryable = error ? !read_timeout?(error) : response.try { |r| retryable_status?(r.status_code) }
         if retryable && attempt < MAX_ATTEMPTS
           sleep retry_delay(response, attempt)
           next
@@ -274,64 +262,35 @@ module LLM
       end
     end
 
-    # Opens the socket a request goes over: direct, or through a proxy
-    # (`HTTP::Client` has no proxy support). https tunnels with CONNECT;
-    # plain http sends the absolute URL to the proxy (see `execute`).
-    private def self.connect(uri : URI, proxy : URI?) : IO
-      host = uri.hostname || raise IO::Error.new("AI provider URL has no host: #{uri}")
-      port = uri.port || (uri.scheme == "https" ? 443 : 80)
-      socket = if proxy
-                 TCPSocket.new(proxy.hostname.to_s, proxy.port || 80, connect_timeout: connect_timeout)
-               else
-                 TCPSocket.new(host, port, connect_timeout: connect_timeout)
-               end
+    # A timeout once connected means the model was still generating:
+    # another attempt waits the whole budget again and may pay for the same
+    # generation twice. Only a connect timeout is worth retrying.
+    # ponytail: told apart by the event loop's message ("Connect timed out",
+    # libevent's "connect timed out"); a loop that words it differently
+    # just loses the connect retry.
+    def self.read_timeout?(error : Exception) : Bool
+      error.is_a?(IO::TimeoutError) && !error.message.to_s.downcase.starts_with?("connect")
+    end
+
+    # `HTTP::Client` has no proxy support of its own; the `http_proxy` shard
+    # (already in the build through crest) adds `#proxy=`, which tunnels
+    # https with CONNECT. Plain http goes to the proxy with the absolute URL.
+    private def self.execute(uri : URI, proxy : URI?, body : String, headers : HTTP::Headers) : HTTP::Client::Response
+      client = HTTP::Client.new(uri)
       begin
-        # The tunnel and the TLS handshake are part of connecting, so they
-        # get the short budget; the request itself gets the long one.
-        socket.read_timeout = connect_timeout
-        socket.write_timeout = connect_timeout
-        io = socket
-        if uri.scheme == "https"
-          tunnel(socket, proxy, "#{uri.host}:#{port}") if proxy
-          io = OpenSSL::SSL::Socket::Client.new(socket, sync_close: true, hostname: host)
+        client.connect_timeout = connect_timeout
+        client.read_timeout = timeout
+        client.write_timeout = timeout
+        target = uri.request_target
+        if proxy
+          client.proxy = HTTP::Proxy::Client.new(proxy.hostname.to_s, proxy.port || 80,
+            username: proxy.user.try { |u| URI.decode(u) }, password: proxy.password.try { |p| URI.decode(p) })
+          target = uri.to_s if uri.scheme == "http"
         end
-        socket.read_timeout = timeout
-        socket.write_timeout = timeout
-        io
-      rescue e
-        socket.close
-        raise e
+        client.post(target, headers: headers, body: body)
+      ensure
+        client.close
       end
-    end
-
-    private def self.tunnel(socket : IO, proxy : URI, authority : String) : Nil
-      socket << "CONNECT #{authority} HTTP/1.1\r\nHost: #{authority}\r\n"
-      if auth = proxy_authorization(proxy)
-        socket << "Proxy-Authorization: " << auth << "\r\n"
-      end
-      socket << "\r\n"
-      socket.flush
-      status = socket.gets.to_s
-      while (line = socket.gets) && !line.empty?
-      end
-      return if status.matches?(/\AHTTP\/1\.[01] 200\b/)
-      raise IO::Error.new("proxy #{proxy.hostname}:#{proxy.port} refused CONNECT to #{authority}: #{status}")
-    end
-
-    private def self.proxy_authorization(proxy : URI) : String?
-      return unless user = proxy.user
-      "Basic #{Base64.strict_encode("#{URI.decode(user)}:#{URI.decode(proxy.password.to_s)}")}"
-    end
-
-    private def self.execute(io : IO, uri : URI, proxy : URI?, body : String, headers : HTTP::Headers) : HTTP::Client::Response
-      headers = headers.dup
-      headers["Host"] = uri.port ? "#{uri.host}:#{uri.port}" : uri.host.to_s
-      target = uri.request_target
-      if proxy && uri.scheme == "http"
-        target = uri.to_s
-        proxy_authorization(proxy).try { |auth| headers["Proxy-Authorization"] = auth }
-      end
-      HTTP::Client.new(io).post(target, headers: headers, body: body)
     end
   end
 end
