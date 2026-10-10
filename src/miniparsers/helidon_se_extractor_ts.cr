@@ -176,7 +176,7 @@ module Noir
                            include_callees : Bool)
       args = argument_list_node(call)
       return unless args
-      return if LibTreeSitter.ts_node_named_child_count(args) < 2
+      return if Noir::TreeSitter.named_arg_count(args) < 2
 
       path_arg = first_string_argument(call, source, constants)
       return unless path_arg
@@ -233,7 +233,7 @@ module Noir
       return unless args
 
       children = [] of LibTreeSitter::TSNode
-      Noir::TreeSitter.each_named_child(args) { |child| children << child }
+      Noir::TreeSitter.each_named_arg(args) { |child| children << child }
       return if children.empty?
 
       prefix = ""
@@ -346,7 +346,7 @@ module Noir
     private def header_name_argument(call : LibTreeSitter::TSNode, source : String) : String?
       args = argument_list_node(call)
       return unless args
-      Noir::TreeSitter.each_named_child(args) do |arg|
+      Noir::TreeSitter.each_named_arg(args) do |arg|
         next unless Noir::TreeSitter.node_type(arg) == "method_invocation"
         name = method_invocation_method_name(arg, source)
         next unless name == "create" || name == "createFromLowercase"
@@ -360,7 +360,7 @@ module Noir
     private def first_class_literal_type(call : LibTreeSitter::TSNode, source : String) : String?
       args = argument_list_node(call)
       return unless args
-      Noir::TreeSitter.each_named_child(args) do |arg|
+      Noir::TreeSitter.each_named_arg(args) do |arg|
         next unless Noir::TreeSitter.node_type(arg) == "class_literal"
         Noir::TreeSitter.each_named_child(arg) do |child|
           if Noir::TreeSitter.node_type(child) == "type_identifier"
@@ -414,7 +414,7 @@ module Noir
                                       constants : Hash(String, String)) : String?
       args = argument_list_node(call)
       return unless args
-      Noir::TreeSitter.each_named_child(args) do |arg|
+      Noir::TreeSitter.each_named_arg(args) do |arg|
         case Noir::TreeSitter.node_type(arg)
         when "string_literal", "identifier", "field_access", "scoped_identifier", "binary_expression", "parenthesized_expression"
           if value = resolve_string_value(arg, source, constants)
@@ -471,7 +471,7 @@ module Noir
     private def lambda_body_in_args(call : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
       args = argument_list_node(call)
       return unless args
-      Noir::TreeSitter.each_named_child(args) do |arg|
+      Noir::TreeSitter.each_named_arg(args) do |arg|
         next unless Noir::TreeSitter.node_type(arg) == "lambda_expression"
         Noir::TreeSitter.each_named_child(arg) do |child|
           ty = Noir::TreeSitter.node_type(child)
@@ -488,7 +488,7 @@ module Noir
       args = argument_list_node(call)
       return unless args
 
-      Noir::TreeSitter.each_named_child(args) do |arg|
+      Noir::TreeSitter.each_named_arg(args) do |arg|
         next unless Noir::TreeSitter.node_type(arg) == "method_reference"
 
         method_name = Noir::TreeSitter.node_text(arg, source).split("::").last?.to_s

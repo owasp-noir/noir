@@ -20,6 +20,6 @@ public final class Main {
     static void routing(HttpRouting.Builder routing) {
         routing.get("/health", (req, res) -> res.send("OK"))
                .any("/ping", (req, res) -> res.send("pong"))
-               .register("/greet", new GreetService());
+               .register(/* mount prefix */ "/greet", new GreetService());
     }
 }

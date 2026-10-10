@@ -468,6 +468,13 @@ module Noir::TreeSitter
     each_named_child(node) { |child| yield child unless node_type(child).ends_with?("comment") }
   end
 
+  # Argument count with comments skipped, see `each_named_arg`.
+  def self.named_arg_count(node : LibTreeSitter::TSNode) : Int32
+    count = 0
+    each_named_arg(node) { count += 1 }
+    count
+  end
+
   # Runs the block one level deeper on the same budget as
   # `each_named_child`, or returns nil without running it once that budget
   # is spent. For recursion that descends through `field(...)` instead —
