@@ -215,7 +215,7 @@ module Analyzer::Python
       sources = [] of Tuple(::String, ::String)
       python_source_files.each do |file|
         content = read_file_content(file) rescue next
-        sources << {file, content} if content.includes?("URLRouter") || content.includes?("websocket_urlpatterns")
+        sources << {file, channels_code(content)} if content.includes?("URLRouter") || content.includes?("websocket_urlpatterns")
       end
       return endpoints if sources.empty?
 
@@ -232,6 +232,14 @@ module Analyzer::Python
         channels_list_endpoints(file, content, "websocket_urlpatterns", "", visited, endpoints)
       end
       endpoints
+    end
+
+    # `content` with comments cut and docstring lines blanked (line count
+    # kept), so a commented-out or documented `URLRouter(...)` is not a route.
+    private def channels_code(content : ::String) : ::String
+      lines = content.split('\n')
+      docstring = Helper.docstring_line_flags(lines)
+      lines.map_with_index { |line, idx| docstring[idx] ? "" : strip_python_comment(line) }.join('\n')
     end
 
     # The argument text of the `URLRouter(` whose `(` sits at char `open`.
@@ -264,18 +272,19 @@ module Analyzer::Python
         end
         unless module_name.empty?
           target = channels_module_file(file, module_name) || return
-          return channels_list_endpoints(target, read_file_content(target), name, prefix, visited, endpoints)
+          return channels_list_endpoints(target, channels_code(read_file_content(target)), name, prefix, visited, endpoints)
         end
       end
 
-      route_path = PathInfo.new(file)
+      list_start = content.index(list) || 0
       extract_route_mappings(list).each do |route, view|
         url = join_url_parts(prefix, normalize_django_route(route))
+        line = route.empty? ? nil : content.index(route, list_start).try { |idx| content[0, idx].count('\n') + 1 }
         if router = view.index("URLRouter(")
           inner = channels_router_arg(view, router + "URLRouter".size)
           channels_list_endpoints(file, content, inner, url, visited, endpoints) if inner
         else
-          endpoint = Endpoint.new(url, "GET", Details.new(route_path))
+          endpoint = Endpoint.new(url, "GET", Details.new(PathInfo.new(file, line)))
           endpoint.protocol = "ws"
           endpoints << endpoint
         end

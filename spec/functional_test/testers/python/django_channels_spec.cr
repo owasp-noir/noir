@@ -6,6 +6,7 @@ require "../../func_spec.cr"
 # `websocket_urlpatterns`. `chat/routing.py`'s `unused_patterns` is never
 # handed to a URLRouter, so `/not-mounted/` must not appear, and the nested
 # inline `URLRouter([...])` body must not leak out as a bare `/chat/`.
+# A commented-out or docstring `URLRouter` in `asgi.py` is not a router.
 ws = ->(url : String, params : Array(Param)) do
   ep = Endpoint.new(url, "GET", params)
   ep.protocol = "ws"
@@ -21,7 +22,20 @@ expected_endpoints = [
   ws.call("/ws/notes/", [] of Param),
 ]
 
-FunctionalTester.new("fixtures/python/django_channels/", {
+tester = FunctionalTester.new("fixtures/python/django_channels/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
-}, expected_endpoints).perform_tests
+}, expected_endpoints)
+tester.perform_tests
+
+describe "Django Channels route lines", tags: "functional" do
+  it "points each WebSocket route at its path() line" do
+    lines = tester.endpoints.select(&.protocol.==("ws")).to_h do |ep|
+      info = ep.details.code_paths.first
+      {ep.url, "#{File.basename(info.path)}:#{info.line}"}
+    end
+    lines["/ws/chat/<str:room_name>/"].should eq("routing.py:6")
+    lines["/game/lobby/chat/"].should eq("routing.py:9")
+    lines["/live/{feed}/"].should eq("asgi.py:31")
+  end
+end
