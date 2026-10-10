@@ -29,7 +29,7 @@ public static class OrderEndpoints
     public static void Delete([Document] Order order, IDocumentSession session) => session.Delete(order);
 
     [WolverinePatch("/orders/{id}/note")]
-    public static void Note(int id, [FromQuery] string reason, NotePatch patch) { }
+    public static void Note (int id, [FromQuery(Name = "reason")] string why, NotePatch patch) { }
 
     // An attribute list split over several lines.
     [WolverinePost("/orders/{id}/refund",
