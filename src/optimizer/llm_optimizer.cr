@@ -62,12 +62,8 @@ class LLMEndpointOptimizer < EndpointOptimizer
     end
 
     # One metered request per candidate: say how many before paying.
-    if candidate_indexes.size > MAX_OPTIMIZE_REQUESTS
-      @logger.info "LLM optimizer: #{candidate_indexes.size} candidate endpoints, optimizing the first #{MAX_OPTIMIZE_REQUESTS}."
-      candidate_indexes = candidate_indexes.first(MAX_OPTIMIZE_REQUESTS)
-    else
-      @logger.info "LLM optimizer: #{candidate_indexes.size} candidate endpoint(s)."
-    end
+    @logger.info "LLM optimizer: #{candidate_indexes.size} candidate endpoint(s), sending at most #{MAX_OPTIMIZE_REQUESTS}."
+    candidate_indexes = candidate_indexes.first(MAX_OPTIMIZE_REQUESTS)
 
     results = optimize_concurrently(candidate_indexes.map { |idx| endpoints[idx] })
 
@@ -315,7 +311,6 @@ class LLMEndpointOptimizer < EndpointOptimizer
     end
 
     if any_to_bool(@options["ai_no_optimize"]?)
-      @use_llm = false
       @logger.debug "LLM optimization disabled by --ai-no-optimize"
     elsif !provider.empty? && (!model.empty? || LLM::ACPClient.acp_provider?(provider))
       @use_llm = true
