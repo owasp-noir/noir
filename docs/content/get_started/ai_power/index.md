@@ -57,6 +57,7 @@ noir scan . --ai-provider acp:codex
 | `--ai-key` | API key (or use `NOIR_AI_KEY` env var) |
 | `--ai-agent` | Enable agentic AI workflow (iterative tool-calling loop) |
 | `--ai-agent-max-steps` | Max steps for AI agent loop (default: `20`) |
+| `--ai-no-optimize` | Skip the LLM optimizer pass |
 | `--ai-native-tools-allowlist` | Provider allowlist for native tool-calling (comma-separated, default: `openai,xai,github`) |
 | `--ai-max-token` | Max tokens for AI requests (optional) |
 | `--cache-disable` | Disable LLM response cache |
@@ -202,4 +203,4 @@ Groups files into token-limited bundles and processes them concurrently to maxim
 LLM responses are cached on disk (SHA256-keyed) at `~/.config/noir/cache/ai/` (or `$NOIR_HOME/cache/ai/`; `%APPDATA%\noir\cache\ai\` on Windows). `noir cache info` prints the resolved path. Use `--cache-disable` or `--cache-clear` to control caching.
 
 #### LLM Optimizer
-Optional post-processing that normalizes URLs, parameter names, and applies RESTful conventions to improve endpoint quality.
+Post-processing for endpoints the AI analyzer found on its own. It normalizes path-parameter syntax (`:id` becomes `{id}`) and fixes parameter types; a rewrite that changes literal path text or a parameter name is discarded. Routes a static analyzer found are never sent. It runs up to 4 requests at a time, at most 100 per scan. Turn it off with `--ai-no-optimize`.

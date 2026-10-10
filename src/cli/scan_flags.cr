@@ -109,6 +109,7 @@ module Noir::CLI::ScanFlags
     Flag.new("--ai-key", "AI API key", Arg::Value, hint: "key"),
     Flag.new("--ai-agent", "Enable agentic AI workflow"),
     Flag.new("--ai-agent-max-steps", "Max steps for AI agent loop", Arg::Value, hint: "n"),
+    Flag.new("--ai-no-optimize", "Skip the LLM optimizer pass"),
     Flag.new("--ai-native-tools-allowlist", "Provider allowlist for native tool-calling", Arg::Value, hint: "list"),
     Flag.new("--ai-max-token", "Max tokens per request", Arg::Value, hint: "n"),
     Flag.new("--diff-path", "Old code version for diff", Arg::File, hint: "path"),

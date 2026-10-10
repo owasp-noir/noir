@@ -1,3 +1,4 @@
+require "wait_group"
 require "./optimizer"
 require "../llm/adapter"
 require "../llm/cache"
@@ -60,16 +61,26 @@ class LLMEndpointOptimizer < EndpointOptimizer
       return endpoints
     end
 
-    @logger.debug_sub "Found #{candidate_indexes.size} endpoints that may benefit from LLM optimization."
+    # One metered request per candidate: say how many before paying.
+    if candidate_indexes.size > MAX_OPTIMIZE_REQUESTS
+      @logger.info "LLM optimizer: #{candidate_indexes.size} candidate endpoints, optimizing the first #{MAX_OPTIMIZE_REQUESTS}."
+      candidate_indexes = candidate_indexes.first(MAX_OPTIMIZE_REQUESTS)
+    else
+      @logger.info "LLM optimizer: #{candidate_indexes.size} candidate endpoint(s)."
+    end
+
+    results = optimize_concurrently(candidate_indexes.map { |idx| endpoints[idx] })
 
     final_endpoints = endpoints.dup
     # The dedup pass already ran, so a rewrite onto another endpoint's
     # (method, url) — a model answering `/api/items` for every route —
     # would replace distinct routes with duplicates. Keep the original URL.
+    # Checked here, in candidate order, so the winner does not depend on
+    # which request finished first.
     taken = endpoints.map { |endpoint| {endpoint.method, endpoint.url} }.to_set
-    candidate_indexes.each do |idx|
+    candidate_indexes.each_with_index do |idx, i|
       original = final_endpoints[idx]
-      optimized = llm_optimize_single_endpoint(original)
+      optimized = results[i]
       if optimized.url != original.url && !taken.add?({optimized.method, optimized.url})
         @logger.debug_sub "  - URL rewrite #{original.url} → #{optimized.url} rejected: collides with another endpoint"
         optimized.url = original.url
@@ -78,6 +89,28 @@ class LLMEndpointOptimizer < EndpointOptimizer
     end
 
     final_endpoints
+  end
+
+  # Same bounded pool as the AI analyzer's bundles: a few requests in
+  # flight, never one per candidate, and one at a time for an ACP agent,
+  # which serializes prompts anyway.
+  private def optimize_concurrently(candidates : Array(Endpoint)) : Array(Endpoint)
+    results = candidates.dup
+    queue = Channel(Int32).new(candidates.size)
+    candidates.each_index { |i| queue.send(i) }
+    queue.close
+
+    workers = LLM::ACPClient.acp_provider?(@provider) ? 1 : (@options["concurrency"]?.try(&.to_s.to_i?) || 1).clamp(1, MAX_OPTIMIZE_WORKERS)
+    WaitGroup.wait do |wg|
+      Math.min(workers, candidates.size).times do
+        wg.spawn do
+          while i = queue.receive?
+            results[i] = llm_optimize_single_endpoint(candidates[i])
+          end
+        end
+      end
+    end
+    results
   end
 
   # Only routes the AI analyzer alone reported. A static analyzer read the
@@ -282,7 +315,10 @@ class LLMEndpointOptimizer < EndpointOptimizer
       api_key = @options["ai_key"]?.try(&.to_s.presence)
     end
 
-    if !provider.empty? && (!model.empty? || LLM::ACPClient.acp_provider?(provider))
+    if any_to_bool(@options["ai_no_optimize"]?)
+      @use_llm = false
+      @logger.debug "LLM optimization disabled by --ai-no-optimize"
+    elsif !provider.empty? && (!model.empty? || LLM::ACPClient.acp_provider?(provider))
       @use_llm = true
       @provider = provider
       @model = model
@@ -298,6 +334,10 @@ class LLMEndpointOptimizer < EndpointOptimizer
       @logger.debug "LLM optimization disabled - missing required configuration"
     end
   end
+
+  # Matches Analyzer::AI::Unified::MAX_BUNDLE_WORKERS.
+  MAX_OPTIMIZE_WORKERS  =   4
+  MAX_OPTIMIZE_REQUESTS = 100
 
   VALID_PARAM_TYPES        = %w[query json form header cookie path]
   MAX_REWRITE_URL_LENGTH   = 2048

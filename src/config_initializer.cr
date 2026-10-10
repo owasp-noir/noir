@@ -343,6 +343,7 @@ class ConfigInitializer
       "ai_key"                       => YAML::Any.new(""),
       "ai_agent"                     => YAML::Any.new(false),
       "ai_agent_max_steps"           => YAML::Any.new(20),
+      "ai_no_optimize"               => YAML::Any.new(false),
       "ai_native_tools_allowlist"    => YAML::Any.new(LLM::NativeToolCalling.default_allowlist_csv),
       "ai_max_token"                 => YAML::Any.new(0),
       "cache_disable"                => YAML::Any.new(false),
@@ -523,6 +524,9 @@ class ConfigInitializer
 
       # The maximum number of steps for the AI agent loop
       ai_agent_max_steps: #{options["ai_agent_max_steps"]}
+
+      # Skip the LLM optimizer pass over AI-found endpoints
+      ai_no_optimize: #{options["ai_no_optimize"]}
 
       # Provider allowlist for native tool-calling (comma-separated)
       # Commented so the built-in list keeps tracking new releases. Uncomment to pin.

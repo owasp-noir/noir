@@ -352,6 +352,31 @@ describe "LLMEndpointOptimizer" do
       JSON.parse(client.__test_body("hi", "json"))["options"]["num_ctx"].as_i.should eq(8192)
     end
 
+    it "stays disabled with --ai-no-optimize" do
+      llm_options = create_test_options
+      llm_options["ai_provider"] = YAML::Any.new("openai")
+      llm_options["ai_model"] = YAML::Any.new("gpt-4o-mini")
+      llm_options["ai_no_optimize"] = YAML::Any.new(true)
+      LLMEndpointOptimizer.new(logger, llm_options).__test_adapter.should be_nil
+    end
+
+    it "optimizes every candidate through the worker pool, up to the request cap" do
+      with_cache_disabled do
+        llm_options = create_test_options
+        llm_options["concurrency"] = YAML::Any.new("8")
+        optimizer = LLMEndpointOptimizer.new(logger, llm_options)
+        adapter = CountingAdapter.new(%({"optimized_params":[{"name":"q","param_type":"query","value":""}]}))
+        optimizer.__test_install_adapter(adapter, "openai", "gpt-4o-mini")
+        cap = LLMEndpointOptimizer::MAX_OPTIMIZE_REQUESTS
+        endpoints = (0..cap).map { |i| ai_endpoint("/API/#{i}", [Param.new("q", "", "json")]) }
+
+        result = optimizer.__test_llm_optimize(endpoints)
+        adapter.calls.should eq(cap)
+        result.first(cap).all? { |endpoint| endpoint.params[0].param_type == "query" }.should be_true
+        result.last.params[0].param_type.should eq("json")
+      end
+    end
+
     it "stays disabled without an AI provider" do
       LLMEndpointOptimizer.new(logger, create_test_options).__test_adapter.should be_nil
     end
