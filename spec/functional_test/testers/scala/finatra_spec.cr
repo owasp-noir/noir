@@ -10,7 +10,7 @@ expected_endpoints = [
   Endpoint.new("/admin/v2/settings", "PUT", [Param.new("mode", "", "query")]),
   Endpoint.new("/files/:*", "GET", [Param.new("*", "", "path")]),
   Endpoint.new("/ping", "ANY"),
-  Endpoint.new("/secured", "GET"),
+  Endpoint.new("/secured", "GET", [Param.new("token", "", "query")]),
   Endpoint.new("/audited", "POST"),
   Endpoint.new("/me/profile", "GET"),
 ]
