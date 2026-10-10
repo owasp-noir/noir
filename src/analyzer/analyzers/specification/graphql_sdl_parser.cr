@@ -133,21 +133,31 @@ module Analyzer::Specification
       # `String#[](Int)` is O(n) per access on non-ASCII content. `body` is
       # kept only for `\G`-anchored regex matches and output slices.
       body_chars = body.chars
+      # Fields arrive in order, so each one's line is counted on from the
+      # previous field's: recounting from the top of the document per field
+      # was quadratic in a large root type.
+      body_line = line_number_at(sanitized, body_offset)
+      counted = 0
+      newlines = 0
 
       pos = 0
       while pos < body_chars.size
         pos = skip_field_padding(body_chars, pos)
         break if pos >= body_chars.size
 
-        field_match = body.match(/\G([A-Za-z_][A-Za-z0-9_]*)/, pos)
-        if field_match.nil?
+        name_end = identifier_end(body_chars, pos)
+        if name_end == pos
           pos = advance_to_next_field(body_chars, pos)
           next
         end
-        field_name = field_match[1]
-        field_line = line_number_at(sanitized, body_offset + pos)
-        field_line = field_line.try { |ln| ln + line_offset }
-        cursor = pos + field_match[0].size
+        field_name = body_chars[pos...name_end].join
+        while counted < pos
+          newlines += 1 if body_chars.unsafe_fetch(counted) == '
+'
+          counted += 1
+        end
+        field_line = body_line.try { |ln| ln + newlines + line_offset }
+        cursor = name_end
 
         cursor = skip_ws(body_chars, cursor)
         args = [] of NamedTuple(name: String, type: String)
@@ -625,6 +635,18 @@ module Analyzer::Specification
           end
           pos += 1
         end
+      end
+      pos
+    end
+
+    # End of the `[A-Za-z_][A-Za-z0-9_]*` name at `pos` (`pos` itself when
+    # none starts there). Read off the chars: a char-offset regex match
+    # re-decodes the body from its start on non-ASCII content.
+    private def identifier_end(chars : Array(Char), pos : Int32) : Int32
+      return pos unless (c = chars[pos]?) && (c.ascii_letter? || c == '_')
+      pos += 1
+      while pos < chars.size && ((c = chars.unsafe_fetch(pos)).ascii_alphanumeric? || c == '_')
+        pos += 1
       end
       pos
     end
