@@ -98,9 +98,9 @@ module Analyzer::Php
         prefix = component_prefix(masked)
         {imports ? CLASS_RE : nil, subclass_re}.each do |class_re|
           next unless class_re
-          masked.scan(class_re) do |m|
+          masked.scan(class_re) do |decl|
             # Abstract base components are never mounted.
-            emit(endpoints, lexer, masked, m, prefix + kebab(m[2]), path, m[3]?.try { |base| @bases[base]? }) unless m[1]?
+            emit(endpoints, lexer, masked, decl, prefix + kebab(decl[2]), path, decl[3]?.try { |base| @bases[base]? }) unless decl[1]?
           end
         end
       end
@@ -163,11 +163,7 @@ module Analyzer::Php
       return false if root.empty?
       @update_path_lock.synchronize do
         @v2_roots.fetch(root) do
-          @v2_roots[root] = begin
-            read_file_content(File.join(root, "composer.json")).matches?(V2_CONSTRAINT)
-          rescue
-            false
-          end
+          @v2_roots[root] = (read_file_content(File.join(root, "composer.json")).matches?(V2_CONSTRAINT) rescue false)
         end
       end
     end
