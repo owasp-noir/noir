@@ -86,6 +86,15 @@ describe "EndpointOptimizer" do
       merged.params.map(&.name).should eq(["itemId", "q"])
     end
 
+    it "keeps one analyzer's differently-named placeholders apart" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      result = optimizer.optimize_endpoints([
+        tech_endpoint("/users/{id}", "GET", "php_laravel", "/app/routes/web.php"),
+        tech_endpoint("/users/{user}", "GET", "php_laravel", "/app/routes/api.php"),
+      ])
+      result.map(&.url).sort!.should eq(["/users/{id}", "/users/{user}"])
+    end
+
     it "keeps QUERY endpoints instead of downgrading them to GET" do
       optimizer = EndpointOptimizer.new(logger, options)
       endpoints = [

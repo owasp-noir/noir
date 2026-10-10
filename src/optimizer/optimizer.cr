@@ -192,9 +192,14 @@ class EndpointOptimizer
       # unresolved gradle manifest placeholder, not a JS template literal
       # for the shape-normalizer to rewrite.
       tiny_tmp.url = normalize_url_shape(tiny_tmp.url) unless tiny_tmp.non_http?
-      dedup_url = tiny_tmp.non_http? ? tiny_tmp.url : unify_path_placeholders(normalize_url_shape(tiny_tmp.url, collection_endpoint?(tiny_tmp)))
+      dedup_url = tiny_tmp.non_http? ? tiny_tmp.url : normalize_url_shape(tiny_tmp.url, collection_endpoint?(tiny_tmp))
+      unified_url = tiny_tmp.non_http? ? dedup_url : unify_path_placeholders(dedup_url)
+      # Placeholder spellings are unified only where another technology
+      # reports the route too (code + spec/collection). Within one analyzer,
+      # `/users/{id}` and `/users/{user}` are kept as it reported them.
+      dedup_url = unified_url if cross_tech_keys.includes?({tiny_tmp.method, unified_url})
 
-      key = {tiny_tmp.method, dedup_url, endpoint_source_scope(tiny_tmp, dedup_url, cross_tech_keys)}
+      key = {tiny_tmp.method, dedup_url, endpoint_source_scope(tiny_tmp, unified_url, cross_tech_keys)}
 
       if final_map.has_key?(key)
         dup = final_map[key]
@@ -569,6 +574,7 @@ class EndpointOptimizer
   # one route reported by its code (`/users/:id`) and by a spec or collection
   # (`/users/{userId}`) is one endpoint. A literal segment (`/users/new`)
   # stays distinct. Only the key changes; the reported URL keeps its spelling.
+  # Applied only across technologies (see `cross_technology_duplicate_keys`).
   # ponytail: placeholders differing only by constraint (`{id:[0-9]+}` vs
   # `{name:[a-z]+}`) also unify, since the constraint is gone by now.
   private def unify_path_placeholders(url : String) : String
