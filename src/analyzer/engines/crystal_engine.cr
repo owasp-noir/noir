@@ -2,6 +2,7 @@ require "../../models/analyzer"
 require "../../models/skipped_files"
 require "./file_scan_engine"
 require "../../miniparsers/crystal_callee_extractor"
+require "../../utils/call_fold"
 
 module Analyzer::Crystal
   abstract class CrystalEngine < FileScanEngine
@@ -131,6 +132,13 @@ module Analyzer::Crystal
     protected def normalize_crystal_interpolation(path : String) : String
       return path unless path.includes?("\#{")
       path.gsub(INTERPOLATION_RE) { |_| "{#{$~[1].strip}}" }
+    end
+
+    # Comment-cut `lines` for the per-line param scan, with an accessor read
+    # wrapped over lines (`env.params.query[` / `"q"` / `]`) folded onto its
+    # first line (see `Noir::CallFold`). Same size as `lines`.
+    protected def crystal_param_lines(lines : Array(String)) : Array(String)
+      Noir::CallFold.fold(lines) { |line| Noir::CrystalCalleeExtractor.strip_comment(line) }
     end
 
     # A genuine Kemal/Lucky/Amber route path always begins with `/`

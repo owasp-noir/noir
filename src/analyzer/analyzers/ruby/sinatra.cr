@@ -1,4 +1,5 @@
 require "../../engines/ruby_engine"
+require "../../../utils/call_fold"
 
 module Analyzer::Ruby
   class Sinatra < RubyEngine
@@ -19,6 +20,11 @@ module Analyzer::Ruby
         # routes, interpolations and all (`GET /#{ENV.fetch(`).
         next if rails_router_source?(content) || hanami_router_source?(content)
         lines = content.each_line.to_a
+        # Params are read off a folded view, so a wrapped `params.fetch(`
+        # / `:q` / `)` reads like the one-line form.
+        param_lines = Noir::CallFold.fold(lines) do |l|
+          l.valid_encoding? ? Noir::RubyCalleeExtractor.strip_comment(l, preserve_strings: true) : ""
+        end
         active_route_endpoints = [] of Endpoint
         active_route_depth = nil.as(Int32?)
         prefix_stack = [] of NamedTuple(depth: Int32, path: String)
@@ -58,7 +64,7 @@ module Analyzer::Ruby
             end
           end
 
-          line_to_params(stripped).each do |param|
+          line_to_params(param_lines[index].lstrip).each do |param|
             target_endpoints = if route_endpoints.empty?
                                  if (route_depth = active_route_depth) && !active_route_endpoints.empty? && depth >= route_depth
                                    active_route_endpoints

@@ -76,6 +76,7 @@ module Analyzer::Crystal
       # Main scan with namespace stack
       namespace_stack = [] of NamedTuple(prefix: String, indent: Int32, router_var: String)
       last_endpoint : Endpoint? = nil
+      param_lines = crystal_param_lines(lines)
 
       lines.each_with_index do |line, index|
         # Collect public folder / serve_static info (used by post-pass)
@@ -155,7 +156,7 @@ module Analyzer::Crystal
         end
 
         # Parse params
-        param = line_to_param(line)
+        param = line_to_param(param_lines[index])
         unless param.name.empty?
           if le = last_endpoint
             unless le.method.empty?

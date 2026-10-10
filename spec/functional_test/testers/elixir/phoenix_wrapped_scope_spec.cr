@@ -2,12 +2,16 @@ require "../../func_spec.cr"
 
 # `scope "/api", # v1` with the module alias on the next line: the opener
 # was read one line at a time, so the alias was dropped and the bare
-# `UserController` resolved to every controller of that name.
+# `UserController` resolved to every controller of that name. The api
+# action also reads a header through a call wrapped over lines.
 FunctionalTester.new("fixtures/elixir/phoenix_wrapped_scope/", {
   :techs     => 1,
   :endpoints => 3,
 }, [
-  Endpoint.new("/api/users", "GET", [Param.new("api_q", "", "query")]),
+  Endpoint.new("/api/users", "GET", [
+    Param.new("api_q", "", "query"),
+    Param.new("x-api-key", "", "header"),
+  ]),
   Endpoint.new("/admin/users", "GET", [Param.new("admin_q", "", "query")]),
   Endpoint.new("/users", "GET", [Param.new("root_q", "", "query")]),
 ]).perform_tests
@@ -23,7 +27,8 @@ describe "Phoenix wrapped scope module", tags: "functional" do
     app.analyze
 
     app.endpoints.each do |endpoint|
-      endpoint.params.size.should eq(1)
+      names = endpoint.params.map(&.name)
+      %w[api_q admin_q root_q].count { |name| names.includes?(name) }.should eq(1)
     end
   end
 end

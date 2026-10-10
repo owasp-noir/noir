@@ -2,6 +2,7 @@ require "../../models/analyzer"
 require "../../miniparsers/import_graph"
 require "../../miniparsers/python_callee_extractor"
 require "../../utils/top_level_split"
+require "../../utils/call_fold"
 require "../analyzers/python/python_helper"
 require "json"
 
@@ -1131,27 +1132,29 @@ module Analyzer::Python
     # folded line's continuations become `""`, so indexes (and the line
     # numbers derived from them) still line up. Folded pieces are cut at
     # their `#` comment and stripped; a line that closes on its own comes
-    # back verbatim. Triple-quoted strings are tracked across the block,
-    # so a `(` in a docstring opens nothing.
+    # back verbatim, and so does one still open after
+    # `Noir::CallFold::MAX_CONTINUATION_LINES` (a long call, not a wrapped
+    # read). Triple-quoted strings are tracked across the block, so a `(`
+    # in a docstring opens nothing.
     def fold_python_continuations(lines : Array(::String)) : Array(::String)
-      folded = Array(::String).new(lines.size)
+      folded = lines.dup
       triple : Char? = nil
       i = 0
       while i < lines.size
         delta, triple, comment = python_call_line_scan(lines[i], triple, brackets: true)
-        head = lines[i]
+        start = i
         i += 1
-        if delta <= 0
-          folded << head
-          next
-        end
-        head = head.byte_slice(0, comment).rstrip
+        next unless delta > 0
+
+        head = lines[start].byte_slice(0, comment).rstrip
+        inner_triple = triple
+        j = i
         joined = String.build do |io|
           io << head
           last = head[-1]? || ' '
-          while i < lines.size && delta > 0
-            line_delta, triple, comment = python_call_line_scan(lines[i], triple, brackets: true)
-            piece = lines[i].byte_slice(0, comment).strip
+          while j < lines.size && delta > 0 && j - start <= Noir::CallFold::MAX_CONTINUATION_LINES
+            line_delta, inner_triple, comment = python_call_line_scan(lines[j], inner_triple, brackets: true)
+            piece = lines[j].byte_slice(0, comment).strip
             unless piece.empty?
               # Glue the tokens back together, but keep `a` / `and b` two words.
               io << ' ' if python_word_char?(last) && python_word_char?(piece[0])
@@ -1159,11 +1162,15 @@ module Analyzer::Python
               last = piece[-1]
             end
             delta += line_delta
-            i += 1
+            j += 1
           end
         end
-        folded << joined
-        (i - folded.size).times { folded << "" }
+        next if delta > 0 # unclosed: resume at the next line, which may open its own read
+
+        folded[start] = joined
+        (i...j).each { |k| folded[k] = "" }
+        i = j
+        triple = inner_triple
       end
       folded
     end

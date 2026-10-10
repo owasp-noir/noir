@@ -181,6 +181,16 @@ describe Analyzer::Python::PythonEngine do
     ])
   end
 
+  it "leaves a long call unfolded but folds the wrapped read inside it" do
+    harness = PythonEngineSpecHarness.new(create_test_options)
+    args = Array.new(Noir::CallFold::MAX_CONTINUATION_LINES) { |i| "    a#{i}=1," }
+    lines = ["return jsonify("] + args + ["    q=request.args.get(", "        \"q\"", "    ),", ")"]
+    folded = harness.fold_python_continuations(lines)
+    folded[0].should eq(lines[0])
+    folded.should contain("    q=request.args.get(\"q\"),")
+    folded.size.should eq(lines.size)
+  end
+
   it "parses a long non-ASCII parameter default in linear time" do
     harness = PythonEngineSpecHarness.new(create_test_options)
     default = "가" * 60_000

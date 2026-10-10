@@ -1,6 +1,7 @@
 require "../../engines/elixir_engine"
 require "../../../utils/url_path"
 require "../../../utils/top_level_split"
+require "../../../utils/call_fold"
 
 module Analyzer::Elixir
   class Phoenix < ElixirEngine
@@ -832,9 +833,9 @@ module Analyzer::Elixir
       params = Array(Param).new
       seen_params = Set(String).new # Track seen params for O(1) lookup
 
-      # Extract parameters from the function block content
-      (start_index..end_index).each do |i|
-        line = lines[i]
+      # Extract parameters from the function block content, with a wrapped
+      # read (`get_req_header(` / `conn,` / `"x-key"` / `)`) folded.
+      Noir::CallFold.fold(lines[start_index..end_index]) { |l| strip_trailing_comment(l) }.each do |line|
         # Most action lines are business logic with no param accessors.
         # Five PCRE scans only run when a conn accessor or header helper
         # is present.
