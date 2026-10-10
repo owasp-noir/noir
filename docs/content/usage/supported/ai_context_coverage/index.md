@@ -57,6 +57,8 @@ Every context bucket is a list of entries with `kind`, `name`, optional `source`
 
 The list is best-effort. Heuristic confidence is exposed on each entry so consumers can filter by threshold. Up to 16 entries per bucket are kept to keep output compact.
 
+Every non-empty context also carries `"untrusted_fields": ["name", "path", "snippet"]`. Those fields come from the scanned repository as-is, so `snippet` includes comments and string literals written by whoever controls that code. When you pass this output to an LLM, treat those fields as untrusted data and fence them off from your instructions.
+
 ## Typical use cases
 
 - **AI SAST**: hand the endpoint inventory plus its AI context to an LLM so it can decide where vulnerabilities are reachable from the attack surface without re-discovering the route structure.
