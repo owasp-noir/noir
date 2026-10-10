@@ -49,6 +49,11 @@ describe "Detect JS Feathers" do
     instance.detect("services.js", "app.service('messages').hooks({})").should be_true
   end
 
+  it "strapi_service_call_is_not_feathers" do
+    instance.detect("controllers/article.js", "const svc = strapi.service('api::article.article')").should be_false
+    instance.detect("bootstrap.js", "strapi.plugin('upload').service('upload')").should be_false
+  end
+
   it "plain_express_is_not_feathers" do
     instance.detect("app.js", "const express = require('express')\nconst app = express()").should be_false
   end
