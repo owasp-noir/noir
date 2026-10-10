@@ -78,6 +78,45 @@ describe LLM::HttpTransport do
     end
   end
 
+  describe ".proxy_for" do
+    it "picks the scheme's proxy variable, lowercase first" do
+      with_env("https_proxy", nil) do
+        with_env("HTTPS_PROXY", "proxy.corp:3128") do
+          with_env("NO_PROXY", nil) do
+            with_env("no_proxy", nil) do
+              LLM::HttpTransport.proxy_for(URI.parse("https://api.openai.com/v1")).to_s.should eq("http://proxy.corp:3128")
+              with_env("https_proxy", "http://lower:8080") do
+                LLM::HttpTransport.proxy_for(URI.parse("https://api.openai.com/v1")).to_s.should eq("http://lower:8080")
+              end
+              with_env("http_proxy", nil) do
+                with_env("HTTP_PROXY", nil) do
+                  LLM::HttpTransport.proxy_for(URI.parse("http://llm.internal/v1")).should be_nil
+                end
+              end
+            end
+          end
+        end
+      end
+    end
+
+    it "goes direct for loopback and NO_PROXY hosts" do
+      with_env("https_proxy", "http://proxy.corp:3128") do
+        with_env("no_proxy", nil) do
+          with_env("NO_PROXY", ".corp.example, *.internal,api.x.ai") do
+            LLM::HttpTransport.proxy_for(URI.parse("https://localhost:8443")).should be_nil
+            LLM::HttpTransport.proxy_for(URI.parse("https://llm.corp.example/v1")).should be_nil
+            LLM::HttpTransport.proxy_for(URI.parse("https://a.b.internal/v1")).should be_nil
+            LLM::HttpTransport.proxy_for(URI.parse("https://api.x.ai/v1")).should be_nil
+            LLM::HttpTransport.proxy_for(URI.parse("https://api.openai.com/v1")).should_not be_nil
+          end
+          with_env("NO_PROXY", "*") do
+            LLM::HttpTransport.proxy_for(URI.parse("https://api.openai.com/v1")).should be_nil
+          end
+        end
+      end
+    end
+  end
+
   describe ".backoff" do
     it "grows exponentially from one second" do
       LLM::HttpTransport.backoff(1).should eq(1.second)

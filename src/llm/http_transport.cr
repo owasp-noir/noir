@@ -1,3 +1,4 @@
+require "base64"
 require "http/client"
 require "uri"
 require "../utils/redact"
@@ -104,7 +105,7 @@ module LLM
       @@secrets_mutex.synchronize { @@secrets << key }
     end
 
-    @@cleartext_warned = Atomic::Flag.new
+    @@cleartext_warned = Atomic(Bool).new(false)
 
     # A key over plain http:// to another machine is readable by anything on
     # the path. Local servers (ollama, vLLM, LM Studio) are the normal http
@@ -112,7 +113,7 @@ module LLM
     def self.warn_cleartext_key(uri : URI, headers : HTTP::Headers) : Nil
       return unless uri.scheme == "http" && headers.has_key?("Authorization")
       return if loopback?(uri.hostname.to_s)
-      return unless @@cleartext_warned.test_and_set
+      return if @@cleartext_warned.swap(true)
       STDERR.puts "WARNING: The AI API key is sent unencrypted over http:// to #{uri.hostname}; use https:// for a remote provider."
     end
 
@@ -156,6 +157,7 @@ module LLM
       remember_secret(headers)
       uri = URI.parse(url)
       warn_cleartext_key(uri, headers)
+      proxy = proxy_for(uri)
       attempt = 0
       loop do
         attempt += 1
@@ -163,7 +165,12 @@ module LLM
         error = nil
 
         begin
-          response = execute(url, body, headers)
+          io = connect(uri, proxy)
+          begin
+            response = execute(io, uri, proxy, body, headers)
+          ensure
+            io.close rescue nil
+          end
           return response.body if response.success?
         rescue e : IO::Error
           # Connect/read timeouts, refused connections and resets all
@@ -190,17 +197,89 @@ module LLM
       STDERR.puts "WARNING: AI API error (HTTP #{rejection.status}): #{truncate_error_snippet(rejection.body)}"
     end
 
-    private def self.execute(url : String, body : String, headers : HTTP::Headers) : HTTP::Client::Response
-      uri = URI.parse(url)
-      client = HTTP::Client.new(uri)
-      begin
-        client.connect_timeout = connect_timeout
-        client.read_timeout = timeout
-        client.write_timeout = timeout
-        client.post(uri.request_target, headers: headers, body: body)
-      ensure
-        client.close
+    # The proxy `HTTPS_PROXY` / `HTTP_PROXY` name for this request (lowercase
+    # wins, as in curl), or nil to connect directly. Loopback and `NO_PROXY`
+    # hosts always go direct: a local model behind a corporate proxy
+    # variable must stay reachable.
+    def self.proxy_for(uri : URI) : URI?
+      host = uri.hostname.to_s.downcase
+      return if loopback?(host) || no_proxy?(host)
+      name = uri.scheme == "https" ? "https_proxy" : "http_proxy"
+      raw = ENV[name]?.presence || ENV[name.upcase]?.presence
+      return unless raw
+      URI.parse(raw.includes?("://") ? raw : "http://#{raw}")
+    end
+
+    # ponytail: suffix and `*` entries only; CIDR ranges are not matched.
+    def self.no_proxy?(host : String) : Bool
+      list = ENV["no_proxy"]?.presence || ENV["NO_PROXY"]?.presence
+      return false unless list
+      list.split(',').any? do |raw|
+        entry = raw.strip.downcase
+        next true if entry == "*"
+        entry = entry.lchop("*").lchop('.')
+        !entry.empty? && (host == entry || host.ends_with?(".#{entry}"))
       end
+    end
+
+    # Opens the socket a request goes over: direct, or through a proxy
+    # (`HTTP::Client` has no proxy support). https tunnels with CONNECT;
+    # plain http sends the absolute URL to the proxy (see `execute`).
+    private def self.connect(uri : URI, proxy : URI?) : IO
+      host = uri.hostname || raise IO::Error.new("AI provider URL has no host: #{uri}")
+      port = uri.port || (uri.scheme == "https" ? 443 : 80)
+      socket = if proxy
+                 TCPSocket.new(proxy.hostname.to_s, proxy.port || 80, connect_timeout: connect_timeout)
+               else
+                 TCPSocket.new(host, port, connect_timeout: connect_timeout)
+               end
+      begin
+        # The tunnel and the TLS handshake are part of connecting, so they
+        # get the short budget; the request itself gets the long one.
+        socket.read_timeout = connect_timeout
+        socket.write_timeout = connect_timeout
+        io = socket
+        if uri.scheme == "https"
+          tunnel(socket, proxy, "#{uri.host}:#{port}") if proxy
+          io = OpenSSL::SSL::Socket::Client.new(socket, sync_close: true, hostname: host)
+        end
+        socket.read_timeout = timeout
+        socket.write_timeout = timeout
+        io
+      rescue e
+        socket.close
+        raise e
+      end
+    end
+
+    private def self.tunnel(socket : IO, proxy : URI, authority : String) : Nil
+      socket << "CONNECT #{authority} HTTP/1.1\r\nHost: #{authority}\r\n"
+      if auth = proxy_authorization(proxy)
+        socket << "Proxy-Authorization: " << auth << "\r\n"
+      end
+      socket << "\r\n"
+      socket.flush
+      status = socket.gets.to_s
+      while (line = socket.gets) && !line.empty?
+      end
+      return if status.matches?(/\AHTTP\/1\.[01] 200\b/)
+      raise IO::Error.new("proxy #{proxy.hostname}:#{proxy.port} refused CONNECT to #{authority}: #{status}")
+    end
+
+    private def self.proxy_authorization(proxy : URI) : String?
+      return unless user = proxy.user
+      "Basic #{Base64.strict_encode("#{URI.decode(user)}:#{URI.decode(proxy.password.to_s)}")}"
+    end
+
+    private def self.execute(io : IO, uri : URI, proxy : URI?, body : String, headers : HTTP::Headers) : HTTP::Client::Response
+      headers = headers.dup
+      headers["Host"] = uri.port ? "#{uri.host}:#{uri.port}" : uri.host.to_s
+      target = uri.request_target
+      if proxy && uri.scheme == "http"
+        target = uri.to_s
+        proxy_authorization(proxy).try { |auth| headers["Proxy-Authorization"] = auth }
+      end
+      HTTP::Client.new(io).post(target, headers: headers, body: body)
     end
   end
 end
