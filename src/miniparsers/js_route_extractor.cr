@@ -108,6 +108,10 @@ module Noir
           STDERR.puts "Skipping #{file_path} for route extraction (test-stub/non-server marker)" if debug
           return [] of Endpoint
         end
+        # Handler bodies are read with regexes below (`req.header('x')`,
+        # `this.route('GET', '/p')`), so a comment inside a call would hide
+        # the literal. Blanking keeps every line and column.
+        content = strip_js_comments(content)
         parser = JSParser.new(content)
         route_patterns = parser.parse_routes
 
@@ -1784,6 +1788,9 @@ module Noir
       # substring from packed library code; never run the static-mount
       # regexes across a multi-megabyte single line (issue #1903).
       return static_paths if minified_content?(content)
+      # The mount regexes read call arguments; a comment between them must
+      # not hide the path (and a commented-out mount must not count).
+      content = strip_js_comments(content)
 
       want_express = framework.nil? || framework == :express
       want_koa = framework.nil? || framework == :koa

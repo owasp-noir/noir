@@ -5,7 +5,7 @@ declare const express: any;
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-  app.use('/static', express.static('public'));
+  app.use(/* assets */ '/static', express.static('public'));
   await app.listen(3000);
 }
 bootstrap();
