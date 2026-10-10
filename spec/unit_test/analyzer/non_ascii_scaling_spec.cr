@@ -51,4 +51,14 @@ describe "non-ASCII route files" do
       "config/routes.php" => "<?php\n$title = 'COMMENT';\nreturn static function (RouteBuilder $routes) {\n  $routes->scope('/api', function (RouteBuilder $builder) {\n#{routes}  });\n};\n",
     }, "config/routes.php", "php_cakephp")
   end
+
+  it "keeps Phalcon route scans linear" do
+    routes = (1..1200).join do |i|
+      "$router->add('/legacy#{i}', 'Info::show')->via(['POST']);\n$app->get('/items#{i}', function () { echo 'x'; });\n"
+    end
+    assert_linear_on_non_ascii({
+      "composer.json" => %({"require":{"ext-phalcon":">=5.0"}}),
+      "index.php"     => "<?php\nuse Phalcon\\Mvc\\Router;\n$title = 'COMMENT';\n#{routes}",
+    }, "index.php", "php_phalcon")
+  end
 end

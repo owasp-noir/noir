@@ -286,9 +286,17 @@ module Analyzer::Php
     # `matching_delimiter` — constructing a lexer per call re-lexes the whole
     # file and is ~hundreds of times slower on method-heavy controllers.
     protected def find_matching_php_close_brace(content : String, open_pos : Int32) : Int32?
-      bytes = content.to_slice
       start = content.char_index_to_byte_index(open_pos)
-      return unless start && start < bytes.size && bytes[start] == BYTE_OPEN_BRACE
+      return unless start
+      close = find_matching_php_close_brace_at_byte(content, start)
+      content.byte_index_to_char_index(close) if close
+    end
+
+    # BYTE-offset form of `find_matching_php_close_brace`: takes and returns
+    # byte offsets, so a per-route caller pays no O(n) char/byte conversion.
+    protected def find_matching_php_close_brace_at_byte(content : String, start : Int32) : Int32?
+      bytes = content.to_slice
+      return unless start < bytes.size && bytes[start] == BYTE_OPEN_BRACE
 
       depth = 0
       in_string = false
@@ -333,7 +341,7 @@ module Analyzer::Php
           depth += 1
         elsif char == BYTE_CLOSE_BRACE
           depth -= 1
-          return content.byte_index_to_char_index(pos) if depth == 0
+          return pos if depth == 0
         end
 
         pos += 1
