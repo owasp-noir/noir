@@ -1,3 +1,5 @@
+require "./char_offsets"
+
 module Noir
   # JSLiteralScanner provides utilities for scanning JavaScript source code
   # while properly skipping string literals, comments, template literals, and regex.
@@ -76,6 +78,19 @@ module Noir
 
     def self.find_matching_paren(chars : Array(Char), open_paren_idx : Int32) : Int32?
       find_matching_impl(chars, open_paren_idx, '(', ')')
+    end
+
+    # The char forms above over a prebuilt `CharOffsets`: same answers, but a
+    # per-route caller on a non-ASCII file reuses one `chars` array instead
+    # of rebuilding it per call.
+    def self.find_matching_brace(offsets : CharOffsets, open_brace_idx : Int32) : Int32?
+      return find_matching_brace(offsets.content, open_brace_idx) if offsets.ascii?
+      find_matching_impl(offsets.chars, open_brace_idx, '{', '}')
+    end
+
+    def self.find_matching_paren(offsets : CharOffsets, open_paren_idx : Int32) : Int32?
+      return find_matching_paren(offsets.content, open_paren_idx) if offsets.ascii?
+      find_matching_impl(offsets.chars, open_paren_idx, '(', ')')
     end
 
     # BYTE-offset variants over the raw UTF-8 bytes, for any content. Every

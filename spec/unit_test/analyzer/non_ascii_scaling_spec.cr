@@ -117,6 +117,15 @@ describe "non-ASCII route files" do
     }, "server.ts", "js_bun")
   end
 
+  it "keeps tRPC procedure and router scans linear" do
+    procs = (1..800).join { |i| "export const get#{i}Route = t.procedure.input(z.object({ id: z.string() })).query(({ input }) => input.id);\n" }
+    entries = (1..800).join { |i| "  get#{i}: get#{i}Route,\n" }
+    assert_linear_on_non_ascii({
+      "package.json"     => %({"name":"x","dependencies":{"@trpc/server":"^10.0.0"}}),
+      "server/router.ts" => "import { initTRPC } from '@trpc/server';\nconst t = initTRPC.create();\nconst title = 'COMMENT';\n#{procs}export const appRouter = t.router({\n#{entries}});\n",
+    }, "server/router.ts", "ts_trpc")
+  end
+
   it "keeps node:http handler collection linear" do
     helpers = (1..800).join { |i| "const helper#{i} = (req, res) => { res.end('#{i}'); };\nfunction fn#{i}(req, res) { return 1; }\n" }
     assert_linear_on_non_ascii({

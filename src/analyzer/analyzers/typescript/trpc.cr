@@ -2,6 +2,7 @@ require "../../engines/javascript_engine"
 require "../../../miniparsers/js_callee_extractor"
 require "../../../miniparsers/js_route_extractor"
 require "../../../utils/top_level_split"
+require "../../../utils/char_offsets"
 
 module Analyzer::Typescript
   class TRPC < Analyzer::Javascript::JavascriptEngine
@@ -44,10 +45,12 @@ module Analyzer::Typescript
         content = Noir::JSRouteExtractor.strip_js_comments(raw)
         next unless trpc_candidate?(content)
 
+        # BYTE-indexed, so every probe below passes `byte_begin`.
         literal_mask = string_literal_mask(content)
+        offsets = Noir::CharOffsets.new(content)
         base_path = configured_base_for(path)
-        collected = collect_routers(content, path, base_path, literal_mask)
-        collected_procs = collect_procedures(content, path, base_path, literal_mask)
+        collected = collect_routers(offsets, path, base_path, literal_mask)
+        collected_procs = collect_procedures(offsets, path, base_path, literal_mask)
         {collected, collected_procs, base_path, extract_prefix(content, literal_mask)}
       rescue e
         logger.debug "Error analyzing tRPC file #{path}: #{e.message}"
@@ -188,50 +191,49 @@ module Analyzer::Typescript
       {base_path, name}
     end
 
-    private def collect_routers(content : String, path : String, base_path : String, literal_mask : Array(Bool)) : Array(Router)
+    private def collect_routers(offsets : Noir::CharOffsets, path : String, base_path : String, literal_mask : Array(Bool)) : Array(Router)
+      content = offsets.content
       collected = [] of Router
       # Capture `(export )? (const|let|var) NAME = <prefix>?(router|createTRPCRouter)({...})`.
       # Prefix tolerates `t.router(`, `initTRPC.create().router(`, `_.router(` etc.
       pattern = /\b(?:export\s+)?(?:const|let|var)\s+(\w+)(?:\s*:[^=]+)?\s*=\s*(?:[\w$]+\s*(?:\(\s*\))?\s*\.\s*)?(?:router|createTRPCRouter)\s*\(\s*\{/
 
       content.scan(pattern) do |match|
-        match_start = match.begin(0) || 0
-        next if literal_position?(literal_mask, match_start)
+        next if literal_position?(literal_mask, match.byte_begin(0))
 
-        match_end = match.end(0) || 0
+        match_end = offsets.end(match)
         next if match_end == 0
 
         brace_open = match_end - 1
-        next unless content[brace_open]? == '{'
+        next unless offsets.char_at(brace_open) == '{'
 
-        brace_close = Noir::JSRouteExtractor.find_matching_brace(content, brace_open)
+        brace_close = Noir::JSLiteralScanner.find_matching_brace(offsets, brace_open)
         next unless brace_close
 
-        body = content[(brace_open + 1)...brace_close]
-        line = content[0, match_start].count('\n') + 1
+        body = offsets.slice(brace_open + 1, brace_close)
+        line = offsets.line(offsets.begin(match))
         collected << Router.new(base_path, match[1], body, path, line)
       end
 
       identifier_arg_pattern = /\b(?:export\s+)?(?:const|let|var)\s+(\w+)(?:\s*:[^=]+)?\s*=\s*(?:[\w$]+\s*(?:\(\s*\))?\s*\.\s*)?(?:router|createTRPCRouter)\s*\(\s*([A-Za-z_$][\w$]*)\s*\)/
 
       content.scan(identifier_arg_pattern) do |match|
-        match_start = match.begin(0) || 0
-        next if literal_position?(literal_mask, match_start)
+        next if literal_position?(literal_mask, match.byte_begin(0))
 
-        body_info = extract_object_assignment_body(content, match[2], literal_mask)
+        body_info = extract_object_assignment_body(offsets, match[2], literal_mask)
         next unless body_info
 
         body, object_line = body_info
-        line = object_line > 0 ? object_line : content[0, match_start].count('\n') + 1
+        line = object_line > 0 ? object_line : offsets.line(offsets.begin(match))
         collected << Router.new(base_path, match[1], body, path, line)
       end
 
-      collected.concat collect_v9_chain_routers(content, path, base_path, literal_mask)
+      collected.concat collect_v9_chain_routers(offsets, path, base_path, literal_mask)
 
       collected
     end
 
-    private def collect_v9_chain_routers(content : String, path : String, base_path : String, literal_mask : Array(Bool)) : Array(Router)
+    private def collect_v9_chain_routers(offsets : Noir::CharOffsets, path : String, base_path : String, literal_mask : Array(Bool)) : Array(Router)
       collected = [] of Router
       assignment_pattern = /\b(?:export\s+)?(?:const|let|var)\s+(\w+)(?:\s*:[^=]+)?\s*=\s*/
       # `find_statement_end`/`skip_whitespace` index by char; materializing
@@ -239,19 +241,18 @@ module Analyzer::Typescript
       # a non-ASCII file with many top-level declarations from re-walking
       # `content` from byte 0 on every char access (Crystal has no
       # char-index cache), which is O(n) per char -> O(n^2) per match.
-      chars = content.chars
+      chars = offsets.chars
 
-      content.scan(assignment_pattern) do |match|
-        match_start = match.begin(0) || 0
-        next if literal_position?(literal_mask, match_start)
+      offsets.content.scan(assignment_pattern) do |match|
+        next if literal_position?(literal_mask, match.byte_begin(0))
 
-        value_start = skip_whitespace(chars, match.end(0) || 0)
+        value_start = skip_whitespace(chars, offsets.end(match))
         statement_end = find_statement_end(chars, value_start)
-        expression = content[value_start...statement_end]
+        expression = offsets.slice(value_start, statement_end)
         next unless v9_router_chain_expression?(expression)
 
-        line = content[0, match_start].count('\n') + 1
-        body = v9_router_chain_body(expression, content, value_start, line)
+        line = offsets.line(offsets.begin(match))
+        body = v9_router_chain_body(expression, offsets, value_start, line)
         next if body.empty?
 
         collected << Router.new(base_path, match[1], body, path, line)
@@ -325,13 +326,13 @@ module Analyzer::Typescript
       i
     end
 
-    private def v9_router_chain_body(expression : String, content : String, expression_start : Int32, assignment_line : Int32) : String
+    private def v9_router_chain_body(expression : String, offsets : Noir::CharOffsets, expression_start : Int32, assignment_line : Int32) : String
       entries = [] of Tuple(Int32, Int32, String, String)
 
       # Precompute newline offsets once so per-entry line lookups stay O(log n)
       # instead of re-slicing `content[0, ...].count('\n')` for every chained
       # `.query`/`.merge` (which is O(n²) on long single-expression chains).
-      base_newlines = expression_start == 0 ? 0 : content[0, expression_start].count('\n')
+      base_newlines = offsets.line(expression_start) - 1
       expr_newlines = [] of Int32
       expression.each_char_with_index { |char, index| expr_newlines << index if char == '\n' }
 
@@ -429,7 +430,7 @@ module Analyzer::Typescript
 
     # Collect standalone `export const NAME = <builder>.input(...).<verb>(...)`
     # procedure definitions so a router that references NAME resolves it.
-    private def collect_procedures(content : String, path : String, base_path : String, literal_mask : Array(Bool)) : Array(Procedure)
+    private def collect_procedures(offsets : Noir::CharOffsets, path : String, base_path : String, literal_mask : Array(Bool)) : Array(Procedure)
       collected = [] of Procedure
       # `procedure_terminal`/`verb_call_at?` index by char within an
       # up-to-8000-char window; materializing `chars` once per file
@@ -437,19 +438,18 @@ module Analyzer::Typescript
       # top-level declarations from re-walking `content` from byte 0 on
       # every char access (Crystal has no char-index cache) — otherwise a
       # single call already costs up to O(8000 * start).
-      chars = content.chars
-      content.scan(/\b(?:export\s+)?(?:const|let|var)\s+(\w+)(?:\s*:[^=]+)?\s*=\s*/) do |match|
-        match_start = match.begin(0) || 0
-        next if literal_position?(literal_mask, match_start)
+      chars = offsets.chars
+      offsets.content.scan(/\b(?:export\s+)?(?:const|let|var)\s+(\w+)(?:\s*:[^=]+)?\s*=\s*/) do |match|
+        next if literal_position?(literal_mask, match.byte_begin(0))
 
-        value_start = match.end(0) || 0
-        first = content[value_start]?
+        value_start = offsets.end(match)
+        first = chars[value_start]?
         next unless first && (first.ascii_letter? || first == '_' || first == '$')
 
-        info = procedure_terminal(content, chars, value_start)
+        info = procedure_terminal(offsets, chars, value_start)
         next unless info
         method, value = info
-        line = content[0, match_start].count('\n') + 1
+        line = offsets.line(offsets.begin(match))
         collected << Procedure.new(base_path, match[1], method, value, path, line)
       end
       collected
@@ -460,7 +460,7 @@ module Analyzer::Typescript
     # `.query/.mutation/.subscription(` terminal is found. Nested parens —
     # the `.input(z.object({...}))` schema, refinement arrows, the resolver
     # — sit at depth > 0, so only the procedure's own terminal verb matches.
-    private def procedure_terminal(content : String, chars : Array(Char), start : Int32) : Tuple(String, String)?
+    private def procedure_terminal(offsets : Noir::CharOffsets, chars : Array(Char), start : Int32) : Tuple(String, String)?
       i = start
       depth = 0
       n = chars.size
@@ -477,7 +477,7 @@ module Analyzer::Typescript
         when '.'
           if depth == 0
             PROCEDURE_VERBS.each do |verb, method|
-              return {method, content[start...i]} if verb_call_at?(chars, i + 1, verb)
+              return {method, offsets.slice(start, i)} if verb_call_at?(chars, i + 1, verb)
             end
           end
         else
@@ -505,26 +505,25 @@ module Analyzer::Typescript
       chars[j]? == '('
     end
 
-    private def extract_object_assignment_body(content : String, identifier : String, literal_mask : Array(Bool)) : Tuple(String, Int32)?
+    private def extract_object_assignment_body(offsets : Noir::CharOffsets, identifier : String, literal_mask : Array(Bool)) : Tuple(String, Int32)?
       pattern = cached_regex("trpc:object_assign:#{identifier}") do
         /\b(?:export\s+)?(?:const|let|var)\s+#{Regex.escape(identifier)}(?:\s*:[^=]+)?\s*=\s*\{/
       end
 
-      content.scan(pattern) do |match|
-        match_start = match.begin(0) || 0
-        next if literal_position?(literal_mask, match_start)
+      offsets.content.scan(pattern) do |match|
+        next if literal_position?(literal_mask, match.byte_begin(0))
 
-        match_end = match.end(0) || 0
+        match_end = offsets.end(match)
         next if match_end == 0
 
         brace_open = match_end - 1
-        next unless content[brace_open]? == '{'
+        next unless offsets.char_at(brace_open) == '{'
 
-        brace_close = Noir::JSRouteExtractor.find_matching_brace(content, brace_open)
+        brace_close = Noir::JSLiteralScanner.find_matching_brace(offsets, brace_open)
         next unless brace_close
 
-        body = content[(brace_open + 1)...brace_close]
-        line = content[0, match_start].count('\n') + 1
+        body = offsets.slice(brace_open + 1, brace_close)
+        line = offsets.line(offsets.begin(match))
         return {body, line}
       end
 
@@ -534,7 +533,7 @@ module Analyzer::Typescript
     private def extract_prefix(content : String, literal_mask : Array(Bool)) : String?
       # Explicit endpoint option in fetch/openapi handlers.
       content.scan(/endpoint\s*:\s*['"`]([^'"`]+)['"`]/) do |m|
-        next if literal_position?(literal_mask, m.begin(0))
+        next if literal_position?(literal_mask, m.byte_begin(0))
         # Skip TS *type* annotations like `endpoint: `/${string}`` — a
         # template literal carrying an interpolation is a type/computed
         # value, not the concrete mount path (documenso's
@@ -546,13 +545,13 @@ module Analyzer::Typescript
 
       # Express/Koa-style mounting: `app.use('/api/trpc', trpcExpress.createExpressMiddleware(...))`.
       content.scan(/\.\s*use\s*\(\s*['"`]([^'"`]+)['"`]\s*,\s*[^)]*?(?:trpcExpress\.createExpressMiddleware|createExpressMiddleware|createKoaMiddleware)/m) do |m|
-        next if literal_position?(literal_mask, m.begin(0))
+        next if literal_position?(literal_mask, m.byte_begin(0))
         return m[1]
       end
 
       # Fastify plugin: `fastify.register(fastifyTRPCPlugin, { prefix: '/api/trpc' })`.
       content.scan(/(?:fastifyTRPCPlugin|fastifyTRPC)\b[^)]*?prefix\s*:\s*['"`]([^'"`]+)['"`]/m) do |m|
-        next if literal_position?(literal_mask, m.begin(0))
+        next if literal_position?(literal_mask, m.byte_begin(0))
         return m[1]
       end
 
@@ -565,9 +564,11 @@ module Analyzer::Typescript
       # machine — which scans an entire router/procedure map body — O(n)
       # per char -> O(n^2). Materialize `chars` once and thread it through
       # to `find_matching_bracket`/`skip_top_level_to_comma` so the
-      # conversion isn't repeated per key/value pair; all substring
-      # extraction still reads from the original `body` String.
-      chars = body.chars
+      # conversion isn't repeated per key/value pair. Slices and line
+      # numbers go through `offsets` too: `body[0, i].count('\n')` per pair
+      # re-read the body from the top, quadratic in the router's size.
+      offsets = Noir::CharOffsets.new(body)
+      chars = offsets.chars
       i = 0
       n = chars.size
       while i < n
@@ -583,13 +584,13 @@ module Analyzer::Typescript
                 while j < n && chars[j] != quote
                   j += chars[j] == '\\' ? 2 : 1
                 end
-                literal = body[(i + 1)...j]
+                literal = offsets.slice(i + 1, j)
                 i = j < n ? j + 1 : j
                 literal
               when '['
                 # Computed key like ['foo']: ... — skip the bracket span.
                 if close = find_matching_bracket(chars, i)
-                  literal = body[(i + 1)...close].strip.gsub(/^['"`]|['"`]$/, "")
+                  literal = offsets.slice(i + 1, close).strip.gsub(/^['"`]|['"`]$/, "")
                   i = close + 1
                   literal
                 else
@@ -603,7 +604,7 @@ module Analyzer::Typescript
                   while j < n && (chars[j].ascii_alphanumeric? || chars[j] == '_' || chars[j] == '$')
                     j += 1
                   end
-                  literal = body[i...j]
+                  literal = offsets.slice(i, j)
                   i = j
                   literal
                 else
@@ -622,7 +623,7 @@ module Analyzer::Typescript
 
         if i >= n || chars[i] == ','
           # Shorthand: `userRouter,` — value is the same identifier.
-          value_line = body[0, i].count('\n') + 1
+          value_line = offsets.line(i)
           yield key, key, value_line unless key.empty?
           i += 1 if i < n && chars[i] == ','
           next
@@ -637,8 +638,8 @@ module Analyzer::Typescript
         i += 1
         value_start = i
         value_end = skip_top_level_to_comma(chars, i)
-        value = body[value_start...value_end]
-        value_line = body[0, value_start].count('\n') + 1
+        value = offsets.slice(value_start, value_end)
+        value_line = offsets.line(value_start)
         yield key, value, value_line unless key.empty?
         i = value_end
       end

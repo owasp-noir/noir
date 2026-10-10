@@ -86,7 +86,7 @@ module Noir
       seen = Set(Tuple(String, String)).new
 
       create_server_call_parens(src).each do |open_paren|
-        close_paren = matching_paren(src, open_paren)
+        close_paren = JSLiteralScanner.find_matching_paren(src, open_paren)
         next unless close_paren
 
         split_top_level_args(src, open_paren + 1, close_paren).each do |arg_source, arg_start|
@@ -124,7 +124,7 @@ module Noir
 
       stripped.scan(RUNTIME_SERVE_CALLS[runtime]) do |match|
         open_paren = src.end(match) - 1
-        close_paren = matching_paren(src, open_paren)
+        close_paren = JSLiteralScanner.find_matching_paren(src, open_paren)
         next unless close_paren
 
         split_top_level_args(src, open_paren + 1, close_paren).each do |arg_source, arg_start|
@@ -268,7 +268,7 @@ module Noir
     # as both key and value, so callers can resolve it as an identifier.
     # Spreads and computed keys are skipped.
     private def self.each_object_entry(src : CharOffsets, open_brace : Int32, & : String, String, Int32, Int32, Bool -> Nil) : Nil
-      close_brace = matching_brace(src, open_brace)
+      close_brace = JSLiteralScanner.find_matching_brace(src, open_brace)
       return unless close_brace
 
       split_top_level_args(src, open_brace + 1, close_brace).each do |entry, entry_start|
@@ -456,7 +456,7 @@ module Noir
     # Handler whose parameter list opens at `param_open` and whose block
     # follows it: a `function` expression or an object method shorthand.
     private def self.handler_after_params(src : CharOffsets, param_open : Int32) : Handler?
-      param_close = matching_paren(src, param_open)
+      param_close = JSLiteralScanner.find_matching_paren(src, param_open)
       return unless param_close
       params = src.slice(param_open + 1, param_close)
       request_name = first_param_name(params)
@@ -464,7 +464,7 @@ module Noir
 
       open_brace = src.index('{', param_close)
       return unless open_brace
-      close_brace = matching_brace(src, open_brace)
+      close_brace = JSLiteralScanner.find_matching_brace(src, open_brace)
       return unless close_brace
 
       Handler.new(request_name, src.slice(open_brace + 1, close_brace), open_brace + 1)
@@ -484,7 +484,7 @@ module Noir
 
       body_start = skip_whitespace(src, arrow_idx + 2)
       return unless src.char_at(body_start) == '{'
-      close_brace = matching_brace(src, body_start)
+      close_brace = JSLiteralScanner.find_matching_brace(src, body_start)
       return unless close_brace
 
       Handler.new(request_name, src.slice(body_start + 1, close_brace), body_start + 1)
@@ -499,7 +499,7 @@ module Noir
       if head = src.match(ARROW_HEAD, start_pos, Noir::TextFile::MATCH_OPTIONS)
         return head[2] if head[2]?
         open_paren = src.end(head) - 1
-        close_paren = matching_paren(src, open_paren)
+        close_paren = JSLiteralScanner.find_matching_paren(src, open_paren)
         return src.slice(open_paren + 1, close_paren) if close_paren && close_paren < arrow_idx
       end
 
@@ -1105,16 +1105,6 @@ module Noir
         i += 1
       end
       i
-    end
-
-    private def self.matching_paren(src : CharOffsets, open_paren : Int32) : Int32?
-      return JSRouteExtractor.find_matching_paren(src.content, open_paren) if src.ascii?
-      JSLiteralScanner.find_matching_paren(src.chars, open_paren)
-    end
-
-    private def self.matching_brace(src : CharOffsets, open_brace : Int32) : Int32?
-      return JSRouteExtractor.find_matching_brace(src.content, open_brace) if src.ascii?
-      JSLiteralScanner.find_matching_brace(src.chars, open_brace)
     end
 
     private def self.identifier_char?(char : Char) : Bool
