@@ -262,12 +262,16 @@ module Analyzer::Javascript
 
     # Whether the closest package.json above `path` names the framework.
     protected def owned_by_js_package?(path : String, owners : Hash(String, Bool)) : Bool
+      js_package_dir(path, owners).try { |dir| owners[dir] } || false
+    end
+
+    # Directory of the closest package.json above `path` (a key of `owners`).
+    protected def js_package_dir(path : String, owners : Hash(String, Bool)) : String?
       dir = File.dirname(Noir::PathScope.expand(path))
       loop do
-        owned = owners[dir]?
-        return owned unless owned.nil?
+        return dir if owners.has_key?(dir)
         parent = File.dirname(dir)
-        return false if parent == dir
+        return if parent == dir
         dir = parent
       end
     end

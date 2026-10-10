@@ -24,11 +24,15 @@ module Analyzer::Javascript
 
       parallel_file_scan(EXTENSIONS) do |path|
         next unless path.matches?(API_MODULE)
-        scoped = base_relative_path(path)
-        idx = scoped.index("/app/") || next
-        next unless owned_by_js_package?(path, owners)
+        # The routes root is `app/` (or `src/app/`) beside the package.json,
+        # not the first `app/` anywhere in the path: a project directory
+        # itself named `app` would otherwise prefix every URL with `/app`.
+        root = js_package_dir(path, owners) || next
+        next unless owners[root]
+        relative = Noir::PathScope.base_relative(Noir::PathScope.expand(path), root)
+        routed = relative.lchop?("/app/") || relative.lchop?("/src/app/") || next
 
-        segments = scoped[(idx + "/app/".size)..].sub(API_MODULE, "").split('/')
+        segments = routed.sub(API_MODULE, "").split('/')
         segments.pop if segments.last == "index"
         analyze_route_handler_file(path, file_route_url(segments), result, mutex, include_callee)
       end
