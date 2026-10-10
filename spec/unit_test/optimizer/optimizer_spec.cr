@@ -65,6 +65,27 @@ describe "EndpointOptimizer" do
       result[1].method.should eq("POST")
     end
 
+    it "merges one route spelled with different placeholder syntaxes" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      express = tech_endpoint("/items/:itemId/:sub", "GET", "js_express", "/app/app.js", 3)
+      express.params << Param.new("itemId", "", "path")
+      spec = tech_endpoint("/items/{item_id}/{s}", "GET", "oas3", "/app/openapi.json")
+      spec.params << Param.new("item_id", "", "path")
+      spec.params << Param.new("q", "", "query")
+      endpoints = [
+        express,
+        spec,
+        tech_endpoint("/items/<int:pk>/<sub>", "GET", "python_flask", "/app/app.py"),
+        tech_endpoint("/items/new/:sub", "GET", "js_express", "/app/app.js", 4),
+      ]
+
+      result = optimizer.optimize_endpoints(endpoints)
+      result.map(&.url).sort!.should eq(["/items/:itemId/:sub", "/items/new/:sub"])
+      merged = result.find!(&.url.==("/items/:itemId/:sub"))
+      # The loser's path params name slots the winner's URL does not have.
+      merged.params.map(&.name).should eq(["itemId", "q"])
+    end
+
     it "keeps QUERY endpoints instead of downgrading them to GET" do
       optimizer = EndpointOptimizer.new(logger, options)
       endpoints = [
@@ -956,13 +977,13 @@ describe "EndpointOptimizer" do
         optimizer = EndpointOptimizer.new(logger, options)
 
         result = optimizer.optimize_endpoints([
-          tech_endpoint("/api/users/{id}", "GET", "go_gin", "a.go"),
-          tech_endpoint("/api/users/{uid}", "GET", "go_echo", "b.go"),
-          tech_endpoint("/api/users/42", "POST", "postman", "c.json"),
-          tech_endpoint("/api/users/7", "GET", "postman", "c.json"),
+          tech_endpoint("/{v}/users/{id}", "GET", "go_gin", "a.go"),
+          tech_endpoint("/{v}/users/7", "GET", "go_echo", "b.go"),
+          tech_endpoint("/1/users/42", "POST", "postman", "c.json"),
+          tech_endpoint("/1/users/7", "GET", "postman", "c.json"),
         ])
 
-        result.map(&.url).should eq(["/api/users/{id}", "/api/users/{uid}", "/api/users/42"])
+        result.map(&.url).should eq(["/{v}/users/{id}", "/{v}/users/7", "/1/users/42"])
         result[0].details.code_paths.map(&.path).should eq(["a.go", "c.json"])
         result[1].details.code_paths.map(&.path).should eq(["b.go"])
       end

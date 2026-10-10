@@ -192,9 +192,9 @@ class EndpointOptimizer
       # unresolved gradle manifest placeholder, not a JS template literal
       # for the shape-normalizer to rewrite.
       tiny_tmp.url = normalize_url_shape(tiny_tmp.url) unless tiny_tmp.non_http?
-      dedup_url = tiny_tmp.non_http? ? tiny_tmp.url : normalize_url_shape(tiny_tmp.url, collection_endpoint?(tiny_tmp))
+      dedup_url = tiny_tmp.non_http? ? tiny_tmp.url : unify_path_placeholders(normalize_url_shape(tiny_tmp.url, collection_endpoint?(tiny_tmp)))
 
-      key = {tiny_tmp.method, dedup_url, endpoint_source_scope(tiny_tmp, cross_tech_keys)}
+      key = {tiny_tmp.method, dedup_url, endpoint_source_scope(tiny_tmp, dedup_url, cross_tech_keys)}
 
       if final_map.has_key?(key)
         dup = final_map[key]
@@ -203,7 +203,11 @@ class EndpointOptimizer
         if graphql_endpoint?(dup) || graphql_endpoint?(tiny_tmp)
           dup = merge_graphql_params(dup, tiny_tmp)
         else
-          merge_params(dup, tiny_tmp, source_collection_pair?(dup, tiny_tmp))
+          # The key unifies placeholder spellings, so the duplicate may name
+          # its slots differently (`/items/{item_id}` vs `/items/:itemId`).
+          # The winner's URL is the one reported; the loser's path params
+          # would name slots that URL does not have.
+          merge_params(dup, tiny_tmp, source_collection_pair?(dup, tiny_tmp), skip_path: dup.url != tiny_tmp.url)
         end
         tiny_tmp.tags.each { |tag| merge_tag(dup, tag) }
         tiny_tmp.callees.each do |callee|
@@ -258,9 +262,10 @@ class EndpointOptimizer
     {endpoint.method.upcase, "/" + segments.map { |seg| seg.matches?(AI_FOLD_PLACEHOLDER_RE) ? "{}" : seg }.join('/')}
   end
 
-  private def merge_params(target : Endpoint, source : Endpoint, drop_collection_noise : Bool = false) : Nil
+  private def merge_params(target : Endpoint, source : Endpoint, drop_collection_noise : Bool = false, skip_path : Bool = false) : Nil
     source.params.each do |param|
       next if drop_collection_noise && collection_noise_param?(source, param)
+      next if skip_path && param.param_type == "path"
 
       existing_param = target.params.find { |target_param| target_param.name == param.name && target_param.request_type == param.request_type }
       target.params << param unless existing_param
@@ -552,12 +557,26 @@ class EndpointOptimizer
     absolute_url = normalized.matches?(ABSOLUTE_URL_RE)
     normalized = "/#{normalized}" if !absolute_url && normalized[0] != '/' && !endpoint.non_http?
     return normalized if endpoint.non_http?
-    normalized = normalize_url_shape(normalized, collection_endpoint?(endpoint))
-    normalized
+    unify_path_placeholders(normalize_url_shape(normalized, collection_endpoint?(endpoint)))
   end
 
-  private def endpoint_source_scope(endpoint : Endpoint, cross_tech_keys : Set(Tuple(String, String))) : String
-    return "" if cross_tech_keys.includes?({endpoint.method, endpoint.url})
+  # A whole-segment path placeholder in any framework's spelling: `{id}`,
+  # `:id` (Express/Rails/Postman) or `<id>` / `<int:id>` (Flask/Django).
+  # Constraints were already stripped by `normalize_url_shape`.
+  WHOLE_SEGMENT_PLACEHOLDER_RE = %r{(?<=/)(?:\{[A-Za-z_]\w*\}|:[A-Za-z_]\w*|<(?:[A-Za-z_]\w*:)?[A-Za-z_]\w*>)(?=[/?#]|\z)}
+
+  # Dedup-key form of a URL: every whole-segment placeholder becomes `{}`, so
+  # one route reported by its code (`/users/:id`) and by a spec or collection
+  # (`/users/{userId}`) is one endpoint. A literal segment (`/users/new`)
+  # stays distinct. Only the key changes; the reported URL keeps its spelling.
+  # ponytail: placeholders differing only by constraint (`{id:[0-9]+}` vs
+  # `{name:[a-z]+}`) also unify, since the constraint is gone by now.
+  private def unify_path_placeholders(url : String) : String
+    url.gsub(WHOLE_SEGMENT_PLACEHOLDER_RE, "{}")
+  end
+
+  private def endpoint_source_scope(endpoint : Endpoint, dedup_url : String, cross_tech_keys : Set(Tuple(String, String))) : String
+    return "" if cross_tech_keys.includes?({endpoint.method, dedup_url})
     framework_source_scope(endpoint)
   end
 
