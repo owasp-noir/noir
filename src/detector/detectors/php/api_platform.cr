@@ -7,11 +7,11 @@ module Detector::Php
     detector_for "php_api_platform", extensions: %w[.php], basenames: %w[composer.json composer.lock]
 
     # Quoted so `api-platform/core-extra` style names don't match.
-    PACKAGES = [%("api-platform/core"), %("api-platform/symfony"), %("api-platform/laravel"), %("api-platform/metadata")]
+    PACKAGES = %w[api-platform/core api-platform/symfony api-platform/laravel api-platform/metadata]
 
     def detect(filename : String, file_contents : String) : Bool
       if filename.ends_with?("composer.json") || filename.ends_with?("composer.lock")
-        return PACKAGES.any? { |package| file_contents.includes?(package) }
+        return PACKAGES.any? { |package| composer_dependency?(filename, file_contents, package) }
       end
 
       Noir::FileExtension.fold(filename).ends_with?(".php") && file_contents.matches?(/^\s*use\s+ApiPlatform\\Metadata\\/m)

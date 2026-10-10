@@ -34,6 +34,9 @@ describe "Detect Mautic" do
   it "does not detect unrelated PHP projects" do
     instance.detect("index.php", "<?php echo 'Hello World';").should_not be_true
     instance.detect("composer.json", %({"require": {"symfony/framework-bundle": "^6.0"}})).should_not be_true
+    # roave/security-advisories lists mautic/core-lib under `conflict`.
+    lock = %({"packages-dev": [{"name": "roave/security-advisories", "conflict": {"mautic/core-lib": "<4.4.13"}}]})
+    instance.detect("composer.lock", lock).should_not be_true
     # A plain Symfony config.php with a 'routes' array but no Mautic controllers
     instance.detect("config/routes.php", %(<?php return ['routes' => []];)).should_not be_true
   end

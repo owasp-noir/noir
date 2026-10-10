@@ -25,7 +25,7 @@ module Detector::Php
         # non-routing PSR-7 deps like `zendframework/zend-diactoros` — both fired
         # the Laminas analyzer on apps that never use Laminas routing, surfacing
         # HTTP-client `$x->get('https://…')` calls as phantom endpoints.
-        return true if LAMINAS_PACKAGES.any? { |package| file_contents.includes?(%("#{package}")) }
+        return true if LAMINAS_PACKAGES.any? { |package| composer_dependency?(filename, file_contents, package) }
       end
 
       if Noir::FileExtension.fold(filename).ends_with?(".php")
