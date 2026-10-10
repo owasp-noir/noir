@@ -92,6 +92,7 @@ module Analyzer::Javascript
         # Cheap gate: the mount chain always pairs `.use(` with `.routes(`.
         next unless content.includes?(".use(") && content.includes?(".routes(")
         next if Noir::JSRouteExtractor.minified_content?(content)
+        content = Noir::JSRouteExtractor.strip_js_comments(content)
 
         # Map local identifiers to the router file they import. Oak
         # projects are ESM-only in the overwhelming majority of cases

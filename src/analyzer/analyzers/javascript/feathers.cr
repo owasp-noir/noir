@@ -141,7 +141,9 @@ module Analyzer::Javascript
         content = read_file_content(path)
         next unless content.matches?(USE_CALL_RE)
 
-        scan_file(path, content, result, include_callee)
+        # The `use(...)` walk reads arguments as text; comments blanked
+        # in place keep every offset and line.
+        scan_file(path, Noir::JSRouteExtractor.strip_js_comments(content), result, include_callee)
       end
 
       result

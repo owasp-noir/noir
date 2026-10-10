@@ -49,7 +49,7 @@ module Analyzer::Javascript
     end
 
     private def process_file(path : String, content : String)
-      mount_path = detect_mount_path(content)
+      mount_path = detect_mount_path(Noir::JSRouteExtractor.strip_js_comments(content))
       Analyzer::Specification::GraphqlTypedefs.extract(content).each do |sdl, line_offset|
         endpoints = Analyzer::Specification::GraphqlSdlParser.parse(
           sdl, path,
