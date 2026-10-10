@@ -12,7 +12,7 @@ return [
             'mautic_test_action' => [
                 'path'       => '/test/{objectId}',
                 'controller' => 'Mautic\TestBundle\Controller\TestController::executeAction',
-                'method'     => 'POST',
+                'method'     => /* write */ 'POST',
             ],
         ],
         'public' => [

@@ -43,6 +43,7 @@ module Analyzer::Php
 
       content = read_file_content(path)
       if laminas_relevant?(path, content)
+        content = php_code(content)
         endpoints.concat(analyze_config_routes(path, content))
         endpoints.concat(analyze_programmatic_routes(path, content, include_callee))
       end
