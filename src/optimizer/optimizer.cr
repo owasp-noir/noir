@@ -518,15 +518,19 @@ class EndpointOptimizer
 
   private def cross_technology_duplicate_keys(endpoints : Array(Endpoint), allowed_methods : Array(String)) : Set(Tuple(String, String))
     technologies_by_key = Hash(Tuple(String, String), Set(String)).new
+    urls_by_key_technology = Hash(Tuple(String, String, String), Set(String)).new
     framework_scopes_by_key = Hash(Tuple(String, String), Set(String)).new
 
     endpoints.each do |endpoint|
-      url = normalized_dedup_url(endpoint)
-      next if url.empty?
+      shaped_url = normalized_dedup_url(endpoint)
+      next if shaped_url.empty?
+      url = endpoint.non_http? ? shaped_url : unify_path_placeholders(shaped_url)
 
       method = normalized_dedup_method(endpoint.method, allowed_methods)
       key = {method, url}
-      (technologies_by_key[key] ||= Set(String).new) << (endpoint.details.technology || "")
+      technology = endpoint.details.technology || ""
+      (technologies_by_key[key] ||= Set(String).new) << technology
+      (urls_by_key_technology[{method, url, technology}] ||= Set(String).new) << shaped_url
 
       scope = framework_source_scope(endpoint)
       (framework_scopes_by_key[key] ||= Set(String).new) << scope unless scope.empty?
@@ -535,6 +539,10 @@ class EndpointOptimizer
     keys = Set(Tuple(String, String)).new
     technologies_by_key.each do |key, technologies|
       next unless technologies.size > 1
+      # Unifying placeholders must not merge two routes one analyzer reported
+      # apart (`/users/:id` and `/users/:username`, separate handlers): when
+      # any technology spells the key more than one way, keep exact URLs.
+      next if technologies.any? { |technology| urls_by_key_technology[{key[0], key[1], technology}].size > 1 }
       # Neutralizing the scope merges a collection endpoint with the framework
       # one at the same path. But when 2+ distinct build-module scopes share the
       # path, neutralizing would also collapse those distinct multi-module
@@ -562,7 +570,7 @@ class EndpointOptimizer
     absolute_url = normalized.matches?(ABSOLUTE_URL_RE)
     normalized = "/#{normalized}" if !absolute_url && normalized[0] != '/' && !endpoint.non_http?
     return normalized if endpoint.non_http?
-    unify_path_placeholders(normalize_url_shape(normalized, collection_endpoint?(endpoint)))
+    normalize_url_shape(normalized, collection_endpoint?(endpoint))
   end
 
   # A whole-segment path placeholder in any framework's spelling: `{id}`,

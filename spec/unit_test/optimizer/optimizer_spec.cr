@@ -95,6 +95,19 @@ describe "EndpointOptimizer" do
       result.map(&.url).sort!.should eq(["/users/{id}", "/users/{user}"])
     end
 
+    it "does not unify placeholders that split one technology's routes" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      endpoints = [
+        tech_endpoint("/users/:id", "GET", "js_express", "/app/app.js", 3),
+        tech_endpoint("/users/:username", "GET", "js_express", "/app/app.js", 7),
+        tech_endpoint("/users/{userId}", "GET", "oas3", "/app/openapi.json"),
+      ]
+
+      result = optimizer.optimize_endpoints(endpoints)
+      result.map(&.url).sort!.should eq(["/users/:id", "/users/:username", "/users/{userId}"])
+      result.find!(&.url.==("/users/:username")).details.code_paths.map(&.line).should eq([7])
+    end
+
     it "keeps QUERY endpoints instead of downgrading them to GET" do
       optimizer = EndpointOptimizer.new(logger, options)
       endpoints = [
