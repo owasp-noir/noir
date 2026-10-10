@@ -352,6 +352,8 @@ describe "detect_techs file walker" do
         # `sam build` staging copy (template.yaml is not a build manifest).
         File.join(temp_dir, ".aws-sam", "build", "HelloWorldFunction", "app.py"),
         File.join(temp_dir, "cdk.out", "asset.1", "index.js"),
+        # Yarn Berry's committed binary.
+        File.join(temp_dir, ".yarn", "releases", "yarn-4.12.0.cjs"),
         # Stale tsc output beside the package's `src/` and `tsconfig.json`.
         File.join(temp_dir, "server", "dist", "app.js"),
         # Composer / `go mod vendor` trees, known by their own contents.

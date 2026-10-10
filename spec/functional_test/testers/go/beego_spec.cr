@@ -5,7 +5,7 @@ expected_endpoints = [
     Param.new("query", "", "query"),
     Param.new("auth", "", "cookie"),
   ]),
-  Endpoint.new("/", "GET"),
+  Endpoint.new("/", "GET", [Param.new("lang", "", "query")]),
 ]
 
 FunctionalTester.new("fixtures/go/beego/", {

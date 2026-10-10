@@ -56,7 +56,7 @@ module Analyzer::Swift
 
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
-      lines = read_file_content(path).lines
+      lines = swift_code_lines(read_file_content(path))
       stripped_lines = strip_code_lines(lines)
       include_callee = callees_needed?
       handler_bodies = named_handler_bodies(lines)
@@ -779,7 +779,7 @@ module Analyzer::Swift
                                                method_set : Set(String),
                                                assignments : Hash(ScopedPrefixKey, String),
                                                base : String)
-      original_lines = read_file_content(path).lines
+      original_lines = swift_code_lines(read_file_content(path))
       stripped_lines = strip_code_lines(original_lines)
 
       merge_logical_lines(stripped_lines, original_lines) do |stripped, original|
@@ -1013,8 +1013,8 @@ module Analyzer::Swift
       # Extract query parameters from request.uri.queryParameters
       if line.includes?("request.uri.queryParameters.get(") ||
          line.includes?("request.uri.queryParameters[")
-        match = line.match(/request\.uri\.queryParameters\.get\(["']([^"']+)["']\)/) ||
-                line.match(/request\.uri\.queryParameters\[["']([^"']+)["']\]/)
+        match = line.match(/request\.uri\.queryParameters\.get\(\s*["']([^"']+)["']\s*\)/) ||
+                line.match(/request\.uri\.queryParameters\[\s*["']([^"']+)["']\s*\]/)
         if match
           query_name = match[1]
           endpoint.push_param(Param.new(query_name, "", "query"))
@@ -1028,7 +1028,7 @@ module Analyzer::Swift
 
       # Extract headers from request.headers
       if line.includes?("request.headers[")
-        match = line.match(/request\.headers\[["']([^"']+)["']\]/)
+        match = line.match(/request\.headers\[\s*["']([^"']+)["']\s*\]/)
         if match
           header_name = match[1]
           endpoint.push_param(Param.new(header_name, "", "header"))
@@ -1037,7 +1037,7 @@ module Analyzer::Swift
 
       # Extract cookies from request.cookies
       if line.includes?("request.cookies[")
-        match = line.match(/request\.cookies\[["']([^"']+)["']\]/)
+        match = line.match(/request\.cookies\[\s*["']([^"']+)["']\s*\]/)
         if match
           cookie_name = match[1]
           endpoint.push_param(Param.new(cookie_name, "", "cookie"))
@@ -1047,7 +1047,7 @@ module Analyzer::Swift
       # Extract path parameters from context.parameters.require / .get
       if line.includes?("context.parameters.require(") ||
          line.includes?("context.parameters.get(")
-        match = line.match(/context\.parameters\.(require|get)\(["']([^"']+)["']\)/)
+        match = line.match(/context\.parameters\.(require|get)\(\s*["']([^"']+)["']\s*\)/)
         if match
           param_name = match[2]
           if !existing_path_params.includes?(param_name)

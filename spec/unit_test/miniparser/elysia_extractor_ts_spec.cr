@@ -167,4 +167,14 @@ describe Noir::TreeSitterElysiaExtractor do
       {"POST", "/v1/c"},
     ])
   end
+
+  it "decodes escape sequences in string literals" do
+    source = <<-'TS'
+      new Elysia()
+          .get('/say/\'hi\'', () => 'x')
+          .get("/a\\b", () => 'y')
+      TS
+
+    Noir::TreeSitterElysiaExtractor.extract_routes(source).map(&.path).sort!.should eq([%(/a\\b), %(/say/'hi')])
+  end
 end

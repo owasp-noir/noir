@@ -12,7 +12,8 @@ var (
 	verbose   = app.Flag("verbose", "Enable verbose output.").Bool()
 	deployCmd = app.Command("deploy", "Deploy the application.")
 	target    = deployCmd.Arg("target", "Deployment target.").String()
-	token     = deployCmd.Flag("token", "API token.").Envar("KINGPIN_TOKEN").String()
+	token     = deployCmd.Flag("token", "API token.").
+			Envar("KINGPIN_TOKEN").String()
 )
 
 func main() {

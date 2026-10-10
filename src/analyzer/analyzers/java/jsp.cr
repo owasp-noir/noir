@@ -325,6 +325,7 @@ module Analyzer::Java
     end
 
     private def extract_servlet_http_methods(content : String) : Hash(String, Array(Param))
+      content = JavaEngine.strip_comments(content)
       methods = Hash(String, Array(Param)).new
 
       SERVLET_DO_METHOD_PATTERNS.each do |method, pattern|

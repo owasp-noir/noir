@@ -35,16 +35,19 @@ module Analyzer::Php
     COMPUTED_RE  = /#\[[^\]]*\bComputed\b/
     VIEW_DIRS    = ["views/livewire/", "views/"]
 
-    @update_path : String? = nil
+    # `setUpdateRoute` path per app (`composer_project_root`), so one app's
+    # custom route does not move a sibling app's components.
+    @update_paths = {} of String => String
     @update_path_lock = Mutex.new
 
     def analyze
       super
-      if (custom = @update_path) && custom != DEFAULT_UPDATE_PATH
-        result.each_with_index do |endpoint, idx|
-          endpoint.url = endpoint.url.sub(DEFAULT_UPDATE_PATH, custom)
-          result[idx] = endpoint
-        end
+      return result if @update_paths.empty?
+      result.each_with_index do |endpoint, idx|
+        file = endpoint.details.code_paths.first?.try(&.path) || next
+        custom = @update_paths[composer_project_root(file)]? || next
+        endpoint.url = endpoint.url.sub(DEFAULT_UPDATE_PATH, custom)
+        result[idx] = endpoint
       end
       result
     end
@@ -54,7 +57,8 @@ module Analyzer::Php
       content = read_file_content(path)
 
       if content.includes?("setUpdateRoute") && (m = php_code(content).match(UPDATE_ROUTE_RE))
-        @update_path_lock.synchronize { @update_path = "/" + m[1].lstrip('/') }
+        root = composer_project_root(path)
+        @update_path_lock.synchronize { @update_paths[root] = "/" + m[1].lstrip('/') }
       end
       return endpoints unless content.matches?(IMPORT_RE)
 

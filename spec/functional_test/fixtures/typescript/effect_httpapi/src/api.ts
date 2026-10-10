@@ -14,7 +14,7 @@ const CreateUser = Schema.Struct({
 })
 
 export class UsersGroup extends HttpApiGroup.make("users")
-  .add(HttpApiEndpoint.get("findById", "/users/:id").addSuccess(User))
+  .add(HttpApiEndpoint.get(/* name */ "findById", "/users/:id").addSuccess(User))
   .add(HttpApiEndpoint.post("create", "/users").setPayload(CreateUser).addSuccess(User))
   .add(
     HttpApiEndpoint.get("search", "/users/search")

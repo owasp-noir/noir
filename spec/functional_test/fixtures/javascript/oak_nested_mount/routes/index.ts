@@ -9,6 +9,6 @@ api.use(users.routes());
 api.use(articles.routes());
 
 const router = new Router();
-router.use("/api", api.routes(), api.allowedMethods());
+router.use(/* v1 */ "/api", api.routes(), api.allowedMethods());
 
 export default router;

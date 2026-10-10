@@ -83,7 +83,7 @@ app.post('/upload', async (c) => {
 })
 
 // app.on() with specific method
-app.on('GET', '/health', (c) => {
+app.on('GET', /* liveness */ '/health', (c) => {
   const format = c.req.query('format')
 
   return c.json({ status: 'ok' })

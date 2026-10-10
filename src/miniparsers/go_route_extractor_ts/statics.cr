@@ -69,7 +69,7 @@ module Noir
       return unless args
 
       strings = [] of String
-      Noir::TreeSitter.each_named_child(args) do |arg|
+      Noir::TreeSitter.each_named_arg(args) do |arg|
         case Noir::TreeSitter.node_type(arg)
         when "interpreted_string_literal", "raw_string_literal"
           strings << decode_string_literal(arg, source)
@@ -100,7 +100,7 @@ module Noir
       return unless args
 
       prefix = nil
-      Noir::TreeSitter.each_named_child(args) do |arg|
+      Noir::TreeSitter.each_named_arg(args) do |arg|
         case Noir::TreeSitter.node_type(arg)
         when "interpreted_string_literal", "raw_string_literal"
           candidate = decode_string_literal(arg, source)
@@ -172,7 +172,7 @@ module Noir
                Noir::TreeSitter.node_text(operand, source) == "http" &&
                Noir::TreeSitter.node_text(fld, source) == "Dir"
               if args = Noir::TreeSitter.field(node, "arguments")
-                Noir::TreeSitter.each_named_child(args) do |arg|
+                Noir::TreeSitter.each_named_arg(args) do |arg|
                   case Noir::TreeSitter.node_type(arg)
                   when "interpreted_string_literal", "raw_string_literal"
                     return decode_string_literal(arg, source)

@@ -9,6 +9,12 @@ expected_endpoints = [
     Param.new("X-Request-Id", "", "header"),
   ]),
   Endpoint.new("/v1/orders", "POST"),
+  # KrakenD 1.x (`version: 2`) parameter keys.
+  Endpoint.new("/v1/search", "GET", [
+    Param.new("q", "", "query"),
+    Param.new("page", "", "query"),
+    Param.new("X-Tenant", "", "header"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/specification/krakend/", {

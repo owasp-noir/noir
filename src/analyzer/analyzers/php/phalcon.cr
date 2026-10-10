@@ -156,8 +156,8 @@ module Analyzer::Php
       details = Details.new(PathInfo.new(path))
 
       pos = 0
-      while m = content.match(VERB_REGEX, pos)
-        after_args = m.end(0)
+      while m = VERB_REGEX.match_at_byte_index(content, pos)
+        after_args = m.byte_end(0)
         receiver = m[1]
         handler_body, next_pos, body_start_line = extract_handler_body_with_end(content, after_args)
 
@@ -192,19 +192,19 @@ module Analyzer::Php
       details = Details.new(PathInfo.new(path))
 
       pos = 0
-      while m = content.match(MAP_CALL_RE, pos)
-        open_paren = m.end(0) - 1
+      while m = MAP_CALL_RE.match_at_byte_index(content, pos)
+        open_paren = m.byte_end(0) - 1
         call_close = find_matching_close_paren(content, open_paren)
 
         if call_close
-          args_str = content[(open_paren + 1)...call_close]
+          args_str = content.byte_slice(open_paren + 1, call_close - open_paren - 1)
           path_match = args_str.match(/\A\s*['"]([^'"\r\n]+)['"]\s*,/)
 
           if path_match && route_receiver?(m[1])
             receiver = m[1]
             full_path = build_full_path(prefix_for(prefixes, receiver), normalize_phalcon_route_path(path_match[1]))
 
-            handler_abs_pos = open_paren + 1 + path_match.end(0)
+            handler_abs_pos = open_paren + 1 + path_match.byte_end(0)
             handler_body, _, body_start_line = extract_handler_body_with_end(content, handler_abs_pos)
 
             methods = methods_from_via(content, call_close + 1)
@@ -223,7 +223,7 @@ module Analyzer::Php
 
           pos = call_close + 1
         else
-          pos = m.end(0)
+          pos = m.byte_end(0)
         end
       end
 
@@ -264,12 +264,12 @@ module Analyzer::Php
       details = Details.new(PathInfo.new(path))
 
       pos = 0
-      while m = content.match(ADD_REGEX, pos)
-        open_paren = m.end(0) - 1
+      while m = ADD_REGEX.match_at_byte_index(content, pos)
+        open_paren = m.byte_end(0) - 1
         call_close = find_matching_close_paren(content, open_paren)
 
         if call_close
-          args_str = content[(open_paren + 1)...call_close]
+          args_str = content.byte_slice(open_paren + 1, call_close - open_paren - 1)
           path_match = args_str.match(/\A\s*['"]([^'"\r\n]+)['"]/)
 
           if path_match && route_receiver?(m[1])
@@ -294,7 +294,7 @@ module Analyzer::Php
 
           pos = call_close + 1
         else
-          pos = m.end(0)
+          pos = m.byte_end(0)
         end
       end
 
@@ -305,19 +305,19 @@ module Analyzer::Php
     # `after_call_pos` (the position right after a call's closing `)`).
     # Bounded lookahead keeps this a cheap, local check instead of a
     # full-file scan.
+    VIA_CALL_RE = /\G\s*->via\s*\(/i
+
     private def methods_from_via(content : String, after_call_pos : Int32) : Array(String)
-      return [] of String unless after_call_pos < content.size
+      return [] of String unless after_call_pos < content.bytesize
 
-      window_end = Math.min(content.size, after_call_pos + 40)
-      lookahead = content[after_call_pos...window_end]
-      via_match = lookahead.match(/\A\s*->via\s*\(/i)
-      return [] of String unless via_match
+      via_match = VIA_CALL_RE.match_at_byte_index(content, after_call_pos)
+      return [] of String unless via_match && via_match[0].size <= 40
 
-      via_open = after_call_pos + via_match[0].size - 1
+      via_open = via_match.byte_end(0) - 1
       via_close = find_matching_close_paren(content, via_open)
       return [] of String unless via_close
 
-      extract_http_methods(content[(via_open + 1)...via_close])
+      extract_http_methods(content.byte_slice(via_open + 1, via_close - via_open - 1))
     end
 
     private def extract_http_methods(text : String) : Array(String)
@@ -576,25 +576,29 @@ module Analyzer::Php
     # handler is a string/callable-array reference, or brace matching
     # fails) together with the position after the handler so the caller
     # can resume scanning past it.
+    CLOSURE_HEAD_RE = /\G(?:static\s+)?function\s*\([^)]*\)\s*(?:use\s*\([^)]*\)\s*)?(?::\s*[^{=]+)?\{/i
+
+    # Takes and returns BYTE offsets: it runs once per route, and every
+    # char-indexed op here walks from byte 0 on a non-ASCII file.
     private def extract_handler_body_with_end(content : String, pos : Int32) : Tuple(String?, Int32, Int32?)
-      return {nil, pos, nil} unless pos < content.size
+      bytes = content.to_slice
+      return {nil, pos, nil} unless pos < bytes.size
 
       scan_pos = pos
-      while scan_pos < content.size && content[scan_pos].ascii_whitespace?
+      while scan_pos < bytes.size && bytes[scan_pos].unsafe_chr.ascii_whitespace?
         scan_pos += 1
       end
-      return {nil, pos, nil} unless scan_pos < content.size
+      return {nil, pos, nil} unless scan_pos < bytes.size
 
-      closure_regex = /\A(?:static\s+)?function\s*\([^)]*\)\s*(?:use\s*\([^)]*\)\s*)?(?::\s*[^{=]+)?\{/i
-      m = content[scan_pos..].match(closure_regex)
+      m = CLOSURE_HEAD_RE.match_at_byte_index(content, scan_pos)
       return {nil, pos, nil} unless m
 
-      brace_pos = scan_pos + m[0].size - 1
-      body_end = find_matching_php_close_brace(content, brace_pos)
+      brace_pos = m.byte_end(0) - 1
+      body_end = find_matching_php_close_brace_at_byte(content, brace_pos)
       return {nil, pos, nil} unless body_end
 
-      body_start_line = line_number_for_index(content, brace_pos)
-      {content[(brace_pos + 1)...body_end], body_end + 1, body_start_line}
+      body_start_line = bytes[0, brace_pos].count('\n'.ord.to_u8) + 1
+      {content.byte_slice(brace_pos + 1, body_end - brace_pos - 1), body_end + 1, body_start_line}
     end
 
     # Byte-level scan for O(1) positional access instead of `String#[](Int)`,
@@ -604,11 +608,10 @@ module Analyzer::Php
     # carry inline `//`/`/* */` comments in practice, so unlike the brace
     # matcher this doesn't need to skip them, and nested `(`/`)` inside a
     # PHP `array(...)` literal balance correctly since every paren — code or
-    # array — is counted the same way.
-    private def find_matching_close_paren(content : String, open_pos : Int32) : Int32?
+    # array — is counted the same way. Takes and returns BYTE offsets.
+    private def find_matching_close_paren(content : String, start : Int32) : Int32?
       bytes = content.to_slice
-      start = content.char_index_to_byte_index(open_pos)
-      return unless start && start < bytes.size && bytes[start] == BYTE_LPAREN
+      return unless start < bytes.size && bytes[start] == BYTE_LPAREN
 
       depth = 0
       in_string = false
@@ -634,7 +637,7 @@ module Analyzer::Php
           depth += 1
         elsif byte == BYTE_RPAREN
           depth -= 1
-          return content.byte_index_to_char_index(pos) if depth == 0
+          return pos if depth == 0
         end
         pos += 1
       end

@@ -50,7 +50,8 @@ Route::group(['prefix' => 'admin'], function () {
     });
 });
 
-Route::match(['get', 'post'], '/contact', function () {
+Route::match(['get', 'post'], '/contact', function (Request $request) {
+    $topic = $request->input('topic');
     return view('contact');
 });
 

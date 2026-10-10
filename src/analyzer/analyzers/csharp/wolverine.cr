@@ -13,8 +13,10 @@ module Analyzer::CSharp
 
     include Common
 
-    ROUTE_ATTR_RE = /\[\s*(?:Wolverine\.Http\.)?Wolverine(Get|Post|Put|Patch|Delete|Head|Options)(?:Attribute)?\s*\(\s*@?"([^"]*)"/
-    PLACEHOLDER   = /\{([^{}]+)\}/
+    # First in its attribute list or after a comma (`[AllowAnonymous, WolverineGet(...)]`).
+    ROUTE_ATTR_RE       = /[\[,]\s*(?:Wolverine\.Http\.)?Wolverine(Get|Post|Put|Patch|Delete|Head|Options)(?:Attribute)?\s*\(\s*@?"([^"]*)"/
+    PLACEHOLDER         = /\{([^{}]+)\}/
+    MAX_ATTRIBUTE_LINES = 32
     # Loaded from storage by the route id (Marten/EF), or explicitly not the
     # body: never request input of their own.
     NOT_INPUT_ATTR_RE = /\[\s*(?:Entity|Document|Aggregate|ReadAggregate|WriteAggregate|NotBody)\b/
@@ -33,11 +35,19 @@ module Analyzer::CSharp
         masked = lexer.masked_lines
         lines.each_with_index do |line, i|
           attr = ROUTE_ATTR_RE.match(line) || next
-          # The method follows its attribute list, or shares the line with it.
+          # The method follows its attribute lists (which may span lines), or
+          # shares the line with the last one. A list still open after
+          # MAX_ATTRIBUTE_LINES is unbalanced: fall back to the attribute line.
           j = i
-          while j < masked.size && (stripped = masked[j].strip).starts_with?('[') && stripped.ends_with?(']')
+          depth = 0
+          while j < masked.size && j - i < MAX_ATTRIBUTE_LINES
+            stripped = masked[j].strip
+            break if depth == 0 && !stripped.starts_with?('[')
+            depth += stripped.count('[') - stripped.count(']')
+            break if depth <= 0 && !stripped.ends_with?(']')
             j += 1
           end
+          j = i if depth > 0
           signature, sig_end = build_signature(lines, masked, j)
           endpoint = endpoint(file, j + 1, attr[1].upcase, attr[2], extract_balanced_param_list(signature) || "")
           if include_callee

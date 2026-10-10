@@ -129,6 +129,10 @@ module Analyzer::Javascript
       # completion order, which is not stable across runs.
       sorted = entries.sort_by { |(path, _)| path }
       roots = discover_js_project_roots(app_root_markers, NEST_CONFIG_BASENAMES)
+      # Separate `-b` bases are separate apps even without a marker.
+      if @normalized_base_paths.size > 1
+        @normalized_base_paths.each { |(_, base)| roots << base unless roots.includes?(base) }
+      end
 
       by_root = {} of String => GlobalPrefixConfig
       sorted.each do |(path, config)|
@@ -139,7 +143,9 @@ module Analyzer::Javascript
       # One app (the overwhelmingly common case, and every project without a
       # discoverable root) keeps the original whole-scan behaviour, including
       # for endpoints that carry no source file such as static-directory ones.
-      if by_root.size <= 1
+      # A single config inside one of several discovered apps is not that
+      # case: it governs its own app only, not the apps that set no prefix.
+      if by_root.size <= 1 && (roots.size <= 1 || by_root.has_key?(""))
         apply_global_prefix(result, sorted.first[1])
         return
       end
@@ -716,30 +722,44 @@ module Analyzer::Javascript
       # on non-ASCII source.
       chars = class_content.chars
       previous_body_end = 0
+      previous_signature_start = -1
+      decorator_block_start = 0
       line_pos = 0
       line_count = 0
+      # `MatchData#begin` re-counts chars from the start of the class on
+      # non-ASCII source; matches arrive in order, so count from the last.
+      cursor_byte = 0
+      cursor_char = 0
       class_content.scan(route_decorator_re) do |match|
-        decorator_start = match.begin(0)
-        next unless decorator_start
+        cursor_char += class_content.byte_slice(cursor_byte, match.byte_begin(0) - cursor_byte).size
+        cursor_byte = match.byte_begin(0)
+        decorator_start = cursor_char
 
         method_name = match[1]
         methods = method_map[method_name]? || [] of String
         next if methods.empty?
 
-        open_paren = match.end(0) - 1
+        open_paren = decorator_start + match[0].size - 1
 
-        close_paren = Noir::JSRouteExtractor.find_matching_paren(class_content, open_paren)
+        close_paren = Noir::JSLiteralScanner.find_matching_paren(chars, open_paren)
         next unless close_paren
 
-        route_paths = literal_paths_from_expression(first_decorator_arg(class_content[(open_paren + 1)...close_paren]), literal_values)
+        route_paths = literal_paths_from_expression(first_decorator_arg(chars[(open_paren + 1)...close_paren].join), literal_values)
         next unless route_paths
-        signature = method_signature_after_decorators(class_content, close_paren + 1)
+        signature = method_signature_after_decorators(class_content, close_paren + 1, chars: chars)
         next unless signature
 
-        floor = previous_body_end < decorator_start ? previous_body_end : 0
-        decorator_block_start = method_decorator_block_start(chars, decorator_start, floor)
+        # Route decorators stacked on one method share its decorator block.
+        # Walking back again from a later one would start with no floor (the
+        # body end just recorded lies past it), leaking an earlier one-line
+        # member's `@Version`, and rescans the stack per decorator.
+        if signature[:start_pos] != previous_signature_start
+          floor = previous_body_end < decorator_start ? previous_body_end : 0
+          decorator_block_start = method_decorator_block_start(chars, decorator_start, floor)
+          previous_signature_start = signature[:start_pos]
+        end
         signature[:close_brace].try { |close_brace| previous_body_end = close_brace + 1 }
-        decorator_block = class_content[decorator_block_start...signature[:start_pos]]
+        decorator_block = chars[decorator_block_start...signature[:start_pos]].join
         method_versions = parse_method_versions(decorator_block)
         effective_base_paths = if method_versions.empty?
                                  controller_versions.empty? ? base_paths : expand_versions(base_paths, controller_versions)
@@ -864,7 +884,7 @@ module Analyzer::Javascript
         param_name = param_match[1]
         endpoint.push_param(Param.new(param_name, "", "query"))
       end
-      if method_params =~ /@Query\s*\(\s*(?:\)|[^'"`][\s\S]*?\))/
+      if method_params =~ /@Query\s*\(\s*+(?:\)|[^'"`][\s\S]*?\))/
         endpoint.push_param(Param.new("query", "", "query"))
       end
 
@@ -879,7 +899,7 @@ module Analyzer::Javascript
         endpoint.push_param(Param.new(body_match[1], "", "body"))
       end
 
-      if method_params =~ /@Body\s*\(\s*(?:\)|[^'"`][\s\S]*?\))/
+      if method_params =~ /@Body\s*\(\s*+(?:\)|[^'"`][\s\S]*?\))/
         endpoint.push_param(Param.new("body", "", "body"))
       end
 
@@ -888,7 +908,7 @@ module Analyzer::Javascript
         param_name = param_match[1]
         endpoint.push_param(Param.new(param_name, "", "header"))
       end
-      if method_params =~ /@Headers\s*\(\s*(?:\)|[^'"`][\s\S]*?\))/
+      if method_params =~ /@Headers\s*\(\s*+(?:\)|[^'"`][\s\S]*?\))/
         endpoint.push_param(Param.new("headers", "", "header"))
       end
 

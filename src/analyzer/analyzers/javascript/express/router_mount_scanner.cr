@@ -52,10 +52,77 @@ module Analyzer::Javascript
     )
     end
 
+    # Per importing file: local binding => the name it was imported under,
+    # for renamed imports only (`const { router: usersRouter } = require(…)`,
+    # `import { router as usersRouter } from …`). The prefix belongs to the
+    # exported name — that is what the router's own file registers routes on.
+    @import_names = Hash(String, Hash(String, String)).new
+
+    RENAMED_IMPORT_RE = /([A-Za-z_$][\w$]*)\s*(?::|\s+as\s+)\s*([A-Za-z_$][\w$]*)/
+
+    # Per scanned file: local binding => the names the file exports it
+    # under, so a router imported by name can carry its prefix on to the
+    # routers it mounts in turn.
+    @export_bindings = Hash(String, Hash(String, Array(String))).new
+
+    REEXPORT_LIST_RE   = /\bexport\s*\{([^}]*)\}\s*from\s*['"]([^'"]+)['"]/
+    CJS_REEXPORT_RE    = /(?:\b([A-Za-z_$][\w$]*)\s*:|\bexports\.([A-Za-z_$][\w$]*)\s*=)\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)/
+    MAX_REEXPORT_DEPTH = 5
+
+    # The locator key for `name` as exported by `file`, followed through
+    # re-export barrels to the module that defines it:
+    #   export { default as users } from './users.js'
+    #   module.exports = { users: require('./users') }
+    #   import users from './users'; export { users }
+    # A barrel's routes live in the module it forwards to, so a prefix keyed
+    # on the barrel would never reach them. A module default lands on the
+    # file key — the key a default import of that module uses.
+    private def named_export_key(file : String, name : String, depth : Int32 = 0) : Noir::LocatorKey(Array(String))
+      return ExpressConstants.function_key(file, name) if depth >= MAX_REEXPORT_DEPTH
+      content = CodeLocator.instance.content_for(file) || Noir::TextFile.read(file)
+      return ExpressConstants.function_key(file, name) unless content.includes?("export")
+      content = Noir::JSRouteExtractor.strip_js_comments(content)
+
+      content.scan(REEXPORT_LIST_RE) do |m|
+        m[1].split(',').each do |item|
+          parts = item.strip.split(/\s+as\s+/)
+          next unless (parts[1]? || parts[0]) == name
+          target = resolve_require_path(file, m[2])
+          next unless target
+          return parts[0] == "default" ? ExpressConstants.file_key(target) : named_export_key(target, parts[0], depth + 1)
+        end
+      end
+
+      content.scan(CJS_REEXPORT_RE) do |m|
+        next unless (m[1]? || m[2]?) == name
+        target = resolve_require_path(file, m[3])
+        return ExpressConstants.file_key(target) if target
+      end
+
+      Noir::JSRouteExtractor.export_bindings(content).each do |local, exported_names|
+        next unless exported_names.includes?(name)
+        imports = parse_imports(content, file)
+        if target = imports[:require_map][local]?
+          return ExpressConstants.file_key(target)
+        elsif target = imports[:function_map][local]?
+          return named_export_key(target, exported_name(file, local), depth + 1)
+        end
+      end
+
+      ExpressConstants.function_key(file, name)
+    rescue File::Error | IO::Error
+      ExpressConstants.function_key(file, name)
+    end
+
+    private def exported_name(main_file : String, local : String) : String
+      @import_names[main_file]?.try(&.[local]?) || local
+    end
+
     # Main entry point: scan all files for router mount patterns
     def scan
       locator = CodeLocator.instance
       main_files = collect_js_files
+      return scan_register_mounts(main_files, locator) if @framework.in?(:fastify, :restify)
       seed_firebase_function_mounts(main_files, locator) if @framework == :express
 
       # Global collections for two-pass processing
@@ -69,6 +136,93 @@ module Analyzer::Javascript
 
       # PASS 2: Process all deferred nested mounts now that all top-level mounts are known
       process_deferred_mounts(global_deferred_mounts, file_contexts, locator)
+    end
+
+    REGISTER_CALL_RE    = /\.register\s*\(/
+    REGISTER_PREFIX_RE  = /\bprefix\s*:\s*(?:['"]([^'"]+)['"]|`([^`$]+)`)/
+    REGISTER_MODULE_RE  = /\A(?:await\s+)?(?:require|import)\s*\(\s*['"]([^'"]+)['"]\s*\)(?:\.default)?\z/
+    REGISTER_BINDING_RE = /\A([A-Za-z_$][\w$]*)(?:\.([A-Za-z_$][\w$]*))?\z/
+    # restify-router: `usersRouter.applyRoutes(server, '/users')` and the
+    # nested `router.add('/v1', v1Router)`.
+    APPLY_ROUTES_RE = /((?:require\s*\(\s*['"][^'"]+['"]\s*\))|[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?)\s*\.applyRoutes\s*\(\s*[\w$.]+\s*,\s*(?:['"]([^'"]+)['"]|`([^`$]+)`)/
+    RESTIFY_ADD_RE  = /\.add\s*\(\s*(?:['"]([^'"]+)['"]|`([^`$]+)`)\s*,\s*((?:require\s*\(\s*['"][^'"]+['"]\s*\))|[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?)\s*\)/
+
+    # Plugin/router mounts whose child lives in another file:
+    #   Fastify  `<instance>.register(<plugin>, { prefix: '/p' })`
+    #   Restify  `<router>.applyRoutes(server, '/p')`, `router.add('/p', <router>)`
+    # where the child is `require('./users')`, `import('./users')` or an
+    # imported binding. Every route the child file registers is served under
+    # the prefix, and so is every child it mounts in turn, so the mounts form
+    # a tree whose roots are the files nothing mounts. Same-file children are
+    # the route extractor's job.
+    private def scan_register_mounts(main_files : Array(String), locator : CodeLocator)
+      # from_file => [{prefix, target key, target module file}]
+      edges = Hash(String, Array(Tuple(String, Noir::LocatorKey(Array(String)), String))).new
+      main_files.each do |file|
+        content = CodeLocator.instance.content_for(file) || Noir::TextFile.read(file)
+        next unless @framework == :fastify ? content.includes?(".register") : content.includes?(".applyRoutes") || content.includes?(".add")
+        next if Noir::JSRouteExtractor.other_shared_extractor_framework?(content, @framework)
+        content = Noir::JSRouteExtractor.strip_js_comments(content)
+        imports = nil.as(NamedTuple(require_map: Hash(String, String), function_map: Hash(String, String), var_to_function: Hash(String, String))?)
+
+        each_plugin_mount(content) do |plugin, prefix|
+          next unless mount_prefix?(prefix)
+
+          plugin = plugin.strip
+          target = if module_match = plugin.match(REGISTER_MODULE_RE)
+                     resolve_require_path(file, module_match[1]).try { |t| {ExpressConstants.file_key(t), t} }
+                   elsif binding = plugin.match(REGISTER_BINDING_RE)
+                     imports ||= parse_imports(content, file)
+                     local, prop = binding[1], binding[2]?
+                     if t = imports[:require_map][local]?
+                       {prop ? named_export_key(t, prop) : ExpressConstants.file_key(t), t}
+                     elsif t = imports[:function_map][local]?
+                       {named_export_key(t, exported_name(file, local)), t} unless prop
+                     end
+                   end
+          next unless target
+          (edges[Noir::PathScope.expand(file)] ||= [] of Tuple(String, Noir::LocatorKey(Array(String)), String)) << {prefix, target[0], target[1]}
+        end
+      rescue e : File::Error | IO::Error
+        @logger.debug "Error scanning #{file} for plugin mounts (#{e.class}): #{e.message}"
+      end
+
+      registered = edges.values.flat_map(&.map(&.[2])).to_set
+      edges.each_key do |root|
+        next if registered.includes?(root)
+        descend_register_mounts(root, "", edges, locator, Set{root})
+      end
+    end
+
+    # Yields each cross-file mount site as {child expression, prefix}.
+    private def each_plugin_mount(content : String, &)
+      if @framework == :fastify
+        content.scan(REGISTER_CALL_RE) do |m|
+          args = extract_use_call_args(content, m.byte_end(0))
+          plugin = first_top_level_argument(args)
+          prefix_match = args[plugin.size..].match(REGISTER_PREFIX_RE)
+          next unless prefix_match
+          # Fastify adds the leading slash itself: `{ prefix: 'api/v1' }`.
+          prefix = prefix_match[1]? || prefix_match[2]
+          yield plugin, prefix.starts_with?('/') ? prefix : "/#{prefix}"
+        end
+      else
+        content.scan(APPLY_ROUTES_RE) { |m| yield m[1], m[2]? || m[3] }
+        content.scan(RESTIFY_ADD_RE) { |m| yield m[3], m[1]? || m[2] }
+      end
+    end
+
+    private def descend_register_mounts(file : String, parent : String,
+                                        edges : Hash(String, Array(Tuple(String, Noir::LocatorKey(Array(String)), String))),
+                                        locator : CodeLocator, on_path : Set(String))
+      edges[file]?.try &.each do |prefix, key, target|
+        next if on_path.includes?(target)
+        combined = Noir::URLPath.join(parent, prefix)
+        push_prefix_to_locator(locator, key, combined, "Mapped plugin mount prefix: #{target} => #{combined}")
+        on_path << target
+        descend_register_mounts(target, combined, edges, locator, on_path)
+        on_path.delete(target)
+      end
     end
 
     # The handler is the last argument: `onRequest(app)` / `onRequest({ region }, app)`.
@@ -130,8 +284,13 @@ module Analyzer::Javascript
       # no router mounts at all.
       return unless content.includes?(".use(") || content.includes?(".use (") ||
                     content.includes?(".route(") || content.includes?(".route (")
+      # The mount scans are regexes over call arguments: a comment in
+      # `.use(/* x */ '/api', router)` must not hide the prefix, and a
+      # commented-out mount must not add one. Lines and columns are kept.
+      content = Noir::JSRouteExtractor.strip_js_comments(content)
 
       # Parse imports
+      @export_bindings[main_file] = Noir::JSRouteExtractor.export_bindings(content)
       imports = parse_imports(content, main_file)
       require_map = imports[:require_map]
       function_map = imports[:function_map]
@@ -158,7 +317,7 @@ module Analyzer::Javascript
         caller = m[1]
         prefix = "/"
         # Position scanner to start right after the opening parenthesis
-        match_end = (m.begin(0) || 0) + m[0].size
+        match_end = m.byte_end(0)
         args = extract_use_call_args(content, match_end)
         next if explicit_mount_prefix_args?(args, prefix_constants)
 
@@ -259,7 +418,7 @@ module Analyzer::Javascript
 
         caller = m[1]
         prefix = m[2]
-        match_end = m.end(0) || 0
+        match_end = m.byte_end(0)
 
         process_use_call(content, match_end, caller, prefix, main_file, locator,
           require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
@@ -270,7 +429,7 @@ module Analyzer::Javascript
 
         caller = m[1]
         prefix = m[2]
-        match_end = m.end(0) || 0
+        match_end = m.byte_end(0)
 
         process_use_call(content, match_end, caller, prefix, main_file, locator,
           require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
@@ -283,7 +442,7 @@ module Analyzer::Javascript
         next unless prefix
 
         caller = m[1]
-        match_end = m.end(0) || 0
+        match_end = m.byte_end(0)
 
         process_use_call(content, match_end, caller, prefix, main_file, locator,
           require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
@@ -296,7 +455,7 @@ module Analyzer::Javascript
         prefixes = extract_mount_prefixes_from_array(m[2], prefix_constants)
         next if prefixes.empty?
 
-        match_end = m.end(0) || 0
+        match_end = m.byte_end(0)
         prefixes.each do |prefix|
           process_use_call(content, match_end, caller, prefix, main_file, locator,
             require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
@@ -556,12 +715,14 @@ module Analyzer::Javascript
             parse_destructured_names(names).each do |name|
               function_map[name] = resolved_path unless name.empty?
             end
+            names.scan(RENAMED_IMPORT_RE) { |r| (@import_names[main_file] ||= {} of String => String)[r[2]] = r[1] }
           end
         end
       end
 
       # Pattern: import varName from './path/to/file'
-      content.scan(/import\s+(\w+)\s+from\s+['"]([^'"]+)['"]/) do |m|
+      # (and `import * as routes from …`: `routes.users` is a named export)
+      content.scan(/import\s+(?:\*\s*as\s+)?(\w+)\s+from\s+['"]([^'"]+)['"]/) do |m|
         if m.size >= 3
           var_name = m[1]
           require_path = m[2]
@@ -580,6 +741,7 @@ module Analyzer::Javascript
             parse_destructured_names(names).each do |name|
               function_map[name] = resolved_path unless name.empty?
             end
+            names.scan(RENAMED_IMPORT_RE) { |r| (@import_names[main_file] ||= {} of String => String)[r[2]] = r[1] }
           end
         end
       end
@@ -695,6 +857,8 @@ module Analyzer::Javascript
       candidates.last
     end
 
+    ROUTE_CALL_RE = /\.(get|post|put|delete|patch|all|head|options)\s*\(/
+
     # Check if a file contains route definitions (get/post/put/delete/patch/all)
     private def file_has_routes?(file_path : String) : Bool
       return false unless File.file?(file_path)
@@ -703,7 +867,10 @@ module Analyzer::Javascript
         content = CodeLocator.instance.content_for(file_path) || Noir::TextFile.read(file_path)
         # Look for common route definition patterns
         # Matches: router.get(, router.post(, .get(, .post(, etc.
-        content.matches?(/\.(get|post|put|delete|patch|all|head|options)\s*\(/)
+        # A commented-out `// router.get(...)` in a middleware module must not
+        # make it the mounted router; strip only once the raw text matches.
+        content.matches?(ROUTE_CALL_RE) &&
+          Noir::JSRouteExtractor.strip_js_comments(content).matches?(ROUTE_CALL_RE)
       rescue
         false
       end
@@ -726,10 +893,19 @@ module Analyzer::Javascript
           parent_prefixes = locator.all(ExpressConstants.file_key(caller_file)).dup
         elsif caller_func = var_to_function[caller]?
           if caller_file = function_map[caller_func]?
-            parent_prefixes = locator.all(ExpressConstants.function_key(caller_file, caller_func)).dup
+            parent_prefixes = locator.all(named_export_key(caller_file, exported_name(main_file, caller_func))).dup
           end
         elsif caller_file = function_map[caller]?
-          parent_prefixes = locator.all(ExpressConstants.function_key(caller_file, caller)).dup
+          parent_prefixes = locator.all(named_export_key(caller_file, exported_name(main_file, caller))).dup
+        end
+      end
+
+      # A router this file exports by name carries the prefix its importer
+      # recorded under that name.
+      if parent_prefixes.empty?
+        @export_bindings[main_file]?.try(&.[caller]?).try &.each do |exported|
+          key = ExpressConstants.function_key(Noir::PathScope.expand(main_file), exported)
+          locator.all(key).each { |p| parent_prefixes << p unless parent_prefixes.includes?(p) }
         end
       end
 
@@ -749,7 +925,7 @@ module Analyzer::Javascript
 
     # Extract arguments from .use() call using literal-aware scanning
     private def extract_use_call_args(content : String, match_end : Int32) : String
-      result = Noir::JSLiteralScanner.extract_paren_content(content, match_end)
+      result = Noir::JSLiteralScanner.extract_paren_content_at_byte(content, match_end)
       result ? result.content : ""
     end
 
@@ -800,7 +976,7 @@ module Analyzer::Javascript
       if func_name = var_to_function[router_var]?
         router_file = function_map[func_name]?
         return unless router_file
-        return {key:  ExpressConstants.function_key(router_file, func_name),
+        return {key:  named_export_key(router_file, exported_name(main_file, func_name)),
                 note: " (factory var): #{router_file}:#{func_name}",
                 var:  router_var}
       end
@@ -809,7 +985,7 @@ module Analyzer::Javascript
       # Note: We do NOT store file-level keys here to avoid prefix bleed to other
       # factory functions in the same file that were not mounted.
       if router_file = function_map[router_var]?
-        return {key:  ExpressConstants.function_key(router_file, router_var),
+        return {key:  named_export_key(router_file, exported_name(main_file, router_var)),
                 note: " (factory direct): #{router_file}:#{router_var}",
                 var:  router_var}
       end
@@ -823,7 +999,7 @@ module Analyzer::Javascript
         prop_name = parts[1]?
         if prop_name
           if router_file = require_map[base_obj]? || function_map[base_obj]?
-            return {key:  ExpressConstants.function_key(router_file, prop_name),
+            return {key:  named_export_key(router_file, prop_name),
                     note: " (property): #{router_file}:#{prop_name}",
                     var:  router_var}
           end

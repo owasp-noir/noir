@@ -120,12 +120,14 @@ module Analyzer::Javascript
       sanitized = Noir::JSRouteExtractor.strip_js_comments(content)
 
       methods = detect_pages_router_methods(sanitized)
-      default_body_info = extract_default_export_body(content)
+      # Comments are blanked in place, so lines and callee positions still
+      # match the file.
+      default_body_info = extract_default_export_body(sanitized)
       default_source_line = default_body_info.try(&.[1]) || 1
 
       methods.each do |method|
         endpoint = Endpoint.new(url, method)
-        body_info = extract_exported_method_body(content, method) || default_body_info
+        body_info = extract_exported_method_body(sanitized, method) || default_body_info
         endpoint.details = Details.new(PathInfo.new(path, body_info.try(&.[1]) || default_source_line))
 
         extract_path_params(url, endpoint)
@@ -183,10 +185,11 @@ module Analyzer::Javascript
 
       methods.each do |method|
         endpoint = Endpoint.new(url, method)
-        method_body_info = extract_exported_method_body(content, method)
+        # Read from the blanked text: `export {\n  list as GET, // x\n}` hid
+        # the alias, and the line fell back to 1.
+        method_body_info = extract_exported_method_body(sanitized, method)
         endpoint.details = Details.new(PathInfo.new(path, method_body_info.try(&.[1]) || 1))
-        param_body_info = extract_exported_method_body(sanitized, method)
-        param_source = param_body_info.try(&.[0]) || sanitized
+        param_source = method_body_info.try(&.[0]) || sanitized
 
         extract_path_params(url, endpoint)
         extract_app_router_params(param_source, endpoint)
@@ -216,16 +219,14 @@ module Analyzer::Javascript
       sanitized.scan(/export\s+async\s+function\s+(\w+)\s*\(([^)]*)\)/) do |match|
         action_name = match[1]
         next unless seen.add?(action_name)
-        original_match = content.match(cached_regex("nextjs:action_fn:#{action_name}") { /export\s+async\s+function\s+#{Regex.escape(action_name)}\s*\(([^)]*)\)/ })
-        register_server_action(path, action_name, match[2], sanitized, match, content, original_match, result, mutex, include_callee)
+        register_server_action(path, action_name, match[2], sanitized, match, result, mutex, include_callee)
       end
 
       # export const NAME = async (args) => { ... }
       sanitized.scan(/export\s+const\s+(\w+)\s*=\s*async\s*\(([^)]*)\)/) do |match|
         action_name = match[1]
         next unless seen.add?(action_name)
-        original_match = content.match(cached_regex("nextjs:action_const:#{action_name}") { /export\s+const\s+#{Regex.escape(action_name)}\s*=\s*async\s*\(([^)]*)\)/ })
-        register_server_action(path, action_name, match[2], sanitized, match, content, original_match, result, mutex, include_callee)
+        register_server_action(path, action_name, match[2], sanitized, match, result, mutex, include_callee)
       end
 
       # Note: `export default` actions are unaddressable by name, and
@@ -234,11 +235,9 @@ module Analyzer::Javascript
 
     private def register_server_action(path : String, action_name : String, args : String,
                                        sanitized : String, match : Regex::MatchData,
-                                       content : String, original_match : Regex::MatchData?,
                                        result : Array(Endpoint), mutex : Mutex, include_callee : Bool)
       param_body_info = extract_action_body(sanitized, match)
       body = param_body_info.try(&.[0]) || ""
-      callee_body_info = original_match ? extract_action_body(content, original_match) : nil
 
       url = "/" + action_name
       endpoint = Endpoint.new(url, "POST")
@@ -246,7 +245,9 @@ module Analyzer::Javascript
       endpoint.details = Details.new(PathInfo.new(path, param_body_info.try(&.[1]) || line_number_for_index(sanitized, match.begin(0) || 0)))
 
       extract_server_action_params(args, body, endpoint)
-      attach_callees(endpoint, path, callee_body_info) if include_callee && callee_body_info
+      # The blanked body: a commented-out declaration of the same name no
+      # longer lends its callees.
+      attach_callees(endpoint, path, param_body_info) if include_callee && param_body_info
 
       mutex.synchronize { result << endpoint }
     end

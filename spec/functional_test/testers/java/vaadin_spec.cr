@@ -5,6 +5,7 @@ expected_endpoints = [
   Endpoint.new("/admin/users", "GET"),
   Endpoint.new("/app/dashboard", "GET"),
   Endpoint.new("/app/home", "GET"),
+  Endpoint.new("/app/audit", "GET"),
   Endpoint.new("/login", "GET"),
   Endpoint.new("/", "GET"),
   Endpoint.new("/reports", "GET"),

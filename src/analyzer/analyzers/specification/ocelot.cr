@@ -35,9 +35,13 @@ module Analyzer::Specification
       downstream = route_h["DownstreamPathTemplate"]?.try(&.as_s?).presence
       hosts = json_strings(route_h["UpstreamHost"]?)
       line = take_line(lines, template)
+      # A template may also match on the query (`/updates?unitId={uid}`).
+      path, _, query = template.partition('?')
+      params = [] of Param
+      request_query_pairs("?#{query}").each { |name, _| add_param(params, name, "query") } unless query.empty?
 
       methods.each do |method|
-        endpoint = Endpoint.new(template, method, details_at(details, line))
+        endpoint = Endpoint.new(path, method, params.dup, details_at(details, line))
         endpoint.add_tag(Tag.new("ocelot-downstream", downstream, "ocelot_analyzer")) if downstream
         endpoint.add_tag(Tag.new("ocelot-host", hosts.join(", "), "ocelot_analyzer")) unless hosts.empty?
         @result << endpoint

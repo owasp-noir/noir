@@ -160,7 +160,7 @@ struct PassiveScan
     # first or last line; `(*ANYCRLF)` keeps `$` true before the `\r\n`
     # that `each_line` strips.
     private def file_gate_for(pattern : String, line_regex : Regex) : Regex?
-      return if pattern.matches?(NO_FILE_GATE)
+      return if pattern.matches?(NO_FILE_GATE) || self.class.newline_negative_lookaround?(pattern)
       return line_regex unless self.class.line_anchored?(pattern)
       Regex.new("(*ANYCRLF)#{pattern}", Regex::Options::MULTILINE_ONLY)
     rescue
@@ -196,6 +196,45 @@ struct PassiveScan
         folded.concat(plain)
       end
       folded.concat(multiline)
+    end
+
+    # A token that can match `\n`: `\s`, a negated class, `\n` itself, …
+    NEWLINE_TOKEN = /\\[sWDRvnNX]|\[\^|\\x\{?0*[aA]\b|\\0?12\b|\\o\{|\\cJ|\\p\{|\(\?[a-z]*s|\n/
+
+    # True when a negative lookaround in `pattern` can match a newline. At a
+    # line's end the per-line match sees end-of-string where the whole-file
+    # gate sees `\n` and the next line, so `key(?!\s*=\s*null)` fires on the
+    # line `key` but the gate rejects `key\n= null` and the rule never runs.
+    # Over-matching here only costs the gate.
+    def self.newline_negative_lookaround?(pattern : String) : Bool
+      chars = pattern.chars
+      offset = 0
+      while start = pattern.index(/\(\?<?!/, offset)
+        # Walk to the `)` closing the lookaround, skipping escapes and classes.
+        i = start + 1
+        depth = 1
+        escaped = in_class = false
+        while i < chars.size && depth > 0
+          char = chars[i]
+          if escaped
+            escaped = false
+          elsif char == '\\'
+            escaped = true
+          elsif in_class
+            in_class = false if char == ']'
+          elsif char == '['
+            in_class = true
+          elsif char == '('
+            depth += 1
+          elsif char == ')'
+            depth -= 1
+          end
+          i += 1
+        end
+        return true if pattern[start...i].matches?(NEWLINE_TOKEN)
+        offset = start + 1
+      end
+      false
     end
 
     # True when `pattern` has an unescaped `^` or `$` outside a character

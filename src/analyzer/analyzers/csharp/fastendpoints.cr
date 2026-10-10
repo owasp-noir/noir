@@ -98,7 +98,8 @@ module Analyzer::CSharp
         content = read_file_content(file)
         next unless content_matches?(content, wanted_re)
         base_path = configured_base_for(file)
-        lines = content.lines
+        # Comment-blanked: `[FromHeader("X")] // note` is still an attribute line.
+        lines = Noir::CSharpLexer.new(content).code_lines
         i = 0
         while i < lines.size
           line = lines[i]

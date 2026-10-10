@@ -36,7 +36,7 @@ module Analyzer::Javascript
       ordered_scan_files(get_files_by_extensions(EXTENSIONS)) do |path|
         kind, segments = function_location(path, configured) || next
         name = Noir::ServerlessLayout.netlify_function_name(segments) || next
-        endpoints_for(path, read_file_content(path), kind, name, include_callee)
+        endpoints_for(path, Noir::JSRouteExtractor.strip_js_comments(read_file_content(path)), kind, name, include_callee)
       end.each { |endpoints| @result.concat(endpoints) }
       @result
     end

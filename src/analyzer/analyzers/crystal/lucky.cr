@@ -33,6 +33,7 @@ module Analyzer::Crystal
       # Track the enclosing action class so `action`/`nested_route` (which
       # carry no path) can infer their route from the class name.
       current_class = ""
+      param_lines = crystal_param_lines(lines)
 
       lines.each_with_index do |line, index|
         stripped = Noir::CrystalCalleeExtractor.strip_comment(line)
@@ -75,7 +76,7 @@ module Analyzer::Crystal
           last_endpoint = endpoint
         end
 
-        param = line_to_param(line)
+        param = line_to_param(param_lines[index])
         unless param.name.empty?
           unless last_endpoint.method.empty?
             last_endpoint.push_param(param)

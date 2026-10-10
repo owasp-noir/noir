@@ -454,6 +454,7 @@ module Analyzer::Python
     # `await` keyword is invisible to the access shape so the same
     # regexes work for sync Flask and async Quart.
     private def extract_request_params(codeblock_lines : Array(::String)) : Array(Param)
+      codeblock_lines = fold_python_continuations(codeblock_lines)
       params = [] of Param
       json_variable_names = [] of ::String
       # (json-variable regexes are memoized in @json_param_regex_cache —

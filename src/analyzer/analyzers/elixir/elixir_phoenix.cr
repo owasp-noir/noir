@@ -1,6 +1,7 @@
 require "../../engines/elixir_engine"
 require "../../../utils/url_path"
 require "../../../utils/top_level_split"
+require "../../../utils/call_fold"
 
 module Analyzer::Elixir
   class Phoenix < ElixirEngine
@@ -191,15 +192,17 @@ module Analyzer::Elixir
         end
 
         # Scope openers always contain the `scope` token.
-        if opener = scope_opener(line)
+        opener_line, opener_lines = scope_statement(lines, index)
+        if opener = scope_opener(opener_line)
           prefix = opener[:unquote] ? (string_bindings[opener[:value]]? || "") : opener[:value]
           scope_stack << {prefix: prefix, module_prefix: opener[:module_prefix], indent: opener[:indent]}
           if body = opener[:inline_body]
             # Popped at the top of the next iteration (see `scope_opener`).
             inline_scope_open = true
             line = body
+            index += opener_lines - 1
           else
-            index += 1
+            index += opener_lines
             next
           end
         end
@@ -238,12 +241,21 @@ module Analyzer::Elixir
           next
         end
 
-        line_to_endpoint(line, path, scope_prefix, scope_module, base, string_bindings).each do |endpoint|
+        found = line_to_endpoint(line, path, scope_prefix, scope_module, base, string_bindings)
+        consumed = 1
+        # `get "/page", # note` + newline + `PageController, :home`: a verb
+        # route wrapped after a comma reads as nothing on its first line.
+        if found.empty? && line == lines[index] && statement_open?(line)
+          statement, wrapped = assemble_statement(lines, index)
+          found = line_to_endpoint(statement, path, scope_prefix, scope_module, base, string_bindings)
+          consumed = wrapped unless found.empty?
+        end
+        found.each do |endpoint|
           next if endpoint.method.empty?
           endpoint.details = Details.new(PathInfo.new(path, index + 1))
           endpoints << endpoint
         end
-        index += 1
+        index += consumed
       end
       endpoints
     end
@@ -264,6 +276,16 @@ module Analyzer::Elixir
         break if consumed > 12 # safety bound: route options never wrap this far
       end
       {buffer, consumed}
+    end
+
+    # The `scope` opener starting at `start`, joined across lines when it
+    # wraps after a comma (`scope "/api", # v1` + newline + `AppWeb do`),
+    # so the module alias on a continuation line still scopes the routes.
+    # Returns the statement and how many physical lines it spans.
+    private def scope_statement(lines : Array(String), start : Int32) : Tuple(String, Int32)
+      line = lines[start]
+      return {line, 1} unless line.includes?("scope") && statement_open?(line)
+      assemble_statement(lines, start)
     end
 
     private def update_elixir_string_bindings(bindings : Hash(String, String), line : String) : Nil
@@ -703,18 +725,20 @@ module Analyzer::Elixir
           end
         end
 
-        if opener = scope_opener(line)
+        opener_line, opener_lines = scope_statement(route_macro.body_lines, index)
+        if opener = scope_opener(opener_line)
           prefix = opener[:unquote] ? bindings[opener[:value]]? : opener[:value]
           unless prefix
-            index += 1
+            index += opener_lines
             next
           end
           scope_stack << {prefix: prefix, module_prefix: opener[:module_prefix], indent: opener[:indent]}
           if body = opener[:inline_body]
             inline_scope_open = true
             line = body
+            index += opener_lines - 1
           else
-            index += 1
+            index += opener_lines
             next
           end
         end
@@ -809,9 +833,9 @@ module Analyzer::Elixir
       params = Array(Param).new
       seen_params = Set(String).new # Track seen params for O(1) lookup
 
-      # Extract parameters from the function block content
-      (start_index..end_index).each do |i|
-        line = lines[i]
+      # Extract parameters from the function block content, with a wrapped
+      # read (`get_req_header(` / `conn,` / `"x-key"` / `)`) folded.
+      Noir::CallFold.fold(lines[start_index..end_index]) { |l| strip_trailing_comment(l) }.each do |line|
         # Most action lines are business logic with no param accessors.
         # Five PCRE scans only run when a conn accessor or header helper
         # is present.
@@ -920,15 +944,22 @@ module Analyzer::Elixir
       normalized.ends_with?("controller") ? normalized[0, normalized.size - "controller".size] : normalized
     end
 
-    SCOPE_LITERAL_RE = /^(\s*)scope\s*(?:\(\s*)?["']([^"']+)["'](?:\s*,\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*))?/
-    SCOPE_UNQUOTE_RE = /^(\s*)scope\s*(?:\(\s*)?unquote\(\s*(\w+)\s*\)(?:\s*,\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*))?/
-    SCOPE_INLINE_RE  = /(?:^|[\s,(])do:\s*(.+)$/
+    # The optional positional alias must not be the first key of a trailing
+    # keyword list (`scope "/x", as: :y do`), hence the `(?![a-z_]\w*:)`.
+    SCOPE_LITERAL_RE = /^(\s*)scope\s*(?:\(\s*)?["']([^"']+)["'](?:\s*,\s*(?![a-z_]\w*:)([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*))?/
+    SCOPE_UNQUOTE_RE = /^(\s*)scope\s*(?:\(\s*)?unquote\(\s*(\w+)\s*\)(?:\s*,\s*(?![a-z_]\w*:)([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*))?/
+    # `scope path: "/api", alias: App do` / `scope alias: App do`: options only.
+    SCOPE_KEYWORD_RE  = /^(\s*)scope\s*(?:\(\s*)?(?=[a-z_]\w*:\s)/
+    SCOPE_PATH_KW_RE  = /\bpath:\s*["']([^"']*)["']/
+    SCOPE_ALIAS_KW_RE = /\balias:\s*([A-Z]\w*(?:\.[A-Za-z_]\w*)*)/
+    SCOPE_INLINE_RE   = /(?:^|[\s,(])do:\s*(.+)$/
 
     # A `scope` opener on `line`: its indent, the literal prefix (or the
     # `unquote(var)` name when `unquote` is set), the module alias, and —
     # for the one-line `scope "/admin", App, do: get(...)` form, which has
     # no `end` — the inline body. Callers push the scope, read the body
     # under it, and pop it before the next line so the prefix cannot leak.
+    # The prefix and alias may also come from `path:` / `alias:` options.
     private def scope_opener(line : String) : NamedTuple(indent: Int32, value: String, unquote: Bool, module_prefix: String, inline_body: String?)?
       return unless line.includes?("scope")
 
@@ -936,12 +967,22 @@ module Analyzer::Elixir
       match = line.match(SCOPE_LITERAL_RE)
       unless match
         match = line.match(SCOPE_UNQUOTE_RE)
+        unquote = true if match
+      end
+      keyword_only = false
+      unless match
+        match = line.match(SCOPE_KEYWORD_RE)
         return unless match
-        unquote = true
+        keyword_only = true
       end
 
-      inline_body = strip_trailing_comment(match.post_match).match(SCOPE_INLINE_RE).try(&.[1])
-      {indent: match[1].size, value: match[2], unquote: unquote, module_prefix: match[3]? || "", inline_body: inline_body}
+      tail = strip_trailing_comment(match.post_match)
+      inline = tail.match(SCOPE_INLINE_RE)
+      inline_body = inline.try(&.[1])
+      options = inline ? tail[0, inline.begin(0)] : tail
+      value = keyword_only ? (options.match(SCOPE_PATH_KW_RE).try(&.[1]) || "") : match[2]
+      module_prefix = (keyword_only ? nil : match[3]?) || options.match(SCOPE_ALIAS_KW_RE).try(&.[1]) || ""
+      {indent: match[1].size, value: value, unquote: unquote, module_prefix: module_prefix, inline_body: inline_body}
     end
 
     private def current_scope_prefix(scope_stack : Array(ScopeEntry)) : String

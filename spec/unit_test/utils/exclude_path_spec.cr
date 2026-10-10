@@ -26,6 +26,23 @@ describe Noir::ExcludePath do
     matcher.excluded?("src/tests/integration.js").should be_false
   end
 
+  # `*` stops at `/`, so `tests/*` (and the documented `vendor/*`) used to
+  # drop only the files directly inside the directory.
+  it "drops everything under a directory a path glob matches" do
+    matcher = Noir::ExcludePath.new("tests/*")
+    matcher.excluded?("tests/unit/deep/a.js").should be_true
+    matcher.excluded?("src/tests/unit/a.js").should be_false
+  end
+
+  # A bare name used to match only a file of that name, so `tests` excluded
+  # nothing in a project with a `tests/` directory.
+  it "matches a bare name against every directory above the file" do
+    matcher = Noir::ExcludePath.new("tests")
+    matcher.excluded?("tests/a.js").should be_true
+    matcher.excluded?("pkg/tests/unit/a.js").should be_true
+    matcher.excluded?("pkg/testsuite/a.js").should be_false
+  end
+
   it "treats a plain directory pattern as everything under it" do
     matcher = Noir::ExcludePath.new("src/legacy")
     matcher.excluded?("src/legacy").should be_true

@@ -24,11 +24,14 @@ module Noir
 
       code = JSRouteExtractor.strip_js_comments(content)
       triggers = [] of Trigger
+      # Byte offsets throughout: char-indexed matching and slicing rescan
+      # the file per trigger once it holds one non-ASCII char.
+      offsets = JSRouteExtractor::ByteOffsets.new(code)
       code.scan(EXPORT) do |m|
-        open = m.end(0) - 1
-        close = JSRouteExtractor.find_matching_paren(code, open) || next
+        open = m.byte_end(0) - 1
+        close = JSLiteralScanner.find_matching_paren_at_byte(code, open) || next
         name = m[1]? || m[2]
-        triggers << Trigger.new(name, m[3], code[(open + 1)...close], JSRouteExtractor.line_for_char_pos(code, m.begin(0)))
+        triggers << Trigger.new(name, m[3], code.byte_slice(open + 1, close - open - 1), offsets.line(m.byte_begin(0)))
       end
       triggers
     end

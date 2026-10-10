@@ -15,6 +15,6 @@ builder.Services
 var app = builder.Build();
 
 app.UseWebSockets();
-app.MapGraphQL("/api/graphql");
+app.MapGraphQL(/* public schema */ "/api/graphql");
 
 app.Run();

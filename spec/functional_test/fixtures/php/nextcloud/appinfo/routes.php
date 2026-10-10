@@ -11,7 +11,7 @@ return array_merge_recursive(
             ['name' => 'page#index', 'url' => '/home', 'verb' => 'GET', 'root' => '/elsewhere'],
         ],
         'ocs' => [
-            ['name' => 'api#share', 'url' => '/api/v1/share', 'verb' => 'POST'],
+            ['name' => 'api#share', 'url' => '/api/v1/share', 'verb' => /* write */ 'POST'],
         ],
         'resources' => [
             'note' => ['url' => '/notes'],

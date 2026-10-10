@@ -19,7 +19,7 @@ module Analyzer::Go
     # rebuilt for every line — precompile it once at load time.
     CONTEXT_GETTER_PATTERNS = ["GetString", "GetStrings", "GetInt", "GetInt8", "GetUint8", "GetInt16", "GetUint16", "GetInt32", "GetUint32",
                                "GetInt64", "GetUint64", "GetBool", "GetFloat"].map do |pattern|
-      {pattern, /#{pattern}\("([^"]*)"\)/}
+      {pattern, /#{pattern}\(\s*"([^"]*)"\s*[,)]/}
     end
 
     def analyze
@@ -54,7 +54,7 @@ module Analyzer::Go
         next unless File.exists?(path)
         content = read_file_content(path)
         next unless content_matches?(content, IMPORT_MARKER_RE)
-        lines = content.lines
+        lines = GoEngine.strip_comments(content).lines
         last_endpoint = Endpoint.new("", "")
 
         # Functional `web.Get("/x", h)` verb routes plus
@@ -142,14 +142,14 @@ module Analyzer::Go
       end
 
       if line.includes?("GetCookie(")
-        match = line.match(/GetCookie\(\"([^"]*)\"\)/)
+        match = line.match(/GetCookie\(\s*\"([^"]*)\"\s*\)/)
         if match
           endpoint.params << Param.new(match[1], "", "cookie")
         end
       end
 
       if line.includes?("GetSecureCookie(")
-        match = line.match(/GetSecureCookie\(\"([^"]*)\"\)/)
+        match = line.match(/GetSecureCookie\(\s*\"([^"]*)\"\s*\)/)
         if match
           endpoint.params << Param.new(match[1], "", "cookie")
         end

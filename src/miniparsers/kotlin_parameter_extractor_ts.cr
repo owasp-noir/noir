@@ -3,6 +3,7 @@ require "../models/endpoint"
 require "../models/code_locator"
 require "./extraction_result_cache"
 require "./import_graph"
+require "./kotlin_source_mask"
 require "../utils/text_file"
 require "../utils/jvm_literal"
 
@@ -249,7 +250,7 @@ module Noir
                                                       parameter_format : String?,
                                                       class_fields : Hash(String, Array(FieldInfo))) : Array(Param)
       params = [] of Param
-      body = Noir::TreeSitter.node_text(method, source)
+      body = Noir::KotlinSourceMask.code_only(Noir::TreeSitter.node_text(method, source))
       request_names = server_request_parameter_names(body)
       return params if request_names.empty?
 
@@ -660,7 +661,7 @@ module Noir
       buf = String.build do |io|
         Noir::TreeSitter.each_named_child(node) do |child|
           if Noir::TreeSitter.node_type(child) == "string_content"
-            io << Noir::TreeSitter.node_text(child, source)
+            io << Noir::TreeSitter.kotlin_string_content(child, node, source)
           end
         end
       end

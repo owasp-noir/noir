@@ -93,7 +93,11 @@ module Analyzer::Specification
     private def shortcut_predicate(text : String) : Predicate?
       name, sep, args = text.partition('=')
       return if sep.empty?
-      Predicate.new(name.strip, [args])
+      name = name.strip
+      values = args.split(',')
+      # `Path=/a,/b,false`: a trailing boolean is the `matchTrailingSlash` flag.
+      values.pop if name == "Path" && values.last.strip.downcase.in?("true", "false")
+      Predicate.new(name, values)
     end
 
     private def properties_routes(content : String) : Array(Route)

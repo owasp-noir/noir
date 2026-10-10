@@ -1,5 +1,6 @@
 require "../../engines/ruby_engine"
 require "../../../utils/top_level_split"
+require "../../../utils/call_fold"
 
 module Analyzer::Ruby
   class Rails < RubyEngine
@@ -1473,7 +1474,12 @@ module Analyzer::Ruby
       permit_mask = ""
       permit_lines = 0
 
-      controller_content.each_line.with_index do |raw_line, index|
+      controller_lines = controller_content.lines
+      # Subscript reads wrapped over lines (`request.headers[` / `"X-Key"` /
+      # `]`) are read off this folded view; see the `'['` scans below.
+      folded_lines = Noir::CallFold.fold(controller_lines) { |l| strip_inline_comment(l) }
+
+      controller_lines.each_with_index do |raw_line, index|
         line = strip_inline_comment(raw_line)
 
         if line.includes?("def ")
@@ -1522,11 +1528,14 @@ module Analyzer::Ruby
           end
         end
 
-        # Every param source below is a `[ ... ]` subscript. A line without a '['
-        # cannot match any of them, so skip the regex ops — this runs on every
-        # line of every controller in the app.
-        if line.includes?('[')
-          line.scan(/params\[\s*(?::(\w+)|['"]([^'"]+)['"])\s*\]/) do |m|
+        # Every param source below is a `[ ... ]` subscript or a
+        # `params.fetch(` / `params.dig(` call (on bare `params` only:
+        # `source_params.fetch(:x)` reads a nested key). A line with neither
+        # cannot match any of them, so skip the regex ops — this runs on
+        # every line of every controller in the app.
+        line = folded_lines[index]
+        if line.includes?('[') || line.includes?("params.")
+          line.scan(/(?:params\[|(?<![\w.])params\.(?:fetch|dig)\s*\()\s*(?::(\w+)|['"]([^'"]+)['"])\s*[\],)]/) do |m|
             name = (m[1]? || m[2]?).to_s.strip
             next if name.empty? || this_method.empty?
             params_body_by_action[this_method] ||= [] of Param

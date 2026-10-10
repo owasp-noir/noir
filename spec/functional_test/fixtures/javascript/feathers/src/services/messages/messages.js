@@ -6,7 +6,7 @@ module.exports = (app) => {
     paginate: app.get('paginate'),
   };
 
-  app.use('/messages', new Messages(options, app));
+  app.use(/* chat */ '/messages', new Messages(options, app));
 
   const service = app.service('messages');
   service.hooks(hooks);

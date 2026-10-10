@@ -8,17 +8,35 @@ expected_endpoints = [
   Endpoint.new("/dashboard", "GET"),
   Endpoint.new("/terms", "GET"),
   Endpoint.new("/legacy-dashboard", "GET"),
-  Endpoint.new("/users", "GET"),
-  Endpoint.new("/users", "POST"),
-  Endpoint.new("/health", "GET"),
-  Endpoint.new("/categories", "GET"),
-  Endpoint.new("/categories", "POST"),
-  Endpoint.new("/categories/{slug}", "GET", [Param.new("slug", "", "path")]),
-  Endpoint.new("/albums/{album}/songs", "GET", [Param.new("album", "", "path")]),
-  Endpoint.new("/albums/{album}/songs/{song}", "GET", [Param.new("album", "", "path"), Param.new("song", "", "path")]),
-  Endpoint.new("/v1.0/albums/{record}/songs/{track}", "GET", [Param.new("record", "", "path"), Param.new("track", "", "path")]),
-  Endpoint.new("/contact", "GET"),
-  Endpoint.new("/contact", "POST"),
+  # Controller-action request reads: accessors, `validate([...])` keys
+  # (not the custom-messages array) and a FormRequest's `rules()` keys.
+  Endpoint.new("/users", "GET", [
+    Param.new("search", "", "query"),
+    Param.new("sort", "", "query"),
+    Param.new("page", "", "query"),
+    Param.new("Accept-Language", "", "header"),
+    Param.new("theme", "", "cookie"),
+  ]),
+  Endpoint.new("/users", "POST", [
+    Param.new("name", "", "form"),
+    Param.new("email", "", "form"),
+    Param.new("address", "", "form"),
+    Param.new("avatar", "", "form"),
+  ]),
+  Endpoint.new("/users/{id}", "PUT", [
+    Param.new("id", "", "path"),
+    Param.new("nickname", "", "form"),
+    Param.new("bio", "", "form"),
+  ]),
+  Endpoint.new("/api/health", "GET"),
+  Endpoint.new("/api/categories", "GET"),
+  Endpoint.new("/api/categories", "POST"),
+  Endpoint.new("/api/categories/{slug}", "GET", [Param.new("slug", "", "path")]),
+  Endpoint.new("/api/albums/{album}/songs", "GET", [Param.new("album", "", "path")]),
+  Endpoint.new("/api/albums/{album}/songs/{song}", "GET", [Param.new("album", "", "path"), Param.new("song", "", "path")]),
+  Endpoint.new("/api/v1.0/albums/{record}/songs/{track}", "GET", [Param.new("record", "", "path"), Param.new("track", "", "path")]),
+  Endpoint.new("/contact", "GET", [Param.new("topic", "", "query")]),
+  Endpoint.new("/contact", "POST", [Param.new("topic", "", "form")]),
   Endpoint.new("/filter", "GET"),
   Endpoint.new("/filter", "QUERY"),
   Endpoint.new("/search", "QUERY"),
@@ -28,13 +46,14 @@ expected_endpoints = [
   Endpoint.new("/webhook", "GET"),
   Endpoint.new("/webhook", "POST"),
   Endpoint.new("/products", "GET"),
-  Endpoint.new("/products", "POST"),
+  # Resource action: `$this->validate($request, [...])` keys.
+  Endpoint.new("/products", "POST", [Param.new("sku", "", "form"), Param.new("price", "", "form")]),
   Endpoint.new("/photos", "GET"),
   Endpoint.new("/photos/{photo}", "GET", [Param.new("photo", "", "path")]),
   Endpoint.new("/admin/widgets", "GET"),
   Endpoint.new("/admin/widgets/{widget}", "GET", [Param.new("widget", "", "path")]),
   Endpoint.new("/admin/widgets/{widget}", "PATCH", [Param.new("widget", "", "path")]),
-  Endpoint.new("/user", "GET"),
+  Endpoint.new("/api/user", "GET"),
   Endpoint.new("/admin/settings", "GET"),
   Endpoint.new("/admin/settings", "POST"),
   Endpoint.new("/admin/logs", "QUERY"),
@@ -54,5 +73,5 @@ expected_endpoints = [
 
 FunctionalTester.new("fixtures/php/laravel/", {
   :techs     => 2,  # Detection still sees both php_laravel and php_pure
-  :endpoints => 78, # Analysis suppresses redundant php_pure and unprefixed group endpoints
+  :endpoints => 80, # Analysis suppresses redundant php_pure and unprefixed group endpoints
 }, expected_endpoints).perform_tests

@@ -21,7 +21,9 @@ module Analyzer::Javascript
 
       parallel_file_scan do |path|
         next if base_relative_path(path).includes?("/app/routes/") && owned_by_js_package?(path, honox)
-        content = read_file_content(path)
+        # Blanked once here: the `app.on()` pass and `line_to_params` read
+        # the text with their own regexes. Lines and columns are kept.
+        content = Noir::JSRouteExtractor.strip_js_comments(read_file_content(path))
         next if Noir::JSRouteExtractor.other_shared_extractor_framework?(content, :hono)
         include_callee = callees_needed?
         callees_by_route = include_callee ? Noir::JSCalleeExtractor.callees_for_routes(content, path) : {} of String => Array(Noir::JSCalleeExtractor::Entry)

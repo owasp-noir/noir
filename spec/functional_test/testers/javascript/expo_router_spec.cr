@@ -16,3 +16,10 @@ FunctionalTester.new("fixtures/javascript/expo_router/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
 }, expected_endpoints).perform_tests
+
+# The project directory is itself named `app`: the router root is the
+# `app/` beside package.json, so URLs carry no extra `/app` prefix.
+FunctionalTester.new("fixtures/javascript/expo_router_app_dir/", {
+  :techs     => 1,
+  :endpoints => 1,
+}, [Endpoint.new("/api/hello", "POST")]).perform_tests

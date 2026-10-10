@@ -53,6 +53,10 @@ module Noir::Detection
     "node_modules", "__pycache__", ".venv", "venv",
     ".pytest_cache", ".tox", ".gradle", ".bundle", ".dart_tool",
     ".cargo", ".terraform",
+    # Yarn Berry: the committed yarn binary (`releases/yarn-4.x.cjs`, a
+    # 3 MB bundle whose embedded libraries read as Feathers/Express
+    # routes), plus `cache/`, `unplugged/` and `sdks/`.
+    ".yarn",
     # Zig build outputs / fetched-dependency cache. Vendored deps under
     # `.zig-cache` carry their own `@import("httpz")` etc. and would
     # otherwise make every Zig project look like it uses every framework.

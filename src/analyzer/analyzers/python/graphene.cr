@@ -37,16 +37,19 @@ module Analyzer::Python
         X.outline(path, source, source.includes?("graphene") && source.matches?(Detector::Python::Graphene::IMPORT_RE))
       end
       index = X::Index.new(outlines)
-      mount = index.mount_path || Specification::GraphqlSdlParser::DEFAULT_GRAPHQL_PATH
 
       seen = Set(::String).new
-      index.roots { |c| index.lineage(c).any? { |k| index.library?(k) && k.bases.any?(&.includes?("ObjectType")) } }.each do |(kind, klass, camel)|
-        index.members(klass).each do |member|
-          next if member.params
-          name, args, returns = field(member, index, camel) || next
-          endpoint = Specification::GraphqlSdlParser.field_endpoint(member.path, member.line, kind, name, args,
-            returns, TAGGER, mount, klass.name)
-          result << endpoint if seen.add?(endpoint.url)
+      # Each app's schema binding and mount on their own.
+      outlines.group_by { |outline| python_project_root(outline.path) }.each_value do |group|
+        mount = index.mount_path(group) || Specification::GraphqlSdlParser::DEFAULT_GRAPHQL_PATH
+        index.roots(group) { |c| index.lineage(c).any? { |k| index.library?(k) && k.bases.any?(&.includes?("ObjectType")) } }.each do |(kind, klass, camel)|
+          index.members(klass).each do |member|
+            next if member.params
+            name, args, returns = field(member, index, camel) || next
+            endpoint = Specification::GraphqlSdlParser.field_endpoint(member.path, member.line, kind, name, args,
+              returns, TAGGER, mount, klass.name)
+            result << endpoint if seen.add?(endpoint.url)
+          end
         end
       end
       result

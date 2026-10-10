@@ -89,7 +89,9 @@ module Analyzer::Scala
       want_callees = callees_needed?
 
       scala_files.each do |path|
-        content = read_file_content(path)
+        # Comments blanked (strings kept, offsets kept) so the param regexes
+        # read `request.headers.get(/* x */ "X-H")` too.
+        content = Noir::ScalaLexer.new(read_file_content(path)).code.join
         base_path = configured_base_for(path)
         # Length-preserving copy with strings/comments blanked out. Braces,
         # colons and `def` keywords that live inside literals or comments are

@@ -5,7 +5,7 @@ const { Router } = require('express');
 // Traditional app-based routes
 module.exports = function(app) {
     app.get('/',function(req,res){ 
-        var userAgent = req.header('X-API-Key');
+        var userAgent = req.header(/* api key */ 'X-API-Key');
         var paramName = req.query.name;
         
         res.render('index');

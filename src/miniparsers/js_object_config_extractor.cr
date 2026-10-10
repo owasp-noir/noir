@@ -131,6 +131,11 @@ module Noir
       return data if depth > MAX_VALUE_DEPTH
 
       Noir::TreeSitter.each_named_child(node) do |pair|
+        # `{ path: "/x", handler }`: the key is present, its value unknown.
+        if Noir::TreeSitter.node_type(pair) == "shorthand_property_identifier"
+          data[Noir::TreeSitter.node_text(pair, source)] = nil
+          next
+        end
         next unless Noir::TreeSitter.node_type(pair) == "pair"
         key, value = pair_key_value(pair, source)
         next if key.empty?
@@ -144,7 +149,9 @@ module Noir
       key = ""
       value : LibTreeSitter::TSNode? = nil
 
-      Noir::TreeSitter.each_named_child(pair) do |child|
+      # Comments are named extras: `path: /* x */ "/p"` would take the
+      # comment for the value.
+      Noir::TreeSitter.each_named_arg(pair) do |child|
         case Noir::TreeSitter.node_type(child)
         when "property_identifier", "identifier"
           if key.empty?
@@ -182,7 +189,7 @@ module Noir
         nil
       when "array"
         items = [] of ConfigValue
-        Noir::TreeSitter.each_named_child(node) do |elem|
+        Noir::TreeSitter.each_named_arg(node) do |elem|
           items << decode_value(elem, source, depth + 1)
         end
         items
@@ -202,6 +209,7 @@ module Noir
         Noir::TreeSitter.each_named_child(node) do |child|
           type = Noir::TreeSitter.node_type(child)
           io << Noir::TreeSitter.node_text(child, source) if type == "string_fragment" || type == "template_string_fragment"
+          io << Noir::TreeSitter.unescape(Noir::TreeSitter.node_text(child, source)) if type == "escape_sequence"
         end
       end
       return buf unless buf.empty?

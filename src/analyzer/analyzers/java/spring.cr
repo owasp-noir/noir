@@ -1013,6 +1013,7 @@ module Analyzer::Java
     end
 
     private def top_level_arguments(args : String) : Array(String)
+      args = JavaEngine.strip_comments(args)
       values = [] of String
       start = 0
       depth = 0

@@ -324,6 +324,40 @@ describe Noir::TreeSitterKotlinRouteExtractor do
     ])
   end
 
+  it "reads gateway, functional router and STOMP paths past comments in the call" do
+    source = <<-KT
+      class Config {
+          fun customRouteLocator(builder: RouteLocatorBuilder): RouteLocator {
+              val routesBuilder = builder.routes()
+              routesBuilder.route("post") { predicateSpec -> predicateSpec.isPost().uri("no://op") }
+              return routesBuilder.build()
+          }
+
+          private fun PredicateSpec.isPost() =
+              method(HttpMethod.POST).and().path(/* mcp */ "/mcp")
+
+          fun routes() = coRouter {
+              /* nested */ "/posts".nest {
+                  GET(/* list */ "", postHandler::all)
+              }
+          }
+
+          override fun registerStompEndpoints(registry: StompEndpointRegistry) {
+              registry.addEndpoint("/ws", /* legacy */ "/portfolio")
+          }
+      }
+      KT
+
+    routes = Noir::TreeSitterKotlinRouteExtractor.extract_routes(source)
+    Noir::TreeSitter.parse_kotlin(source) do |root|
+      routes.concat(Noir::TreeSitterKotlinRouteExtractor.extract_stomp_routes_from(root, source))
+    end
+
+    routes.map { |r| {r.verb, r.path} }.should contain({"POST", "/mcp"})
+    routes.map { |r| {r.verb, r.path} }.should contain({"GET", "/posts"})
+    routes.map { |r| {r.verb, r.path} }.should contain({"GET", "/portfolio"})
+  end
+
   it "extracts Spring WebFlux functional router routes and handler references" do
     source = <<-KT
       package com.example
@@ -866,5 +900,20 @@ describe Noir::TreeSitterKotlinRouteExtractor do
     nested = %(") + %(${") * depth + "x" + %("}) * depth + %(")
     source = "@RestController\nclass Deep {\n    @GetMapping(#{nested})\n    fun deep(): String = \"\"\n}\n"
     Noir::TreeSitterKotlinRouteExtractor.extract_routes(source).should be_a(Array(Noir::TreeSitterKotlinRouteExtractor::Route))
+  end
+
+  it "decodes escapes in plain strings but not in raw strings" do
+    source = <<-'KT'
+      @RestController
+      class K {
+          @GetMapping("/say/\"hi\"")
+          fun a(): String = ""
+
+          @GetMapping("""/raw/\d""")
+          fun b(): String = ""
+      }
+      KT
+
+    Noir::TreeSitterKotlinRouteExtractor.extract_routes(source).map(&.path).should eq([%(/say/"hi"), %(/raw/\\d)])
   end
 end

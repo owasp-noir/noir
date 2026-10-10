@@ -27,6 +27,7 @@ module Analyzer::Php
       begin
         content = read_file_content(path)
         return endpoints unless content.includes?("'routes'") || content.includes?("\"routes\"")
+        content = php_code(content)
 
         lexer = Noir::PhpLexer.new(content)
 

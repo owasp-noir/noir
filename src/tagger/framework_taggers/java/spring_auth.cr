@@ -16,8 +16,13 @@ class SpringAuthTagger < FrameworkTagger
   # Patterns for security config URL rules. `access { ... }` is a
   # protected rule too; `permitAll()` is intentionally tracked so a
   # more-specific public matcher can suppress a broader protected one.
-  MATCHERS_RULE    = /\.(antMatchers|requestMatchers|mvcMatchers)\s*\(([^)]+)\)\s*\.\s*(permitAll|authenticated|hasRole|hasAnyRole|hasAuthority|hasAnyAuthority|access)\s*(?:\(|\{)/
-  ANY_REQUEST_AUTH = /\.anyRequest\s*\(\)\s*\.\s*(authenticated|hasRole|hasAnyRole|hasAuthority|hasAnyAuthority|access)\s*(?:\(|\{)/
+  MATCHERS_RULE    = /\.(antMatchers|requestMatchers|mvcMatchers)\s*\(([^)]+)\)\s*\.\s*(permitAll|authenticated|fullyAuthenticated|hasRole|hasAnyRole|hasAuthority|hasAnyAuthority|access)\s*(?:\(|\{)/
+  ANY_REQUEST_AUTH = /\.anyRequest\s*\(\)\s*\.\s*(authenticated|fullyAuthenticated|hasRole|hasAnyRole|hasAuthority|hasAnyAuthority|access)\s*(?:\(|\{)/
+
+  # The Kotlin DSL Spring Security documents for Kotlin apps:
+  # `authorizeHttpRequests { authorize("/public/**", permitAll);
+  # authorize(anyRequest, authenticated) }`.
+  KOTLIN_AUTHORIZE_RULE = /\bauthorize\s*\(\s*(?:HttpMethod\.(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s*,\s*)?(?:"([^"]+)"|(anyRequest))\s*,\s*(permitAll|authenticated|fullyAuthenticated|hasRole|hasAnyRole|hasAuthority|hasAnyAuthority|access)\b/
 
   # A chain is "scoped" only when restricted by a singular `securityMatcher(` /
   # `antMatcher(` call. The plural `antMatchers(...)` / `requestMatchers(...)`
@@ -81,6 +86,15 @@ class SpringAuthTagger < FrameworkTagger
               "Public by Spring Security permitAll via #{match[1]}(\"#{url_pattern}\")"
             end
           @security_rules << {pattern: url_pattern, method: matcher_method, description: description, protected_rule: protected_rule}
+        end
+      elsif match = line.match(KOTLIN_AUTHORIZE_RULE)
+        auth_type = match[4]
+        protected_rule = auth_type != "permitAll"
+        if url_pattern = match[2]?
+          verb = protected_rule ? "Protected by Spring Security #{auth_type}" : "Public by Spring Security permitAll"
+          @security_rules << {pattern: url_pattern, method: match[1]?, description: "#{verb} via authorize(\"#{url_pattern}\")", protected_rule: protected_rule}
+        elsif unscoped_chain && protected_rule
+          @security_rules << {pattern: "/**", method: nil, description: "Protected by Spring Security #{auth_type} via authorize(anyRequest)", protected_rule: true}
         end
       elsif unscoped_chain && (match = line.match(ANY_REQUEST_AUTH))
         auth_type = match[1]

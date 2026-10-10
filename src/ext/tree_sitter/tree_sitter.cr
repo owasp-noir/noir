@@ -342,12 +342,47 @@ module Noir::TreeSitter
     LibTreeSitter.ts_node_named_child(node, 0_u32)
   end
 
-  # A string literal's `string_fragment` text, or its raw text minus the
-  # surrounding double quotes when the grammar exposes no fragments.
+  ESCAPE_SEQUENCE_RE = /\\(?:u\{([0-9A-Fa-f]{1,6})\}|u([0-9A-Fa-f]{4})|x([0-9A-Fa-f]{2})|(.))/m
+
+  # The value of the backslash escapes in `text`: an `escape_sequence` node
+  # (Java/JS), or a Kotlin `string_content`, which keeps its escapes inline.
+  # `\\` → `\`, `\"` → `"`, `\n` → newline, `é` → `é`; any other `\c`
+  # is `c`, as in JavaScript.
+  def self.unescape(text : String) : String
+    return text unless text.includes?('\\')
+    text.gsub(ESCAPE_SEQUENCE_RE) do |seq, match|
+      if hex = match[1]? || match[2]? || match[3]?
+        code = hex.to_i(16)
+        code <= Char::MAX_CODEPOINT && !(0xD800..0xDFFF).includes?(code) ? code.chr.to_s : seq
+      else
+        case char = match[4]
+        when "n" then "\n"
+        when "t" then "\t"
+        when "r" then "\r"
+        else          char
+        end
+      end
+    end
+  end
+
+  # A Kotlin `string_content` child of `literal`, decoded. The grammar keeps
+  # escapes inline in the content; a raw `"""` string has none to decode.
+  def self.kotlin_string_content(content : LibTreeSitter::TSNode, literal : LibTreeSitter::TSNode, source : String) : String
+    text = node_text(content, source)
+    return text if source.byte_slice?(LibTreeSitter.ts_node_start_byte(literal).to_i, 3) == %(""")
+    unescape(text)
+  end
+
+  # A string literal's `string_fragment` and decoded `escape_sequence` text,
+  # or its raw text minus the surrounding double quotes when the grammar
+  # exposes no fragments.
   def self.decode_string_literal(node : LibTreeSitter::TSNode, source : String) : String
     buf = String.build do |io|
       each_named_child(node) do |child|
-        io << node_text(child, source) if node_type(child) == "string_fragment"
+        case node_type(child)
+        when "string_fragment" then io << node_text(child, source)
+        when "escape_sequence" then io << unescape(node_text(child, source))
+        end
       end
     end
     return buf unless buf.empty?
@@ -424,6 +459,26 @@ module Noir::TreeSitter
     ensure
       @@walk_depth = depth
     end
+  end
+
+  # `each_named_child` minus comments. Grammars attach comments as named
+  # extra nodes anywhere, so `f("/a", // note` + newline + `g)` has three
+  # named arguments; readers that index or count arguments must skip them.
+  def self.each_named_arg(node : LibTreeSitter::TSNode, &)
+    each_named_child(node) { |child| yield child unless node_type(child).ends_with?("comment") }
+  end
+
+  # First argument with comments skipped, see `each_named_arg`.
+  def self.first_named_arg(node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
+    each_named_arg(node) { |child| return child }
+    nil
+  end
+
+  # Argument count with comments skipped, see `each_named_arg`.
+  def self.named_arg_count(node : LibTreeSitter::TSNode) : Int32
+    count = 0
+    each_named_arg(node) { count += 1 }
+    count
   end
 
   # Runs the block one level deeper on the same budget as

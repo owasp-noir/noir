@@ -68,9 +68,9 @@ module Noir
         outline(klass.path).library?
       end
 
-      # The one mount path every file agrees on, else nil.
-      def mount_path : String?
-        paths = @outlines.flat_map(&.mounts).uniq!
+      # The one mount path every file of `group` (one app) agrees on, else nil.
+      def mount_path(group : Array(FileOutline) = @outlines) : String?
+        paths = group.flat_map(&.mounts).uniq!
         paths.first if paths.size == 1
       end
 
@@ -85,9 +85,11 @@ module Noir
       # Root kind, class and camelCase flag of every `Schema(query=...,
       # mutation=..., subscription=...)` binding. With none resolved, the
       # classes named Query / Mutation / Subscription that `accept` takes.
-      def roots(& : ClassDecl -> Bool) : Array({String, ClassDecl, Bool})
+      # Both are looked for in `group` (one app) only; references still
+      # resolve across every outline.
+      def roots(group : Array(FileOutline) = @outlines, & : ClassDecl -> Bool) : Array({String, ClassDecl, Bool})
         roots = [] of {String, ClassDecl, Bool}
-        @outlines.each do |outline|
+        group.each do |outline|
           outline.schema_calls.each do |call|
             ROOT_KINDS.each_with_index do |(keyword, kind), i|
               ref = call.keywords[keyword]? || call.positional[i]?
@@ -97,8 +99,9 @@ module Noir
           end
         end
         return roots unless roots.empty?
+        paths = group.map(&.path).to_set
         ROOT_KINDS.each_value do |kind|
-          @classes[kind]?.try &.each { |c| roots << {kind, c, true} if yield c }
+          @classes[kind]?.try &.each { |c| roots << {kind, c, true} if paths.includes?(c.path) && yield c }
         end
         roots
       end
@@ -181,7 +184,7 @@ module Noir
           next unless TreeSitter.node_type(node) == "call"
           callee = TreeSitter.field(node, "function").try { |f| TreeSitter.node_text(f, source) } || next
           next unless callee == "Schema" || callee.ends_with?(".Schema")
-          positional, keywords = call_args(TreeSitter.node_text(node, source)) || next
+          positional, keywords = call_args(code_text(node, source)) || next
           outline.schema_calls << SchemaCall.new(path, TreeSitter.node_start_row(node) + 1, positional, keywords, camel)
         end
       end
@@ -230,7 +233,7 @@ module Noir
         return unless TreeSitter.node_type(assignment) == "assignment"
         left = TreeSitter.field(assignment, "left") || return
         right = TreeSitter.field(assignment, "right") || return
-        positional, _ = call_args(TreeSitter.node_text(right, source)) || return
+        positional, _ = call_args(code_text(right, source)) || return
         callee = TreeSitter.field(right, "function").try { |f| TreeSitter.node_text(f, source) }
         return unless callee && (callee == "merge_types" || callee.ends_with?(".merge_types"))
         bases = positional[1]?.try { |t| TopLevelSplit.split(t.strip.lchop('(').lchop('[').rchop(')').rchop(']'), ',', TopLevelSplit::Rules::PYTHON) }
@@ -246,7 +249,7 @@ module Noir
       if TreeSitter.node_type(node) == "decorated_definition"
         TreeSitter.each_named_child(node) do |child|
           next unless TreeSitter.node_type(child) == "decorator"
-          TreeSitter.first_named_child(child).try { |expr| decorators << TreeSitter.node_text(expr, source) }
+          TreeSitter.first_named_child(child).try { |expr| decorators << code_text(expr, source) }
         end
         node = TreeSitter.field(node, "definition") || return
       end
@@ -299,9 +302,26 @@ module Noir
       while right && TreeSitter.node_type(right) == "parenthesized_expression"
         right = TreeSitter.first_named_child(right)
       end
-      value = right.try { |r| TreeSitter.node_text(r, source) }
+      value = right.try { |r| code_text(r, source) }
       Member.new(path, TreeSitter.node_text(left, source), TreeSitter.node_start_row(stmt) + 1,
         [] of String, hint, value, nil, nil)
+    end
+
+    # Node text with its comments cut out. A call wrapped over several lines
+    # carries `# note`s that would otherwise glue onto the next argument
+    # when the text is split on commas, losing every argument after it.
+    private def code_text(node : LibTreeSitter::TSNode, source : String) : String
+      pos = LibTreeSitter.ts_node_start_byte(node).to_i
+      stop = LibTreeSitter.ts_node_end_byte(node).to_i
+      String.build do |io|
+        TreeSitter.walk(node) do |n|
+          next unless TreeSitter.node_type(n) == "comment"
+          from = LibTreeSitter.ts_node_start_byte(n).to_i
+          io << source.byte_slice(pos, from - pos)
+          pos = LibTreeSitter.ts_node_end_byte(n).to_i
+        end
+        io << source.byte_slice(pos, stop - pos)
+      end
     end
 
     private def param(node : LibTreeSitter::TSNode, source : String) : Param?

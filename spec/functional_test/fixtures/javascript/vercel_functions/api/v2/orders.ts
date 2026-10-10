@@ -1,6 +1,6 @@
 // Web-standard method exports.
 export function GET(request: Request) {
-  const status = new URL(request.url).searchParams.get("status");
+  const status = new URL(request.url).searchParams.get(/* filter */ "status");
   return Response.json({ status });
 }
 

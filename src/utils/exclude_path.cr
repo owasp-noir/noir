@@ -14,13 +14,15 @@ module Noir
   # applies this to them, which is only correct as long as both sides agree
   # on what a pattern means — hence one type, used by both.
   #
-  # Pattern semantics (unchanged from the detector's original inline form):
+  # Pattern semantics (as in `.gitignore`, a pattern that matches a
+  # directory excludes everything under it):
   #
-  #   * a pattern containing `/` matches the file's path *relative to the
-  #     scan base*, as a glob (`tests/*`, `**/vendor/**`), as an exact
-  #     directory (`src/legacy`), or as a directory prefix (everything
-  #     under `src/legacy/`);
-  #   * a pattern without `/` matches the basename as a glob (`*.test.js`);
+  #   * a pattern containing `/` is a glob over the path *relative to the
+  #     scan base* of the file or any directory above it: `tests/*` and
+  #     `src/legacy` both drop `tests/unit/a.js` / `src/legacy/x/y.go`;
+  #   * a pattern without `/` is a glob over the name of the file or of any
+  #     directory above it: `*.test.js` drops test files, `tests` drops
+  #     every `tests/` directory at any depth;
   #   * a leading `./` on a path pattern is dropped, since the path it is
   #     compared against never carries one: `./tests/**` means `tests/**`.
   #     It is dropped *after* the classification above, so `./app.js` stays
@@ -80,20 +82,19 @@ module Noir
       candidate = candidate.lchop('/')
       candidate = candidate.downcase if CASE_INSENSITIVE
 
+      # Each pattern is tried against the file and every directory above it,
+      # so a pattern that names a directory drops everything under it.
       unless @basename_patterns.empty?
-        basename = File.basename(candidate)
-        return true if @basename_patterns.any? { |pat| File.match?(pat, basename) }
+        return true if candidate.split('/').any? { |name| @basename_patterns.any? { |pat| File.match?(pat, name) } }
       end
 
       return false if @path_patterns.empty?
 
-      @path_patterns.any? do |pat|
-        # `File.match?` handles the glob forms; the equality / prefix
-        # checks add plain-directory exclusion so `--exclude-path
-        # src/legacy` drops everything under it, not just a file literally
-        # named `src/legacy`.
-        dir_pat = pat.rstrip('/')
-        File.match?(pat, candidate) || candidate == dir_pat || candidate.starts_with?("#{dir_pat}/")
+      prefix = candidate
+      loop do
+        return true if @path_patterns.any? { |pat| File.match?(pat, prefix) || prefix == pat.rstrip('/') }
+        slash = prefix.rindex('/') || return false
+        prefix = prefix[0, slash]
       end
     end
   end

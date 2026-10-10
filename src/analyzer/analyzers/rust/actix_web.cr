@@ -447,7 +447,7 @@ module Analyzer::Rust
               args = Noir::TreeSitter.field(call, "arguments")
               next unless args
               first = nil.as(LibTreeSitter::TSNode?)
-              Noir::TreeSitter.each_named_child(args) { |a| first ||= a }
+              Noir::TreeSitter.each_named_arg(args) { |a| first ||= a }
               next unless first
               ref = configure_target_ref(first, src, aliases)
               next unless ref
@@ -629,7 +629,7 @@ module Analyzer::Rust
       return unless args
 
       named = [] of LibTreeSitter::TSNode
-      Noir::TreeSitter.each_named_child(args) { |c| named << c }
+      Noir::TreeSitter.each_named_arg(args) { |c| named << c }
       return if named.empty?
 
       receiver = Noir::TreeSitter.field(function, "value")
@@ -720,7 +720,7 @@ module Analyzer::Rust
       args = Noir::TreeSitter.field(call, "arguments")
       return unless args
       first = nil.as(LibTreeSitter::TSNode?)
-      Noir::TreeSitter.each_named_child(args) { |c| first ||= c }
+      Noir::TreeSitter.each_named_arg(args) { |c| first ||= c }
       return unless first
       case Noir::TreeSitter.node_type(first)
       when "identifier", "scoped_identifier"
@@ -794,7 +794,7 @@ module Analyzer::Rust
         field = Noir::TreeSitter.field(fn, "field")
         if field && Noir::TreeSitter.node_text(field, source) == "service"
           if sargs = Noir::TreeSitter.field(cursor, "arguments")
-            Noir::TreeSitter.each_named_child(sargs) do |sarg|
+            Noir::TreeSitter.each_named_arg(sargs) do |sarg|
               service_items(sarg).each do |arg|
                 register_scope_chain(arg, prefix, map, source) if Noir::TreeSitter.node_type(arg) == "call_expression"
               end
@@ -884,7 +884,7 @@ module Analyzer::Rust
         next unless field && handler_binder?(Noir::TreeSitter.node_text(field, source))
         cargs = Noir::TreeSitter.field(call, "arguments")
         next unless cargs
-        Noir::TreeSitter.each_named_child(cargs) do |arg|
+        Noir::TreeSitter.each_named_arg(cargs) do |arg|
           case Noir::TreeSitter.node_type(arg)
           when "identifier", "scoped_identifier"
             found = Noir::TreeSitter.node_text(arg, source)
@@ -1006,7 +1006,7 @@ module Analyzer::Rust
             args = Noir::TreeSitter.field(cursor, "arguments")
             return unless args
             named = [] of LibTreeSitter::TSNode
-            Noir::TreeSitter.each_named_child(args) { |c| named << c }
+            Noir::TreeSitter.each_named_arg(args) { |c| named << c }
             return if named.empty?
             return first_string_literal_text(named[0], source)
           end
@@ -1031,7 +1031,7 @@ module Analyzer::Rust
 
     private def named_children(node : LibTreeSitter::TSNode) : Array(LibTreeSitter::TSNode)
       named = [] of LibTreeSitter::TSNode
-      Noir::TreeSitter.each_named_child(node) { |c| named << c }
+      Noir::TreeSitter.each_named_arg(node) { |c| named << c }
       named
     end
 

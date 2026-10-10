@@ -12,5 +12,5 @@ export const yoga = createYoga({
       type Product { id: ID!, name: String! }
     `,
   }),
-  graphqlEndpoint: '/api/graphql',
+  graphqlEndpoint: /* behind the gateway */ '/api/graphql',
 });

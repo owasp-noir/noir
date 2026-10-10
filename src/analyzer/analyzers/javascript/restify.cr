@@ -1,5 +1,6 @@
 require "../../engines/javascript_engine"
 require "../../../miniparsers/js_route_extractor"
+require "./express/router_mount_scanner"
 
 module Analyzer::Javascript
   class Restify < JavascriptEngine
@@ -9,6 +10,9 @@ module Analyzer::Javascript
       result = [] of Endpoint
       static_dirs = [] of Hash(String, String)
       include_callee = callees_needed?
+      # Cross-file `router.applyRoutes(server, '/p')` prefixes, read back by
+      # the shared route extractor through `CodeLocator`.
+      RouterMountScanner.new(all_files, @base_paths, base_path, logger, :restify).scan
 
       parallel_file_scan do |path|
         content = read_file_content(path)

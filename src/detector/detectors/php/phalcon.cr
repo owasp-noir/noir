@@ -47,7 +47,7 @@ module Detector::Php
       basename = File.basename(filename)
 
       if basename == "composer.json" || basename == "composer.lock"
-        return true if PHALCON_PACKAGES.any? { |package| file_contents.includes?(%("#{package}")) }
+        return true if PHALCON_PACKAGES.any? { |package| composer_dependency?(filename, file_contents, package) }
       end
 
       if basename == "php.ini" || filename.ends_with?(".ini")

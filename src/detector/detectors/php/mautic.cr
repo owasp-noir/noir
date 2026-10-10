@@ -10,7 +10,7 @@ module Detector::Php
 
     def detect(filename : String, file_contents : String) : Bool
       if File.basename(filename) == "composer.json" || File.basename(filename) == "composer.lock"
-        return true if file_contents.includes?(%("mautic/core-lib"))
+        return true if composer_dependency?(filename, file_contents, "mautic/core-lib")
       end
 
       # A bundle route config: `.../Config/config.php` carrying a `'routes'`

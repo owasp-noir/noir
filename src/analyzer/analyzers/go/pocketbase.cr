@@ -39,7 +39,7 @@ module Analyzer::Go
         external_fns = ts_function_bodies_for_directory(package_function_bodies, dir)
         callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns)
 
-        lines = content.lines
+        lines = GoEngine.strip_comments(content).lines
         lines.each_with_index do |_line, index|
           details = Details.new(PathInfo.new(path, index + 1))
           if ts_hits = routes_by_line[index]?

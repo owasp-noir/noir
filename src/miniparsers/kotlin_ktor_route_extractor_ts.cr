@@ -980,7 +980,7 @@ module Noir
         Noir::TreeSitter.each_named_child(node) do |child|
           case Noir::TreeSitter.node_type(child)
           when "string_content"
-            text = Noir::TreeSitter.node_text(child, source)
+            text = Noir::TreeSitter.kotlin_string_content(child, node, source)
             io << text
             in_placeholder = trailing_placeholder_open?(in_placeholder, text)
           when "interpolated_identifier", "interpolated_expression"

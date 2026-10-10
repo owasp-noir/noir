@@ -13,6 +13,12 @@ import chat.routing  # noqa: E402
 from chat.consumers import LiveConsumer  # noqa: E402
 from game.routing import game_patterns  # noqa: E402
 
+# Neither of these is a router: no endpoint may come out of them.
+# legacy = URLRouter([path("commented/", LiveConsumer.as_asgi())])
+"""
+example = URLRouter([path("docstring/", LiveConsumer.as_asgi())])
+"""
+
 application = ProtocolTypeRouter(
     {
         "http": django_asgi_app,

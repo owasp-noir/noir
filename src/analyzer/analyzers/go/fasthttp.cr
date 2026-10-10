@@ -74,7 +74,7 @@ module Analyzer::Go
               callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns, external_methods)
               named = Noir::GoNamedHandler.new(content, path, ts_routes)
 
-              content.each_line.with_index do |line, index|
+              GoEngine.strip_comments(content).each_line.with_index do |line, index|
                 next if named.claim?(index, line)
 
                 details = Details.new(PathInfo.new(path, index + 1))

@@ -9,7 +9,7 @@ import (
 func main() {
 	r := gin.Default()
 	r.GET("/ping", func(c *gin.Context) {
-		_ = c.DefaultQuery("name", "Guest")
+		_ = c.DefaultQuery(/* display name */ "name", "Guest")
 		_ = c.Query("age")
 
 		c.JSON(http.StatusOK, gin.H{
@@ -65,7 +65,7 @@ func main() {
 	})
 	
 	// Multi-line route definition
-	r.GET(
+	r.GET( // path on the next line
 		"/multiline",
 		func(c *gin.Context) {
 			_ = c.Query("ml_param")

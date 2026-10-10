@@ -69,7 +69,9 @@ module Analyzer::Java
         next unless content.includes?(PACKAGE_MARKER)
         next unless content.includes?(CREATE_CONTEXT)
 
-        analyze_file(content, path, include_callee)
+        # Handler bodies are read with regexes; blank comments so
+        # `getFirst(/* x */ "X-H")` still matches. Lines are kept.
+        analyze_file(JavaEngine.strip_comments(content), path, include_callee)
       end
 
       Fiber.yield
@@ -629,7 +631,12 @@ module Analyzer::Java
     private def decode_string_literal(node : LibTreeSitter::TSNode, content : String) : String
       String.build do |io|
         Noir::TreeSitter.each_named_child(node) do |child|
-          io << Noir::TreeSitter.node_text(child, content) if Noir::TreeSitter.node_type(child) == "string_fragment"
+          case Noir::TreeSitter.node_type(child)
+          when "string_fragment"
+            io << Noir::TreeSitter.node_text(child, content)
+          when "escape_sequence"
+            io << Noir::TreeSitter.unescape(Noir::TreeSitter.node_text(child, content))
+          end
         end
       end
     end

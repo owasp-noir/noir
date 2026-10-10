@@ -78,6 +78,7 @@ module Analyzer::Crystal
       # Stack of `{prefix, indent}` for open `routes "/scope"`/`namespace`
       # blocks. The path scope is the concatenation of every open prefix.
       scope_stack = [] of NamedTuple(prefix: String, indent: Int32)
+      param_lines = crystal_param_lines(lines)
 
       lines.each_with_index do |line, index|
         stripped = Noir::CrystalCalleeExtractor.strip_comment(line)
@@ -123,7 +124,7 @@ module Analyzer::Crystal
           last_endpoint = endpoint
         end
 
-        param = line_to_param(line)
+        param = line_to_param(param_lines[index])
         unless param.name.empty?
           unless last_endpoint.method.empty?
             last_endpoint.push_param(param)

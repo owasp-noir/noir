@@ -36,7 +36,7 @@ module Analyzer::Javascript
       include_callee = callees_needed?
       ordered_scan_files(get_files_by_extensions(EXTENSIONS)) do |path|
         segments = route_segments(path) || next
-        content = read_file_content(path)
+        content = Noir::JSRouteExtractor.strip_js_comments(read_file_content(path))
         next unless content.includes?(CATCH_ALL_EXPORT)
         next if content.includes?("firebase-functions")
 

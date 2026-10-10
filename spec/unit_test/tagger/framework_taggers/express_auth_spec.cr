@@ -369,4 +369,32 @@ describe "ExpressAuthTagger" do
 
     endpoint.tags.empty?.should be_true
   end
+
+  it "does not call a passport login strategy's own route protected" do
+    tmpdir = File.tempname("express_passport_login")
+    Dir.mkdir_p(tmpdir)
+    app_js = File.join(tmpdir, "app.js")
+    File.write(app_js, [
+      "const app = express();",
+      "app.post('/login', passport.authenticate('local', { failureRedirect: '/login' }), (req, res) => res.redirect('/'));",
+      "app.get('/auth/github', passport.authenticate('github', { scope: ['user:email'] }));",
+      "app.get('/profile', passport.authenticate('jwt', { session: false }), (req, res) => res.json(req.user));",
+    ].join("\n"))
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    CodeLocator.instance.register_path(app_js)
+
+    login = Endpoint.new("/login", "POST", [] of Param, Details.new(PathInfo.new(app_js, 2)))
+    github = Endpoint.new("/auth/github", "GET", [] of Param, Details.new(PathInfo.new(app_js, 3)))
+    profile = Endpoint.new("/profile", "GET", [] of Param, Details.new(PathInfo.new(app_js, 4)))
+
+    ExpressAuthTagger.new(noir_options).perform([login, github, profile])
+
+    login.tags.should be_empty
+    github.tags.should be_empty
+    profile.tags.map(&.description).should eq(["Protected by Passport.js jwt strategy"])
+
+    FileUtils.rm_rf(tmpdir)
+  end
 end

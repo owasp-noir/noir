@@ -5,7 +5,7 @@ interface Env {
 }
 
 export const onRequestGet: PagesFunction<Env> = async ({ request, params, env }) => {
-  const token = request.headers.get("Authorization");
+  const token = request.headers.get(/* bearer */ "Authorization");
   const user = await findUser(env.DB, params.id as string, token);
   return Response.json(user);
 };

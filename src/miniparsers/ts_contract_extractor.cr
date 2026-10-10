@@ -89,6 +89,7 @@ module Noir
 
     SCHEMA_OBJECT_CALLS = Set{"object", "strictObject", "looseObject", "Struct"}
     QUERY_METHODS       = Set{"GET", "HEAD"}
+    ORPC_WILDCARD       = /\{\+(\w+)\}/
     EFFECT_VERBS        = {
       "get" => "GET", "post" => "POST", "put" => "PUT", "patch" => "PATCH",
       "del" => "DELETE", "delete" => "DELETE", "head" => "HEAD", "options" => "OPTIONS",
@@ -170,6 +171,8 @@ module Noir
         # A `handler` key is Hapi's / Fastify's `server.route({...})`, not oRPC.
         if TreeSitter.node_type(config) == "object" && (path = object_string(config, "path", ctx)) && !object_key?(config, "handler", ctx)
           method = (object_string(config, "method", ctx) || "POST").upcase
+          # `{+rest}` is oRPC's catch-all segment, a path param like `{id}`.
+          path = path.gsub(ORPC_WILDCARD, "{\\1}")
           route = Route.new(method, URLPath.join(prefix, path), TreeSitter.call_name_row(route_call[1]) + 1)
           links.find { |l| l[0] == "input" }.try do |input|
             first_arg(input[1]).try { |schema| route.add_fields(schema_fields(schema, ctx), QUERY_METHODS.includes?(method) ? "query" : "json") }
@@ -280,7 +283,9 @@ module Noir
     private def effect_verb(call : LibTreeSitter::TSNode, ctx : Context) : String?
       return unless property = call_property(call, ctx)
       object = receiver(call)
-      return unless object && text(object, ctx) == "HttpApiEndpoint"
+      # Type first: every link of a long chain has the whole chain before
+      # it as its receiver, and copying that text per link went quadratic.
+      return unless object && TreeSitter.node_type(object) == "identifier" && text(object, ctx) == "HttpApiEndpoint"
       EFFECT_VERBS[property]?
     end
 
@@ -465,7 +470,7 @@ module Noir
     private def nth_arg(args : LibTreeSitter::TSNode, n : Int32) : LibTreeSitter::TSNode?
       return unless TreeSitter.node_type(args) == "arguments"
       i = 0
-      TreeSitter.each_named_child(args) do |arg|
+      TreeSitter.each_named_arg(args) do |arg|
         return arg if i == n
         i += 1
       end
@@ -475,7 +480,7 @@ module Noir
     private def each_arg(call : LibTreeSitter::TSNode, &)
       args = TreeSitter.field(call, "arguments")
       return unless args && TreeSitter.node_type(args) == "arguments"
-      TreeSitter.each_named_child(args) { |arg| yield arg }
+      TreeSitter.each_named_arg(args) { |arg| yield arg }
     end
 
     private def descend(node : LibTreeSitter::TSNode, & : LibTreeSitter::TSNode -> Array(Route)) : Array(Route)

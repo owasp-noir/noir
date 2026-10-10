@@ -39,6 +39,18 @@ describe Noir::JSServerlessFunctionExtractor do
     extractor.default_handler(%(export const config = {};)).should be_nil
   end
 
+  # Every `(` in a wrapper's arguments is probed for an arrow; on a
+  # non-ASCII file each probe used to copy the whole source to a char array.
+  it "finds a wrapped arrow after many calls in a non-ASCII file quickly" do
+    calls = (1..8000).join(", ") { |i| "f(#{i})" }
+    content = "// 한국어\nexport const onRequest = wrap(#{calls}, async (ctx) => { return ctx.request.method; });\n"
+    handler = nil
+    elapsed = Time.measure { handler = extractor.exported_handler(content, "onRequest") }
+    handler.not_nil!.params.should eq "ctx"
+    handler.not_nil!.body.should contain "ctx.request.method"
+    elapsed.should be < 2.seconds
+  end
+
   it "reads config strings only from the module's config" do
     content = %(export default async () => new Response();\nexport const config: Config = {\n  path: ["/api/a/:id", "/api/b"],\n  method: "GET",\n};)
     config = extractor.config_object(content).not_nil!

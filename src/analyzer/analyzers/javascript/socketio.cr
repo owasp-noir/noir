@@ -1,4 +1,5 @@
 require "../../engines/javascript_engine"
+require "../../../miniparsers/js_route_extractor"
 
 module Analyzer::Javascript
   # Surfaces Socket.IO real-time attack surface as `ws://` endpoints. A
@@ -49,7 +50,7 @@ module Analyzer::Javascript
       parallel_file_scan do |path|
         content = read_file_content(path)
         next unless socketio_evidence?(content)
-        scan_file(content, path)
+        scan_file(Noir::JSRouteExtractor.strip_js_comments(content), path)
       end
       @result
     end

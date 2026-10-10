@@ -30,6 +30,7 @@ class FrameworkTagger < Tagger
   @base_paths : Array(String)
   @file_cache : Hash(String, String)
   @lines_cache : Hash(String, Array(String))
+  @project_roots = Hash({String, String}, String?).new
 
   def initialize(options : Hash(String, YAML::Any))
     super
@@ -77,6 +78,31 @@ class FrameworkTagger < Tagger
     end
     files.uniq!
     files
+  end
+
+  # Directory of the nearest project manifest (`*.csproj`, `package.json`)
+  # holding `path`, walking up no further than the scan base; nil when there
+  # is none. App-wide auth switches (an ASP.NET `FallbackPolicy`, a Nest
+  # `APP_GUARD`) belong to one app: scoping them by this root keeps one app
+  # of a monorepo from tagging its siblings.
+  def nearest_project_root(path : String, manifest : Regex) : String?
+    dir = Noir::PathScope.expand(File.dirname(path))
+    key = {dir, manifest.source}
+    return @project_roots[key] if @project_roots.has_key?(key)
+
+    bases = @base_paths.map { |base| Noir::PathScope.normalize_root(base) }
+    root = nil
+    current = dir
+    loop do
+      if (Dir.children(current).any?(&.matches?(manifest)) rescue false)
+        root = current
+        break
+      end
+      parent = File.dirname(current)
+      break if bases.includes?(current) || parent == current
+      current = parent
+    end
+    @project_roots[key] = root
   end
 
   def self.target_techs : Array(String)

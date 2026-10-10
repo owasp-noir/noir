@@ -19,9 +19,11 @@ namespace Senparc.Weixin.MP.Sample
                 defaults: new { controller = "Open", action = "Callback", appId = UrlParameter.Optional }
             );
 
+            routes.MapRoute("Login", "account/login", new { controller = "Account", action = "Login" });
+
             routes.MapRoute(
-                name: "Default",
-                url: "data/default",
+                name: "Default", // Route name
+                url: "data/default", // URL with parameters
                 defaults: new { controller = "Home", action = "Index", id = UrlParameter.Optional }
             );
         }

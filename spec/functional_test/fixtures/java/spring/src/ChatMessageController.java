@@ -14,7 +14,7 @@ public class ChatMessageController {
     public void send(ChatMessage payload) {
     }
 
-    @SubscribeMapping("/presence/{roomId}")
+    @SubscribeMapping(/* on join */ "/presence/{roomId}")
     public ChatMessage presence() {
         return new ChatMessage();
     }

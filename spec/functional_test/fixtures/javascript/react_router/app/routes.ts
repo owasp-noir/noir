@@ -8,11 +8,11 @@ import {
 
 export default [
   index("routes/home.tsx"),
-  route("about", "routes/about.tsx"),
+  route(/* static page */ "about", "routes/about.tsx"),
   layout("routes/auth/layout.tsx", [
     route("login", "routes/auth/login.tsx"),
   ]),
-  ...prefix("api", [
+  ...prefix(/* api */ "api", [
     route("users", "routes/api/users.ts"),
     route("users/:id", "routes/api/user.ts"),
   ]),

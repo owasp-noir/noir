@@ -208,7 +208,7 @@ module Analyzer::Rust
     private def first_identifier_argument(call : LibTreeSitter::TSNode, source : String) : String?
       args = Noir::TreeSitter.field(call, "arguments")
       return unless args
-      Noir::TreeSitter.each_named_child(args) do |child|
+      Noir::TreeSitter.each_named_arg(args) do |child|
         case Noir::TreeSitter.node_type(child)
         when "identifier", "scoped_identifier"
           return Noir::TreeSitter.node_text(child, source)

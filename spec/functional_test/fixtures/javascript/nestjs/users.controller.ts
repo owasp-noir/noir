@@ -29,7 +29,7 @@ export class UserController {
   }
 
   @Get('search')
-  search(@Query('name') name: string, @Query('email') email: string) {
+  search(@Query( 'name') name: string, @Query('email') email: string) {
     return [];
   }
 }
@@ -50,7 +50,7 @@ export class SearchController {
 @Controller('protected')
 export class ProtectedController {
   @Get()
-  getProtected(@Headers('authorization') auth: string) {
+  getProtected(@Headers(/* bearer */ 'authorization') auth: string) {
     return {};
   }
 }

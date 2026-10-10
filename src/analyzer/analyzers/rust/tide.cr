@@ -161,7 +161,7 @@ module Analyzer::Rust
         args = Noir::TreeSitter.field(node, "arguments")
         next unless args
         arg = nil.as(LibTreeSitter::TSNode?)
-        Noir::TreeSitter.each_named_child(args) { |c| arg ||= c }
+        Noir::TreeSitter.each_named_arg(args) { |c| arg ||= c }
         next unless mount = arg
         ranges << {LibTreeSitter.ts_node_start_byte(mount).to_i, LibTreeSitter.ts_node_end_byte(mount).to_i, prefix}
       end
@@ -353,7 +353,7 @@ module Analyzer::Rust
     private def first_named_argument(call : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
       args = Noir::TreeSitter.field(call, "arguments")
       return unless args
-      Noir::TreeSitter.each_named_child(args) do |child|
+      Noir::TreeSitter.each_named_arg(args) do |child|
         return child
       end
       nil

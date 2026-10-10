@@ -103,6 +103,12 @@ module Analyzer::Go
     # scoping below).
     TOPLEVEL_BRACE_CLOSE_RE = /^\}\s*$/
 
+    # A wrapped call is matched as one logical line (see `call_lines`); this
+    # caps how many continuation lines one call may pull in.
+    MAX_CALL_CONTINUATION = 8
+    # `var (` / `const (` / `import (` open a block, not a call.
+    PAREN_BLOCK_RE = /^\s*(?:var|const|import|type)\s*\($/
+
     # --- kong (struct-tag CLI) ------------------------------------------------
     # Root/subcommand fields are declared as struct fields; a `cmd:""` tag
     # marks a field as a subcommand whose own flags/args live in that
@@ -168,6 +174,7 @@ module Analyzer::Go
           binary = go_binary_name(modules, path, content)
           root_url = "cli://#{binary}"
           lines = content.lines
+          calls = call_lines(lines)
           framework_cli = content.matches?(FRAMEWORK_IMPORTS_RE)
           # stdlib flag / os.Args / raw os.Getenv only describe a CLI surface
           # when this file isn't really an HTTP server using flags for config.
@@ -179,7 +186,7 @@ module Analyzer::Go
           # Map cobra command variables to their command URL.
           cobra_cmd_urls = map_cobra_commands(lines, binary, root_url)
 
-          scan_lines(lines, path, binary, root_url, endpoints, cobra_cmd_urls,
+          scan_lines(calls, path, binary, root_url, endpoints, cobra_cmd_urls,
             emit_stdlib, has_cli_parse)
           scan_struct_tags(content, path, root_url, endpoints)
 
@@ -188,11 +195,11 @@ module Analyzer::Go
           end
 
           if content_matches?(content, KINGPIN_IMPORT_RE)
-            scan_kingpin(lines, path, endpoints, kingpin_cmd_urls(lines, root_url))
+            scan_kingpin(calls, path, endpoints, kingpin_cmd_urls(calls, root_url))
           end
 
           if content_matches?(content, MITCHELLH_IMPORT_RE)
-            scan_mitchellh(lines, path, root_url, endpoints)
+            scan_mitchellh(lines, calls, path, root_url, endpoints)
           end
         rescue e
           logger.debug "Error analyzing #{path}: #{e}"
@@ -202,6 +209,30 @@ module Analyzer::Go
 
       @result.concat(cli_endpoints(endpoints))
       @result
+    end
+
+    # `lines`, with each call whose arguments wrap joined onto its first line:
+    # `Flags().IntVar(&port,` + `"port", 0, "")` or a kingpin chain broken
+    # after a `.` would otherwise lose the name (or `.Envar(...)`) on the
+    # next line. A line opens such a call when it leaves a `(` unclosed and
+    # ends in `(` or `,`, or ends in `.`. Every index keeps its own line too,
+    # so line numbers and brace-scoped scans are unchanged.
+    private def call_lines(lines : Array(String)) : Array(String)
+      lines.map_with_index do |line, index|
+        tail = line.rstrip
+        depth = line.count('(') - line.count(')')
+        next line unless tail.ends_with?('.') || (depth > 0 && (tail.ends_with?('(') || tail.ends_with?(',')))
+        next line if tail.matches?(PAREN_BLOCK_RE)
+        String.build do |io|
+          io << tail
+          (index + 1).upto(Math.min(index + MAX_CALL_CONTINUATION, lines.size - 1)) do |j|
+            tail = lines[j].strip
+            io << ' ' << tail
+            depth += tail.count('(') - tail.count(')')
+            break if depth <= 0 && !tail.ends_with?('.')
+          end
+        end
+      end
     end
 
     # A file is part of the CLI surface when it imports a CLI framework or
@@ -688,8 +719,8 @@ module Analyzer::Go
     # its own still surfaces), then a second pass scoped to each mapped
     # type's own `Run` method body picks up FlagSet `*Var` registrations and
     # raw env reads.
-    private def scan_mitchellh(lines : Array(String), path : String, root_url : String,
-                               endpoints : Hash(String, Endpoint))
+    private def scan_mitchellh(lines : Array(String), calls : Array(String), path : String,
+                               root_url : String, endpoints : Hash(String, Endpoint))
       type_urls = mitchellh_cmd_type_urls(lines, root_url)
       mitchellh_cmd_keys(lines).each do |key, line_no|
         fetch_endpoint(endpoints, "#{root_url}/#{key}", path, line_no)
@@ -709,11 +740,12 @@ module Analyzer::Go
         end
         next unless url = current_url
 
-        if m = line.match(MITCHELLH_FLAGVAR_RE)
+        call = calls[index]
+        if m = call.match(MITCHELLH_FLAGVAR_RE)
           ep = fetch_endpoint(endpoints, url, path, line_no)
           ep.push_param(Param.new(m[1], "", "flag"))
         end
-        line.scan(OS_GETENV_RE) do |env_match|
+        call.scan(OS_GETENV_RE) do |env_match|
           ep = fetch_endpoint(endpoints, url, path, line_no)
           ep.push_param(Param.new(env_match[1], "", "env"))
         end

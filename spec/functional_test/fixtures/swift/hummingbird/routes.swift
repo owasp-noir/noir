@@ -27,7 +27,7 @@ func routes(_ router: Router<some RequestContext>) {
     
     // GET with query parameter
     router.get("search") { request, context -> String in
-        let query = request.uri.queryParameters.get("q")
+        let query = request.uri.queryParameters.get(/* search */ "q")
         let sort = request.uri.queryParameters.get("sort")
         return "Searching for: \(query ?? "nothing")"
     }

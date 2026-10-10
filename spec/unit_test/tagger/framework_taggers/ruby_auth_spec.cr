@@ -108,6 +108,178 @@ describe "RubyAuthTagger" do
 
     FileUtils.rm_rf(tmpdir)
   end
+
+  it "inherits auth callbacks from parent controllers and concerns" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("ruby_inherited_auth")
+    controllers = File.join(tmpdir, "app", "controllers")
+    Dir.mkdir_p(File.join(controllers, "concerns"))
+    Dir.mkdir_p(File.join(controllers, "admin"))
+    files = {
+      # Rails 8 `rails generate authentication`
+      "concerns/authentication.rb" => <<-RB,
+        module Authentication
+          extend ActiveSupport::Concern
+
+          included do
+            before_action :require_authentication
+          end
+
+          class_methods do
+            def allow_unauthenticated_access(**options)
+              skip_before_action :require_authentication, **options
+            end
+          end
+        end
+        RB
+      "application_controller.rb" => <<-RB,
+        class ApplicationController < ActionController::Base
+          include Authentication
+        end
+        RB
+      "sessions_controller.rb" => <<-RB,
+        class SessionsController < ApplicationController
+          allow_unauthenticated_access only: %i[ new create ]
+
+          def create
+          end
+
+          def destroy
+          end
+        end
+        RB
+      "posts_controller.rb" => <<-RB,
+        class PostsController < ApplicationController
+          def index
+          end
+        end
+        RB
+      # Devise in a namespaced base controller
+      "admin/base_controller.rb" => <<-RB,
+        module Admin
+          class BaseController < ::ApplicationController
+            allow_unauthenticated_access
+            before_action :authenticate_user!, except: :ping
+          end
+        end
+        RB
+      "admin/reports_controller.rb" => <<-RB,
+        module Admin
+          class ReportsController < BaseController
+            skip_before_action :authenticate_user!, only: [:feed]
+
+            def index
+            end
+
+            def feed
+            end
+
+            def ping
+            end
+          end
+        end
+        RB
+    }
+    files.each do |name, body|
+      path = File.join(controllers, name)
+      File.write(path, body)
+      CodeLocator.instance.register_path(path)
+    end
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(name : String, line : Int32) do
+        Endpoint.new("/#{name}/#{line}", "GET", [] of Param, Details.new(PathInfo.new(File.join(controllers, name), line)))
+      end
+      session_create = at.call("sessions_controller.rb", 4)
+      session_destroy = at.call("sessions_controller.rb", 7)
+      posts_index = at.call("posts_controller.rb", 2)
+      reports_index = at.call("admin/reports_controller.rb", 5)
+      reports_feed = at.call("admin/reports_controller.rb", 8)
+      reports_ping = at.call("admin/reports_controller.rb", 11)
+
+      RubyAuthTagger.new(noir_options).perform([session_create, session_destroy, posts_index, reports_index, reports_feed, reports_ping])
+
+      session_create.tags.should be_empty
+      session_destroy.tags.map(&.description).should eq(["Protected by require_authentication"])
+      posts_index.tags.map(&.description).should eq(["Protected by require_authentication"])
+      reports_index.tags.map(&.description).should eq(["Protected by Devise authenticate_user!"])
+      reports_feed.tags.should be_empty
+      reports_ping.tags.should be_empty
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
+  it "treats skip_before_action as an opt-out, never as the callback it skips" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("ruby_skip_callback")
+    controllers = File.join(tmpdir, "app", "controllers")
+    Dir.mkdir_p(File.join(controllers, "api"))
+    files = {
+      "api/base_controller.rb" => <<-RB,
+        module Api
+          class BaseController < ActionController::API
+            before_action :doorkeeper_authorize!
+          end
+        end
+        RB
+      "api/users_controller.rb" => <<-RB,
+        module Api
+          class UsersController < BaseController
+            skip_before_action :doorkeeper_authorize!, only: [:index]
+
+            def index
+            end
+
+            def show
+            end
+          end
+        end
+        RB
+      "posts_controller.rb" => <<-RB,
+        class PostsController < ActionController::API
+          before_action :doorkeeper_authorize!
+          skip_before_action :doorkeeper_authorize!, only: [:index]
+
+          def index
+          end
+
+          def show
+          end
+        end
+        RB
+    }
+    files.each do |name, body|
+      path = File.join(controllers, name)
+      File.write(path, body)
+      CodeLocator.instance.register_path(path)
+    end
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(name : String, line : Int32) do
+        Endpoint.new("/#{name}/#{line}", "GET", [] of Param, Details.new(PathInfo.new(File.join(controllers, name), line)))
+      end
+      users_index = at.call("api/users_controller.rb", 5)
+      users_show = at.call("api/users_controller.rb", 8)
+      posts_index = at.call("posts_controller.rb", 5)
+      posts_show = at.call("posts_controller.rb", 8)
+
+      RubyAuthTagger.new(noir_options).perform([users_index, users_show, posts_index, posts_show])
+
+      users_index.tags.should be_empty
+      users_show.tags.map(&.description).should eq(["Protected by Doorkeeper OAuth authorize"])
+      posts_index.tags.should be_empty
+      posts_show.tags.map(&.description).should eq(["Protected by Doorkeeper OAuth authorize"])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
 end
 
 # Additional tests for Grape + Roda support (B target)

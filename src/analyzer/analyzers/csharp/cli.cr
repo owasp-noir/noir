@@ -86,7 +86,10 @@ module Analyzer::CSharp
           root_url = "cli://#{binary}"
           framework_cli = cli_library?(content)
           emit_builtin = framework_cli || !content.matches?(WEB_HOST_RE)
-          scan(content.lines, path, binary, root_url, endpoints, emit_builtin, framework_cli)
+          # Comment-blanked lines: a trailing `// the input file` after
+          # `[Argument(0)]` was read as the member name, and commented-out
+          # attributes were reported.
+          scan(Noir::CSharpLexer.new(content).code_lines, path, binary, root_url, endpoints, emit_builtin, framework_cli)
         rescue e
           logger.debug "Error analyzing #{path}: #{e}"
           next

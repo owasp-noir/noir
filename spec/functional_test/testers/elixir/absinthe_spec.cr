@@ -61,6 +61,16 @@ FunctionalTester.new("fixtures/elixir/absinthe_passthrough/", {
   ]),
 ]).perform_tests
 
+# Two Mix projects under one scan base: `snake/`'s Passthrough adapter and
+# `/gql` mount stay with it; `camel/` keeps camelCase and the default mount.
+FunctionalTester.new("fixtures/elixir/absinthe_multi_app/", {
+  :techs     => 2,
+  :endpoints => 3,
+}, [
+  Endpoint.new("/gql#Query.list_items", "POST", [Param.new("page_size", "", "json")]),
+  Endpoint.new("/graphql#Query.allUsers", "POST"),
+]).perform_tests
+
 # Same shapes without Absinthe: nothing is detected.
 FunctionalTester.new("fixtures/elixir/absinthe_negative/", {
   :techs     => 0,

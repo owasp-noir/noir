@@ -17,8 +17,21 @@ class PhpAuthTagger < FrameworkTagger
     {/(?:->|::)middleware\s*\(\s*['"]auth:sanctum['"]/, "Laravel Sanctum auth"},
     {/(?:->|::)middleware\s*\(\s*['"]auth:web['"]/, "Laravel web auth"},
     {/(?:->|::)middleware\s*\(\s*['"]verified['"]/, "Laravel verified middleware"},
-    {/(?:->|::)middleware\s*\(\s*\[.*['"]auth['"]/, "Laravel auth middleware"},
+    # `[^\]]*`, not `.*`: stay inside the middleware list, or
+    # `middleware(['guest'])->prefix('auth')` reads the prefix as the guard.
+    {/(?:->|::)middleware\s*\(\s*\[[^\]]*['"]auth['"]/, "Laravel auth middleware"},
+    # Jetstream's `Route::middleware(['auth:sanctum', ..., 'verified'])`
+    {/(?:->|::)middleware\s*\(\s*\[[^\]]*['"]auth:[\w,]+['"]/, "Laravel auth middleware"},
   ]
+
+  # `Route::middleware('auth')->group(function () { ... })` and the older
+  # `Route::group(['middleware' => 'auth'], function () { ... })`: every route
+  # declared inside the closure inherits the middleware. Breeze's
+  # routes/web.php and routes/auth.php are built this way. The middleware value
+  # is one string or one bracketed list; the match must not run past it into
+  # later keys (`'middleware' => 'guest', 'prefix' => 'auth'`).
+  LARAVEL_GROUP_OPEN       = /(?:->|::)group\s*\(\s*(?:\[(?:[^\[\]]|\[[^\]]*\])*\]\s*,\s*)?(?:static\s+)?(?:function|fn)\b/
+  LARAVEL_GROUP_MIDDLEWARE = /['"]middleware['"]\s*=>\s*(?:\[[^\]]*?)?['"](?:auth(?::[\w,]+)?|verified)['"]/
 
   # Laravel controller middleware
   LARAVEL_CONTROLLER_MIDDLEWARE = [
@@ -104,6 +117,39 @@ class PhpAuthTagger < FrameworkTagger
     ]
   end
 
+  def initialize(options : Hash(String, YAML::Any))
+    super
+    @group_auth = Hash(String, Array(String?)).new
+  end
+
+  # Per line of a routes file, the auth middleware of the innermost
+  # `->group(function () {` closure enclosing it, tracked by brace depth.
+  private def group_auth_lines(path : String, lines : Array(String)) : Array(String?)
+    @group_auth[path] ||= begin
+      covered = Array(String?).new(lines.size, nil)
+      frames = [] of {Int32, String?}
+      depth = 0
+      statement = ""
+      lines.each_with_index do |line, idx|
+        code = line.gsub(/'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"/) { |str| str.gsub(/[{}]/, "") }.sub(%r{^\s*(?://|#|\*).*}, "")
+        statement = "#{statement} #{code}"
+        covered[idx] = frames.reverse_each.compact_map(&.[1]).first?
+        if code.matches?(LARAVEL_GROUP_OPEN)
+          desc = LARAVEL_ROUTE_MIDDLEWARE.find { |pattern, _| statement.matches?(pattern) }.try(&.[1])
+          desc ||= "Laravel auth middleware" if statement.matches?(LARAVEL_GROUP_MIDDLEWARE)
+          frames << {depth, desc}
+        end
+        depth += code.count('{') - code.count('}')
+        while (top = frames.last?) && depth <= top[0]
+          frames.pop
+        end
+        stripped = code.strip
+        statement = "" if stripped.ends_with?(';') || stripped.ends_with?('{') || stripped.ends_with?('}')
+      end
+      covered
+    end
+  end
+
   private def check_endpoint(endpoint : Endpoint)
     endpoint.details.code_paths.each do |path_info|
       lines = read_file_lines(path_info.path)
@@ -120,6 +166,11 @@ class PhpAuthTagger < FrameworkTagger
       description = check_patterns_near_line(lines, line_idx, route_patterns, 3)
       if description
         endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "php_auth"))
+        return
+      end
+
+      if description = group_auth_lines(path_info.path, lines)[line_idx]
+        endpoint.add_tag(Tag.new("auth", "Protected by #{description} (group)", "php_auth"))
         return
       end
 

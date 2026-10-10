@@ -83,8 +83,9 @@ module Analyzer::Scala
     # Extract routes from Scalatra DSL
     private def extract_routes_from_content(path : String, content : String, include_callee : Bool) : Array(Endpoint)
       endpoints = [] of Endpoint
-      lines = content.split('\n')
-      code_lines = scala_code_lines(content)
+      lexer = scala_lexer(content)
+      lines = scala_code_text(lexer).split('\n')
+      code_lines = lexer.code_lines
       mount_prefix = single_mount_prefix(code_lines)
 
       lines.each_with_index do |_line, index|

@@ -45,12 +45,11 @@ module Analyzer::Java
     # Data REST exports DELETE through either method, so hiding it takes both.
     DELETE_METHODS = Set{"delete", "deleteById"}
 
-    QUERY_METHOD_RE  = /^(?:find|read|get|query|search|stream|count|exists|delete|remove)[A-Z]/
-    SOURCE_MARKER    = Regex.union("org.springframework.data.rest")
-    INTERFACE_GATE   = /\binterface\s+\w+[^{]*\bextends\b/
-    BUILD_FILES      = %w[pom.xml build.gradle build.gradle.kts]
-    IRREGULAR_PLURAL = {"person" => "people", "man" => "men", "woman" => "women", "child" => "children"}
-    MAX_BASE_DEPTH   = 8
+    QUERY_METHOD_RE = /^(?:find|read|get|query|search|stream|count|exists|delete|remove)[A-Z]/
+    SOURCE_MARKER   = Regex.union("org.springframework.data.rest")
+    INTERFACE_GATE  = /\binterface\s+\w+[^{]*\bextends\b/
+    BUILD_FILES     = %w[pom.xml build.gradle build.gradle.kts]
+    MAX_BASE_DEPTH  = 8
 
     private record Candidate, path : String, decl : Model::TypeDecl, dto_index : Noir::TreeSitterJavaDtoIndex::Index, owned : Bool
 
@@ -138,7 +137,7 @@ module Analyzer::Java
       return if entity.empty?
 
       entity = Model.simple_type_name(entity)
-      resource = type_annotation.try(&.string("path")) || pluralize(uncapitalize(entity))
+      resource = type_annotation.try(&.string("path")) || SpringDataRest.pluralize(uncapitalize(entity))
       base = Noir::URLPath.join_absorbing(
         normalize_optional_path(config["server.servlet.context-path"]?),
         normalize_optional_path(config["spring.data.rest.base-path"]? || config["spring.data.rest.basePath"]?))
@@ -233,12 +232,57 @@ module Analyzer::Java
       name.empty? ? name : name[0].downcase + name[1..]
     end
 
-    # English plural, the subset of Evo Inflector's rules that cover
-    # entity names; Spring Data REST derives the default path this way.
-    private def pluralize(word : String) : String
-      return IRREGULAR_PLURAL[word] if IRREGULAR_PLURAL.has_key?(word)
-      return "#{word[0..-2]}ies" if word.matches?(/[^aeiou]y\z/i)
-      return "#{word}es" if word.matches?(/(?:s|x|z|ch|sh)\z/i)
+    # `{pattern, replacement}` turning each of `words` (all ending in
+    # `singular`) into its plural.
+    def self.category(words : Array(String), singular : String, plural : String) : Tuple(Regex, String)
+      {Regex.new("(#{words.map(&.rchop(singular)).join('|')})#{singular}\\z", Regex::Options::IGNORE_CASE), "\\1#{plural}"}
+    end
+
+    # Evo Inflector 1.3's anglicized `English.plural`, which Spring Data REST
+    # derives the default path with: every rule is a case-insensitive suffix
+    # match and the first one that matches wins. `person` is not irregular
+    # there, so `Person` maps to `/persons`.
+    PLURAL_RULES = [
+      category(%w[fish ois sheep deer pox itis bison flounder pliers bream gallows proceedings breeches graffiti
+        rabies britches headquarters salmon carp herpes scissors chassis high-jinks sea-bass clippers homework
+        series cod innings shears contretemps jackanapes species corps mackerel swine debris measles trout
+        diabetes mews tuna djinn mumps whiting eland news wildebeest elk pincers sugar], "", ""),
+      {/(c)hild\z/i, "\\1hildren"}, {/(e)phemeris\z/i, "\\1phemerides"}, {/(m)ongoose\z/i, "\\1ongoose"},
+      {/(m)ythos\z/i, "\\1ythoi"}, {/(s)oliloquy\z/i, "\\1oliloquies"}, {/(t)rilby\z/i, "\\1rilbys"},
+      {/(g)enus\z/i, "\\1enera"}, {/(q)uiz\z/i, "\\1uizzes"}, {/(b)eef\z/i, "\\1eefs"},
+      {/(b)rother\z/i, "\\1rothers"}, {/(c)ow\z/i, "\\1ows"}, {/(g)enie\z/i, "\\1enies"},
+      {/(m)oney\z/i, "\\1oneys"}, {/(o)ctopus\z/i, "\\1ctopuses"}, {/(o)pus\z/i, "\\1puses"},
+      # Evo's other `-man` exceptions are capitalized and never match.
+      category(%w[human], "", "s"),
+      {/man\z/i, "men"}, {/([lm])ouse\z/i, "\\1ice"}, {/tooth\z/i, "teeth"}, {/goose\z/i, "geese"},
+      {/foot\z/i, "feet"}, {/zoon\z/i, "zoa"}, {/([csx])is\z/i, "\\1es"},
+      category(%w[codex murex silex], "ex", "ices"),
+      category(%w[radix helix], "ix", "ices"),
+      category(%w[bacterium agendum desideratum erratum stratum datum ovum extremum candelabrum], "um", "a"),
+      category(%w[criterion perihelion aphelion phenomenon prolegomenon noumenon organon asyndeton hyperbaton], "on", "a"),
+      category(%w[alumna alga vertebra persona], "a", "ae"),
+      category(%w[alumnus alveolus bacillus bronchus locus nucleus stimulus meniscus thesaurus], "us", "i"),
+      {/([cs]h|[zx])\z/i, "\\1es"},
+      category(%w[acropolis chaos lens aegis cosmos mantis alias dais marquis asbestos digitalis metropolis atlas
+        epidermis pathos bathos ethos pelvis bias gas polis caddis glottis rhinoceros cannabis sassafras canvas
+        ibis trellis iris clitoris apparatus impetus prospectus cantus nexus sinus coitus plexus status hiatus], "", "es"),
+      {/(us)\z/i, "\\1es"},
+      category(%w[anathema enema oedema bema enigma sarcoma carcinoma gumma schema charisma lemma soma diploma
+        lymphoma stigma dogma magma stoma drama melisma trauma edema miasma], "", "s"),
+      {/ss\z/i, "sses"},
+      {/([aeo]l)f\z/i, "\\1ves"}, {/([^d]ea)f\z/i, "\\1ves"}, {/(ar)f\z/i, "\\1ves"}, {/([nlw]i)fe\z/i, "\\1ves"},
+      {/([aeiou]y)\z/i, "\\1s"}, {/y\z/i, "ies"},
+      category(%w[solo soprano basso alto contralto tempo piano virtuoso albino archipelago armadillo commando
+        crescendo fiasco ditto dynamo embryo ghetto guano inferno jumbo lumbago magneto manifesto medico octavo
+        photo pro quarto canto lingo generalissimo stylo rhino casino auto macro zero todo], "o", "os"),
+      {/([aeiou]o)\z/i, "\\1s"}, {/o\z/i, "oes"},
+      {/(ul)um\z/i, "\\1a"},
+      {/s\z/i, "ses"},
+    ]
+
+    def self.pluralize(word : String) : String
+      return word if word.empty?
+      PLURAL_RULES.each { |(pattern, replacement)| return word.sub(pattern, replacement) if word.matches?(pattern) }
       "#{word}s"
     end
   end

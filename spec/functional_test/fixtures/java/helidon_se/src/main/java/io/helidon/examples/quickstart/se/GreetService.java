@@ -13,7 +13,7 @@ public class GreetService implements HttpService {
         rules.get("/", this::getDefaultMessageHandler)
              .get("/{name}", this::getMessageHandler)
              .put("/greeting", this::updateGreetingHandler)
-             .register("/admin", new AdminService());
+             .register(/* nested */ "/admin", new AdminService());
     }
 
     private void getDefaultMessageHandler(ServerRequest request, ServerResponse response) {

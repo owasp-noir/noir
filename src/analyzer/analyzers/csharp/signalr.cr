@@ -75,7 +75,8 @@ module Analyzer::CSharp
       files.each do |path|
         content = read_file_content(path)
         next unless content.includes?("MapHub")
-        content.scan(MAP_HUB) do |m|
+        # Comments blanked: `MapHub<T>(/* x */ "/hub")` must still match.
+        Noir::CSharpLexer.new(content).code_source.scan(MAP_HUB) do |m|
           hub_type = m[1].split('.').last
           map_hub_types << hub_type
           routes[hub_type] = m[2]

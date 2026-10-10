@@ -5,7 +5,7 @@ const helpers = require('./helpers');
 const writeRoutes = require('./write');
 const controllers = require('../controllers');
 
-const { setupPageRoute } = helpers;
+const { /* page routes */ setupPageRoute } = helpers;
 
 module.exports = function (app) {
 	const router = express.Router();

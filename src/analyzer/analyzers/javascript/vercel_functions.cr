@@ -31,7 +31,7 @@ module Analyzer::Javascript
       vercel_roots = {} of String => Bool
       ordered_scan_files(get_files_by_extensions(EXTENSIONS)) do |path|
         root, segments = route_location(path) || next
-        content = read_file_content(path)
+        content = Noir::JSRouteExtractor.strip_js_comments(read_file_content(path))
         vercel = vercel_roots.fetch(root) { vercel_roots[root] = Noir::ServerlessLayout.vercel_project?(root) }
         next unless vercel || content.matches?(Noir::ServerlessLayout::VERCEL_IMPORT)
 

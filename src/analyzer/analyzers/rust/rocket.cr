@@ -217,7 +217,7 @@ module Analyzer::Rust
         args = Noir::TreeSitter.field(n, "arguments")
         next unless args
         named = [] of LibTreeSitter::TSNode
-        Noir::TreeSitter.each_named_child(args) { |c| named << c }
+        Noir::TreeSitter.each_named_arg(args) { |c| named << c }
         next if named.size < 2
 
         prefix = extract_mount_prefix(named[0], source)

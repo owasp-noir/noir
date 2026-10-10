@@ -725,6 +725,7 @@ module Analyzer::Python
     end
 
     private def get_endpoints(method : String, route_path : String, extra_params : String, codeblock_lines : Array(String), prefix : String = "", route_attr : String = "")
+      codeblock_lines = fold_python_continuations(codeblock_lines)
       endpoints = [] of Endpoint
       params = [] of Param
 

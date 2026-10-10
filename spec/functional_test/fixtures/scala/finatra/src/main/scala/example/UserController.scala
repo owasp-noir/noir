@@ -8,7 +8,7 @@ class UserController @Inject()(
   service: UserService
 ) extends Controller {
   get("/users/:id") { request: Request =>
-    service.find(request.params("id"), request.params("fields"))
+    service.find(request.params("id"), request.params(/* projection */ "fields"))
   }
 
   post("/users") { request: Request => "ok" }
@@ -17,6 +17,8 @@ class UserController @Inject()(
 
   prefix("/admin") {
     delete("/users/:id") { request: Request => "x" }
+    // A brace char literal must not keep this prefix block open.
+    get("/raw") { request: Request => request.contentString.indexOf('{') }
 
     prefix("/v2") {
       put[Request, String]("/settings") { request: Request =>

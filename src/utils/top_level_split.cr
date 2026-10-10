@@ -410,8 +410,7 @@ module Noir
       first = delim[0]
       spans = cur.spans?
 
-      text.each_char_with_index do |ch, index|
-        next if index < start_pos
+      each_char_from(text, start_pos) do |ch, index|
         break if index >= end_pos
 
         # Every character inside the window is offered to the span tracker
@@ -501,12 +500,22 @@ module Noir
     # `text[i]` is O(i) once the string is not single-byte. Only called when a
     # part ended without ever seeing a non-whitespace character.
     private def first_non_whitespace_at(text : String, from : Int32) : Int32
-      index = 0
-      text.each_char do |ch|
-        return index if index >= from && !ch.whitespace?
+      each_char_from(text, from) { |ch, index| return index unless ch.whitespace? }
+      text.size
+    end
+
+    # `each_char_with_index` starting at char index `from`. The seek is O(1)
+    # on single-byte text; walking from 0 and skipping made every windowed
+    # `split_spans` cost the whole file, so splitting each entry of a big
+    # object literal (a Bun `routes` map) was quadratic.
+    private def each_char_from(text : String, from : Int32, &) : Nil
+      reader = Char::Reader.new(text, pos: text.char_index_to_byte_index(from) || text.bytesize)
+      index = from
+      while reader.has_next?
+        yield reader.current_char, index
+        reader.next_char
         index += 1
       end
-      index
     end
 
     private def prefix_of?(buffer : Array(Char), delim : Array(Char)) : Bool

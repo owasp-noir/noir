@@ -1,6 +1,7 @@
 require "../../../models/analyzer"
 require "../../engines/javascript_engine"
 require "../../engines/cli_endpoint_support"
+require "../../../miniparsers/js_route_extractor"
 
 module Analyzer::Javascript
   # Surfaces the command-line attack surface of JavaScript/TypeScript programs
@@ -136,7 +137,9 @@ module Analyzer::Javascript
 
               binary = js_binary_name(package_names, path)
               root_url = "cli://#{binary}"
-              lines = content.lines
+              # `.option(/* x */ '-v')` hides the literal from the line
+              # regexes; blanking keeps every line.
+              lines = Noir::JSRouteExtractor.strip_js_comments(content).lines
               emit_env = !content_matches?(content, WEB_EVIDENCE_RE)
 
               scan(lines, path, root_url, endpoints, emit_env)

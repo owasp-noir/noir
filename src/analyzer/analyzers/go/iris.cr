@@ -25,7 +25,7 @@ module Analyzer::Go
         next unless File.exists?(path)
         content = file_contents[path]? || read_file_content(path)
         next unless content_matches?(content, IMPORT_MARKER_RE)
-        lines = content.lines
+        lines = GoEngine.strip_comments(content).lines
         last_endpoint = Endpoint.new("", "")
 
         cross_file_groups = ts_groups_for_directory(package_groups, File.dirname(path))

@@ -12,7 +12,7 @@ class RecipeType(DjangoObjectType):
 class Query(graphene.ObjectType):
     recipe = graphene.Field(
         RecipeType,
-        recipe_id=graphene.ID(required=True),
+        recipe_id=graphene.ID(required=True),  # path-style id
         args={"include_drafts": graphene.Boolean()},
         description="One recipe",
     )

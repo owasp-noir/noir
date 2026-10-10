@@ -307,6 +307,51 @@ describe "SpringAuthTagger" do
     end
   end
 
+  it "reads the Kotlin authorizeHttpRequests DSL" do
+    temp_dir = File.join(Dir.tempdir, "noir-spring-auth-kotlin-dsl-#{Process.pid}-#{Time.utc.to_unix_ms}")
+    config_path = File.join(temp_dir, "src/main/kotlin/com/example/SecurityConfig.kt")
+
+    begin
+      Dir.mkdir_p(File.dirname(config_path))
+      File.write(config_path, <<-KT)
+        package com.example
+
+        import org.springframework.security.config.annotation.web.builders.HttpSecurity
+        import org.springframework.security.config.annotation.web.invoke
+        import org.springframework.security.web.SecurityFilterChain
+
+        class SecurityConfig {
+            fun filterChain(http: HttpSecurity): SecurityFilterChain {
+                http {
+                    authorizeHttpRequests {
+                        authorize("/public/**", permitAll)
+                        authorize(HttpMethod.POST, "/admin/**", hasRole("ADMIN"))
+                        authorize(anyRequest, authenticated)
+                    }
+                }
+                return http.build()
+            }
+        }
+        KT
+
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(temp_dir)
+      CodeLocator.instance.register_path(config_path)
+
+      open = Endpoint.new("/public/hello", "GET")
+      admin = Endpoint.new("/admin/users", "POST")
+      me = Endpoint.new("/me", "GET")
+
+      SpringAuthTagger.new(noir_options).perform([open, admin, me])
+
+      open.tags.should be_empty
+      admin.tags.map(&.description).should eq(["Protected by Spring Security hasRole via authorize(\"/admin/**\")"])
+      me.tags.map(&.description).should eq(["Protected by Spring Security authenticated via authorize(anyRequest)"])
+    ensure
+      FileUtils.rm_rf(temp_dir) if Dir.exists?(temp_dir)
+    end
+  end
+
   it "lets a more-specific permitAll matcher suppress a broader protected matcher" do
     temp_dir = File.join(Dir.tempdir, "noir-spring-auth-permit-#{Process.pid}-#{Time.utc.to_unix_ms}")
     config_path = File.join(temp_dir, "src/main/kotlin/com/example/SecurityConfiguration.kt")

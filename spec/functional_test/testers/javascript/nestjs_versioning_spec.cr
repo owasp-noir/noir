@@ -20,6 +20,9 @@ expected_endpoints = [
   ]),
   Endpoint.new("/items/c", "GET"),
   Endpoint.new("/v4/items/d", "GET"),
+  # Route decorators stacked on one member share its decorator block.
+  Endpoint.new("/items/e", "GET"),
+  Endpoint.new("/items/f", "GET"),
 ]
 
 FunctionalTester.new("fixtures/javascript/nestjs_versioning/", {

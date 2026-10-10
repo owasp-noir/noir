@@ -3,6 +3,7 @@ require "../../func_spec.cr"
 expected_endpoints = [
   Endpoint.new("/api/users/**", "GET"),
   Endpoint.new("/api/users/**", "POST"),
+  Endpoint.new("/strict/{id}", "PATCH", [Param.new("id", "", "path")]),
   # Expanded `name`/`args` form under `spring.cloud.gateway.server.webflux`.
   Endpoint.new("/api/orders/{id}", "DELETE", [Param.new("id", "", "path")]),
   Endpoint.new("/api/carts/**", "DELETE"),

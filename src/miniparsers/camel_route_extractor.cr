@@ -191,7 +191,7 @@ module Noir
       end
 
       private def first_arg(call : Node) : Node?
-        Noir::TreeSitter.field(call, "arguments").try { |args| Noir::TreeSitter.first_named_child(args) }
+        Noir::TreeSitter.field(call, "arguments").try { |args| Noir::TreeSitter.first_named_arg(args) }
       end
 
       # "" for a call with no arguments, nil for an unresolvable one.

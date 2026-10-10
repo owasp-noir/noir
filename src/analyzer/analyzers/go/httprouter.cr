@@ -43,7 +43,7 @@ module Analyzer::Go
         next unless File.exists?(path)
         content = read_file_content(path)
         next unless content_matches?(content, IMPORT_MARKER_RE)
-        lines = content.lines
+        lines = GoEngine.strip_comments(content).lines
         last_endpoint = Endpoint.new("", "")
 
         # Tree-sitter pre-pass: httprouter exposes HTTP verbs as

@@ -126,7 +126,23 @@ module Analyzer::Specification
 
       basename = include_path ? File.basename(include_path) : "#{prefix}.thrift"
       matches = @documents.values.select { |entry| File.basename(entry[0]) == basename }
-      matches.size == 1 ? matches.first : nil
+      return matches.first? if matches.size <= 1
+
+      # Several projects in one scan each carry their own copy: the one
+      # sharing the deepest directory with the including file is its own.
+      from = Path[File.expand_path(path)].parent.parts
+      ranked = matches.map { |entry| {shared_depth(from, Path[File.expand_path(entry[0])].parent.parts), entry} }
+      best = ranked.max_of(&.[0])
+      nearest = ranked.select { |(depth, _)| depth == best }
+      nearest.size == 1 ? nearest.first[1] : nil
+    end
+
+    private def shared_depth(a : Array(String), b : Array(String)) : Int32
+      depth = 0
+      while depth < a.size && depth < b.size && a[depth] == b[depth]
+        depth += 1
+      end
+      depth
     end
 
     # The field as declared minus its name — `1: required map<string, i32>`.

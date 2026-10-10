@@ -776,6 +776,8 @@ module Noir::JSCalleeExtractor
       type = Noir::TreeSitter.node_type(child)
       if type == "string_fragment" || type == "template_chars"
         fragments << Noir::TreeSitter.node_text(child, source)
+      elsif type == "escape_sequence"
+        fragments << Noir::TreeSitter.unescape(Noir::TreeSitter.node_text(child, source))
       end
     end
     return fragments.join unless fragments.empty?

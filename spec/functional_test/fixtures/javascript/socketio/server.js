@@ -11,7 +11,7 @@ process.on("SIGTERM", () => io.close());
 
 // Default namespace connection handler.
 io.on("connection", (socket) => {
-  socket.on("chat message", (msg) => {
+  socket.on(/* text */ "chat message", (msg) => {
     io.emit("chat message", msg); // outbound: server -> client, ignored
   });
 

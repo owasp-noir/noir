@@ -2,6 +2,7 @@ require "../../models/analyzer"
 require "../../miniparsers/import_graph"
 require "../../miniparsers/python_callee_extractor"
 require "../../utils/top_level_split"
+require "../../utils/call_fold"
 require "../analyzers/python/python_helper"
 require "json"
 
@@ -76,6 +77,18 @@ module Analyzer::Python
 
     protected def python_test_path?(path : String) : Bool
       PythonEngine.python_test_path?(path, python_base_path_for(path))
+    end
+
+    PROJECT_MARKERS = %w[pyproject.toml setup.py setup.cfg manage.py requirements.txt Pipfile]
+    @python_project_dirs : Array(String)?
+
+    # Deepest directory above `path` holding a Python project marker, else its scan base
+    # — the app a file belongs to in a monorepo.
+    protected def python_project_root(path : String) : String
+      dirs = @python_project_dirs ||= PROJECT_MARKERS.flat_map { |m| get_files_by_basename(m) }
+        .map { |f| Noir::PathScope.normalize_root(File.dirname(f)) }.uniq!
+      expanded = Noir::PathScope.expand(path)
+      dirs.select { |dir| Noir::PathScope.under_normalized_root?(expanded, dir) }.max_by?(&.size) || configured_base_for(path)
     end
 
     private def self.path_for_test_convention_match(path : String, base_path : String?) : String
@@ -255,6 +268,11 @@ module Analyzer::Python
             end
           elsif char == '\'' || char == '"'
             in_quote = char
+          elsif char == '#'
+            # A comment runs to the end of the line. Read as text it glued
+            # onto the next parameter's name (`q: str = None,  # search`
+            # lost the parameter on the following line).
+            break
           elsif char == '['
             bracket_count += 1
           elsif char == ']'
@@ -1079,13 +1097,17 @@ module Analyzer::Python
     def join_until_python_call_closes(lines : Array(::String),
                                       index : Int32,
                                       line : ::String) : ::String
-      pieces = [line]
-      delta, triple = python_call_line_delta(line, nil)
+      # Each piece is cut at its `#` comment: joined onto one line, the
+      # comment text glued onto the next argument (`add_api_route(  # v2`
+      # made the path argument `# v2 "/x"`).
+      delta, triple, comment = python_call_line_scan(line, nil)
+      return line unless delta > 0
+      pieces = [line.byte_slice(0, comment)]
       i = index + 1
       while i < lines.size && delta > 0
         nxt = lines[i]
-        pieces << nxt
-        line_delta, triple = python_call_line_delta(nxt, triple)
+        line_delta, triple, comment = python_call_line_scan(nxt, triple)
+        pieces << nxt.byte_slice(0, comment)
         delta += line_delta
         i += 1
       end
@@ -1099,6 +1121,68 @@ module Analyzer::Python
     # not keep the call open) from a `#` inside a multi-line string
     # (`Returns things (see issue #12)`, which is text).
     private def python_call_line_delta(line : ::String, triple : Char?) : Tuple(Int32, Char?)
+      depth, triple, _ = python_call_line_scan(line, triple)
+      {depth, triple}
+    end
+
+    # `lines` with each call or subscript left open at a line end folded
+    # onto the line that opens it, so a per-line accessor regex sees
+    # black's wrap of a long call (`request.args.get(` / `"q"` / `)`) as
+    # `request.args.get("q")`. The result has the same size as `lines`: a
+    # folded line's continuations become `""`, so indexes (and the line
+    # numbers derived from them) still line up. Folded pieces are cut at
+    # their `#` comment and stripped; a line that closes on its own comes
+    # back verbatim, and so does one still open after
+    # `Noir::CallFold::MAX_CONTINUATION_LINES` (a long call, not a wrapped
+    # read). Triple-quoted strings are tracked across the block, so a `(`
+    # in a docstring opens nothing.
+    def fold_python_continuations(lines : Array(::String)) : Array(::String)
+      folded = lines.dup
+      triple : Char? = nil
+      i = 0
+      while i < lines.size
+        delta, triple, comment = python_call_line_scan(lines[i], triple, brackets: true)
+        start = i
+        i += 1
+        next unless delta > 0
+
+        head = lines[start].byte_slice(0, comment).rstrip
+        inner_triple = triple
+        j = i
+        joined = String.build do |io|
+          io << head
+          last = head[-1]? || ' '
+          while j < lines.size && delta > 0 && j - start <= Noir::CallFold::MAX_CONTINUATION_LINES
+            line_delta, inner_triple, comment = python_call_line_scan(lines[j], inner_triple, brackets: true)
+            piece = lines[j].byte_slice(0, comment).strip
+            unless piece.empty?
+              # Glue the tokens back together, but keep `a` / `and b` two words.
+              io << ' ' if python_word_char?(last) && python_word_char?(piece[0])
+              io << piece
+              last = piece[-1]
+            end
+            delta += line_delta
+            j += 1
+          end
+        end
+        next if delta > 0 # unclosed: resume at the next line, which may open its own read
+
+        folded[start] = Noir::CallFold.drop_trailing_commas(joined)
+        (i...j).each { |k| folded[k] = "" }
+        i = j
+        triple = inner_triple
+      end
+      folded
+    end
+
+    private def python_word_char?(ch : Char) : Bool
+      ch.alphanumeric? || ch == '_'
+    end
+
+    # `python_call_line_delta` plus the byte offset where the line's `#`
+    # comment starts (`line.bytesize` when it has none). `brackets` also
+    # counts `[` / `]`, for a subscript wrapped like a call.
+    private def python_call_line_scan(line : ::String, triple : Char?, brackets : Bool = false) : Tuple(Int32, Char?, Int32)
       depth = 0
       in_quote : Char? = nil
       escaped = false
@@ -1128,15 +1212,15 @@ module Analyzer::Python
             in_quote = ch
           end
         elsif ch == '#'
-          break
-        elsif ch == '('
+          return {depth, triple, i}
+        elsif ch == '(' || (brackets && ch == '[')
           depth += 1
-        elsif ch == ')'
+        elsif ch == ')' || (brackets && ch == ']')
           depth -= 1
         end
         i += 1
       end
-      {depth, triple}
+      {depth, triple, bytes.size}
     end
 
     # `line` up to its first `#` outside a single-line quoted string.

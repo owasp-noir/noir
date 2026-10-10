@@ -10,7 +10,13 @@ class KtorAuthTagger < FrameworkTagger
   AUTHENTICATE_BLOCK_PATTERNS = [
     {/authenticate\s*\(/, "Ktor authenticate block"},
     {/authenticate\s*\(\s*"([^"]+)"/, "Ktor named authenticate"},
+    # The default provider: `authenticate { ... }`
+    {/^authenticate\s*\{/, "Ktor authenticate block"},
   ]
+
+  # `authenticate("session", optional = true) { ... }` lets an anonymous
+  # caller through; it only resolves a principal when credentials are sent.
+  OPTIONAL_AUTHENTICATE = /\boptional\s*=\s*true\b/
 
   # Ktor session/JWT/basic auth in route context
   ROUTE_AUTH_PATTERNS = [
@@ -84,7 +90,8 @@ class KtorAuthTagger < FrameworkTagger
       end
 
       # Only record a block whose route prefix is known.
-      if !route_frames.empty? && AUTHENTICATE_BLOCK_PATTERNS.any? { |pattern, _desc| stripped.matches?(pattern) }
+      if !route_frames.empty? && AUTHENTICATE_BLOCK_PATTERNS.any? { |pattern, _desc| stripped.matches?(pattern) } &&
+         !stripped.matches?(OPTIONAL_AUTHENTICATE)
         auth_match = stripped.match(/authenticate\s*\(\s*"([^"]+)"/)
         auth_name = auth_match ? auth_match[1] : "default"
         auth_frames << {
@@ -170,7 +177,7 @@ class KtorAuthTagger < FrameworkTagger
       # Check pattern BEFORE counting braces on this line
       # brace_depth <= 0 means we haven't left the enclosing scope (handles nested route blocks)
       AUTHENTICATE_BLOCK_PATTERNS.each do |pattern, _desc|
-        if stripped.matches?(pattern) && brace_depth <= 0
+        if stripped.matches?(pattern) && brace_depth <= 0 && !stripped.matches?(OPTIONAL_AUTHENTICATE)
           auth_match = stripped.match(/authenticate\s*\(\s*"([^"]+)"/)
           if auth_match
             return "Ktor authenticate(\"#{auth_match[1]}\") block"
@@ -180,6 +187,12 @@ class KtorAuthTagger < FrameworkTagger
       end
 
       brace_depth += current.count('}') - current.count('{')
+      # Below zero means this line opened a block enclosing the route (a
+      # `route("/x") {`, an optional authenticate): the walk is now in that
+      # block's parent scope. Without the reset the debt cancelled the next
+      # closed sibling block's `}`, and a sibling `authenticate {}` above it
+      # looked like it enclosed the route.
+      brace_depth = 0 if brace_depth < 0
 
       idx -= 1
     end

@@ -64,4 +64,11 @@ describe Noir::ScalaCalleeExtractor do
       {"SafeService.run", 33},
     ])
   end
+
+  it "blanks braces inside char literals but keeps symbol literals" do
+    stripped, _, _ = Noir::ScalaCalleeExtractor.strip_non_code_with_state("s.indexOf('{') + t.split('\\}') + 'sym", 0, false)
+    stripped.count('{').should eq 0
+    stripped.count('}').should eq 0
+    stripped.should contain("'sym")
+  end
 end

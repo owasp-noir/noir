@@ -7,6 +7,8 @@ expected_endpoints = [
   Endpoint.new("/healthz", "ANY"),
   # `path_reg` anchors are stripped; `path_end .php` is not a path.
   Endpoint.new("/v2/[a-z]+", "ANY"),
+  # The older `url*` fetches match the path too; `url_param` does not.
+  Endpoint.new("/legacy/", "ANY"),
   # Anonymous ACLs in rules; a regex quantifier's `}` does not close one.
   Endpoint.new("/v[0-9]{1,2}/admin", "ANY"),
   Endpoint.new("/internal", "ANY"),

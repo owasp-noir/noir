@@ -69,7 +69,7 @@ module Analyzer::Php
         content = read_file_content(path)
         return endpoints unless content.includes?("Route") && content.includes?("OCP\\AppFramework")
         id = app.try(&.[1]) || content.match(NAMESPACE_RE).try(&.[1].downcase)
-        attribute_routes(endpoints, path, content, id) if id
+        attribute_routes(endpoints, path, php_code(content), id) if id
       end
       endpoints
     rescue e
@@ -79,7 +79,7 @@ module Analyzer::Php
     end
 
     private def routes_file(endpoints : Array(Endpoint), path : String, root : String, id : String)
-      content = read_file_content(path)
+      content = php_code(read_file_content(path))
       lexer = Noir::PhpLexer.new(content)
       controllers = {} of String => Methods
 

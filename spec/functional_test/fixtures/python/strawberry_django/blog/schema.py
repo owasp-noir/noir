@@ -8,7 +8,7 @@ from blog.users.schema import UserQuery
 Query = merge_types("Query", (UserQuery, PostQuery))
 
 schema = strawberry.Schema(
-    query=Query,
+    query=Query,  # merged from users + posts
     mutation=PostMutation,
     config=StrawberryConfig(auto_camel_case=False),
 )

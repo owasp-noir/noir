@@ -31,6 +31,28 @@ describe Noir::WaspExtractor do
     ]
   end
 
+  it "reads many declarations of a non-ASCII spec in linear time, on the right lines" do
+    content = %(app a {\n  title: "한국어 앱"\n}\n) +
+              (0...4000).join { |i| %(api a#{i} {\n  fn: import { a } from "@src/a",\n  httpRoute: (GET, "/한/#{i}")\n}\n) }
+    spec = nil
+    elapsed = Time.measure { spec = Noir::WaspExtractor.parse_dsl(content) }
+    apis = spec.not_nil!.apis
+    apis.size.should eq 4000
+    {apis.last.path, apis.last.line}.should eq({"/한/3999", 4 + 3999 * 4})
+    elapsed.should be < 2.seconds
+  end
+
+  it "reads many Wasp Spec calls of a non-ASCII file in linear time, on the right lines" do
+    content = %(import { api } from "@wasp.sh/spec";\nimport { a } from "./a" with { type: "ref" };\n) +
+              (0...4000).join { |i| %(api("GET", "/한/#{i}", a);\n) }
+    spec = nil
+    elapsed = Time.measure { spec = Noir::WaspExtractor.parse_spec(content) }
+    apis = spec.not_nil!.apis
+    apis.size.should eq 4000
+    {apis.last.path, apis.last.line}.should eq({"/한/3999", 4002})
+    elapsed.should be < 2.seconds
+  end
+
   it "does not treat apiNamespace as a route prefix" do
     content = <<-WASP
       apiNamespace bar { middlewareConfigFn: import { mw } from "@src/apis", path: "/bar" }

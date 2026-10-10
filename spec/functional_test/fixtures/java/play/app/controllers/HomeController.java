@@ -103,7 +103,7 @@ class Assets extends Controller {
 
 class AsyncApi extends Controller {
     public java.util.concurrent.CompletionStage< Result > async(Http.Request request) {
-        String trace = request.header("X-Async").orElse("none");
+        String trace = request.header(/* trace */ "X-Async").orElse("none");
         return java.util.concurrent.CompletableFuture.completedFuture(ok(trace));
     }
 

@@ -54,7 +54,7 @@ module Analyzer::Go
         content = file_contents[path]? || read_file_content(path)
         dir = File.dirname(path)
         next unless framework_route_source_candidate?(content, dir, framework_dirs, IMPORT_MARKER, ROUTE_METHODS)
-        lines = content.lines
+        lines = GoEngine.strip_comments(content).lines
         last_endpoint = Endpoint.new("", "")
 
         ts_routes, statics = prefetched[path]? ||

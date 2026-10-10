@@ -87,3 +87,13 @@ describe "Thrift endpoint metadata", tags: "functional" do
     end
   end
 end
+
+# Two projects in one scan, each with its own `common/shared.thrift` on the
+# include path: `shared.Base` resolves to the copy beside the including file.
+FunctionalTester.new("fixtures/specification/thrift_multi_project/", {
+  :techs     => 1,
+  :endpoints => 4,
+}, [
+  thrift_endpoint("/SvcA/ping_a", [] of Param),
+  thrift_endpoint("/SvcB/ping_b", [] of Param),
+]).perform_tests

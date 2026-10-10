@@ -1,3 +1,5 @@
+require "./char_offsets"
+
 module Noir
   # JSLiteralScanner provides utilities for scanning JavaScript source code
   # while properly skipping string literals, comments, template literals, and regex.
@@ -67,6 +69,30 @@ module Noir
       end
     end
 
+    # The same over a string's already materialized `chars`, for a caller
+    # matching many delimiters in one non-ASCII string: the `String` forms
+    # above re-materialize it on every call.
+    def self.find_matching_brace(chars : Array(Char), open_brace_idx : Int32) : Int32?
+      find_matching_impl(chars, open_brace_idx, '{', '}')
+    end
+
+    def self.find_matching_paren(chars : Array(Char), open_paren_idx : Int32) : Int32?
+      find_matching_impl(chars, open_paren_idx, '(', ')')
+    end
+
+    # The char forms above over a prebuilt `CharOffsets`: same answers, but a
+    # per-route caller on a non-ASCII file reuses one `chars` array instead
+    # of rebuilding it per call.
+    def self.find_matching_brace(offsets : CharOffsets, open_brace_idx : Int32) : Int32?
+      return find_matching_brace(offsets.content, open_brace_idx) if offsets.ascii?
+      find_matching_impl(offsets.chars, open_brace_idx, '{', '}')
+    end
+
+    def self.find_matching_paren(offsets : CharOffsets, open_paren_idx : Int32) : Int32?
+      return find_matching_paren(offsets.content, open_paren_idx) if offsets.ascii?
+      find_matching_impl(offsets.chars, open_paren_idx, '(', ')')
+    end
+
     # BYTE-offset variants over the raw UTF-8 bytes, for any content. Every
     # delimiter, quote and comment marker is ASCII and no byte of a
     # multi-byte char is, so non-ASCII text is just opaque bytes here — and
@@ -78,6 +104,21 @@ module Noir
 
     def self.find_matching_paren_at_byte(content : String, open_paren_byte : Int32) : Int32?
       find_matching_impl(content.to_slice, open_paren_byte, '(', ')')
+    end
+
+    # `extract_paren_content` from a BYTE offset; `end_pos` is a byte offset
+    # too. The byte walk emits each byte of a multi-byte char as its own
+    # U+0080..U+00FF char, so fold those back into the source bytes.
+    def self.extract_paren_content_at_byte(content : String, start_byte : Int32) : ScanResult?
+      return unless start_byte < content.bytesize
+
+      result = extract_paren_content_impl(content.to_slice, start_byte)
+      text = result.content
+      return result if text.bytesize == text.size
+
+      bytes = Bytes.new(text.size)
+      text.each_char_with_index { |char, i| bytes[i] = char.ord.to_u8 }
+      ScanResult.new(String.new(bytes), result.end_pos)
     end
 
     # --- indexed char access (ASCII byte slice / char array) ---

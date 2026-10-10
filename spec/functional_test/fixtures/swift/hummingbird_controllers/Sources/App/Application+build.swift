@@ -16,7 +16,7 @@ func buildApplication() -> some ApplicationProtocol {
     // RouteCollection controller mounted at an explicit path.
     router.addRoutes(UserController().endpoints, atPath: "/users")
     // Controller bound to a router group.
-    TodoController().addRoutes(to: router.group("api/todos"))
+    TodoController().addRoutes(to: router.group(/* mount */ "api/todos"))
 
     return Application(router: router)
 }

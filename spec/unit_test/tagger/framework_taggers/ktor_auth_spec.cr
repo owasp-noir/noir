@@ -243,4 +243,46 @@ describe "KtorAuthTagger" do
 
     FileUtils.rm_rf(tmpdir)
   end
+
+  it "reads default-provider authenticate {} and skips optional = true blocks" do
+    tmpdir = File.tempname("ktor_optional")
+    Dir.mkdir_p(tmpdir)
+    app = File.join(tmpdir, "Application.kt")
+    File.write(app, <<-KT)
+      fun Application.module() {
+          routing {
+              authenticate {
+                  get("/secret") {
+                      call.respondText("secret")
+                  }
+              }
+              authenticate("session", optional = true) {
+                  get("/maybe") {
+                      call.respondText("maybe")
+                  }
+              }
+              route("/pub") {
+                  get("/open") {
+                      call.respondText("open")
+                  }
+              }
+          }
+      }
+      KT
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    CodeLocator.instance.register_path(app)
+    secret = Endpoint.new("/secret", "GET", [] of Param, Details.new(PathInfo.new(app, 4)))
+    maybe = Endpoint.new("/maybe", "GET", [] of Param, Details.new(PathInfo.new(app, 9)))
+    open = Endpoint.new("/pub/open", "GET", [] of Param, Details.new(PathInfo.new(app, 14)))
+
+    KtorAuthTagger.new(noir_options).perform([secret, maybe, open])
+
+    secret.tags.map(&.description).should eq(["Protected by Ktor authenticate block"])
+    maybe.tags.should be_empty
+    open.tags.should be_empty
+
+    FileUtils.rm_rf(tmpdir)
+  end
 end

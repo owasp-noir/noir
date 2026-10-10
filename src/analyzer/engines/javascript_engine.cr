@@ -1,3 +1,4 @@
+require "../../utils/char_offsets"
 require "../../models/analyzer"
 require "../../miniparsers/js_callee_extractor"
 
@@ -262,12 +263,16 @@ module Analyzer::Javascript
 
     # Whether the closest package.json above `path` names the framework.
     protected def owned_by_js_package?(path : String, owners : Hash(String, Bool)) : Bool
+      js_package_dir(path, owners).try { |dir| owners[dir] } || false
+    end
+
+    # Directory of the closest package.json above `path` (a key of `owners`).
+    protected def js_package_dir(path : String, owners : Hash(String, Bool)) : String?
       dir = File.dirname(Noir::PathScope.expand(path))
       loop do
-        owned = owners[dir]?
-        return owned unless owned.nil?
+        return dir if owners.has_key?(dir)
         parent = File.dirname(dir)
-        return false if parent == dir
+        return if parent == dir
         dir = parent
       end
     end
@@ -320,6 +325,15 @@ module Analyzer::Javascript
     protected def skip_whitespace(content : String, pos : Int32) : Int32
       i = pos
       while i < content.size && content[i].whitespace?
+        i += 1
+      end
+      i
+    end
+
+    # Same walk without `content[i]`, which is O(i) on a non-ASCII string.
+    protected def skip_whitespace(offsets : Noir::CharOffsets, pos : Int32) : Int32
+      i = pos
+      while (char = offsets.char_at(i)) && char.whitespace?
         i += 1
       end
       i
@@ -394,55 +408,80 @@ module Analyzer::Javascript
     # rather than on a copy of the rest of the class per route decorator.
     METHOD_SIGNATURE_AT = /\G\s*(?:(?:public|private|protected|static|async|readonly|override)\s+)*([A-Za-z_$][\w$]*)\s*\(/
 
-    protected def method_signature_after_decorators(content : String, start_pos : Int32, dotted_decorator_names : Bool = false)
-      idx = skip_decorators_and_whitespace(content, start_pos, dotted_decorator_names)
+    #
+    # `chars` is `content.chars` when the caller already holds it. A
+    # non-ASCII `content` is otherwise materialized once here, and every
+    # offset is then found and sliced on it: char-indexed `String` calls
+    # re-decode UTF-8 from the start of the class on each use, which made a
+    # many-route controller with one non-ASCII char quadratic.
+    protected def method_signature_after_decorators(content : String, start_pos : Int32, dotted_decorator_names : Bool = false,
+                                                    chars : Array(Char)? = nil)
+      src = chars || (content.bytesize == content.size ? content.to_slice : content.chars)
+      idx = skip_decorators_in(content, src, start_pos, dotted_decorator_names)
       return if idx > content.size
-      match = content.match(METHOD_SIGNATURE_AT, idx)
-      return unless match
+      name, open_paren = signature_head(content, src, idx) || return
 
-      open_paren = match.end(0) - 1
-      close_paren = Noir::JSRouteExtractor.find_matching_paren(content, open_paren)
+      close_paren = matching_delimiter(content, src, open_paren, '(')
       return unless close_paren
 
-      open_brace = content.index('{', close_paren)
+      open_brace = index_of(content, src, '{', close_paren)
       return unless open_brace
-      close_brace = Noir::JSRouteExtractor.find_matching_brace(content, open_brace)
+      close_brace = matching_delimiter(content, src, open_brace, '{')
 
       {
-        name:        match[1],
-        params:      content[(open_paren + 1)...close_paren],
+        name:        name,
+        params:      slice_of(content, src, open_paren + 1, close_paren),
         start_pos:   idx,
         open_paren:  open_paren,
         close_paren: close_paren,
         open_brace:  open_brace,
         close_brace: close_brace,
+        body:        close_brace && close_brace > open_brace ? slice_of(content, src, open_brace + 1, close_brace) : nil,
       }
     end
 
     protected def body_from_signature(content : String, signature) : Tuple(String, Int32)?
-      close_brace = signature[:close_brace]
-      return unless close_brace
-      open_brace = signature[:open_brace]
-      return unless close_brace > open_brace
-      {content[(open_brace + 1)...close_brace], open_brace}
+      body = signature[:body]
+      {body, signature[:open_brace]} if body
+    end
+
+    # `METHOD_SIGNATURE_AT` at char `idx`: the method name and its `(`.
+    private def signature_head(content : String, src : Bytes, idx : Int32) : Tuple(String, Int32)?
+      m = content.match(METHOD_SIGNATURE_AT, idx) || return
+      {m[1], m.end(0) - 1}
+    end
+
+    # The pattern ends at the first `(` and holds none before it, so it is
+    # matched on just the chars up to that `(`.
+    private def signature_head(content : String, src : Array(Char), idx : Int32) : Tuple(String, Int32)?
+      open_paren = index_of(content, src, '(', idx) || return
+      m = slice_of(content, src, idx, open_paren + 1).match(METHOD_SIGNATURE_AT) || return
+      {m[1], open_paren}
+    end
+
+    private def index_of(content : String, src : Bytes, char : Char, from : Int32) : Int32?
+      content.index(char, from)
+    end
+
+    private def index_of(content : String, src : Array(Char), char : Char, from : Int32) : Int32?
+      (from...src.size).find { |i| src.unsafe_fetch(i) == char }
+    end
+
+    private def slice_of(content : String, src : Bytes, from : Int32, to : Int32) : String
+      content[from...to]
+    end
+
+    private def slice_of(content : String, src : Array(Char), from : Int32, to : Int32) : String
+      String.build { |io| (from...to).each { |i| io << src.unsafe_fetch(i) } }
     end
 
     # A route decorator is often followed by more decorators before the
     # method itself — guards, interceptors, `@authenticate('jwt')`, custom
     # ones — so walk forward over any `@word(...)` / `@word` sequence.
-    private def skip_decorators_and_whitespace(content : String, start_pos : Int32, dotted_names : Bool) : Int32
-      # `content[i]` re-decodes UTF-8 from byte 0 on every call once the
-      # string isn't single_byte_optimizable? (any non-ASCII char), so index
-      # a Char array there. ASCII content — the norm — reads its bytes in
-      # place: materialising the whole class per route decorator made a
-      # many-route controller quadratic in allocation alone.
-      if content.bytesize == content.size
-        skip_decorators_in(content, content.to_slice, start_pos, dotted_names)
-      else
-        skip_decorators_in(content, content.chars, start_pos, dotted_names)
-      end
-    end
-
+    #
+    # `src` indexes `content` by char: its bytes when it is ASCII, else its
+    # `chars` (`content[i]` re-decodes UTF-8 from byte 0 on every call once
+    # the string holds any non-ASCII char).
     private def skip_decorators_in(content : String, src, start_pos : Int32, dotted_names : Bool) : Int32
       idx = start_pos
       size = src.size
@@ -463,7 +502,7 @@ module Analyzer::Javascript
         end
 
         if scan < size && char_at(src, scan) == '('
-          close = Noir::JSRouteExtractor.find_matching_paren(content, scan)
+          close = matching_delimiter(content, src, scan, '(')
           break unless close
           idx = close + 1
         else
@@ -472,6 +511,14 @@ module Analyzer::Javascript
         end
       end
       idx
+    end
+
+    private def matching_delimiter(content : String, src : Bytes, open : Int32, delimiter : Char) : Int32?
+      delimiter == '(' ? Noir::JSRouteExtractor.find_matching_paren(content, open) : Noir::JSRouteExtractor.find_matching_brace(content, open)
+    end
+
+    private def matching_delimiter(content : String, src : Array(Char), open : Int32, delimiter : Char) : Int32?
+      delimiter == '(' ? Noir::JSLiteralScanner.find_matching_paren(src, open) : Noir::JSLiteralScanner.find_matching_brace(src, open)
     end
 
     private def char_at(src : Bytes, i : Int32) : Char

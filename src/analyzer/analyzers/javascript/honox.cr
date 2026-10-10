@@ -36,7 +36,7 @@ module Analyzer::Javascript
         next unless owned_by_js_package?(path, owners)
 
         content = begin
-          read_file_content(path)
+          Noir::JSRouteExtractor.strip_js_comments(read_file_content(path))
         rescue e
           logger.debug "Error reading #{path}: #{e.message}"
           next

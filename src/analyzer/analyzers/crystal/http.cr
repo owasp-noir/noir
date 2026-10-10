@@ -24,6 +24,7 @@ module Analyzer::Crystal
       # strings, or other values) that happen to contain path-like literals.
       # Pattern mirrors the namespace/scope indent stacks used in kemal/grip/lucky/etc.
       path_case_stack = [] of Int32
+      param_lines = crystal_param_lines(lines)
 
       lines.each_with_index do |line, index|
         raw = line
@@ -56,7 +57,7 @@ module Analyzer::Crystal
           last_endpoint = endpoint
         end
 
-        param = line_to_param(stripped)
+        param = line_to_param(param_lines[index])
         unless param.name.empty?
           if le = last_endpoint
             unless le.method.empty?

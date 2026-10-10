@@ -12,15 +12,18 @@ module Analyzer::Scala
     CONTROLLER_RE = /\bextends\s+(?:[\w.]+\.)?Controller\b/
     ROUTE_RE      = /(?:(?<![.\w])|(?<=\]\.))(get|post|put|patch|delete|head|options|any)\s*(?:\[[^(]*\])?\s*\(\s*"([^"]*)"/
     PREFIX_RE     = /(?:(?<![.\w])|(?<=\]\.))prefix\s*\(\s*"([^"]*)"/
-    PARAM_READ_RE = /request\.(?:params|getParam)\s*\(\s*"([^"]+)"/
+    # `request.params("q")`, any `ParamMap` accessor (`params.get`,
+    # `params.getInt`, ...) and Finagle's `getParam` / `getIntParam` family.
+    PARAM_READ_RE = /request\.(?:params(?:\.\w+)?|get(?:Int|Long|Short|Boolean)?Param)\s*\(\s*"([^"]+)"/
 
     def analyze_file(path : String) : Array(Endpoint)
       content = read_file_content(path)
       return [] of Endpoint unless content.includes?("com.twitter.finatra.http")
 
       endpoints = [] of Endpoint
-      lines = content.split('\n')
-      code = scala_code_lines(content)
+      lexer = scala_lexer(content)
+      lines = scala_code_text(lexer).split('\n')
+      code = lexer.code_lines
       # Open `prefix` blocks as {segment, last line}; routes only count inside
       # a controller class body.
       prefixes = [] of Tuple(String, Int32)

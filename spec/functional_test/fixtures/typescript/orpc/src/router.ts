@@ -9,7 +9,7 @@ const PlanetSchema = z.object({
 });
 
 export const listPlanet = os
-  .route({ method: 'GET', path: '/planets' })
+  .route(/* spec */ { method: 'GET', path: '/planets' })
   .input(
     z.object({
       limit: z.number().int().min(1).max(100).optional(),
@@ -35,6 +35,11 @@ export const createPlanet = os
   .handler(async ({ input, context }) => {
     return { id: 1, ...input };
   });
+
+// `{+path}` matches the rest of the URL.
+export const getFile = os
+  .route({ method: 'GET', path: '/files/{+path}' })
+  .handler(async () => 'file');
 
 // No `.route()`: reachable only through the RPC protocol, not as REST.
 export const ping = os.handler(async () => 'pong');

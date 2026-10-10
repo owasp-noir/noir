@@ -707,7 +707,7 @@ module Analyzer::Python
             codeblock = parse_code_block(lines[i..])
             if codeblock
               params = [] of Param
-              codeblock.split("\n").each do |cl|
+              fold_python_continuations(codeblock.split("\n")).each do |cl|
                 if request_name && request_body_res
                   collect_request_attr_params(cl, request_name, "path_params", "path", params)
                   collect_request_attr_params(cl, request_name, "query_params", "query", params)
@@ -824,7 +824,7 @@ module Analyzer::Python
       end
 
       request_body_res = await_body_regexes(request_name)
-      codeblock.split("\n").each do |cl|
+      fold_python_continuations(codeblock.split("\n")).each do |cl|
         collect_websocket_params(cl, request_name, params)
 
         if cl.matches?(request_body_res.json_await)
@@ -882,7 +882,7 @@ module Analyzer::Python
     end
 
     private def collect_websocket_params(source : ::String, request_name : ::String, params : Array(Param))
-      source.each_line do |line|
+      fold_python_continuations(source.lines).each do |line|
         collect_request_attr_params(line, request_name, "path_params", "path", params)
         collect_request_attr_params(line, request_name, "query_params", "query", params)
         collect_request_attr_params(line, request_name, "headers", "header", params)

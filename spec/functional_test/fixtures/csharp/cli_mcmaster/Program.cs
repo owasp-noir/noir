@@ -7,7 +7,7 @@ class Program
     [Option("-n|--name")]
     public string Name { get; set; }
 
-    [Argument(0)]
+    [Argument(0)] // the input file
     public string Input { get; set; }
 
     static int Main(string[] args)

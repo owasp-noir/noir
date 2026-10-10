@@ -8,7 +8,7 @@ import (
 type handler struct{}
 
 func (h *handler) index(w http.ResponseWriter, r *http.Request) {
-	_ = r.URL.Query().Get("next")
+	_ = r.URL.Query().Get(/* redirect */ "next")
 	w.WriteHeader(http.StatusOK)
 }
 

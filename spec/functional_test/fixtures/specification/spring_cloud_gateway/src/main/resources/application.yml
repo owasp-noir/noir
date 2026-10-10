@@ -8,6 +8,10 @@ spring.cloud.gateway.routes:
     uri: http://landing:8080
     predicates:
       - Host=**.example.com
+  - id: strict
+    uri: http://strict:8080
+    # The trailing boolean is the `matchTrailingSlash` flag, not a pattern.
+    predicates: [ "Path=/strict/{id},false", "Method=PATCH" ]
 ---
 spring:
   config:

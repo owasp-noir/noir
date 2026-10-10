@@ -238,6 +238,21 @@ class Detector
     content_matches?(file_contents, re)
   end
 
+  # Whether a `composer.json` / `composer.lock` names `package` (exact,
+  # quoted). In a lock file only an installed entry (`"name": "<pkg>"`)
+  # counts: the lock also carries every package's `require`/`suggest`/
+  # `conflict` maps, and `roave/security-advisories` alone lists ~3,000
+  # names (`api-platform/core`, `mautic/core-lib`, …) as conflicts, so a
+  # bare substring fired API Platform and Mautic on plain Laravel apps.
+  # Composer always writes `"name": "x"` with that exact spacing.
+  def composer_dependency?(filename : String, file_contents : String, package : String) : Bool
+    if filename.ends_with?("composer.lock")
+      file_contents.includes?(%("name": "#{package}"))
+    else
+      file_contents.includes?(%("#{package}"))
+    end
+  end
+
   # A document that matched this format's content marker but could not be
   # parsed at all.
   #

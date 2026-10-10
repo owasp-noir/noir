@@ -3,7 +3,7 @@ require "../../../utils/url_path"
 
 module Analyzer::Specification
   # HAProxy: every path pattern an ACL matches on (`path`, `path_beg`,
-  # `path_reg`, `path_dir`) is a path the proxy routes, whether it is declared
+  # `path_reg`, `path_dir`, and their older `url*` forms) is a path the proxy routes, whether it is declared
   # as a named `acl` or inline as `{ path_beg /x }`. Rules that use it add
   # context: `use_backend` names the backend, `http-request deny` (and
   # `reject`, `tarpit`, `silent-drop`, legacy `block`) marks it denied. ACLs
@@ -13,7 +13,7 @@ module Analyzer::Specification
     analyzer_for "haproxy"
 
     SECTION_RE = /^(?:global|defaults|frontend|backend|listen|resolvers|peers|userlist|program|cache|mailers|ring|http-errors)\b/
-    FETCH      = /path(?:_beg|_end|_reg|_dir|_sub)?/
+    FETCH      = /(?:path|url)(?:_beg|_end|_reg|_dir|_sub)?/
     ACL_RE     = /^acl\s+(\S+)\s+(#{FETCH})(?:,\S+)?(?:\s+(.*))?$/
     # HAProxy needs whitespace before an anonymous ACL's closing `}`, so a
     # regex quantifier (`{1,2}`) inside the pattern does not end it.
@@ -23,9 +23,9 @@ module Analyzer::Specification
     DENY_RE    = /^(?:http-request\s+(deny|reject|tarpit|silent-drop)|tcp-request\s+\S+\s+(reject)|block)\b/
     COMMENT_RE = /(?:^|\s)#.*$/
 
-    # Match mode by fetch name; `-m <mode>` overrides it.
-    MODES = {"path" => "str", "path_beg" => "beg", "path_end" => "end",
-             "path_reg" => "reg", "path_dir" => "dir", "path_sub" => "sub"}
+    # Match mode by fetch suffix (`path_beg`, `url_beg`); `-m <mode>` overrides it.
+    MODES = {"" => "str", "_beg" => "beg", "_end" => "end",
+             "_reg" => "reg", "_dir" => "dir", "_sub" => "sub"}
     # Modes whose pattern is a routable path, with the tag each one gets.
     PATH_TYPES = {"str" => "exact", "beg" => "prefix", "reg" => "regex", "dir" => "dir"}
 
@@ -100,7 +100,7 @@ module Analyzer::Specification
     # `{pattern, path type}` for each routable pattern after the fetch,
     # skipping flags (`-i`, `-m beg`, `-f file`, ...).
     private def patterns(fetch : String, args : String) : Array({String, String})
-      mode = MODES[fetch]
+      mode = MODES[fetch.lchop("path").lchop("url")]
       values = [] of String
       tokens = args.split
       i = 0

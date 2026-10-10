@@ -24,11 +24,13 @@ module Detector::Javascript
     # module (including submodule specifiers like
     # `@feathersjs/express/rest`), the `feathers()` core factory call,
     # or `app.service(` — the one Feathers-specific API on the app
-    # object that plain Express never has.
+    # object that plain Express never has. The receiver matters: Strapi
+    # resolves its own services with `strapi.service('api::x.x')` in
+    # hundreds of files.
     SOURCE_MARKERS = Regex.union(
       /(?:require\(|from\s)['"]@feathersjs\/[\w.\/-]+['"]/,
       /\bfeathers\s*\(\s*\)/,
-      /\.service\s*\(\s*['"][^'"]*['"]\s*\)/,
+      /\bapp\.service\s*\(\s*['"][^'"]*['"]\s*\)/,
     )
 
     def detect(filename : String, file_contents : String) : Bool
@@ -45,7 +47,7 @@ module Detector::Javascript
       # Necessary condition for every marker below, which all spell `feathers`
       # or `.service` literally; a memchr scan is far cheaper than the
       # alternation regex.
-      return false unless file_contents.includes?("feathers") || file_contents.includes?(".service")
+      return false unless file_contents.includes?("feathers") || file_contents.includes?("app.service")
       content_matches?(file_contents, SOURCE_MARKERS)
     end
   end

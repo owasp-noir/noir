@@ -5,7 +5,7 @@ require "../../func_spec.cr"
 # outside a mount (and under a commented-out mount) are not endpoints.
 FunctionalTester.new("fixtures/php/folio/", {
   :techs     => 3,
-  :endpoints => 6,
+  :endpoints => 7,
 }, [
   Endpoint.new("/", "GET"),
   Endpoint.new("/users", "GET"),
@@ -13,4 +13,6 @@ FunctionalTester.new("fixtures/php/folio/", {
   Endpoint.new("/admin", "GET"),
   Endpoint.new("/admin/settings", "GET"),
   Endpoint.new("/docs/{slug}", "GET", [Param.new("slug", "", "path")]),
+  # `Folio::domain(...)->path(...)` is a mount too.
+  Endpoint.new("/tenant/dashboard", "GET"),
 ]).perform_tests

@@ -11,6 +11,11 @@
     {
       "UpstreamPathTemplate": "/health",
       "DownstreamPathTemplate": "/healthz",
+    },
+    {
+      "UpstreamPathTemplate": "/units/{unitId}/updates?since={since}",
+      "UpstreamHttpMethod": [ "Get" ],
+      "DownstreamPathTemplate": "/api/units/{unitId}/updates?since={since}"
     }
   ],
   "Aggregates": [

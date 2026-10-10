@@ -215,14 +215,18 @@ module Analyzer::Python
       sources = [] of Tuple(::String, ::String)
       python_source_files.each do |file|
         content = read_file_content(file) rescue next
-        sources << {file, content} if content.includes?("URLRouter") || content.includes?("websocket_urlpatterns")
+        sources << {file, channels_code(content)} if content.includes?("URLRouter") || content.includes?("websocket_urlpatterns")
       end
       return endpoints if sources.empty?
 
       visited = Set(Tuple(::String, ::String)).new
       sources.each do |file, content|
         content.scan(/URLRouter\s*\(/) do |match|
-          next if content[0, match.begin(0)].rstrip.ends_with?(',')
+          # A `path(prefix, URLRouter(...))` view, also behind a middleware
+          # wrapper (`path(prefix, AuthMiddlewareStack(URLRouter(...)))`),
+          # is expanded under its prefix by the router that holds it.
+          before = content[0, match.begin(0)]
+          next if before.rstrip.ends_with?(',') || before[(before.rindex('\n') || -1) + 1..].matches?(/\b(?:re_)?path\s*\(/)
           if arg = channels_router_arg(content, match.end(0) - 1)
             channels_list_endpoints(file, content, arg, "", visited, endpoints)
           end
@@ -232,6 +236,14 @@ module Analyzer::Python
         channels_list_endpoints(file, content, "websocket_urlpatterns", "", visited, endpoints)
       end
       endpoints
+    end
+
+    # `content` with comments cut and docstring lines blanked (line count
+    # kept), so a commented-out or documented `URLRouter(...)` is not a route.
+    private def channels_code(content : ::String) : ::String
+      lines = content.split('\n')
+      docstring = Helper.docstring_line_flags(lines)
+      lines.map_with_index { |line, idx| docstring[idx] ? "" : strip_python_comment(line) }.join('\n')
     end
 
     # The argument text of the `URLRouter(` whose `(` sits at char `open`.
@@ -264,18 +276,19 @@ module Analyzer::Python
         end
         unless module_name.empty?
           target = channels_module_file(file, module_name) || return
-          return channels_list_endpoints(target, read_file_content(target), name, prefix, visited, endpoints)
+          return channels_list_endpoints(target, channels_code(read_file_content(target)), name, prefix, visited, endpoints)
         end
       end
 
-      route_path = PathInfo.new(file)
+      list_start = content.index(list) || 0
       extract_route_mappings(list).each do |route, view|
         url = join_url_parts(prefix, normalize_django_route(route))
+        line = route.empty? ? nil : content.index(route, list_start).try { |idx| content[0, idx].count('\n') + 1 }
         if router = view.index("URLRouter(")
           inner = channels_router_arg(view, router + "URLRouter".size)
           channels_list_endpoints(file, content, inner, url, visited, endpoints) if inner
         else
-          endpoint = Endpoint.new(url, "GET", Details.new(route_path))
+          endpoint = Endpoint.new(url, "GET", Details.new(PathInfo.new(file, line)))
           endpoint.protocol = "ws"
           endpoints << endpoint
         end
@@ -1419,7 +1432,7 @@ module Analyzer::Python
             end
           end
 
-          lines.each do |line|
+          fold_python_continuations(lines).each do |line|
             # Check if line has 'request.method == "GET"' similar pattern
             if line.includes? "request.method"
               suspicious_code = line.split("request.method")[1].strip
@@ -1509,7 +1522,9 @@ module Analyzer::Python
           end
           current_http_methods : Array(String)? = nil
 
-          # Check HTTP methods in class methods
+          # Check HTTP methods in class methods. Params are read off the
+          # folded view so a wrapped `request.GET.get(` call still counts.
+          folded_lines = fold_python_continuations(lines)
           lines.each_with_index do |line, offset|
             method_function_match = line.match(REGEX_CBV_METHOD_DEF)
             any_method_function_match = line.match(/\s+(?:async\s+)?def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/)
@@ -1542,14 +1557,14 @@ module Analyzer::Python
 
             if method_names = current_http_methods
               scan_methods = method_names.dup
-              extract_params_from_line(line, scan_methods).each do |param|
+              extract_params_from_line(folded_lines[offset], scan_methods).each do |param|
                 method_names.each do |mapped_method_name|
                   next unless suspicious_http_methods.includes?(mapped_method_name)
                   method_params[mapped_method_name] << param
                 end
               end
             else
-              extract_params_from_line(line, suspicious_http_methods).each do |param|
+              extract_params_from_line(folded_lines[offset], suspicious_http_methods).each do |param|
                 common_params << param
               end
             end
@@ -1653,7 +1668,7 @@ module Analyzer::Python
         method_actions.each do |drf_action|
           drf_action.definition_line = body_start_line + offset + 2
           if codeblock
-            codeblock.split("\n").each do |body_line|
+            fold_python_continuations(codeblock.split("\n")).each do |body_line|
               extract_params_from_line(body_line, [drf_action.method]).each do |param|
                 drf_action.params << param
               end

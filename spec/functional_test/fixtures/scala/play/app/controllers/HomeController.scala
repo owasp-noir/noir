@@ -83,7 +83,7 @@ class Assets extends BaseController {
 
 class Admin extends BaseController {
   def stats(request: Request, format: Option[String]) = AuthenticatedAction { request =>
-    val trace = request.headers.get("X-Trace-Id")
+    val trace = request.headers.get(/* tracing */ "X-Trace-Id")
     Ok(s"admin stats $format")
   }
 

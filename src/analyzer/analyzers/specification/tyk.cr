@@ -55,9 +55,10 @@ module Analyzer::Specification
         next unless version_h = version.as_h?
         version_h["extended_paths"]?.try(&.as_h?).try(&.each do |policy, entries|
           entries.as_a?.try(&.each do |entry|
-            next unless entry_h = entry.as_h?
-            next unless sub_path = entry_h["path"]?.try(&.as_s?).presence
-            methods = entry_h["method_actions"]?.try(&.as_h?).try(&.keys) || json_strings(entry_h["method"]?)
+            # `cache` is a plain list of paths; every other policy lists objects.
+            entry_h = entry.as_h?
+            next unless sub_path = (entry_h ? entry_h["path"]?.try(&.as_s?) : entry.as_s?).presence
+            methods = entry_h.try { |h| h["method_actions"]?.try(&.as_h?).try(&.keys) || json_strings(h["method"]?) } || [] of String
             whitelisted = true if policy == "white_list"
             emit(Noir::URLPath.join(listen_path, sub_path), methods, policy, details_at(details, take_line(lines, sub_path)))
           end)

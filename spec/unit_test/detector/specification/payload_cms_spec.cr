@@ -72,6 +72,14 @@ describe "Detect Payload CMS" do
       TS
 
     instance.detect("src/payload.config.ts", content).should be_true
+    instance.detect("payload.config.js", "const { buildConfig } = require('payload/config')\nmodule.exports = buildConfig({})").should be_true
+  end
+
+  # Superset's websocket server and Discourse's rolldown config both
+  # define their own `buildConfig`.
+  it "ignores a buildConfig that is not imported from payload" do
+    instance.detect("src/config.ts", "export function buildConfig(): ConfigType {\n  return {}\n}").should be_false
+    instance.detect("rolldown.mjs", "import { buildConfig } from \"./rolldown.config.mjs\";\nconst c = buildConfig({ devMode: true });").should be_false
   end
 
   # slug: and fields: are extremely common. Astro content collections,

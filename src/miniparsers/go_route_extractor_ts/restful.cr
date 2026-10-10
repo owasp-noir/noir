@@ -61,7 +61,7 @@ module Noir
           args = Noir::TreeSitter.field(node, "arguments")
           next if args.nil?
           builder = nil
-          Noir::TreeSitter.each_named_child(args) do |arg|
+          Noir::TreeSitter.each_named_arg(args) do |arg|
             builder ||= arg if Noir::TreeSitter.node_type(arg) == "call_expression"
           end
           next if builder.nil?
@@ -143,7 +143,7 @@ module Noir
       args = Noir::TreeSitter.field(call, "arguments")
       return if args.nil?
       inner = nil
-      Noir::TreeSitter.each_named_child(args) do |arg|
+      Noir::TreeSitter.each_named_arg(args) do |arg|
         inner ||= arg if Noir::TreeSitter.node_type(arg) == "call_expression"
       end
       # Peel an outer chain on the parameter builder
@@ -168,7 +168,7 @@ module Noir
     private def restful_first_arg_text(call : LibTreeSitter::TSNode, source : String) : String
       args = Noir::TreeSitter.field(call, "arguments")
       return "" if args.nil?
-      Noir::TreeSitter.each_named_child(args) do |arg|
+      Noir::TreeSitter.each_named_arg(args) do |arg|
         return Noir::TreeSitter.node_text(arg, source)
       end
       ""

@@ -24,6 +24,6 @@ http.route({
   }),
 });
 
-http.route({ path: "/stripe", method: "POST", handler: stripeWebhook });
+http.route({ path: /* webhook */ "/stripe", method: "POST", handler: stripeWebhook });
 
 export default http;

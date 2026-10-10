@@ -594,6 +594,19 @@ describe Noir::TopLevelSplit do
         .should eq [{"'/유저'", open_paren + 1}, {"handler", open_paren + 8}]
     end
 
+    it "costs the window, not the text before it" do
+      # One windowed split per entry of a big object literal used to walk
+      # the whole text up to the window each time: quadratic overall.
+      content = "x" * 2_000_000 + "{a, b}"
+      open = content.size - 6
+      elapsed = Time.measure do
+        2_000.times { TLS.split_spans(content, ',', TLSRules::JS_POSITIONAL_ARGS, open + 1, open + 5) }
+      end
+      TLS.split_spans(content, ',', TLSRules::JS_POSITIONAL_ARGS, open + 1, open + 5)
+        .should eq [{"a", open + 1}, {"b", open + 4}]
+      elapsed.should be < 2.seconds
+    end
+
     it "treats a negative end_pos as the end of the text" do
       TLS.split_spans("a, b", ',', tls_rules(empties: TLSEmpties::Keep))
         .should eq [{"a", 0}, {"b", 3}]

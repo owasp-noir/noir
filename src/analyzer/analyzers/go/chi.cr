@@ -67,7 +67,7 @@ module Analyzer::Go
         # IMPORT_MARKER gate fires later, in the per-file route
         # extraction loop, where the savings actually matter.
         file_contents_cache[scan_path] = content
-        file_lines_cache[scan_path] = content.lines
+        file_lines_cache[scan_path] = GoEngine.strip_comments(content).lines
 
         # Mount targets are resolved after this loop (see below): the
         # target of `r.Mount("/api/v1", apiv1.Routes())` may live in a
@@ -146,11 +146,11 @@ module Analyzer::Go
       # nothing: its routes then keep surfacing through the free pass,
       # unprefixed, exactly as before.
       mount_files.each do |scan_path|
-        content = file_contents_cache[scan_path]? || next
         dir = File.dirname(scan_path)
-        content.each_line do |scan_line|
+        scan_lines = file_lines_cache[scan_path]? || next
+        scan_lines.each_with_index do |scan_line, scan_index|
           next unless scan_line.includes?(".Mount(")
-          target = parse_mount_target(scan_line, string_values_for(dir))
+          target = parse_mount_target(mount_call(scan_lines, scan_index), string_values_for(dir))
           next unless target
           target_dir = resolve_mount_dir(scan_path, dir, target, file_contents_cache)
           next unless target_dir
@@ -170,7 +170,7 @@ module Analyzer::Go
         # verb calls cannot surface as chi routes.
         chi_file = content_matches?(content, IMPORT_MARKER_RE)
         next unless chi_file || expandable_mount_files.includes?(path)
-        lines = file_lines_cache[path]? || content.lines
+        lines = file_lines_cache[path]? || GoEngine.strip_comments(content).lines
 
         dir = File.dirname(path)
         mounted_functions = package_mounted_functions.fetch(dir, Set(String).new)
@@ -255,7 +255,7 @@ module Analyzer::Go
           details = Details.new(PathInfo.new(path, index + 1))
 
           if line.includes?(".Mount(")
-            if (target = parse_mount_target(line, string_values_for(dir))) &&
+            if (target = parse_mount_target(mount_call(lines, index), string_values_for(dir))) &&
                (target_dir = resolve_mount_dir(path, dir, target, file_contents_cache))
               endpoints = expand_mounted_router(target_dir, target[:func_name], target[:recv_type],
                 package_files, file_contents_cache, file_lines_cache, [] of String)
@@ -447,6 +447,23 @@ module Analyzer::Go
       nil
     end
 
+    # The `.Mount(` call on `lines[index]` with its wrapped arguments joined
+    # on (`r.Mount("/users",` + `usersResource{}.Routes())`), so the target
+    # on a continuation line still resolves.
+    private def mount_call(lines : Array(String), index : Int32) : String
+      line = lines[index]
+      depth = line.count('(') - line.count(')')
+      return line if depth <= 0
+      String.build do |io|
+        io << line
+        (index + 1).upto(Math.min(index + 4, lines.size - 1)) do |j|
+          io << ' ' << lines[j].strip
+          depth += lines[j].count('(') - lines[j].count(')')
+          break if depth <= 0
+        end
+      end
+    end
+
     alias MountTarget = NamedTuple(prefix: String, func_name: String, recv_type: String?, pkg_alias: String?)
 
     # Skip key for a parsed mount target: a method target is keyed by
@@ -563,7 +580,7 @@ module Analyzer::Go
               end
             end
 
-            lines = file_lines_cache[search_path]? || content.lines
+            lines = file_lines_cache[search_path]? || GoEngine.strip_comments(content).lines
             first_row = Noir::TreeSitter.node_start_row(body)
             last_row = Noir::TreeSitter.node_end_row(body)
             row = first_row
@@ -571,7 +588,7 @@ module Analyzer::Go
               line = lines[row]
               row += 1
               next unless line.includes?(".Mount(")
-              target = parse_mount_target(line, string_values)
+              target = parse_mount_target(mount_call(lines, row - 1), string_values)
               next unless target
               target_dir = resolve_mount_dir(search_path, dir, target, file_contents_cache)
               next unless target_dir
@@ -585,7 +602,7 @@ module Analyzer::Go
         end
         next unless found
 
-        lines = file_lines_cache[search_path]? || content.lines
+        lines = file_lines_cache[search_path]? || GoEngine.strip_comments(content).lines
         attach_router_function_params(endpoints, lines)
         endpoints.concat(nested)
         break

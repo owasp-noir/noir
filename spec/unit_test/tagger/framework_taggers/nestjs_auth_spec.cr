@@ -154,4 +154,101 @@ describe "NestjsAuthTagger" do
 
     FileUtils.rm_rf(tmpdir)
   end
+
+  it "applies a global APP_GUARD auth guard unless the handler or controller is @Public()" do
+    tmpdir = File.tempname("nest_global_guard")
+    Dir.mkdir_p(tmpdir)
+    mod = File.join(tmpdir, "app.module.ts")
+    cats = File.join(tmpdir, "cats.controller.ts")
+    health = File.join(tmpdir, "health.controller.ts")
+    File.write(mod, <<-TS)
+      @Module({
+        providers: [
+          { provide: APP_GUARD, useClass: ThrottlerGuard },
+          {
+            provide: APP_GUARD,
+            useClass: JwtAuthGuard,
+          },
+        ],
+      })
+      export class AppModule {}
+      TS
+    File.write(cats, <<-TS)
+      @Controller('cats')
+      export class CatsController {
+        @Public()
+        @Get()
+        findAll() {}
+
+        @Post()
+        create() {}
+      }
+      TS
+    File.write(health, <<-TS)
+      @Public()
+      @Controller('health')
+      export class HealthController {
+        @Get()
+        check() {}
+      }
+      TS
+    [mod, cats, health].each { |path| CodeLocator.instance.register_path(path) }
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    find_all = Endpoint.new("/cats", "GET", [] of Param, Details.new(PathInfo.new(cats, 5)))
+    create = Endpoint.new("/cats", "POST", [] of Param, Details.new(PathInfo.new(cats, 8)))
+    check = Endpoint.new("/health", "GET", [] of Param, Details.new(PathInfo.new(health, 5)))
+
+    NestjsAuthTagger.new(noir_options).perform([find_all, create, check])
+
+    find_all.tags.should be_empty
+    create.tags.map(&.description).should eq(["Protected by NestJS global APP_GUARD (JwtAuthGuard)"])
+    check.tags.should be_empty
+
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  it "reads a global guard only from live, non-test code of the endpoint's own app" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("nest_global_scope")
+    controller = <<-TS
+      @Controller('x')
+      export class XController {
+        @Get()
+        find() {}
+      }
+      TS
+    files = {
+      "api/package.json"          => "{}",
+      "api/src/app.module.ts"     => "// providers: [{ provide: APP_GUARD, useClass: JwtAuthGuard }]\n/* app.useGlobalGuards(new JwtAuthGuard()) */\n",
+      "api/src/x.controller.ts"   => controller,
+      "api/test/app.e2e-spec.ts"  => "app.useGlobalGuards(new JwtAuthGuard());\n",
+      "api/src/auth.spec.ts"      => "const m = { provide: APP_GUARD, useClass: JwtAuthGuard };\n",
+      "admin/package.json"        => "{}",
+      "admin/src/main.ts"         => "app.useGlobalGuards(new JwtAuthGuard());\n",
+      "admin/src/x.controller.ts" => controller,
+    }
+    files.each do |rel, body|
+      path = File.join(tmpdir, rel)
+      Dir.mkdir_p(File.dirname(path))
+      File.write(path, body)
+      CodeLocator.instance.register_path(path)
+    end
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      api = Endpoint.new("/x", "GET", [] of Param, Details.new(PathInfo.new(File.join(tmpdir, "api/src/x.controller.ts"), 4)))
+      admin = Endpoint.new("/x", "GET", [] of Param, Details.new(PathInfo.new(File.join(tmpdir, "admin/src/x.controller.ts"), 4)))
+
+      NestjsAuthTagger.new(noir_options).perform([api, admin])
+
+      api.tags.should be_empty
+      admin.tags.map(&.description).should eq(["Protected by NestJS global APP_GUARD (JwtAuthGuard)"])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
 end

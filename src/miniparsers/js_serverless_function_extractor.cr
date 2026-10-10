@@ -329,10 +329,15 @@ module Noir
       if m = segment.match(/(?:^|[^\w$.])(?:async\s+)?function\b\s*\*?\s*(?:[A-Za-z_$][\w$]*)?\s*\(/m)
         return function_from_paren(content, from + m.end(0) - 1, name, line)
       end
+      # Probe each `(` on an ASCII stand-in (one char per char, so indices
+      # carry over): the char-indexed scanner copies a non-ASCII string into
+      # a char array on every call, and this loop calls it once per paren.
+      probe = segment.bytesize == segment.size ? segment : segment.gsub(/[^\x00-\x7F]/, '_')
       offset = 0
-      while idx = segment.index('(', offset)
-        if arrow = arrow_from_paren(content, from + idx, name, line)
-          return arrow
+      while idx = probe.index('(', offset)
+        close = JSLiteralScanner.find_matching_paren(probe, idx)
+        if close && probe[(close + 1), 200]?.try(&.matches?(ARROW_AFTER_PARAMS))
+          return arrow_from_paren(content, from + idx, name, line)
         end
         offset = idx + 1
       end
@@ -350,12 +355,15 @@ module Noir
       Handler.new(name, params, content[(open + 1)...body_close], line, line_at(content, open))
     end
 
+    # What follows an arrow's `(params)`: an optional return type, then `=>`.
+    ARROW_AFTER_PARAMS = /\A\s*(?::\s*[^=;{}]+?)?\s*=>\s*/
+
     # `(params) [: Type] => body` starting at the `(`; nil when the paren is
     # not an arrow's parameter list.
     private def arrow_from_paren(content : String, paren : Int32, name : String, line : Int32) : Handler?
       close = JSLiteralScanner.find_matching_paren(content, paren) || return
       after = content[(close + 1), 200]? || ""
-      arrow = after.match(/\A\s*(?::\s*[^=;{}]+?)?\s*=>\s*/) || return
+      arrow = after.match(ARROW_AFTER_PARAMS) || return
       arrow_body(content, close + 1 + arrow[0].size, content[(paren + 1)...close], name, line)
     end
 

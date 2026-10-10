@@ -27,7 +27,7 @@ module Analyzer::Go
         content = file_contents[path]? || read_file_content(path)
         dir = File.dirname(path)
         next unless framework_route_source_candidate?(content, dir, framework_dirs, IMPORT_MARKER, ["Add", "Match", "Static", "File"])
-        lines = content.lines
+        lines = GoEngine.strip_comments(content).lines
         last_endpoints = [] of Endpoint
 
         # Tree-sitter pre-pass: every Echo verb route
@@ -136,7 +136,7 @@ module Analyzer::Go
       end
 
       if line.includes?("Request().Header.Get(")
-        match = line.match(/Request\(\)\.Header\.Get\(\"(.*)\"\)/)
+        match = line.match(/Request\(\)\.Header\.Get\(\s*\"(.*)\"\s*\)/)
         if match
           ep.params << Param.new(match[1], "", "header")
         end
@@ -145,7 +145,7 @@ module Analyzer::Go
       if line.includes?("Cookie(") &&
          !line.includes?("Header.Get") && !line.includes?("Query().Get") &&
          !line.includes?("Request().Header.Get")
-        match = line.match(/Cookie\(\"(.*)\"\)/)
+        match = line.match(/Cookie\(\s*\"(.*)\"\s*\)/)
         if match
           ep.params << Param.new(match[1], "", "cookie")
         end
@@ -172,7 +172,7 @@ module Analyzer::Go
       if first.size > 1
         second = first[1].split(")")
         if second.size > 1
-          param_name = second[0].gsub("\"", "")
+          param_name = second[0].gsub("\"", "").strip
           rtn = Param.new(param_name, "", param_type)
 
           return rtn

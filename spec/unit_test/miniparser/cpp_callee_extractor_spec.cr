@@ -232,4 +232,21 @@ describe Noir::CppCalleeExtractor do
     stripped.includes?("dropped").should be_false
     stripped.includes?("Kept::call").should be_true
   end
+
+  it "finds a definition after many call sites in linear time" do
+    n = 8000
+    source = String.build do |io|
+      io << "void handler(void *c) {\n"
+      n.times { |i| io << "  log_line(c, \"x" << i << "\");\n" }
+      io << "}\n"
+      io << "static int log_line(void *c, const char *s) { return 0; }\n"
+    end
+
+    body = nil
+    elapsed = Time.measure { body = Noir::CppCalleeExtractor.function_body(source, "log_line") }
+    body.should eq({" return 0; ", n + 3})
+    # Each call site searched to the end of the file for a `{` (~6s here);
+    # stopping at the call's `;` is linear.
+    elapsed.should be < 1.second
+  end
 end

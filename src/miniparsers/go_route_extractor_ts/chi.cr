@@ -126,7 +126,7 @@ module Noir
       args = Noir::TreeSitter.field(call, "arguments")
       return unless args
       last = nil
-      Noir::TreeSitter.each_named_child(args) { |arg| last = arg }
+      Noir::TreeSitter.each_named_arg(args) { |arg| last = arg }
       return unless (arg = last) && Noir::TreeSitter.node_type(arg) == "identifier"
       name = Noir::TreeSitter.node_text(arg, source)
       helper = helpers[name]
@@ -177,7 +177,7 @@ module Noir
       return unless args
       router_arg = nil
       position = 0
-      Noir::TreeSitter.each_named_child(args) do |arg|
+      Noir::TreeSitter.each_named_arg(args) do |arg|
         if position == helper.router_index
           router_arg = arg
           break
@@ -429,7 +429,7 @@ module Noir
       return unless args
       raw_path = nil
       handler_text = ""
-      Noir::TreeSitter.each_named_child(args) do |arg|
+      Noir::TreeSitter.each_named_arg(args) do |arg|
         case Noir::TreeSitter.node_type(arg)
         when "interpreted_string_literal", "raw_string_literal"
           raw_path = decode_string_literal(arg, source) if raw_path.nil?
@@ -533,7 +533,7 @@ module Noir
       args = Noir::TreeSitter.field(call, "arguments")
       return "" unless args
       last = ""
-      Noir::TreeSitter.each_named_child(args) do |arg|
+      Noir::TreeSitter.each_named_arg(args) do |arg|
         last = Noir::TreeSitter.node_text(arg, source)
       end
       last
@@ -560,7 +560,7 @@ module Noir
       method = nil
       raw_path = nil
       handler_text = ""
-      Noir::TreeSitter.each_named_child(args) do |arg|
+      Noir::TreeSitter.each_named_arg(args) do |arg|
         s = string_expr_text(arg, source, string_values)
         if method.nil?
           # First arg is the method: a string ("GET", "WOOHOO", ...) or an
@@ -603,7 +603,7 @@ module Noir
       return unless args
       raw_path = nil
       handler_text = ""
-      Noir::TreeSitter.each_named_child(args) do |arg|
+      Noir::TreeSitter.each_named_arg(args) do |arg|
         s = string_expr_text(arg, source, string_values)
         if raw_path.nil?
           return if s.nil?
@@ -643,7 +643,7 @@ module Noir
                                      string_values : Hash(String, String) = Hash(String, String).new) : String?
       args = Noir::TreeSitter.field(call, "arguments")
       return unless args
-      Noir::TreeSitter.each_named_child(args) do |arg|
+      Noir::TreeSitter.each_named_arg(args) do |arg|
         # Resolve the first string-valued argument: a literal, or a
         # constant/variable/concatenation that `string_values` can pin
         # down (e.g. `const apiBase = "/api/v2"` used as `r.Route(apiBase,
@@ -659,7 +659,7 @@ module Noir
     private def chi_closure_arg(call : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
       args = Noir::TreeSitter.field(call, "arguments")
       return unless args
-      Noir::TreeSitter.each_named_child(args) do |arg|
+      Noir::TreeSitter.each_named_arg(args) do |arg|
         return arg if Noir::TreeSitter.node_type(arg) == "func_literal"
       end
       nil
@@ -757,7 +757,7 @@ module Noir
       raw_path = nil
       path_was_literal = false
       handler_text = ""
-      Noir::TreeSitter.each_named_child(args) do |arg|
+      Noir::TreeSitter.each_named_arg(args) do |arg|
         case Noir::TreeSitter.node_type(arg)
         when "interpreted_string_literal", "raw_string_literal"
           if raw_path.nil?

@@ -9,6 +9,9 @@ expected_endpoints = [
   ]),
   Endpoint.new("/posts/1", "GET", [
     Param.new("X-API-KEY", "", "header"),
+    # `params.fetch(:x)` and `params.dig(:top, ...)` read top-level keys too.
+    Param.new("page", "", "query"),
+    Param.new("filter", "", "query"),
   ]),
   Endpoint.new("/posts", "POST", [
     Param.new("title", "", "json"),
@@ -67,7 +70,14 @@ expected_endpoints = [
   Endpoint.new("/manifest", "GET"),
 ]
 
-FunctionalTester.new("fixtures/ruby/rails/", {
+tester = FunctionalTester.new("fixtures/ruby/rails/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
-}, expected_endpoints).perform_tests
+}, expected_endpoints)
+tester.perform_tests
+
+it "reads fetch on bare params only, not on a *_params hash", tags: "functional" do
+  show = tester.app.endpoints.find { |endpoint| endpoint.url == "/posts/1" && endpoint.method == "GET" }
+  show.should_not be_nil
+  show.not_nil!.params.map(&.name).should_not contain("theme")
+end

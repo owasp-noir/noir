@@ -1,11 +1,28 @@
 require "../../engines/php_engine"
 require "../../../minilexers/php_lexer"
+require "../../../utils/char_offsets"
+require "../../../utils/http_symbols"
 
 module Analyzer::Php
   class Laravel < PhpEngine
     analyzer_for "php_laravel"
 
-    @method_def_regexes = Hash(String, Regex).new
+    # A controller file parsed once and shared by every route that names it:
+    # its `use` imports and each `function name(` signature in source order.
+    # Re-deriving these per route was O(routes x controller size).
+    private record ControllerSource,
+      offsets : Noir::CharOffsets,
+      imports : Hash(String, String),
+      methods : Array(Regex::MatchData),
+      first_methods : Hash(String, Regex::MatchData)
+
+    METHOD_DEF_RE = /(?:public|protected|private)\s+(?:static\s+)?function\s+([A-Za-z_]\w*)\s*\(/
+    SIGNATURE_RE  = /\G[^)]*/
+
+    # Filled by the parallel file workers, hence the mutex.
+    @controller_sources = {} of String => ControllerSource
+    @form_request_params = {} of String => Array(Param)
+    @source_cache_mutex = Mutex.new
 
     private record RouteGroup, prefix : String, body : String, body_start : Int32, body_end : Int32
 
@@ -18,7 +35,7 @@ module Analyzer::Php
     # recursive pass. Bundled so the shared scan helpers below take the body
     # once instead of threading eight arguments through every call.
     private record RouteScanContext,
-      content : String,
+      offsets : Noir::CharOffsets,
       file_path : String,
       include_callee : Bool,
       base_line : Int32,
@@ -28,9 +45,19 @@ module Analyzer::Php
       skip_ranges : Array(Range(Int32, Int32)),
       handler_bodies : Array(Range(Int32, Int32))
 
-    alias ControllerActionBody = Tuple(String, String, Int32)
+    # {body, controller file, body start line, request params}
+    alias ControllerActionBody = Tuple(String, String, Int32, Array(Param))
     alias ControllerActionMap = Hash(String, ControllerActionBody)
     EMPTY_RESOURCE_PARAMS = {} of String => String
+
+    # Prefix each route file is loaded under, keyed by its expanded path.
+    # Built once before the parallel file scan, so workers only read it.
+    @route_file_prefixes = {} of String => String
+
+    def analyze
+      @route_file_prefixes = route_file_prefixes
+      super
+    end
 
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
@@ -73,16 +100,91 @@ module Analyzer::Php
       begin
         content = read_file_content(path)
         # `use App\Http\Controllers\...;` imports map the short class
-        # names used in route handlers back to their FQCNs so callee
-        # resolution can locate the controller file. Only parsed when
-        # callees/ai-context are requested.
-        imports = include_callee ? parse_use_imports(content) : EMPTY_IMPORTS
-        endpoints = analyze_routes_content(content, "", path, include_callee, imports: imports)
+        # names used in route handlers back to their FQCNs so the
+        # controller file (params, callees) can be located.
+        imports = parse_use_imports(content)
+        prefix = @route_file_prefixes[Noir::PathScope.expand(path)]? || default_route_file_prefix(path)
+        endpoints = analyze_routes_content(php_code(content), prefix, path, include_callee, imports: imports)
       rescue e
         logger.debug "Error analyzing routes file #{path}: #{e}"
         Noir::SkippedFiles.record(tech, path, e.message.presence || e.class.name)
       end
       endpoints
+    end
+
+    # A route file's URL prefix comes from where the app loads it, not from
+    # the file: `Route::prefix('api')->group(base_path('routes/api.php'))` in
+    # a RouteServiceProvider (Laravel <= 10, including the older
+    # `Route::group(['prefix' => 'api'], function () { require ... })`), or
+    # `->withRouting(api: __DIR__.'/../routes/api.php', apiPrefix: 'v2')` in
+    # `bootstrap/app.php` (Laravel 11+, `apiPrefix` defaulting to `api`),
+    # whose `then:` closure registers further groups the same way.
+    ROUTE_FILE_REF_RE   = /(['"])([^'"\n]*routes\/[^'"\n]*\.php)\1/
+    WIRING_GROUP_RE     = /Route::(?:\w+\s*\([^;()]*\)\s*->\s*)*group\s*\(/i
+    WITH_ROUTING_API_RE = /\bapi\s*:\s*(?:\[[^\]]*\]|[^,)]*)/
+    API_PREFIX_RE       = /\bapiPrefix\s*:\s*['"]([^'"]*)['"]/
+
+    private def route_file_prefixes : Hash(String, String)
+      prefixes = {} of String => String
+      php_source_files.each do |path|
+        bootstrap = path.ends_with?("/bootstrap/app.php")
+        next unless bootstrap || path.ends_with?("Provider.php")
+        next if PhpEngine.test_path?(base_relative_path(path))
+        begin
+          content = read_file_content(path)
+          next unless content.includes?("routes/")
+          base = bootstrap ? File.dirname(File.dirname(path)) : composer_project_root(path)
+          collect_route_wiring(php_code(content), path, base, prefixes) unless base.empty?
+        rescue e
+          logger.debug "Error reading Laravel route wiring #{path}: #{e}"
+        end
+      end
+      prefixes
+    end
+
+    private def collect_route_wiring(content : String, source_path : String, base : String, prefixes : Hash(String, String)) : Nil
+      lexer = Noir::PhpLexer.new(content)
+      # {open paren, close paren, prefix} of every `Route::…->group(` call,
+      # outermost first. A `Route::group([...], …)` carries its prefix in the
+      # leading options array rather than the chain.
+      groups = [] of Tuple(Int32, Int32, String)
+      pos = 0
+      while group_match = content.match(WIRING_GROUP_RE, pos)
+        open = group_match.end(0) - 1
+        pos = group_match.end(0)
+        next unless lexer.in_code?(group_match.begin(0))
+        next unless close = lexer.matching_delimiter(open)
+        prelude = group_match[0]
+        if options = content.match(/\G\s*(?:\[|array\s*\()/i, open + 1)
+          options_end = lexer.matching_delimiter(options.end(0) - 1)
+          prelude += content[options.begin(0)..options_end] if options_end
+        end
+        groups << {open, close, extract_group_prefix(prelude)}
+      end
+
+      api_spans = content.scan(WITH_ROUTING_API_RE).map { |m| m.begin(0)...m.end(0) }
+      api_prefix = content.match(API_PREFIX_RE).try(&.[1]) || "api"
+
+      content.scan(ROUTE_FILE_REF_RE) do |ref|
+        at = ref.begin(0)
+        relative_to = content[Math.max(0, at - 16)...at].matches?(/__DIR__\s*\.\s*\z/) ? File.dirname(source_path) : base
+        prefix = groups.select { |(open, close, _)| open < at && at < close }
+          .reduce("") { |acc, group| build_full_path(acc, group[2]) }
+        prefix = build_full_path(api_prefix, prefix) if api_spans.any?(&.includes?(at))
+        prefixes[Noir::PathScope.expand(File.join(relative_to, ref[2]))] ||= prefix
+      end
+    end
+
+    # No wiring found for the file: fall back to the skeleton's own, which
+    # serves `routes/api.php` under `/api` and every other file unprefixed.
+    # Only for an app root (`artisan` / `bootstrap/app.php`): a package's
+    # `routes/api.php` is loaded however its provider says. (Lumen, which has
+    # no implicit API group, never gets here: `php_lumen` supersedes us.)
+    private def default_route_file_prefix(path : String) : String
+      return "" unless path.ends_with?("/routes/api.php")
+      root = path[0...-"/routes/api.php".size]
+      return "" unless File.exists?(File.join(root, "artisan")) || File.exists?(File.join(root, "bootstrap", "app.php"))
+      "api"
     end
 
     EMPTY_IMPORTS = {} of String => String
@@ -152,6 +254,10 @@ module Analyzer::Php
     # capture 2 the (unread) static verb, capture 3 the path.
     CHAINED_STATIC_ROUTE_REGEX = /Route::((?:\w+\s*\([^;]*?\)\s*->\s*)+)(view|redirect|permanentRedirect)\s*\(\s*['"]([^'"]+)['"]\s*,/mi
 
+    # Livewire Volt full-page components: `Volt::route('/users', 'users.index')`
+    # registers a GET route. Capture 1 is the path.
+    VOLT_ROUTE_REGEX = /\bVolt::route\s*\(\s*['"]([^'"]+)['"]\s*,/mi
+
     # Any `Route::…('path', …` registration, whatever verb or chain precedes
     # it. Used only to locate handler-closure bodies up front; the six scans
     # above are what actually decide which registrations become endpoints.
@@ -172,6 +278,7 @@ module Analyzer::Php
       # file starts outside `<?php`; a group body handed back by the recursive
       # pass below was already carved out of a PHP region.
       lexer = Noir::PhpLexer.new(content, php_mode: php_mode)
+      offsets = Noir::CharOffsets.new(content)
       route_groups = extract_route_groups(content, lexer)
       resource_controller_cache = {} of String => ControllerActionMap?
       # Character ranges that are inside PHP comments (`//`, `#`, `/* */`),
@@ -181,7 +288,7 @@ module Analyzer::Php
       # `"Try Route::get(...)"` string, or a `<<<SQL … SQL` heredoc doesn't
       # surface as a real endpoint.
       skip_ranges = lexer.skip_ranges
-      ctx = RouteScanContext.new(content, file_path, include_callee, base_line, lexer, imports, route_groups, skip_ranges, collect_handler_bodies(content, base_line, lexer))
+      ctx = RouteScanContext.new(offsets, file_path, include_callee, base_line, lexer, imports, route_groups, skip_ranges, collect_handler_bodies(offsets, base_line, lexer))
 
       # 1. Verb routes. Every scan below walks the body the same way, with the
       # same guards — `each_laravel_route` holds that walk once. What differs
@@ -232,17 +339,21 @@ module Analyzer::Php
         emit_static_route(endpoints, ctx, route_match, chained_full_path(prefix, chain, route_path))
       end
 
+      each_laravel_route(ctx, VOLT_ROUTE_REGEX) do |route_match|
+        emit_static_route(endpoints, ctx, route_match, build_full_path(prefix, route_match[1]))
+      end
+
       # 2. Resource routes: `resource`/`apiResource`, their plural array forms
       # (one resource per `'name' => Controller` entry, sharing the call's
       # options) and the id-less `singleton`/`apiSingleton`.
       RESOURCE_CALL_RES.each_key do |kind|
-        extract_resource_route_calls(content, kind, skip_ranges, lexer).each do |call|
+        extract_resource_route_calls(offsets, kind, skip_ranges, lexer).each do |call|
           next if inside_laravel_group_body?(call.start_pos, route_groups) ||
                   inside_php_skip_range?(call.start_pos, skip_ranges)
 
           actions = resource_actions_for_statement(call.statement, default_resource_actions(kind, call.statement))
           parameter_overrides = resource_parameter_overrides_for_statement(call.statement)
-          call_line = base_line + newline_count_before(content, call.start_pos)
+          call_line = base_line + offsets.line(call.start_pos) - 1
           resource_entries(kind, call, lexer, call_line).each do |name, statement, line|
             templates = resource_route_templates(prefix, name, parameter_overrides, kind)
             endpoints.concat(create_resource_endpoints(templates, file_path, line, actions, statement, include_callee, imports, resource_controller_cache))
@@ -254,7 +365,7 @@ module Analyzer::Php
       # routes so prefixed groups do not also emit unprefixed endpoints.
       route_groups.each do |group|
         new_prefix = group.prefix.empty? ? prefix : build_full_path(prefix, group.prefix)
-        group_base_line = base_line + newline_count_before(content, group.body_start)
+        group_base_line = base_line + offsets.line(group.body_start) - 1
         endpoints.concat(analyze_routes_content(group.body, new_prefix, file_path, include_callee, group_base_line, imports, php_mode: true))
       end
 
@@ -275,14 +386,15 @@ module Analyzer::Php
     # resume scanning from, which is how far a match consumes: past an inline
     # closure body for handler routes, past the match itself otherwise.
     private def each_laravel_route(ctx : RouteScanContext, regex : Regex, &) : Nil
-      content = ctx.content
+      offsets = ctx.offsets
       pos = 0
 
-      while route_match = content.match(regex, pos)
-        pos = if inside_laravel_group_body?(route_match.begin(0), ctx.route_groups) ||
-                 inside_php_skip_range?(route_match.begin(0), ctx.skip_ranges) ||
-                 inside_handler_body?(route_match.begin(0), ctx.handler_bodies)
-                route_match.end(0)
+      while route_match = offsets.match(regex, pos)
+        start = offsets.begin(route_match)
+        pos = if inside_laravel_group_body?(start, ctx.route_groups) ||
+                 inside_php_skip_range?(start, ctx.skip_ranges) ||
+                 inside_handler_body?(start, ctx.handler_bodies)
+                offsets.end(route_match)
               else
                 yield route_match
               end
@@ -317,19 +429,17 @@ module Analyzer::Php
     # Collecting the ranges once, up front, makes the skip a property of the
     # content rather than of scan ordering — the same shape `skip_ranges`
     # already uses for strings, comments and heredocs.
-    private def collect_handler_bodies(content : String, base_line : Int32, lexer : Noir::PhpLexer) : Array(Range(Int32, Int32))
+    private def collect_handler_bodies(offsets : Noir::CharOffsets, base_line : Int32, lexer : Noir::PhpLexer) : Array(Range(Int32, Int32))
       bodies = [] of Range(Int32, Int32)
       pos = 0
 
-      while route_match = content.match(ROUTE_REGISTRATION_RE, pos)
-        action_pos = route_match.end(0)
-        if lexer.in_code?(route_match.begin(0))
-          _body, next_pos, _line = extract_inline_closure_body(content, action_pos, base_line, lexer)
+      while route_match = offsets.match(ROUTE_REGISTRATION_RE, pos)
+        action_pos = offsets.end(route_match)
+        if lexer.in_code?(offsets.begin(route_match))
+          _body, next_pos, _line = extract_inline_closure_body(offsets, action_pos, base_line, lexer)
           bodies << (action_pos...next_pos) if next_pos > action_pos
-          pos = action_pos
-        else
-          pos = route_match.end(0)
         end
+        pos = action_pos
       end
 
       bodies
@@ -344,16 +454,22 @@ module Analyzer::Php
                                    route_match : Regex::MatchData,
                                    methods : Array(String),
                                    full_path : String) : Int32
-      content = ctx.content
-      action_pos = route_match.end(0)
-      route_line = ctx.base_line + newline_count_before(content, route_match.begin(0))
-      handler_body, next_pos, body_start_line = extract_inline_closure_body(content, action_pos, ctx.base_line, ctx.lexer)
-      params = extract_brace_path_params(full_path)
+      offsets = ctx.offsets
+      action_pos = offsets.end(route_match)
+      route_line = ctx.base_line + offsets.line(offsets.begin(route_match)) - 1
+      handler_body, next_pos, body_start_line = extract_inline_closure_body(offsets, action_pos, ctx.base_line, ctx.lexer)
+      action = handler_body ? nil : resolve_route_action(offsets, action_pos, ctx.file_path, ctx.imports)
+      input_params = if handler_body
+                       illuminate_request_params(handler_body)
+                     else
+                       action.try(&.[3]) || [] of Param
+                     end
 
       methods.each do |http_method|
         details = Details.new(PathInfo.new(ctx.file_path, route_line))
-        endpoint = Endpoint.new(full_path, http_method, params, details.dup)
-        attach_route_callees(endpoint, handler_body, body_start_line, content, action_pos, ctx.file_path, ctx.imports) if ctx.include_callee
+        params = extract_brace_path_params(full_path) + params_for_method(input_params, http_method)
+        endpoint = Endpoint.new(full_path, http_method, dedup_params(params), details.dup)
+        attach_route_callees(endpoint, handler_body, body_start_line, action, ctx.file_path) if ctx.include_callee
         endpoints << endpoint
       end
 
@@ -368,11 +484,11 @@ module Analyzer::Php
                                   ctx : RouteScanContext,
                                   route_match : Regex::MatchData,
                                   full_path : String) : Int32
-      route_line = ctx.base_line + newline_count_before(ctx.content, route_match.begin(0))
+      route_line = ctx.base_line + ctx.offsets.line(ctx.offsets.begin(route_match)) - 1
       params = extract_brace_path_params(full_path)
       details = Details.new(PathInfo.new(ctx.file_path, route_line))
       endpoints << Endpoint.new(full_path, "GET", params, details.dup)
-      route_match.end(0)
+      ctx.offsets.end(route_match)
     end
 
     # Path for a route registered behind a fluent chain. The chain is fed back
@@ -393,51 +509,129 @@ module Analyzer::Php
     private def attach_route_callees(endpoint : Endpoint,
                                      body : String?,
                                      start_line : Int32?,
-                                     content : String,
-                                     action_pos : Int32,
-                                     routes_file_path : String,
-                                     imports : Hash(String, String))
+                                     action : ControllerActionBody?,
+                                     routes_file_path : String)
       if body && start_line
         callees = Noir::PhpCalleeExtractor.callees_for_body(body, routes_file_path, start_line)
         attach_php_callees(endpoint, callees)
         return
       end
-
-      action = extract_route_action(content, action_pos)
       return unless action
 
-      resolved = resolve_controller_action_body(action[0], action[1], routes_file_path, imports)
-      return unless resolved
-
-      action_body, controller_path, controller_line = resolved
-      callees = Noir::PhpCalleeExtractor.callees_for_body(action_body, controller_path, controller_line)
+      callees = Noir::PhpCalleeExtractor.callees_for_body(action[0], action[1], action[2])
       attach_php_callees(endpoint, callees)
+    end
+
+    # The controller action a route's handler argument names, resolved to
+    # its body, file, line and request params.
+    private def resolve_route_action(offsets : Noir::CharOffsets,
+                                     action_pos : Int32,
+                                     routes_file_path : String,
+                                     imports : Hash(String, String)) : ControllerActionBody?
+      action = extract_route_action(offsets, action_pos)
+      return unless action
+      resolve_controller_action_body(action[0], action[1], routes_file_path, imports)
+    end
+
+    # A GET (or HEAD) request carries its input in the query string.
+    private def params_for_method(params : Array(Param), http_method : String) : Array(Param)
+      return params unless http_method.in?("GET", "HEAD")
+      params.map { |param| param.param_type == "form" ? Param.new(param.name, param.value, "query") : param }
+    end
+
+    FORM_REQUEST_HINT_RE = /([A-Za-z_\\][\w\\]*Request)\s+\$/
+    RULES_METHOD_RE      = /(?:public|protected|private)\s+function\s+rules\s*\(/
+
+    # Request params of the controller action whose `(` ends at `sig_pos` in
+    # `content`: reads in its body plus the `rules()` keys of every
+    # FormRequest it type-hints (`store(StorePostRequest $request)`).
+    private def controller_action_params(source : ControllerSource,
+                                         signature_match : Regex::MatchData,
+                                         body : String,
+                                         routes_file_path : String) : Array(Param)
+      params = illuminate_request_params(body)
+      signature = SIGNATURE_RE.match_at_byte_index(source.offsets.content, signature_match.byte_end(0)).try(&.[0]) || ""
+      return params unless signature.includes?("Request")
+
+      signature.scan(FORM_REQUEST_HINT_RE) do |m|
+        next if m[1].split('\\').last == "Request"
+        request_path = resolve_controller_path(m[1], routes_file_path, source.imports)
+        next unless request_path && File.exists?(request_path)
+        params.concat(form_request_rule_params(request_path))
+      end
+      dedup_params(params)
+    end
+
+    # `rules()` keys of one FormRequest file, read once per scan.
+    private def form_request_rule_params(path : String) : Array(Param)
+      if cached = @source_cache_mutex.synchronize { @form_request_params[path]? }
+        return cached
+      end
+
+      content = read_file_content(path)
+      params = [] of Param
+      if (rules = content.match(RULES_METHOD_RE)) && (rules_body = extract_php_method_body_after(content, rules.begin(0)))
+        params = rule_key_params(rules_body[0])
+      end
+      @source_cache_mutex.synchronize { @form_request_params[path] ||= params }
+    end
+
+    private def controller_source(path : String) : ControllerSource
+      if cached = @source_cache_mutex.synchronize { @controller_sources[path]? }
+        return cached
+      end
+
+      content = read_file_content(path)
+      methods = [] of Regex::MatchData
+      first_methods = {} of String => Regex::MatchData
+      content.scan(METHOD_DEF_RE) do |m|
+        methods << m
+        first_methods[m[1]] ||= m
+      end
+      source = ControllerSource.new(Noir::CharOffsets.new(content), parse_use_imports(content), methods, first_methods)
+      @source_cache_mutex.synchronize { @controller_sources[path] ||= source }
+    end
+
+    # The action whose signature is `signature_match`, as
+    # `extract_php_method_body_after` would cut it, but in O(body): no copy of
+    # the rest of the file and no newline count from the top.
+    private def controller_action(source : ControllerSource,
+                                  signature_match : Regex::MatchData,
+                                  controller_path : String,
+                                  routes_file_path : String) : ControllerActionBody?
+      content = source.offsets.content
+      brace = content.byte_index('{'.ord.to_u8, signature_match.byte_end(0))
+      return unless brace
+      close = find_matching_php_close_brace_at_byte(content, brace)
+      return unless close && close > brace + 1
+
+      body = content.byte_slice(brace + 1, close - brace - 1)
+      start_line = source.offsets.line(source.offsets.char(brace))
+      {body, controller_path, start_line, controller_action_params(source, signature_match, body, routes_file_path)}
     end
 
     # Parse the controller reference that follows a route's path argument.
     # Returns {class, method} where `class` may be a short name (resolved
     # later via `use` imports) or a fully-qualified `\App\...` name.
-    private def extract_route_action(content : String, pos : Int32) : Tuple(String, String)?
+    private def extract_route_action(offsets : Noir::CharOffsets, pos : Int32) : Tuple(String, String)?
       scan_pos = pos
-      while scan_pos < content.size && content[scan_pos].ascii_whitespace?
+      while offsets.ascii_whitespace?(scan_pos)
         scan_pos += 1
       end
-      return unless scan_pos < content.size
-
-      rest = content[scan_pos..]
+      return unless scan_pos < offsets.content.size
 
       # [Controller::class, 'method']
-      if m = rest.match(/\A\[\s*([A-Za-z_\\][\w\\]*)::class\s*,\s*['"]([A-Za-z_]\w*)['"]/)
+      if m = offsets.match(/\G\[\s*([A-Za-z_\\][\w\\]*)::class\s*,\s*['"]([A-Za-z_]\w*)['"]/, scan_pos)
         return {m[1], m[2]}
       end
 
       # 'Controller@method' / "App\\...\\Controller@method"
-      if m = rest.match(/\A['"]([\w\\]+)@([A-Za-z_]\w*)['"]/)
+      if m = offsets.match(/\G['"]([\w\\]+)@([A-Za-z_]\w*)['"]/, scan_pos)
         return {m[1], m[2]}
       end
 
       # Single-action (`__invoke`) controller: Controller::class
-      if m = rest.match(/\A([A-Za-z_\\][\w\\]*)::class\s*\)/)
+      if m = offsets.match(/\G([A-Za-z_\\][\w\\]*)::class\s*\)/, scan_pos)
         return {m[1], "__invoke"}
       end
 
@@ -447,22 +641,13 @@ module Analyzer::Php
     private def resolve_controller_action_body(class_ref : String,
                                                method_name : String,
                                                routes_file_path : String,
-                                               imports : Hash(String, String)) : Tuple(String, String, Int32)?
+                                               imports : Hash(String, String)) : ControllerActionBody?
       controller_path = resolve_controller_path(class_ref, routes_file_path, imports)
       return unless controller_path && File.exists?(controller_path)
 
-      content = read_file_content(controller_path)
-      # Memoized: an interpolated regex literal recompiles (PCRE2 JIT) on
-      # every evaluation, and action names repeat across controllers.
-      method_regex = @method_def_regexes[method_name] ||= /(?:public|protected|private)\s+(?:static\s+)?function\s+#{Regex.escape(method_name)}\s*\(/
-      method_match = content.match(method_regex)
-      return unless method_match
-
-      body_info = extract_php_method_body_after(content, method_match.begin(0))
-      return unless body_info
-
-      body, start_line = body_info
-      {body, controller_path, start_line}
+      source = controller_source(controller_path)
+      return unless method_match = source.first_methods[method_name]?
+      controller_action(source, method_match, controller_path, routes_file_path)
     rescue e
       logger.debug "Error resolving Laravel handler #{class_ref}::#{method_name}: #{e}"
       nil
@@ -529,49 +714,53 @@ module Analyzer::Php
       imports
     end
 
-    private def extract_inline_closure_body(content : String, pos : Int32, base_line : Int32, lexer : Noir::PhpLexer) : Tuple(String?, Int32, Int32?)
-      return {nil, pos, nil} unless pos < content.size
+    private def extract_inline_closure_body(offsets : Noir::CharOffsets, pos : Int32, base_line : Int32, lexer : Noir::PhpLexer) : Tuple(String?, Int32, Int32?)
+      size = offsets.content.size
+      return {nil, pos, nil} unless pos < size
 
       scan_pos = pos
-      while scan_pos < content.size && content[scan_pos].ascii_whitespace?
+      while offsets.ascii_whitespace?(scan_pos)
         scan_pos += 1
       end
-      return {nil, pos, nil} unless scan_pos < content.size
+      return {nil, pos, nil} unless scan_pos < size
 
-      closure_regex = /\A(?:static\s+)?function\s*\([^)]*\)\s*(?:use\s*\([^)]*\)\s*)?(?::\s*[^{=]+)?\{/i
-      match = content[scan_pos..].match(closure_regex)
-      return extract_arrow_closure_body(content, scan_pos, pos, base_line, lexer) unless match
+      closure_regex = /\G(?:static\s+)?function\s*\([^)]*\)\s*(?:use\s*\([^)]*\)\s*)?(?::\s*[^{=]+)?\{/i
+      match = offsets.match(closure_regex, scan_pos)
+      return extract_arrow_closure_body(offsets, scan_pos, pos, base_line, lexer) unless match
 
-      brace_pos = scan_pos + match[0].size - 1
+      brace_pos = offsets.end(match) - 1
       body_end = lexer.matching_delimiter(brace_pos)
       return {nil, pos, nil} unless body_end
 
-      body_start_line = base_line + newline_count_before(content, brace_pos)
-      {content[(brace_pos + 1)...body_end], body_end + 1, body_start_line}
+      body_start_line = base_line + offsets.line(brace_pos) - 1
+      {offsets.slice(brace_pos + 1, body_end), body_end + 1, body_start_line}
     end
 
-    private def extract_arrow_closure_body(content : String,
+    private def extract_arrow_closure_body(offsets : Noir::CharOffsets,
                                            scan_pos : Int32,
                                            fallback_pos : Int32,
                                            base_line : Int32,
                                            lexer : Noir::PhpLexer) : Tuple(String?, Int32, Int32?)
-      arrow_regex = /\A(?:static\s+)?fn\s*\([^)]*\)\s*(?::\s*[^=]+)?=>/i
-      match = content[scan_pos..].match(arrow_regex)
+      arrow_regex = /\G(?:static\s+)?fn\s*\([^)]*\)\s*(?::\s*[^=]+)?=>/i
+      match = offsets.match(arrow_regex, scan_pos)
       return {nil, fallback_pos, nil} unless match
 
-      body_start = scan_pos + match[0].size
+      body_start = offsets.end(match)
       body_end = lexer.expression_end(body_start)
       return {nil, fallback_pos, nil} unless body_end > body_start
 
-      body_start_line = base_line + newline_count_before(content, body_start)
-      {content[body_start...body_end], body_end, body_start_line}
+      body_start_line = base_line + offsets.line(body_start) - 1
+      {offsets.slice(body_start, body_end), body_end, body_start_line}
     end
 
     # True when `pos` falls inside any skip range (PHP comment, string
     # literal or heredoc/nowdoc body — see `PhpLexer#skip_ranges`). Cheap on
     # the ~few-hundred-range count seen in real Laravel routes files.
     private def inside_php_skip_range?(pos : Int32, ranges : Array(Range(Int32, Int32))) : Bool
-      ranges.any?(&.covers?(pos))
+      # The lexer records its ranges in one left-to-right pass, so they are
+      # sorted and disjoint: the only candidate is the first ending at/after `pos`.
+      range = ranges.bsearch { |r| r.end >= pos }
+      !range.nil? && range.covers?(pos)
     end
 
     private def extract_route_groups(content : String, lexer : Noir::PhpLexer) : Array(RouteGroup)
@@ -658,9 +847,13 @@ module Analyzer::Php
         method = route_info.method
         next unless actions.includes?(action)
 
+        resolved = resource_action_body(statement, action, file_path, imports, controller_cache)
         params = extract_brace_path_params(path)
-        endpoint = Endpoint.new(path, method, params, details)
-        attach_resource_action_callees(endpoint, statement, action, file_path, imports, controller_cache) if include_callee
+        params.concat(params_for_method(resolved[3], method)) if resolved
+        endpoint = Endpoint.new(path, method, dedup_params(params), details)
+        if include_callee && resolved
+          attach_php_callees(endpoint, Noir::PhpCalleeExtractor.callees_for_body(resolved[0], resolved[1], resolved[2]))
+        end
         endpoints << endpoint
       end
 
@@ -755,12 +948,12 @@ module Analyzer::Php
       build_full_path(prefix, expanded.join("/"))
     end
 
-    private def attach_resource_action_callees(endpoint : Endpoint,
-                                               statement : String?,
-                                               action : String,
-                                               routes_file_path : String,
-                                               imports : Hash(String, String),
-                                               controller_cache : Hash(String, ControllerActionMap?))
+    # The resolved body of resource `action` on the statement's controller.
+    private def resource_action_body(statement : String?,
+                                     action : String,
+                                     routes_file_path : String,
+                                     imports : Hash(String, String),
+                                     controller_cache : Hash(String, ControllerActionMap?)) : ControllerActionBody?
       return unless statement
       class_ref = extract_resource_controller(statement)
       return unless class_ref
@@ -772,14 +965,7 @@ module Analyzer::Php
                      controller_cache[class_ref] = resolved_actions
                      resolved_actions
                    end
-      return unless action_map
-
-      resolved = action_map[action]?
-      return unless resolved
-
-      action_body, controller_path, controller_line = resolved
-      callees = Noir::PhpCalleeExtractor.callees_for_body(action_body, controller_path, controller_line)
-      attach_php_callees(endpoint, callees)
+      action_map.try(&.[action]?)
     end
 
     private def extract_resource_controller(statement : String) : String?
@@ -796,16 +982,13 @@ module Analyzer::Php
       controller_path = resolve_controller_path(class_ref, routes_file_path, imports)
       return unless controller_path && File.exists?(controller_path)
 
-      content = read_file_content(controller_path)
+      source = controller_source(controller_path)
       actions = ControllerActionMap.new
-      content.scan(/(?:public|protected|private)\s+(?:static\s+)?function\s+([A-Za-z_]\w*)\s*\(/) do |method_match|
+      source.methods.each do |method_match|
         method_name = method_match[1]
         next unless RESOURCE_ACTIONS.includes?(method_name)
-        body_info = extract_php_method_body_after(content, method_match.begin(0))
-        next unless body_info
-
-        body, start_line = body_info
-        actions[method_name] = {body, controller_path, start_line}
+        next unless action = controller_action(source, method_match, controller_path, routes_file_path)
+        actions[method_name] = action
       end
 
       actions
@@ -834,7 +1017,7 @@ module Analyzer::Php
       "except" => Regex.new("->\\s*except\\s*\\((.*?)\\)", Regex::Options::IGNORE_CASE | Regex::Options::MULTILINE),
     }
 
-    private def extract_resource_route_calls(content : String,
+    private def extract_resource_route_calls(offsets : Noir::CharOffsets,
                                              method_name : String,
                                              skip_ranges : Array(Range(Int32, Int32)),
                                              lexer : Noir::PhpLexer) : Array(ResourceRouteCall)
@@ -842,14 +1025,16 @@ module Analyzer::Php
       regex = RESOURCE_CALL_RES[method_name]
       pos = 0
 
-      while route_match = content.match(regex, pos)
-        if inside_php_skip_range?(route_match.begin(0), skip_ranges)
-          pos = route_match.end(0)
+      while route_match = offsets.match(regex, pos)
+        start = offsets.begin(route_match)
+        match_end = offsets.end(route_match)
+        if inside_php_skip_range?(start, skip_ranges)
+          pos = match_end
         else
-          statement_end = lexer.statement_end(route_match.begin(0))
-          statement = content[route_match.begin(0)...statement_end]
-          calls << ResourceRouteCall.new(route_match[1], statement, route_match.begin(0))
-          pos = statement_end > route_match.end(0) ? statement_end : route_match.end(0)
+          statement_end = lexer.statement_end(start)
+          statement = offsets.slice(start, statement_end)
+          calls << ResourceRouteCall.new(route_match[1], statement, start)
+          pos = statement_end > match_end ? statement_end : match_end
         end
       end
 

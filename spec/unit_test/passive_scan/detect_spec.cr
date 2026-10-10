@@ -334,6 +334,16 @@ describe NoirPassiveScan do
       matcher.regex_may_match_file?("x\nk = AKZnABCDEFGHIJKLMNOP\n").should be_true
     end
 
+    # The whole-file gate sees the next line where the per-line match sees
+    # end-of-string, so this lookahead rejected the file the rule fires on.
+    it "does not gate a negative lookaround that can match a newline" do
+      rule = rule_with.call("or", [%q(api_key(?!\s*=\s*null))])
+      NoirPassiveScan.detect("f", "api_key\n= null\n", [rule], nil).map(&.line_number).should eq([1])
+      PassiveScan::Matcher.newline_negative_lookaround?(%q((?<![A-Za-z0-9])AKZn(?![A-Za-z0-9]))).should be_false
+      PassiveScan::Matcher.newline_negative_lookaround?(%q((?<![A-Za-z0-9])token\s*=)).should be_false
+      PassiveScan::Matcher.newline_negative_lookaround?(%q(x(?![^a]))).should be_true
+    end
+
     it "gates a mixed or-matcher on both its plain and anchored patterns" do
       matcher = rule_with.call("or", ["plain_[a-z]{4}", %q(^\s*key\s*=)]).matchers.first
       matcher.regex_may_match_file?("nothing\n").should be_false

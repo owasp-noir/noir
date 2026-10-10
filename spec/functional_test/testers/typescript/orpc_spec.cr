@@ -7,6 +7,8 @@ expected_endpoints = [
   Endpoint.new("/planets", "POST", [Param.new("name", "", "json"), Param.new("description", "", "json")]),
   # Mounted through `os.prefix('/admin/planets').router({...})`.
   Endpoint.new("/admin/planets/{id}", "DELETE", [Param.new("id", "", "path")]),
+  # oRPC's `{+path}` catch-all is a path param.
+  Endpoint.new("/files/{path}", "GET", [Param.new("path", "", "path")]),
   # moons.ts builds on a base from ./base and never imports oRPC itself;
   # `.router(moonRouter)` and `{ ...moonRouter }` both take the prefix.
   Endpoint.new("/v1/moons", "GET", [Param.new("planetId", "", "query")]),

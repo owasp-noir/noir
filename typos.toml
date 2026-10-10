@@ -18,6 +18,7 @@ extend-ignore-re = [
 vertx = "vertx"
 Verticle = "Verticle"
 nd = "nd"
+ois = "ois"
 # `deps.edn` is the canonical Clojure dependency file (extensible data notation).
 edn = "edn"
 # `paket` is the .NET dependency manager (paket.dependencies).

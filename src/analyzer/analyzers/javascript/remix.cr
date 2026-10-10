@@ -1,5 +1,6 @@
 require "../../engines/javascript_engine"
 require "../../../miniparsers/js_callee_extractor"
+require "../../../miniparsers/js_route_extractor"
 require "../../../utils/top_level_split"
 
 module Analyzer::Javascript
@@ -143,8 +144,10 @@ module Analyzer::Javascript
     # Endpoints one route module serves at `url`, or nil when it serves none
     # (a resource module without `loader` / `action`) or cannot be read.
     private def module_endpoints(url : String, path : String, include_callee : Bool) : Array(Endpoint)?
+      # Comments blanked in place: `export {\n  // x\n  update as action }`
+      # hid the alias, and a commented-out `export const action` added a verb.
       content = begin
-        read_file_content(path)
+        Noir::JSRouteExtractor.strip_js_comments(read_file_content(path))
       rescue e
         logger.debug "Error reading #{path}: #{e.message}"
         return

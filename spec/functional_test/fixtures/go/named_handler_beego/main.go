@@ -17,7 +17,7 @@ func main() {
 }
 
 func listA(ctx *context.Context) {
-	_ = ctx.Input.GetString("qa")
+	_ = ctx.Input.GetString(/* page */ "qa")
 }
 
 func listB(ctx *context.Context) {

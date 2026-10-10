@@ -9,7 +9,7 @@ module.exports = {
     port: 3000,
     routes: [
       {
-        path: "/api",
+        path: /* public */ "/api",
         aliases: {
           "GET users": "users.list",
           "POST users": "users.create",

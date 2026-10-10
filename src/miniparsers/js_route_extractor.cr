@@ -108,6 +108,10 @@ module Noir
           STDERR.puts "Skipping #{file_path} for route extraction (test-stub/non-server marker)" if debug
           return [] of Endpoint
         end
+        # Handler bodies are read with regexes below (`req.header('x')`,
+        # `this.route('GET', '/p')`), so a comment inside a call would hide
+        # the literal. Blanking keeps every line and column.
+        content = strip_js_comments(content)
         parser = JSParser.new(content)
         route_patterns = parser.parse_routes
 
@@ -258,6 +262,16 @@ module Noir
           end
         end
 
+        # Routers imported by name: prefixes recorded under the exported
+        # name apply to routes registered on the local binding.
+        prefixes_by_binding = Hash(String, Array(String)).new
+        export_bindings(content).each do |local, exported_names|
+          list = exported_names.flat_map do |exported|
+            locator.all(Analyzer::Javascript::ExpressConstants.function_key(absolute_file_path, exported))
+          end.uniq!.reject!(&.empty?)
+          prefixes_by_binding[local] = list unless list.empty?
+        end
+
         # Seed same-file Fastify plugin registrations from top-level mounts.
         content.scan(/\b\w+\.register\s*\(\s*(\w+)\s*,\s*\{[^}]*prefix\s*:\s*['"]([^'"]+)['"]/) do |m|
           next unless m.size >= 3
@@ -315,6 +329,17 @@ module Noir
               containing_registers.sort_by! { |_, span| span }
               anonymous_prefix = containing_registers.first[0]
               prefixes = [anonymous_prefix]
+            end
+          end
+          if prefixes.empty? && start_byte >= 0 && !prefixes_by_binding.empty?
+            # Some parser paths report a position inside the receiver token
+            # (`usersRouter` at its last char); back up to the token start.
+            receiver_start = start_byte
+            while receiver_start > 0 && identifier_byte?(content.to_unsafe[receiver_start - 1])
+              receiver_start -= 1
+            end
+            if receiver = offsets.window(receiver_start, 128).match(ROUTE_RECEIVER_RE)
+              prefixes = prefixes_by_binding[receiver[1]]? || prefixes
             end
           end
           if prefixes.empty? && !file_prefixes.empty?
@@ -1054,6 +1079,54 @@ module Noir
     # same-file router resolution.
     MAX_MOUNT_PREFIXES = JSParser::MAX_MOUNT_PREFIXES
 
+    EXPORT_DECL_RE         = /\bexport\s+(?:const|let|var)\s+([A-Za-z_$][\w$]*)/
+    EXPORT_LIST_RE         = /\bexport\s*\{([^}]*)\}(?!\s*from\b)/
+    CJS_EXPORT_OBJECT_RE   = /(?:\bmodule\.exports\s*=|\bexport\s+default)\s*\{([^}]*)\}/
+    CJS_EXPORT_PROPERTY_RE = /\b(?:module\.)?exports\.([A-Za-z_$][\w$]*)\s*=\s*([A-Za-z_$][\w$]*)\s*[;\n]/
+    EXPORT_ALIAS_RE        = /\A([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)\z/
+    EXPORT_KEY_VALUE_RE    = /\A([A-Za-z_$][\w$]*)\s*:\s*([A-Za-z_$][\w$]*)\z/
+    EXPORT_IDENT_RE        = /\A[A-Za-z_$][\w$]*\z/
+    ROUTE_RECEIVER_RE      = /\A([A-Za-z_$][\w$]*)\s*\./
+
+    private def self.identifier_byte?(byte : UInt8) : Bool
+      byte.unsafe_chr.ascii_alphanumeric? || byte === '_' || byte === '$'
+    end
+
+    # Local binding => the names it is exported under. An importer that
+    # takes a router by name (`const { usersRouter } = require('./users')`,
+    # `import { usersRouter } from './users'`, `users.router`) records the
+    # mount prefix under that *exported* name, and the routes are registered
+    # on the *local* binding, so the two have to be joined here. Covers
+    # `export const x = …`, `export { a as b }`, `module.exports = { a, b: c }`,
+    # `export default { a, b: c }`
+    # and `(module.)exports.b = a`.
+    def self.export_bindings(content : String) : Hash(String, Array(String))
+      bindings = Hash(String, Array(String)).new { |h, k| h[k] = [] of String }
+      content.scan(EXPORT_DECL_RE) { |m| bindings[m[1]] << m[1] }
+      content.scan(CJS_EXPORT_PROPERTY_RE) { |m| bindings[m[2]] << m[1] }
+      content.scan(EXPORT_LIST_RE) do |m|
+        m[1].split(',').each do |item|
+          item = item.strip
+          if alias_match = item.match(EXPORT_ALIAS_RE)
+            bindings[alias_match[1]] << alias_match[2]
+          elsif item.matches?(EXPORT_IDENT_RE)
+            bindings[item] << item
+          end
+        end
+      end
+      content.scan(CJS_EXPORT_OBJECT_RE) do |m|
+        m[1].split(',').each do |item|
+          item = item.strip
+          if pair = item.match(EXPORT_KEY_VALUE_RE)
+            bindings[pair[2]] << pair[1]
+          elsif item.matches?(EXPORT_IDENT_RE)
+            bindings[item] << item
+          end
+        end
+      end
+      bindings
+    end
+
     # Pushes mount prefixes along `{parent, prefix, child}` edges into
     # `prefixes`, starting from each parent's existing prefixes (or
     # `fallback` when it has none, without recording that on the parent).
@@ -1191,7 +1264,7 @@ module Noir
         # interpolated regex literal would recompile (full PCRE2 compile)
         # once per endpoint.
         direct_call_pattern = @@direct_call_res.fetch(method_alternation) do
-          @@direct_call_res[method_alternation] = /\.\s*(?:#{method_alternation})\s*\(/i
+          @@direct_call_res[method_alternation] = /(?:\.\s*(?:#{method_alternation})|\[\s*['"](?:#{method_alternation})['"]\s*\])\s*\(/i
         end
         if direct_match = search_window.match(direct_call_pattern)
           candidate_idx = start_byte + direct_match.byte_begin(0)
@@ -1379,6 +1452,8 @@ module Noir
       endpoint.push_param(param)
     end
 
+    COMMENT_OPENER_RE = %r{/[/*]}
+
     # Replace JS/TS comments with whitespace of the same shape.
     # Preserves newlines and column offsets so downstream line/column
     # math (`controller_start_line`, regex `.begin(0)`, etc.) stays
@@ -1394,6 +1469,10 @@ module Noir
     # bodies were scanned as code, so a `//` or `/*` inside a string opened
     # a comment that swallowed every route below it.
     def self.strip_js_comments(content : String) : String
+      # No `//` or `/*` anywhere means no comment: return the input as is.
+      # Callers that hand already-blanked text on to `extract_routes` then
+      # pay one scan instead of a second char-by-char rebuild.
+      return content unless content.matches?(COMMENT_OPENER_RE)
       builder = String::Builder.new(content.bytesize)
       state = :code
       escaped = false
@@ -1784,6 +1863,9 @@ module Noir
       # substring from packed library code; never run the static-mount
       # regexes across a multi-megabyte single line (issue #1903).
       return static_paths if minified_content?(content)
+      # The mount regexes read call arguments; a comment between them must
+      # not hide the path (and a commented-out mount must not count).
+      content = strip_js_comments(content)
 
       want_express = framework.nil? || framework == :express
       want_koa = framework.nil? || framework == :koa

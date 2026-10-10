@@ -275,7 +275,7 @@ module Noir
       raw_path : String? = nil
       handler_text = ""
       handler_node : LibTreeSitter::TSNode? = nil
-      Noir::TreeSitter.each_named_child(args) do |arg|
+      Noir::TreeSitter.each_named_arg(args) do |arg|
         if raw_path.nil?
           if s = string_expr_text(arg, source, string_values)
             raw_path = s
@@ -368,7 +368,7 @@ module Noir
       while Noir::TreeSitter.node_type(actual) == "call_expression"
         if args = Noir::TreeSitter.field(actual, "arguments")
           inner = nil
-          Noir::TreeSitter.each_named_child(args) do |arg|
+          Noir::TreeSitter.each_named_arg(args) do |arg|
             inner = arg
           end
           break unless inner

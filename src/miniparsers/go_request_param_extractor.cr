@@ -1,6 +1,7 @@
 require "../ext/tree_sitter/tree_sitter"
 require "../models/endpoint"
 require "./go_callee_extractor"
+require "../utils/c_comments"
 
 module Noir::GoRequestParamExtractor
   extend self
@@ -177,7 +178,8 @@ module Noir::GoRequestParamExtractor
                                        source : String,
                                        http_method : String) : Array(Param)
     params = [] of Param
-    call_text = Noir::TreeSitter.node_text(call, source)
+    # Comments blanked so `Get(/* c */ "q")` still matches the regexes below.
+    call_text = Noir::CComments.strip(Noir::TreeSitter.node_text(call, source), raw_quotes: "`")
 
     if call_text.matches?(/json\.NewDecoder\([^)]*\.Body\)\s*\.\s*Decode/) ||
        call_text.matches?(/(?:io|ioutil)\.ReadAll\([^)]*\.Body\)/)
@@ -267,7 +269,7 @@ module Noir::GoRequestParamExtractor
     args = Noir::TreeSitter.field(call, "arguments")
     return unless args
 
-    Noir::TreeSitter.each_named_child(args) do |arg|
+    Noir::TreeSitter.each_named_arg(args) do |arg|
       if string_literal_node?(arg)
         return decode_string_literal(arg, source)
       end
@@ -282,7 +284,7 @@ module Noir::GoRequestParamExtractor
     return found unless args
 
     first = true
-    Noir::TreeSitter.each_named_child(args) do |arg|
+    Noir::TreeSitter.each_named_arg(args) do |arg|
       if first
         first = false
         next
@@ -301,7 +303,7 @@ module Noir::GoRequestParamExtractor
     args = Noir::TreeSitter.field(call, "arguments")
     return unless args
 
-    Noir::TreeSitter.each_named_child(args) do |arg|
+    Noir::TreeSitter.each_named_arg(args) do |arg|
       next if string_literal_node?(arg)
       candidate = unwrap_handler_arg(arg, source)
       return candidate if handler_candidate?(candidate, source, external_functions, external_methods)
@@ -341,7 +343,7 @@ module Noir::GoRequestParamExtractor
     return arg unless args
 
     inner : LibTreeSitter::TSNode? = nil
-    Noir::TreeSitter.each_named_child(args) do |child|
+    Noir::TreeSitter.each_named_arg(args) do |child|
       next if string_literal_node?(child)
       inner = child
       break unless wrapper_name == "append"

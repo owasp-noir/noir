@@ -151,6 +151,46 @@ describe Analyzer::Python::PythonEngine do
     harness.def_line_after(lines, 0).should eq(4)
   end
 
+  it "drops comments from the lines it joins" do
+    harness = PythonEngineSpecHarness.new(create_test_options)
+    lines = ["app.add_api_route(  # v2 (beta", "    \"/items\",  # list", "    list_items,", ")"]
+    harness.join_until_python_call_closes(lines, 0, lines[0]).should eq("app.add_api_route(       \"/items\",       list_items, )")
+  end
+
+  it "folds wrapped calls and subscripts onto their opening line" do
+    harness = PythonEngineSpecHarness.new(create_test_options)
+    lines = [
+      "    a = request.args.get(  # long (call",
+      "        \"q\"",
+      "    )",
+      "    b = request.form[",
+      "        \"f\"",
+      "    ]",
+      "    \"\"\"see (docs\"\"\"",
+      "    c = f(x",
+      "          and y)",
+      "    # d = request.args.get(",
+      "    #     \"commented\")",
+    ]
+    harness.fold_python_continuations(lines).should eq([
+      "    a = request.args.get(\"q\")", "", "",
+      "    b = request.form[\"f\"]", "", "",
+      lines[6],
+      "    c = f(x and y)", "",
+      lines[9], lines[10],
+    ])
+  end
+
+  it "leaves a long call unfolded but folds the wrapped read inside it" do
+    harness = PythonEngineSpecHarness.new(create_test_options)
+    args = Array.new(Noir::CallFold::MAX_CONTINUATION_LINES) { |i| "    a#{i}=1," }
+    lines = ["return jsonify("] + args + ["    q=request.args.get(", "        \"q\"", "    ),", ")"]
+    folded = harness.fold_python_continuations(lines)
+    folded[0].should eq(lines[0])
+    folded.should contain("    q=request.args.get(\"q\"),")
+    folded.size.should eq(lines.size)
+  end
+
   it "parses a long non-ASCII parameter default in linear time" do
     harness = PythonEngineSpecHarness.new(create_test_options)
     default = "가" * 60_000

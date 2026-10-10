@@ -99,4 +99,17 @@ describe Noir::JSHttpRouteExtractor do
       endpoints.map { |e| {e.method, e.url} }.should eq([{"GET", "/api/status"}])
     end
   end
+
+  describe ".extract_runtime_serve" do
+    it "keeps a large inline Deno.serve handler" do
+      # The inline handler used to be escaped into an object-literal lookup
+      # regex, which PCRE2 refused to compile once the handler was big.
+      branches = (0...400).map { |i| "  if (url.pathname === \"/r#{i}\") return new Response(\"x\");\n" }.join
+      code = "Deno.serve(async (req) => {\n  const url = new URL(req.url);\n#{branches}  return new Response(\"\");\n});\n"
+
+      endpoints = Noir::JSHttpRouteExtractor.extract_runtime_serve("main.ts", code, "Deno")
+      endpoints.size.should eq(400)
+      endpoints.last.url.should eq("/r399")
+    end
+  end
 end

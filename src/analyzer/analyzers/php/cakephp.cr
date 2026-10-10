@@ -61,9 +61,9 @@ module Analyzer::Php
       # endpoints into GET false positives (and dropping the verbs they
       # actually answer).
       pos = 0
-      while route_match = content.match(CONNECT_REGEX, pos)
-        if inside_scope_body?(route_match.begin(0), scopes)
-          pos = route_match.end(0)
+      while route_match = CONNECT_REGEX.match_at_byte_index(content, pos)
+        if inside_scope_body?(route_match.byte_begin(0), scopes)
+          pos = route_match.byte_end(0)
           next
         end
 
@@ -81,15 +81,15 @@ module Analyzer::Php
           attach_route_target_callees(endpoint, target, file_path) if include_callee
           endpoints << endpoint
         end
-        pos = route_match.end(0)
+        pos = route_match.byte_end(0)
       end
 
       # 2. HTTP verb shortcuts: $routes->get/post/..., Router::get/...
       VERB_REGEXES.each do |method, pattern|
         pos = 0
-        while route_match = content.match(pattern, pos)
-          if inside_scope_body?(route_match.begin(0), scopes)
-            pos = route_match.end(0)
+        while route_match = pattern.match_at_byte_index(content, pos)
+          if inside_scope_body?(route_match.byte_begin(0), scopes)
+            pos = route_match.byte_end(0)
             next
           end
 
@@ -100,15 +100,15 @@ module Analyzer::Php
           endpoint = Endpoint.new(full_path, method, params, details.dup)
           attach_route_target_callees(endpoint, target, file_path) if include_callee
           endpoints << endpoint
-          pos = route_match.end(0)
+          pos = route_match.byte_end(0)
         end
       end
 
       # 3. Resource routes
       pos = 0
-      while route_match = content.match(RESOURCE_REGEX, pos)
-        if inside_scope_body?(route_match.begin(0), scopes)
-          pos = route_match.end(0)
+      while route_match = RESOURCE_REGEX.match_at_byte_index(content, pos)
+        if inside_scope_body?(route_match.byte_begin(0), scopes)
+          pos = route_match.byte_end(0)
           next
         end
 
@@ -116,7 +116,7 @@ module Analyzer::Php
         full_resource_path = build_full_path(prefix, resource_name)
         args = route_match[3]
         endpoints.concat(create_resource_endpoints(full_resource_path, file_path, include_callee, resource_name, args))
-        pos = route_match.end(0)
+        pos = route_match.byte_end(0)
       end
 
       # 4. Recurse into each scope/prefix/plugin body with its prefix applied.
@@ -159,7 +159,10 @@ module Analyzer::Php
         info = parse_scope_call(content, open_match.end(0), method)
         if info
           prefix, body, body_start, body_end = info
-          scopes << Scope.new(prefix, body, body_start, body_end)
+          # Stored as BYTE offsets: the per-route scans compare them with
+          # `byte_begin`, which (unlike `begin`) is O(1) on non-ASCII files.
+          scopes << Scope.new(prefix, body, content.char_index_to_byte_index(body_start) || content.bytesize,
+            content.char_index_to_byte_index(body_end) || content.bytesize)
           pos = body_end + 1
         else
           pos = open_match.end(0)

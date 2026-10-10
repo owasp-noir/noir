@@ -9,3 +9,5 @@ public class ShipOrder
 }
 
 public record OrderCreated(int Id);
+
+public record RefundOrder(decimal Amount, string Reason);

@@ -16,8 +16,9 @@ module Analyzer::Scala
     #   Method.GET / "users" / int("id") -> handler { (id: Int, req: Request) => ... }
     private def extract_routes_from_content(path : String, content : String, include_callee : Bool) : Array(Endpoint)
       endpoints = [] of Endpoint
-      lines = content.split('\n')
-      code_lines = scala_code_lines(content)
+      lexer = scala_lexer(content)
+      lines = scala_code_text(lexer).split('\n')
+      code_lines = lexer.code_lines
 
       lines.each_with_index do |_line, index|
         stripped = code_lines[index]? || ""

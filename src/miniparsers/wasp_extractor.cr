@@ -73,14 +73,21 @@ module Noir
       pages = Hash(String, Bool).new
       pending = [] of Tuple(String, String, String?, Int32)
 
+      # Byte offsets throughout: char offsets cost a scan from the start of a
+      # non-ASCII file on every declaration (and the char brace matcher a
+      # full copy), which went quadratic in the declaration count.
       pos = 0
-      while m = code.match(DSL_DECL, pos)
-        open = m.end(0) - 1
-        close = JSLiteralScanner.find_matching_brace(code, open)
+      line = 1
+      line_pos = 0
+      while m = DSL_DECL.match_at_byte_index(code, pos)
+        open = m.byte_end(0) - 1
+        close = JSLiteralScanner.find_matching_brace_at_byte(code, open)
         break unless close
         pos = close + 1
-        entries = object_entries(code[(open + 1)...close])
-        line = JSRouteExtractor.line_for_char_pos(code, m.begin(0) + (m[0].size - m[0].lstrip.size))
+        entries = object_entries(code.byte_slice(open + 1, close - open - 1))
+        decl = m.byte_begin(0) + (m[0].bytesize - m[0].lstrip.bytesize)
+        line += code.to_slice[line_pos, decl - line_pos].count('\n'.ord.to_u8)
+        line_pos = decl
         name = m[2]
 
         case m[1]
@@ -221,8 +228,7 @@ module Noir
       return spec if callees.empty?
       refs = import_refs(code)
 
-      each_call(code, callees) do |kind, args, pos|
-        line = JSRouteExtractor.line_for_char_pos(code, pos)
+      each_call(code, callees) do |kind, args, line, _|
         case kind
         when "app"
           config = args[0]?.try { |a| object_body(a) }
@@ -336,8 +342,7 @@ module Noir
 
       pages = Hash(String, Bool).new
       pending = [] of Tuple(String, String, String?, Int32)
-      each_call(code, callees) do |kind, args, pos|
-        line = JSRouteExtractor.line_for_char_pos(code, pos)
+      each_call(code, callees) do |kind, args, line, pos|
         name = string_value(args[0]?)
         config = args[1]?.try { |a| object_body(a) }
         case kind
@@ -365,7 +370,7 @@ module Noir
           required = bool_value(entries["authRequired"]?) || false
           pages[name] = required
           # `const loginPage = app.page(...)`: routes point at the variable.
-          if decl = code[0...pos].match(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*\z/)
+          if decl = code.byte_slice(0, pos).match(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*\z/)
             pages[decl[1]] = required
           end
         when "route"
@@ -465,22 +470,29 @@ module Noir
       operations
     end
 
-    # Yields `(constructor, args, start)` for each call to a name in
-    # `callees` (local name → canonical constructor), skipping member
+    # Yields `(constructor, args, line, start_byte)` for each call to a name
+    # in `callees` (local name → canonical constructor), skipping member
     # calls such as `foo.api(` unless the dotted name itself is listed.
-    private def each_call(code : String, callees : Hash(String, String), & : String, Array(String), Int32 ->)
+    # Byte offsets, like `parse_dsl`: char offsets went quadratic on a
+    # non-ASCII file.
+    private def each_call(code : String, callees : Hash(String, String), & : String, Array(String), Int32, Int32 ->)
       return if callees.empty?
       pattern = Regex.union(callees.keys.sort_by!(&.size).reverse!.map { |name| /(?<![\w$.])#{Regex.escape(name)}\s*\(/ })
       pos = 0
-      while m = code.match(pattern, pos)
-        open = m.end(0) - 1
+      line = 1
+      line_pos = 0
+      while m = pattern.match_at_byte_index(code, pos)
+        open = m.byte_end(0) - 1
         name = m[0].rchop('(').strip
         pos = open + 1
         canonical = callees[name]?
         next unless canonical
-        close = JSLiteralScanner.find_matching_paren(code, open)
+        close = JSLiteralScanner.find_matching_paren_at_byte(code, open)
         next unless close
-        yield canonical, TopLevelSplit.split(code[(open + 1)...close], ',', JS_RULES), m.begin(0)
+        start = m.byte_begin(0)
+        line += code.to_slice[line_pos, start - line_pos].count('\n'.ord.to_u8)
+        line_pos = start
+        yield canonical, TopLevelSplit.split(code.byte_slice(open + 1, close - open - 1), ',', JS_RULES), line, start
       end
     end
 

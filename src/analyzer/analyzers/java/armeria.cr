@@ -74,6 +74,9 @@ module Analyzer::Java
         # otherwise-live chain are not reported.
         non_code_mask = nil.as(Array(Bool)?)
         constants = nil.as(Hash(String, String)?)
+        # Comments blanked, offsets kept: the chain is parsed as text, so a
+        # comment inside `.service(...)` would otherwise read as an argument.
+        code = nil.as(String?)
         content.scan(REGEX_SERVER_BUILDER) do |builder_match|
           start = builder_match.begin(0)
           next unless start
@@ -85,7 +88,7 @@ module Analyzer::Java
 
           finish = scan_server_builder_statement_end(content, after_builder, mask)
           next unless finish && finish >= start
-          server_codeblock = content[start..finish]
+          server_codeblock = (code ||= JavaEngine.strip_comments(content))[start..finish]
 
           resolved_constants = constants ||= (path.ends_with?(".java") ? Noir::TreeSitterJavaRouteExtractor.extract_string_constants(content) : Hash(String, String).new)
           collect_service_routes(server_codeblock, resolved_constants, details, service_with_routes_index, base, mask, start)
@@ -418,7 +421,7 @@ module Analyzer::Java
 
         constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants(content)
         base = configured_base_for(path)
-        call_argument_expressions(content, ".annotatedService").each do |expr|
+        call_argument_expressions(JavaEngine.strip_comments(content), ".annotatedService").each do |expr|
           prefix, service_class = annotated_service_registration(expr, constants)
           next if service_class.empty?
 
@@ -489,7 +492,7 @@ module Analyzer::Java
 
         method_body = Noir::TreeSitter.field(member, "body")
         next unless method_body
-        route_builder_expressions(Noir::TreeSitter.node_text(method_body, content)).each do |expr|
+        route_builder_expressions(JavaEngine.strip_comments(Noir::TreeSitter.node_text(method_body, content))).each do |expr|
           routes.concat(route_entries_from_expression(expr, constants))
         end
       end
@@ -1078,8 +1081,11 @@ module Analyzer::Java
     private def decode_string_literal(node : LibTreeSitter::TSNode, content : String) : String
       buf = String.build do |io|
         Noir::TreeSitter.each_named_child(node) do |child|
-          if Noir::TreeSitter.node_type(child) == "string_fragment"
+          case Noir::TreeSitter.node_type(child)
+          when "string_fragment"
             io << Noir::TreeSitter.node_text(child, content)
+          when "escape_sequence"
+            io << Noir::TreeSitter.unescape(Noir::TreeSitter.node_text(child, content))
           end
         end
       end

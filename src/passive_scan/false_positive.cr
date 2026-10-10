@@ -205,7 +205,9 @@ module NoirPassiveScan
 
       # Variable-name word match with no real assignment on the line.
       if name = matched_secret_name(rule, line)
-        return true if comment_line?(line)
+        # A commented-out credentialed URL (`# DATABASE_URL=postgres://u:pw@…`)
+        # is still a committed secret; any other commented mention is prose.
+        return true if comment_line?(line) && !assigns_credential_url?(line, name)
         return true unless assigns_literal?(line, name)
       end
 
@@ -273,12 +275,30 @@ module NoirPassiveScan
       false
     end
 
+    # The value assigned right after a name, quoted or not: `NAME=v`,
+    # `NAME: "v"`, `"NAME" => 'v'`. Group 1 is the value.
+    ASSIGNED_VALUE = /\G['"]?\s*(?::|=>?)\s*['"]?([^\s'"]+)/
+
+    # True when `name` is assigned a credentialed URL with a real password.
+    def self.assigns_credential_url?(line : String, name : String) : Bool
+      offset = 0
+      while idx = line.byte_index(name, offset)
+        offset = idx + name.bytesize
+        next unless match = ASSIGNED_VALUE.match_at_byte_index(line, offset)
+        return true if (url = match[1].match(CREDENTIAL_URL)) && real_password?(url[1])
+      end
+      false
+    end
+
     # True when `handoff` matches at `offset` and the literal whose opening
     # quote ends that match is a credentialed URL with a real password.
     private def self.credential_url_at?(line : String, handoff : Regex, offset : Int32) : Bool
       return false unless match = handoff.match_at_byte_index(line, offset)
       return false unless url = quoted_literal(line, match).match(CREDENTIAL_URL)
-      password = url[1]
+      real_password?(url[1])
+    end
+
+    private def self.real_password?(password : String) : Bool
       !(password.matches?(PURE_REFERENCE) || password.matches?(PLACEHOLDER_VALUE) || password.matches?(FORMAT_SLOT))
     end
 

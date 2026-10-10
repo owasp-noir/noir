@@ -4,7 +4,7 @@ require "../../func_spec.cr"
 # moleculer-web mixin, so `/nope/leak` is not reported.
 FunctionalTester.new("fixtures/javascript/moleculer/", {
   :techs     => 1,
-  :endpoints => 14,
+  :endpoints => 16,
 }, [
   Endpoint.new("/api/users", "GET", [Param.new("limit", "", "query")]),
   Endpoint.new("/api/users", "POST", [Param.new("name", "", "json"), Param.new("email", "", "json")]),
@@ -22,4 +22,7 @@ FunctionalTester.new("fixtures/javascript/moleculer/", {
   Endpoint.new("/auto/users", "POST", [Param.new("name", "", "json"), Param.new("email", "", "json")]),
   Endpoint.new("/auto/users/:id", "GET", [Param.new("id", "", "path")]),
   Endpoint.new("/auto/v2/orders/find", "ANY"),
+  # `settings.rest` as an array mounts the service under each base path.
+  Endpoint.new("/auto/items/:sku", "GET", [Param.new("sku", "", "path"), Param.new("s", "", "query")]),
+  Endpoint.new("/auto/things/:sku", "GET", [Param.new("sku", "", "path"), Param.new("s", "", "query")]),
 ]).perform_tests

@@ -31,6 +31,7 @@ module Analyzer::Crystal
       actions = include_callee ? collect_controller_actions(lines, path) : Hash(String, Array(Noir::CrystalCalleeExtractor::Entry)).new
       last_endpoint = Endpoint.new("", "")
       scope_stack = [] of NamedTuple(prefix: String, indent: Int32)
+      param_lines = crystal_param_lines(lines)
 
       lines.each_with_index do |raw_line, index|
         # Grip was the one Crystal analyzer matching routes on raw source:
@@ -73,7 +74,7 @@ module Analyzer::Crystal
         end
 
         # Parse parameters
-        param = line_to_param(line)
+        param = line_to_param(param_lines[index])
         unless param.name.empty?
           unless last_endpoint.method.empty?
             last_endpoint.push_param(param)

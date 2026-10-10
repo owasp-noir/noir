@@ -1,4 +1,5 @@
 require "../../models/analyzer"
+require "../../utils/char_offsets"
 require "../../miniparsers/php_callee_extractor"
 require "../../minilexers/php_lexer"
 require "../../utils/utils.cr"
@@ -113,6 +114,14 @@ module Analyzer::Php
       configured_base_for(path)
     end
 
+    # Directory (normalized) of the nearest `composer.json` above `path`, or
+    # "" — the app a file belongs to in a monorepo.
+    protected def composer_project_root(path : String) : String
+      expanded = Noir::PathScope.expand(path)
+      get_files_by_basename("composer.json").map { |f| Noir::PathScope.normalize_root(File.dirname(f)) }
+        .select { |dir| Noir::PathScope.under_normalized_root?(expanded, dir) }.max_by?(&.size) || ""
+    end
+
     # Route composition helper. Will migrate to a PHP route extractor when that
     # layer is introduced; kept here for now so Laravel/CakePHP/Symfony stop
     # duplicating it.
@@ -174,22 +183,31 @@ module Analyzer::Php
     # Body of an inline `function (...) use (...) { ... }` closure handler
     # starting at `pos`: `{body, position after the closure, body start line}`,
     # or `{nil, pos, nil}` when no closure starts there.
-    protected def extract_inline_closure_body(content : String, pos : Int32, base_line : Int32) : Tuple(String?, Int32, Int32?)
-      return {nil, pos, nil} unless pos < content.size
+    INLINE_CLOSURE_HEAD_RE = /\G(?:static\s+)?function\s*\([^)]*\)\s*(?:use\s*\([^)]*\)\s*)?(?::\s*[^{=]+)?\{/i
 
-      scan_pos = skip_whitespace(content, pos)
-      return {nil, pos, nil} unless scan_pos < content.size
+    # Char positions in and out, like the rest of the route loops, but every
+    # step goes through `offsets`: this runs once per route, and the plain
+    # `String` forms are O(file) per call on non-ASCII content.
+    protected def extract_inline_closure_body(offsets : Noir::CharOffsets, pos : Int32, base_line : Int32) : Tuple(String?, Int32, Int32?)
+      size = offsets.content.size
+      return {nil, pos, nil} unless pos < size
 
-      closure_regex = /\A(?:static\s+)?function\s*\([^)]*\)\s*(?:use\s*\([^)]*\)\s*)?(?::\s*[^{=]+)?\{/i
-      match = content[scan_pos..].match(closure_regex)
+      scan_pos = pos
+      while offsets.ascii_whitespace?(scan_pos)
+        scan_pos += 1
+      end
+      return {nil, pos, nil} unless scan_pos < size
+
+      match = offsets.match(INLINE_CLOSURE_HEAD_RE, scan_pos)
       return {nil, pos, nil} unless match
 
-      brace_pos = scan_pos + match[0].size - 1
-      body_end = find_matching_php_close_brace(content, brace_pos)
-      return {nil, pos, nil} unless body_end
+      close_byte = find_matching_php_close_brace_at_byte(offsets.content, match.byte_end(0) - 1)
+      return {nil, pos, nil} unless close_byte
 
-      body_start_line = base_line + newline_count_before(content, brace_pos)
-      {content[(brace_pos + 1)...body_end], body_end + 1, body_start_line}
+      brace_pos = offsets.end(match) - 1
+      body_end = offsets.char(close_byte)
+      body_start_line = base_line + offsets.line(brace_pos) - 1
+      {offsets.slice(brace_pos + 1, body_end), body_end + 1, body_start_line}
     end
 
     private def skip_whitespace(content : String, pos : Int32) : Int32
@@ -248,6 +266,54 @@ module Analyzer::Php
       end
     end
 
+    # `Illuminate\Http\Request` reads (Laravel, Lumen): `$request->input('x')`,
+    # `request()->query('x')`, `$request->header('X-Token')`, ... Capture 1 is
+    # the accessor, capture 2 the input name.
+    ILLUMINATE_REQUEST_READ_RE = /(?:\$request|\brequest\(\s*\))\s*->\s*(input|post|get|query|header|cookie|file|string|integer|boolean|float|date|enum|array)\s*\(\s*['"]([^'"]+)['"]/
+    ILLUMINATE_READ_TYPES      = {"get" => "query", "query" => "query", "header" => "header", "cookie" => "cookie"}
+    # Calls taking a validation rules array: `$request->validate([...])`,
+    # `$this->validate($request, [...])`, `Validator::make($data, [...])`.
+    ILLUMINATE_VALIDATE_RE = /(?:->\s*validate(?:WithBag)?|\bValidator::make)\s*\(/
+    # A rules-array key: `'title' =>`, `'author.name' =>` (input `author`).
+    RULE_KEY_RE = /['"]([\w-]+)(?:\.[^'"]*)?['"]\s*=>/
+
+    # Input an `Illuminate\Http\Request` handler body reads: accessor calls
+    # plus the keys of its validation rules. Body inputs come back as "form".
+    protected def illuminate_request_params(body : String) : Array(Param)
+      params = [] of Param
+      body.scan(ILLUMINATE_REQUEST_READ_RE) do |m|
+        params << Param.new(m[2], "", ILLUMINATE_READ_TYPES[m[1]]? || "form")
+      end
+      if body.matches?(ILLUMINATE_VALIDATE_RE)
+        lexer = Noir::PhpLexer.new(body, php_mode: true)
+        body.scan(ILLUMINATE_VALIDATE_RE) do |m|
+          open = m.end(0) - 1
+          next unless lexer.in_code?(open) && (close = lexer.matching_delimiter(open))
+          # The rules are the first array literal among the call's own
+          # arguments; a later one is custom messages (keyed by rule name).
+          depth = 0
+          (open + 1...close).each do |i|
+            case lexer.masked[i]
+            when '(' then depth += 1
+            when ')' then depth -= 1
+            when '['
+              next unless depth == 0
+              if array_close = lexer.matching_delimiter(i)
+                params.concat(rule_key_params(body[i..array_close]))
+              end
+              break
+            end
+          end
+        end
+      end
+      dedup_params(params)
+    end
+
+    # One "form" param per key of a validation rules array or `rules()` body.
+    protected def rule_key_params(rules : String) : Array(Param)
+      rules.scan(RULE_KEY_RE).map { |m| Param.new(m[1], "", "form") }
+    end
+
     # ASCII byte values for the structural delimiters scanned below.
     # All are < 0x80, so they can never collide with a UTF-8 multi-byte
     # continuation/lead byte (>= 0x80) — see `find_matching_php_close_brace`.
@@ -278,9 +344,17 @@ module Analyzer::Php
     # `matching_delimiter` — constructing a lexer per call re-lexes the whole
     # file and is ~hundreds of times slower on method-heavy controllers.
     protected def find_matching_php_close_brace(content : String, open_pos : Int32) : Int32?
-      bytes = content.to_slice
       start = content.char_index_to_byte_index(open_pos)
-      return unless start && start < bytes.size && bytes[start] == BYTE_OPEN_BRACE
+      return unless start
+      close = find_matching_php_close_brace_at_byte(content, start)
+      content.byte_index_to_char_index(close) if close
+    end
+
+    # BYTE-offset form of `find_matching_php_close_brace`: takes and returns
+    # byte offsets, so a per-route caller pays no O(n) char/byte conversion.
+    protected def find_matching_php_close_brace_at_byte(content : String, start : Int32) : Int32?
+      bytes = content.to_slice
+      return unless start < bytes.size && bytes[start] == BYTE_OPEN_BRACE
 
       depth = 0
       in_string = false
@@ -325,7 +399,7 @@ module Analyzer::Php
           depth += 1
         elsif char == BYTE_CLOSE_BRACE
           depth -= 1
-          return content.byte_index_to_char_index(pos) if depth == 0
+          return pos if depth == 0
         end
 
         pos += 1

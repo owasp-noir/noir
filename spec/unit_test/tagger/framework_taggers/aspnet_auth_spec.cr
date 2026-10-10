@@ -119,4 +119,158 @@ describe "AspnetAuthTagger" do
       FileUtils.rm_rf(tmpdir)
     end
   end
+
+  it "applies FallbackPolicy and MapGroup auth, honouring [AllowAnonymous] in attribute lists and on controllers" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("aspnet_fallback")
+    Dir.mkdir_p(tmpdir)
+    program = File.join(tmpdir, "Program.cs")
+    controllers = File.join(tmpdir, "Controllers.cs")
+    File.write(program, <<-CS)
+      builder.Services.AddAuthorization(options =>
+      {
+          options.FallbackPolicy = new AuthorizationPolicyBuilder()
+              .RequireAuthenticatedUser()
+              .Build();
+      });
+      var app = builder.Build();
+      var api = app.MapGroup("/api").RequireAuthorization("admin");
+      api.MapGet("/stats", () => "stats");
+      app.MapGet("/ping", () => "pong").AllowAnonymous();
+      app.MapGet("/me", () => "me");
+      CS
+    File.write(controllers, <<-CS)
+      public class AccountController : ControllerBase
+      {
+          [HttpPost("login"), AllowAnonymous]
+          public IActionResult Login() => Ok();
+      }
+
+      [AllowAnonymous]
+      public class PublicController : ControllerBase
+      {
+          [HttpGet("info")]
+          public IActionResult Info() => Ok();
+      }
+      CS
+    CodeLocator.instance.register_path(program)
+    CodeLocator.instance.register_path(controllers)
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(path : String, line : Int32) { Endpoint.new("/#{line}", "GET", [] of Param, Details.new(PathInfo.new(path, line))) }
+      stats = at.call(program, 9)
+      ping = at.call(program, 10)
+      me = at.call(program, 11)
+      login = at.call(controllers, 4)
+      info = at.call(controllers, 11)
+
+      AspnetAuthTagger.new(noir_options).perform([stats, ping, me, login, info])
+
+      stats.tags.map(&.description).should eq(["Protected by ASP.NET .RequireAuthorization()"])
+      ping.tags.should be_empty
+      me.tags.map(&.description).should eq(["Protected by ASP.NET FallbackPolicy (RequireAuthenticatedUser)"])
+      login.tags.should be_empty
+      info.tags.should be_empty
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
+  it "reads app-wide auth only from live, non-test code of the endpoint's own project" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("aspnet_global_scope")
+    files = {
+      "Web/Web.csproj" => "<Project />",
+      "Web/Program.cs" => <<-CS,
+        // options.FallbackPolicy = new AuthorizationPolicyBuilder().RequireAuthenticatedUser().Build();
+        /* builder.Services.AddControllers(o => o.Filters.Add(new AuthorizeFilter())); */
+        var app = builder.Build();
+        CS
+      "Web/Controllers/Home.cs" => <<-CS,
+        public class HomeController : Controller
+        {
+            [HttpGet("home")]
+            public IActionResult Index() => Ok();
+        }
+        CS
+      "Web.Tests/Web.Tests.csproj" => "<Project />",
+      "Web.Tests/AuthFactory.cs"   => <<-CS,
+        public class AuthFactory : WebApplicationFactory<Program>
+        {
+            void Configure(IServiceCollection services) =>
+                services.AddAuthorization(o => o.FallbackPolicy = new AuthorizationPolicyBuilder().RequireAuthenticatedUser().Build());
+        }
+        CS
+      "Admin/Admin.csproj" => "<Project />",
+      "Admin/Program.cs"   => <<-CS,
+        builder.Services.AddAuthorization(o => o.FallbackPolicy = new AuthorizationPolicyBuilder().RequireAuthenticatedUser().Build());
+        CS
+      "Admin/Controllers/Dashboard.cs" => <<-CS,
+        public class DashboardController : Controller
+        {
+            [HttpGet("dash")]
+            public IActionResult Index() => Ok();
+        }
+        CS
+    }
+    files.each do |rel, body|
+      path = File.join(tmpdir, rel)
+      Dir.mkdir_p(File.dirname(path))
+      File.write(path, body)
+      CodeLocator.instance.register_path(path)
+    end
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      home = Endpoint.new("/home", "GET", [] of Param, Details.new(PathInfo.new(File.join(tmpdir, "Web/Controllers/Home.cs"), 4)))
+      home.details.technology = "cs_aspnet_core_mvc"
+      dash = Endpoint.new("/dash", "GET", [] of Param, Details.new(PathInfo.new(File.join(tmpdir, "Admin/Controllers/Dashboard.cs"), 4)))
+      dash.details.technology = "cs_aspnet_core_mvc"
+
+      AspnetAuthTagger.new(noir_options).perform([home, dash])
+
+      home.tags.should be_empty
+      dash.tags.map(&.description).should eq(["Protected by ASP.NET FallbackPolicy (RequireAuthenticatedUser)"])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
+  it "inherits RequireAuthorization through nested MapGroup declarations" do
+    tmpdir = File.tempname("aspnet_nested_group")
+    Dir.mkdir_p(tmpdir)
+    program = File.join(tmpdir, "Program.cs")
+    File.write(program, <<-CS)
+      var app = builder.Build();
+      var api = app.MapGroup("/api").RequireAuthorization();
+      var v1 = api.MapGroup("/v1");
+      RouteGroupBuilder admin = v1.MapGroup("/admin");
+      v1.MapGet("/items", () => "items");
+      admin.MapGet("/stats", () => "stats");
+      var pub = app.MapGroup("/public");
+      pub.MapGet("/ping", () => "pong");
+      CS
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(line : Int32) { Endpoint.new("/#{line}", "GET", [] of Param, Details.new(PathInfo.new(program, line))) }
+      items = at.call(5)
+      stats = at.call(6)
+      ping = at.call(8)
+
+      AspnetAuthTagger.new(noir_options).perform([items, stats, ping])
+
+      items.tags.map(&.description).should eq(["Protected by ASP.NET .RequireAuthorization()"])
+      stats.tags.map(&.description).should eq(["Protected by ASP.NET .RequireAuthorization()"])
+      ping.tags.should be_empty
+    ensure
+      FileUtils.rm_rf(tmpdir)
+    end
+  end
 end

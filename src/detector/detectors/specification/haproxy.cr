@@ -11,7 +11,7 @@ module Detector::Specification
     # takes a port, not a name.
     SECTION = /^[ \t]*(?:frontend|backend|listen)[ \t]+[A-Za-z_]/m
     # A path fetch in an ACL definition or an anonymous `{ ... }` ACL.
-    PATH_ACL = /(?:^[ \t]*acl[ \t]+\S+|\{)[ \t]+path(?:_beg|_end|_reg|_dir|_sub)?\b/m
+    PATH_ACL = /(?:^[ \t]*acl[ \t]+\S+|\{)[ \t]+(?:path|url)(?:_beg|_end|_reg|_dir|_sub)?\b/m
 
     # `haproxy.cfg`, `conf/lb.cfg`, `haproxy.conf`, `haproxy.cfg.j2`; not
     # `docs/haproxy.md`, whose examples are not a running config.
