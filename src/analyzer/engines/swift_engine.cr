@@ -2,6 +2,7 @@ require "../../models/analyzer"
 
 require "./file_scan_engine"
 require "../../miniparsers/swift_callee_extractor"
+require "../../utils/c_comments"
 
 module Analyzer::Swift
   abstract class SwiftEngine < FileScanEngine
@@ -43,6 +44,13 @@ module Analyzer::Swift
     # `File.exists?` / `File.directory?`.
     protected def scan_target_files : Array(String)
       get_files_by_extension(".swift")
+    end
+
+    # Source lines with comments blanked and strings kept, column-aligned
+    # with the raw lines. Read argument text from these: a comment inside
+    # `router.group(/* x */ "api")` must not swallow the literal.
+    protected def swift_code_lines(content : String) : Array(String)
+      Noir::CComments.strip(content, quotes: "\"").lines
     end
 
     # Route-path composition shared by the Vapor and Hummingbird
