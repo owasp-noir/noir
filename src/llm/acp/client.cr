@@ -30,7 +30,8 @@ module LLM
     class UnsupportedACPTargetError < Exception; end
 
     # Escape hatch for power users running their own ACP agent binary. Off by
-    # default so a poisoned `.noir.yml` can't silently spawn a process.
+    # default so an untrusted `$NOIR_HOME/config.yaml` (or a provider value
+    # pasted from elsewhere) can't silently spawn a process.
     def self.custom_command_allowed? : Bool
       ENV["NOIR_ACP_ALLOW_CUSTOM_COMMAND"]? == "1"
     end
