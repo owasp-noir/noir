@@ -69,6 +69,7 @@ noir scan . --ai-provider acp:codex
 | `--ai-native-tools-allowlist` | Provider allowlist for native tool-calling (comma-separated, default: `openai,xai,github,anthropic`) |
 | `--ai-max-token` | Max tokens for AI requests (optional) |
 | `--ai-max-requests` | Max AI HTTP requests per run, retries included (default: unlimited). Files left over are listed as coverage gaps |
+| `--ai-stream` | Stream endpoint-extraction replies over SSE (OpenAI-compatible providers), so a proxy with an idle timeout keeps the connection open while the model generates |
 | `--ai-scope` | Files sent to the AI analyzer: `all` (default) or `unmatched`, which skips files a static analyzer already found endpoints in. Does not apply to `--ai-agent` |
 | `--cache-disable` | Disable LLM response cache |
 | `--cache-clear` | Clear LLM cache before run |

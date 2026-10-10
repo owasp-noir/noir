@@ -508,6 +508,60 @@ describe "LLM.unfinished_reply" do
   end
 end
 
+private def sse(*events : String) : String
+  events.map { |event| "data: #{event}\n\n" }.join + "data: [DONE]\n\n"
+end
+
+describe "LLM::General with --ai-stream" do
+  it "asks for SSE with usage and folds the deltas back into one reply" do
+    provider = RejectingProvider.new do |_|
+      {200, sse(
+        %({"choices":[{"delta":{"role":"assistant","content":"{\\"endpoints\\""}}],"usage":null}),
+        %({"choices":[{"delta":{"content":":[]}"},"finish_reason":"stop"}],"usage":null}),
+        %({"choices":[],"usage":{"prompt_tokens":0,"completion_tokens":0}}),
+      )}
+    end
+    begin
+      LLM::General.stream = true
+      LLM::General.new(provider.url, "gpt-4o", "k").request_messages([{"role" => "user", "content" => "x"}]).should eq(%({"endpoints":[]}))
+      provider.bodies[0]["stream"].as_bool.should be_true
+      provider.bodies[0]["stream_options"]["include_usage"].as_bool.should be_true
+    ensure
+      LLM::General.stream = false
+      provider.close
+    end
+  end
+
+  it "sends no stream_options by default" do
+    provider = RejectingProvider.new { |_| {200, OK_REPLY} }
+    begin
+      LLM::General.new(provider.url, "gpt-4o", "k").request_messages([{"role" => "user", "content" => "x"}])
+      provider.bodies[0]["stream"].as_bool.should be_false
+      provider.bodies[0]["stream_options"]?.should be_nil
+    ensure
+      provider.close
+    end
+  end
+
+  it "reads a server that ignored stream, a truncation, a refusal and an error event" do
+    LLM::General.collect_stream(OK_REPLY)["choices"][0]["message"]["content"].as_s.should eq(%({"endpoints":[]}))
+    cut = LLM::General.collect_stream(sse(%({"choices":[{"delta":{"content":"{"},"finish_reason":"length"}]})))
+    cut["choices"][0]["finish_reason"].as_s.should eq("length")
+    refused = LLM::General.collect_stream(sse(%({"choices":[{"delta":{"refusal":"no"}}]})))
+    refused["choices"][0]["message"]["refusal"].as_s.should eq("no")
+    LLM::General.collect_stream(sse(%({"error":{"message":"overloaded"}})))["error"]["message"].as_s.should eq("overloaded")
+  end
+
+  it "ignores a null error field, flags a stream cut before its finish reason and rejects a non-SSE body" do
+    ok = LLM::General.collect_stream(sse(%({"error":null,"choices":[{"delta":{"content":"{}"},"finish_reason":"stop"}]})))
+    ok["choices"][0]["message"]["content"].as_s.should eq("{}")
+    cut = LLM::General.collect_stream(%(data: {"choices":[{"delta":{"content":"{\\"endpoints\\":["}}]}\n\n))
+    cut["choices"][0]["finish_reason"].as_s.should eq("incomplete")
+    LLM.unfinished_reply("incomplete", "{").to_s.should contain("stream ended before the reply finished")
+    expect_raises(JSON::ParseException) { LLM::General.collect_stream("<html>login</html>") }
+  end
+end
+
 # Zero usage: HttpTransport's token counters are process-wide.
 private ANTHROPIC_OK = %({"content":[{"type":"thinking","thinking":""},{"type":"text","text":"{\\"endpoints\\":[]}"}],"stop_reason":"end_turn","usage":{"input_tokens":0,"output_tokens":0}})
 

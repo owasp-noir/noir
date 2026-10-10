@@ -119,6 +119,7 @@ module Noir::CLI::ScanFlags
     Flag.new("--ai-scope", "Files sent to the AI analyzer (all|unmatched)", Arg::Value, hint: "scope"),
     Flag.new("--ai-max-token", "Max tokens per request", Arg::Value, hint: "n"),
     Flag.new("--ai-max-requests", "Max AI HTTP requests per run", Arg::Value, hint: "n"),
+    Flag.new("--ai-stream", "Stream AI replies (OpenAI-compatible)"),
     Flag.new("--diff-path", "Old code version for diff", Arg::File, hint: "path"),
     Flag.new("--diff-ref", "Git revision to diff against", Arg::Value, hint: "ref"),
     Flag.new("--fail-on", "Exit 3 on these diff findings", Arg::Value, hint: "list"),

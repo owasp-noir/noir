@@ -648,6 +648,9 @@ def run_options_parser
       validated = positive_int_or_die!("--ai-max-token", v)
       noir_options["ai_max_token"] = YAML::Any.new(validated)
     end
+    parser.on "--ai-stream", "Stream endpoint-extraction replies (OpenAI-compatible providers), so idle-timeout proxies keep the connection" do
+      noir_options["ai_stream"] = YAML::Any.new(true)
+    end
     parser.on "--ai-max-requests N", "Max AI HTTP requests per run, retries included (default: unlimited)" do |v|
       validated = positive_int_or_die!("--ai-max-requests", v)
       noir_options["ai_max_requests"] = YAML::Any.new(validated)

@@ -36,3 +36,4 @@ noir scan ./myapp --ai-provider=anthropic --ai-model=claude-sonnet-5-5
 - 샘플링이 고정된 모델(Claude Opus 4.7 이후)에는 `temperature`를 보내지 않습니다.
 - 응답 하나는 출력 토큰 16,000개로 제한됩니다. 이 한도에서 잘린 응답은 잘림으로 보고되며, 잘리기 전까지 완성된 엔드포인트는 유지됩니다.
 - `--ai-agent`는 Claude의 네이티브 도구 호출을 사용합니다 (`anthropic`은 기본 `--ai-native-tools-allowlist`에 포함).
+- `--ai-stream`은 이 제공업체에는 적용되지 않습니다.

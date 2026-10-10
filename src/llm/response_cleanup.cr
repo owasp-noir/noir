@@ -46,6 +46,8 @@ module LLM
     case reason
     when "length", "max_tokens"
       "AI reply was truncated by the model's output limit; endpoints after the cut are lost (a lower --ai-max-token sends smaller bundles)"
+    when "incomplete"
+      "AI reply stream ended before the reply finished; endpoints after the cut are lost"
     when "content_filter"
       "AI reply was blocked by the provider's content filter"
     else

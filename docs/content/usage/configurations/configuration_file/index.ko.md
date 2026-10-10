@@ -184,6 +184,7 @@ noir scan /path/to/my/project -f json -u https://api.example.com --exclude-codes
 | `ai_native_tools_allowlist` | CSV | `--ai-native-tools-allowlist` | 네이티브 툴 사용을 허용할 제공업체 |
 | `ai_max_token` | int | `--ai-max-token` | 요청당 최대 토큰 (`0` = 제공업체 기본값) |
 | `ai_max_requests` | int | `--ai-max-requests` | 실행당 최대 AI HTTP 요청 수, 재시도 포함 (`0` = 무제한) |
+| `ai_stream` | bool | `--ai-stream` | OpenAI 호환 제공업체의 엔드포인트 추출 응답을 SSE로 스트리밍 |
 | `ai_scope` | string | `--ai-scope` | AI 분석기로 보낼 파일 (`all` 또는 `unmatched`) |
 | `ai_temperature` | number | `--ai-temperature` | 샘플링 temperature, 0-2 (`""` = 0.3) |
 | `ai_seed` | number | `--ai-seed` | 지원하는 제공업체에 보내는 샘플링 seed (`""` = 없음) |

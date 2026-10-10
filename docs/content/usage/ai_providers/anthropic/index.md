@@ -36,3 +36,4 @@ noir scan ./myapp --ai-provider=anthropic --ai-model=claude-sonnet-5-5
 - Models with fixed sampling (Claude Opus 4.7 and later) are sent no `temperature`.
 - Each reply is capped at 16,000 output tokens. A reply cut at that cap is reported as truncated, and the complete endpoints before the cut are kept.
 - `--ai-agent` uses Claude's native tool calling (`anthropic` is in the default `--ai-native-tools-allowlist`).
+- `--ai-stream` does not apply to this provider.

@@ -69,6 +69,10 @@ module LLM
     @fatal_streak = Atomic(Int32).new(0)
     @answered = false
 
+    # `--ai-stream`: endpoint-extraction requests ask for SSE, so a proxy
+    # that drops idle connections sees bytes while the model generates.
+    class_property? stream = false
+
     def initialize(url : String, model : String, api_key : String?)
       @url = url
       @api = url.includes?("://") ? self.class.api_url(url) : PRESETS[url.downcase]? || url
@@ -264,14 +268,16 @@ module LLM
         "messages"        => messages,
         "temperature"     => LLM::Sampling.temperature || 0.3,
         "seed"            => LLM::Sampling.seed,
-        "stream"          => false,
+        "stream"          => General.stream?,
+        "stream_options"  => {"include_usage" => true},
         "response_format" => format == "json" ? {"type" => "json_object"} : JSON.parse(format),
       }
+      body.delete("stream_options") unless General.stream?
 
       raw = post(body, raise_overflow)
       return "" if raw.nil?
 
-      response_json = JSON.parse(raw)
+      response_json = General.stream? ? self.class.collect_stream(raw) : JSON.parse(raw)
       return "" if report_api_error(response_json)
 
       choice = response_json["choices"][0]
@@ -287,6 +293,38 @@ module LLM
     rescue e : Exception
       STDERR.puts "WARNING: AI API error (#{e.message})"
       ""
+    end
+
+    # A streamed reply folded back into the non-streamed shape the callers
+    # read. A body that is not SSE (a server that ignored `stream`, or an
+    # HTML page) is parsed as-is so it fails loudly, and an `error` event is
+    # returned as the whole reply. A stream that ends without a finish
+    # reason was cut off, and says so.
+    def self.collect_stream(raw : String) : JSON::Any
+      return JSON.parse(raw) if raw.lstrip.starts_with?('{') || !raw.includes?("data:")
+
+      content = String::Builder.new
+      refusal = String::Builder.new
+      finish = nil
+      usage = nil
+      raw.each_line do |line|
+        next unless line.starts_with?("data:")
+        data = line.lchop("data:").strip
+        next if data.empty? || data == "[DONE]"
+        chunk = JSON.parse(data)
+        return chunk unless chunk["error"]?.try(&.raw).nil?
+        usage = chunk["usage"]? unless chunk["usage"]?.try(&.raw).nil?
+        next unless choice = chunk["choices"]?.try(&.as_a?).try(&.first?)
+        delta = choice["delta"]?
+        delta.try(&.["content"]?).try(&.as_s?).try { |text| content << text }
+        delta.try(&.["refusal"]?).try(&.as_s?).try { |text| refusal << text }
+        finish = choice["finish_reason"]?.try(&.as_s?) || finish
+      end
+
+      JSON.parse({
+        "choices" => [{"message" => {"content" => content.to_s, "refusal" => refusal.to_s.presence}, "finish_reason" => finish || "incomplete"}],
+        "usage"   => usage,
+      }.to_json)
     end
 
     # Request next action with provider-native tool-calling.
