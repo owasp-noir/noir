@@ -103,6 +103,15 @@ async def get_body(request: Request):
     jj = request.json()
     return await jj["dummy"]
 
+
+@api.get("/raw_request")
+async def raw_request(request: Request):
+    q = request.query_params.get("q")
+    page = request.query_params["page"]
+    token = request.headers.get("x-token")
+    session = request.cookies.get("session")
+    return {"q": q, "page": page, "token": token, "session": session}
+
 @api.get(BASE_ROUTE + "/concat")
 def constant_concat_route():
     return {"ok": True}

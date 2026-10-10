@@ -26,6 +26,13 @@ expected_endpoints = [
   ]),
   Endpoint.new("/api/cookie_examples/", "GET", [Param.new("data", "", "cookie")]),
   Endpoint.new("/api/dummypath", "POST", [Param.new("dummy", "", "json")]),
+  # Starlette `Request` accessors read in the handler body.
+  Endpoint.new("/api/raw_request", "GET", [
+    Param.new("q", "", "query"),
+    Param.new("page", "", "query"),
+    Param.new("x-token", "", "header"),
+    Param.new("session", "", "cookie"),
+  ]),
   Endpoint.new("/api/constant/concat", "GET"),
   Endpoint.new("/api/keyword/fstring", "GET", [Param.new("q", "", "query")]),
   Endpoint.new("/api/keyword/items/{item_id}", "GET", [Param.new("item_id", "", "path")]),

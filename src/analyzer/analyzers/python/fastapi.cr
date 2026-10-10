@@ -53,6 +53,9 @@ module Analyzer::Python
 
     @fastapi_import_cache = Hash(::String, Hash(::String, Tuple(::String, Int32))).new
 
+    REQUEST_ATTR_TYPES = {"query_params" => "query", "headers" => "header", "cookies" => "cookie"}
+    @request_attr_regex_cache = Hash(::String, Regex).new
+
     def analyze
       include_router_map = Hash(::String, Hash(::String, Router)).new
       fastapi_app_instances = [] of Tuple(::String, ::String)
@@ -1368,6 +1371,15 @@ module Analyzer::Python
         end
 
         new_params = find_json_params(codelines, json_variable_names)
+
+        # Starlette `Request` accessors read in the handler body:
+        # `request.query_params.get("q")`, `request.headers["x-token"]`, ...
+        attr_re = @request_attr_regex_cache[param.name] ||=
+          /(?<![\w.])#{Regex.escape(param.name)}\.(query_params|headers|cookies)(?:\[\s*['"]([^'"]+)['"]\s*\]|\.get(?:list)?\(\s*['"]([^'"]+)['"])/
+        source.scan(attr_re) do |m|
+          found = Param.new((m[2]? || m[3]).to_s, "", REQUEST_ATTR_TYPES[m[1]])
+          new_params << found unless new_params.any? { |p| p.name == found.name && p.param_type == found.param_type }
+        end
       elsif param.type == "dict"
         json_variable_names << param.name
         new_params = find_json_params(codelines, json_variable_names)
