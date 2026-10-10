@@ -215,12 +215,10 @@ module Noir
 
     # A `<receiver>.<attribute>(...)` call: positional arguments (string
     # literals decoded, anything else as source text) and keywords.
-    # `literals` names the plain (non-f) string arguments: keyword names, and
-    # `#<index>` for positional ones.
+    # `literals` names the string arguments: keyword names, and `#<index>`
+    # for positional ones.
     record AttributeCall, attribute : String, args : Array(String), keywords : Hash(String, String),
       literals : Set(String) = Set(String).new
-
-    F_STRING_PREFIX = /\A[rRbBuU]*[fF]/
 
     # Every `<x>.<attribute>(...)` call whose attribute is in `attributes`
     # — mount calls such as `app.include_router(router, prefix="/v1")`.
@@ -248,9 +246,9 @@ module Noir
               next unless key && value
               key_name = Noir::TreeSitter.node_text(key, source)
               keywords[key_name] = argument_text(value, source)
-              literals << key_name if plain_string?(value, source)
+              literals << key_name if Noir::TreeSitter.node_type(value) == "string"
             elsif Noir::TreeSitter.node_type(arg) != "comment"
-              literals << "##{args.size}" if plain_string?(arg, source)
+              literals << "##{args.size}" if Noir::TreeSitter.node_type(arg) == "string"
               args << argument_text(arg, source)
             end
           end
@@ -258,10 +256,6 @@ module Noir
         end
       end
       calls
-    end
-
-    private def plain_string?(node : LibTreeSitter::TSNode, source : String) : Bool
-      Noir::TreeSitter.node_type(node) == "string" && !Noir::TreeSitter.node_text(node, source).matches?(F_STRING_PREFIX)
     end
 
     private def argument_text(node : LibTreeSitter::TSNode, source : String) : String

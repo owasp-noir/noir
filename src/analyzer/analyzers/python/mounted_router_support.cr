@@ -31,8 +31,13 @@ module Analyzer::Python
         target = call.keywords[target_keyword]? || call.args[0]?
         prefix, key = call.keywords.has_key?(prefix_keyword) ? {call.keywords[prefix_keyword], prefix_keyword} : {call.args[prefix_index]?, "##{prefix_index}"}
         # A non-literal prefix is a same-file `NAME = "..."` constant or
-        # unknown; its source text is never a URL.
-        prefix = call.literals.includes?(key) ? prefix : prefix.try { |name| string_constant(source, name) }
+        # unknown; its source text is never a URL. An f-string's `{NAME}`
+        # takes the constant's value when there is one.
+        prefix = if call.literals.includes?(key)
+                   prefix.try &.gsub(/\{(\w+)\}/) { |whole, m| string_constant(source, m[1]) || whole }
+                 else
+                   prefix.try { |name| string_constant(source, name) }
+                 end
         resolve_mount(target, prefix || "", path, imports).try { |mount| mounts << mount } if target
       end
       mounts
