@@ -66,9 +66,10 @@ noir scan . --ai-provider acp:codex
 | `--ai-no-optimize` | LLM 옵티마이저 단계를 건너뜀 |
 | `--ai-dry-run` | AI 분석기가 보낼 파일, 요청 수, 토큰 추정치만 출력하고 아무것도 전송하지 않음 (LLM 필터와 LLM 최적화도 건너뜀) |
 | `--ai-include-sensitive` | 기본으로 보내지 않는 자격 증명 파일(`.env*`, `*.pem`, `*.key`, `id_rsa*`, `.npmrc`, `*.tfvars` 등)도 전송 |
-| `--ai-native-tools-allowlist` | 네이티브 도구 호출 허용 제공업체 목록 (쉼표 구분, 기본값: `openai,xai,github`) |
+| `--ai-native-tools-allowlist` | 네이티브 도구 호출 허용 제공업체 목록 (쉼표 구분, 기본값: `openai,xai,github,anthropic`) |
 | `--ai-max-token` | AI 요청 최대 토큰 수 (선택 사항) |
 | `--ai-max-requests` | 실행당 최대 AI HTTP 요청 수, 재시도 포함 (기본값: 무제한). 남은 파일은 커버리지 공백으로 보고됩니다 |
+| `--ai-stream` | 엔드포인트 추출 응답을 SSE로 스트리밍 (OpenAI 호환 제공업체). 유휴 타임아웃이 있는 프록시에서도 모델이 생성하는 동안 연결이 유지됨 |
 | `--ai-scope` | AI 분석기로 보낼 파일: `all` (기본값) 또는 정적 분석기가 이미 엔드포인트를 찾은 파일을 건너뛰는 `unmatched`. `--ai-agent` 에는 적용되지 않음 |
 | `--cache-disable` | LLM 응답 캐시 비활성화 |
 | `--cache-clear` | 실행 전 LLM 캐시 삭제 |
@@ -84,6 +85,8 @@ Noir는 다음 AI 제공업체 프리셋을 지원합니다:
 | `github` (레거시) | `https://models.github.ai` |
 | `azure` | `https://models.inference.ai.azure.com` |
 | `openrouter` | `https://openrouter.ai/api/v1` |
+| `anthropic` | `https://api.anthropic.com` (네이티브 Messages API) |
+| `gemini` | `https://generativelanguage.googleapis.com/v1beta/openai` |
 | `vllm` | `http://localhost:8000` |
 | `ollama` | `http://localhost:11434` |
 | `lmstudio` | `http://localhost:1234` |

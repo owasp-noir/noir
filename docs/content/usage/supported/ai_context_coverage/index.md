@@ -59,6 +59,8 @@ The list is best-effort. Heuristic confidence is exposed on each entry so consum
 
 Every non-empty context also carries `"untrusted_fields": ["name", "path", "snippet"]`. Those fields come from the scanned repository as-is, so `snippet` includes comments and string literals written by whoever controls that code. When you pass this output to an LLM, treat those fields as untrusted data and fence them off from your instructions.
 
+The shape is published as a JSON Schema at [`schemas/ai-context.schema.json`](https://owasp-noir.github.io/noir/schemas/ai-context.schema.json), for validators and for prompts that need a stable contract. The untrusted fields carry `"x-noir-untrusted": true` there. Entry `kind` values are an open vocabulary: new ones are added without a schema change.
+
 ## Typical use cases
 
 - **AI SAST**: hand the endpoint inventory plus its AI context to an LLM so it can decide where vulnerabilities are reachable from the attack surface without re-discovering the route structure.

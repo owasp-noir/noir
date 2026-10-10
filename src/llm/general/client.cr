@@ -35,6 +35,9 @@ module LLM
       "azure"      => "https://models.inference.ai.azure.com/chat/completions",
       "github"     => "https://models.github.ai/inference/chat/completions",
       "openrouter" => "https://openrouter.ai/api/v1/chat/completions",
+      "gemini"     => "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+      # Served by `LLM::Anthropic`, which speaks the native Messages API.
+      "anthropic" => "https://api.anthropic.com/v1/messages",
     }
 
     @api_key : String?
@@ -66,13 +69,13 @@ module LLM
     @fatal_streak = Atomic(Int32).new(0)
     @answered = false
 
+    # `--ai-stream`: endpoint-extraction requests ask for SSE, so a proxy
+    # that drops idle connections sees bytes while the model generates.
+    class_property? stream = false
+
     def initialize(url : String, model : String, api_key : String?)
       @url = url
-      @api = if url.includes?("://")
-               self.class.chat_completions_url(url)
-             else
-               PRESETS[url.downcase]? || url
-             end
+      @api = url.includes?("://") ? self.class.api_url(url) : PRESETS[url.downcase]? || url
 
       @model = model
       @send_temperature = self.class.sampling_temperature?(model)
@@ -139,7 +142,12 @@ module LLM
     # A server that implements only `json_object`, or no structured output
     # at all, answers every `json_schema` request with a 400 naming it.
     def self.response_format_rejected?(rejection : HttpTransport::Rejection) : Bool
-      rejected_for?(rejection, /response_format|json_schema|json_object/i)
+      rejected_for?(rejection, /response_format|output_config|json_schema|json_object|structured output/i)
+    end
+
+    # The body field that carries the structured-output request.
+    private def format_key : String
+      "response_format"
     end
 
     private def self.rejected_for?(rejection : HttpTransport::Rejection, pattern : Regex) : Bool
@@ -195,10 +203,11 @@ module LLM
     private def post(body : Hash, raise_overflow : Bool = false) : String?
       return if @fatal_streak.get >= MAX_FATAL_STREAK
 
-      if body.has_key?("response_format")
+      key = format_key
+      if body.has_key?(key)
         case @response_format
-        when .json_object? then body["response_format"] = JSON_OBJECT_FORMAT
-        when .omitted?     then body.delete("response_format")
+        when .json_object? then body[key] = JSON_OBJECT_FORMAT
+        when .omitted?     then body.delete(key)
         end
       end
 
@@ -220,13 +229,14 @@ module LLM
         return post(body, raise_overflow)
       end
 
-      if (sent = body["response_format"]?) && self.class.response_format_rejected?(result)
+      if (sent = body[key]?) && self.class.response_format_rejected?(result)
         # Stepped from what was sent, not from the current setting: requests
         # in flight concurrently all come back rejected at the old level.
-        step = sent.to_json.includes?("json_schema") ? ResponseFormat::JsonObject : ResponseFormat::Omitted
+        # Only `response_format` has a `json_object` step to land on.
+        step = key == "response_format" && sent.to_json.includes?("json_schema") ? ResponseFormat::JsonObject : ResponseFormat::Omitted
         if step > @response_format
           @response_format = step
-          STDERR.puts "WARNING: AI provider rejected the response_format; retrying with #{step.json_object? ? %("json_object") : "none"} for the rest of the run"
+          STDERR.puts "WARNING: AI provider rejected the #{key}; retrying with #{step.json_object? ? %("json_object") : "none"} for the rest of the run"
         end
         return post(body, raise_overflow)
       end
@@ -258,14 +268,16 @@ module LLM
         "messages"        => messages,
         "temperature"     => LLM::Sampling.temperature || 0.3,
         "seed"            => LLM::Sampling.seed,
-        "stream"          => false,
+        "stream"          => General.stream?,
+        "stream_options"  => {"include_usage" => true},
         "response_format" => format == "json" ? {"type" => "json_object"} : JSON.parse(format),
       }
+      body.delete("stream_options") unless General.stream?
 
       raw = post(body, raise_overflow)
       return "" if raw.nil?
 
-      response_json = JSON.parse(raw)
+      response_json = General.stream? ? self.class.collect_stream(raw) : JSON.parse(raw)
       return "" if report_api_error(response_json)
 
       choice = response_json["choices"][0]
@@ -281,6 +293,38 @@ module LLM
     rescue e : Exception
       STDERR.puts "WARNING: AI API error (#{e.message})"
       ""
+    end
+
+    # A streamed reply folded back into the non-streamed shape the callers
+    # read. A body that is not SSE (a server that ignored `stream`, or an
+    # HTML page) is parsed as-is so it fails loudly, and an `error` event is
+    # returned as the whole reply. A stream that ends without a finish
+    # reason was cut off, and says so.
+    def self.collect_stream(raw : String) : JSON::Any
+      return JSON.parse(raw) if raw.lstrip.starts_with?('{') || !raw.includes?("data:")
+
+      content = String::Builder.new
+      refusal = String::Builder.new
+      finish = nil
+      usage = nil
+      raw.each_line do |line|
+        next unless line.starts_with?("data:")
+        data = line.lchop("data:").strip
+        next if data.empty? || data == "[DONE]"
+        chunk = JSON.parse(data)
+        return chunk unless chunk["error"]?.try(&.raw).nil?
+        usage = chunk["usage"]? unless chunk["usage"]?.try(&.raw).nil?
+        next unless choice = chunk["choices"]?.try(&.as_a?).try(&.first?)
+        delta = choice["delta"]?
+        delta.try(&.["content"]?).try(&.as_s?).try { |text| content << text }
+        delta.try(&.["refusal"]?).try(&.as_s?).try { |text| refusal << text }
+        finish = choice["finish_reason"]?.try(&.as_s?) || finish
+      end
+
+      JSON.parse({
+        "choices" => [{"message" => {"content" => content.to_s, "refusal" => refusal.to_s.presence}, "finish_reason" => finish || "incomplete"}],
+        "usage"   => usage,
+      }.to_json)
     end
 
     # Request next action with provider-native tool-calling.
@@ -365,6 +409,12 @@ module LLM
       JSON.parse(text)
     rescue Exception
       JSON.parse(%({"raw":#{raw.to_json}}))
+    end
+
+    # The request URL for a provider given as a URL; `LLM::Anthropic`
+    # resolves it to the Messages endpoint instead.
+    def self.api_url(url : String) : String
+      chat_completions_url(url)
     end
 
     # Decided on the URI path, not the whole string: an Azure-style

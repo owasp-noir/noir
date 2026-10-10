@@ -2,11 +2,13 @@
 #
 # Supports:
 # - LLM::General (OpenAI-compatible chat APIs)
+# - LLM::Anthropic (Anthropic Messages API, through GeneralAdapter)
 # - LLM::Ollama (Ollama native API)
 # - LLM::ACPClient (ACP agents; includes Adapter directly)
 
 require "uri"
 require "./general/client"
+require "./anthropic/client"
 require "./ollama/ollama"
 require "./acp/client"
 require "./native_tool_calling"
@@ -191,6 +193,21 @@ module LLM
       false
     end
 
+    # The `anthropic` preset, an Anthropic host, or any URL already naming
+    # the Messages endpoint. An Anthropic URL that names
+    # `/chat/completions` asked for the OpenAI-compatible layer and gets it.
+    def self.anthropic_native?(provider : String) : Bool
+      prov = provider.strip.downcase
+      return true if prov == "anthropic"
+      return false unless prov.includes?("://")
+
+      uri = URI.parse(prov)
+      path = uri.path.chomp("/")
+      path.ends_with?("/messages") || (uri.host.to_s.ends_with?("anthropic.com") && !path.ends_with?("/chat/completions"))
+    rescue URI::Error
+      false
+    end
+
     # The native API lives at the server root. The CLI's own help prints
     # `ollama -> http://localhost:11434/v1`, and that `/v1` is the
     # OpenAI-compatible mount: appending `/api/generate` to it yields a 404,
@@ -217,7 +234,8 @@ module LLM
         OllamaAdapter.new(LLM::Ollama.new(ollama_base_url(provider), model, context_tokens, api_key))
       else
         native_tool_calling = native_tool_calling_enabled_for_provider?(provider, native_tool_calling_allowlist)
-        GeneralAdapter.new(LLM::General.new(provider, model, api_key), native_tool_calling)
+        client = anthropic_native?(prov) ? LLM::Anthropic.new(provider, model, api_key) : LLM::General.new(provider, model, api_key)
+        GeneralAdapter.new(client, native_tool_calling)
       end
     end
   end

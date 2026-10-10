@@ -208,7 +208,7 @@ describe Noir::CliValidation do
     end
 
     it "accepts presets in any case and absolute http(s) URLs" do
-      ["OpenAI", "openrouter", "http://localhost:8000/v1", "HTTPS://gw.example/openai/v1"].each do |provider|
+      ["OpenAI", "openrouter", "anthropic", "Gemini", "http://localhost:8000/v1", "HTTPS://gw.example/openai/v1"].each do |provider|
         options = create_test_options
         options["ai_provider"] = YAML::Any.new(provider)
         options["ai_model"] = YAML::Any.new("m")
@@ -217,7 +217,7 @@ describe Noir::CliValidation do
     end
 
     it "rejects a provider that is neither a preset nor an http(s) URL" do
-      ["anthropic", "gemini", "openai.com", "ftp://host/v1", "localhost:8000"].each do |provider|
+      ["claude", "google", "openai.com", "ftp://host/v1", "localhost:8000"].each do |provider|
         options = create_test_options
         options["ai_provider"] = YAML::Any.new(provider)
         options["ai_model"] = YAML::Any.new("m")

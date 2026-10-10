@@ -350,6 +350,7 @@ class ConfigInitializer
       "ai_scope"                     => YAML::Any.new("all"),
       "ai_max_token"                 => YAML::Any.new(0),
       "ai_max_requests"              => YAML::Any.new(0),
+      "ai_stream"                    => YAML::Any.new(false),
       "ai_temperature"               => YAML::Any.new(""),
       "ai_seed"                      => YAML::Any.new(""),
       "cache_disable"                => YAML::Any.new(false),
@@ -552,6 +553,9 @@ class ConfigInitializer
 
       # The maximum number of AI HTTP requests per run, retries included (0 = unlimited)
       ai_max_requests: #{options["ai_max_requests"]}
+
+      # Stream endpoint-extraction replies from OpenAI-compatible providers (SSE)
+      ai_stream: #{options["ai_stream"]}
 
       # Sampling temperature for AI requests, 0-2 ("" = 0.3; models with fixed sampling ignore it)
       ai_temperature: "#{options["ai_temperature"]}"

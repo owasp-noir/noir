@@ -15,6 +15,8 @@ Noir의 LLM 분석은 클라우드 API, 오프라인·프라이버시가 필요�
 | [OpenAI](openai/) | 클라우드 | 필요 | 필요 | 높은 정확도, 최신 모델 |
 | [xAI](xai/) | 클라우드 | 필요 | 필요 | Grok 모델 |
 | [Azure AI](azure/) | 클라우드 | 필요 | 필요 | 기업 환경, 컴플라이언스 |
+| [Anthropic](anthropic/) | 클라우드 | 필요 | 필요 | Claude 모델, 네이티브 API |
+| [Google Gemini](gemini/) | 클라우드 | 필요 | 필요 | Gemini 모델 |
 | [OpenRouter](openrouter/) | 클라우드 | 필요 | 필요 | 하나의 API로 여러 모델 접근 |
 | [Ollama](ollama/) | 로컬 | 불필요 | 불필요 | 개인정보 보호, 오프라인, 무료 |
 | [vLLM](vllm/) | 로컬 | 불필요 | 불필요 | 고성능 로컬 추론 |
@@ -27,6 +29,8 @@ Noir의 LLM 분석은 클라우드 API, 오프라인·프라이버시가 필요�
     *   [OpenAI](openai/)
     *   [xAI](xai/)
     *   [Azure AI](azure/)
+    *   [Anthropic](anthropic/)
+    *   [Google Gemini](gemini/)
     *   [OpenRouter](openrouter/)
 *   **로컬 모델 제공업체**:
     *   [Ollama](ollama/)

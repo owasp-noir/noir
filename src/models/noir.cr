@@ -88,6 +88,7 @@ class NoirRunner
     # written to Crystal's global `Log`, whose backend is STDOUT.
     LLM::Cache.logger = @logger
     LLM::HttpTransport.max_requests = @options["ai_max_requests"]?.try(&.as_i?) || 0
+    LLM::General.stream = any_to_bool(@options["ai_stream"]?)
     # `--ai-temperature` / `--ai-seed`: "" (the default) means unset, and
     # CliValidation has already rejected anything that does not parse.
     LLM::Sampling.temperature = @options["ai_temperature"]?.to_s.strip.to_f?

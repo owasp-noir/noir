@@ -66,9 +66,10 @@ noir scan . --ai-provider acp:codex
 | `--ai-no-optimize` | Skip the LLM optimizer pass |
 | `--ai-dry-run` | List the files, request count and token estimate the AI analyzer would send, and send nothing (no LLM filter, no LLM optimizer) |
 | `--ai-include-sensitive` | Also send credentials files (`.env*`, `*.pem`, `*.key`, `id_rsa*`, `.npmrc`, `*.tfvars`, ...), which are withheld by default |
-| `--ai-native-tools-allowlist` | Provider allowlist for native tool-calling (comma-separated, default: `openai,xai,github`) |
+| `--ai-native-tools-allowlist` | Provider allowlist for native tool-calling (comma-separated, default: `openai,xai,github,anthropic`) |
 | `--ai-max-token` | Max tokens for AI requests (optional) |
 | `--ai-max-requests` | Max AI HTTP requests per run, retries included (default: unlimited). Files left over are listed as coverage gaps |
+| `--ai-stream` | Stream endpoint-extraction replies over SSE (OpenAI-compatible providers), so a proxy with an idle timeout keeps the connection open while the model generates |
 | `--ai-scope` | Files sent to the AI analyzer: `all` (default) or `unmatched`, which skips files a static analyzer already found endpoints in. Does not apply to `--ai-agent` |
 | `--cache-disable` | Disable LLM response cache |
 | `--cache-clear` | Clear LLM cache before run |
@@ -84,6 +85,8 @@ Noir has built-in presets for several popular AI providers:
 | `github` (legacy) | `https://models.github.ai` |
 | `azure` | `https://models.inference.ai.azure.com` |
 | `openrouter` | `https://openrouter.ai/api/v1` |
+| `anthropic` | `https://api.anthropic.com` (native Messages API) |
+| `gemini` | `https://generativelanguage.googleapis.com/v1beta/openai` |
 | `vllm` | `http://localhost:8000` |
 | `ollama` | `http://localhost:11434` |
 | `lmstudio` | `http://localhost:1234` |

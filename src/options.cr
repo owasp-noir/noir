@@ -584,6 +584,8 @@ def run_options_parser
         github     → https://models.github.ai/inference
         azure      → https://models.inference.ai.azure.com
         openrouter → https://openrouter.ai/api/v1
+        anthropic  → https://api.anthropic.com/v1 (native Messages API)
+        gemini     → https://generativelanguage.googleapis.com/v1beta/openai
         ollama     → http://localhost:11434/v1
         lmstudio   → http://localhost:1234/v1
         vllm       → http://localhost:8000/v1
@@ -645,6 +647,9 @@ def run_options_parser
     parser.on "--ai-max-token N", "Max tokens per request" do |v|
       validated = positive_int_or_die!("--ai-max-token", v)
       noir_options["ai_max_token"] = YAML::Any.new(validated)
+    end
+    parser.on "--ai-stream", "Stream endpoint-extraction replies (OpenAI-compatible providers), so idle-timeout proxies keep the connection" do
+      noir_options["ai_stream"] = YAML::Any.new(true)
     end
     parser.on "--ai-max-requests N", "Max AI HTTP requests per run, retries included (default: unlimited)" do |v|
       validated = positive_int_or_die!("--ai-max-requests", v)

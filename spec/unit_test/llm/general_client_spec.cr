@@ -266,11 +266,13 @@ end
 # body and lets the spec decide the reply.
 private class RejectingProvider
   getter bodies = [] of JSON::Any
+  getter headers = [] of HTTP::Headers
 
   def initialize(&@reply : JSON::Any -> {Int32, String})
     @server = HTTP::Server.new do |ctx|
       body = JSON.parse(ctx.request.body.try(&.gets_to_end) || "{}")
       @bodies << body
+      @headers << ctx.request.headers
       status, text = @reply.call(body)
       ctx.response.status_code = status
       ctx.response.print text
@@ -494,6 +496,7 @@ end
 describe "LLM.unfinished_reply" do
   it "names a truncation, a content filter and an empty reply" do
     LLM.unfinished_reply("length", %({"endpoints":[)).to_s.should contain("truncated by the model's output limit")
+    LLM.unfinished_reply("max_tokens", %({"endpoints":[)).to_s.should contain("truncated by the model's output limit")
     LLM.unfinished_reply("content_filter", "").to_s.should contain("content filter")
     LLM.unfinished_reply("stop", " ").should eq("AI provider returned an empty reply (finish reason: stop)")
     LLM.unfinished_reply(nil, "").should eq("AI provider returned an empty reply")
@@ -502,5 +505,170 @@ describe "LLM.unfinished_reply" do
   it "says nothing about a normal reply" do
     LLM.unfinished_reply("stop", %({"endpoints":[]})).should be_nil
     LLM.unfinished_reply(nil, %({"endpoints":[]})).should be_nil
+  end
+end
+
+private def sse(*events : String) : String
+  events.map { |event| "data: #{event}\n\n" }.join + "data: [DONE]\n\n"
+end
+
+describe "LLM::General with --ai-stream" do
+  it "asks for SSE with usage and folds the deltas back into one reply" do
+    provider = RejectingProvider.new do |_|
+      {200, sse(
+        %({"choices":[{"delta":{"role":"assistant","content":"{\\"endpoints\\""}}],"usage":null}),
+        %({"choices":[{"delta":{"content":":[]}"},"finish_reason":"stop"}],"usage":null}),
+        %({"choices":[],"usage":{"prompt_tokens":0,"completion_tokens":0}}),
+      )}
+    end
+    begin
+      LLM::General.stream = true
+      LLM::General.new(provider.url, "gpt-4o", "k").request_messages([{"role" => "user", "content" => "x"}]).should eq(%({"endpoints":[]}))
+      provider.bodies[0]["stream"].as_bool.should be_true
+      provider.bodies[0]["stream_options"]["include_usage"].as_bool.should be_true
+    ensure
+      LLM::General.stream = false
+      provider.close
+    end
+  end
+
+  it "sends no stream_options by default" do
+    provider = RejectingProvider.new { |_| {200, OK_REPLY} }
+    begin
+      LLM::General.new(provider.url, "gpt-4o", "k").request_messages([{"role" => "user", "content" => "x"}])
+      provider.bodies[0]["stream"].as_bool.should be_false
+      provider.bodies[0]["stream_options"]?.should be_nil
+    ensure
+      provider.close
+    end
+  end
+
+  it "reads a server that ignored stream, a truncation, a refusal and an error event" do
+    LLM::General.collect_stream(OK_REPLY)["choices"][0]["message"]["content"].as_s.should eq(%({"endpoints":[]}))
+    cut = LLM::General.collect_stream(sse(%({"choices":[{"delta":{"content":"{"},"finish_reason":"length"}]})))
+    cut["choices"][0]["finish_reason"].as_s.should eq("length")
+    refused = LLM::General.collect_stream(sse(%({"choices":[{"delta":{"refusal":"no"}}]})))
+    refused["choices"][0]["message"]["refusal"].as_s.should eq("no")
+    LLM::General.collect_stream(sse(%({"error":{"message":"overloaded"}})))["error"]["message"].as_s.should eq("overloaded")
+  end
+
+  it "ignores a null error field, flags a stream cut before its finish reason and rejects a non-SSE body" do
+    ok = LLM::General.collect_stream(sse(%({"error":null,"choices":[{"delta":{"content":"{}"},"finish_reason":"stop"}]})))
+    ok["choices"][0]["message"]["content"].as_s.should eq("{}")
+    cut = LLM::General.collect_stream(%(data: {"choices":[{"delta":{"content":"{\\"endpoints\\":["}}]}\n\n))
+    cut["choices"][0]["finish_reason"].as_s.should eq("incomplete")
+    LLM.unfinished_reply("incomplete", "{").to_s.should contain("stream ended before the reply finished")
+    expect_raises(JSON::ParseException) { LLM::General.collect_stream("<html>login</html>") }
+  end
+end
+
+# Zero usage: HttpTransport's token counters are process-wide.
+private ANTHROPIC_OK = %({"content":[{"type":"thinking","thinking":""},{"type":"text","text":"{\\"endpoints\\":[]}"}],"stop_reason":"end_turn","usage":{"input_tokens":0,"output_tokens":0}})
+
+describe LLM::Anthropic do
+  it "resolves the preset and base URLs to the Messages endpoint" do
+    LLM::Anthropic.new("anthropic", "claude-opus-5-5", "k").__test_api.should eq("https://api.anthropic.com/v1/messages")
+    LLM::Anthropic.new("https://api.anthropic.com", "m", "k").__test_api.should eq("https://api.anthropic.com/v1/messages")
+    LLM::Anthropic.new("https://gw.example/anthropic/v1/", "m", "k").__test_api.should eq("https://gw.example/anthropic/v1/messages")
+    LLM::Anthropic.new("https://gw.example/v1/messages", "m", "k").__test_api.should eq("https://gw.example/v1/messages")
+  end
+
+  it "authenticates with x-api-key, falling back to ANTHROPIC_API_KEY" do
+    headers = LLM::Anthropic.new("anthropic", "m", "sk-ant").__test_headers
+    headers["x-api-key"].should eq("sk-ant")
+    headers["anthropic-version"].should eq(LLM::Anthropic::API_VERSION)
+    headers["Authorization"]?.should be_nil
+    with_ai_key_env(nil) do
+      prev = ENV["ANTHROPIC_API_KEY"]?
+      ENV["ANTHROPIC_API_KEY"] = "from-env"
+      begin
+        LLM::Anthropic.new("anthropic", "m", "").__test_api_key.should eq("from-env")
+      ensure
+        prev ? (ENV["ANTHROPIC_API_KEY"] = prev) : ENV.delete("ANTHROPIC_API_KEY")
+      end
+    end
+  end
+
+  it "sends system on top, the schema as output_config and reads the text blocks" do
+    provider = RejectingProvider.new { |_| {200, ANTHROPIC_OK} }
+    begin
+      client = LLM::Anthropic.new(provider.url, "claude-opus-5-5", "k")
+      messages = [{"role" => "system", "content" => "sys"}, {"role" => "user", "content" => "x"}]
+      client.request_messages(messages, SCHEMA_FORMAT).should eq(%({"endpoints":[]}))
+      body = provider.bodies[0]
+      body["system"].as_s.should eq("sys")
+      body["messages"].as_a.map(&.["role"].as_s).should eq(["user"])
+      body["max_tokens"].as_i.should eq(LLM::Anthropic::MAX_OUTPUT_TOKENS)
+      body["output_config"]["format"].should eq(JSON.parse(%({"type":"json_schema","schema":{"type":"object"}})))
+      body["response_format"]?.should be_nil
+      body["temperature"]?.should be_nil
+      provider.headers[0]["x-api-key"].should eq("k")
+    ensure
+      provider.close
+    end
+  end
+
+  it "drops a rejected output_config for the rest of the run" do
+    provider = RejectingProvider.new do |body|
+      if body["output_config"]?
+        {400, %({"type":"error","error":{"type":"invalid_request_error","message":"output_config.format.schema: For 'object' type, 'additionalProperties' must be explicitly set to false"}})}
+      else
+        {200, ANTHROPIC_OK}
+      end
+    end
+    begin
+      client = LLM::Anthropic.new(provider.url, "claude-opus-5-5", "k")
+      2.times { client.request_messages([{"role" => "user", "content" => "x"}], SCHEMA_FORMAT).should eq(%({"endpoints":[]})) }
+      provider.bodies.map(&.["output_config"]?.nil?).should eq([false, true, true])
+    ensure
+      provider.close
+    end
+  end
+
+  it "caps max_tokens at the output limit of Claude 3 and 3.5" do
+    LLM::Anthropic.max_output_tokens("claude-3-haiku-20240307").should eq(4_096)
+    LLM::Anthropic.max_output_tokens("claude-3-5-haiku-20241022").should eq(8_192)
+    LLM::Anthropic.max_output_tokens("claude-3-7-sonnet-20250219").should eq(LLM::Anthropic::MAX_OUTPUT_TOKENS)
+    LLM::Anthropic.max_output_tokens("claude-opus-5-5").should eq(LLM::Anthropic::MAX_OUTPUT_TOKENS)
+  end
+
+  it "returns nothing for a refusal and keeps a truncated reply" do
+    LLM::Anthropic.reply_text(JSON.parse(%({"content":[],"stop_reason":"refusal","stop_details":{"type":"refusal","explanation":"no"}}))).should eq("")
+    cut = JSON.parse(%({"content":[{"type":"text","text":"{\\"endpoints\\":["}],"stop_reason":"max_tokens"}))
+    LLM::Anthropic.reply_text(cut).should eq(%({"endpoints":[))
+  end
+
+  it "raises ContextOverflow for a bundle over the window" do
+    provider = RejectingProvider.new do |_|
+      {400, %({"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 250000 tokens > 200000 maximum"}})}
+    end
+    begin
+      client = LLM::Anthropic.new(provider.url, "claude-opus-5-5", "k")
+      ex = expect_raises(LLM::ContextOverflow) { LLM::GeneralAdapter.new(client).request_bundle("s", "u", "json") }
+      ex.limit.should eq(200000)
+    ensure
+      provider.close
+    end
+  end
+
+  it "converts OpenAI tools and reads a tool_use block as the agent action" do
+    tools = LLM::Anthropic.tools(%([{"type":"function","function":{"name":"read_file","description":"d","parameters":{"type":"object"}}}]))
+    tools.should eq(JSON.parse(%([{"name":"read_file","description":"d","input_schema":{"type":"object"}}])))
+    reply = JSON.parse(%({"content":[{"type":"text","text":"reading"},{"type":"tool_use","id":"t","name":"read_file","input":{"path":"a.rb"}}],"stop_reason":"tool_use"}))
+    JSON.parse(LLM::Anthropic.extract_agent_action(reply)).should eq(JSON.parse(%({"action":"read_file","args":{"path":"a.rb"}})))
+  end
+end
+
+describe "LLM::AdapterFactory.anthropic_native?" do
+  it "takes the preset, Anthropic hosts and /messages URLs, not the compatibility path" do
+    {
+      "anthropic"                                     => true,
+      "https://api.anthropic.com"                     => true,
+      "https://gw.example/v1/messages"                => true,
+      "https://api.anthropic.com/v1/chat/completions" => false,
+      "https://gw.example/anthropic/v1"               => false,
+      "openai"                                        => false,
+    }.each { |provider, native| LLM::AdapterFactory.anthropic_native?(provider).should eq(native) }
+    LLM::AdapterFactory.for("anthropic", "claude-opus-5-5", "k").as(LLM::GeneralAdapter).client.should be_a(LLM::Anthropic)
   end
 end

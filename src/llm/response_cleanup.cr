@@ -38,13 +38,16 @@ module LLM
   end
 
   # Why a reply that did not end normally is unusable, or nil. `reason` is
-  # OpenAI's `finish_reason` or Ollama's `done_reason`; both say `length`
-  # for a reply cut off by the output limit. An empty reply is otherwise
-  # silent: the caller would read it as "no endpoints".
+  # OpenAI's `finish_reason`, Ollama's `done_reason` or Anthropic's
+  # `stop_reason` (`length` / `max_tokens` for a reply cut off by the output
+  # limit). An empty reply is otherwise silent: the caller would read it as
+  # "no endpoints".
   def self.unfinished_reply(reason : String?, content : String) : String?
     case reason
-    when "length"
+    when "length", "max_tokens"
       "AI reply was truncated by the model's output limit; endpoints after the cut are lost (a lower --ai-max-token sends smaller bundles)"
+    when "incomplete"
+      "AI reply stream ended before the reply finished; endpoints after the cut are lost"
     when "content_filter"
       "AI reply was blocked by the provider's content filter"
     else
