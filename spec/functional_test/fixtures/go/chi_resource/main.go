@@ -17,7 +17,7 @@ func main() {
 	r.HandleFunc("/everything", everything)
 
 	// Mount struct value-method routers (chi's REST "resource" pattern).
-	r.Mount("/todos", todosResource{}.Routes())
+	r.Mount(/* resource */ "/todos", todosResource{}.Routes())
 	r.Mount("/users", usersResource{}.Routes())
 
 	http.ListenAndServe(":3333", r)

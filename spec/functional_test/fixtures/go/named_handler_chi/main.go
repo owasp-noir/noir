@@ -19,7 +19,7 @@ func main() {
 }
 
 func listA(w http.ResponseWriter, r *http.Request) {
-	_ = r.URL.Query().Get("qa")
+	_ = r.URL.Query().Get(/* page */ "qa")
 }
 
 func listB(w http.ResponseWriter, r *http.Request) {

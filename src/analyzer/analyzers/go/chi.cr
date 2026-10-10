@@ -67,7 +67,7 @@ module Analyzer::Go
         # IMPORT_MARKER gate fires later, in the per-file route
         # extraction loop, where the savings actually matter.
         file_contents_cache[scan_path] = content
-        file_lines_cache[scan_path] = content.lines
+        file_lines_cache[scan_path] = GoEngine.strip_comments(content).lines
 
         # Mount targets are resolved after this loop (see below): the
         # target of `r.Mount("/api/v1", apiv1.Routes())` may live in a
@@ -146,9 +146,8 @@ module Analyzer::Go
       # nothing: its routes then keep surfacing through the free pass,
       # unprefixed, exactly as before.
       mount_files.each do |scan_path|
-        content = file_contents_cache[scan_path]? || next
         dir = File.dirname(scan_path)
-        content.each_line do |scan_line|
+        (file_lines_cache[scan_path]? || next).each do |scan_line|
           next unless scan_line.includes?(".Mount(")
           target = parse_mount_target(scan_line, string_values_for(dir))
           next unless target
@@ -170,7 +169,7 @@ module Analyzer::Go
         # verb calls cannot surface as chi routes.
         chi_file = content_matches?(content, IMPORT_MARKER_RE)
         next unless chi_file || expandable_mount_files.includes?(path)
-        lines = file_lines_cache[path]? || content.lines
+        lines = file_lines_cache[path]? || GoEngine.strip_comments(content).lines
 
         dir = File.dirname(path)
         mounted_functions = package_mounted_functions.fetch(dir, Set(String).new)
@@ -563,7 +562,7 @@ module Analyzer::Go
               end
             end
 
-            lines = file_lines_cache[search_path]? || content.lines
+            lines = file_lines_cache[search_path]? || GoEngine.strip_comments(content).lines
             first_row = Noir::TreeSitter.node_start_row(body)
             last_row = Noir::TreeSitter.node_end_row(body)
             row = first_row
@@ -585,7 +584,7 @@ module Analyzer::Go
         end
         next unless found
 
-        lines = file_lines_cache[search_path]? || content.lines
+        lines = file_lines_cache[search_path]? || GoEngine.strip_comments(content).lines
         attach_router_function_params(endpoints, lines)
         endpoints.concat(nested)
         break
