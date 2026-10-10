@@ -1,5 +1,6 @@
 require "../../engines/javascript_engine"
 require "../../../miniparsers/js_object_config_extractor"
+require "../../../miniparsers/js_route_extractor"
 
 module Analyzer::Javascript
   # Convex HTTP actions: `convex/http.ts` builds an `httpRouter()` and
@@ -25,6 +26,7 @@ module Analyzer::Javascript
         content = read_file_content(path)
         next unless content.includes?("convex/server") && content.matches?(ROUTER_IMPORT)
         next unless owned_by_js_package?(path, owners)
+        next if Noir::JSRouteExtractor.test_stub_only?(path, content, false)
 
         Noir::JSObjectConfigExtractor.extract(content, ["method", "handler"]).compact_map do |route|
           method = route.string("method").try(&.upcase)

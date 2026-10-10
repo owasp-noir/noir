@@ -1,5 +1,6 @@
 require "../../engines/javascript_engine"
 require "../../../miniparsers/js_object_config_extractor"
+require "../../../miniparsers/js_route_extractor"
 
 module Analyzer::Javascript
   # Moleculer services reach HTTP only through a `moleculer-web` gateway
@@ -35,6 +36,7 @@ module Analyzer::Javascript
       services = ordered_scan_files(get_files_by_extensions(DEFAULT_EXTENSIONS)) do |path|
         content = read_file_content(path)
         next unless content.matches?(SERVICE_HINT) && owned_by_js_package?(path, owners)
+        next if Noir::JSRouteExtractor.test_stub_only?(path, content, false)
         # The gateway mixin is what serves `settings.routes`; a look-alike
         # object elsewhere is not routed.
         gateway = content.matches?(GATEWAY_IMPORT)
