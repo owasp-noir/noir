@@ -277,4 +277,40 @@ describe "PhpAuthTagger (expanded targets)" do
       FileUtils.rm_rf(tmpdir)
     end
   end
+
+  it "reads auth only inside the middleware value, not later group keys" do
+    tmpdir = File.tempname("php_group_guest")
+    Dir.mkdir_p(tmpdir)
+    routes = File.join(tmpdir, "web.php")
+    File.write(routes, <<-PHP)
+      <?php
+      Route::group(['middleware' => 'guest', 'prefix' => 'auth'], function () {
+          Route::get('/login', 'LoginController@show');
+      });
+
+      Route::middleware(['guest'])->prefix('auth')->group(function () {
+          Route::get('/register', 'RegisterController@show');
+      });
+
+      Route::middleware(['guest'])->prefix('auth')->get('/forgot', 'ForgotController@show');
+
+      Route::group(['middleware' => ['web', 'auth'], 'prefix' => 'admin'], function () {
+          Route::get('/admin', 'AdminController@index');
+      });
+      PHP
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(line : Int32) { Endpoint.new("/#{line}", "GET", [] of Param, Details.new(PathInfo.new(routes, line))) }
+      endpoints = [3, 7, 10, 13].map { |line| at.call(line) }
+
+      PhpAuthTagger.new(noir_options).perform(endpoints)
+
+      endpoints[0..2].each(&.tags.should(be_empty))
+      endpoints[3].tags.map(&.name).should eq(["auth"])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+    end
+  end
 end

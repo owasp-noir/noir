@@ -17,7 +17,9 @@ class PhpAuthTagger < FrameworkTagger
     {/(?:->|::)middleware\s*\(\s*['"]auth:sanctum['"]/, "Laravel Sanctum auth"},
     {/(?:->|::)middleware\s*\(\s*['"]auth:web['"]/, "Laravel web auth"},
     {/(?:->|::)middleware\s*\(\s*['"]verified['"]/, "Laravel verified middleware"},
-    {/(?:->|::)middleware\s*\(\s*\[.*['"]auth['"]/, "Laravel auth middleware"},
+    # `[^\]]*`, not `.*`: stay inside the middleware list, or
+    # `middleware(['guest'])->prefix('auth')` reads the prefix as the guard.
+    {/(?:->|::)middleware\s*\(\s*\[[^\]]*['"]auth['"]/, "Laravel auth middleware"},
     # Jetstream's `Route::middleware(['auth:sanctum', ..., 'verified'])`
     {/(?:->|::)middleware\s*\(\s*\[[^\]]*['"]auth:[\w,]+['"]/, "Laravel auth middleware"},
   ]
@@ -25,9 +27,11 @@ class PhpAuthTagger < FrameworkTagger
   # `Route::middleware('auth')->group(function () { ... })` and the older
   # `Route::group(['middleware' => 'auth'], function () { ... })`: every route
   # declared inside the closure inherits the middleware. Breeze's
-  # routes/web.php and routes/auth.php are built this way.
+  # routes/web.php and routes/auth.php are built this way. The middleware value
+  # is one string or one bracketed list; the match must not run past it into
+  # later keys (`'middleware' => 'guest', 'prefix' => 'auth'`).
   LARAVEL_GROUP_OPEN       = /(?:->|::)group\s*\(\s*(?:\[(?:[^\[\]]|\[[^\]]*\])*\]\s*,\s*)?(?:static\s+)?(?:function|fn)\b/
-  LARAVEL_GROUP_MIDDLEWARE = /['"]middleware['"]\s*=>\s*\[?[^\]]*?['"](?:auth(?::[\w,]+)?|verified)['"]/
+  LARAVEL_GROUP_MIDDLEWARE = /['"]middleware['"]\s*=>\s*(?:\[[^\]]*?)?['"](?:auth(?::[\w,]+)?|verified)['"]/
 
   # Laravel controller middleware
   LARAVEL_CONTROLLER_MIDDLEWARE = [
