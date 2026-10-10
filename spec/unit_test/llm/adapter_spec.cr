@@ -108,15 +108,18 @@ describe LLM::OllamaAdapter do
       sys.should be_nil
     end
 
-    it "drops messages with roles other than system / user" do
+    it "keeps assistant turns in conversation order and drops other roles" do
+      # The agent loop records each action as an assistant turn; without
+      # it the model never sees what it already asked for.
       sys, usr = LLM::OllamaAdapter.flatten_messages([
         {"role" => "system", "content" => "S"},
-        {"role" => "assistant", "content" => "A"},
-        {"role" => "user", "content" => "U"},
+        {"role" => "user", "content" => "U1"},
+        {"role" => "assistant", "content" => %({"action":"list_directory"})},
         {"role" => "tool", "content" => "T"},
+        {"role" => "user", "content" => "Tool result (list_directory): a.js"},
       ])
       sys.should eq("S")
-      usr.should eq("U")
+      usr.should eq(%(U1\n\nASSISTANT:\n{"action":"list_directory"}\n\nTool result (list_directory): a.js))
     end
   end
 end

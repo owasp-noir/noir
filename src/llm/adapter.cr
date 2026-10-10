@@ -128,25 +128,26 @@ module LLM
       client.request_with_context(system, user, format)
     end
 
-    # Promoted to a class-level pure function so the flattening rule
-    # (system messages joined with \n\n, non-system/non-user roles
-    # dropped, nil system when no system messages were present) is
-    # unit-testable without standing up a real Ollama client.
+    # `/api/generate` takes one prompt, so a conversation is flattened:
+    # system messages are joined into the system slot (nil when absent);
+    # user and assistant turns stay in order, assistant ones labelled so
+    # the agent loop still sees the actions it already took. Other roles
+    # are dropped.
     def self.flatten_messages(messages : Messages) : {String?, String}
       systems = [] of String
-      users = [] of String
+      turns = [] of String
       messages.each do |m|
         role = m["role"]?
         content = m["content"]?
         next unless role && content
         case role
-        when "system" then systems << content
-        when "user"   then users << content
+        when "system"    then systems << content
+        when "user"      then turns << content
+        when "assistant" then turns << "ASSISTANT:\n#{content}"
         end
       end
       sys = systems.empty? ? nil : systems.join("\n\n")
-      usr = users.join("\n\n")
-      {sys, usr}
+      {sys, turns.join("\n\n")}
     end
   end
 
