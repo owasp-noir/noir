@@ -181,10 +181,14 @@ module Analyzer::Specification
       return "" if stripped.empty?
 
       if stripped =~ /^https?:\/\//i
-        uri = parse_absolute_url(stripped)
-        return "" unless uri
-        path = uri.path
-        return template_path(path.empty? ? "/" : path, template_var)
+        if uri = parse_absolute_url(stripped)
+          path = uri.path
+          return template_path(path.empty? ? "/" : path, template_var)
+        end
+        # `http://localhost:{{port}}/x` is no URI (the port is not numeric),
+        # but its templated authority is still a host: read it host-prefixed.
+        stripped = stripped.split("://", 2)[1]
+        return "" unless stripped.split(/[\/?#]/, 2)[0].matches?(template_var)
       elsif stripped =~ /^[A-Za-z][A-Za-z0-9+.-]*:\/\//
         return ""
       end

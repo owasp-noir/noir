@@ -122,4 +122,15 @@ describe "HTTP/REST File Analyzer" do
 
     endpoints.map(&.url).should eq ["/health"]
   end
+
+  it "keeps absolute request URLs whose authority is templated" do
+    endpoints = analyze_http_file <<-HTTP
+      GET http://localhost:{{port}}/api/local
+
+      ###
+      GET https://{{host}}:{{port}}/api/users/{{id}}?x=1
+      HTTP
+
+    endpoints.map(&.url).should eq ["/api/local", "/api/users/:id"]
+  end
 end
