@@ -96,7 +96,9 @@ end
 
 # `--ai-key-file`: the key without its trailing newline, or a clear error.
 private def read_key_file_or_die!(path : String) : String
-  key = File.read(Path[path].expand(home: true)).strip
+  # PowerShell's `Set-Content -Encoding UTF8` writes a BOM, which `strip`
+  # keeps and the provider rejects.
+  key = Noir::TextFile.strip_utf8_bom(File.read(Path[path].expand(home: true))).strip
   raise "'#{path}' is empty" if key.empty?
   raise "'#{path}' must hold only the key" if key.each_char.any?(&.whitespace?)
   key
