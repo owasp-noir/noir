@@ -91,6 +91,21 @@ module Noir
       find_matching_impl(content.to_slice, open_paren_byte, '(', ')')
     end
 
+    # `extract_paren_content` from a BYTE offset; `end_pos` is a byte offset
+    # too. The byte walk emits each byte of a multi-byte char as its own
+    # U+0080..U+00FF char, so fold those back into the source bytes.
+    def self.extract_paren_content_at_byte(content : String, start_byte : Int32) : ScanResult?
+      return unless start_byte < content.bytesize
+
+      result = extract_paren_content_impl(content.to_slice, start_byte)
+      text = result.content
+      return result if text.bytesize == text.size
+
+      bytes = Bytes.new(text.size)
+      text.each_char_with_index { |char, i| bytes[i] = char.ord.to_u8 }
+      ScanResult.new(String.new(bytes), result.end_pos)
+    end
+
     # --- indexed char access (ASCII byte slice / char array) ---
 
     # O(1) ASCII probe: a UTF-8 string is all-ASCII iff its char count

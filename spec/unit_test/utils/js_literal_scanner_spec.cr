@@ -49,6 +49,17 @@ describe Noir::JSLiteralScanner do
     end
   end
 
+  describe "extract_paren_content_at_byte" do
+    it "takes and returns byte offsets and keeps multi-byte text intact" do
+      content = "// 한글\napp.use('/경로', /* 주석 */ router)"
+      start = content.byte_index("(").not_nil! + 1
+      result = Noir::JSLiteralScanner.extract_paren_content_at_byte(content, start)
+      result = result.should_not be_nil
+      result.content.should eq("'/경로',  router")
+      result.end_pos.should eq(content.bytesize - 1)
+    end
+  end
+
   describe "find_matching_brace" do
     it "finds matching brace" do
       content = "{ code }"

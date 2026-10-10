@@ -162,7 +162,7 @@ module Analyzer::Javascript
         caller = m[1]
         prefix = "/"
         # Position scanner to start right after the opening parenthesis
-        match_end = (m.begin(0) || 0) + m[0].size
+        match_end = m.byte_end(0)
         args = extract_use_call_args(content, match_end)
         next if explicit_mount_prefix_args?(args, prefix_constants)
 
@@ -263,7 +263,7 @@ module Analyzer::Javascript
 
         caller = m[1]
         prefix = m[2]
-        match_end = m.end(0) || 0
+        match_end = m.byte_end(0)
 
         process_use_call(content, match_end, caller, prefix, main_file, locator,
           require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
@@ -274,7 +274,7 @@ module Analyzer::Javascript
 
         caller = m[1]
         prefix = m[2]
-        match_end = m.end(0) || 0
+        match_end = m.byte_end(0)
 
         process_use_call(content, match_end, caller, prefix, main_file, locator,
           require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
@@ -287,7 +287,7 @@ module Analyzer::Javascript
         next unless prefix
 
         caller = m[1]
-        match_end = m.end(0) || 0
+        match_end = m.byte_end(0)
 
         process_use_call(content, match_end, caller, prefix, main_file, locator,
           require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
@@ -300,7 +300,7 @@ module Analyzer::Javascript
         prefixes = extract_mount_prefixes_from_array(m[2], prefix_constants)
         next if prefixes.empty?
 
-        match_end = m.end(0) || 0
+        match_end = m.byte_end(0)
         prefixes.each do |prefix|
           process_use_call(content, match_end, caller, prefix, main_file, locator,
             require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
@@ -753,7 +753,7 @@ module Analyzer::Javascript
 
     # Extract arguments from .use() call using literal-aware scanning
     private def extract_use_call_args(content : String, match_end : Int32) : String
-      result = Noir::JSLiteralScanner.extract_paren_content(content, match_end)
+      result = Noir::JSLiteralScanner.extract_paren_content_at_byte(content, match_end)
       result ? result.content : ""
     end
 
