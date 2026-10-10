@@ -19,7 +19,7 @@ module Analyzer::Go
     # rebuilt for every line — precompile it once at load time.
     CONTEXT_GETTER_PATTERNS = ["GetString", "GetStrings", "GetInt", "GetInt8", "GetUint8", "GetInt16", "GetUint16", "GetInt32", "GetUint32",
                                "GetInt64", "GetUint64", "GetBool", "GetFloat"].map do |pattern|
-      {pattern, /#{pattern}\("([^"]*)"\)/}
+      {pattern, /#{pattern}\(\s*"([^"]*)"\s*[,)]/}
     end
 
     def analyze
