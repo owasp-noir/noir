@@ -69,7 +69,9 @@ module Analyzer::Java
         next unless content.includes?(PACKAGE_MARKER)
         next unless content.includes?(CREATE_CONTEXT)
 
-        analyze_file(content, path, include_callee)
+        # Handler bodies are read with regexes; blank comments so
+        # `getFirst(/* x */ "X-H")` still matches. Lines are kept.
+        analyze_file(JavaEngine.strip_comments(content), path, include_callee)
       end
 
       Fiber.yield

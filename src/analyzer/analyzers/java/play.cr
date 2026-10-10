@@ -1,4 +1,5 @@
 require "../../../models/analyzer"
+require "../../engines/java_engine"
 require "../../../miniparsers/java_callee_extractor"
 require "../../../miniparsers/java_route_extractor_ts"
 require "../../../utils/url_path"
@@ -84,7 +85,9 @@ module Analyzer::Java
       include_callee = callees_needed?
 
       java_files.each do |path|
-        content = read_file_content(path)
+        # The handler bodies are read with regexes; blank comments so
+        # `request.header(/* x */ "X-H")` still matches. Lines are kept.
+        content = JavaEngine.strip_comments(read_file_content(path))
         base_path = configured_base_for(path)
 
         # Extract package name

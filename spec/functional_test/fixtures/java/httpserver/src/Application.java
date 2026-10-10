@@ -35,7 +35,7 @@ public class Application {
 
         // 3. Lambda reading a request header -> GET /profile
         server.createContext("/profile", exchange -> {
-            String trace = exchange.getRequestHeaders().getFirst("X-Trace-Id");
+            String trace = exchange.getRequestHeaders().getFirst(/* trace */ "X-Trace-Id");
             exchange.sendResponseHeaders(200, 0);
         });
 
