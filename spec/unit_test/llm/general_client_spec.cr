@@ -437,3 +437,35 @@ describe "LLM::General stopping after repeated fatal failures" do
     end
   end
 end
+
+describe "LLM::General reading an unusable reply" do
+  it "returns nothing for a refusal or an empty reply, and keeps a truncated one" do
+    {
+      %({"message":{"content":null,"refusal":"I can't help with that."},"finish_reason":"stop"})   => "",
+      %({"message":{"content":""},"finish_reason":"stop"})                                         => "",
+      %({"message":{"content":null},"finish_reason":"content_filter"})                             => "",
+      %({"message":{"content":"{\\"endpoints\\":[{\\"url\\":\\"/a\\"}"},"finish_reason":"length"}) => %({"endpoints":[{"url":"/a"}),
+    }.each do |choice, expected|
+      provider = RejectingProvider.new { |_| {200, %({"choices":[#{choice}]})} }
+      begin
+        LLM::General.new(provider.url, "gpt-4o", "k").request_messages([{"role" => "user", "content" => "x"}]).should eq(expected)
+      ensure
+        provider.close
+      end
+    end
+  end
+end
+
+describe "LLM.unfinished_reply" do
+  it "names a truncation, a content filter and an empty reply" do
+    LLM.unfinished_reply("length", %({"endpoints":[)).to_s.should contain("truncated by the model's output limit")
+    LLM.unfinished_reply("content_filter", "").to_s.should contain("content filter")
+    LLM.unfinished_reply("stop", " ").should eq("AI provider returned an empty reply (finish reason: stop)")
+    LLM.unfinished_reply(nil, "").should eq("AI provider returned an empty reply")
+  end
+
+  it "says nothing about a normal reply" do
+    LLM.unfinished_reply("stop", %({"endpoints":[]})).should be_nil
+    LLM.unfinished_reply(nil, %({"endpoints":[]})).should be_nil
+  end
+end

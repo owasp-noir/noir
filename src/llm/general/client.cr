@@ -252,7 +252,14 @@ module LLM
       response_json = JSON.parse(raw)
       return "" if report_api_error(response_json)
 
-      LLM.strip_json_fences(response_json["choices"][0]["message"]["content"].to_s)
+      choice = response_json["choices"][0]
+      if refusal = choice["message"]["refusal"]?.try(&.as_s?).presence
+        STDERR.puts "WARNING: AI model refused the request: #{LLM::HttpTransport.truncate_error_snippet(refusal)}"
+        return ""
+      end
+      content = choice["message"]["content"]?.to_s
+      LLM.unfinished_reply(choice["finish_reason"]?.try(&.as_s?), content).try { |warning| STDERR.puts "WARNING: #{warning}" }
+      LLM.strip_json_fences(content)
     rescue e : ContextOverflow
       raise e
     rescue e : Exception

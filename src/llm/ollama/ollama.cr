@@ -1,5 +1,6 @@
 require "json"
 require "../http_transport"
+require "../response_cleanup"
 
 module LLM
   # Ollama LLM client (native `/api/generate`)
@@ -106,7 +107,9 @@ module LLM
         return ""
       end
 
-      response_json["response"]?.try(&.to_s) || ""
+      text = response_json["response"]?.try(&.to_s) || ""
+      LLM.unfinished_reply(response_json["done_reason"]?.try(&.as_s?), text).try { |warning| STDERR.puts "WARNING: #{warning}" }
+      text
     rescue e : Exception
       # Previously a bare `rescue Exception` returning "" — an unreachable
       # server, a wrong model name and a malformed reply were all reported

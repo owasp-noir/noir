@@ -37,6 +37,21 @@ module LLM
     stripped.sub(LEADING_FENCE, "").sub(TRAILING_FENCE, "").strip
   end
 
+  # Why a reply that did not end normally is unusable, or nil. `reason` is
+  # OpenAI's `finish_reason` or Ollama's `done_reason`; both say `length`
+  # for a reply cut off by the output limit. An empty reply is otherwise
+  # silent: the caller would read it as "no endpoints".
+  def self.unfinished_reply(reason : String?, content : String) : String?
+    case reason
+    when "length"
+      "AI reply was truncated by the model's output limit; endpoints after the cut are lost (a lower --ai-max-token sends smaller bundles)"
+    when "content_filter"
+      "AI reply was blocked by the provider's content filter"
+    else
+      "AI provider returned an empty reply#{" (finish reason: #{reason})" if reason}" if content.blank?
+    end
+  end
+
   # The JSON object in an LLM reply that carries `key`, or nil.
   #
   # A model wraps its JSON in prose ("Here are the endpoints: ...", "Note

@@ -50,11 +50,12 @@ module Analyzer::AI
       "...", "<url>", "<endpoint>", "<path>",
     }
     # Every adapter maps a call it could not complete — an HTTP error the
-    # retries did not clear, a provider error body, a dead ACP agent, a reply
-    # that would not parse — to an empty string, and each one already prints
-    # its own WARNING naming the cause. The empty string is what reaches here,
-    # so this is the reason the *analyzer* can attach to the lost coverage.
-    LLM_NO_RESPONSE_REASON = "the AI provider returned no usable response (see the WARNING lines above for the cause)"
+    # retries did not clear, a provider error body, a refused or empty reply,
+    # a dead ACP agent, a request skipped after repeated failures — to an
+    # empty string, usually after a WARNING naming the cause. The empty string
+    # is what reaches here, so this is the reason the *analyzer* can attach to
+    # the lost coverage; it must stay true when no warning was printed.
+    LLM_NO_RESPONSE_REASON = "the AI provider returned no usable response (an error, a refused or empty reply, or a request skipped after repeated failures)"
 
     IGNORE_EXTENSIONS = [".css", ".xml", ".json", ".yml", ".yaml", ".md", ".jpg", ".jpeg", ".png", ".gif", ".svg", ".ico",
                          ".eot", ".ttf", ".woff", ".woff2", ".otf", ".mp3", ".mp4", ".avi", ".mov", ".webm", ".zip", ".tar",
