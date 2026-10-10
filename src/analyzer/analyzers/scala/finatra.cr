@@ -17,7 +17,7 @@ module Analyzer::Scala
     PARAM_READ_RE = /request\.(?:params(?:\.\w+)?|get(?:Int|Long|Short|Boolean)?Param)\s*\(\s*"([^"]+)"/
 
     def analyze_file(path : String) : Array(Endpoint)
-      return [] of Endpoint if base_relative_path(path).matches?(Scalatra::TEST_PATH_RE)
+      return [] of Endpoint if sbt_test_path?(path)
       content = read_file_content(path)
       return [] of Endpoint unless content.includes?("com.twitter.finatra.http")
 
