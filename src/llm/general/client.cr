@@ -208,8 +208,9 @@ module LLM
         @fatal_streak.set(0)
         return result
       when nil
-        # The transport already reported the connection failure.
-        count_fatal_failure
+        # The transport already reported the connection failure, or the
+        # request was over --ai-max-requests and never sent.
+        count_fatal_failure if LLM::HttpTransport.requests_left?
         return
       end
 

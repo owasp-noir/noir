@@ -100,6 +100,13 @@ module LLM
     @@requests = Atomic(Int32).new(0)
     @@cap_warned = Atomic(Bool).new(false)
 
+    # False once --ai-max-requests is used up: a skipped request, not a
+    # provider failure.
+    def self.requests_left? : Bool
+      max = max_requests
+      max <= 0 || @@requests.get < max
+    end
+
     def self.claim_request : Bool
       max = max_requests
       return true if @@requests.add(1) < max || max <= 0
@@ -235,7 +242,7 @@ module LLM
     def self.report(rejection : Rejection) : Nil
       # A redirect has no body worth showing; where it points is the fix
       # (usually an http:// provider URL that should be https://).
-      detail = rejection.location.try { |loc| "redirected to #{Noir::Redact.url(loc)}; check the provider URL" } if (300..399).includes?(rejection.status)
+      detail = rejection.location.try { |loc| "redirected to #{truncate_error_snippet(loc)}; check the provider URL" } if (300..399).includes?(rejection.status)
       STDERR.puts "WARNING: AI API error (HTTP #{rejection.status}): #{detail || truncate_error_snippet(rejection.body)}"
     end
 
