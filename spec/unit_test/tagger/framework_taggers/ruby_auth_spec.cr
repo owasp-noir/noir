@@ -212,6 +212,74 @@ describe "RubyAuthTagger" do
       CodeLocator.instance.clear_all
     end
   end
+
+  it "treats skip_before_action as an opt-out, never as the callback it skips" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("ruby_skip_callback")
+    controllers = File.join(tmpdir, "app", "controllers")
+    Dir.mkdir_p(File.join(controllers, "api"))
+    files = {
+      "api/base_controller.rb" => <<-RB,
+        module Api
+          class BaseController < ActionController::API
+            before_action :doorkeeper_authorize!
+          end
+        end
+        RB
+      "api/users_controller.rb" => <<-RB,
+        module Api
+          class UsersController < BaseController
+            skip_before_action :doorkeeper_authorize!, only: [:index]
+
+            def index
+            end
+
+            def show
+            end
+          end
+        end
+        RB
+      "posts_controller.rb" => <<-RB,
+        class PostsController < ActionController::API
+          before_action :doorkeeper_authorize!
+          skip_before_action :doorkeeper_authorize!, only: [:index]
+
+          def index
+          end
+
+          def show
+          end
+        end
+        RB
+    }
+    files.each do |name, body|
+      path = File.join(controllers, name)
+      File.write(path, body)
+      CodeLocator.instance.register_path(path)
+    end
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(name : String, line : Int32) do
+        Endpoint.new("/#{name}/#{line}", "GET", [] of Param, Details.new(PathInfo.new(File.join(controllers, name), line)))
+      end
+      users_index = at.call("api/users_controller.rb", 5)
+      users_show = at.call("api/users_controller.rb", 8)
+      posts_index = at.call("posts_controller.rb", 5)
+      posts_show = at.call("posts_controller.rb", 8)
+
+      RubyAuthTagger.new(noir_options).perform([users_index, users_show, posts_index, posts_show])
+
+      users_index.tags.should be_empty
+      users_show.tags.map(&.description).should eq(["Protected by Doorkeeper OAuth authorize"])
+      posts_index.tags.should be_empty
+      posts_show.tags.map(&.description).should eq(["Protected by Doorkeeper OAuth authorize"])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
 end
 
 # Additional tests for Grape + Roda support (B target)
