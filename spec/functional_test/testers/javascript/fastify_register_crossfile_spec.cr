@@ -3,7 +3,7 @@ require "../../func_spec.cr"
 # Fastify plugins registered from another file:
 #
 #   fastify.register(apiRoutes, { prefix: '/api' })          // const apiRoutes = require('./routes/api')
-#   fastify.register(adminRoutes, { prefix: '/admin' })      // const { adminRoutes } = require(...)
+#   fastify.register(adminRoutes, { prefix: 'admin' })       // const { adminRoutes } = require(...); Fastify adds the '/'
 #   fastify.register(require('./users'), { prefix: '/users' }) // inside routes/api.js
 #
 # Only same-file plugins had their prefix applied; every route in a plugin

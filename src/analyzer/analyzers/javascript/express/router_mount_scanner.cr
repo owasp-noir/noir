@@ -201,7 +201,10 @@ module Analyzer::Javascript
           args = extract_use_call_args(content, m.byte_end(0))
           plugin = first_top_level_argument(args)
           prefix_match = args[plugin.size..].match(REGISTER_PREFIX_RE)
-          yield plugin, prefix_match[1]? || prefix_match[2] if prefix_match
+          next unless prefix_match
+          # Fastify adds the leading slash itself: `{ prefix: 'api/v1' }`.
+          prefix = prefix_match[1]? || prefix_match[2]
+          yield plugin, prefix.starts_with?('/') ? prefix : "/#{prefix}"
         end
       else
         content.scan(APPLY_ROUTES_RE) { |m| yield m[1], m[2]? || m[3] }
