@@ -64,16 +64,17 @@ module Analyzer::Php
                                        base_line : Int32 = 1) : Array(Endpoint)
       endpoints = [] of Endpoint
       route_groups = extract_route_groups(content)
+      offsets = Noir::CharOffsets.new(content)
 
       # 1. Standard verb routes: Route::get('pattern', 'handler')
       verb_regex = /Route::(get|post|put|delete|patch|any)\s*\(\s*['"]([^'"]+)['"]\s*,/mi
       pos = 0
       loop do
-        route_match = content.match(verb_regex, pos)
+        route_match = offsets.match(verb_regex, pos)
         break unless route_match
 
-        if inside_group_body?(route_match.begin(0), route_groups)
-          pos = route_match.end(0)
+        if inside_group_body?(offsets.begin(route_match), route_groups)
+          pos = offsets.end(route_match)
           next
         end
 
@@ -81,12 +82,12 @@ module Analyzer::Php
         route_path = route_match[2]
         full_path = build_full_path(prefix, route_path)
         normalized_path = normalize_route(full_path)
-        route_line = base_line + newline_count_before(content, route_match.begin(0))
+        route_line = base_line + offsets.line(offsets.begin(route_match)) - 1
 
         methods = verb == "ANY" ? ANY_ROUTE_HTTP_METHODS : [verb]
 
-        handler_body, next_pos, body_start_line = extract_inline_closure_body(content, route_match.end(0), base_line)
-        route_handler = handler_body ? nil : extract_route_handler(content, route_match.end(0))
+        handler_body, next_pos, body_start_line = extract_inline_closure_body(offsets, offsets.end(route_match), base_line)
+        route_handler = handler_body ? nil : extract_route_handler(offsets, offsets.end(route_match))
 
         path_params = extract_path_params(full_path)
         handler_params = handler_body ? extract_request_params(handler_body) : [] of Param
@@ -102,25 +103,25 @@ module Analyzer::Php
           endpoints << endpoint
         end
 
-        pos = next_pos > pos ? next_pos : route_match.end(0)
+        pos = next_pos > pos ? next_pos : offsets.end(route_match)
       end
 
       # 2. Generic Route::rule('pattern', 'handler', 'methods')
       rule_regex = /Route::rule\s*\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]\s*(?:,\s*['"]([^'"]+)['"])?/mi
       pos = 0
       loop do
-        route_match = content.match(rule_regex, pos)
+        route_match = offsets.match(rule_regex, pos)
         break unless route_match
 
-        if inside_group_body?(route_match.begin(0), route_groups)
-          pos = route_match.end(0)
+        if inside_group_body?(offsets.begin(route_match), route_groups)
+          pos = offsets.end(route_match)
           next
         end
 
         route_path = route_match[1]
         full_path = build_full_path(prefix, route_path)
         normalized_path = normalize_route(full_path)
-        route_line = base_line + newline_count_before(content, route_match.begin(0))
+        route_line = base_line + offsets.line(offsets.begin(route_match)) - 1
 
         methods = ["GET"]
         if method_str = route_match[3]?
@@ -134,33 +135,33 @@ module Analyzer::Php
           endpoints << Endpoint.new(normalized_path, m, path_params.dup, details)
         end
 
-        pos = route_match.end(0)
+        pos = offsets.end(route_match)
       end
 
       # 3. Route::resource('pattern', 'controller')
       resource_regex = /Route::resource\s*\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]/mi
       pos = 0
       loop do
-        route_match = content.match(resource_regex, pos)
+        route_match = offsets.match(resource_regex, pos)
         break unless route_match
 
-        if inside_group_body?(route_match.begin(0), route_groups)
-          pos = route_match.end(0)
+        if inside_group_body?(offsets.begin(route_match), route_groups)
+          pos = offsets.end(route_match)
           next
         end
 
         route_path = route_match[1]
         full_path = build_full_path(prefix, route_path)
-        route_line = base_line + newline_count_before(content, route_match.begin(0))
+        route_line = base_line + offsets.line(offsets.begin(route_match)) - 1
 
         endpoints.concat(generate_resource_endpoints(full_path, file_path, route_line))
-        pos = route_match.end(0)
+        pos = offsets.end(route_match)
       end
 
       # 4. Recurse into groups
       route_groups.each do |group|
         new_prefix = group.prefix.empty? ? prefix : build_full_path(prefix, group.prefix)
-        group_base_line = base_line + newline_count_before(content, group.body_start)
+        group_base_line = base_line + offsets.line(group.body_start) - 1
         endpoints.concat(analyze_routes_content(group.body, new_prefix, file_path, include_callee, group_base_line))
       end
 
@@ -269,17 +270,18 @@ module Analyzer::Php
     # Parse the controller reference following a route's pattern argument.
     # Handles `'v1.user.User/save_info'`, `'v1.user.User@save_info'`, and
     # `[\app\...\User::class, 'save_info']`. Returns {controller_ref, method}.
-    private def extract_route_handler(content : String, pos : Int32) : Tuple(String, String)?
-      scan_pos = skip_whitespace(content, pos)
-      return unless scan_pos < content.size
+    private def extract_route_handler(offsets : Noir::CharOffsets, pos : Int32) : Tuple(String, String)?
+      scan_pos = pos
+      while offsets.ascii_whitespace?(scan_pos)
+        scan_pos += 1
+      end
+      return unless scan_pos < offsets.content.size
 
-      rest = content[scan_pos..]
-
-      if m = rest.match(/\A['"]([^'"\/@]+)[\/@]([A-Za-z_]\w*)['"]/)
+      if m = offsets.match(/\G['"]([^'"\/@]+)[\/@]([A-Za-z_]\w*)['"]/, scan_pos)
         return {m[1], m[2]}
       end
 
-      if m = rest.match(/\A\[\s*([A-Za-z_\\][\w\\]*)::class\s*,\s*['"]([A-Za-z_]\w*)['"]/)
+      if m = offsets.match(/\G\[\s*([A-Za-z_\\][\w\\]*)::class\s*,\s*['"]([A-Za-z_]\w*)['"]/, scan_pos)
         return {m[1], m[2]}
       end
 

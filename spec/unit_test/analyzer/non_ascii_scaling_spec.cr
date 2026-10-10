@@ -72,4 +72,22 @@ describe "non-ASCII route files" do
       "routes/web.php" => "<?php\nuse Illuminate\\Support\\Facades\\Route;\n$title = 'COMMENT';\n#{routes}",
     }, "routes/web.php", "php_laravel")
   end
+
+  it "keeps Lumen route scans linear" do
+    routes = (1..1500).join { |i| "$router->post('/users#{i}', function () { return $request->input('name'); });\n" }
+    assert_linear_on_non_ascii({
+      "composer.json"     => %({"require":{"laravel/lumen-framework":"^10.0"}}),
+      "bootstrap/app.php" => "<?php\n$app = new Laravel\\Lumen\\Application(dirname(__DIR__));\n",
+      "routes/web.php"    => "<?php\n$title = 'COMMENT';\n#{routes}",
+    }, "routes/web.php", "php_lumen")
+  end
+
+  it "keeps ThinkPHP route scans linear" do
+    routes = (1..800).join { |i| "Route::get('hello#{i}/:name', 'index/hello');\nRoute::rule('update#{i}', 'index/update', 'PUT');\n" }
+    assert_linear_on_non_ascii({
+      "composer.json" => %({"require":{"topthink/framework":"^8.0"}}),
+      "think"         => "#!/usr/bin/env php\n",
+      "route/app.php" => "<?php\nuse think\\facade\\Route;\n$title = 'COMMENT';\n#{routes}",
+    }, "route/app.php", "php_thinkphp")
+  end
 end

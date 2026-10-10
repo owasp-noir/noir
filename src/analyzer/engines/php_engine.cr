@@ -1,4 +1,5 @@
 require "../../models/analyzer"
+require "../../utils/char_offsets"
 require "../../miniparsers/php_callee_extractor"
 require "../../minilexers/php_lexer"
 require "../../utils/utils.cr"
@@ -182,22 +183,31 @@ module Analyzer::Php
     # Body of an inline `function (...) use (...) { ... }` closure handler
     # starting at `pos`: `{body, position after the closure, body start line}`,
     # or `{nil, pos, nil}` when no closure starts there.
-    protected def extract_inline_closure_body(content : String, pos : Int32, base_line : Int32) : Tuple(String?, Int32, Int32?)
-      return {nil, pos, nil} unless pos < content.size
+    INLINE_CLOSURE_HEAD_RE = /\G(?:static\s+)?function\s*\([^)]*\)\s*(?:use\s*\([^)]*\)\s*)?(?::\s*[^{=]+)?\{/i
 
-      scan_pos = skip_whitespace(content, pos)
-      return {nil, pos, nil} unless scan_pos < content.size
+    # Char positions in and out, like the rest of the route loops, but every
+    # step goes through `offsets`: this runs once per route, and the plain
+    # `String` forms are O(file) per call on non-ASCII content.
+    protected def extract_inline_closure_body(offsets : Noir::CharOffsets, pos : Int32, base_line : Int32) : Tuple(String?, Int32, Int32?)
+      size = offsets.content.size
+      return {nil, pos, nil} unless pos < size
 
-      closure_regex = /\A(?:static\s+)?function\s*\([^)]*\)\s*(?:use\s*\([^)]*\)\s*)?(?::\s*[^{=]+)?\{/i
-      match = content[scan_pos..].match(closure_regex)
+      scan_pos = pos
+      while offsets.ascii_whitespace?(scan_pos)
+        scan_pos += 1
+      end
+      return {nil, pos, nil} unless scan_pos < size
+
+      match = offsets.match(INLINE_CLOSURE_HEAD_RE, scan_pos)
       return {nil, pos, nil} unless match
 
-      brace_pos = scan_pos + match[0].size - 1
-      body_end = find_matching_php_close_brace(content, brace_pos)
-      return {nil, pos, nil} unless body_end
+      close_byte = find_matching_php_close_brace_at_byte(offsets.content, match.byte_end(0) - 1)
+      return {nil, pos, nil} unless close_byte
 
-      body_start_line = base_line + newline_count_before(content, brace_pos)
-      {content[(brace_pos + 1)...body_end], body_end + 1, body_start_line}
+      brace_pos = offsets.end(match) - 1
+      body_end = offsets.char(close_byte)
+      body_start_line = base_line + offsets.line(brace_pos) - 1
+      {offsets.slice(brace_pos + 1, body_end), body_end + 1, body_start_line}
     end
 
     private def skip_whitespace(content : String, pos : Int32) : Int32
