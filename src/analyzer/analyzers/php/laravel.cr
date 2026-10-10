@@ -33,6 +33,15 @@ module Analyzer::Php
     alias ControllerActionMap = Hash(String, ControllerActionBody)
     EMPTY_RESOURCE_PARAMS = {} of String => String
 
+    # Prefix each route file is loaded under, keyed by its expanded path.
+    # Built once before the parallel file scan, so workers only read it.
+    @route_file_prefixes = {} of String => String
+
+    def analyze
+      @route_file_prefixes = route_file_prefixes
+      super
+    end
+
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
 
@@ -78,12 +87,88 @@ module Analyzer::Php
         # resolution can locate the controller file. Only parsed when
         # callees/ai-context are requested.
         imports = include_callee ? parse_use_imports(content) : EMPTY_IMPORTS
-        endpoints = analyze_routes_content(php_code(content), "", path, include_callee, imports: imports)
+        prefix = @route_file_prefixes[Noir::PathScope.expand(path)]? || default_route_file_prefix(path)
+        endpoints = analyze_routes_content(php_code(content), prefix, path, include_callee, imports: imports)
       rescue e
         logger.debug "Error analyzing routes file #{path}: #{e}"
         Noir::SkippedFiles.record(tech, path, e.message.presence || e.class.name)
       end
       endpoints
+    end
+
+    # A route file's URL prefix comes from where the app loads it, not from
+    # the file: `Route::prefix('api')->group(base_path('routes/api.php'))` in
+    # a RouteServiceProvider (Laravel <= 10, including the older
+    # `Route::group(['prefix' => 'api'], function () { require ... })`), or
+    # `->withRouting(api: __DIR__.'/../routes/api.php', apiPrefix: 'v2')` in
+    # `bootstrap/app.php` (Laravel 11+, `apiPrefix` defaulting to `api`),
+    # whose `then:` closure registers further groups the same way.
+    ROUTE_FILE_REF_RE   = /(['"])([^'"\n]*routes\/[^'"\n]*\.php)\1/
+    WIRING_GROUP_RE     = /Route::(?:\w+\s*\([^;()]*\)\s*->\s*)*group\s*\(/i
+    WITH_ROUTING_API_RE = /\bapi\s*:\s*(?:\[[^\]]*\]|[^,)]*)/
+    API_PREFIX_RE       = /\bapiPrefix\s*:\s*['"]([^'"]*)['"]/
+
+    private def route_file_prefixes : Hash(String, String)
+      prefixes = {} of String => String
+      php_source_files.each do |path|
+        bootstrap = path.ends_with?("/bootstrap/app.php")
+        next unless bootstrap || path.ends_with?("Provider.php")
+        next if PhpEngine.test_path?(base_relative_path(path))
+        begin
+          content = read_file_content(path)
+          next unless content.includes?("routes/")
+          base = bootstrap ? File.dirname(File.dirname(path)) : composer_project_root(path)
+          collect_route_wiring(php_code(content), path, base, prefixes) unless base.empty?
+        rescue e
+          logger.debug "Error reading Laravel route wiring #{path}: #{e}"
+        end
+      end
+      prefixes
+    end
+
+    private def collect_route_wiring(content : String, source_path : String, base : String, prefixes : Hash(String, String)) : Nil
+      lexer = Noir::PhpLexer.new(content)
+      # {open paren, close paren, prefix} of every `Route::…->group(` call,
+      # outermost first. A `Route::group([...], …)` carries its prefix in the
+      # leading options array rather than the chain.
+      groups = [] of Tuple(Int32, Int32, String)
+      pos = 0
+      while group_match = content.match(WIRING_GROUP_RE, pos)
+        open = group_match.end(0) - 1
+        pos = group_match.end(0)
+        next unless lexer.in_code?(group_match.begin(0))
+        next unless close = lexer.matching_delimiter(open)
+        prelude = group_match[0]
+        if options = content.match(/\G\s*(?:\[|array\s*\()/i, open + 1)
+          options_end = lexer.matching_delimiter(options.end(0) - 1)
+          prelude += content[options.begin(0)..options_end] if options_end
+        end
+        groups << {open, close, extract_group_prefix(prelude)}
+      end
+
+      api_spans = content.scan(WITH_ROUTING_API_RE).map { |m| m.begin(0)...m.end(0) }
+      api_prefix = content.match(API_PREFIX_RE).try(&.[1]) || "api"
+
+      content.scan(ROUTE_FILE_REF_RE) do |ref|
+        at = ref.begin(0)
+        relative_to = content[Math.max(0, at - 16)...at].matches?(/__DIR__\s*\.\s*\z/) ? File.dirname(source_path) : base
+        prefix = groups.select { |(open, close, _)| open < at && at < close }
+          .reduce("") { |acc, group| build_full_path(acc, group[2]) }
+        prefix = build_full_path(api_prefix, prefix) if api_spans.any?(&.includes?(at))
+        prefixes[Noir::PathScope.expand(File.join(relative_to, ref[2]))] ||= prefix
+      end
+    end
+
+    # No wiring found for the file: fall back to the skeleton's own, which
+    # serves `routes/api.php` under `/api` and every other file unprefixed.
+    # Only for an app root (`artisan` / `bootstrap/app.php`): a package's
+    # `routes/api.php` is loaded however its provider says. (Lumen, which has
+    # no implicit API group, never gets here: `php_lumen` supersedes us.)
+    private def default_route_file_prefix(path : String) : String
+      return "" unless path.ends_with?("/routes/api.php")
+      root = path[0...-"/routes/api.php".size]
+      return "" unless File.exists?(File.join(root, "artisan")) || File.exists?(File.join(root, "bootstrap", "app.php"))
+      "api"
     end
 
     EMPTY_IMPORTS = {} of String => String

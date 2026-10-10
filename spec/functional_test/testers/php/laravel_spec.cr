@@ -10,13 +10,13 @@ expected_endpoints = [
   Endpoint.new("/legacy-dashboard", "GET"),
   Endpoint.new("/users", "GET"),
   Endpoint.new("/users", "POST"),
-  Endpoint.new("/health", "GET"),
-  Endpoint.new("/categories", "GET"),
-  Endpoint.new("/categories", "POST"),
-  Endpoint.new("/categories/{slug}", "GET", [Param.new("slug", "", "path")]),
-  Endpoint.new("/albums/{album}/songs", "GET", [Param.new("album", "", "path")]),
-  Endpoint.new("/albums/{album}/songs/{song}", "GET", [Param.new("album", "", "path"), Param.new("song", "", "path")]),
-  Endpoint.new("/v1.0/albums/{record}/songs/{track}", "GET", [Param.new("record", "", "path"), Param.new("track", "", "path")]),
+  Endpoint.new("/api/health", "GET"),
+  Endpoint.new("/api/categories", "GET"),
+  Endpoint.new("/api/categories", "POST"),
+  Endpoint.new("/api/categories/{slug}", "GET", [Param.new("slug", "", "path")]),
+  Endpoint.new("/api/albums/{album}/songs", "GET", [Param.new("album", "", "path")]),
+  Endpoint.new("/api/albums/{album}/songs/{song}", "GET", [Param.new("album", "", "path"), Param.new("song", "", "path")]),
+  Endpoint.new("/api/v1.0/albums/{record}/songs/{track}", "GET", [Param.new("record", "", "path"), Param.new("track", "", "path")]),
   Endpoint.new("/contact", "GET"),
   Endpoint.new("/contact", "POST"),
   Endpoint.new("/filter", "GET"),
@@ -34,7 +34,7 @@ expected_endpoints = [
   Endpoint.new("/admin/widgets", "GET"),
   Endpoint.new("/admin/widgets/{widget}", "GET", [Param.new("widget", "", "path")]),
   Endpoint.new("/admin/widgets/{widget}", "PATCH", [Param.new("widget", "", "path")]),
-  Endpoint.new("/user", "GET"),
+  Endpoint.new("/api/user", "GET"),
   Endpoint.new("/admin/settings", "GET"),
   Endpoint.new("/admin/settings", "POST"),
   Endpoint.new("/admin/logs", "QUERY"),
@@ -54,5 +54,5 @@ expected_endpoints = [
 
 FunctionalTester.new("fixtures/php/laravel/", {
   :techs     => 2,  # Detection still sees both php_laravel and php_pure
-  :endpoints => 78, # Analysis suppresses redundant php_pure and unprefixed group endpoints
+  :endpoints => 80, # Analysis suppresses redundant php_pure and unprefixed group endpoints
 }, expected_endpoints).perform_tests
