@@ -106,7 +106,7 @@ module Analyzer::Javascript
 
       # Read file content to extract parameters
       begin
-        content = read_file_content(path)
+        content = Noir::JSRouteExtractor.strip_js_comments(read_file_content(path))
         callees = include_callee ? Noir::JSCalleeExtractor.callees_for_default_event_handler(content, path, language: javascript_source_language(path)) : [] of Noir::JSCalleeExtractor::Entry
 
         methods.each do |method|

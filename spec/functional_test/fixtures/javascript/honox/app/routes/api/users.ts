@@ -6,6 +6,6 @@ export const POST = createRoute(async (c) => {
 });
 
 export default createRoute((c) => {
-  const page = c.req.query("page");
+  const page = c.req.query(/* 1-based */ "page");
   return c.json({ page, users: [] });
 });
