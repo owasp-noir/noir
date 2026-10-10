@@ -260,3 +260,123 @@ describe Analyzer::AI::Unified do
     end
   end
 end
+
+# Overflows on any request carrying more than one file section and answers
+# the rest with one endpoint per file, so the spec can see coverage survive.
+private class OverflowAdapter
+  include LLM::Adapter
+
+  getter overflows = 0
+
+  def initialize(@always : Bool = false)
+  end
+
+  def request_messages(messages : Messages, format : String = "json") : String
+    ""
+  end
+
+  def request(prompt : String, format : String = "json") : String
+    ""
+  end
+
+  def request_bundle(system : String, user : String, format : String) : String
+    files = user.scan(/- File: "([^"]+)"/).map { |m| File.basename(m[1]) }
+    if @always || files.size > 1
+      @overflows += 1
+      raise LLM::ContextOverflow.new(nil)
+    end
+    %({"endpoints":[{"url":"/ep/#{files[0]}","method":"GET","params":[]}]})
+  end
+end
+
+# Overflows on any prompt over `max_chars` and records the routes it was shown.
+private class SizeCapAdapter
+  include LLM::Adapter
+
+  getter seen = Set(String).new
+
+  def initialize(@max_chars : Int32)
+  end
+
+  def request_messages(messages : Messages, format : String = "json") : String
+    ""
+  end
+
+  def request(prompt : String, format : String = "json") : String
+    ""
+  end
+
+  def request_bundle(system : String, user : String, format : String) : String
+    raise LLM::ContextOverflow.new if user.size > @max_chars
+    user.scan(/get '(\/r\d+)'/).each { |m| @seen << m[1] }
+    %({"endpoints":[]})
+  end
+end
+
+describe "Analyzer::AI::Unified on a context overflow" do
+  it "re-splits one part of a split file without resending the other parts" do
+    without_llm_cache do
+      dir = File.tempname("noir-overflow-spec")
+      Dir.mkdir_p(dir)
+      begin
+        path = File.join(dir, "routes.rb")
+        File.write(path, (1..2000).map { |i| "get '/r#{i}'\n" }.join)
+        parts = LLM.bundle_files([{path, File.read(path)}], 4000)
+        parts.size.should be > 2
+        own = parts[1].content.scan(/get '(\/r\d+)'/).map(&.[1]).to_set
+
+        adapter = SizeCapAdapter.new(parts[1].content.size // 2 + 4000)
+        ai_analyzer.__test_process_bundle(parts[1], adapter)
+
+        adapter.seen.should eq(own)
+        Noir::SkippedFiles.failures.should be_empty
+      ensure
+        FileUtils.rm_rf(dir)
+      end
+    end
+  end
+
+  it "re-splits the bundle instead of losing it" do
+    without_llm_cache do
+      dir = File.tempname("noir-overflow-spec")
+      Dir.mkdir_p(dir)
+      begin
+        paths = %w[a.rb b.rb].map do |name|
+          path = File.join(dir, name)
+          File.write(path, "get '/x'\n" * 250)
+          path
+        end
+        files = paths.map { |p| {p, File.read(p)} }
+        bundle = LLM.bundle_files(files, 1_000_000)[0]
+
+        analyzer = ai_analyzer
+        adapter = OverflowAdapter.new
+        analyzer.__test_process_bundle(bundle, adapter)
+
+        analyzer.__test_result.map(&.url).uniq!.sort!.should eq(["/ep/a.rb", "/ep/b.rb"])
+        Noir::SkippedFiles.failures.should be_empty
+        adapter.overflows.should eq(1)
+      ensure
+        FileUtils.rm_rf(dir)
+      end
+    end
+  end
+
+  it "reports the files once re-splitting cannot help" do
+    without_llm_cache do
+      dir = File.tempname("noir-overflow-spec")
+      Dir.mkdir_p(dir)
+      begin
+        path = File.join(dir, "a.rb")
+        File.write(path, "get '/x'\n" * 250)
+        bundle = LLM.bundle_files([{path, File.read(path)}], 1_000_000)[0]
+
+        ai_analyzer.__test_process_bundle(bundle, OverflowAdapter.new(always: true))
+
+        Noir::SkippedFiles.failures.map(&.message).join.should contain("context window")
+      ensure
+        FileUtils.rm_rf(dir)
+      end
+    end
+  end
+end

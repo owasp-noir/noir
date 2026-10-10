@@ -698,6 +698,21 @@ module LLM
     STDERR.puts message if @@budget_warnings.add?(message)
   end
 
+  # The budget to re-split an overflowing bundle at, in noir's estimated
+  # tokens. When the provider named both the window and the prompt's real
+  # size, their ratio corrects the chars/4 estimate in one step (dense or
+  # CJK source runs far over it); otherwise the named window, or half the
+  # bundle. Always below the bundle's own size, so each re-split shrinks it.
+  def self.overflow_budget(bundle_tokens : Int32, limit : Int32?, used : Int32? = nil) : Int32
+    if limit && used && used > limit
+      (bundle_tokens.to_i64 * limit // used).to_i
+    elsif limit
+      Math.min(limit, bundle_tokens)
+    else
+      bundle_tokens // 2
+    end
+  end
+
   # One request's worth of bundled source.
   #
   # `paths` rides along so a failed request can name the coverage it lost:
@@ -773,6 +788,16 @@ module LLM
     end
 
     bundles
+  end
+
+  PART_HEADER = /\A- File: "(.*)" \(part \d+\/\d+\)\n```\n/
+
+  # The `{label, text}` of a bundle that is one part of a split file (the
+  # section `split_file_sections` wrote), or nil for any other bundle.
+  def self.split_part(bundle : Bundle) : Tuple(String, String)?
+    return unless bundle.paths.size == 1 && bundle.content.ends_with?("\n```\n")
+    return unless header = bundle.content.match(PART_HEADER)
+    {bundle.paths[0], bundle.content[header[0].size...-5]}
   end
 
   # Split one over-budget file into labelled parts, each its own bundle.

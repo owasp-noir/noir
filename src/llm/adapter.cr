@@ -53,12 +53,23 @@ module LLM
     # Context-aware request. Adapters that support provider-side context can reuse it using a cache_key.
     # Default implementation falls back to request_messages without context reuse.
     def request_with_context(system : String?, user : String, format : String = "json", cache_key : String? = nil) : String
+      request_messages(Adapter.messages(system, user), format)
+    end
+
+    # A bundle request: like `request_with_context`, but an adapter that can
+    # tell raises `LLM::ContextOverflow` instead of returning "", so the
+    # bundle can be re-split rather than lost.
+    def request_bundle(system : String, user : String, format : String) : String
+      request_with_context(system, user, format, nil)
+    end
+
+    def self.messages(system : String?, user : String) : Messages
       msgs = [] of Hash(String, String)
       if system && !system.empty?
         msgs << {"role" => "system", "content" => system}
       end
       msgs << {"role" => "user", "content" => user}
-      request_messages(msgs, format)
+      msgs
     end
 
     # Optional cleanup hook for adapters that manage external resources.
@@ -81,6 +92,10 @@ module LLM
 
     def request(prompt : String, format : String = "json") : String
       client.request(prompt, format)
+    end
+
+    def request_bundle(system : String, user : String, format : String) : String
+      client.request_messages(Adapter.messages(system, user), format, raise_overflow: true)
     end
 
     def supports_native_tool_calling? : Bool

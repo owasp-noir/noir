@@ -261,3 +261,110 @@ describe "LLM::General request body" do
     JSON.parse(LLM::General.new("openai", "gpt-4o", "k").__test_encode(body.dup))["temperature"].as_f.should eq(0.3)
   end
 end
+
+# Answers like a provider that rejects some requests: records each request
+# body and lets the spec decide the reply.
+private class RejectingProvider
+  getter bodies = [] of JSON::Any
+
+  def initialize(&@reply : JSON::Any -> {Int32, String})
+    @server = HTTP::Server.new do |ctx|
+      body = JSON.parse(ctx.request.body.try(&.gets_to_end) || "{}")
+      @bodies << body
+      status, text = @reply.call(body)
+      ctx.response.status_code = status
+      ctx.response.print text
+    end
+    @address = @server.bind_tcp("127.0.0.1", 0)
+    spawn { @server.listen }
+    Fiber.yield
+  end
+
+  def url : String
+    "http://#{@address.address}:#{@address.port}/v1"
+  end
+
+  def close
+    @server.close
+  end
+end
+
+private OK_REPLY = %({"choices":[{"message":{"content":"{\\"endpoints\\":[]}"}}]})
+
+describe "LLM::General recovering from a rejection" do
+  it "drops a temperature the model refuses and keeps it dropped" do
+    provider = RejectingProvider.new do |body|
+      if body["temperature"]?
+        {400, %({"error":{"message":"Unsupported value: 'temperature' does not support 0.3 with this model.","param":"temperature","code":"unsupported_value"}})}
+      else
+        {200, OK_REPLY}
+      end
+    end
+    begin
+      client = LLM::General.new(provider.url, "some-future-reasoner", "k")
+      client.request_messages([{"role" => "user", "content" => "x"}]).should eq(%({"endpoints":[]}))
+      client.request_messages([{"role" => "user", "content" => "y"}]).should eq(%({"endpoints":[]}))
+      provider.bodies.map(&.["temperature"]?.nil?).should eq([false, true, true])
+    ensure
+      provider.close
+    end
+  end
+
+  it "raises ContextOverflow only for a caller that can re-split" do
+    provider = RejectingProvider.new do |_|
+      {400, %({"error":{"message":"This model's maximum context length is 128000 tokens. However, your messages resulted in 130000 tokens.","code":"context_length_exceeded"}})}
+    end
+    begin
+      client = LLM::General.new(provider.url, "gpt-4o", "k")
+      messages = [{"role" => "user", "content" => "x"}]
+      ex = expect_raises(LLM::ContextOverflow) { client.request_messages(messages, raise_overflow: true) }
+      ex.limit.should eq(128000)
+      ex.used.should eq(130000)
+      expect_raises(LLM::ContextOverflow) { LLM::GeneralAdapter.new(client).request_bundle("s", "u", "json") }
+      # Every other caller keeps the "" contract.
+      client.request_messages(messages).should eq("")
+      LLM::GeneralAdapter.new(client).request_messages(messages).should eq("")
+    ensure
+      provider.close
+    end
+  end
+end
+
+private def overflow(status : Int32, body : String)
+  LLM::General.context_overflow(LLM::HttpTransport::Rejection.new(status, body))
+end
+
+describe "LLM::General.context_overflow" do
+  {
+    "openai"    => { %({"error":{"message":"This model's maximum context length is 8192 tokens. However, your messages resulted in 9000 tokens.","code":"context_length_exceeded"}}), 8192, 9000 },
+    "gpt-5"     => { %({"error":{"message":"Input tokens exceed the configured limit of 272000 tokens."}}), 272000, nil },
+    "anthropic" => { %({"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 250000 tokens > 200000 maximum"}}), 200000, 250000 },
+    "gemini"    => { %([{"error":{"code":400,"message":"The input token count (40000) exceeds the maximum number of tokens allowed (32768).","status":"INVALID_ARGUMENT"}}]), 32768, 40000 },
+    "lmstudio"  => { %({"error":"The model is loaded with context length of only 4096 tokens"}), 4096, nil },
+    "unnamed"   => { %({"error":{"message":"context_length_exceeded"}}), nil, nil },
+  }.each do |label, (body, limit, used)|
+    it "reads the #{label} overflow" do
+      ex = overflow(400, body).should_not be_nil
+      ex.limit.should eq(limit)
+      ex.used.should eq(used)
+    end
+  end
+
+  it "takes a bare 413 from a proxy as an overflow" do
+    overflow(413, "<html><body>413 Request Entity Too Large</body></html>").should_not be_nil
+  end
+
+  it "ignores other rejections" do
+    overflow(400, %({"error":{"message":"invalid model"}})).should be_nil
+    overflow(401, %({"error":{"message":"context length"}})).should be_nil
+  end
+end
+
+describe "LLM::General.temperature_rejected?" do
+  it "reads the error, not an echo of the request" do
+    rejected = ->(body : String) { LLM::General.temperature_rejected?(LLM::HttpTransport::Rejection.new(400, body)) }
+    rejected.call(%({"error":{"message":"Unsupported value","param":"temperature","code":"unsupported_value"}})).should be_true
+    rejected.call(%({"type":"error","error":{"type":"invalid_request_error","message":"`temperature` is deprecated for this model."}})).should be_true
+    rejected.call(%({"error":{"message":"invalid model"},"request":{"temperature":0.3}})).should be_false
+  end
+end

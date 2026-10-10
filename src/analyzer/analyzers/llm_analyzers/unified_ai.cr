@@ -256,7 +256,14 @@ module Analyzer::AI
       total < limit ? total : limit
     end
 
-    private def process_bundle(bundle : LLM::Bundle, adapter : LLM::Adapter)
+    # A bundle the provider says is over the model's window is re-split and
+    # retried instead of lost, so a model the token table doesn't know (or
+    # knows wrong) costs a rejected request, not the bundle's endpoints.
+    # Providers reject an oversized prompt before inference, so each bundle
+    # finding out for itself costs latency, not tokens.
+    MAX_RESPLIT_DEPTH = 3
+
+    private def process_bundle(bundle : LLM::Bundle, adapter : LLM::Adapter, depth : Int32 = 0)
       endpoints = call_llm_with_cache(
         kind: "BUNDLE_ANALYZE",
         system_prompt: LLM::SYSTEM_BUNDLE,
@@ -274,6 +281,30 @@ module Analyzer::AI
         store_endpoints(endpoints, fallback)
       else
         record_llm_failure(bundle.paths, LLM_NO_RESPONSE_REASON)
+      end
+    rescue ex : LLM::ContextOverflow
+      budget = LLM.overflow_budget(bundle.tokens, ex.limit, ex.used)
+      if depth >= MAX_RESPLIT_DEPTH || budget < LLM::MIN_SPLIT_CHARS // 4
+        record_llm_failure(bundle.paths, "#{ex.message}, even after re-splitting; set --ai-max-token lower")
+        return
+      end
+      logger.info "Bundle (#{bundle.tokens} tokens) is over the model's context window; re-splitting at #{budget} tokens"
+      resplit_bundle(bundle, adapter, budget, depth)
+    end
+
+    private def resplit_bundle(bundle : LLM::Bundle, adapter : LLM::Adapter, budget : Int32, depth : Int32)
+      files = if part = LLM.split_part(bundle)
+                # One part of a split file: re-split that part's text only.
+                # Re-reading the file would resend every other part too, once
+                # per overflowing part.
+                [part]
+              else
+                # A bundle names its files by prompt label; map back to the
+                # walked path.
+                prepare_files_for_bundling(bundle.paths.map { |label| @bundle_labels[label]? || label })
+              end
+      LLM.bundle_files(files, budget).each do |sub|
+        process_bundle(sub, adapter, depth + 1)
       end
     end
 
@@ -1065,8 +1096,11 @@ module Analyzer::AI
       # adapter's @contexts Hash). Disable context reuse for that kind;
       # each request already carries the full system + bundle prompt.
       # Adapters without provider-side context ignore the key.
-      ctx_key = kind == "BUNDLE_ANALYZE" ? nil : "#{@provider}:#{@model}:#{kind}"
-      response = adapter.request_with_context(system_prompt, payload, format, ctx_key)
+      response = if kind == "BUNDLE_ANALYZE"
+                   adapter.request_bundle(system_prompt, payload, format)
+                 else
+                   adapter.request_with_context(system_prompt, payload, format, "#{@provider}:#{@model}:#{kind}")
+                 end
       logger.debug "AI #{kind} response:"
       logger.debug_sub response
 
