@@ -28,6 +28,17 @@ class UserController @Inject()(
   get("/files/:*") { request: Request => "file" }
 
   any("/ping") { request: Request => "pong" }
+
+  filter[AuthFilter].get("/secured") { request: Request =>
+    val token = request.params.get("token")
+    token.getOrElse("")
+  }
+
+  filter[AuthFilter].filter[AuditFilter].post("/audited") { request: Request => "ok" }
+
+  filter[AuthFilter].prefix("/me") {
+    get("/profile") { request: Request => "me" }
+  }
 }
 
 // Not a controller: a client wrapper whose `get("...")` is an outbound call.

@@ -10,8 +10,8 @@ module Analyzer::Scala
     analyzer_for "scala_finatra"
 
     CONTROLLER_RE = /\bextends\s+(?:[\w.]+\.)?Controller\b/
-    ROUTE_RE      = /(?<![.\w])(get|post|put|patch|delete|head|options|any)\s*(?:\[[^(]*\])?\s*\(\s*"([^"]*)"/
-    PREFIX_RE     = /(?<![.\w])prefix\s*\(\s*"([^"]*)"/
+    ROUTE_RE      = /(?:(?<![.\w])|(?<=\]\.))(get|post|put|patch|delete|head|options|any)\s*(?:\[[^(]*\])?\s*\(\s*"([^"]*)"/
+    PREFIX_RE     = /(?:(?<![.\w])|(?<=\]\.))prefix\s*\(\s*"([^"]*)"/
     PARAM_READ_RE = /request\.(?:params|getParam)\s*\(\s*"([^"]+)"/
 
     def analyze_file(path : String) : Array(Endpoint)
