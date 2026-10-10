@@ -6,6 +6,18 @@ require "../http_transport"
 require "../prompt"
 
 module LLM
+  # A request whose prompt is over the model's context window, raised for a
+  # caller that asked to re-split instead of getting "". `limit` is the
+  # window and `used` the prompt's real size, when the provider named them.
+  class ContextOverflow < Exception
+    getter limit : Int32?
+    getter used : Int32?
+
+    def initialize(@limit : Int32? = nil, @used : Int32? = nil)
+      super("prompt exceeds the model's context window#{" (#{@used} > #{@limit} tokens)" if @limit && @used}")
+    end
+  end
+
   # General OpenAI-compatible LLM client
   class General
     @@tools_cache = {} of String => JSON::Any
@@ -79,18 +91,89 @@ module LLM
       ""
     end
 
-    # Reasoning models answer a non-default `temperature` with HTTP 400, which
-    # loses the whole bundle: OpenAI's o-series and GPT-5 family (its `-chat`
-    # models excepted), and Claude from Opus 4.7 / Sonnet 5 / Haiku 5.5 on
-    # (Fable and Mythos included).
+    # Reasoning models answer a non-default `temperature` with HTTP 400:
+    # OpenAI's o-series and GPT-5 family (its `-chat` models excepted), and
+    # Claude from Opus 4.7 / Sonnet 5 / Haiku 5.5 on (Fable and Mythos
+    # included). `post` recovers from that rejection for any model, so this
+    # list only saves the first wasted request for the models it names.
     FIXED_SAMPLING_MODEL = /\A(?:o\d+(?:-|\z)|gpt-5(?![\w.-]*-chat)|claude-(?:opus-4-[7-9]|(?:opus|sonnet|haiku)-[5-9]|fable|mythos))/
 
     def self.sampling_temperature?(model : String) : Bool
       !LLM.model_basename(model).matches?(FIXED_SAMPLING_MODEL)
     end
 
+    # The 400 for a rejected sampling parameter: OpenAI names it in `param`
+    # (`unsupported_value`), Anthropic in the message. Only the error itself
+    # is read; a gateway that echoes the request would otherwise match on
+    # every 400.
+    def self.temperature_rejected?(rejection : HttpTransport::Rejection) : Bool
+      return false unless rejection.status == 400
+      error = JSON.parse(rejection.body).as_h?.try(&.["error"]?)
+      text = error.try { |e| e.as_h? ? "#{e["param"]?} #{e["message"]?}" : e.to_s } || rejection.body
+      text.downcase.includes?("temperature")
+    rescue JSON::ParseException
+      rejection.body.downcase.includes?("temperature")
+    end
+
+    CONTEXT_OVERFLOW = /context_length_exceeded|context length|context window|prompt is too long|maximum number of tokens|too many (?:input )?tokens|exceed[s]? the (?:configured )?limit/i
+
+    # How OpenAI, vLLM, Anthropic, Gemini and LM Studio state the window ...
+    CONTEXT_LIMIT = [
+      /maximum context length is (\d+)/i,
+      /> ?(\d+) maximum/i,
+      /maximum number of tokens allowed \((\d+)\)/i,
+      /context length of only (\d+)/i,
+      /limit of (\d+) tokens/i,
+    ]
+
+    # ... and the prompt's real size, which corrects noir's chars/4 estimate.
+    CONTEXT_USED = [
+      /resulted in (\d+) tokens/i,
+      /prompt is too long: (\d+) tokens/i,
+      /input token count \((\d+)\)/i,
+    ]
+
+    # nil when the rejection is not a context overflow. A 413 is one even
+    # with no wording: a reverse proxy's body-size cap answers in HTML.
+    def self.context_overflow(rejection : HttpTransport::Rejection) : ContextOverflow?
+      body = rejection.body
+      return unless rejection.status == 413 || (rejection.status == 400 && body.matches?(CONTEXT_OVERFLOW))
+      ContextOverflow.new(first_number(body, CONTEXT_LIMIT), first_number(body, CONTEXT_USED))
+    end
+
+    private def self.first_number(text : String, patterns : Array(Regex)) : Int32?
+      patterns.each do |re|
+        if (m = text.match(re)) && (n = m[1].to_i?) && n > 0
+          return n
+        end
+      end
+    end
+
+    # Sends a request body, recovering from the rejections a model name
+    # cannot predict: a `temperature` the model refuses is dropped for the
+    # rest of the run and the request resent. A prompt over the context
+    # window raises `ContextOverflow` when the caller can re-split it, and is
+    # reported like any other failure when it cannot.
+    private def post(body : Hash, raise_overflow : Bool = false) : String?
+      result = LLM::HttpTransport.post_json_result(@api, encode(body), request_headers)
+      return result unless result.is_a?(HttpTransport::Rejection)
+
+      if @send_temperature && self.class.temperature_rejected?(result)
+        @send_temperature = false
+        return post(body, raise_overflow)
+      end
+
+      if raise_overflow && (overflow = self.class.context_overflow(result))
+        raise overflow
+      end
+      LLM::HttpTransport.report(result)
+      nil
+    end
+
     # Make a request with chat-style messages
-    def request_messages(messages : Array(Hash(String, String)), format : String = "json")
+    # `raise_overflow` turns a context-window rejection into
+    # `ContextOverflow` instead of "" (see `post`).
+    def request_messages(messages : Array(Hash(String, String)), format : String = "json", raise_overflow : Bool = false)
       body = {
         "model"           => @model,
         "messages"        => messages,
@@ -99,13 +182,15 @@ module LLM
         "response_format" => format == "json" ? {"type" => "json_object"} : JSON.parse(format),
       }
 
-      raw = LLM::HttpTransport.post_json(@api, encode(body), request_headers)
+      raw = post(body, raise_overflow)
       return "" if raw.nil?
 
       response_json = JSON.parse(raw)
       return "" if report_api_error(response_json)
 
       LLM.strip_json_fences(response_json["choices"][0]["message"]["content"].to_s)
+    rescue e : ContextOverflow
+      raise e
     rescue e : Exception
       STDERR.puts "WARNING: AI API error (#{e.message})"
       ""
@@ -124,7 +209,7 @@ module LLM
         "tool_choice" => "auto",
       }
 
-      raw = LLM::HttpTransport.post_json(@api, encode(body), request_headers)
+      raw = post(body)
       return "" if raw.nil?
 
       response_json = JSON.parse(raw)

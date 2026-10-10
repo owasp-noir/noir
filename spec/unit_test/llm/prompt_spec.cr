@@ -534,3 +534,32 @@ describe LLM do
     end
   end
 end
+
+describe "LLM.overflow_budget" do
+  it "uses the window the provider named, never above the bundle" do
+    LLM.overflow_budget(50_000, 32_768).should eq(32_768)
+    LLM.overflow_budget(20_000, 32_768).should eq(20_000)
+  end
+
+  it "scales by the real prompt size when the provider reports it" do
+    # Estimated 100k, really 400k, window 128k: one step to 32k estimated.
+    LLM.overflow_budget(100_000, 128_000, 400_000).should eq(32_000)
+  end
+
+  it "halves the bundle when the provider named no window" do
+    LLM.overflow_budget(50_000, nil).should eq(25_000)
+  end
+end
+
+describe "LLM.split_part" do
+  it "recovers one part's own text, and nothing for a whole-file bundle" do
+    content = (1..2000).map { |i| "get '/r#{i}'\n" }.join
+    parts = LLM.bundle_files([{"routes.rb", content}], 2000)
+    parts.size.should be > 1
+    parts.map { |b| LLM.split_part(b).not_nil![1] }.join.should eq(content)
+    LLM.split_part(parts[1]).not_nil![0].should eq("routes.rb")
+
+    whole = LLM.bundle_files([{"a.rb", "get '/a'\n"}], 100_000)[0]
+    LLM.split_part(whole).should be_nil
+  end
+end
