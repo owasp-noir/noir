@@ -1,5 +1,6 @@
 require "http/client"
 require "uri"
+require "../utils/redact"
 
 module LLM
   # Shared HTTP transport for the provider clients (OpenAI-compatible and
@@ -90,7 +91,28 @@ module LLM
       retry_after(response) || backoff(attempt)
     end
 
+    # Credentials this run has sent, so provider text that echoes one back
+    # (some gateways quote the whole bearer token in a 401) never reaches
+    # stderr or a CI log. Taken from the request headers rather than the
+    # options, so whatever key a client actually sent is the one masked.
+    @@secrets = Set(String).new
+    @@secrets_mutex = Mutex.new
+
+    def self.remember_secret(headers : HTTP::Headers) : Nil
+      return unless auth = headers["Authorization"]?
+      key = auth.sub(/\A\w+\s+/, "")
+      @@secrets_mutex.synchronize { @@secrets << key }
+    end
+
+    def self.redact(text : String) : String
+      Noir::Redact.secret(text, @@secrets_mutex.synchronize { @@secrets.dup })
+    end
+
+    # Every provider error text that reaches stderr goes through here, so
+    # it is also where the key is masked — before the cut, so a key
+    # straddling it cannot leak its prefix.
     def self.truncate_error_snippet(body : String) : String
+      body = redact(body)
       body.size > MAX_ERROR_SNIPPET_SIZE ? "#{body[0, MAX_ERROR_SNIPPET_SIZE]}..." : body
     end
 
@@ -113,6 +135,7 @@ module LLM
     # `post_json`, except a rejection is returned unreported, for a caller
     # that can recover from some of them.
     def self.post_json_result(url : String, body : String, headers : HTTP::Headers) : (String | Rejection)?
+      remember_secret(headers)
       attempt = 0
       loop do
         attempt += 1

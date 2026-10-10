@@ -107,5 +107,11 @@ describe LLM::HttpTransport do
     it "leaves short bodies alone" do
       LLM::HttpTransport.truncate_error_snippet("boom").should eq("boom")
     end
+
+    it "masks a key the run has sent when the provider echoes it" do
+      LLM::HttpTransport.remember_secret(HTTP::Headers{"Authorization" => "Bearer sk-test-KEY-1234"})
+      snippet = LLM::HttpTransport.truncate_error_snippet(%({"error":{"message":"Incorrect API key provided: sk-test-KEY-1234"}}))
+      snippet.should eq(%({"error":{"message":"Incorrect API key provided: ***"}}))
+    end
   end
 end

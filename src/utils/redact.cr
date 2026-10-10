@@ -57,6 +57,14 @@ module Noir::Redact
     url(text).sub(URL_TAIL, "\\1/#{MASK}")
   end
 
+  # Every occurrence of each secret in `text`, for text a remote party wrote
+  # (a provider error body that echoes the key it was sent). Secrets under
+  # four characters are left alone: masking them would garble the message
+  # and hide nothing worth hiding.
+  def self.secret(text : String, secrets : Enumerable(String)) : String
+    secrets.reduce(text) { |acc, s| s.size < 4 ? acc : acc.gsub(s, MASK) }
+  end
+
   # `Name: value` → `Name: ***`. Without a separator (a malformed
   # `--probe-header "Authorization Bearer xyz"`) everything after the first
   # word is hidden, and a lone word is hidden whole.
