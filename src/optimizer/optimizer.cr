@@ -20,7 +20,9 @@ class EndpointOptimizer
   # imported collection when they sort before the implementation endpoint.
   SPECIFICATION_TECHNOLOGIES = Set{"oas2", "oas3", "grpc", "thrift", "graphql_sdl", "graphql_operation"}
 
-  AI_FOLD_PLACEHOLDER_RE = /\A(?::\w+|\{[^}]*\}|<[^>]*>|\[[^\]]*\])\z/
+  # `:id`, `:id?`, `:id(\d+)`, `*`, `*path`, `{id}`, `<int:id>`, `[id]`.
+  AI_FOLD_PLACEHOLDER_RE = /\A(?::\w.*|\*\w*|\{[^}]*\}|<[^>]*>|\[[^\]]*\])\z/
+  URL_AUTHORITY_RE       = /\A[a-zA-Z][a-zA-Z0-9+.\-]*:\/\/[^\/]*/
 
   @logger : NoirLogger
   @options : Hash(String, YAML::Any)
@@ -224,11 +226,12 @@ class EndpointOptimizer
     prune_collection_graphql_transport_endpoints(merged)
   end
 
-  # An AI endpoint that names a static route under any path-param spelling
-  # (`:id`, `{id}`, `<int:id>`, `[id]`) folds into the static one: its
-  # technology, code path and params stay primary, the AI's non-path params
-  # and its `ai` technology ride along as evidence. Only AI-vs-static pairs
-  # are compared, so static-vs-static dedup is unchanged.
+  # An AI endpoint that names a static route under another path-param
+  # spelling (see AI_FOLD_PLACEHOLDER_RE) folds into the static one: its
+  # technology, code path and params stay primary; the AI's non-path params,
+  # code paths in other files and its `ai` technology ride along as evidence.
+  # Only AI-vs-static pairs are compared, so static-vs-static dedup is
+  # unchanged.
   private def fold_ai_into_static(endpoints : Array(Endpoint)) : Array(Endpoint)
     ai, static = endpoints.partition { |endpoint| endpoint.details.technology == "ai" }
     return endpoints if ai.empty? || static.empty?
@@ -241,6 +244,9 @@ class EndpointOptimizer
       next false unless idx = index[ai_fold_key(endpoint)]?
       endpoint.params = endpoint.params.reject { |param| param.param_type == "path" }
       merge_params(static[idx], endpoint)
+      endpoint.details.code_paths.each do |path_info|
+        static[idx].details.add_path(path_info) unless static[idx].details.code_paths.any? { |existing| existing.path == path_info.path }
+      end
       static[idx] = absorb_technologies(static[idx], endpoint)
       true
     end
@@ -248,7 +254,7 @@ class EndpointOptimizer
   end
 
   private def ai_fold_key(endpoint : Endpoint) : Tuple(String, String)
-    segments = endpoint.url.split('?').first.split('/').reject(&.empty?)
+    segments = comparable_path_segments(endpoint.url.sub(URL_AUTHORITY_RE, ""))
     {endpoint.method.upcase, "/" + segments.map { |seg| seg.matches?(AI_FOLD_PLACEHOLDER_RE) ? "{}" : seg }.join('/')}
   end
 

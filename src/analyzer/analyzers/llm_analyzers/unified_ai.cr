@@ -422,7 +422,9 @@ module Analyzer::AI
       )
 
       if endpoints
-        store_endpoints(endpoints, path, content)
+        # The path is part of the haystack: file-routed frameworks (Next.js
+        # pages, plain PHP) name the route only in the file name.
+        store_endpoints(endpoints, path, "#{relative_path}\n#{content}")
       else
         record_llm_failure([relative_path], LLM_NO_RESPONSE_REASON)
       end
@@ -445,7 +447,7 @@ module Analyzer::AI
     end
 
     private def store_endpoints(endpoints : Array(JSON::Any), default_path : String?, source : String)
-      haystack = source.downcase
+      haystack = source.downcase.delete("-_")
       endpoints.each do |ep|
         if endpoint = create_endpoint_from_json(ep, default_path, haystack)
           @result << endpoint
@@ -488,14 +490,21 @@ module Analyzer::AI
     end
 
     # A well-formed URL the code never mentions is a hallucination or
-    # injected output. The last literal segment must occur in the source
-    # (case-folded: `UsersController` grounds `/users`). Prefix-composed
+    # injected output. The last literal segment must occur in the source,
+    # compared case-folded without `-`/`_` and without a `.ext` suffix
+    # (`UsersController` grounds `/users`, `getUserProfile` grounds
+    # `/user-profile`, `admin.php` grounds `/admin.php`). Prefix-composed
     # routes still pass on their own last segment; `/` and all-placeholder
-    # paths have nothing to check and pass.
+    # paths have nothing to check and pass. `haystack` must be downcased
+    # with `-`/`_` removed.
+    # ponytail: convention-generated segments (Rails `resources` -> `/new`,
+    # `/edit`) are dropped when the static analyzer did not report them.
     def self.grounded?(url : String, haystack : String) : Bool
       path = url.sub(URL_AUTHORITY_RE, "").split(/[?#]/, 2).first
       literal = path.split('/').reverse_each.find { |seg| !seg.empty? && !seg.matches?(PLACEHOLDER_SEGMENT_RE) }
-      literal.nil? || haystack.includes?(literal.downcase)
+      return true unless literal
+      word = literal.sub(/\.[^.]*\z/, "").presence || literal
+      haystack.includes?(word.downcase.delete("-_"))
     end
 
     # A parameter name is an identifier-ish token. Drop names that carry

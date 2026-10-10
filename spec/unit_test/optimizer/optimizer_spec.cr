@@ -32,9 +32,15 @@ describe "EndpointOptimizer" do
       login_ai = Endpoint.new("/login", "POST", [] of Param, ai_details)
       login = tech_endpoint("/login", "POST", "js_express", "server.js", 5)
       other_ai = Endpoint.new("/only/ai", "GET", [] of Param, ai_details)
+      files = tech_endpoint("/files/*filepath", "GET", "go_gin", "main.go", 9)
+      files_ai = Endpoint.new("https://api.example.com/files/{filepath}", "GET", [] of Param, Details.new(PathInfo.new("handlers.go", 3)))
+      files_ai_details = files_ai.details
+      files_ai_details.technology = "ai"
+      files_ai.details = files_ai_details
 
-      result = optimizer.optimize_endpoints([ai, static, login_ai, login, other_ai])
-      result.size.should eq(3)
+      result = optimizer.optimize_endpoints([ai, static, login_ai, login, other_ai, files, files_ai])
+      result.size.should eq(4)
+      result.find!(&.url.==("/files/*filepath")).details.code_paths.map(&.path).should eq(["main.go", "handlers.go"])
       user = result.find!(&.url.==("/users/:id"))
       user.details.technology.should eq("js_express")
       user.details.technologies.should eq(["ai", "js_express"])

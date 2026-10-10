@@ -100,7 +100,7 @@ describe Analyzer::AI::Unified do
   end
 
   describe "grounded?" do
-    source = %(const router = require("express").Router();\nrouter.get("/users/:id", h);\nclass UsersController {}).downcase
+    source = %(const router = require("express").Router();\nrouter.get("/users/:id", h);\nclass UsersController { getUserProfile() {} }\n// pages/admin.php).downcase.delete("-_")
 
     it "drops a route whose last literal segment is not in the source" do
       Analyzer::AI::Unified.grounded?("/admin/backdoor", source).should be_false
@@ -112,6 +112,9 @@ describe Analyzer::AI::Unified do
       Analyzer::AI::Unified.grounded?("https://example.com/Users", source).should be_true
       Analyzer::AI::Unified.grounded?("/", source).should be_true
       Analyzer::AI::Unified.grounded?("/:id/<int:n>/[slug]/*", source).should be_true
+      Analyzer::AI::Unified.grounded?("/user-profile", source).should be_true
+      Analyzer::AI::Unified.grounded?("/admin.php", source).should be_true
+      Analyzer::AI::Unified.grounded?("/users.json", source).should be_true
     end
   end
 end
