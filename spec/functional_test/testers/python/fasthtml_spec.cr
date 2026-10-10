@@ -33,6 +33,15 @@ expected_endpoints = [
   ]),
 ]
 
+# `@app.ws` / `@ar.ws` are WebSocket routes; message fields are not params.
+ws = ->(url : String, params : Array(Param)) do
+  ep = Endpoint.new(url, "GET", params)
+  ep.protocol = "ws"
+  ep
+end
+expected_endpoints << ws.call("/ws/{room}", [Param.new("room", "", "path")])
+expected_endpoints << ws.call("/products/live", [] of Param)
+
 FunctionalTester.new("fixtures/python/fasthtml/", {
   :techs     => 2,
   :endpoints => expected_endpoints.size,

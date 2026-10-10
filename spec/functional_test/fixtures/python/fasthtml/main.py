@@ -47,3 +47,8 @@ async def put(item_id: int, name: str):
 @rt("/upload", methods=["post"])
 def upload(file: UploadFile):
     return ""
+
+
+@app.ws("/ws/{room}")
+async def ws(msg: str, send, room: str):
+    await send(msg)

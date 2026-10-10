@@ -17,3 +17,8 @@ def details(pid: int):
 @ar.post("/{pid}/buy")
 def buy(pid: int, qty: int):
     return ""
+
+
+@ar.ws("/live")
+async def live(msg: str, send):
+    pass

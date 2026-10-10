@@ -20,6 +20,9 @@ module Analyzer::Python
     PATH_PARAM_RE = /\{([A-Za-z_]\w*)(?::[^}]*)?\}/
     # `app, rt = fast_app()` may name the route decorator something else.
     RT_NAME_RE = /^\s*\w+\s*,\s*(\w+)\s*=\s*fast_app\s*\(/m
+    # `@app.ws("/ws")`: a WebSocket route, emitted as GET + protocol "ws".
+    # Its handler arguments are message fields, not query/form params.
+    WS_ATTRIBUTES = {"ws" => "GET"}
     # `ar = APIRouter(prefix="/products")`: `@ar(...)` / `@ar.get(...)` routes
     # sit under the prefix, which FastHTML prepends as-is.
     API_ROUTER_RE = /^\s*(\w+)\s*=\s*(?:\w+\.)?APIRouter\s*\(\s*(?:prefix\s*=\s*)?(?:(['"])(.*?)\2)?/m
@@ -42,7 +45,7 @@ module Analyzer::Python
       rt_names.concat(routers.keys)
       lines = source.lines
       endpoints = [] of Endpoint
-      Noir::TreeSitterPythonRouteExtractor.extract_decorations(source, pathless: true, bare_routers: rt_names.uniq).each do |deco|
+      Noir::TreeSitterPythonRouteExtractor.extract_decorations(source, extra_attributes: WS_ATTRIBUTES, pathless: true, bare_routers: rt_names.uniq).each do |deco|
         def_line = deco.def_line
         next if def_line < 0
 
@@ -62,8 +65,10 @@ module Analyzer::Python
 
         path_names = [] of ::String
         url = route.gsub(PATH_PARAM_RE) { path_names << $~[1]; "{#{$~[1]}}" }
+        ws = deco.attribute_name == "ws"
         arg_names = [] of ::String
         parse_function_def(lines, def_line).try &.params.each do |param|
+          next if ws
           next if param.name.starts_with?('*') || INJECTED.includes?(param.name) || param.type.includes?("Request")
           arg_names << param.name
         end
@@ -75,6 +80,7 @@ module Analyzer::Python
           params = path_names.map { |param_name| Param.new(param_name, "", "path") }
           (arg_names - path_names).each { |param_name| params << Param.new(param_name, "", param_type) }
           endpoint = Endpoint.new(url, method, params, Details.new(PathInfo.new(path, deco.decorator_line + 1)))
+          endpoint.protocol = "ws" if ws
           callees.each { |callee| endpoint.push_callee(callee) }
           endpoints << endpoint
         end
