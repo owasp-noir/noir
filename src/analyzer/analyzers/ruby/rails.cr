@@ -1528,12 +1528,13 @@ module Analyzer::Ruby
           end
         end
 
-        # Every param source below is a `[ ... ]` subscript. A line without a '['
-        # cannot match any of them, so skip the regex ops — this runs on every
-        # line of every controller in the app.
+        # Every param source below is a `[ ... ]` subscript or a
+        # `params.fetch(` / `params.dig(` call. A line with neither cannot
+        # match any of them, so skip the regex ops — this runs on every line
+        # of every controller in the app.
         line = folded_lines[index]
-        if line.includes?('[')
-          line.scan(/params\[\s*(?::(\w+)|['"]([^'"]+)['"])\s*\]/) do |m|
+        if line.includes?('[') || line.includes?("params.")
+          line.scan(/params(?:\[|\.(?:fetch|dig)\s*\()\s*(?::(\w+)|['"]([^'"]+)['"])\s*[\],)]/) do |m|
             name = (m[1]? || m[2]?).to_s.strip
             next if name.empty? || this_method.empty?
             params_body_by_action[this_method] ||= [] of Param

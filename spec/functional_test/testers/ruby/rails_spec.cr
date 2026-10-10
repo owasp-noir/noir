@@ -9,6 +9,9 @@ expected_endpoints = [
   ]),
   Endpoint.new("/posts/1", "GET", [
     Param.new("X-API-KEY", "", "header"),
+    # `params.fetch(:x)` and `params.dig(:top, ...)` read top-level keys too.
+    Param.new("page", "", "query"),
+    Param.new("filter", "", "query"),
   ]),
   Endpoint.new("/posts", "POST", [
     Param.new("title", "", "json"),
