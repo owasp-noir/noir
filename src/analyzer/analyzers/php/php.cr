@@ -142,7 +142,7 @@ module Analyzer::Php
       # Pure-PHP still emits a GET pseudo-endpoint per file even when no
       # superglobals are present. Only the per-line param walk is gated.
       if content.includes?("$_") || content.includes?("filter_input")
-        content.each_line do |line|
+        php_code(content).each_line do |line|
           if line.matches?(ALLOW_PATTERNS_RE)
             superglobal_matches = line.scan(/\$_(GET|POST|REQUEST|SERVER|COOKIE|FILES)\s*\[\s*['"]([^'"]+)['"]\s*\]/)
             superglobal_matches.each do |match|
