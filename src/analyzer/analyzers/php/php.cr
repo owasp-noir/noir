@@ -1,4 +1,5 @@
 require "../../engines/php_engine"
+require "../../../utils/call_fold"
 
 module Analyzer::Php
   class Php < PhpEngine
@@ -142,7 +143,9 @@ module Analyzer::Php
       # Pure-PHP still emits a GET pseudo-endpoint per file even when no
       # superglobals are present. Only the per-line param walk is gated.
       if content.includes?("$_") || content.includes?("filter_input")
-        php_code(content).each_line do |line|
+        # Comments are already gone, so the fold needs no cutting; it joins
+        # a wrapped `filter_input(` / `INPUT_GET,` / `'q'` / `)` read.
+        Noir::CallFold.fold(php_code(content).lines) { |l| l }.each do |line|
           if line.matches?(ALLOW_PATTERNS_RE)
             superglobal_matches = line.scan(/\$_(GET|POST|REQUEST|SERVER|COOKIE|FILES)\s*\[\s*['"]([^'"]+)['"]\s*\]/)
             superglobal_matches.each do |match|
