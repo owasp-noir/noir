@@ -126,4 +126,54 @@ describe "FastAPIAuthTagger" do
       CodeLocator.instance.clear_all
     end
   end
+
+  it "needs the auth word as a whole name component, not a substring" do
+    tmpdir = File.tempname("fastapi_callable_words")
+    Dir.mkdir_p(tmpdir)
+    main = File.join(tmpdir, "main.py")
+    File.write(main, <<-PY)
+      @app.get("/a")
+      def a(author=Depends(get_author_by_id)):
+          pass
+      @app.get("/b")
+      def b(n=Depends(get_token_count)):
+          pass
+      @app.get("/c")
+      def c(repo=Depends(get_roles_repo)):
+          pass
+      @app.get("/d")
+      def d(svc=Depends(permission_service)):
+          pass
+      @app.get("/e")
+      def e(svc=Depends(author_service)):
+          pass
+      @app.get("/f")
+      def f(key=Security(verify_api_key)):
+          pass
+      @app.get("/g")
+      def g(tok=Depends(reusable_oauth2)):
+          pass
+      @app.get("/h")
+      def h(u=Depends(deps.get_current_active_superuser)):
+          pass
+      @app.get("/i")
+      def i(p=Depends(check_permissions)):
+          pass
+      @app.get("/j")
+      def j(u=Depends(require_authenticated_user)):
+          pass
+      PY
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      endpoints = (0...10).map { |i| Endpoint.new("/#{i}", "GET", [] of Param, Details.new(PathInfo.new(main, i * 3 + 1))) }
+
+      FastAPIAuthTagger.new(noir_options).perform(endpoints)
+
+      endpoints.map(&.tags.empty?).should eq([true, true, true, true, true, false, false, false, false, false])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+    end
+  end
 end

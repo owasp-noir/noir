@@ -5,14 +5,14 @@ require "../../../models/endpoint"
 class FastAPIAuthTagger < FrameworkTagger
   # Depends() with auth-related callables
   DEPENDS_AUTH_PATTERNS = [
-    {/Depends\s*\(\s*get_current_user/, "FastAPI Depends(get_current_user)"},
-    {/Depends\s*\(\s*get_current_active_user/, "FastAPI Depends(get_current_active_user)"},
-    {/Depends\s*\(\s*oauth2_scheme/, "FastAPI OAuth2 dependency"},
-    {/Depends\s*\(\s*get_token/, "FastAPI token dependency"},
-    {/Depends\s*\(\s*verify_token/, "FastAPI token verification"},
-    {/Depends\s*\(\s*auth/, "FastAPI auth dependency"},
-    {/Depends\s*\(\s*require_auth/, "FastAPI require_auth dependency"},
-    {/Depends\s*\(\s*check_permission/, "FastAPI permission check"},
+    {/Depends\s*\(\s*get_current_user\b/, "FastAPI Depends(get_current_user)"},
+    {/Depends\s*\(\s*get_current_active_user\b/, "FastAPI Depends(get_current_active_user)"},
+    {/Depends\s*\(\s*oauth2_scheme\b/, "FastAPI OAuth2 dependency"},
+    {/Depends\s*\(\s*get_token\b/, "FastAPI token dependency"},
+    {/Depends\s*\(\s*verify_token\b/, "FastAPI token verification"},
+    {/Depends\s*\(\s*auth\b/, "FastAPI auth dependency"},
+    {/Depends\s*\(\s*require_auth\b/, "FastAPI require_auth dependency"},
+    {/Depends\s*\(\s*check_permission\b/, "FastAPI permission check"},
     {/Depends\s*\(\s*RoleChecker/, "FastAPI role checker"},
   ]
 
@@ -33,8 +33,17 @@ class FastAPIAuthTagger < FrameworkTagger
 
   # Any other `Depends(x)` / `Security(x)` whose callable is named for auth:
   # `get_current_active_superuser`, `reusable_oauth2`, `verify_api_key`, ...
-  DEPENDENCY_CALL = /\b(Depends|Security)\s*\(\s*([\w.]+)/
-  AUTH_CALLABLE   = /auth|current_\w*user|token|oauth|permission|role|login|jwt|api_?key|bearer|superuser/i
+  #
+  # Matched on the name's snake/camel components, never as a substring:
+  # `get_author_by_id` is not `auth`, and `get_token_count` / `get_roles_repo`
+  # / `permission_service` fetch data rather than guard the route. The weak
+  # words (token, role, permission) count only as the last component or before
+  # a checker word (`verify_token`, `check_permissions`, `RoleChecker`).
+  DEPENDENCY_CALL     = /\b(Depends|Security)\s*\(\s*([\w.]+)/
+  NAME_COMPONENT      = /[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+/
+  STRONG_AUTH_WORDS   = %w[auth authn authz authenticate authenticated authentication authorize authorized authorization oauth jwt bearer superuser login apikey]
+  WEAK_AUTH_WORDS     = %w[token tokens role roles permission permissions scope scopes]
+  AUTH_CHECKER_SUFFIX = %w[checker check required guard verifier validator]
 
   # `CurrentUser = Annotated[User, Depends(get_current_user)]`, the alias the
   # FastAPI docs and full-stack template annotate handler parameters with.
@@ -106,9 +115,20 @@ class FastAPIAuthTagger < FrameworkTagger
 
   private def dependency_desc(text : String) : String?
     text.scan(DEPENDENCY_CALL) do |m|
-      return "FastAPI #{m[1]}(#{m[2]})" if m[2].matches?(AUTH_CALLABLE)
+      return "FastAPI #{m[1]}(#{m[2]})" if auth_callable?(m[2])
     end
     nil
+  end
+
+  private def auth_callable?(name : String) : Bool
+    words = name.scan(NAME_COMPONENT).map(&.[0].downcase)
+    words.each_with_index.any? do |word, i|
+      nxt = words[i + 1]?
+      STRONG_AUTH_WORDS.includes?(word) ||
+        (word == "api" && nxt == "key") ||
+        (word == "current" && words[i + 1..].any? { |w| w == "user" || w == "superuser" }) ||
+        (WEAK_AUTH_WORDS.includes?(word) && (nxt.nil? || AUTH_CHECKER_SUFFIX.includes?(nxt)))
+    end
   end
 
   # From the route's first decorator line through the end of its `def`
