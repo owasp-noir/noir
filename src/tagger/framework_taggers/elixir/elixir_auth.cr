@@ -1,6 +1,8 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 require "../prefix_scope"
+require "../../../utils/call_fold"
+require "../../../miniparsers/elixir_callee_extractor"
 
 @[Noir::TaggerFor(key: "elixir_auth", name: "Elixir Auth Tagger", desc: "Identifies Phoenix/Plug authentication patterns (plugs, Guardian, Pow)", order: 190)]
 class ElixirAuthTagger < FrameworkTagger
@@ -72,9 +74,13 @@ class ElixirAuthTagger < FrameworkTagger
     lines = content.split("\n")
     # Stack-based scope tracking for nested Phoenix scopes
     scope_stack = [] of String
+    # `pipe_through [` / `:browser,` / `:auth` / `]` is matched on the
+    # folded view; string contents are blanked, the patterns are atoms.
+    pipe_lines = Noir::CallFold.fold(lines) { |l| Noir::ElixirCalleeExtractor.strip_comment(l) }
 
-    lines.each do |line|
+    lines.each_with_index do |line, index|
       stripped = line.strip
+      pipe_line = pipe_lines[index].strip
 
       # Track scope nesting
       scope_match = stripped.match(/scope\s+["']([^"']+)["']/)
@@ -84,7 +90,7 @@ class ElixirAuthTagger < FrameworkTagger
 
       # Check for authenticated pipeline within current scope
       PIPELINE_AUTH_PATTERNS.each do |pattern, desc|
-        if stripped.matches?(pattern) && !scope_stack.empty?
+        if pipe_line.matches?(pattern) && !scope_stack.empty?
           prefix = PrefixScope.join_segments(scope_stack)
           @auth_scopes << {prefix: prefix, description: "Protected by #{desc}"}
         end
