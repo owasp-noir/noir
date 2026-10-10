@@ -39,6 +39,8 @@ module Analyzer::AI
     # `--concurrency`: past a handful of in-flight calls a metered provider
     # answers with 429s rather than faster.
     MAX_BUNDLE_WORKERS = 4
+    # Provider aliases whose default URL is on this host (see LLM::General).
+    LOCAL_PROVIDERS = {"ollama", "lmstudio", "vllm"}
     # Bare URL tokens the LLM emits when it has nothing real to report
     # (schema echoes, "no endpoint" stand-ins). Compared case-folded
     # against the whole path with a single leading slash stripped, so a
@@ -118,6 +120,7 @@ module Analyzer::AI
       @agent_max_steps = options["ai_agent_max_steps"]?.try(&.as_i) || 20
       @native_tool_calling_allowlist = parse_native_tool_allowlist(options["ai_native_tools_allowlist"]?.try(&.as_s))
       @include_sensitive = options["ai_include_sensitive"]?.try { |val| any_to_bool(val) } || false
+      @dry_run = options["ai_dry_run"]?.try { |val| any_to_bool(val) } || false
       @agent_tool_cache = {} of String => String
       @agent_tool_cache_order = [] of String
       options[COVERED_FILES_OPTION]?.try(&.as_a?).try &.each { |path| @covered_files << path.as_s }
@@ -138,8 +141,11 @@ module Analyzer::AI
       begin
         logger.info "AI Analysis using #{Noir::Redact.url(@provider)} with model #{@model} (max tokens: #{@max_tokens})"
 
-        if @use_agentic
+        if @use_agentic && !@dry_run
           logger.info "AI Agentic workflow is enabled"
+          if target = egress_target
+            logger.info "The AI agent will send the files it reads to #{target}"
+          end
           if analyze_with_agentic_workflow(adapter)
             logger.info "AI Agentic workflow completed (#{@result.size} endpoints)"
             Fiber.yield
@@ -155,15 +161,19 @@ module Analyzer::AI
         end
 
         if @max_tokens > 0 && target_paths.size > 5
-          analyze_with_bundling(target_paths, adapter)
+          bundled, single = target_paths, [] of String
         else
           # The per-file path sends each file whole, so a file over the
           # token budget goes through bundling, the only path that splits
           # one. The rest stay per-file under --override-analyze-prompt.
-          oversized, small = target_paths.partition { |path| @max_tokens > 0 && over_token_budget?(path) }
-          analyze_with_bundling(oversized, adapter) unless oversized.empty?
-          small.each { |path| analyze_file(path, adapter) }
+          bundled, single = target_paths.partition { |path| @max_tokens > 0 && over_token_budget?(path) }
         end
+        bundles = bundled.empty? ? [] of LLM::Bundle : LLM.bundle_files(prepare_files_for_bundling(bundled), @max_tokens)
+        announce_egress(bundles, single)
+        return @result if @dry_run
+
+        process_bundles_concurrently(bundles, adapter) unless bundles.empty?
+        single.each { |path| analyze_file(path, adapter) }
 
         Fiber.yield
         @result
@@ -180,11 +190,31 @@ module Analyzer::AI
       false
     end
 
-    private def analyze_with_bundling(paths : Array(String), adapter : LLM::Adapter)
-      files_to_bundle = prepare_files_for_bundling(paths)
-      bundles = LLM.bundle_files(files_to_bundle, @max_tokens)
+    # What is about to leave the machine: printed in full under --ai-dry-run,
+    # summarized for a provider that is not on this host. The per-file
+    # estimate is bytes/4, the same rule `LLM.estimate_tokens` uses.
+    private def announce_egress(bundles : Array(LLM::Bundle), single : Array(String))
+      files = (bundles.flat_map(&.paths) + single.map { |path| get_relative_path(base_path, path) }).uniq!.sort!
+      tokens = bundles.sum(&.tokens) + single.sum { |path| (File.info?(path).try(&.size) || 0).to_i // 4 }
+      summary = "#{files.size} files (~#{tokens} tokens, ~#{bundles.size + single.size} requests)"
+      if @dry_run
+        logger.info "AI dry run: #{summary} would be sent to #{egress_target || Noir::Redact.url(@provider)}; nothing was sent"
+        files.each { |file| logger.sub "➔ #{file}" }
+      elsif target = egress_target
+        logger.info "#{summary} will be sent to #{target}"
+      end
+    end
 
-      process_bundles_concurrently(bundles, adapter)
+    # The host source code is sent to, or nil when it stays on this machine.
+    # An ACP agent runs locally but forwards prompts to its vendor.
+    private def egress_target : String?
+      return @provider if LLM::ACPClient.acp_provider?(@provider)
+      return (LOCAL_PROVIDERS.includes?(@provider.downcase) ? nil : @provider) unless @provider.includes?("://")
+      host = URI.parse(@provider).hostname.to_s
+      return if host == "localhost" || (Socket::IPAddress.valid?(host) && Socket::IPAddress.new(host, 0).loopback?)
+      host
+    rescue URI::Error | Socket::Error
+      Noir::Redact.url(@provider)
     end
 
     private def prepare_files_for_bundling(paths : Array(String)) : Array(Tuple(String, String))
@@ -330,7 +360,8 @@ module Analyzer::AI
       locator = CodeLocator.instance
       all_paths = locator.all_files.reject { |path| covered?(path) || sensitive?(path) }
 
-      paths = if all_paths.size > 10
+      # A dry run sends nothing, so it previews the unfiltered superset.
+      paths = if all_paths.size > 10 && !@dry_run
                 logger.debug_sub "AI::Filtering files using LLM"
                 filter_paths_with_llm(all_paths, adapter)
               else

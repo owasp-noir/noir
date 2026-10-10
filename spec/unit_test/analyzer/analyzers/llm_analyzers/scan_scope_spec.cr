@@ -41,6 +41,10 @@ class Analyzer::AI::Unified
     resolve_reported_file(file)
   end
 
+  def __test_egress_target : String?
+    egress_target
+  end
+
   def __test_agent_paths(reply : String) : Array(Array(String))
     apply_agent_finalize(JSON.parse(reply))
     @result.map(&.details.code_paths.map(&.path))
@@ -198,6 +202,36 @@ describe Analyzer::AI::Unified do
         reply = {endpoints: [{url: "/x", method: "GET", file: "../etc/passwd"}]}.to_json
         scope_analyzer(root).__test_agent_paths(reply).should eq([[] of String])
       end
+    end
+  end
+end
+
+# What leaves the machine, and where to (#2997).
+describe "AI data egress" do
+  it "names the host only for a provider off this machine" do
+    {"http://127.0.0.1:1/v1" => nil, "http://localhost:11434" => nil, "http://[::1]:8000/v1" => nil,
+     "ollama" => nil, "openai" => "openai", "https://user:pw@api.example.com/v1" => "api.example.com",
+     "acp:codex" => "acp:codex"}.each do |provider, target|
+      options = create_test_options
+      options["ai_provider"] = YAML::Any.new(provider)
+      options["ai_model"] = YAML::Any.new("m")
+      options["ai_max_token"] = YAML::Any.new(1000)
+      Analyzer::AI::Unified.new(options).__test_egress_target.should eq(target)
+    end
+  end
+
+  it "sends nothing under --ai-dry-run" do
+    with_scoped_project do |root|
+      Noir::SkippedFiles.clear
+      options = create_test_options
+      options["base"] = YAML::Any.new([YAML::Any.new(root)])
+      # Nothing listens here: any request would fail and be recorded.
+      options["ai_provider"] = YAML::Any.new("http://127.0.0.1:1/v1")
+      options["ai_model"] = YAML::Any.new("m")
+      options["ai_max_token"] = YAML::Any.new(4000)
+      options["ai_dry_run"] = YAML::Any.new(true)
+      Analyzer::AI::Unified.new(options).analyze.should be_empty
+      Noir::SkippedFiles.count.should eq(0)
     end
   end
 end

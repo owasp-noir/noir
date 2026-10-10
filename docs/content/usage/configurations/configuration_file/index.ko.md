@@ -179,6 +179,7 @@ noir scan /path/to/my/project -f json -u https://api.example.com --exclude-codes
 | `ai_agent` | bool | `--ai-agent` | 에이전트형 tool-calling 루프 활성화 |
 | `ai_agent_max_steps` | int | `--ai-agent-max-steps` | 에이전트 루프 상한 |
 | `ai_no_optimize` | bool | `--ai-no-optimize` | LLM 옵티마이저 단계를 건너뜀 |
+| `ai_dry_run` | bool | `--ai-dry-run` | 제공업체로 보낼 내용만 출력하고 전송하지 않음 |
 | `ai_include_sensitive` | bool | `--ai-include-sensitive` | 자격 증명 파일도 제공업체로 전송 |
 | `ai_native_tools_allowlist` | CSV | `--ai-native-tools-allowlist` | 네이티브 툴 사용을 허용할 제공업체 |
 | `ai_max_token` | int | `--ai-max-token` | 요청당 최대 토큰 (`0` = 제공업체 기본값) |

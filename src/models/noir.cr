@@ -200,7 +200,7 @@ class NoirRunner
     @endpoints = analysis_endpoints options, @techs, @logger, @tech_failures
 
     # Use the new optimizer module
-    optimizer = LLMEndpointOptimizer.new(@logger, @options)
+    optimizer = any_to_bool(@options["ai_dry_run"]?) ? EndpointOptimizer.new(@logger, @options) : LLMEndpointOptimizer.new(@logger, @options)
     @endpoints = optimizer.optimize(@endpoints)
 
     # Link mobile deep-link endpoints to their handler source (callees +

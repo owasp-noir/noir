@@ -108,6 +108,7 @@ module Noir::CLI::ScanFlags
     Flag.new("--ai-model", "AI model name", Arg::Value, hint: "model"),
     Flag.new("--ai-key", "AI API key", Arg::Value, hint: "key"),
     Flag.new("--ai-agent", "Enable agentic AI workflow"),
+    Flag.new("--ai-dry-run", "Show what the AI analyzer would send; send nothing"),
     Flag.new("--ai-include-sensitive", "Also send credentials files to the AI provider"),
     Flag.new("--ai-agent-max-steps", "Max steps for AI agent loop", Arg::Value, hint: "n"),
     Flag.new("--ai-no-optimize", "Skip the LLM optimizer pass"),
