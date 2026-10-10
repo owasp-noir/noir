@@ -155,7 +155,7 @@ See [Callee Coverage](@/usage/supported/callee_coverage/index.md) and [AI Contex
 | `--only-techs`        | Run only these tech detectors (skip the rest) |
 | `--techs`             | Add these techs to the analyzer set (in addition to auto-detected ones) |
 | `--exclude-techs`     | Skip these frameworks |
-| `--exclude-path`      | Skip files matching a comma-separated glob list |
+| `--exclude-path`      | Skip files matching a comma-separated glob list. A pattern with `/` matches the path from the scan base, one without matches a file or directory name; a matched directory skips everything under it |
 | `--status-codes`      | Probe each endpoint and attach the observed HTTP status code |
 | `--exclude-codes`     | Drop endpoints whose probed status matches (comma-separated; pairs with `--status-codes`) |
 | `-P, --passive-scan`  | Enable passive security scan |
