@@ -84,6 +84,13 @@ describe Analyzer::Python::PythonEngine do
       params[1].default.should eq %q("tail")
     end
 
+    it "skips trailing comments in a multi-line header" do
+      source = "def read(\n    q: str = None,  # search query\n    limit: int = 10,  # (page size, max 100\n    token: str = \"#x\",\n):"
+      params = literal_harness.parse_def(source).not_nil!.params
+      params.map(&.name).should eq ["q", "limit", "token"]
+      params[2].default.should eq %q("#x")
+    end
+
     it "keeps colons that are not the annotation separator" do
       params = literal_harness.parse_def(%q(def d(cfg: dict = {"a": 1}, z: str = "last"):)).not_nil!.params
       params.map(&.name).should eq ["cfg", "z"]

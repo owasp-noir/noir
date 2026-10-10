@@ -255,6 +255,11 @@ module Analyzer::Python
             end
           elsif char == '\'' || char == '"'
             in_quote = char
+          elsif char == '#'
+            # A comment runs to the end of the line. Read as text it glued
+            # onto the next parameter's name (`q: str = None,  # search`
+            # lost the parameter on the following line).
+            break
           elsif char == '['
             bracket_count += 1
           elsif char == ']'
