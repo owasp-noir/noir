@@ -69,7 +69,7 @@ module Analyzer::AI
     # and agent tools — unless `--ai-include-sensitive` is given. Source-code
     # extensions are deliberately absent from `secrets.*`: `secrets.go` is as
     # likely a route file as a vault.
-    SENSITIVE_FILE = /\A(?:\.env(?:\..*)?|\.envrc|\.npmrc|\.pypirc|\.netrc|_netrc|\.pgpass|\.htpasswd|\.git-credentials|\.dockercfg|id_(?:rsa|dsa|ecdsa|ed25519)(?:\..*)?|credentials(?:\.(?:json|ya?ml|xml|ini|toml|csv|enc|yml\.enc))?|secrets?\.(?:json|ya?ml|xml|ini|toml|env|enc|txt|properties)|.*\.(?:pem|key|p12|pfx|jks|keystore|kdbx|ppk|asc|gpg|tfvars|tfvars\.json|tfstate|tfstate\.backup))\z/i
+    SENSITIVE_FILE = /\A(?:\.env(?:\..*)?|\.envrc|\.npmrc|\.pypirc|\.netrc|_netrc|\.pgpass|\.htpasswd|\.git-credentials|\.dockercfg|id_(?:rsa|dsa|ecdsa|ed25519)(?:\..*)?|credentials(?:\.(?:json|ya?ml|xml|ini|toml|csv|enc|yml\.enc))?|[\w.-]*[-_]credentials\.json|service[-_]?account[\w.-]*\.json|kubeconfig|secrets?\.(?:json|ya?ml|xml|ini|toml|env|enc|txt|properties)|.*\.(?:pem|key|p12|pfx|jks|keystore|kdbx|ppk|asc|gpg|tfvars|tfvars\.json|tfstate|tfstate\.backup))\z/i
 
     @provider : String
     @model : String
@@ -141,6 +141,7 @@ module Analyzer::AI
       begin
         logger.info "AI Analysis using #{Noir::Redact.url(@provider)} with model #{@model} (max tokens: #{@max_tokens})"
 
+        logger.info "AI dry run previews the classic analysis; the agent loop is not run" if @use_agentic && @dry_run
         if @use_agentic && !@dry_run
           logger.info "AI Agentic workflow is enabled"
           if target = egress_target
@@ -194,11 +195,11 @@ module Analyzer::AI
     # summarized for a provider that is not on this host. The per-file
     # estimate is bytes/4, the same rule `LLM.estimate_tokens` uses.
     private def announce_egress(bundles : Array(LLM::Bundle), single : Array(String))
-      files = (bundles.flat_map(&.paths) + single.map { |path| get_relative_path(base_path, path) }).uniq!.sort!
+      files = (bundles.flat_map(&.paths) + single.map { |path| @base_paths.size > 1 ? path : get_relative_path(base_path, path) }).uniq!.sort!
       tokens = bundles.sum(&.tokens) + single.sum { |path| (File.info?(path).try(&.size) || 0).to_i // 4 }
       summary = "#{files.size} files (~#{tokens} tokens, ~#{bundles.size + single.size} requests)"
       if @dry_run
-        logger.info "AI dry run: #{summary} would be sent to #{egress_target || Noir::Redact.url(@provider)}; nothing was sent"
+        logger.info "AI dry run: #{summary} would be sent to #{egress_target || Noir::Redact.url(@provider)}, plus the file-path list (filter) and endpoint URLs (optimizer); nothing was sent"
         files.each { |file| logger.sub "➔ #{file}" }
       elsif target = egress_target
         logger.info "#{summary} will be sent to #{target}"
@@ -363,6 +364,7 @@ module Analyzer::AI
       # A dry run sends nothing, so it previews the unfiltered superset.
       paths = if all_paths.size > 10 && !@dry_run
                 logger.debug_sub "AI::Filtering files using LLM"
+                egress_target.try { |target| logger.info "Sending #{all_paths.size} file paths to #{target} to select files for analysis" }
                 filter_paths_with_llm(all_paths, adapter)
               else
                 logger.debug_sub "AI::Analyzing all files"
@@ -834,7 +836,10 @@ module Analyzer::AI
       resolved = resolve_agent_single_path(path)
       return "ERROR: file '#{path}' is outside base paths or does not exist." if resolved.nil?
       return "ERROR: file '#{path}' is excluded by --exclude-path." if excluded_path?(resolved)
-      return "ERROR: file '#{path}' is withheld as a credentials file (--ai-include-sensitive to allow)." if sensitive?(resolved)
+      # The real path too: an in-base `config.js -> .env` link is allowed through.
+      if sensitive?(resolved) || sensitive?(resolved_real_path(resolved) || resolved)
+        return "ERROR: file '#{path}' is withheld as a credentials file (--ai-include-sensitive to allow)."
+      end
       return "ERROR: '#{path}' is a directory. Use list_directory instead." if File.directory?(resolved)
 
       content = Noir::TextFile.read(resolved)

@@ -121,7 +121,7 @@ describe Analyzer::AI::Unified do
         File.write(File.join(temp_dir, "secrets.go"), "TOKEN=route")
 
         analyzer = Analyzer::AI::Unified.new(build_ai_options(temp_dir))
-        {".env", ".env.local", "id_ed25519.pub", "server.KEY", "credentials", "secrets.yml", ".npmrc", "x.tfstate"}.each do |name|
+        {".env", ".env.local", "id_ed25519.pub", "server.KEY", "credentials", "secrets.yml", ".npmrc", "x.tfstate", "serviceAccountKey.json", "gcp-credentials.json"}.each do |name|
           analyzer.sensitive?("/repo/#{name}").should be_true
         end
         {"secrets.go", "credentials_controller.rb", "environment.ts", "keys.py"}.each do |name|
@@ -129,6 +129,8 @@ describe Analyzer::AI::Unified do
         end
 
         analyzer.__test_run_agent_tool("read_file", %({"path":".env.production"})).should_not contain("leak")
+        File.symlink(File.join(temp_dir, ".env.production"), File.join(temp_dir, "config.js"))
+        analyzer.__test_run_agent_tool("read_file", %({"path":"config.js"})).should_not contain("leak")
         listing = analyzer.__test_run_agent_tool("list_directory", %({"path":"."}))
         listing.should_not contain("id_rsa")
         listing.should_not contain("deploy.pem")
