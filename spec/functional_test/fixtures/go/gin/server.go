@@ -65,7 +65,7 @@ func main() {
 	})
 	
 	// Multi-line route definition
-	r.GET(
+	r.GET( // path on the next line
 		"/multiline",
 		func(c *gin.Context) {
 			_ = c.Query("ml_param")

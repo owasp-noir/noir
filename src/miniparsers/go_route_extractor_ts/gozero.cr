@@ -50,7 +50,7 @@ module Noir
 
           with_prefix = ""
           route_literal = nil
-          Noir::TreeSitter.each_named_child(args) do |arg|
+          Noir::TreeSitter.each_named_arg(args) do |arg|
             case Noir::TreeSitter.node_type(arg)
             when "composite_literal"
               route_literal ||= arg
@@ -227,7 +227,7 @@ module Noir
       return unless Noir::TreeSitter.node_text(fname, source) == "WithPrefix"
       args = Noir::TreeSitter.field(call, "arguments")
       return if args.nil?
-      Noir::TreeSitter.each_named_child(args) do |arg|
+      Noir::TreeSitter.each_named_arg(args) do |arg|
         s = gozero_string_value(arg, source)
         return s unless s.empty?
       end

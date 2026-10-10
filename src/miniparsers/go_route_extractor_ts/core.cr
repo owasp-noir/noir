@@ -198,7 +198,7 @@ module Noir
       when "call_expression"
         function = Noir::TreeSitter.field(arg, "function")
         if function && Noir::TreeSitter.node_text(function, source) == "append" && (args = Noir::TreeSitter.field(arg, "arguments"))
-          Noir::TreeSitter.each_named_child(args) { |child| collect_handler_arg_texts(child, source, sink) }
+          Noir::TreeSitter.each_named_arg(args) { |child| collect_handler_arg_texts(child, source, sink) }
           return
         end
       end
@@ -310,7 +310,7 @@ module Noir
         next unless args
         prefix = nil
         app = nil
-        Noir::TreeSitter.each_named_child(args) do |arg|
+        Noir::TreeSitter.each_named_arg(args) do |arg|
           if prefix.nil?
             prefix = string_expr_text(arg, source, string_values)
             break if prefix.nil?
@@ -563,7 +563,7 @@ module Noir
           args = Noir::TreeSitter.field(node, "arguments")
           next unless args
           first_arg = nil
-          Noir::TreeSitter.each_named_child(args) { |a| first_arg ||= a }
+          Noir::TreeSitter.each_named_arg(args) { |a| first_arg ||= a }
           next unless first_arg
           arg_text = if Noir::TreeSitter.node_type(first_arg) == "identifier"
                        Noir::TreeSitter.node_text(first_arg, source)
@@ -1130,7 +1130,7 @@ module Noir
       return unless args
 
       prefix = nil
-      Noir::TreeSitter.each_named_child(args) do |arg|
+      Noir::TreeSitter.each_named_arg(args) do |arg|
         prefix = string_expr_text(arg, source, string_values)
         next unless prefix
         break
@@ -1184,7 +1184,7 @@ module Noir
       handler_text = ""
       handler_args = [] of String
       arg_index = 0
-      Noir::TreeSitter.each_named_child(args) do |arg|
+      Noir::TreeSitter.each_named_arg(args) do |arg|
         if arg_index == 0
           # The route path must be the FIRST positional argument of a verb
           # call (`r.GET("/path", handler)` across Gin/Echo/Fiber/Beego/
@@ -1303,7 +1303,7 @@ module Noir
       if method_name == group_method
         args = Noir::TreeSitter.field(call, "arguments")
         return unless args
-        Noir::TreeSitter.each_named_child(args) do |arg|
+        Noir::TreeSitter.each_named_arg(args) do |arg|
           prefix = string_expr_text(arg, source, string_values) || ""
           break unless prefix.empty?
         end
@@ -1349,7 +1349,7 @@ module Noir
       path_lit = nil
       handler_text = ""
       handler_args = [] of String
-      Noir::TreeSitter.each_named_child(args) do |arg|
+      Noir::TreeSitter.each_named_arg(args) do |arg|
         case Noir::TreeSitter.node_type(arg)
         when "interpreted_string_literal", "raw_string_literal"
           if method_lit.nil?
@@ -1426,7 +1426,7 @@ module Noir
       verbs = [] of String
       path_lit = nil
       handler_text = ""
-      Noir::TreeSitter.each_named_child(args) do |arg|
+      Noir::TreeSitter.each_named_arg(args) do |arg|
         case Noir::TreeSitter.node_type(arg)
         when "interpreted_string_literal", "raw_string_literal"
           if verbs.empty? && path_lit.nil?
@@ -1505,7 +1505,7 @@ module Noir
         next if args.nil?
         prefix_str = nil
         closure = nil
-        Noir::TreeSitter.each_named_child(args) do |arg|
+        Noir::TreeSitter.each_named_arg(args) do |arg|
           case Noir::TreeSitter.node_type(arg)
           when "interpreted_string_literal", "raw_string_literal"
             prefix_str ||= decode_string_literal(arg, source)
@@ -1623,7 +1623,7 @@ module Noir
           saw_registration = true
           registration_line = Noir::TreeSitter.node_start_row(current)
           if args = Noir::TreeSitter.field(current, "arguments")
-            Noir::TreeSitter.each_named_child(args) do |arg|
+            Noir::TreeSitter.each_named_arg(args) do |arg|
               case Noir::TreeSitter.node_type(arg)
               when "interpreted_string_literal", "raw_string_literal"
                 raw_path ||= decode_string_literal(arg, source)
@@ -1636,7 +1636,7 @@ module Noir
           saw_registration = true
           registration_line = Noir::TreeSitter.node_start_row(current)
           if args = Noir::TreeSitter.field(current, "arguments")
-            Noir::TreeSitter.each_named_child(args) do |arg|
+            Noir::TreeSitter.each_named_arg(args) do |arg|
               case Noir::TreeSitter.node_type(arg)
               when "interpreted_string_literal", "raw_string_literal"
                 # Handler/HandlerFunc don't carry a path in mux's builder
@@ -1648,7 +1648,7 @@ module Noir
           end
         when "Path"
           if args = Noir::TreeSitter.field(current, "arguments")
-            Noir::TreeSitter.each_named_child(args) do |arg|
+            Noir::TreeSitter.each_named_arg(args) do |arg|
               case Noir::TreeSitter.node_type(arg)
               when "interpreted_string_literal", "raw_string_literal"
                 raw_path ||= decode_string_literal(arg, source)

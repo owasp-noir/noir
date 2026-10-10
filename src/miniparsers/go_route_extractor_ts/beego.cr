@@ -60,7 +60,7 @@ module Noir
       controller_node : LibTreeSitter::TSNode? = nil
       mapping = nil
       idx = 0
-      Noir::TreeSitter.each_named_child(args) do |arg|
+      Noir::TreeSitter.each_named_arg(args) do |arg|
         case idx
         when 0 then path = string_expr_text(arg, source, string_values)
         when 1 then controller_node = arg
