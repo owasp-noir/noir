@@ -261,20 +261,24 @@ module Analyzer::Python
     end
 
     private def channels_list_endpoints(file : ::String, content : ::String, arg : ::String, prefix : ::String,
-                                        visited : Set(Tuple(::String, ::String)), endpoints : Array(Endpoint)) : Nil
+                                        visited : Set(Tuple(::String, ::String)), endpoints : Array(Endpoint),
+                                        active = Set(Tuple(::String, ::String)).new) : Nil
       terms = split_python_expression_terms(arg)
       if terms.size > 1 # `a.websocket_urlpatterns + [...]`
-        terms.each { |term| channels_list_endpoints(file, content, term.strip, prefix, visited, endpoints) }
+        terms.each { |term| channels_list_endpoints(file, content, term.strip, prefix, visited, endpoints, active) }
         return
       end
+      entered = nil
 
       list = arg
       unless arg.starts_with?('[')
         module_name, _, name = arg.rpartition('.')
         # Keyed by prefix too: one list mounted under two prefixes serves
-        # both. The size cap ends a cycle whose prefix grows every lap.
-        return if visited.size > 1000
+        # both. `active` holds the lists being expanded, so a list that
+        # mounts itself (directly or through another) stops there.
         return unless visited.add?({file, "#{prefix}\0#{arg}"})
+        return unless active.add?({file, arg})
+        entered = {file, arg}
         if module_name.empty?
           if local = extract_urlpattern_lists(content)[name]?
             list = local
@@ -290,7 +294,7 @@ module Analyzer::Python
         end
         unless module_name.empty?
           target = channels_module_file(file, module_name) || return
-          return channels_list_endpoints(target, channels_code(read_file_content(target)), name, prefix, visited, endpoints)
+          return channels_list_endpoints(target, channels_code(read_file_content(target)), name, prefix, visited, endpoints, active)
         end
       end
 
@@ -300,13 +304,15 @@ module Analyzer::Python
         line = route.empty? ? nil : content.index(route, list_start).try { |idx| content[0, idx].count('\n') + 1 }
         if router = view.index("URLRouter(")
           inner = channels_router_arg(view, router + "URLRouter".size)
-          channels_list_endpoints(file, content, inner, url, visited, endpoints) if inner
+          channels_list_endpoints(file, content, inner, url, visited, endpoints, active) if inner
         else
           endpoint = Endpoint.new(url, "GET", Details.new(PathInfo.new(file, line)))
           endpoint.protocol = "ws"
           endpoints << endpoint
         end
       end
+    ensure
+      active.delete(entered) if entered
     end
 
     # The dotted path `name` is bound to by this file's imports:
