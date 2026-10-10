@@ -764,7 +764,7 @@ module Noir
 
       Noir::TreeSitter.each_named_child(fparams) do |fp|
         next unless Noir::TreeSitter.node_type(fp) == "formal_parameter"
-        current_format = emit_param_for(fp, method, source, verb, current_format, class_fields, constants, current_class, params, model_attributes)
+        current_format = emit_param_for(fp, method, source, verb, current_format, parameter_format, class_fields, constants, current_class, params, model_attributes)
       end
 
       # Collapse duplicate `(name, type)` params. A handler binding two
@@ -782,6 +782,7 @@ module Noir
                                source : String,
                                verb : String,
                                parameter_format : String?,
+                               method_format : String?,
                                class_fields : Hash(String, Array(FieldInfo)),
                                constants : Hash(String, String),
                                current_class : String,
@@ -875,7 +876,9 @@ module Noir
       end
       case ann_kind
       when :body
-        effective_format = effective_format.nil? ? "json" : effective_format
+        # The body's media type comes from the method's `consumes`, never
+        # from the carry-over of a preceding parameter's binding.
+        effective_format = method_format || "json"
       when :query
         effective_format = "query"
       when :header
@@ -956,7 +959,9 @@ module Noir
         end
       end
 
-      effective_format
+      # A body's format is its own, not a default for later arguments:
+      # leave the carry-over (e.g. a sticky "query") untouched.
+      ann_kind == :body ? parameter_format : effective_format
     end
 
     private def supplied_model_attribute_param?(arg_name : String,

@@ -881,7 +881,7 @@ module Noir
           pending_modifiers = child
         when "parameter"
           current_format = emit_param_for(
-            child, pending_modifiers, source, verb, current_format, class_fields, params,
+            child, pending_modifiers, source, verb, current_format, parameter_format, class_fields, params,
             string_constants, local_string_constants
           )
           pending_modifiers = nil
@@ -904,6 +904,7 @@ module Noir
                                source : String,
                                verb : String,
                                parameter_format : String?,
+                               method_format : String?,
                                class_fields : Hash(String, Array(FieldInfo)),
                                sink : Array(Param),
                                string_constants : Hash(String, String),
@@ -968,14 +969,20 @@ module Noir
       return parameter_format if ann_kind.nil? && injected_param
 
       effective_format = parameter_format
+      # A carried-over "header"/"cookie" describes how the *previous*
+      # parameter was bound, not this un-annotated one — recompute the
+      # verb default below instead of mislabeling it.
+      if ann_kind.nil? && (effective_format == "header" || effective_format == "cookie")
+        effective_format = nil
+      end
       case ann_kind
       when :body
         # @RequestBody is JSON unless an explicit `consumes` already pinned
-        # the format (e.g. form-urlencoded). The POST verb default is
-        # applied per-parameter below, NOT pre-seeded into parameter_format,
-        # so a @RequestBody on a POST still resolves to json rather than
-        # being dragged along as form.
-        effective_format = request_body_format(effective_format)
+        # the format (e.g. form-urlencoded). Only the method-level format
+        # counts: the carry-over from a preceding @RequestParam/@RequestHeader/
+        # @CookieValue or un-annotated POST argument says nothing about the
+        # body's media type.
+        effective_format = method_format || "json"
       when :query
         effective_format = "query"
       when :header
@@ -1057,15 +1064,8 @@ module Noir
       # `@RequestParam`'s query format). A `@RequestBody`'s json is NOT a
       # method-wide default, though — propagating it would drag a sibling
       # command object into json, so a body param leaves the carry
-      # untouched (returns the incoming consumes-derived format).
+      # untouched (returns the incoming carry-over).
       ann_kind == :body ? parameter_format : effective_format
-    end
-
-    private def request_body_format(parameter_format : String?) : String
-      return "json" if parameter_format.nil?
-      return "json" if {"query", "header", "cookie"}.includes?(parameter_format)
-
-      parameter_format
     end
 
     # True when `type_name` is a scalar Spring binds from a single

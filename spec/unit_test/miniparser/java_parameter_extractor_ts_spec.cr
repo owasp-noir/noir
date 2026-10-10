@@ -548,6 +548,52 @@ describe Noir::TreeSitterJavaParameterExtractor do
       )
       params.should be_empty
     end
+
+    it "keeps @RequestBody json after a preceding query/header/cookie/form param" do
+      class_fields = Noir::TreeSitterJavaParameterExtractor.extract_class_fields(getter_dto)
+      source = <<-JAVA
+        class C {
+            @PostMapping("/a")
+            public void a(@RequestParam("flag") boolean flag, @RequestBody Body body) {}
+            @PostMapping("/c")
+            public void c(@RequestHeader("X-T") String t, @RequestBody Body body) {}
+            @PostMapping("/g")
+            public void g(@CookieValue("sid") String sid, @RequestBody Body body) {}
+            @PostMapping("/d")
+            public void d(String plain, @RequestBody Body body) {}
+        }
+        JAVA
+      {"a" => {"flag", "query"}, "c" => {"X-T", "header"}, "g" => {"sid", "cookie"}, "d" => {"plain", "form"}}.each do |method, first|
+        params = method_params(source, "C", method, "POST", nil, class_fields)
+        params.map { |p| {p.name, p.param_type} }.should eq([first, {"email", "json"}, {"password", "json"}])
+      end
+    end
+
+    it "leaves a sticky query carry-over intact past a @RequestBody" do
+      class_fields = Noir::TreeSitterJavaParameterExtractor.extract_class_fields(getter_dto)
+      source = <<-JAVA
+        class C {
+            @PostMapping("/s")
+            public void s(@RequestParam("q") String q, @RequestBody Body body, int page) {}
+        }
+        JAVA
+      params = method_params(source, "C", "s", "POST", nil, class_fields)
+      params.map { |p| {p.name, p.param_type} }.should eq([
+        {"q", "query"}, {"email", "json"}, {"password", "json"}, {"page", "query"},
+      ])
+    end
+
+    it "still lets a method-level consumes form pin a later @RequestBody" do
+      source = <<-JAVA
+        class C {
+            @PostMapping(value = "/f", consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
+            public void f(@RequestParam("flag") boolean flag, @RequestBody String body) {}
+        }
+        JAVA
+      no_fields = Hash(String, Array(Noir::TreeSitterJavaParameterExtractor::FieldInfo)).new
+      params = method_params(source, "C", "f", "POST", "form", no_fields)
+      params.map { |p| {p.name, p.param_type} }.should eq([{"flag", "query"}, {"body", "form"}])
+    end
   end
 
   describe "record DTO components" do
