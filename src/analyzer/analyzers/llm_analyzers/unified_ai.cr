@@ -426,7 +426,7 @@ module Analyzer::AI
       endpoints = call_llm_with_cache(
         kind: "ANALYZE",
         system_prompt: LLM::SYSTEM_ANALYZE,
-        payload: compose_prompt_payload(LLM::PromptOverrides.analyze_prompt, content),
+        payload: compose_prompt_payload(LLM::PromptOverrides.analyze_prompt, LLM.untrusted(content)),
         format: LLM::ANALYZE_FORMAT,
         adapter: adapter,
         list_key: "endpoints",
@@ -584,7 +584,7 @@ module Analyzer::AI
 
         logger.verbose "AI agent tool call: #{action[:action]}(#{action[:args].to_json})"
         tool_result = run_agent_tool(action[:action], action[:args])
-        append_agent_message(messages, "user", "Tool result (#{action[:action]}):\n#{compact_tool_result(tool_result)}")
+        append_agent_message(messages, "user", "Tool result (#{action[:action]}):\n#{LLM.untrusted(compact_tool_result(tool_result))}")
       end
 
       false
