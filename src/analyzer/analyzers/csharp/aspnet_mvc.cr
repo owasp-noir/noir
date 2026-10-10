@@ -37,29 +37,23 @@ module Analyzer::CSharp
       Noir::CSharpLexer.new(read_file_content(route_config_path)).code_source.each_line.with_index do |line, index|
         if line.includes? ".MapRoute("
           maproute_check = true
-          maproute_buffer = line
+          maproute_buffer = ""
           maproute_line = index + 1
         end
+        next unless maproute_check
 
-        if line.includes? ");"
-          maproute_check = false
-          unless maproute_buffer.empty?
-            buffer = maproute_buffer.gsub(/[\r\n]/, "")
-            buffer = buffer.gsub(/\s+/, "")
-            buffer.split(",").each do |item|
-              if item.includes? "url:"
-                url = item.gsub(/url:/, "").gsub(/"/, "")
-                details = Details.new(PathInfo.new(route_config_path, maproute_line))
-                @result << Endpoint.new("/#{url}", "GET", details)
-              end
-            end
+        maproute_buffer += line
+        next unless line.includes? ");"
 
-            maproute_buffer = ""
-          end
-        end
-
-        if maproute_check
-          maproute_buffer += line
+        maproute_check = false
+        items = maproute_buffer.gsub(/\s+/, "").split(",")
+        url = items.find(&.includes?("url:")).try(&.sub("url:", ""))
+        # `MapRoute("Default", "{controller}/{action}/{id}", ...)`: the
+        # positional form, which the MVC 3 template and older apps use.
+        url ||= items[1]? if items[0].ends_with?('"') && items[1]?.try(&.starts_with?('"'))
+        if url
+          details = Details.new(PathInfo.new(route_config_path, maproute_line))
+          @result << Endpoint.new("/#{url.gsub('"', "")}", "GET", details)
         end
       end
     end

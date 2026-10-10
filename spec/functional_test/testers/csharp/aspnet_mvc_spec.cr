@@ -5,6 +5,7 @@ expected_endpoints = [
     Param.new("appId", "", "path"),
   ]),
   Endpoint.new("/data/default", "GET"),
+  Endpoint.new("/account/login", "GET"),
   Endpoint.new("/User/Details", "GET", [
     Param.new("id", "", "query"),
   ]),
