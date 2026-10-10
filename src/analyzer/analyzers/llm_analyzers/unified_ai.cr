@@ -29,6 +29,12 @@ module Analyzer::AI
     VALID_PARAM_TYPES                  = ["query", "json", "form", "header", "cookie", "path"]
     MAX_ENDPOINT_URL_LENGTH            = 2048
     MAX_PARAM_NAME_LENGTH              =  128
+    # Expanded code paths of the static endpoints, set by
+    # `analysis_endpoints` under `--ai-scope unmatched`.
+    COVERED_FILES_OPTION = "ai_covered_files"
+    URL_AUTHORITY_RE     = /\A[a-zA-Z][a-zA-Z0-9+.\-]*:\/\/[^\/]*/
+    # `:id`, `{id}`, `<int:id>`, `[id]`, `*`: not literal text to look for.
+    PLACEHOLDER_SEGMENT_RE = /[:{}<>\[\]*]/
     # Ceiling on simultaneous bundle requests, independent of a high
     # `--concurrency`: past a handful of in-flight calls a metered provider
     # answers with 429s rather than faster.
@@ -69,6 +75,7 @@ module Analyzer::AI
     @symlinked_dir_cache = {} of String => Bool
     # Bundle prompt label => walked path, filled before any bundle is sent.
     @bundle_labels = {} of String => String
+    @covered_files = Set(String).new
 
     def initialize(options : Hash(String, YAML::Any))
       super(options)
@@ -104,6 +111,7 @@ module Analyzer::AI
       @native_tool_calling_allowlist = parse_native_tool_allowlist(options["ai_native_tools_allowlist"]?.try(&.as_s))
       @agent_tool_cache = {} of String => String
       @agent_tool_cache_order = [] of String
+      options[COVERED_FILES_OPTION]?.try(&.as_a?).try &.each { |path| @covered_files << path.as_s }
     end
 
     def analyze
@@ -278,7 +286,7 @@ module Analyzer::AI
         # bundle's file only when there is exactly one; in a multi-file
         # bundle any pick would be a guess, so it gets no code path.
         fallback = bundle.paths.size == 1 ? resolve_reported_file(bundle.paths[0]) : nil
-        store_endpoints(endpoints, fallback)
+        store_endpoints(endpoints, fallback, bundle.content)
       else
         record_llm_failure(bundle.paths, LLM_NO_RESPONSE_REASON)
       end
@@ -310,15 +318,22 @@ module Analyzer::AI
 
     private def select_target_paths(adapter : LLM::Adapter) : Array(String)
       locator = CodeLocator.instance
-      all_paths = locator.all_files
+      all_paths = locator.all_files.reject { |path| covered?(path) }
 
-      if all_paths.size > 10
-        logger.debug_sub "AI::Filtering files using LLM"
-        filter_paths_with_llm(all_paths, adapter)
-      else
-        logger.debug_sub "AI::Analyzing all files"
-        get_all_source_files
-      end
+      paths = if all_paths.size > 10
+                logger.debug_sub "AI::Filtering files using LLM"
+                filter_paths_with_llm(all_paths, adapter)
+              else
+                logger.debug_sub "AI::Analyzing all files"
+                get_all_source_files
+              end
+      paths.reject { |path| covered?(path) }
+    end
+
+    # `--ai-scope unmatched`: a file a static analyzer already found an
+    # endpoint in is not sent to the provider.
+    private def covered?(path : String) : Bool
+      !@covered_files.empty? && @covered_files.includes?(Noir::PathScope.expand(path))
     end
 
     private def filter_paths_with_llm(all_paths : Array(String), adapter : LLM::Adapter) : Array(String)
@@ -407,7 +422,9 @@ module Analyzer::AI
       )
 
       if endpoints
-        store_endpoints(endpoints, path)
+        # The path is part of the haystack: file-routed frameworks (Next.js
+        # pages, plain PHP) name the route only in the file name.
+        store_endpoints(endpoints, path, "#{relative_path}\n#{content}")
       else
         record_llm_failure([relative_path], LLM_NO_RESPONSE_REASON)
       end
@@ -429,17 +446,24 @@ module Analyzer::AI
       paths.each { |path| Noir::SkippedFiles.record("ai", path, reason) }
     end
 
-    private def store_endpoints(endpoints : Array(JSON::Any), default_path : String?)
+    private def store_endpoints(endpoints : Array(JSON::Any), default_path : String?, source : String)
+      haystack = source.downcase.delete("-_")
       endpoints.each do |ep|
-        if endpoint = create_endpoint_from_json(ep, default_path)
+        if endpoint = create_endpoint_from_json(ep, default_path, haystack)
           @result << endpoint
         end
       end
     end
 
-    private def create_endpoint_from_json(ep : JSON::Any, default_path : String?) : Endpoint?
+    # `haystack` is the downcased text the model was shown; nil skips the
+    # grounding check (agent mode, whose reads are not tracked).
+    private def create_endpoint_from_json(ep : JSON::Any, default_path : String?, haystack : String? = nil) : Endpoint?
       url = extract_endpoint_url(ep)
       return unless plausible_endpoint_url?(url)
+      if haystack && !Unified.grounded?(url, haystack)
+        logger.debug_sub "AI::Dropping endpoint not found in the analyzed source: #{url}"
+        return
+      end
 
       method = normalize_http_method(safe_json_string(ep, "method", "GET"))
       path_info = build_path_info(ep, default_path)
@@ -463,6 +487,24 @@ module Analyzer::AI
       # placeholder-token comparison uses the stripped form.
       bare = url.lstrip('/').downcase
       !PLACEHOLDER_URLS.includes?(bare)
+    end
+
+    # A well-formed URL the code never mentions is a hallucination or
+    # injected output. The last literal segment must occur in the source,
+    # compared case-folded without `-`/`_` and without a `.ext` suffix
+    # (`UsersController` grounds `/users`, `getUserProfile` grounds
+    # `/user-profile`, `admin.php` grounds `/admin.php`). Prefix-composed
+    # routes still pass on their own last segment; `/` and all-placeholder
+    # paths have nothing to check and pass. `haystack` must be downcased
+    # with `-`/`_` removed.
+    # ponytail: convention-generated segments (Rails `resources` -> `/new`,
+    # `/edit`) are dropped when the static analyzer did not report them.
+    def self.grounded?(url : String, haystack : String) : Bool
+      path = url.sub(URL_AUTHORITY_RE, "").split(/[?#]/, 2).first
+      literal = path.split('/').reverse_each.find { |seg| !seg.empty? && !seg.matches?(PLACEHOLDER_SEGMENT_RE) }
+      return true unless literal
+      word = literal.sub(/\.[^.]*\z/, "").presence || literal
+      haystack.includes?(word.downcase.delete("-_"))
     end
 
     # A parameter name is an identifier-ish token. Drop names that carry

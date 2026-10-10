@@ -609,6 +609,13 @@ def run_options_parser
       # appending onto it.
       append_to_csv_option(noir_options, "ai_native_tools_allowlist", v, reset_if: LLM::NativeToolCalling.default_allowlist_csv, reset_seen: csv_reset_seen)
     end
+    parser.on "--ai-scope SCOPE", "Files sent to the AI analyzer (all|unmatched, default: all)" do |v|
+      unless v.in?(%w[all unmatched])
+        STDERR.puts "ERROR: Invalid --ai-scope '#{v}'. Valid: all, unmatched".colorize(:red)
+        exit(1)
+      end
+      noir_options["ai_scope"] = YAML::Any.new(v)
+    end
     parser.on "--ai-max-token N", "Max tokens per request" do |v|
       validated = positive_int_or_die!("--ai-max-token", v)
       noir_options["ai_max_token"] = YAML::Any.new(validated)

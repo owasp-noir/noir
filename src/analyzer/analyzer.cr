@@ -165,30 +165,42 @@ def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLo
   # Pre-build extension index synchronously to avoid concurrent mutation in multiple threads/fibers
   CodeLocator.instance.build_extension_index
 
-  WaitGroup.wait do |wg|
-    selected_techs.each do |tech|
-      wg.spawn do
-        logger.debug "Analyzer[#{tech}] start"
-        endpoints = analyzer[tech].call(options)
-        # Set technology on each endpoint using map to handle struct copy
-        endpoints_with_tech = endpoints.map do |ep|
-          details = ep.details
-          details.technology = tech
-          ep.details = details
-          ep
-        end
-        mutex.synchronize { result.concat(endpoints_with_tech) }
-        logger.debug "Analyzer[#{tech}] done (#{endpoints.size})"
-      rescue e
-        logger.warning "Analyzer[#{tech}] failed: #{e.message}"
-        if collected = failures
-          # `e.message` is nilable and can be empty (`IndexError.new`,
-          # `raise ""`), and a report that reads `go_gin: ` names no cause
-          # at all — the class name is at least something to search for.
-          reason = e.message.presence || e.class.name
-          # Same mutex as the result concat above, not a second one: this
-          # runs on a spawned fiber and `collected` is shared by all of them.
-          mutex.synchronize { collected << AnalyzerFailure.new(tech, reason) }
+  # `--ai-scope unmatched` skips files a static analyzer already covered,
+  # so the AI analyzer waits for the others; by default it runs with them.
+  ai_last = options["ai_scope"]?.to_s == "unmatched" && selected_techs.includes?("ai")
+  phases = ai_last ? [selected_techs - ["ai"], ["ai"]] : [selected_techs]
+  phases.each_with_index do |phase, phase_index|
+    phase_options = options
+    if phase_index == 1
+      covered = result.flat_map(&.details.code_paths.map { |path_info| Noir::PathScope.expand(path_info.path) }).uniq!
+      phase_options = options.merge({Analyzer::AI::Unified::COVERED_FILES_OPTION => YAML::Any.new(covered.map { |path| YAML::Any.new(path) })})
+    end
+
+    WaitGroup.wait do |wg|
+      phase.each do |tech|
+        wg.spawn do
+          logger.debug "Analyzer[#{tech}] start"
+          endpoints = analyzer[tech].call(phase_options)
+          # Set technology on each endpoint using map to handle struct copy
+          endpoints_with_tech = endpoints.map do |ep|
+            details = ep.details
+            details.technology = tech
+            ep.details = details
+            ep
+          end
+          mutex.synchronize { result.concat(endpoints_with_tech) }
+          logger.debug "Analyzer[#{tech}] done (#{endpoints.size})"
+        rescue e
+          logger.warning "Analyzer[#{tech}] failed: #{e.message}"
+          if collected = failures
+            # `e.message` is nilable and can be empty (`IndexError.new`,
+            # `raise ""`), and a report that reads `go_gin: ` names no cause
+            # at all — the class name is at least something to search for.
+            reason = e.message.presence || e.class.name
+            # Same mutex as the result concat above, not a second one: this
+            # runs on a spawned fiber and `collected` is shared by all of them.
+            mutex.synchronize { collected << AnalyzerFailure.new(tech, reason) }
+          end
         end
       end
     end

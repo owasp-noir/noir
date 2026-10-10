@@ -345,6 +345,7 @@ class ConfigInitializer
       "ai_agent_max_steps"           => YAML::Any.new(20),
       "ai_no_optimize"               => YAML::Any.new(false),
       "ai_native_tools_allowlist"    => YAML::Any.new(LLM::NativeToolCalling.default_allowlist_csv),
+      "ai_scope"                     => YAML::Any.new("all"),
       "ai_max_token"                 => YAML::Any.new(0),
       "ai_max_requests"              => YAML::Any.new(0),
       "cache_disable"                => YAML::Any.new(false),
@@ -532,6 +533,9 @@ class ConfigInitializer
       # Provider allowlist for native tool-calling (comma-separated)
       # Commented so the built-in list keeps tracking new releases. Uncomment to pin.
       # ai_native_tools_allowlist: "#{options["ai_native_tools_allowlist"]}"
+
+      # Files sent to the AI analyzer: all, or unmatched (skip files a static analyzer found endpoints in)
+      ai_scope: "#{options["ai_scope"]}"
 
       # The maximum number of tokens for AI requests (0 = provider/model default)
       ai_max_token: #{options["ai_max_token"]}
