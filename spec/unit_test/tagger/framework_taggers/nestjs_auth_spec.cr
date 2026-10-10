@@ -155,6 +155,38 @@ describe "NestjsAuthTagger" do
     FileUtils.rm_rf(tmpdir)
   end
 
+  it "does not leak a decorator past a one-line handler body" do
+    tmpdir = File.tempname("tsoa_one_line")
+    Dir.mkdir_p(tmpdir)
+    path = File.join(tmpdir, "openController.ts")
+    File.write(path, [
+      "@Route(\"open\")",                                 # 1
+      "export class OpenController extends Controller {", # 2
+      "  @Security(\"api_key\")",                         # 3
+      "  @Post(\"c\")",                                   # 4
+      "  public c() {}",                                  # 5
+      "",                                                 # 6
+      "  @Get(\"d\")",                                    # 7
+      "  public d() {}",                                  # 8
+      "}",                                                # 9
+    ].join("\n"))
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+
+    secured = Endpoint.new("/open/c", "POST", [] of Param, Details.new(PathInfo.new(path, 4)))
+    secured.details.technology = "ts_tsoa"
+    open = Endpoint.new("/open/d", "GET", [] of Param, Details.new(PathInfo.new(path, 7)))
+    open.details.technology = "ts_tsoa"
+
+    NestjsAuthTagger.new(noir_options).perform([secured, open])
+
+    secured.tags.map(&.name).should eq(["auth"])
+    open.tags.should be_empty
+
+    FileUtils.rm_rf(tmpdir)
+  end
+
   it "applies a global APP_GUARD auth guard unless the handler or controller is @Public()" do
     tmpdir = File.tempname("nest_global_guard")
     Dir.mkdir_p(tmpdir)

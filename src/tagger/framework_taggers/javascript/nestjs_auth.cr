@@ -146,6 +146,7 @@ class NestjsAuthTagger < FrameworkTagger
     while idx >= 0 && idx >= method_line - 5
       current = lines[idx].strip
       break if current.empty? && idx < method_line - 1
+      break if member_end?(current)
 
       PUBLIC_PATTERNS.each do |pattern|
         return true if current.matches?(pattern)
@@ -167,10 +168,10 @@ class NestjsAuthTagger < FrameworkTagger
     while idx >= 0 && idx >= method_line - 8
       current = lines[idx].strip
       break if current.empty? && idx < method_line - 1
-      # Stop if we hit another method: its signature, or the closing brace
-      # of a non-async one, which the signature test does not catch.
+      # Stop if we hit another method: its signature, or the end of a
+      # non-async one, which the signature test does not catch.
       break if current.includes?("async ") && current.includes?("(") && idx < method_line - 1
-      break if current == "}"
+      break if member_end?(current)
 
       collect_decorator_line(current, authn_descs, authz_descs)
 
@@ -182,6 +183,16 @@ class NestjsAuthTagger < FrameworkTagger
     annotation_lines_below(lines, method_line, "@").each do |below|
       collect_decorator_line(below, authn_descs, authz_descs)
     end
+  end
+
+  # The end of the previous member: a lone `}`, a `;`, or a one-line body
+  # such as `public c() {}`. A multi-line decorator's object lines
+  # (`schema: { type: 'object' }`) are none of these.
+  ONE_LINE_BODY = /\)\s*(?::[^{}]*)?\{.*\}\z/
+
+  private def member_end?(line : String) : Bool
+    return false if line.starts_with?('@')
+    line == "}" || line.ends_with?(';') || line.matches?(ONE_LINE_BODY)
   end
 
   private def collect_decorator_line(current : String, authn_descs : Array(String), authz_descs : Array(String))
