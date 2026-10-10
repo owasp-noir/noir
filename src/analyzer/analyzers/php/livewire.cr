@@ -3,7 +3,7 @@ require "../../../miniparsers/php_class_members"
 
 module Analyzer::Php
   # Livewire components are reached through one endpoint, `POST
-  # /livewire/update` (v3), whose JSON payload names the component, the
+  # /livewire/update` (v3; v2 posts to `/livewire/message/<name>`), whose JSON payload names the component, the
   # property `updates` and the method `calls`. Every public method that is
   # not a lifecycle hook is a callable action and every public property is
   # client-writable unless `#[Locked]` / `#[Reactive]`.
@@ -22,6 +22,9 @@ module Analyzer::Php
     analyzer_for "php_livewire"
 
     DEFAULT_UPDATE_PATH = "/livewire/update"
+    # Livewire 2 posts each component to its own `/livewire/message/<name>`.
+    V2_MESSAGE_PATH = "/livewire/message/"
+    V2_CONSTRAINT   = /"livewire\/livewire"\s*:\s*"[^"0-9]*2\./
 
     IMPORT_RE       = /Livewire\\(?:Volt\\)?Component\b/
     CLASS_RE        = /(?<!::)\b(abstract\s+)?(?:(?:final|readonly)\s+)*class\s+([A-Za-z_]\w*)\s+extends\s+\\?(?:Livewire\\(?:Volt\\)?)?Component\b[^{;]*\{/
@@ -39,8 +42,29 @@ module Analyzer::Php
     # custom route does not move a sibling app's components.
     @update_paths = {} of String => String
     @update_path_lock = Mutex.new
+    @v2_roots = {} of String => Bool
+    # Project classes extending `Component` by short name, with their
+    # writable props and actions, so `class UsersTable extends BaseTable`
+    # is a component that inherits them.
+    # ponytail: one level deep; a base of a base is not followed.
+    alias Members = Tuple(Array(Param), Array(Noir::PhpClassMembers::Member))
+    @bases = {} of String => Members
+    @subclass_re : Regex? = nil
 
     def analyze
+      ordered_file_scan do |path|
+        content = read_file_content(path)
+        next if path.ends_with?(".blade.php") || !content.matches?(IMPORT_RE)
+        lexer = Noir::PhpLexer.new(content)
+        masked = lexer.masked.join
+        found = [] of Tuple(String, Members)
+        masked.scan(CLASS_RE) { |m| members(lexer, masked, m).try { |members| found << {m[2], members} } }
+        found
+      end.each { |found| found.each { |name, members| @bases[name] = members } }
+      unless @bases.empty?
+        @subclass_re = /(?<!::)\b(abstract\s+)?(?:(?:final|readonly)\s+)*class\s+([A-Za-z_]\w*)\s+extends\s+\\?(?:[\w\\]+\\)?(#{@bases.keys.join('|')})\b[^{;]*\{/
+      end
+
       super
       return result if @update_paths.empty?
       result.each_with_index do |endpoint, idx|
@@ -60,21 +84,24 @@ module Analyzer::Php
         root = composer_project_root(path)
         @update_path_lock.synchronize { @update_paths[root] = "/" + m[1].lstrip('/') }
       end
-      return endpoints unless content.matches?(IMPORT_RE)
+      imports = content.matches?(IMPORT_RE)
+      subclass_re = @subclass_re if content.includes?("extends")
+      return endpoints unless imports || subclass_re
 
       lexer = Noir::PhpLexer.new(content)
       masked = lexer.masked.join
       if path.ends_with?(".blade.php")
-        if (m = VOLT_RE.match(masked)) && (name = volt_name(path))
+        if imports && (m = VOLT_RE.match(masked)) && (name = volt_name(path))
           emit(endpoints, lexer, masked, m, name, path)
         end
       else
         prefix = component_prefix(masked)
-        pos = 0
-        while m = CLASS_RE.match(masked, pos)
-          # Abstract base components are never mounted.
-          emit(endpoints, lexer, masked, m, prefix + kebab(m[2]), path) unless m[1]?
-          pos = m.end(0)
+        {imports ? CLASS_RE : nil, subclass_re}.each do |class_re|
+          next unless class_re
+          masked.scan(class_re) do |m|
+            # Abstract base components are never mounted.
+            emit(endpoints, lexer, masked, m, prefix + kebab(m[2]), path, m[3]?.try { |base| @bases[base]? }) unless m[1]?
+          end
         end
       end
       endpoints
@@ -84,8 +111,7 @@ module Analyzer::Php
       [] of Endpoint
     end
 
-    private def emit(endpoints : Array(Endpoint), lexer : Noir::PhpLexer, masked : String,
-                     decl : Regex::MatchData, name : String, path : String)
+    private def members(lexer : Noir::PhpLexer, masked : String, decl : Regex::MatchData) : Members?
       open = decl.end(0) - 1
       close = lexer.matching_delimiter(open)
       return unless close
@@ -100,19 +126,49 @@ module Analyzer::Php
           props << Param.new(member.name, "", "json")
         end
       end
+      {props, actions}
+    end
 
+    private def emit(endpoints : Array(Endpoint), lexer : Noir::PhpLexer, masked : String,
+                     decl : Regex::MatchData, name : String, path : String, inherited : Members? = nil)
+      props, actions = members(lexer, masked, decl) || return
+      own_actions = actions.size
+      if inherited
+        inherited[0].each { |prop| props << prop unless props.any? { |p| p.name == prop.name } }
+        inherited[1].each { |action| actions << action unless actions.any? { |a| a.name == action.name } }
+      end
+      decl_line = line_number_for_index(masked, decl.begin(0))
+
+      v2 = livewire_v2?(path)
       if actions.empty?
         return if props.empty?
-        endpoints << Endpoint.new("#{DEFAULT_UPDATE_PATH}##{name}", "POST", props,
-          Details.new(PathInfo.new(path, line_number_for_index(masked, decl.begin(0)))))
+        url = v2 ? "#{V2_MESSAGE_PATH}#{name}" : "#{DEFAULT_UPDATE_PATH}##{name}"
+        endpoints << Endpoint.new(url, "POST", props,
+          Details.new(PathInfo.new(path, decl_line)))
         return
       end
 
-      actions.each do |action|
+      actions.each_with_index do |action, idx|
         params = props.dup
         action.args.each { |arg| params << Param.new(arg, "", "json") unless params.any? { |p| p.name == arg } }
-        endpoints << Endpoint.new("#{DEFAULT_UPDATE_PATH}##{name}.#{action.name}", "POST", params,
-          Details.new(PathInfo.new(path, action.line)))
+        url = v2 ? "#{V2_MESSAGE_PATH}#{name}##{action.name}" : "#{DEFAULT_UPDATE_PATH}##{name}.#{action.name}"
+        endpoints << Endpoint.new(url, "POST", params,
+          # An inherited action is reported at the subclass declaration.
+          Details.new(PathInfo.new(path, idx < own_actions ? action.line : decl_line)))
+      end
+    end
+
+    private def livewire_v2?(path : String) : Bool
+      root = composer_project_root(path)
+      return false if root.empty?
+      @update_path_lock.synchronize do
+        @v2_roots.fetch(root) do
+          @v2_roots[root] = begin
+            read_file_content(File.join(root, "composer.json")).matches?(V2_CONSTRAINT)
+          rescue
+            false
+          end
+        end
       end
     end
 

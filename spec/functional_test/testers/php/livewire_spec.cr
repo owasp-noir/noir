@@ -1,7 +1,8 @@
 require "../../func_spec.cr"
 
 # Livewire actions and writable properties all go through `POST
-# /livewire/update`; the fragment names `<component>.<action>`. Lifecycle
+# /livewire/update` (`/livewire/message/<component>` on Livewire 2); the
+# fragment names `<component>.<action>`. Lifecycle
 # hooks, `#[Computed]` methods, `#[Locked]` / static members, abstract base
 # components and Blade view components (`Illuminate\View\Component`) are
 # not endpoints; a commented-out `#[Locked]` does not lock. Volt
@@ -9,8 +10,15 @@ require "../../func_spec.cr"
 # included.
 FunctionalTester.new("fixtures/php/livewire/", {
   :techs     => 3,
-  :endpoints => 7,
+  :endpoints => 9,
 }, [
+  # A subclass of the project's abstract `BaseTable` inherits its members.
+  Endpoint.new("/livewire/update#users-table.deleteUser", "POST", [
+    Param.new("search", "", "json"), Param.new("sortColumn", "", "json"), Param.new("id", "", "json"),
+  ]),
+  Endpoint.new("/livewire/update#users-table.sortBy", "POST", [
+    Param.new("search", "", "json"), Param.new("sortColumn", "", "json"), Param.new("column", "", "json"),
+  ]),
   Endpoint.new("/livewire/update#edit-post.save", "POST", [
     Param.new("title", "", "json"), Param.new("body", "", "json"), Param.new("draftId", "", "json"),
   ]),
@@ -45,9 +53,10 @@ FunctionalTester.new("fixtures/php/livewire_update_route/", {
 # `setUpdateRoute`, so `plain/`'s component stays on the default route.
 FunctionalTester.new("fixtures/php/livewire_multi_app/", {
   :techs     => 1,
-  :endpoints => 2,
+  :endpoints => 3,
 }, [
   Endpoint.new("/custom/livewire/update#counter.increment", "POST", [Param.new("count", "", "json")]),
+  Endpoint.new("/livewire/message/contact-form#submit", "POST", [Param.new("email", "", "json")]),
   Endpoint.new("/livewire/update#toggle.flip", "POST", [Param.new("on", "", "json")]),
 ], {
   "only_techs" => YAML::Any.new("php_livewire"),
