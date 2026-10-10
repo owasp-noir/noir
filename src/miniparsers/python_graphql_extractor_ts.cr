@@ -181,7 +181,7 @@ module Noir
           next unless TreeSitter.node_type(node) == "call"
           callee = TreeSitter.field(node, "function").try { |f| TreeSitter.node_text(f, source) } || next
           next unless callee == "Schema" || callee.ends_with?(".Schema")
-          positional, keywords = call_args(TreeSitter.node_text(node, source)) || next
+          positional, keywords = call_args(code_text(node, source)) || next
           outline.schema_calls << SchemaCall.new(path, TreeSitter.node_start_row(node) + 1, positional, keywords, camel)
         end
       end
@@ -230,7 +230,7 @@ module Noir
         return unless TreeSitter.node_type(assignment) == "assignment"
         left = TreeSitter.field(assignment, "left") || return
         right = TreeSitter.field(assignment, "right") || return
-        positional, _ = call_args(TreeSitter.node_text(right, source)) || return
+        positional, _ = call_args(code_text(right, source)) || return
         callee = TreeSitter.field(right, "function").try { |f| TreeSitter.node_text(f, source) }
         return unless callee && (callee == "merge_types" || callee.ends_with?(".merge_types"))
         bases = positional[1]?.try { |t| TopLevelSplit.split(t.strip.lchop('(').lchop('[').rchop(')').rchop(']'), ',', TopLevelSplit::Rules::PYTHON) }
