@@ -19,7 +19,8 @@ Static rules don't know your framework? Hand the code to an LLM and I'll still f
 Scan with OpenAI:
 
 ```bash
-noir scan . --ai-provider openai --ai-model gpt-5.5 --ai-key $OPENAI_API_KEY
+export NOIR_AI_KEY=...   # or --ai-key-file ~/.config/noir/openai.key
+noir scan . --ai-provider openai --ai-model gpt-5.5
 ```
 
 Scan with local Ollama (no API key needed):
@@ -36,11 +37,13 @@ noir scan . --ai-provider acp:codex
 
 ## Usage
 
-Specify an AI provider, model, and API key:
+Specify an AI provider and model; the API key comes from `NOIR_AI_KEY` (or `--ai-key-file`):
 
 ```bash
-noir scan . --ai-provider <PROVIDER> --ai-model <MODEL_NAME> --ai-key <YOUR_API_KEY>
+NOIR_AI_KEY=<YOUR_API_KEY> noir scan . --ai-provider <PROVIDER> --ai-model <MODEL_NAME>
 ```
+
+`--ai-key` also works, but a key on the command line is visible to other local users in the process list and lands in shell history and CI logs.
 
 For ACP providers (`acp:*`), `--ai-model` is optional and `--ai-key` is usually not required:
 
@@ -54,7 +57,10 @@ noir scan . --ai-provider acp:codex
 |---|---|
 | `--ai-provider` | Provider prefix (e.g., `openai`, `ollama`, `acp:codex`) or custom API URL |
 | `--ai-model` | Model name (e.g., `gpt-5.5`), optional for `acp:*` |
-| `--ai-key` | API key (or use `NOIR_AI_KEY` env var) |
+| `--ai-key` | API key (prefer `NOIR_AI_KEY` or `--ai-key-file`: argv is visible in the process list) |
+| `--ai-key-file` | Read the API key from a file (surrounding whitespace is stripped) |
+| `--ai-temperature` | Sampling temperature (default: `0.3`; `0` for repeatable CI runs). Fixed-sampling models such as GPT-5 and the o-series ignore it |
+| `--ai-seed` | Sampling seed, sent where the provider supports one (OpenAI-compatible `seed`, Ollama `options.seed`) |
 | `--ai-agent` | Enable agentic AI workflow (iterative tool-calling loop) |
 | `--ai-agent-max-steps` | Max steps for AI agent loop (default: `20`) |
 | `--ai-no-optimize` | Skip the LLM optimizer pass |
@@ -85,7 +91,7 @@ Noir has built-in presets for several popular AI providers:
 | `acp:gemini` | `gemini --experimental-acp` |
 | `acp:claude` | `npx @zed-industries/claude-agent-acp` |
 
-For custom providers, use the full API URL: `--ai-provider=http://my-custom-api:9000`.
+For custom providers, use the full API URL: `--ai-provider=http://my-custom-api:9000`. Any other name is rejected before the scan starts.
 
 The `azure` preset's shared host has been retired upstream; see [Azure AI](@/usage/ai_providers/azure/index.md) for the per-resource URL to use instead.
 
