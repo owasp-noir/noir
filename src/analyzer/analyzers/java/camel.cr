@@ -49,8 +49,17 @@ module Analyzer::Java
         context = dsl_paths[key]? || property_paths[key]? || ""
         servlet = servlet_paths[key]?.try(&.rchop("/*").rchop("*")) || ""
         result.routes.each do |route|
-          url = route.rest? ? Noir::URLPath.absolute_join(servlet, context, route.path) : route.path
-          url = Noir::URLPath.absolute_join(servlet, url) if route.servlet?
+          # The servlet component serves REST routes under its mapping and
+          # does not prepend `contextPath`, which only describes it.
+          # ponytail: assumes the REST component is servlet whenever the
+          # mapping is set; reading `component(...)` would settle it.
+          url = if route.rest?
+                  Noir::URLPath.absolute_join(servlet.empty? ? context : servlet, route.path)
+                elsif route.servlet?
+                  Noir::URLPath.absolute_join(servlet, route.path)
+                else
+                  route.path
+                end
           params = route.params.map { |(name, type)| Param.new(name, "", type) }
           route.body_type.try { |type| params << Param.new("body", type, "json") }
           @result << Endpoint.new(url, route.verb, unique_params(params), Details.new(PathInfo.new(path, route.line + 1)))
