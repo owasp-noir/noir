@@ -1,4 +1,5 @@
 require "../../engines/elixir_engine"
+require "../../../utils/call_fold"
 
 module Analyzer::Elixir
   class Plug < ElixirEngine
@@ -111,9 +112,9 @@ module Analyzer::Elixir
       end_index = block_end || find_block_end(lines, start_index)
       return params if end_index == -1
 
-      # Extract parameters from the block content
-      (start_index..end_index).each do |i|
-        line = strip_trailing_comment(lines[i])
+      # Extract parameters from the block content, with a wrapped read
+      # (`get_req_header(` / `conn,` / `"x-key"` / `)`) folded.
+      Noir::CallFold.fold(lines[start_index..end_index]) { |l| strip_trailing_comment(l) }.each do |line|
         has_conn = line.includes?("conn.")
         has_header = line.includes?("get_req_header")
         next unless has_conn || has_header
