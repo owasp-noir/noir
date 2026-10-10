@@ -36,6 +36,11 @@ export const createPlanet = os
     return { id: 1, ...input };
   });
 
+// `{+path}` matches the rest of the URL.
+export const getFile = os
+  .route({ method: 'GET', path: '/files/{+path}' })
+  .handler(async () => 'file');
+
 // No `.route()`: reachable only through the RPC protocol, not as REST.
 export const ping = os.handler(async () => 'pong');
 

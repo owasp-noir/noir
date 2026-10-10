@@ -89,6 +89,7 @@ module Noir
 
     SCHEMA_OBJECT_CALLS = Set{"object", "strictObject", "looseObject", "Struct"}
     QUERY_METHODS       = Set{"GET", "HEAD"}
+    ORPC_WILDCARD       = /\{\+(\w+)\}/
     EFFECT_VERBS        = {
       "get" => "GET", "post" => "POST", "put" => "PUT", "patch" => "PATCH",
       "del" => "DELETE", "delete" => "DELETE", "head" => "HEAD", "options" => "OPTIONS",
@@ -170,6 +171,8 @@ module Noir
         # A `handler` key is Hapi's / Fastify's `server.route({...})`, not oRPC.
         if TreeSitter.node_type(config) == "object" && (path = object_string(config, "path", ctx)) && !object_key?(config, "handler", ctx)
           method = (object_string(config, "method", ctx) || "POST").upcase
+          # `{+rest}` is oRPC's catch-all segment, a path param like `{id}`.
+          path = path.gsub(ORPC_WILDCARD, "{\\1}")
           route = Route.new(method, URLPath.join(prefix, path), TreeSitter.call_name_row(route_call[1]) + 1)
           links.find { |l| l[0] == "input" }.try do |input|
             first_arg(input[1]).try { |schema| route.add_fields(schema_fields(schema, ctx), QUERY_METHODS.includes?(method) ? "query" : "json") }
