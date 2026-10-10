@@ -2,7 +2,7 @@
 #
 # Supports:
 # - LLM::General (OpenAI-compatible chat APIs)
-# - LLM::Ollama (Ollama local API with optional KV context reuse)
+# - LLM::Ollama (Ollama native API)
 # - LLM::ACPClient (ACP agents; includes Adapter directly)
 
 require "uri"
@@ -50,9 +50,8 @@ module LLM
       request_messages(messages, "json")
     end
 
-    # Context-aware request. Adapters that support provider-side context can reuse it using a cache_key.
-    # Default implementation falls back to request_messages without context reuse.
-    def request_with_context(system : String?, user : String, format : String = "json", cache_key : String? = nil) : String
+    # A single system + user request.
+    def request_with_context(system : String?, user : String, format : String = "json") : String
       request_messages(Adapter.messages(system, user), format)
     end
 
@@ -60,7 +59,7 @@ module LLM
     # tell raises `LLM::ContextOverflow` instead of returning "", so the
     # bundle can be re-split rather than lost.
     def request_bundle(system : String, user : String, format : String) : String
-      request_with_context(system, user, format, nil)
+      request_with_context(system, user, format)
     end
 
     def self.messages(system : String?, user : String) : Messages
@@ -107,7 +106,7 @@ module LLM
     end
   end
 
-  # Adapter for Ollama (LLM::Ollama) with optional context reuse.
+  # Adapter for Ollama (LLM::Ollama).
   class OllamaAdapter
     include Adapter
 
@@ -118,15 +117,15 @@ module LLM
 
     def request_messages(messages : Messages, format : String = "json") : String
       system_msg, user_payload = self.class.flatten_messages(messages)
-      client.request_with_context(system_msg, user_payload, format, nil)
+      client.request_with_context(system_msg, user_payload, format)
     end
 
     def request(prompt : String, format : String = "json") : String
       client.request(prompt, format)
     end
 
-    def request_with_context(system : String?, user : String, format : String = "json", cache_key : String? = nil) : String
-      client.request_with_context(system, user, format, cache_key)
+    def request_with_context(system : String?, user : String, format : String = "json") : String
+      client.request_with_context(system, user, format)
     end
 
     # Promoted to a class-level pure function so the flattening rule

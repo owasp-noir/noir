@@ -50,7 +50,7 @@ describe LLM::Adapter do
   describe "default request_with_context" do
     it "skips the system slot when system is nil" do
       adapter = RecordingAdapter.new
-      adapter.request_with_context(nil, "u", "json", "ck").should eq("OK")
+      adapter.request_with_context(nil, "u", "json").should eq("OK")
       payload = adapter.calls.first[:payload]
       payload.should_not contain("\"role\":\"system\"")
       payload.should contain("\"role\":\"user\"")
