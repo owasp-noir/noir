@@ -241,7 +241,16 @@ module Analyzer::CSharp::Common
         break if depth == 0
       end
     end
-    open = masked.index('(', start)
+    # The parameter list's `(` hugs the method name (or a generic `>`); a
+    # tuple return type's `(` follows whitespace, `<` or `,` and is skipped
+    # (`static (A, B) Post(Cmd c)`, `Task<(IResult, E)> Ship(...)`).
+    open = start
+    while open = masked.index('(', open)
+      prev = open > 0 ? masked[open - 1] : ' '
+      break if prev.alphanumeric? || prev == '_' || prev == '>'
+      open += 1
+    end
+    open ||= masked.index('(', start)
     return unless open
 
     depth = 0

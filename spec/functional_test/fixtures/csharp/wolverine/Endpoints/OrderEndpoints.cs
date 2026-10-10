@@ -9,7 +9,7 @@ namespace OrderApi;
 public static class OrderEndpoints
 {
     [WolverinePost("/orders")]
-    public static OrderCreated Post(CreateOrder command, IDocumentSession session) => new(1);
+    public static (OrderCreated, OrderPlaced) Post(CreateOrder command, IDocumentSession session) => (new(1), new());
 
     [WolverineGet("/orders/{id}")]
     public static Order Get(int id, IQuerySession session) => new();
