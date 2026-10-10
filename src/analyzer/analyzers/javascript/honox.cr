@@ -11,8 +11,8 @@ module Analyzer::Javascript
   #   app/routes/posts/[id].tsx       → GET /posts/{id}
   #   app/routes/(marketing)/about.tsx → GET /about
   #
-  # `_renderer`, `_middleware`, `_error`, `_404` and `$island` modules are
-  # not routes. A default-exported `new Hono()` app is mounted at the path.
+  # `_renderer`, `_middleware`, `_error`, `_404`, `$island` and `-`-prefixed
+  # modules are not routes. A default-exported `new Hono()` app is mounted at the path.
   class Honox < JavascriptEngine
     analyzer_for "js_honox"
 
@@ -33,6 +33,8 @@ module Analyzer::Javascript
         name = File.basename(relative)
         # The same exclusions as HonoX's own `import.meta.glob`.
         next if name.starts_with?('_') || name.starts_with?('$') || name.includes?(".test.") || name.includes?(".spec.")
+        # `-*` files and `-dir/` trees hold co-located components.
+        next if relative.split('/').any?(&.starts_with?('-'))
         next unless owned_by_js_package?(path, owners)
 
         content = begin
