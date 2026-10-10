@@ -4,10 +4,11 @@ from chalicelib.admin import admin_bp
 from chalicelib import reports
 
 app = Chalice(app_name='helloworld')
+REPORTS_PREFIX = '/reports'
 authorizer = CognitoUserPoolAuthorizer('MyPool', provider_arns=['arn:aws:cognito-idp:us-east-1:1:userpool/x'])
 
 app.register_blueprint(admin_bp, url_prefix='/admin')
-app.register_blueprint(reports.bp, url_prefix='/reports')
+app.register_blueprint(reports.bp, url_prefix=REPORTS_PREFIX)
 
 
 @app.route('/')
@@ -37,7 +38,9 @@ def keys():
 
 @app.route('/open', authorizer=None)
 def open_route():
-    return {}
+    # Chalice's query_params is None without a query string.
+    params = app.current_request.query_params or {}
+    return {'page': params.get('page')}
 
 
 @app.lambda_function()

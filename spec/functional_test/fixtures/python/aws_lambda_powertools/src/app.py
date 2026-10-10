@@ -59,7 +59,7 @@ def not_found(ex):
 
 app.include_router(router, prefix="/v1")
 app.include_router(orders.router, prefix="/orders")
-app.include_router(health_router)
+app.include_router(health_router, prefix=os.environ.get("HEALTH_PREFIX", ""))
 app.include_router(v2, "/v2")
 # app.include_router(orders.router, prefix="/old")
 

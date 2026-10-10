@@ -13,10 +13,10 @@ expected_endpoints = [
   ]),
   Endpoint.new("/orders", "POST", [
     Param.new("X-Request-Token", "", "header"),
-    Param.new("body", "", "json"),
+    Param.new("id", "", "json"),
   ]),
   Endpoint.new("/keys", "GET"),
-  Endpoint.new("/open", "GET"),
+  Endpoint.new("/open", "GET", [Param.new("page", "", "query")]),
   Endpoint.new("/admin/users/{uid}", "DELETE", [
     Param.new("uid", "", "path"),
   ]),

@@ -29,10 +29,18 @@ module Analyzer::Python
       imports = mount_imports(base_path, path, source)
       Noir::TreeSitterPythonRouteExtractor.extract_attribute_calls(source, [attribute]).each do |call|
         target = call.keywords[target_keyword]? || call.args[0]?
-        prefix = call.keywords[prefix_keyword]? || call.args[prefix_index]? || ""
-        resolve_mount(target, prefix, path, imports).try { |mount| mounts << mount } if target
+        prefix, key = call.keywords.has_key?(prefix_keyword) ? {call.keywords[prefix_keyword], prefix_keyword} : {call.args[prefix_index]?, "##{prefix_index}"}
+        # A non-literal prefix is a same-file `NAME = "..."` constant or
+        # unknown; its source text is never a URL.
+        prefix = call.literals.includes?(key) ? prefix : prefix.try { |name| string_constant(source, name) }
+        resolve_mount(target, prefix || "", path, imports).try { |mount| mounts << mount } if target
       end
       mounts
+    end
+
+    private def string_constant(source : ::String, name : ::String) : ::String?
+      return unless name.matches?(/\A[A-Za-z_]\w*\z/)
+      source.match(/^#{name}\s*(?::[^=\n]+)?=\s*[rRuU]?(["'])([^"'\n]*)\1/m).try(&.[2])
     end
 
     # Imports resolved from the scan base, then from the file's own
@@ -75,15 +83,27 @@ module Analyzer::Python
     # `<accessor>.<attr>.get("k")` / `["k"]` reads (also through a local
     # alias of the accessor), typed by `attrs`; a bare `.json_body` read with
     # no keyed access becomes one `body` JSON param.
+    # `x.query_params or {}`: Chalice leaves an absent query dict as `None`.
+    OR_EMPTY_RE   = /\(\s*((?:\w+\.)*\w+)\s+or\s+\{\s*\}\s*\)/
+    ATTR_ALIAS_RE = /\b([A-Za-z_]\w*)\s*=\s*((?:\w+\.)*\w+)\.(\w+)\s*(?:or\s*\{\s*\}\s*)?$/m
+
     private def request_params(body : ::String, accessor : ::String, alias_re : Regex,
                                attrs : Hash(::String, ::String)) : Array(Param)
       readers = [accessor]
       body.scan(alias_re) { |m| readers << m[1] }
+      reads_from = ->(receiver : ::String) { readers.any? { |r| receiver == r || receiver.ends_with?(".#{r}") } }
+      body = body.gsub(OR_EMPTY_RE, "\\1")
+      # `params = app.current_request.query_params`: the alias reads `attr`.
+      attr_aliases = {} of ::String => ::String
+      body.scan(ATTR_ALIAS_RE) do |m|
+        type = attrs[m[3]]?
+        attr_aliases[m[1]] = type if type && reads_from.call(m[2])
+      end
       params = [] of Param
       body.scan(PythonEngine::DICT_READ_RE) do |m|
         receiver, _, attr = m[1].rpartition('.')
-        next unless (type = attrs[attr]?) && readers.any? { |r| receiver == r || receiver.ends_with?(".#{r}") }
-        params << Param.new(m[2]? || m[3], "", type)
+        type = attr_aliases[m[1]]? || (attrs[attr]?.try { |t| t if reads_from.call(receiver) })
+        params << Param.new(m[2]? || m[3], "", type) if type
       end
       params << Param.new("body", "", "json") if body.includes?(".json_body") && params.none? { |p| p.param_type == "json" }
       params
