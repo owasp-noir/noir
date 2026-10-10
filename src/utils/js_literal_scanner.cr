@@ -67,6 +67,17 @@ module Noir
       end
     end
 
+    # The same over a string's already materialized `chars`, for a caller
+    # matching many delimiters in one non-ASCII string: the `String` forms
+    # above re-materialize it on every call.
+    def self.find_matching_brace(chars : Array(Char), open_brace_idx : Int32) : Int32?
+      find_matching_impl(chars, open_brace_idx, '{', '}')
+    end
+
+    def self.find_matching_paren(chars : Array(Char), open_paren_idx : Int32) : Int32?
+      find_matching_impl(chars, open_paren_idx, '(', ')')
+    end
+
     # BYTE-offset variants over the raw UTF-8 bytes, for any content. Every
     # delimiter, quote and comment marker is ASCII and no byte of a
     # multi-byte char is, so non-ASCII text is just opaque bytes here — and

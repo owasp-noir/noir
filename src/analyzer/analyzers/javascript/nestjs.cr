@@ -726,22 +726,27 @@ module Analyzer::Javascript
       decorator_block_start = 0
       line_pos = 0
       line_count = 0
+      # `MatchData#begin` re-counts chars from the start of the class on
+      # non-ASCII source; matches arrive in order, so count from the last.
+      cursor_byte = 0
+      cursor_char = 0
       class_content.scan(route_decorator_re) do |match|
-        decorator_start = match.begin(0)
-        next unless decorator_start
+        cursor_char += class_content.byte_slice(cursor_byte, match.byte_begin(0) - cursor_byte).size
+        cursor_byte = match.byte_begin(0)
+        decorator_start = cursor_char
 
         method_name = match[1]
         methods = method_map[method_name]? || [] of String
         next if methods.empty?
 
-        open_paren = match.end(0) - 1
+        open_paren = decorator_start + match[0].size - 1
 
-        close_paren = Noir::JSRouteExtractor.find_matching_paren(class_content, open_paren)
+        close_paren = Noir::JSLiteralScanner.find_matching_paren(chars, open_paren)
         next unless close_paren
 
-        route_paths = literal_paths_from_expression(first_decorator_arg(class_content[(open_paren + 1)...close_paren]), literal_values)
+        route_paths = literal_paths_from_expression(first_decorator_arg(chars[(open_paren + 1)...close_paren].join), literal_values)
         next unless route_paths
-        signature = method_signature_after_decorators(class_content, close_paren + 1)
+        signature = method_signature_after_decorators(class_content, close_paren + 1, chars: chars)
         next unless signature
 
         # Route decorators stacked on one method share its decorator block.
@@ -754,7 +759,7 @@ module Analyzer::Javascript
           previous_signature_start = signature[:start_pos]
         end
         signature[:close_brace].try { |close_brace| previous_body_end = close_brace + 1 }
-        decorator_block = class_content[decorator_block_start...signature[:start_pos]]
+        decorator_block = chars[decorator_block_start...signature[:start_pos]].join
         method_versions = parse_method_versions(decorator_block)
         effective_base_paths = if method_versions.empty?
                                  controller_versions.empty? ? base_paths : expand_versions(base_paths, controller_versions)
