@@ -62,6 +62,13 @@ module Analyzer::AI
                          ".gz", ".7z", ".rar", ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv",
                          ".log", ".sql", ".bak", ".swp", ".jar"] of String
 
+    # Files that exist to hold credentials. Matched on the basename and
+    # withheld from every request — path listing, bundles, per-file prompts
+    # and agent tools — unless `--ai-include-sensitive` is given. Source-code
+    # extensions are deliberately absent from `secrets.*`: `secrets.go` is as
+    # likely a route file as a vault.
+    SENSITIVE_FILE = /\A(?:\.env(?:\..*)?|\.envrc|\.npmrc|\.pypirc|\.netrc|_netrc|\.pgpass|\.htpasswd|\.git-credentials|\.dockercfg|id_(?:rsa|dsa|ecdsa|ed25519)(?:\..*)?|credentials(?:\.(?:json|ya?ml|xml|ini|toml|csv|enc|yml\.enc))?|secrets?\.(?:json|ya?ml|xml|ini|toml|env|enc|txt|properties)|.*\.(?:pem|key|p12|pfx|jks|keystore|kdbx|ppk|asc|gpg|tfvars|tfvars\.json|tfstate|tfstate\.backup))\z/i
+
     @provider : String
     @model : String
     @api_key : String?
@@ -110,6 +117,7 @@ module Analyzer::AI
       @use_agentic = options["ai_agent"]?.try { |val| any_to_bool(val) } || false
       @agent_max_steps = options["ai_agent_max_steps"]?.try(&.as_i) || 20
       @native_tool_calling_allowlist = parse_native_tool_allowlist(options["ai_native_tools_allowlist"]?.try(&.as_s))
+      @include_sensitive = options["ai_include_sensitive"]?.try { |val| any_to_bool(val) } || false
       @agent_tool_cache = {} of String => String
       @agent_tool_cache_order = [] of String
       options[COVERED_FILES_OPTION]?.try(&.as_a?).try &.each { |path| @covered_files << path.as_s }
@@ -182,7 +190,7 @@ module Analyzer::AI
     private def prepare_files_for_bundling(paths : Array(String)) : Array(Tuple(String, String))
       files = [] of Tuple(String, String)
       paths.each do |path|
-        next if File.directory?(path) || File.symlink?(path) || ignore_extensions.includes?(File.extname(path))
+        next if File.directory?(path) || File.symlink?(path) || ignore_extensions.includes?(File.extname(path)) || sensitive?(path)
 
         # The label is what the model echoes back as `file`, so it has to name
         # one file unambiguously. Base-relative is fine for one base; with
@@ -320,7 +328,7 @@ module Analyzer::AI
 
     private def select_target_paths(adapter : LLM::Adapter) : Array(String)
       locator = CodeLocator.instance
-      all_paths = locator.all_files.reject { |path| covered?(path) }
+      all_paths = locator.all_files.reject { |path| covered?(path) || sensitive?(path) }
 
       paths = if all_paths.size > 10
                 logger.debug_sub "AI::Filtering files using LLM"
@@ -366,6 +374,7 @@ module Analyzer::AI
         selected = selected.select do |path|
           File.file?(path) &&
             !ignore_extensions.includes?(File.extname(path)) &&
+            !sensitive?(path) &&
             path_within_base?(path)
         end
 
@@ -394,14 +403,14 @@ module Analyzer::AI
       # relative base paths like `.` where the map stores unexpanded
       # paths.
       all_files.select do |path|
-        next false if ignore_extensions.includes?(File.extname(path))
+        next false if ignore_extensions.includes?(File.extname(path)) || sensitive?(path)
         path_within_base?(path)
       end
     end
 
     private def analyze_file(path : String, adapter : LLM::Adapter)
       return if File.directory?(path)
-      return if !File.exists?(path) || ignore_extensions.includes?(File.extname(path))
+      return if !File.exists?(path) || ignore_extensions.includes?(File.extname(path)) || sensitive?(path)
 
       relative_path = get_relative_path(base_path, path)
       File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
@@ -778,7 +787,7 @@ module Analyzer::AI
             lines << "#{indent}[D] #{agent_relative_path(full_path)}/"
             walk_directory_tree(full_path, depth + 1, max_depth, lines) if depth < max_depth
           else
-            next if ignore_extensions.includes?(File.extname(full_path))
+            next if ignore_extensions.includes?(File.extname(full_path)) || sensitive?(full_path)
             lines << "#{indent}[F] #{agent_relative_path(full_path)}"
           end
         rescue ex : Exception
@@ -794,6 +803,7 @@ module Analyzer::AI
       resolved = resolve_agent_single_path(path)
       return "ERROR: file '#{path}' is outside base paths or does not exist." if resolved.nil?
       return "ERROR: file '#{path}' is excluded by --exclude-path." if excluded_path?(resolved)
+      return "ERROR: file '#{path}' is withheld as a credentials file (--ai-include-sensitive to allow)." if sensitive?(resolved)
       return "ERROR: '#{path}' is a directory. Use list_directory instead." if File.directory?(resolved)
 
       content = Noir::TextFile.read(resolved)
@@ -858,7 +868,7 @@ module Analyzer::AI
         Dir.glob(glob).each do |file_path|
           break if matches.size >= AGENT_TOOL_MAX_MATCHES
           next if File.directory?(file_path) || File.symlink?(file_path)
-          next if ignore_extensions.includes?(File.extname(file_path))
+          next if ignore_extensions.includes?(File.extname(file_path)) || sensitive?(file_path)
           next unless path_within_base?(file_path)
           next if excluded_path?(file_path)
 
@@ -1176,6 +1186,11 @@ module Analyzer::AI
 
     def ignore_extensions
       IGNORE_EXTENSIONS
+    end
+
+    # The one gate on credentials files leaving the machine; see SENSITIVE_FILE.
+    def sensitive?(path : String) : Bool
+      !@include_sensitive && File.basename(path).matches?(SENSITIVE_FILE)
     end
 
     def max_tokens

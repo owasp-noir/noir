@@ -121,6 +121,19 @@ describe Analyzer::AI::Unified do
         selected.none?(&.includes?("vault")).should be_true
       end
     end
+
+    it "keeps credentials files out of the selection and the bundles" do
+      with_scoped_project do |root|
+        env = File.join(root, ".env")
+        File.write(env, "SECRET=1")
+        CodeLocator.instance.register_path(env)
+        reply = {files: [env, File.join(root, "f1.js")]}.to_json
+
+        analyzer = scope_analyzer(root)
+        analyzer.__test_filter_paths(CodeLocator.instance.all_files, ScriptedAdapter.new(reply)).should eq([File.join(root, "f1.js")])
+        analyzer.__test_bundle_labels([env, File.join(root, "f2.js")]).should eq(["f2.js"])
+      end
+    end
   end
 
   describe "an endpoint's reported file" do

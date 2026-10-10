@@ -109,6 +109,42 @@ describe Analyzer::AI::Unified do
       end
     end
 
+    it "withholds credentials files from every path that reaches the provider" do
+      temp_dir = File.tempname
+      Dir.mkdir(temp_dir)
+      begin
+        Dir.mkdir(File.join(temp_dir, ".ssh"))
+        File.write(File.join(temp_dir, ".ssh", "id_rsa"), "TOKEN=leak")
+        File.write(File.join(temp_dir, ".env.production"), "TOKEN=leak")
+        File.write(File.join(temp_dir, "deploy.pem"), "TOKEN=leak")
+        File.write(File.join(temp_dir, "prod.tfvars"), "TOKEN=leak")
+        File.write(File.join(temp_dir, "secrets.go"), "TOKEN=route")
+
+        analyzer = Analyzer::AI::Unified.new(build_ai_options(temp_dir))
+        {".env", ".env.local", "id_ed25519.pub", "server.KEY", "credentials", "secrets.yml", ".npmrc", "x.tfstate"}.each do |name|
+          analyzer.sensitive?("/repo/#{name}").should be_true
+        end
+        {"secrets.go", "credentials_controller.rb", "environment.ts", "keys.py"}.each do |name|
+          analyzer.sensitive?("/repo/#{name}").should be_false
+        end
+
+        analyzer.__test_run_agent_tool("read_file", %({"path":".env.production"})).should_not contain("leak")
+        listing = analyzer.__test_run_agent_tool("list_directory", %({"path":"."}))
+        listing.should_not contain("id_rsa")
+        listing.should_not contain("deploy.pem")
+        listing.should contain("secrets.go")
+        grep = analyzer.__test_run_agent_tool("grep", %({"pattern":"TOKEN","path":".","file_pattern":"*"}))
+        grep.should_not contain("leak")
+        grep.should contain("secrets.go")
+
+        options = build_ai_options(temp_dir)
+        options["ai_include_sensitive"] = YAML::Any.new(true)
+        Analyzer::AI::Unified.new(options).__test_run_agent_tool("read_file", %({"path":"deploy.pem"})).should contain("leak")
+      ensure
+        FileUtils.rm_rf(temp_dir)
+      end
+    end
+
     it "truncates large files in read_file tool" do
       temp_dir = File.tempname
       Dir.mkdir(temp_dir)
