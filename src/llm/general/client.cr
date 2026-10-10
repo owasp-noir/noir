@@ -3,6 +3,7 @@ require "uri"
 require "http/client"
 require "../response_cleanup"
 require "../http_transport"
+require "../prompt"
 
 module LLM
   # General OpenAI-compatible LLM client
@@ -11,6 +12,7 @@ module LLM
     @@tools_cache_mutex = Mutex.new
 
     @api_key : String?
+    @send_temperature : Bool
 
     def initialize(url : String, model : String, api_key : String?)
       @url = url
@@ -40,6 +42,7 @@ module LLM
              end
 
       @model = model
+      @send_temperature = self.class.sampling_temperature?(model)
       # An empty key means "no key given", not "authenticate with an empty
       # string". Treating it literally suppressed the documented
       # NOIR_AI_KEY fallback for every caller that passes the config
@@ -76,6 +79,16 @@ module LLM
       ""
     end
 
+    # Reasoning models answer a non-default `temperature` with HTTP 400, which
+    # loses the whole bundle: OpenAI's o-series and GPT-5 family (its `-chat`
+    # models excepted), and Claude from Opus 4.7 / Sonnet 5 / Haiku 5.5 on
+    # (Fable and Mythos included).
+    FIXED_SAMPLING_MODEL = /\A(?:o\d+(?:-|\z)|gpt-5(?![\w.-]*-chat)|claude-(?:opus-4-[7-9]|(?:opus|sonnet|haiku)-[5-9]|fable|mythos))/
+
+    def self.sampling_temperature?(model : String) : Bool
+      !LLM.model_basename(model).matches?(FIXED_SAMPLING_MODEL)
+    end
+
     # Make a request with chat-style messages
     def request_messages(messages : Array(Hash(String, String)), format : String = "json")
       body = {
@@ -84,9 +97,9 @@ module LLM
         "temperature"     => 0.3,
         "stream"          => false,
         "response_format" => format == "json" ? {"type" => "json_object"} : JSON.parse(format),
-      }.to_json
+      }
 
-      raw = LLM::HttpTransport.post_json(@api, body, request_headers)
+      raw = LLM::HttpTransport.post_json(@api, encode(body), request_headers)
       return "" if raw.nil?
 
       response_json = JSON.parse(raw)
@@ -109,9 +122,9 @@ module LLM
         "stream"      => false,
         "tools"       => parsed_tools,
         "tool_choice" => "auto",
-      }.to_json
+      }
 
-      raw = LLM::HttpTransport.post_json(@api, body, request_headers)
+      raw = LLM::HttpTransport.post_json(@api, encode(body), request_headers)
       return "" if raw.nil?
 
       response_json = JSON.parse(raw)
@@ -121,6 +134,11 @@ module LLM
     rescue e : Exception
       STDERR.puts "WARNING: AI API error (#{e.message})"
       ""
+    end
+
+    private def encode(body : Hash) : String
+      body.delete("temperature") unless @send_temperature
+      body.to_json
     end
 
     private def request_headers : HTTP::Headers
