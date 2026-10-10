@@ -103,6 +103,16 @@ defmodule ElixirPhoenixWeb.Router do
       KeyController, :export
   end
 
+  # Keyword-list scope forms: the prefix and module alias come from the
+  # `path:` / `alias:` options rather than positional arguments.
+  scope path: "/kw", alias: ElixirPhoenixWeb do
+    get "/accounts/:id", Api.UserController, :show
+  end
+
+  scope "/kw2", as: :kw2, alias: ElixirPhoenixWeb do
+    get "/accounts/:id", Api.UserController, :show
+  end
+
   admin_routes(scope: "/macro-admin-v2")
 
   # Enable LiveDashboard and Swoosh mailbox preview in development

@@ -58,6 +58,9 @@ expected_endpoints = [
   Endpoint.new("/account/keys/:key_id", "DELETE", [Param.new("key_id", "", "path")]),
   # A verb route wrapped onto a second line after a trailing comment.
   Endpoint.new("/account/keys/export", "GET"),
+  # Keyword-list scopes: `path:` / `alias:` options set prefix and module.
+  Endpoint.new("/kw/accounts/:id", "GET", [Param.new("include", "", "query"), Param.new("x-api-version", "", "header"), Param.new("id", "", "path")]),
+  Endpoint.new("/kw2/accounts/:id", "GET", [Param.new("include", "", "query"), Param.new("x-api-version", "", "header"), Param.new("id", "", "path")]),
   # Macro-generated routes with unquoted scope/controller defaults
   Endpoint.new("/macro-admin-v2/dashboard", "GET"),
   Endpoint.new("/macro-admin-v2/dashboard", "OPTIONS"),

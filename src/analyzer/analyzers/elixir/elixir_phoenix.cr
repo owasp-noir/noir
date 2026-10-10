@@ -944,15 +944,22 @@ module Analyzer::Elixir
       normalized.ends_with?("controller") ? normalized[0, normalized.size - "controller".size] : normalized
     end
 
-    SCOPE_LITERAL_RE = /^(\s*)scope\s*(?:\(\s*)?["']([^"']+)["'](?:\s*,\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*))?/
-    SCOPE_UNQUOTE_RE = /^(\s*)scope\s*(?:\(\s*)?unquote\(\s*(\w+)\s*\)(?:\s*,\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*))?/
-    SCOPE_INLINE_RE  = /(?:^|[\s,(])do:\s*(.+)$/
+    # The optional positional alias must not be the first key of a trailing
+    # keyword list (`scope "/x", as: :y do`), hence the `(?![a-z_]\w*:)`.
+    SCOPE_LITERAL_RE = /^(\s*)scope\s*(?:\(\s*)?["']([^"']+)["'](?:\s*,\s*(?![a-z_]\w*:)([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*))?/
+    SCOPE_UNQUOTE_RE = /^(\s*)scope\s*(?:\(\s*)?unquote\(\s*(\w+)\s*\)(?:\s*,\s*(?![a-z_]\w*:)([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*))?/
+    # `scope path: "/api", alias: App do` / `scope alias: App do`: options only.
+    SCOPE_KEYWORD_RE  = /^(\s*)scope\s*(?:\(\s*)?(?=[a-z_]\w*:\s)/
+    SCOPE_PATH_KW_RE  = /\bpath:\s*["']([^"']*)["']/
+    SCOPE_ALIAS_KW_RE = /\balias:\s*([A-Z]\w*(?:\.[A-Za-z_]\w*)*)/
+    SCOPE_INLINE_RE   = /(?:^|[\s,(])do:\s*(.+)$/
 
     # A `scope` opener on `line`: its indent, the literal prefix (or the
     # `unquote(var)` name when `unquote` is set), the module alias, and —
     # for the one-line `scope "/admin", App, do: get(...)` form, which has
     # no `end` — the inline body. Callers push the scope, read the body
     # under it, and pop it before the next line so the prefix cannot leak.
+    # The prefix and alias may also come from `path:` / `alias:` options.
     private def scope_opener(line : String) : NamedTuple(indent: Int32, value: String, unquote: Bool, module_prefix: String, inline_body: String?)?
       return unless line.includes?("scope")
 
@@ -960,12 +967,22 @@ module Analyzer::Elixir
       match = line.match(SCOPE_LITERAL_RE)
       unless match
         match = line.match(SCOPE_UNQUOTE_RE)
+        unquote = true if match
+      end
+      keyword_only = false
+      unless match
+        match = line.match(SCOPE_KEYWORD_RE)
         return unless match
-        unquote = true
+        keyword_only = true
       end
 
-      inline_body = strip_trailing_comment(match.post_match).match(SCOPE_INLINE_RE).try(&.[1])
-      {indent: match[1].size, value: match[2], unquote: unquote, module_prefix: match[3]? || "", inline_body: inline_body}
+      tail = strip_trailing_comment(match.post_match)
+      inline = tail.match(SCOPE_INLINE_RE)
+      inline_body = inline.try(&.[1])
+      options = inline ? tail[0, inline.begin(0)] : tail
+      value = keyword_only ? (options.match(SCOPE_PATH_KW_RE).try(&.[1]) || "") : match[2]
+      module_prefix = (keyword_only ? nil : match[3]?) || options.match(SCOPE_ALIAS_KW_RE).try(&.[1]) || ""
+      {indent: match[1].size, value: value, unquote: unquote, module_prefix: module_prefix, inline_body: inline_body}
     end
 
     private def current_scope_prefix(scope_stack : Array(ScopeEntry)) : String
