@@ -470,7 +470,7 @@ module Noir
     private def nth_arg(args : LibTreeSitter::TSNode, n : Int32) : LibTreeSitter::TSNode?
       return unless TreeSitter.node_type(args) == "arguments"
       i = 0
-      TreeSitter.each_named_child(args) do |arg|
+      TreeSitter.each_named_arg(args) do |arg|
         return arg if i == n
         i += 1
       end
@@ -480,7 +480,7 @@ module Noir
     private def each_arg(call : LibTreeSitter::TSNode, &)
       args = TreeSitter.field(call, "arguments")
       return unless args && TreeSitter.node_type(args) == "arguments"
-      TreeSitter.each_named_child(args) { |arg| yield arg }
+      TreeSitter.each_named_arg(args) { |arg| yield arg }
     end
 
     private def descend(node : LibTreeSitter::TSNode, & : LibTreeSitter::TSNode -> Array(Route)) : Array(Route)

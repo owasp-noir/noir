@@ -23,7 +23,7 @@ const commentsContract = c.router(
       responses: { 200: z.array(z.any()) },
     },
   },
-  { pathPrefix: '/v1' },
+  /* options */ { pathPrefix: '/v1' },
 );
 
 export const contract = c.router(

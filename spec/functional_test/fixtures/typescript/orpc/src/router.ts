@@ -9,7 +9,7 @@ const PlanetSchema = z.object({
 });
 
 export const listPlanet = os
-  .route({ method: 'GET', path: '/planets' })
+  .route(/* spec */ { method: 'GET', path: '/planets' })
   .input(
     z.object({
       limit: z.number().int().min(1).max(100).optional(),
