@@ -238,12 +238,21 @@ module Analyzer::Elixir
           next
         end
 
-        line_to_endpoint(line, path, scope_prefix, scope_module, base, string_bindings).each do |endpoint|
+        found = line_to_endpoint(line, path, scope_prefix, scope_module, base, string_bindings)
+        consumed = 1
+        # `get "/page", # note` + newline + `PageController, :home`: a verb
+        # route wrapped after a comma reads as nothing on its first line.
+        if found.empty? && line == lines[index] && statement_open?(line)
+          statement, wrapped = assemble_statement(lines, index)
+          found = line_to_endpoint(statement, path, scope_prefix, scope_module, base, string_bindings)
+          consumed = wrapped unless found.empty?
+        end
+        found.each do |endpoint|
           next if endpoint.method.empty?
           endpoint.details = Details.new(PathInfo.new(path, index + 1))
           endpoints << endpoint
         end
-        index += 1
+        index += consumed
       end
       endpoints
     end

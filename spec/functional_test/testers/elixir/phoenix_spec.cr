@@ -56,6 +56,8 @@ expected_endpoints = [
   # `param:` renames the member capture
   Endpoint.new("/account/keys/:key_id", "GET", [Param.new("key_id", "", "path")]),
   Endpoint.new("/account/keys/:key_id", "DELETE", [Param.new("key_id", "", "path")]),
+  # A verb route wrapped onto a second line after a trailing comment.
+  Endpoint.new("/account/keys/export", "GET"),
   # Macro-generated routes with unquoted scope/controller defaults
   Endpoint.new("/macro-admin-v2/dashboard", "GET"),
   Endpoint.new("/macro-admin-v2/dashboard", "OPTIONS"),

@@ -99,6 +99,8 @@ defmodule ElixirPhoenixWeb.Router do
   scope "/account", ElixirPhoenixWeb do
     resources("/session", SessionController, singleton: true, only: [:create, :delete])
     resources "/keys", KeyController, param: "key_id", only: [:show, :delete]
+    get "/keys/export", # wrapped after the path
+      KeyController, :export
   end
 
   admin_routes(scope: "/macro-admin-v2")
