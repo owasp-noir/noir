@@ -98,6 +98,7 @@ end
 private def read_key_file_or_die!(path : String) : String
   key = File.read(Path[path].expand(home: true)).strip
   raise "'#{path}' is empty" if key.empty?
+  raise "'#{path}' must hold only the key" if key.each_char.any?(&.whitespace?)
   key
 rescue e
   STDERR.puts "ERROR: --ai-key-file: #{e.message}".colorize(:red)
@@ -604,7 +605,7 @@ def run_options_parser
     parser.on "--ai-key-file PATH", "Read the API key from a file" do |v|
       noir_options["ai_key"] = YAML::Any.new(read_key_file_or_die!(v))
     end
-    parser.on "--ai-temperature N", "Sampling temperature, 0-2 (default: 0.3; 0 for repeatable runs)" do |v|
+    parser.on "--ai-temperature N", "Sampling temperature for every AI request, 0-2 (default: 0.3, agent steps 0)" do |v|
       noir_options["ai_temperature"] = YAML::Any.new(v)
     end
     parser.on "--ai-seed N", "Sampling seed, sent where the provider supports one" do |v|

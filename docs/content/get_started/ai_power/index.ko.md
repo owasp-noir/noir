@@ -59,7 +59,7 @@ noir scan . --ai-provider acp:codex
 | `--ai-model` | 모델 이름 (예: `gpt-5.5`), `acp:*`에서는 선택 사항 |
 | `--ai-key` | API 키 (프로세스 목록에 노출되므로 `NOIR_AI_KEY` 또는 `--ai-key-file` 권장) |
 | `--ai-key-file` | 파일에서 API 키를 읽음 (앞뒤 공백 제거) |
-| `--ai-temperature` | 샘플링 temperature (기본값: `0.3`, 반복 가능한 CI 실행에는 `0`). GPT-5, o 시리즈 같은 고정 샘플링 모델은 무시합니다 |
+| `--ai-temperature` | 모든 AI 요청의 샘플링 temperature (기본값: `0.3`, `--ai-agent` 단계는 `0`. 반복 가능한 CI 실행에는 `0`). GPT-5, o 시리즈 같은 고정 샘플링 모델은 무시합니다 |
 | `--ai-seed` | 샘플링 seed. 제공업체가 지원할 때 전달됩니다 (OpenAI 호환 `seed`, Ollama `options.seed`) |
 | `--ai-agent` | 에이전트 기반 AI 워크플로우 활성화 (반복적 도구 호출 루프) |
 | `--ai-agent-max-steps` | AI 에이전트 루프 최대 단계 수 (기본값: `20`) |

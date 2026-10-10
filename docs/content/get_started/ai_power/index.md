@@ -59,7 +59,7 @@ noir scan . --ai-provider acp:codex
 | `--ai-model` | Model name (e.g., `gpt-5.5`), optional for `acp:*` |
 | `--ai-key` | API key (prefer `NOIR_AI_KEY` or `--ai-key-file`: argv is visible in the process list) |
 | `--ai-key-file` | Read the API key from a file (surrounding whitespace is stripped) |
-| `--ai-temperature` | Sampling temperature (default: `0.3`; `0` for repeatable CI runs). Fixed-sampling models such as GPT-5 and the o-series ignore it |
+| `--ai-temperature` | Sampling temperature for every AI request (default: `0.3`, and `0` for `--ai-agent` steps; use `0` for repeatable CI runs). Fixed-sampling models such as GPT-5 and the o-series ignore it |
 | `--ai-seed` | Sampling seed, sent where the provider supports one (OpenAI-compatible `seed`, Ollama `options.seed`) |
 | `--ai-agent` | Enable agentic AI workflow (iterative tool-calling loop) |
 | `--ai-agent-max-steps` | Max steps for AI agent loop (default: `20`) |
