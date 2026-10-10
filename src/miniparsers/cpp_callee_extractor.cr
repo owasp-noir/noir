@@ -146,11 +146,18 @@ module Noir::CppCalleeExtractor
       end
       next if prev >= 0 && source.byte_at(prev).unsafe_chr.in?('.', '>', ':')
 
-      open_paren = find_next_code_char(source, '(', offset)
-      next unless open_paren && source.byte_slice(offset, open_paren - offset).blank?
+      open_paren = offset
+      while open_paren < source.bytesize && source.byte_at(open_paren).unsafe_chr.whitespace?
+        open_paren += 1
+      end
+      next unless open_paren < source.bytesize && source.byte_at(open_paren) == '('.ord
       close_paren = find_matching_delimiter(source, open_paren, '(', ')')
       next unless close_paren
-      body_open = find_next_code_char(source, '{', close_paren + 1)
+      # A `;` before the `{` makes this a call or prototype (see
+      # `definition_tail?`), so stop there: searching past it to the next `{`
+      # costs a file scan per call site of `name`.
+      semicolon = find_next_code_char(source, ';', close_paren + 1)
+      body_open = find_next_code_char(source, '{', close_paren + 1, semicolon || source.bytesize)
       next unless body_open && definition_tail?(source.byte_slice(close_paren + 1, body_open - close_paren - 1))
       body_close = find_matching_delimiter(source, body_open, '{', '}')
       next unless body_close
