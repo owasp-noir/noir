@@ -566,11 +566,11 @@ describe Noir::TreeSitterJavaRouteExtractor do
   it "decodes escape sequences in string literals" do
     source = <<-'JAVA'
       public class K {
-          @GetMapping("/caf\u00e9/tab\\path\"quoted")
+          @GetMapping("/r\u00e9sum\u00e9/tab\\path\"quoted")
           public String a() { return ""; }
       }
       JAVA
 
-    Noir::TreeSitterJavaRouteExtractor.extract_routes(source).map(&.path).should eq([%(/café/tab\\path"quoted)])
+    Noir::TreeSitterJavaRouteExtractor.extract_routes(source).map(&.path).should eq([%(/résumé/tab\\path"quoted)])
   end
 end
