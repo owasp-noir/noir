@@ -199,16 +199,12 @@ module Analyzer::Php
       # far-off quote+comma, surfacing multi-line code as a bogus route
       # (e.g. CakePHP controllers in cakesandbox, koel request objects).
       verb_regex = /(\$\w+|\$this->\w+)->(get|post|put|patch|delete|options|head|any)\s*\(\s*(['"])([^'"\r\n]*?)\3\s*,/im
+      offsets = Noir::CharOffsets.new(working_content)
       pos = 0
-      while match = working_content.match(verb_regex, pos)
-        match_text = match[0]
-        match_start = working_content.index(match_text, pos)
-        break unless match_start
-
+      while match = offsets.match(verb_regex, pos)
         route_path = normalize_laminas_route_path(match[4])
         methods = match[2].downcase == "any" ? ANY_ROUTE_HTTP_METHODS : [match[2].upcase]
-        after_args = match_start + match_text.size
-        handler_body, next_pos, body_start_line = extract_handler_body_with_end(working_content, after_args)
+        handler_body, next_pos, body_start_line = extract_handler_body_with_end(offsets, offsets.end(match))
 
         params = extract_laminas_path_params(route_path)
         params.concat(extract_handler_params(handler_body)) if handler_body
@@ -229,17 +225,14 @@ module Analyzer::Php
       # 7-method phantom route (koel request objects).
       route_regex = /(\$\w+|\$this->\w+)->route\s*\(\s*(['"])([^'"\r\n]*?)\2\s*,/im
       pos = 0
-      while match = working_content.match(route_regex, pos)
-        match_text = match[0]
-        match_start = working_content.index(match_text, pos)
-        break unless match_start
-
-        call_open = working_content.index('(', match_start)
+      while match = offsets.match(route_regex, pos)
+        # Byte offsets from here: the `(` is inside the match itself.
+        call_open = working_content.byte_index('('.ord.to_u8, match.byte_begin(0))
         break unless call_open
 
-        call_close = find_matching_delimiter(working_content, call_open)
+        call_close = find_matching_delimiter(working_content.to_slice, call_open)
         if call_close
-          call_content = working_content[(call_open + 1)...call_close]
+          call_content = working_content.byte_slice(call_open + 1, call_close - call_open - 1)
           route_path = normalize_laminas_route_path(match[3])
           methods = extract_methods_from_route_call(call_content)
           params = extract_laminas_path_params(route_path)
@@ -247,9 +240,9 @@ module Analyzer::Php
           methods.each do |method|
             endpoints << Endpoint.new(route_path, method, params, details.dup)
           end
-          pos = call_close + 1
+          pos = offsets.char(call_close) + 1
         else
-          pos = match_start + match_text.size
+          pos = offsets.end(match)
         end
       end
 
@@ -263,25 +256,25 @@ module Analyzer::Php
       attach_php_callees(endpoint, callees)
     end
 
-    private def extract_handler_body_with_end(content : String, pos : Int32) : Tuple(String?, Int32, Int32?)
-      return {nil, pos, nil} unless pos < content.size
+    private def extract_handler_body_with_end(offsets : Noir::CharOffsets, pos : Int32) : Tuple(String?, Int32, Int32?)
+      size = offsets.content.size
+      return {nil, pos, nil} unless pos < size
 
       scan_pos = pos
-      while scan_pos < content.size && content[scan_pos].ascii_whitespace?
+      while offsets.ascii_whitespace?(scan_pos)
         scan_pos += 1
       end
-      return {nil, pos, nil} unless scan_pos < content.size
+      return {nil, pos, nil} unless scan_pos < size
 
-      closure_regex = /\A(?:static\s+)?function\s*\([^)]*\)\s*(?:use\s*\([^)]*\)\s*)?(?::\s*[^{=]+)?\{/i
-      match = content[scan_pos..].match(closure_regex)
+      match = offsets.match(INLINE_CLOSURE_HEAD_RE, scan_pos)
       return {nil, pos, nil} unless match
 
-      brace_pos = scan_pos + match[0].size - 1
-      body_end = find_matching_delimiter(content, brace_pos)
-      return {nil, pos, nil} unless body_end
+      close_byte = find_matching_delimiter(offsets.content.to_slice, match.byte_end(0) - 1)
+      return {nil, pos, nil} unless close_byte
 
-      body_start_line = line_number_for_index(content, brace_pos)
-      {content[(brace_pos + 1)...body_end], body_end + 1, body_start_line}
+      brace_pos = offsets.end(match) - 1
+      body_end = offsets.char(close_byte)
+      {offsets.slice(brace_pos + 1, body_end), body_end + 1, offsets.line(brace_pos)}
     end
 
     PARAM_PATTERNS = [

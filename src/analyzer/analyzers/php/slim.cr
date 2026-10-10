@@ -112,18 +112,16 @@ module Analyzer::Php
       # Keep the path literal on a single line (no quotes, no newlines) so an
       # unrelated `$obj->get('key')` can't pull in following code as a route.
       verb_regex = /(\$\w+)->(get|post|put|patch|delete|options|head)\s*\(\s*['"]([^'"\r\n]+)['"]\s*,/i
+      offsets = Noir::CharOffsets.new(working_content)
       pos = 0
-      while m = working_content.match(verb_regex, pos)
-        match_text = m[0]
-        match_start = working_content.index(match_text, pos)
-        break unless match_start
-        after_args = match_start + match_text.size
+      while m = offsets.match(verb_regex, pos)
+        after_args = offsets.end(m)
 
         method = m[2].upcase
         route_path = m[3]
         full_path = build_full_path(prefix, route_path)
 
-        handler_body, next_pos, body_start_line = extract_handler_body_with_end(working_content, after_args, base_line)
+        handler_body, next_pos, body_start_line = extract_handler_body_with_end(offsets, after_args, base_line)
         params = extract_brace_path_params(full_path)
         params.concat(extract_handler_params(handler_body)) if handler_body
         params = dedup_params(params)
@@ -137,15 +135,12 @@ module Analyzer::Php
       # 3. Multi-method map routes: $app->map(["GET","POST"], "/path", handler)
       map_regex = /(\$\w+)->map\s*\(\s*\[([^\]]+)\]\s*,\s*['"]([^'"\r\n]+)['"]\s*,/i
       pos = 0
-      while m = working_content.match(map_regex, pos)
-        match_text = m[0]
-        match_start = working_content.index(match_text, pos)
-        break unless match_start
-        after_args = match_start + match_text.size
+      while m = offsets.match(map_regex, pos)
+        after_args = offsets.end(m)
 
         methods = m[2].scan(/['"]([^'"]+)['"]/).map(&.[1].upcase)
 
-        handler_body, next_pos, body_start_line = extract_handler_body_with_end(working_content, after_args, base_line)
+        handler_body, next_pos, body_start_line = extract_handler_body_with_end(offsets, after_args, base_line)
         pos = next_pos
 
         next if methods.empty?
@@ -186,8 +181,9 @@ module Analyzer::Php
       return unless match_start
 
       brace_pos = match_start + match_text.size - 1
-      body_end = find_matching_close_brace(content, brace_pos)
-      return unless body_end
+      close_byte = find_matching_close_brace(content, content.char_index_to_byte_index(brace_pos) || content.bytesize)
+      return unless close_byte
+      body_end = content.byte_index_to_char_index(close_byte) || content.size
 
       # Consume the closing `)` (and optional `;`) that terminates the group call.
       close_end = body_end + 1
@@ -209,25 +205,26 @@ module Analyzer::Php
     # text (or nil when the handler is a string/callable or brace matching
     # fails) together with the position after the handler so the caller can
     # resume scanning past it.
-    private def extract_handler_body_with_end(content : String, pos : Int32, base_line : Int32) : Tuple(String?, Int32, Int32?)
-      return {nil, pos, nil} unless pos < content.size
+    private def extract_handler_body_with_end(offsets : Noir::CharOffsets, pos : Int32, base_line : Int32) : Tuple(String?, Int32, Int32?)
+      size = offsets.content.size
+      return {nil, pos, nil} unless pos < size
 
       scan_pos = pos
-      while scan_pos < content.size && content[scan_pos].ascii_whitespace?
+      while offsets.ascii_whitespace?(scan_pos)
         scan_pos += 1
       end
-      return {nil, pos, nil} unless scan_pos < content.size
+      return {nil, pos, nil} unless scan_pos < size
 
-      closure_regex = /\A(?:static\s+)?function\s*\([^)]*\)\s*(?:use\s*\([^)]*\)\s*)?(?::\s*[^{=]+)?\{/i
-      m = content[scan_pos..].match(closure_regex)
+      m = offsets.match(INLINE_CLOSURE_HEAD_RE, scan_pos)
       return {nil, pos, nil} unless m
 
-      brace_pos = scan_pos + m[0].size - 1
-      body_end = find_matching_close_brace(content, brace_pos)
-      return {nil, pos, nil} unless body_end
+      close_byte = find_matching_close_brace(offsets.content, m.byte_end(0) - 1)
+      return {nil, pos, nil} unless close_byte
 
-      body_start_line = base_line + newline_count_before(content, brace_pos)
-      {content[(brace_pos + 1)...body_end], body_end + 1, body_start_line}
+      brace_pos = offsets.end(m) - 1
+      body_end = offsets.char(close_byte)
+      body_start_line = base_line + offsets.line(brace_pos) - 1
+      {offsets.slice(brace_pos + 1, body_end), body_end + 1, body_start_line}
     end
 
     # Byte-level scan for O(1) positional access instead of the previous
@@ -237,11 +234,11 @@ module Analyzer::Php
     # fix applied to the shared brace matcher. `find_group_call` and
     # `extract_handler_body_with_end` both call this over the full
     # remainder of the file, so this is the hot path for any Slim routes
-    # file with non-ASCII content (e.g. CJK comments/strings).
-    private def find_matching_close_brace(content : String, open_pos : Int32) : Int32?
+    # file with non-ASCII content (e.g. CJK comments/strings). Takes and
+    # returns BYTE offsets.
+    private def find_matching_close_brace(content : String, start : Int32) : Int32?
       bytes = content.to_slice
-      start = content.char_index_to_byte_index(open_pos)
-      return unless start && start < bytes.size && bytes[start] == BYTE_LBRACE
+      return unless start < bytes.size && bytes[start] == BYTE_LBRACE
 
       depth = 0
       in_string = false
@@ -256,7 +253,7 @@ module Analyzer::Php
             depth += 1
           when BYTE_RBRACE
             depth -= 1
-            return content.byte_index_to_char_index(pos) if depth == 0
+            return pos if depth == 0
           when BYTE_DQUOTE, BYTE_SQUOTE
             in_string = true
             quote_byte = byte

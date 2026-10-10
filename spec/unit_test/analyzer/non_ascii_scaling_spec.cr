@@ -90,4 +90,22 @@ describe "non-ASCII route files" do
       "route/app.php" => "<?php\nuse think\\facade\\Route;\n$title = 'COMMENT';\n#{routes}",
     }, "route/app.php", "php_thinkphp")
   end
+
+  it "keeps Slim route scans linear" do
+    routes = (1..1500).join { |i| "$app->get('/search#{i}', function ($request, $response) { return $response; });\n" }
+    assert_linear_on_non_ascii({
+      "composer.json" => %({"require":{"slim/slim":"^4.12"}}),
+      "index.php"     => "<?php\nuse Slim\\Factory\\AppFactory;\n$title = 'COMMENT';\n$app = AppFactory::create();\n#{routes}",
+    }, "index.php", "php_slim")
+  end
+
+  it "keeps Laminas route scans linear" do
+    routes = (1..1500).join do |i|
+      "    $app->route('/r#{i}', [H::class], ['GET'], 'r#{i}');\n    $app->get('/docs#{i}', function ($request) { return 1; });\n"
+    end
+    assert_linear_on_non_ascii({
+      "composer.json"                     => %({"require":{"mezzio/mezzio":"^3.19"}}),
+      "config/autoload/routes.global.php" => "<?php\nuse Mezzio\\Application;\n$title = 'COMMENT';\nreturn function (Application $app) {\n#{routes}};\n",
+    }, "config/autoload/routes.global.php", "php_laminas")
+  end
 end
