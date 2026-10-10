@@ -130,6 +130,10 @@ module Analyzer::Javascript
       # no router mounts at all.
       return unless content.includes?(".use(") || content.includes?(".use (") ||
                     content.includes?(".route(") || content.includes?(".route (")
+      # The mount scans are regexes over call arguments: a comment in
+      # `.use(/* x */ '/api', router)` must not hide the prefix, and a
+      # commented-out mount must not add one. Lines and columns are kept.
+      content = Noir::JSRouteExtractor.strip_js_comments(content)
 
       # Parse imports
       imports = parse_imports(content, main_file)
