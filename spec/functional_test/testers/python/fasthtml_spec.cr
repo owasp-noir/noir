@@ -23,6 +23,14 @@ expected_endpoints = [
     Param.new("name", "", "form"),
   ]),
   Endpoint.new("/upload", "POST", [Param.new("file", "", "form")]),
+  # `APIRouter(prefix=...)` routes in products.py.
+  Endpoint.new("/products/all", "GET"),
+  Endpoint.new("/products/details", "GET", [Param.new("pid", "", "query")]),
+  Endpoint.new("/products/details", "POST", [Param.new("pid", "", "form")]),
+  Endpoint.new("/products/{pid}/buy", "POST", [
+    Param.new("pid", "", "path"),
+    Param.new("qty", "", "form"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/python/fasthtml/", {

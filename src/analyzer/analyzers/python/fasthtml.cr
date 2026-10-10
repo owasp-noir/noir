@@ -20,6 +20,9 @@ module Analyzer::Python
     PATH_PARAM_RE = /\{([A-Za-z_]\w*)(?::[^}]*)?\}/
     # `app, rt = fast_app()` may name the route decorator something else.
     RT_NAME_RE = /^\s*\w+\s*,\s*(\w+)\s*=\s*fast_app\s*\(/m
+    # `ar = APIRouter(prefix="/products")`: `@ar(...)` / `@ar.get(...)` routes
+    # sit under the prefix, which FastHTML prepends as-is.
+    API_ROUTER_RE = /^\s*(\w+)\s*=\s*(?:\w+\.)?APIRouter\s*\(\s*(?:prefix\s*=\s*)?(?:(['"])(.*?)\2)?/m
 
     def analyze
       ordered_parallel_analyze(python_source_files) do |path|
@@ -34,6 +37,9 @@ module Analyzer::Python
 
       rt_names = ["rt"]
       source.scan(RT_NAME_RE) { |m| rt_names << m[1] }
+      routers = {} of ::String => ::String
+      source.scan(API_ROUTER_RE) { |m| routers[m[1]] = m[3]? || "" }
+      rt_names.concat(routers.keys)
       lines = source.lines
       endpoints = [] of Endpoint
       Noir::TreeSitterPythonRouteExtractor.extract_decorations(source, pathless: true, bare_routers: rt_names.uniq).each do |deco|
@@ -42,9 +48,13 @@ module Analyzer::Python
 
         name = deco.def_name
         route = deco.path.empty? ? (name == "index" ? "/" : "/#{name}") : deco.path
+        # An APIRouter always hands the app a path, so its path-less
+        # `@ar def post()` takes the verb rule too.
+        prefix = routers[deco.router_name]?
+        route = prefix + route if prefix
         methods = if deco.attribute_name != "route" || deco.keywords.has_key?("methods")
                     deco.methods
-                  elsif !deco.path.empty? && VERBS.includes?(name) # path-less `@rt def post()` is GET+POST /post
+                  elsif (!deco.path.empty? || prefix) && VERBS.includes?(name) # path-less `@rt def post()` is GET+POST /post
                     [name.upcase]
                   else
                     ["GET", "POST"]
