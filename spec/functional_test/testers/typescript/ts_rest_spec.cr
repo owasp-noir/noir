@@ -16,7 +16,7 @@ expected_endpoints = [
   Endpoint.new("/api/posts/:id", "DELETE", [Param.new("id", "", "path")]),
   # Inline nested router with its own pathPrefix.
   Endpoint.new("/api/admin/stats", "GET"),
-  # `${BASE}` resolved from a string constant; `.merge(TagMeta)` fields.
+  # `${BASE}` resolved from a typed string constant; `.merge(TagMeta)` fields.
   Endpoint.new("/v2/tags", "POST", [Param.new("name", "", "json"), Param.new("color", "", "json")]),
 ]
 

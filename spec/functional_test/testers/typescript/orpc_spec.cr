@@ -17,7 +17,7 @@ expected_endpoints = [
 ]
 
 # The RPC-only `ping` procedure has no `.route()` and is not reported, nor
-# is the handler-carrying `server.route({...})` config in moons.ts.
+# are the Hapi-shaped `server.route({...})` configs in moons.ts.
 FunctionalTester.new("fixtures/typescript/orpc/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
