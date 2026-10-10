@@ -14,6 +14,7 @@ require "file_utils"
 require "time"
 require "../utils/home"
 require "../models/logger"
+require "./sampling"
 
 module LLM
   module Cache
@@ -82,6 +83,11 @@ module LLM
       File.join(Noir::Home.path, "cache", "ai")
     end
 
+    # The prompts themselves are part of every key. Bump this when a change
+    # outside them (adapter-side wrapping, how a reply is read) should stop
+    # older cached replies from being replayed.
+    KEY_VERSION = "2"
+
     # Build a deterministic cache key from inputs
     #
     # - provider: "openai", "ollama", url, etc.
@@ -90,12 +96,16 @@ module LLM
     # - format: response_format string (e.g., "json" or JSON schema string)
     # - payload: variable content (file list, source code, bundle, etc.)
     #
+    # The sampling settings are folded in too, so a reply sampled at another
+    # temperature or seed is not replayed.
+    #
     # Returns a hex-encoded SHA256 digest.
     def self.key(provider : String, model : String, kind : String, format : String, payload : String) : String
       digest = Digest::SHA256.new
+      sampling = "#{Sampling.temperature}|#{Sampling.seed}"
       # Length prefixes keep fields distinct when a model, schema, or source
       # payload itself contains the separator used by the old encoding.
-      {provider, model, kind, format, payload}.each do |part|
+      {KEY_VERSION, provider, model, kind, format, payload, sampling}.each do |part|
         digest << part.bytesize.to_s << ":" << part
       end
       digest.hexfinal

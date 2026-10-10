@@ -170,7 +170,7 @@ See [Callee Coverage](@/usage/supported/callee_coverage/index.md) and [AI Contex
 | `--export-webhook <url>` | POST the endpoint catalog as JSON to a webhook |
 | `--ai-provider`        | AI provider prefix or full URL (see [AI Power](@/get_started/ai_power/index.md)) |
 | `--ai-model NAME`     | AI model name |
-| `--ai-key KEY`        | AI API key (or set `NOIR_AI_KEY`) |
+| `--ai-key KEY`        | AI API key (prefer `NOIR_AI_KEY` or `--ai-key-file PATH`: argv is visible in the process list) |
 | `--diff-path <path>`  | Old code path for [Diff Mode](@/usage/more_features/diff/index.md) |
 | `--diff-ref <ref>`    | Git revision to diff against (e.g. `main`, `HEAD~1`; see [Diff Mode](@/usage/more_features/diff/index.md)) |
 | `--fail-on <list>`    | Exit `3` when the diff has any of `added`, `removed`, `changed`, `auth-removed` |

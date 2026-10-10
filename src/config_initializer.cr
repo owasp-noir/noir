@@ -350,6 +350,8 @@ class ConfigInitializer
       "ai_scope"                     => YAML::Any.new("all"),
       "ai_max_token"                 => YAML::Any.new(0),
       "ai_max_requests"              => YAML::Any.new(0),
+      "ai_temperature"               => YAML::Any.new(""),
+      "ai_seed"                      => YAML::Any.new(""),
       "cache_disable"                => YAML::Any.new(false),
       "cache_clear"                  => YAML::Any.new(false),
     }
@@ -550,6 +552,12 @@ class ConfigInitializer
 
       # The maximum number of AI HTTP requests per run, retries included (0 = unlimited)
       ai_max_requests: #{options["ai_max_requests"]}
+
+      # Sampling temperature for AI requests, 0-2 ("" = 0.3; models with fixed sampling ignore it)
+      ai_temperature: "#{options["ai_temperature"]}"
+
+      # Sampling seed, sent where the provider supports one ("" = none)
+      ai_seed: "#{options["ai_seed"]}"
 
       # CACHE:
       # Disable LLM disk cache for this run

@@ -206,6 +206,59 @@ describe Noir::CliValidation do
         Noir::CliValidation.validate_ai_provider_pair!(options)
       end
     end
+
+    it "accepts presets in any case and absolute http(s) URLs" do
+      ["OpenAI", "openrouter", "http://localhost:8000/v1", "HTTPS://gw.example/openai/v1"].each do |provider|
+        options = create_test_options
+        options["ai_provider"] = YAML::Any.new(provider)
+        options["ai_model"] = YAML::Any.new("m")
+        Noir::CliValidation.validate_ai_provider_pair!(options)
+      end
+    end
+
+    it "rejects a provider that is neither a preset nor an http(s) URL" do
+      ["anthropic", "gemini", "openai.com", "ftp://host/v1", "localhost:8000"].each do |provider|
+        options = create_test_options
+        options["ai_provider"] = YAML::Any.new(provider)
+        options["ai_model"] = YAML::Any.new("m")
+        expect_raises(Noir::CliValidation::Error, /is not a known provider/) do
+          Noir::CliValidation.validate_ai_provider_pair!(options)
+        end
+      end
+    end
+
+    it "suggests the nearest preset for a typo" do
+      options = create_test_options
+      options["ai_provider"] = YAML::Any.new("opneai")
+      options["ai_model"] = YAML::Any.new("m")
+      expect_raises(Noir::CliValidation::Error, /Did you mean 'openai'/) do
+        Noir::CliValidation.validate_ai_provider_pair!(options)
+      end
+    end
+  end
+
+  describe "validate_ai_sampling!" do
+    it "accepts unset, in-range and integer values" do
+      options = create_test_options
+      Noir::CliValidation.validate_ai_sampling!(options)
+      options["ai_temperature"] = YAML::Any.new("0")
+      options["ai_seed"] = YAML::Any.new("42")
+      Noir::CliValidation.validate_ai_sampling!(options)
+    end
+
+    it "rejects an out-of-range temperature and a non-integer seed" do
+      options = create_test_options
+      options["ai_temperature"] = YAML::Any.new("hot")
+      expect_raises(Noir::CliValidation::Error, /--ai-temperature/) { Noir::CliValidation.validate_ai_sampling!(options) }
+      options["ai_temperature"] = YAML::Any.new("2.5")
+      expect_raises(Noir::CliValidation::Error, /--ai-temperature/) { Noir::CliValidation.validate_ai_sampling!(options) }
+      options["ai_temperature"] = YAML::Any.new("")
+      options["ai_seed"] = YAML::Any.new("1.5")
+      expect_raises(Noir::CliValidation::Error, /--ai-seed/) { Noir::CliValidation.validate_ai_sampling!(options) }
+      options["ai_seed"] = YAML::Any.new("")
+      options["ai_scope"] = YAML::Any.new("some")
+      expect_raises(Noir::CliValidation::Error, /--ai-scope/) { Noir::CliValidation.validate_ai_sampling!(options) }
+    end
   end
 
   describe "validate_passive_scan_paths!" do

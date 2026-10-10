@@ -4,6 +4,7 @@ require "http/client"
 require "../response_cleanup"
 require "../http_transport"
 require "../prompt"
+require "../sampling"
 
 module LLM
   # A request whose prompt is over the model's context window, raised for a
@@ -23,8 +24,22 @@ module LLM
     @@tools_cache = {} of String => JSON::Any
     @@tools_cache_mutex = Mutex.new
 
+    # `--ai-provider` names that stand for a fixed endpoint. CLI validation
+    # rejects any other bare name, so a typo fails before the scan.
+    PRESETS = {
+      "openai"     => "https://api.openai.com/v1/chat/completions",
+      "ollama"     => "http://localhost:11434/v1/chat/completions",
+      "lmstudio"   => "http://localhost:1234/v1/chat/completions",
+      "xai"        => "https://api.x.ai/v1/chat/completions",
+      "vllm"       => "http://localhost:8000/v1/chat/completions",
+      "azure"      => "https://models.inference.ai.azure.com/chat/completions",
+      "github"     => "https://models.github.ai/inference/chat/completions",
+      "openrouter" => "https://openrouter.ai/api/v1/chat/completions",
+    }
+
     @api_key : String?
     @send_temperature : Bool
+    @send_seed = true
 
     # How much of `response_format` the server accepts, learned from its
     # 400s and kept for the rest of the run. Ordered: each step only drops.
@@ -56,26 +71,7 @@ module LLM
       @api = if url.includes?("://")
                self.class.chat_completions_url(url)
              else
-               case url.downcase
-               when "openai"
-                 "https://api.openai.com/v1/chat/completions"
-               when "ollama"
-                 "http://localhost:11434/v1/chat/completions"
-               when "lmstudio"
-                 "http://localhost:1234/v1/chat/completions"
-               when "xai"
-                 "https://api.x.ai/v1/chat/completions"
-               when "vllm"
-                 "http://localhost:8000/v1/chat/completions"
-               when "azure"
-                 "https://models.inference.ai.azure.com/chat/completions"
-               when "github"
-                 "https://models.github.ai/inference/chat/completions"
-               when "openrouter"
-                 "https://openrouter.ai/api/v1/chat/completions"
-               else
-                 url
-               end
+               PRESETS[url.downcase]? || url
              end
 
       @model = model
@@ -127,12 +123,17 @@ module LLM
       !LLM.model_basename(model).matches?(FIXED_SAMPLING_MODEL)
     end
 
-    # The 400 for a rejected sampling parameter: OpenAI names it in `param`
+    # The 400 for a rejected sampling parameter (`temperature`, or the
+    # `seed` from --ai-seed): OpenAI names it in `param`
     # (`unsupported_value`), Anthropic in the message. Only the error itself
     # is read; a gateway that echoes the request would otherwise match on
     # every 400.
     def self.temperature_rejected?(rejection : HttpTransport::Rejection) : Bool
       rejected_for?(rejection, /temperature/i)
+    end
+
+    def self.seed_rejected?(rejection : HttpTransport::Rejection) : Bool
+      rejected_for?(rejection, /\bseed\b/i)
     end
 
     # A server that implements only `json_object`, or no structured output
@@ -230,6 +231,11 @@ module LLM
         return post(body, raise_overflow)
       end
 
+      if @send_seed && LLM::Sampling.seed && self.class.seed_rejected?(result)
+        @send_seed = false
+        return post(body, raise_overflow)
+      end
+
       if raise_overflow && (overflow = self.class.context_overflow(result))
         raise overflow
       end
@@ -250,7 +256,8 @@ module LLM
       body = {
         "model"           => @model,
         "messages"        => messages,
-        "temperature"     => 0.3,
+        "temperature"     => LLM::Sampling.temperature || 0.3,
+        "seed"            => LLM::Sampling.seed,
         "stream"          => false,
         "response_format" => format == "json" ? {"type" => "json_object"} : JSON.parse(format),
       }
@@ -283,7 +290,8 @@ module LLM
       body = {
         "model"       => @model,
         "messages"    => messages,
-        "temperature" => 0.0,
+        "temperature" => LLM::Sampling.temperature || 0.0,
+        "seed"        => LLM::Sampling.seed,
         "stream"      => false,
         "tools"       => parsed_tools,
         "tool_choice" => "auto",
@@ -303,6 +311,7 @@ module LLM
 
     private def encode(body : Hash) : String
       body.delete("temperature") unless @send_temperature
+      body.delete("seed") unless @send_seed && LLM::Sampling.seed
       body.to_json
     end
 

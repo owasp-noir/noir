@@ -19,7 +19,8 @@ Noir를 대규모 언어 모델(클라우드 API, 로컬 런타임, ACP 에이�
 OpenAI로 스캔:
 
 ```bash
-noir scan . --ai-provider openai --ai-model gpt-5.5 --ai-key $OPENAI_API_KEY
+export NOIR_AI_KEY=...   # 또는 --ai-key-file ~/.config/noir/openai.key
+noir scan . --ai-provider openai --ai-model gpt-5.5
 ```
 
 로컬 Ollama로 스캔 (API 키 불필요):
@@ -36,11 +37,13 @@ noir scan . --ai-provider acp:codex
 
 ## 사용법
 
-AI 제공업체, 모델 및 API 키를 지정합니다:
+AI 제공업체와 모델을 지정합니다. API 키는 `NOIR_AI_KEY`(또는 `--ai-key-file`)로 넘깁니다:
 
 ```bash
-noir scan . --ai-provider <PROVIDER> --ai-model <MODEL_NAME> --ai-key <YOUR_API_KEY>
+NOIR_AI_KEY=<YOUR_API_KEY> noir scan . --ai-provider <PROVIDER> --ai-model <MODEL_NAME>
 ```
+
+`--ai-key`도 동작하지만, 명령줄에 넣은 키는 프로세스 목록에서 다른 로컬 사용자에게 보이고 셸 기록과 CI 로그에 남습니다.
 
 ACP 제공자(`acp:*`)에서는 `--ai-model`이 선택 사항이며 `--ai-key`가 보통 필요하지 않습니다:
 
@@ -54,7 +57,10 @@ noir scan . --ai-provider acp:codex
 |---|---|
 | `--ai-provider` | 제공업체 접두사 (예: `openai`, `ollama`, `acp:codex`) 또는 사용자 정의 API URL |
 | `--ai-model` | 모델 이름 (예: `gpt-5.5`), `acp:*`에서는 선택 사항 |
-| `--ai-key` | API 키 (`NOIR_AI_KEY` 환경 변수로도 설정 가능) |
+| `--ai-key` | API 키 (프로세스 목록에 노출되므로 `NOIR_AI_KEY` 또는 `--ai-key-file` 권장) |
+| `--ai-key-file` | 파일에서 API 키를 읽음 (앞뒤 공백 제거) |
+| `--ai-temperature` | 모든 AI 요청의 샘플링 temperature (기본값: `0.3`, `--ai-agent` 단계는 `0`. 반복 가능한 CI 실행에는 `0`). GPT-5, o 시리즈 같은 고정 샘플링 모델은 무시합니다 |
+| `--ai-seed` | 샘플링 seed. 제공업체가 지원할 때 전달됩니다 (OpenAI 호환 `seed`, Ollama `options.seed`) |
 | `--ai-agent` | 에이전트 기반 AI 워크플로우 활성화 (반복적 도구 호출 루프) |
 | `--ai-agent-max-steps` | AI 에이전트 루프 최대 단계 수 (기본값: `20`) |
 | `--ai-no-optimize` | LLM 옵티마이저 단계를 건너뜀 |
@@ -85,7 +91,7 @@ Noir는 다음 AI 제공업체 프리셋을 지원합니다:
 | `acp:gemini` | `gemini --experimental-acp` |
 | `acp:claude` | `npx @zed-industries/claude-agent-acp` |
 
-사용자 정의 제공업체는 전체 API URL을 사용합니다: `--ai-provider=http://my-custom-api:9000`.
+사용자 정의 제공업체는 전체 API URL을 사용합니다: `--ai-provider=http://my-custom-api:9000`. 그 밖의 이름은 스캔 시작 전에 거부됩니다.
 
 `azure` 프리셋이 쓰던 공용 호스트는 상위에서 종료되었습니다. 대신 사용할 리소스별 URL은 [Azure AI](@/usage/ai_providers/azure/index.ko.md) 문서를 참고하세요.
 

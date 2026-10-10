@@ -185,6 +185,8 @@ noir scan /path/to/my/project -f json -u https://api.example.com --exclude-codes
 | `ai_max_token` | int | `--ai-max-token` | 요청당 최대 토큰 (`0` = 제공업체 기본값) |
 | `ai_max_requests` | int | `--ai-max-requests` | 실행당 최대 AI HTTP 요청 수, 재시도 포함 (`0` = 무제한) |
 | `ai_scope` | string | `--ai-scope` | AI 분석기로 보낼 파일 (`all` 또는 `unmatched`) |
+| `ai_temperature` | number | `--ai-temperature` | 샘플링 temperature, 0-2 (`""` = 0.3) |
+| `ai_seed` | number | `--ai-seed` | 지원하는 제공업체에 보내는 샘플링 seed (`""` = 없음) |
 | `cache_disable` | bool | `--cache-disable` | LLM 응답 캐시 비활성화 |
 | `cache_clear` | bool | `--cache-clear` | 실행 전 캐시 비우기 |
 

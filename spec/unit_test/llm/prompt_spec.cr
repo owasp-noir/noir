@@ -502,6 +502,20 @@ describe LLM do
     end
   end
 
+  describe "table_max_tokens" do
+    openai = LLM::MODEL_TOKEN_LIMITS["openai"].as(Hash(String, Int32))
+
+    it "looks a known model up across the table when the URL names no provider" do
+      LLM.table_max_tokens("https://llm.corp.example/v1", "gpt-5.5").should eq(openai["gpt-5.5"])
+      LLM.table_max_tokens("https://api.openai.com/v1", "gpt-5.5").should eq(openai["gpt-5.5"])
+    end
+
+    it "decides the provider from the host, not the path" do
+      LLM.table_max_tokens("https://llm.corp.example/openai/v1", "my-finetune").should eq(LLM::MODEL_TOKEN_LIMITS["default"])
+      LLM.table_max_tokens("https://openrouter.ai/api/v1", "x/unknown").should eq(LLM::MODEL_TOKEN_LIMITS["openrouter"].as(Hash(String, Int32))["default"])
+    end
+  end
+
   describe "acp_max_tokens?" do
     it "gives ACP agent providers a generous budget, not the 4000 default" do
       LLM.acp_max_tokens?("acp:gemini").should eq(LLM::ACP_DEFAULT_MAX_TOKENS)

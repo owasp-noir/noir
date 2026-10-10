@@ -35,7 +35,7 @@ describe LLM::Cache do
       format = "json"
       payload = "some payload"
 
-      expected_hash = "7a6b86f69a259f0ad0e11acca1b4bdf6979154546d40da9227459b5678548bc6"
+      expected_hash = "9f25643e830f486dfd1a45505e737b6e505d494f68a755c022c5d7c653598b25"
 
       key = LLM::Cache.key(provider, model, kind, format, payload)
       key.should eq(expected_hash)
@@ -45,6 +45,20 @@ describe LLM::Cache do
       k1 = LLM::Cache.key("p1", "m1", "k1", "f1", "payload")
       k2 = LLM::Cache.key("p1", "m1", "k1", "f1", "payload2")
       k1.should_not eq(k2)
+    end
+
+    it "changes with the sampling temperature and seed" do
+      base = LLM::Cache.key("p", "m", "k", "json", "payload")
+      begin
+        LLM::Sampling.temperature = 0.0
+        tempered = LLM::Cache.key("p", "m", "k", "json", "payload")
+        LLM::Sampling.seed = 7_i64
+        seeded = LLM::Cache.key("p", "m", "k", "json", "payload")
+        [base, tempered, seeded].uniq.size.should eq(3)
+      ensure
+        LLM::Sampling.temperature = nil
+        LLM::Sampling.seed = nil
+      end
     end
 
     it "distinguishes field boundaries when values contain the delimiter" do

@@ -1,8 +1,10 @@
 require "colorize"
+require "levenshtein"
 require "yaml"
 require "./tagger/tagger"
 require "./techs/techs"
 require "./llm/acp/targets"
+require "./llm/general/client"
 require "./llm/native_tool_calling"
 require "./output_builder/formats"
 require "./passive_scan/severity"
@@ -24,6 +26,7 @@ module Noir::CliValidation
     validate_passive_scan_paths!(options)
     validate_passive_scan_severity!(options)
     validate_ai_integer_options!(options)
+    validate_ai_sampling!(options)
     validate_ai_provider_pair!(options)
     validate_ai_native_tools_allowlist!(options)
     validate_fail_on!(options)
@@ -90,9 +93,23 @@ module Noir::CliValidation
       validate_acp_target!(provider)
       return
     end
+    validate_ai_provider_name!(provider)
     return unless model.empty?
 
     raise Error.new("--ai-provider '#{provider}' needs a companion --ai-model. Pass it with --ai-model, e.g. `noir scan ./app --ai-provider #{provider} --ai-model gpt-4 --ai-key …`. (ACP providers like `acp:claude` or `acp:codex` are the exception and don't need --ai-model.)")
+  end
+
+  # A name that is neither a preset nor an absolute http(s) URL was used as
+  # the request URL verbatim, so every file failed with "Missing scheme"
+  # while the scan itself reported success.
+  def self.validate_ai_provider_name!(provider : String)
+    return if LLM::General::PRESETS.has_key?(provider.downcase)
+    uri = URI.parse(provider) rescue nil
+    return if uri && uri.scheme.try(&.downcase).in?("http", "https") && uri.host.presence
+
+    names = LLM::General::PRESETS.keys
+    hint = Levenshtein.find(provider.downcase, names).try { |name| " Did you mean '#{name}'?" }
+    raise Error.new("--ai-provider '#{provider}' is not a known provider.#{hint} Use a preset (#{names.join(", ")}), an acp:<agent> target, or the http(s) URL of an OpenAI-compatible API, e.g. https://api.example.com/v1.")
   end
 
   # Pre-flight rejection of an ACP target Noir will not exec, so an untrusted
@@ -175,6 +192,25 @@ module Noir::CliValidation
         raise Error.new("Invalid #{flag} '#{number}'. Must be #{minimum == 0 ? "0 or greater (0 = provider/model default)" : "a positive integer"}.")
       end
     end
+  end
+
+  # `--ai-temperature` / `--ai-seed` and their config keys arrive as text;
+  # "" (the default) means unset. `ai_scope` rides along.
+  def self.validate_ai_sampling!(options : Hash(String, YAML::Any))
+    temperature = options["ai_temperature"]?.to_s.strip
+    unless temperature.empty? || temperature.to_f?.try(&.in?(0.0..2.0))
+      raise Error.new("Invalid --ai-temperature '#{temperature}'. Must be a number from 0 to 2.")
+    end
+
+    seed = options["ai_seed"]?.to_s.strip
+    unless seed.empty? || seed.to_i64?
+      raise Error.new("Invalid --ai-seed '#{seed}'. Must be an integer.")
+    end
+
+    # The --ai-scope flag checks its value; the config key did not.
+    scope = options["ai_scope"]?.to_s
+    return if scope.empty? || scope.in?("all", "unmatched")
+    raise Error.new("Invalid --ai-scope '#{scope}'. Valid: all, unmatched")
   end
 
   # `--probe-match` and `--probe-skip` only run inside the Deliver
