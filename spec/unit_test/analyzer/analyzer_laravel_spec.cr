@@ -292,34 +292,40 @@ describe Analyzer::Php::Laravel do
   end
 
   it "resolves many routes into one large controller in linear time" do
-    temp_dir = File.tempname("laravel_test")
-    begin
-      Dir.mkdir_p(File.join(temp_dir, "routes"))
-      Dir.mkdir_p(File.join(temp_dir, "app", "Http", "Controllers"))
-      Dir.mkdir_p(File.join(temp_dir, "app", "Http", "Requests"))
-      count = 3000
-      routes_file = File.join(temp_dir, "routes", "web.php")
-      File.write(routes_file, String.build do |io|
-        io << "<?php\nuse App\\Http\\Controllers\\UserController;\n"
-        count.times { |i| io << "Route::post('/u#{i}', [UserController::class, 'm#{i}']);\n" }
-      end)
-      File.write(File.join(temp_dir, "app", "Http", "Controllers", "UserController.php"), String.build do |io|
-        io << "<?php\nnamespace App\\Http\\Controllers;\nuse App\\Http\\Requests\\StoreUserRequest;\nclass UserController\n{\n"
-        count.times { |i| io << "    public function m#{i}(StoreUserRequest $request)\n    {\n        return $request->input('a#{i}');\n    }\n" }
-        io << "}\n"
-      end)
-      File.write(File.join(temp_dir, "app", "Http", "Requests", "StoreUserRequest.php"),
-        "<?php\nclass StoreUserRequest { public function rules() { return ['name' => 'required']; } }\n")
+    # Ratio, not wall clock: CI runners vary. 4x the routes must cost well
+    # under the 16x a per-route controller re-parse would.
+    scan = ->(count : Int32) do
+      temp_dir = File.tempname("laravel_test")
+      begin
+        Dir.mkdir_p(File.join(temp_dir, "routes"))
+        Dir.mkdir_p(File.join(temp_dir, "app", "Http", "Controllers"))
+        Dir.mkdir_p(File.join(temp_dir, "app", "Http", "Requests"))
+        routes_file = File.join(temp_dir, "routes", "web.php")
+        File.write(routes_file, String.build do |io|
+          io << "<?php\nuse App\\Http\\Controllers\\UserController;\n"
+          count.times { |i| io << "Route::post('/u#{i}', [UserController::class, 'm#{i}']);\n" }
+        end)
+        File.write(File.join(temp_dir, "app", "Http", "Controllers", "UserController.php"), String.build do |io|
+          io << "<?php\nnamespace App\\Http\\Controllers;\nuse App\\Http\\Requests\\StoreUserRequest;\nclass UserController\n{\n"
+          count.times { |i| io << "    public function m#{i}(StoreUserRequest $request)\n    {\n        return $request->input('a#{i}');\n    }\n" }
+          io << "}\n"
+        end)
+        File.write(File.join(temp_dir, "app", "Http", "Requests", "StoreUserRequest.php"),
+          "<?php\nclass StoreUserRequest { public function rules() { return ['name' => 'required']; } }\n")
 
-      endpoints = [] of Endpoint
-      elapsed = Time.measure { endpoints = Analyzer::Php::Laravel.new(options).analyze_file(routes_file) }
-
-      endpoints.size.should eq(count)
-      last = endpoints.find!(&.url.==("/u#{count - 1}"))
-      last.params.map(&.name).should eq(["a#{count - 1}", "name"])
-      elapsed.should be < 3.seconds
-    ensure
-      FileUtils.rm_rf(temp_dir)
+        endpoints = [] of Endpoint
+        elapsed = Time.measure { endpoints = Analyzer::Php::Laravel.new(options).analyze_file(routes_file) }
+        endpoints.size.should eq(count)
+        last = endpoints.find!(&.url.==("/u#{count - 1}"))
+        last.params.map(&.name).should eq(["a#{count - 1}", "name"])
+        elapsed
+      ensure
+        FileUtils.rm_rf(temp_dir)
+      end
     end
+
+    small = scan.call(500)
+    large = scan.call(2000)
+    large.should be < (small * 8 + 500.milliseconds)
   end
 end
