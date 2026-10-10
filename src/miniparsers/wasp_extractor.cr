@@ -73,14 +73,21 @@ module Noir
       pages = Hash(String, Bool).new
       pending = [] of Tuple(String, String, String?, Int32)
 
+      # Byte offsets throughout: char offsets cost a scan from the start of a
+      # non-ASCII file on every declaration (and the char brace matcher a
+      # full copy), which went quadratic in the declaration count.
       pos = 0
-      while m = code.match(DSL_DECL, pos)
-        open = m.end(0) - 1
-        close = JSLiteralScanner.find_matching_brace(code, open)
+      line = 1
+      line_pos = 0
+      while m = DSL_DECL.match_at_byte_index(code, pos)
+        open = m.byte_end(0) - 1
+        close = JSLiteralScanner.find_matching_brace_at_byte(code, open)
         break unless close
         pos = close + 1
-        entries = object_entries(code[(open + 1)...close])
-        line = JSRouteExtractor.line_for_char_pos(code, m.begin(0) + (m[0].size - m[0].lstrip.size))
+        entries = object_entries(code.byte_slice(open + 1, close - open - 1))
+        decl = m.byte_begin(0) + (m[0].bytesize - m[0].lstrip.bytesize)
+        line += code.to_slice[line_pos, decl - line_pos].count('\n'.ord.to_u8)
+        line_pos = decl
         name = m[2]
 
         case m[1]
