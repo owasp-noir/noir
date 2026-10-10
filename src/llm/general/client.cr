@@ -23,6 +23,19 @@ module LLM
     @@tools_cache = {} of String => JSON::Any
     @@tools_cache_mutex = Mutex.new
 
+    # `--ai-provider` names that stand for a fixed endpoint. CLI validation
+    # rejects any other bare name, so a typo fails before the scan.
+    PRESETS = {
+      "openai"     => "https://api.openai.com/v1/chat/completions",
+      "ollama"     => "http://localhost:11434/v1/chat/completions",
+      "lmstudio"   => "http://localhost:1234/v1/chat/completions",
+      "xai"        => "https://api.x.ai/v1/chat/completions",
+      "vllm"       => "http://localhost:8000/v1/chat/completions",
+      "azure"      => "https://models.inference.ai.azure.com/chat/completions",
+      "github"     => "https://models.github.ai/inference/chat/completions",
+      "openrouter" => "https://openrouter.ai/api/v1/chat/completions",
+    }
+
     @api_key : String?
     @send_temperature : Bool
 
@@ -56,26 +69,7 @@ module LLM
       @api = if url.includes?("://")
                self.class.chat_completions_url(url)
              else
-               case url.downcase
-               when "openai"
-                 "https://api.openai.com/v1/chat/completions"
-               when "ollama"
-                 "http://localhost:11434/v1/chat/completions"
-               when "lmstudio"
-                 "http://localhost:1234/v1/chat/completions"
-               when "xai"
-                 "https://api.x.ai/v1/chat/completions"
-               when "vllm"
-                 "http://localhost:8000/v1/chat/completions"
-               when "azure"
-                 "https://models.inference.ai.azure.com/chat/completions"
-               when "github"
-                 "https://models.github.ai/inference/chat/completions"
-               when "openrouter"
-                 "https://openrouter.ai/api/v1/chat/completions"
-               else
-                 url
-               end
+               PRESETS[url.downcase]? || url
              end
 
       @model = model

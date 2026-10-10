@@ -1,8 +1,10 @@
 require "colorize"
+require "levenshtein"
 require "yaml"
 require "./tagger/tagger"
 require "./techs/techs"
 require "./llm/acp/targets"
+require "./llm/general/client"
 require "./llm/native_tool_calling"
 require "./output_builder/formats"
 require "./passive_scan/severity"
@@ -90,9 +92,23 @@ module Noir::CliValidation
       validate_acp_target!(provider)
       return
     end
+    validate_ai_provider_name!(provider)
     return unless model.empty?
 
     raise Error.new("--ai-provider '#{provider}' needs a companion --ai-model. Pass it with --ai-model, e.g. `noir scan ./app --ai-provider #{provider} --ai-model gpt-4 --ai-key …`. (ACP providers like `acp:claude` or `acp:codex` are the exception and don't need --ai-model.)")
+  end
+
+  # A name that is neither a preset nor an absolute http(s) URL was used as
+  # the request URL verbatim, so every file failed with "Missing scheme"
+  # while the scan itself reported success.
+  def self.validate_ai_provider_name!(provider : String)
+    return if LLM::General::PRESETS.has_key?(provider.downcase)
+    uri = URI.parse(provider) rescue nil
+    return if uri && uri.scheme.try(&.downcase).in?("http", "https") && uri.host.presence
+
+    names = LLM::General::PRESETS.keys
+    hint = Levenshtein.find(provider.downcase, names).try { |name| " Did you mean '#{name}'?" }
+    raise Error.new("--ai-provider '#{provider}' is not a known provider.#{hint} Use a preset (#{names.join(", ")}), an acp:<agent> target, or the http(s) URL of an OpenAI-compatible API, e.g. https://api.example.com/v1.")
   end
 
   # Pre-flight rejection of an ACP target Noir will not exec, so an untrusted

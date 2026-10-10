@@ -206,6 +206,35 @@ describe Noir::CliValidation do
         Noir::CliValidation.validate_ai_provider_pair!(options)
       end
     end
+
+    it "accepts presets in any case and absolute http(s) URLs" do
+      ["OpenAI", "openrouter", "http://localhost:8000/v1", "HTTPS://gw.example/openai/v1"].each do |provider|
+        options = create_test_options
+        options["ai_provider"] = YAML::Any.new(provider)
+        options["ai_model"] = YAML::Any.new("m")
+        Noir::CliValidation.validate_ai_provider_pair!(options)
+      end
+    end
+
+    it "rejects a provider that is neither a preset nor an http(s) URL" do
+      ["anthropic", "gemini", "openai.com", "ftp://host/v1", "localhost:8000"].each do |provider|
+        options = create_test_options
+        options["ai_provider"] = YAML::Any.new(provider)
+        options["ai_model"] = YAML::Any.new("m")
+        expect_raises(Noir::CliValidation::Error, /is not a known provider/) do
+          Noir::CliValidation.validate_ai_provider_pair!(options)
+        end
+      end
+    end
+
+    it "suggests the nearest preset for a typo" do
+      options = create_test_options
+      options["ai_provider"] = YAML::Any.new("opneai")
+      options["ai_model"] = YAML::Any.new("m")
+      expect_raises(Noir::CliValidation::Error, /Did you mean 'openai'/) do
+        Noir::CliValidation.validate_ai_provider_pair!(options)
+      end
+    end
   end
 
   describe "validate_passive_scan_paths!" do
