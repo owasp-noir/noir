@@ -47,9 +47,42 @@ class NestjsAuthTagger < FrameworkTagger
     /\@SetMetadata\s*\(\s*['"]isPublic['"]/,
   ]
 
+  # A guard registered for every route: `{ provide: APP_GUARD, useClass:
+  # JwtAuthGuard }` in a module, or `app.useGlobalGuards(new JwtAuthGuard())`.
+  # The Nest docs' authentication recipe does exactly this and opts routes
+  # out with `@Public()`.
+  GLOBAL_GUARD_PATTERNS = [
+    /provide:\s*APP_GUARD\s*,\s*use(?:Class|Existing):\s*(\w+)/,
+    /use(?:Class|Existing):\s*(\w+)\s*,\s*provide:\s*APP_GUARD/,
+    /useGlobalGuards\s*\(\s*new\s+(\w+)/,
+  ]
+  # Global guards are as often throttling or role checks; only a guard
+  # named for authentication counts.
+  AUTH_GUARD_NAME = /Auth|Jwt|JWT|Session|AccessToken/
+
   def initialize(options : Hash(String, YAML::Any))
     super
-    @class_guards = Hash(String, String).new
+    @global_guard = nil.as(String?)
+  end
+
+  def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
+    @global_guard = find_global_auth_guard
+    super
+  end
+
+  private def find_global_auth_guard : String?
+    {".ts", ".js"}.each do |ext|
+      collect_files_by_extension(ext).each do |path|
+        content = read_file(path)
+        next unless content && (content.includes?("APP_GUARD") || content.includes?("useGlobalGuards"))
+        GLOBAL_GUARD_PATTERNS.each do |pattern|
+          content.scan(pattern) do |m|
+            return m[1] if m[1].matches?(AUTH_GUARD_NAME)
+          end
+        end
+      end
+    end
+    nil
   end
 
   def self.target_techs : Array(String)
@@ -67,8 +100,9 @@ class NestjsAuthTagger < FrameworkTagger
       next if line_num < 1 || line_num > lines.size
       line_idx = line_num - 1
 
-      # Check if endpoint is explicitly public
-      if public?(lines, line_idx)
+      # Check if endpoint (or its whole controller) is explicitly public
+      class_decorators = class_decorator_lines(lines, line_idx)
+      if public?(lines, line_idx) || class_decorators.any? { |line| PUBLIC_PATTERNS.any? { |pattern| line.matches?(pattern) } }
         return
       end
 
@@ -78,7 +112,10 @@ class NestjsAuthTagger < FrameworkTagger
       authn_descs = [] of String
       authz_descs = [] of String
       collect_method_decorators(lines, line_idx, authn_descs, authz_descs)
-      collect_class_decorators(lines, line_idx, authn_descs, authz_descs)
+      collect_class_decorators(class_decorators, authn_descs, authz_descs)
+      if authn_descs.empty? && (guard = @global_guard)
+        authn_descs << "NestJS global APP_GUARD (#{guard})"
+      end
 
       # add_tag dedupes by (name, tagger), so authn and authz need distinct
       # names to stack on the same endpoint.
@@ -148,29 +185,32 @@ class NestjsAuthTagger < FrameworkTagger
     end
   end
 
-  private def collect_class_decorators(lines : Array(String), method_line : Int32,
-                                       authn_descs : Array(String), authz_descs : Array(String))
-    # Walk backwards to find the class definition, checking for class-level guards
+  private def collect_class_decorators(decorators : Array(String), authn_descs : Array(String), authz_descs : Array(String))
+    decorators.each do |decorator|
+      ROLE_PATTERNS.each do |pattern, desc|
+        labeled = "#{desc} (class-level)"
+        authz_descs << labeled if decorator.matches?(pattern) && !authz_descs.includes?(labeled) && !authz_descs.includes?(desc)
+      end
+      GUARD_PATTERNS.each do |pattern, desc|
+        labeled = "#{desc} (class-level)"
+        authn_descs << labeled if decorator.matches?(pattern) && !authn_descs.includes?(labeled) && !authn_descs.includes?(desc)
+      end
+    end
+  end
+
+  # The decorator lines above the class enclosing `method_line`.
+  private def class_decorator_lines(lines : Array(String), method_line : Int32) : Array(String)
+    decorators = [] of String
     idx = method_line
     while idx >= 0
       current = lines[idx].strip
 
       if current.includes?("class ") && current.includes?("{")
-        # Found class — now check decorators above it
         class_idx = idx - 1
         while class_idx >= 0 && class_idx >= idx - 10
           decorator = lines[class_idx].strip
           break if decorator.empty? && class_idx < idx - 1
-
-          ROLE_PATTERNS.each do |pattern, desc|
-            labeled = "#{desc} (class-level)"
-            authz_descs << labeled if decorator.matches?(pattern) && !authz_descs.includes?(labeled) && !authz_descs.includes?(desc)
-          end
-          GUARD_PATTERNS.each do |pattern, desc|
-            labeled = "#{desc} (class-level)"
-            authn_descs << labeled if decorator.matches?(pattern) && !authn_descs.includes?(labeled) && !authn_descs.includes?(desc)
-          end
-
+          decorators << decorator
           class_idx -= 1
         end
         break
@@ -178,5 +218,6 @@ class NestjsAuthTagger < FrameworkTagger
 
       idx -= 1
     end
+    decorators
   end
 end

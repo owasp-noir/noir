@@ -154,4 +154,58 @@ describe "NestjsAuthTagger" do
 
     FileUtils.rm_rf(tmpdir)
   end
+
+  it "applies a global APP_GUARD auth guard unless the handler or controller is @Public()" do
+    tmpdir = File.tempname("nest_global_guard")
+    Dir.mkdir_p(tmpdir)
+    mod = File.join(tmpdir, "app.module.ts")
+    cats = File.join(tmpdir, "cats.controller.ts")
+    health = File.join(tmpdir, "health.controller.ts")
+    File.write(mod, <<-TS)
+      @Module({
+        providers: [
+          { provide: APP_GUARD, useClass: ThrottlerGuard },
+          {
+            provide: APP_GUARD,
+            useClass: JwtAuthGuard,
+          },
+        ],
+      })
+      export class AppModule {}
+      TS
+    File.write(cats, <<-TS)
+      @Controller('cats')
+      export class CatsController {
+        @Public()
+        @Get()
+        findAll() {}
+
+        @Post()
+        create() {}
+      }
+      TS
+    File.write(health, <<-TS)
+      @Public()
+      @Controller('health')
+      export class HealthController {
+        @Get()
+        check() {}
+      }
+      TS
+    [mod, cats, health].each { |path| CodeLocator.instance.register_path(path) }
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    find_all = Endpoint.new("/cats", "GET", [] of Param, Details.new(PathInfo.new(cats, 5)))
+    create = Endpoint.new("/cats", "POST", [] of Param, Details.new(PathInfo.new(cats, 8)))
+    check = Endpoint.new("/health", "GET", [] of Param, Details.new(PathInfo.new(health, 5)))
+
+    NestjsAuthTagger.new(noir_options).perform([find_all, create, check])
+
+    find_all.tags.should be_empty
+    create.tags.map(&.description).should eq(["Protected by NestJS global APP_GUARD (JwtAuthGuard)"])
+    check.tags.should be_empty
+
+    FileUtils.rm_rf(tmpdir)
+  end
 end
