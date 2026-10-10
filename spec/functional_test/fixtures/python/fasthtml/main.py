@@ -28,6 +28,11 @@ def profile(req, session):
     return ""
 
 
+@rt
+def post():
+    return ""
+
+
 @rt("/search")
 @login_required
 def search(q: str, request: Request):

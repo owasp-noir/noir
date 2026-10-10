@@ -44,7 +44,7 @@ module Analyzer::Python
         route = deco.path.empty? ? (name == "index" ? "/" : "/#{name}") : deco.path
         methods = if deco.attribute_name != "route" || deco.keywords.has_key?("methods")
                     deco.methods
-                  elsif VERBS.includes?(name)
+                  elsif !deco.path.empty? && VERBS.includes?(name) # path-less `@rt def post()` is GET+POST /post
                     [name.upcase]
                   else
                     ["GET", "POST"]

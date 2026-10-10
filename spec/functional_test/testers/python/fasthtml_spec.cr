@@ -13,6 +13,9 @@ expected_endpoints = [
   ]),
   Endpoint.new("/profile", "GET"),
   Endpoint.new("/profile", "POST"),
+  # The verb-name rule needs a path: bare `@rt def post()` is GET+POST /post.
+  Endpoint.new("/post", "GET"),
+  Endpoint.new("/post", "POST"),
   Endpoint.new("/search", "GET", [Param.new("q", "", "query")]),
   Endpoint.new("/search", "POST", [Param.new("q", "", "form")]),
   Endpoint.new("/items/{item_id}", "PUT", [
