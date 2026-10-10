@@ -191,15 +191,17 @@ module Analyzer::Elixir
         end
 
         # Scope openers always contain the `scope` token.
-        if opener = scope_opener(line)
+        opener_line, opener_lines = scope_statement(lines, index)
+        if opener = scope_opener(opener_line)
           prefix = opener[:unquote] ? (string_bindings[opener[:value]]? || "") : opener[:value]
           scope_stack << {prefix: prefix, module_prefix: opener[:module_prefix], indent: opener[:indent]}
           if body = opener[:inline_body]
             # Popped at the top of the next iteration (see `scope_opener`).
             inline_scope_open = true
             line = body
+            index += opener_lines - 1
           else
-            index += 1
+            index += opener_lines
             next
           end
         end
@@ -273,6 +275,16 @@ module Analyzer::Elixir
         break if consumed > 12 # safety bound: route options never wrap this far
       end
       {buffer, consumed}
+    end
+
+    # The `scope` opener starting at `start`, joined across lines when it
+    # wraps after a comma (`scope "/api", # v1` + newline + `AppWeb do`),
+    # so the module alias on a continuation line still scopes the routes.
+    # Returns the statement and how many physical lines it spans.
+    private def scope_statement(lines : Array(String), start : Int32) : Tuple(String, Int32)
+      line = lines[start]
+      return {line, 1} unless line.includes?("scope") && statement_open?(line)
+      assemble_statement(lines, start)
     end
 
     private def update_elixir_string_bindings(bindings : Hash(String, String), line : String) : Nil
@@ -712,18 +724,20 @@ module Analyzer::Elixir
           end
         end
 
-        if opener = scope_opener(line)
+        opener_line, opener_lines = scope_statement(route_macro.body_lines, index)
+        if opener = scope_opener(opener_line)
           prefix = opener[:unquote] ? bindings[opener[:value]]? : opener[:value]
           unless prefix
-            index += 1
+            index += opener_lines
             next
           end
           scope_stack << {prefix: prefix, module_prefix: opener[:module_prefix], indent: opener[:indent]}
           if body = opener[:inline_body]
             inline_scope_open = true
             line = body
+            index += opener_lines - 1
           else
-            index += 1
+            index += opener_lines
             next
           end
         end
