@@ -108,4 +108,20 @@ describe "non-ASCII route files" do
       "config/autoload/routes.global.php" => "<?php\nuse Mezzio\\Application;\n$title = 'COMMENT';\nreturn function (Application $app) {\n#{routes}};\n",
     }, "config/autoload/routes.global.php", "php_laminas")
   end
+
+  it "keeps a Bun routes map linear" do
+    routes = (1..1000).join { |i| "    '/items#{i}/:id': { GET: (req) => new Response('x'), POST: async (req) => Response.json(1) },\n" }
+    assert_linear_on_non_ascii({
+      "package.json" => %({"name":"x","devDependencies":{"@types/bun":"*"}}),
+      "server.ts"    => "const title = 'COMMENT';\nBun.serve({\n  routes: {\n#{routes}  },\n});\n",
+    }, "server.ts", "js_bun")
+  end
+
+  it "keeps node:http handler collection linear" do
+    helpers = (1..800).join { |i| "const helper#{i} = (req, res) => { res.end('#{i}'); };\nfunction fn#{i}(req, res) { return 1; }\n" }
+    assert_linear_on_non_ascii({
+      "package.json" => %({"name":"x"}),
+      "server.js"    => "const http = require('http');\nconst title = 'COMMENT';\n#{helpers}http.createServer((req, res) => {\n  if (req.method === 'POST' && req.url === '/users') { res.end('ok'); }\n}).listen(3000);\n",
+    }, "server.js", "js_http")
+  end
 end

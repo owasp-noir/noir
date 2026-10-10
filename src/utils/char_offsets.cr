@@ -31,6 +31,14 @@ module Noir
       end
     end
 
+    # True when every char is one byte, so char and byte offsets coincide.
+    def ascii? : Bool
+      @starts.nil?
+    end
+
+    # `content.chars`, built on first use, for char-array scanners.
+    getter chars : Array(Char) { @content.chars }
+
     # Byte offset of char index `char_pos`.
     def byte(char_pos : Int32) : Int32
       if starts = @starts
@@ -50,8 +58,24 @@ module Noir
     end
 
     # `content.match(regex, char_pos)`.
-    def match(regex : Regex, char_pos : Int32) : Regex::MatchData?
-      regex.match_at_byte_index(@content, byte(char_pos))
+    def match(regex : Regex, char_pos : Int32, options : Regex::MatchOptions = Regex::MatchOptions::None) : Regex::MatchData?
+      regex.match_at_byte_index(@content, byte(char_pos), options)
+    end
+
+    # `content.index(regex, char_pos)`.
+    def index(regex : Regex, char_pos : Int32, options : Regex::MatchOptions = Regex::MatchOptions::None) : Int32?
+      match(regex, char_pos, options).try { |m| self.begin(m) }
+    end
+
+    # `content.index(char, char_pos)` for an ASCII `char`.
+    def index(char : Char, char_pos : Int32) : Int32?
+      @content.byte_index(char.ord.to_u8, byte(char_pos)).try { |b| self.char(b) }
+    end
+
+    # `content[char_pos]?`.
+    def char_at(char_pos : Int32) : Char?
+      return unless 0 <= char_pos < @content.size
+      Char::Reader.new(@content, byte(char_pos)).current_char
     end
 
     # `match.begin(n)` / `match.end(n)` as char indices.
