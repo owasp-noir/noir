@@ -222,19 +222,21 @@ describe LLM::ACPClient do
       SH
 
     it "opens a fresh session per request and reports a non-end_turn stop" do
+      {% if flag?(:windows) %}
+        pending! "fake agent is a POSIX shell script"
+      {% end %}
       script = File.tempname("fake_acp_agent", ".sh")
       File.write(script, fake_agent)
       ENV["NOIR_ACP_ALLOW_CUSTOM_COMMAND"] = "1"
+      events = [] of String
+      sink = ->(msg : String) { events << msg; nil }
+      client = LLM::ACPClient.new("acp:sh #{script}", "acp", sink)
       begin
-        events = [] of String
-        sink = ->(msg : String) { events << msg; nil }
-        client = LLM::ACPClient.new("acp:sh #{script}", "acp", sink)
-
         client.request("bundle one", "").should eq("s1")
         client.request("bundle two", "").should eq("s2")
         events.count(&.includes?("turn stopped with refusal")).should eq(2)
-        client.close
       ensure
+        client.close
         ENV.delete("NOIR_ACP_ALLOW_CUSTOM_COMMAND")
         File.delete?(script)
       end

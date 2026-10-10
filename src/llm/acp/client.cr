@@ -186,7 +186,7 @@ module LLM
     end
 
     def request(prompt : String, format : String = "json") : String
-      # One session, one response buffer. Two fibers prompting at once —
+      # One client, one response buffer. Two fibers prompting at once —
       # which is exactly what the bundle analyzer does when it fans out —
       # interleaved their streamed chunks into that single buffer, and each
       # read back a blend of both answers: unparsable at best, endpoints
