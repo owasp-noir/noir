@@ -78,6 +78,12 @@ describe NoirPassiveScan::FalsePositive do
       NoirPassiveScan::FalsePositive.suppress?(github_rule, "#   - GITHUB_TOKEN").should be_true
     end
 
+    it "keeps a commented-out credentialed URL" do
+      NoirPassiveScan::FalsePositive.suppress?(database_rule, "# DATABASE_URL=postgres://admin:S3cretPassw0rd@prod-db:5432/app").should be_false
+      NoirPassiveScan::FalsePositive.suppress?(database_rule, %(// "DATABASE_URL": "redis://:Sup3rS3cret@cache:6379")).should be_false
+      NoirPassiveScan::FalsePositive.suppress?(database_rule, "# DATABASE_URL=postgres://user:${DB_PASSWORD}@db/app").should be_true
+    end
+
     it "suppresses a variable name used as a bare string literal / reference" do
       NoirPassiveScan::FalsePositive.suppress?(database_rule, %(    name: 'DATABASE_URL',)).should be_true
       NoirPassiveScan::FalsePositive.suppress?(database_rule, %(dependencies: ['DATABASE_URL'],)).should be_true
