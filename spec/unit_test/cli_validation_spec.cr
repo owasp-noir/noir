@@ -252,6 +252,11 @@ describe Noir::CliValidation do
       expect_raises(Noir::CliValidation::Error, /--ai-temperature/) { Noir::CliValidation.validate_ai_sampling!(options) }
       options["ai_temperature"] = YAML::Any.new("2.5")
       expect_raises(Noir::CliValidation::Error, /--ai-temperature/) { Noir::CliValidation.validate_ai_sampling!(options) }
+      # The Anthropic Messages API stops at 1.
+      options["ai_temperature"] = YAML::Any.new("1.5")
+      Noir::CliValidation.validate_ai_sampling!(options)
+      options["ai_provider"] = YAML::Any.new("anthropic")
+      expect_raises(Noir::CliValidation::Error, /from 0 to 1\./) { Noir::CliValidation.validate_ai_sampling!(options) }
       options["ai_temperature"] = YAML::Any.new("")
       options["ai_seed"] = YAML::Any.new("1.5")
       expect_raises(Noir::CliValidation::Error, /--ai-seed/) { Noir::CliValidation.validate_ai_sampling!(options) }
@@ -442,6 +447,15 @@ describe Noir::CliValidation do
   # `positive_int_or_die!` on the CLI side; their config twins had no bound at
   # all. ConfigInitializer coerces the value to an Int, this checks the range.
   describe "ai integer options" do
+    it "rejects a negative request budget" do
+      options = create_test_options
+      options["ai_max_requests"] = YAML::Any.new(-1)
+
+      expect_raises(Noir::CliValidation::Error, /Invalid --ai-max-requests '-1'/) do
+        Noir::CliValidation.validate_ai_integer_options!(options)
+      end
+    end
+
     it "rejects a zero agent step budget" do
       options = create_test_options
       options["ai_agent_max_steps"] = YAML::Any.new(0)
