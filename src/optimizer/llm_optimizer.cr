@@ -209,7 +209,6 @@ class LLMEndpointOptimizer < EndpointOptimizer
       - URL: #{endpoint.url}
       - Parameters:
       #{params_info}
-
       PROMPT
   end
 
@@ -361,8 +360,9 @@ class LLMEndpointOptimizer < EndpointOptimizer
 
   # One path-param token in any spelling the analyzers emit: `{name}`,
   # `{name:regex}`, `{...rest}`, `:name`, `<name>`, `<conv:name>`, or an
-  # unnamed `*` wildcard.
-  ROUTE_PARAM_RE = /\{(?:\.\.\.)?([^{}:]+)(?::[^{}]*)?\}|<(?:[^<>:]+:)?([^<>]+)>|:([A-Za-z_]\w*)|\*+/
+  # unnamed `*` wildcard. A `:` right after a word char is literal text
+  # (`/v1/items:batchGet`), not a param.
+  ROUTE_PARAM_RE = /\{(?:\.\.\.)?([^{}:]+)(?::[^{}]*)?\}|<(?:[^<>:]+:)?([^<>]+)>|(?<!\w):([A-Za-z_]\w*)|\*+/
 
   # A route's literal text with each param replaced by a marker, and the
   # param names in order (nil for a wildcard).

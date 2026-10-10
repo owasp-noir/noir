@@ -303,6 +303,7 @@ describe "LLMEndpointOptimizer" do
       apply.call("/api/getUserByID/:userID", "/api/getUserByID/{user_id}").should eq("/api/getUserByID/:userID")
       apply.call("/users/USR123", "/users/{id}").should eq("/users/USR123")
       apply.call("/files/{path}", "/files/*").should eq("/files/{path}")
+      apply.call("/v1/items:batchGet", "/v1/items{batchGet}").should eq("/v1/items:batchGet")
     end
 
     it "keeps params in sync with the URL" do
