@@ -8,7 +8,7 @@ class UserController @Inject()(
   service: UserService
 ) extends Controller {
   get("/users/:id") { request: Request =>
-    service.find(request.params("id"), request.params("fields"))
+    service.find(request.params("id"), request.params(/* projection */ "fields"))
   }
 
   post("/users") { request: Request => "ok" }

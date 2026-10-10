@@ -19,7 +19,7 @@ object UserApp {
     },
     Method.GET / "api" / "v1" / "status" -> handler(Response.text("ok")),
     Method.GET / "api" / "v1" / "items" -> handler { (req: Request) =>
-      val category = req.url.queryParam("category")
+      val category = req.url.queryParam(/* filter */ "category")
       val sort = req.url.queryParam("sort")
       Response.text(s"Items in $category sorted $sort")
     },

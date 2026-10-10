@@ -21,8 +21,9 @@ module Analyzer::Scala
       return [] of Endpoint unless content.includes?("com.twitter.finatra.http")
 
       endpoints = [] of Endpoint
-      lines = content.split('\n')
-      code = scala_code_lines(content)
+      lexer = scala_lexer(content)
+      lines = scala_code_text(lexer).split('\n')
+      code = lexer.code_lines
       # Open `prefix` blocks as {segment, last line}; routes only count inside
       # a controller class body.
       prefixes = [] of Tuple(String, Int32)

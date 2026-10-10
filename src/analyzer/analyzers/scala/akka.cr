@@ -33,8 +33,8 @@ module Analyzer::Scala
     # Extract routes from Akka HTTP DSL
     private def extract_routes_from_content(path : String, content : String, include_callee : Bool) : Array(Endpoint)
       endpoints = [] of Endpoint
-      lines = content.split('\n')
       lexer = scala_lexer(content)
+      lines = scala_code_text(lexer).split('\n')
       code_lines = lexer.code_lines
       structural_lines = lexer.masked_lines
       prefix_stack = [] of String

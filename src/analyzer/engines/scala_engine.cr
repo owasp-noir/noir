@@ -73,6 +73,14 @@ module Analyzer::Scala
       Noir::ScalaLexer.new(content)
     end
 
+    # The source with comments, triple-quote bodies and char literals blanked
+    # and `"…"` strings kept (the lexer's code view), as one string with every
+    # line in place. Read handler bodies from this, not the raw text, so a
+    # comment inside `parameter(/* x */ "q")` cannot hide the literal.
+    protected def scala_code_text(lexer : Noir::ScalaLexer) : String
+      lexer.code.join
+    end
+
     private def scala_structural_opening_brace(line : String) : Int32?
       scala_structural_line(line).index('{')
     end
