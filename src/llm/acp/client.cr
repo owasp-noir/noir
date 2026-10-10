@@ -111,6 +111,15 @@ module LLM
       HttpTransport.timeout
     end
 
+    # Anything but `end_turn` means the answer is cut short or absent
+    # (refusal, max_tokens, max_turn_requests, cancelled). Say so, or the
+    # caller reads it as "this code defines no endpoints".
+    def report_stop_reason(stop_reason : String) : Nil
+      return if stop_reason == "end_turn"
+      STDERR.puts "WARNING: ACP agent stopped with #{stop_reason}; its answer may be empty or truncated"
+      @event_sink.try(&.call("ACP: turn stopped with #{stop_reason}"))
+    end
+
     def initialize(@provider : String, @model : String, @event_sink : Proc(String, Nil)? = nil)
       @command, @args = self.class.resolve_command(provider)
       @session_lock = Mutex.new
@@ -190,7 +199,7 @@ module LLM
         session = ensure_session
         clear_response_buffer
         final_prompt = append_format_instruction(prompt, format)
-        session.prompt(final_prompt)
+        report_stop_reason(session.prompt(final_prompt).stop_reason)
         LLM.strip_json_fences(read_response_buffer)
       end
     rescue e : Exception

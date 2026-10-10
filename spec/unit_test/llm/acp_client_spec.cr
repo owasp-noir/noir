@@ -186,6 +186,20 @@ describe LLM::ACPClient do
       (LLM::ACPClient.request_timeout > 30.seconds).should be_true
     end
   end
+
+  describe "#report_stop_reason" do
+    it "stays quiet on end_turn and reports anything else" do
+      events = [] of String
+      sink = ->(msg : String) { events << msg; nil }
+      client = LLM::ACPClient.new("acp:gemini", "gemini", sink)
+
+      client.report_stop_reason("end_turn")
+      events.should be_empty
+
+      client.report_stop_reason("refusal")
+      events.should eq(["ACP: turn stopped with refusal"])
+    end
+  end
 end
 
 describe LLM::AdapterFactory do
