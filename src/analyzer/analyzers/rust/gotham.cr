@@ -132,7 +132,7 @@ module Analyzer::Rust
 
     # Body block of the first closure argument in an `arguments` node.
     private def closure_body(args : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
-      Noir::TreeSitter.each_named_child(args) do |arg|
+      Noir::TreeSitter.each_named_arg(args) do |arg|
         next unless Noir::TreeSitter.node_type(arg) == "closure_expression"
         body = Noir::TreeSitter.field(arg, "body")
         return body if body && Noir::TreeSitter.node_type(body) == "block"
@@ -235,7 +235,7 @@ module Analyzer::Rust
         args = Noir::TreeSitter.field(call, "arguments")
         return unless args
         named = [] of LibTreeSitter::TSNode
-        Noir::TreeSitter.each_named_child(args) { |c| named << c }
+        Noir::TreeSitter.each_named_arg(args) { |c| named << c }
         return if named.size < 2
         methods = parse_method_vec(named[0], source)
         return if methods.empty?
@@ -373,7 +373,7 @@ module Analyzer::Rust
     private def first_identifier_argument(call : LibTreeSitter::TSNode, source : String) : String?
       args = Noir::TreeSitter.field(call, "arguments")
       return unless args
-      Noir::TreeSitter.each_named_child(args) do |child|
+      Noir::TreeSitter.each_named_arg(args) do |child|
         case Noir::TreeSitter.node_type(child)
         when "identifier"
           return Noir::TreeSitter.node_text(child, source)

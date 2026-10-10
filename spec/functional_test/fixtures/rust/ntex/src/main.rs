@@ -75,7 +75,7 @@ async fn main() -> std::io::Result<()> {
             .service(echo)
             .route("/hey", web::get().to(|| async { "hey" }))
             .service((search, files))
-            .service(
+            .service( // versioned API
                 web::scope("/api/v1").service((
                     update_item,
                     login,

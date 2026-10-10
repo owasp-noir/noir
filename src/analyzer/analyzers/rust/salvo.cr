@@ -316,7 +316,7 @@ module Analyzer::Rust
             own_seg = chain_path_arg(Noir::TreeSitter.field(cursor, "arguments"), source, base)
           elsif name == "push" || name == "unshift"
             if pargs = Noir::TreeSitter.field(cursor, "arguments")
-              Noir::TreeSitter.each_named_child(pargs) do |arg|
+              Noir::TreeSitter.each_named_arg(pargs) do |arg|
                 push_args << arg if Noir::TreeSitter.node_type(arg) == "call_expression"
               end
             end
@@ -568,7 +568,7 @@ module Analyzer::Rust
     private def first_handler_argument(call : LibTreeSitter::TSNode, source : String) : String?
       args = Noir::TreeSitter.field(call, "arguments")
       return unless args
-      Noir::TreeSitter.each_named_child(args) do |child|
+      Noir::TreeSitter.each_named_arg(args) do |child|
         case Noir::TreeSitter.node_type(child)
         when "identifier", "scoped_identifier"
           return Noir::TreeSitter.node_text(child, source)
@@ -698,7 +698,7 @@ module Analyzer::Rust
             own_seg = chain_path_arg(Noir::TreeSitter.field(cursor, "arguments"), source, fn_key[0])
           elsif name == "push" || name == "unshift"
             if pargs = Noir::TreeSitter.field(cursor, "arguments")
-              Noir::TreeSitter.each_named_child(pargs) do |arg|
+              Noir::TreeSitter.each_named_arg(pargs) do |arg|
                 push_args << arg if Noir::TreeSitter.node_type(arg) == "call_expression"
               end
             end
@@ -799,7 +799,7 @@ module Analyzer::Rust
     private def chain_path_arg(args : LibTreeSitter::TSNode?, source : String, base : String) : String?
       return unless args
       first = nil.as(LibTreeSitter::TSNode?)
-      Noir::TreeSitter.each_named_child(args) { |c| first ||= c }
+      Noir::TreeSitter.each_named_arg(args) { |c| first ||= c }
       (first ? eval_str_expr(first, source, base) : nil) || first_string_literal_text(args, source)
     end
 

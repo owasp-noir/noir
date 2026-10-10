@@ -426,6 +426,13 @@ module Noir::TreeSitter
     end
   end
 
+  # `each_named_child` minus comments. Grammars attach comments as named
+  # extra nodes anywhere, so `f("/a", // note` + newline + `g)` has three
+  # named arguments; readers that index or count arguments must skip them.
+  def self.each_named_arg(node : LibTreeSitter::TSNode, &)
+    each_named_child(node) { |child| yield child unless node_type(child).ends_with?("comment") }
+  end
+
   # Runs the block one level deeper on the same budget as
   # `each_named_child`, or returns nil without running it once that budget
   # is spent. For recursion that descends through `field(...)` instead —

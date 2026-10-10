@@ -350,7 +350,7 @@ module Analyzer::Rust
       args = Noir::TreeSitter.field(call, "arguments")
       return unless args
       result : String? = nil
-      Noir::TreeSitter.each_named_child(args) do |arg|
+      Noir::TreeSitter.each_named_arg(args) do |arg|
         next if result
         next unless Noir::TreeSitter.node_type(arg) == "call_expression"
         f = Noir::TreeSitter.field(arg, "function")
@@ -612,7 +612,7 @@ module Analyzer::Rust
       args = Noir::TreeSitter.field(node, "arguments")
       return unless args
       found : String? = nil
-      Noir::TreeSitter.each_named_child(args) do |arg|
+      Noir::TreeSitter.each_named_arg(args) do |arg|
         case Noir::TreeSitter.node_type(arg)
         when "identifier", "scoped_identifier"
           found = Noir::TreeSitter.node_text(arg, source)

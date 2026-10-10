@@ -37,7 +37,7 @@ async fn main() {
         // index.html for unknown paths.
         .fallback(handler)
         .nest(
-            "/api",
+            "/api", // public API
             Router::new()
                 .route("/users", get(handler))
                 .route("/admin", post(handler))

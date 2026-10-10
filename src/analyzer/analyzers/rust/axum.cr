@@ -794,7 +794,7 @@ module Analyzer::Rust
     private def first_callable_argument(call : LibTreeSitter::TSNode, source : String) : String?
       args = Noir::TreeSitter.field(call, "arguments")
       return unless args
-      Noir::TreeSitter.each_named_child(args) do |child|
+      Noir::TreeSitter.each_named_arg(args) do |child|
         if text = callable_text(child, source)
           return text
         end
@@ -820,7 +820,7 @@ module Analyzer::Rust
 
     private def named_children(node : LibTreeSitter::TSNode) : Array(LibTreeSitter::TSNode)
       named = [] of LibTreeSitter::TSNode
-      Noir::TreeSitter.each_named_child(node) { |c| named << c }
+      Noir::TreeSitter.each_named_arg(node) { |c| named << c }
       named
     end
 
@@ -1558,7 +1558,7 @@ module Analyzer::Rust
             args = Noir::TreeSitter.field(c, "arguments")
             next unless args
             named = [] of LibTreeSitter::TSNode
-            Noir::TreeSitter.each_named_child(args) { |a| named << a }
+            Noir::TreeSitter.each_named_arg(args) { |a| named << a }
             next if named.size < 2
             prefix = string_literal_content(named[0], source)
             next unless prefix

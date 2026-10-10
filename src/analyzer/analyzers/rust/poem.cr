@@ -121,7 +121,7 @@ module Analyzer::Rust
       args = Noir::TreeSitter.field(call, "arguments")
       return unless args
       named = [] of LibTreeSitter::TSNode
-      Noir::TreeSitter.each_named_child(args) { |c| named << c }
+      Noir::TreeSitter.each_named_arg(args) { |c| named << c }
       return if named.size < 2
 
       route_path = string_content_from_string_literal(named[0], source)
@@ -298,7 +298,7 @@ module Analyzer::Rust
     private def first_identifier_argument(call : LibTreeSitter::TSNode, source : String) : String?
       args = Noir::TreeSitter.field(call, "arguments")
       return unless args
-      Noir::TreeSitter.each_named_child(args) do |child|
+      Noir::TreeSitter.each_named_arg(args) do |child|
         case Noir::TreeSitter.node_type(child)
         when "identifier"
           return Noir::TreeSitter.node_text(child, source)
@@ -320,7 +320,7 @@ module Analyzer::Rust
     private def single_string_arg(args : LibTreeSitter::TSNode?, source : String) : String?
       return unless args
       named = [] of LibTreeSitter::TSNode
-      Noir::TreeSitter.each_named_child(args) { |c| named << c }
+      Noir::TreeSitter.each_named_arg(args) { |c| named << c }
       return unless named.size == 1
       return unless Noir::TreeSitter.node_type(named[0]) == "string_literal"
       string_content(named[0], source)
@@ -347,7 +347,7 @@ module Analyzer::Rust
         args = Noir::TreeSitter.field(n, "arguments")
         next unless args
         named = [] of LibTreeSitter::TSNode
-        Noir::TreeSitter.each_named_child(args) { |c| named << c }
+        Noir::TreeSitter.each_named_arg(args) { |c| named << c }
         next if named.size < 2
         prefix = string_content_from_string_literal(named[0], source)
         next unless prefix
@@ -415,7 +415,7 @@ module Analyzer::Rust
         args = Noir::TreeSitter.field(n, "arguments")
         next unless args
         named = [] of LibTreeSitter::TSNode
-        Noir::TreeSitter.each_named_child(args) { |c| named << c }
+        Noir::TreeSitter.each_named_arg(args) { |c| named << c }
         next if named.size < 2
         prefix = string_content_from_string_literal(named[0], source)
         next unless prefix
@@ -440,7 +440,7 @@ module Analyzer::Rust
         args = Noir::TreeSitter.field(c, "arguments")
         next unless args
         first = nil.as(LibTreeSitter::TSNode?)
-        Noir::TreeSitter.each_named_child(args) { |a| first ||= a }
+        Noir::TreeSitter.each_named_arg(args) { |a| first ||= a }
         found = first ? struct_type_of(first, source) : nil
       end
       found
