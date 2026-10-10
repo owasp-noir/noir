@@ -7,4 +7,5 @@ export class ItemsController {
   @Version('2') @Get('a') a() { return 1 }
   @Get('b') b(@Query('q') q: string) { return 2 }
   @Get('c') c() { return 3 } @Version('4') @Get('d') d() { return 4 }
+  @Get('e') @Get('f') e() { return 5 }
 }

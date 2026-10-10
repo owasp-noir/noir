@@ -722,6 +722,8 @@ module Analyzer::Javascript
       # on non-ASCII source.
       chars = class_content.chars
       previous_body_end = 0
+      previous_signature_start = -1
+      decorator_block_start = 0
       line_pos = 0
       line_count = 0
       class_content.scan(route_decorator_re) do |match|
@@ -742,8 +744,15 @@ module Analyzer::Javascript
         signature = method_signature_after_decorators(class_content, close_paren + 1)
         next unless signature
 
-        floor = previous_body_end < decorator_start ? previous_body_end : 0
-        decorator_block_start = method_decorator_block_start(chars, decorator_start, floor)
+        # Route decorators stacked on one method share its decorator block.
+        # Walking back again from a later one would start with no floor (the
+        # body end just recorded lies past it), leaking an earlier one-line
+        # member's `@Version`, and rescans the stack per decorator.
+        if signature[:start_pos] != previous_signature_start
+          floor = previous_body_end < decorator_start ? previous_body_end : 0
+          decorator_block_start = method_decorator_block_start(chars, decorator_start, floor)
+          previous_signature_start = signature[:start_pos]
+        end
         signature[:close_brace].try { |close_brace| previous_body_end = close_brace + 1 }
         decorator_block = class_content[decorator_block_start...signature[:start_pos]]
         method_versions = parse_method_versions(decorator_block)
