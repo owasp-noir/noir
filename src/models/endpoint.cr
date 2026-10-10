@@ -419,6 +419,15 @@ struct AIContext
   @[YAML::Field(ignore_serialize: signals.empty?)]
   property signals : Array(AIContextEntry) = [] of AIContextEntry
 
+  # Entry fields taken from the scanned repo as-is (snippets keep comments
+  # and string literals). A consumer that feeds this report to an LLM keys on
+  # this to fence them off as untrusted data.
+  UNTRUSTED_FIELDS = {"name", "path", "snippet"}
+
+  @[JSON::Field(ignore_serialize: empty?)]
+  @[YAML::Field(ignore_serialize: empty?)]
+  getter untrusted_fields : Tuple(String, String, String) = UNTRUSTED_FIELDS
+
   def initialize
   end
 

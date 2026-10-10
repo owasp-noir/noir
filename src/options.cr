@@ -594,6 +594,12 @@ def run_options_parser
     parser.on "--ai-agent", "Enable agentic AI workflow (iterative tool-calling loop)" do
       noir_options["ai_agent"] = YAML::Any.new(true)
     end
+    parser.on "--ai-dry-run", "List the files, request count and token estimate the AI analyzer would send, and send nothing" do
+      noir_options["ai_dry_run"] = YAML::Any.new(true)
+    end
+    parser.on "--ai-include-sensitive", "Also send credentials files (.env, *.pem, id_rsa, ...) to the AI provider" do
+      noir_options["ai_include_sensitive"] = YAML::Any.new(true)
+    end
     parser.on "--ai-agent-max-steps N", "Max steps for AI agent loop (default: 20)" do |v|
       validated = positive_int_or_die!("--ai-agent-max-steps", v)
       noir_options["ai_agent_max_steps"] = YAML::Any.new(validated)

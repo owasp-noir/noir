@@ -58,6 +58,8 @@ noir scan . --ai-provider acp:codex
 | `--ai-agent` | Enable agentic AI workflow (iterative tool-calling loop) |
 | `--ai-agent-max-steps` | Max steps for AI agent loop (default: `20`) |
 | `--ai-no-optimize` | Skip the LLM optimizer pass |
+| `--ai-dry-run` | List the files, request count and token estimate the AI analyzer would send, and send nothing (no LLM filter, no LLM optimizer) |
+| `--ai-include-sensitive` | Also send credentials files (`.env*`, `*.pem`, `*.key`, `id_rsa*`, `.npmrc`, `*.tfvars`, ...), which are withheld by default |
 | `--ai-native-tools-allowlist` | Provider allowlist for native tool-calling (comma-separated, default: `openai,xai,github`) |
 | `--ai-max-token` | Max tokens for AI requests (optional) |
 | `--ai-max-requests` | Max AI HTTP requests per run, retries included (default: unlimited). Files left over are listed as coverage gaps |

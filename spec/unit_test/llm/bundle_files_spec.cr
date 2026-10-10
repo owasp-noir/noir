@@ -11,12 +11,9 @@ require "../../../src/llm/prompt"
 # the 0.8 safety margin puts the per-bundle ceiling at 3200.
 private SAFE_LIMIT = 3200
 
-# The source text a bundle section wraps, without the header and fences.
+# The source text a bundle section wraps, without the header and tags.
 private def section_body(bundle : LLM::Bundle) : String
-  content = bundle.content
-  start = content.index!("```\n") + 4
-  finish = content.rindex!("\n```\n")
-  content[start...finish]
+  LLM.split_part(bundle).not_nil![1]
 end
 
 describe LLM do

@@ -58,6 +58,8 @@ noir scan . --ai-provider acp:codex
 | `--ai-agent` | 에이전트 기반 AI 워크플로우 활성화 (반복적 도구 호출 루프) |
 | `--ai-agent-max-steps` | AI 에이전트 루프 최대 단계 수 (기본값: `20`) |
 | `--ai-no-optimize` | LLM 옵티마이저 단계를 건너뜀 |
+| `--ai-dry-run` | AI 분석기가 보낼 파일, 요청 수, 토큰 추정치만 출력하고 아무것도 전송하지 않음 (LLM 필터와 LLM 최적화도 건너뜀) |
+| `--ai-include-sensitive` | 기본으로 보내지 않는 자격 증명 파일(`.env*`, `*.pem`, `*.key`, `id_rsa*`, `.npmrc`, `*.tfvars` 등)도 전송 |
 | `--ai-native-tools-allowlist` | 네이티브 도구 호출 허용 제공업체 목록 (쉼표 구분, 기본값: `openai,xai,github`) |
 | `--ai-max-token` | AI 요청 최대 토큰 수 (선택 사항) |
 | `--ai-max-requests` | 실행당 최대 AI HTTP 요청 수, 재시도 포함 (기본값: 무제한). 남은 파일은 커버리지 공백으로 보고됩니다 |

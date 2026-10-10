@@ -39,6 +39,8 @@ module Analyzer::AI
     # `--concurrency`: past a handful of in-flight calls a metered provider
     # answers with 429s rather than faster.
     MAX_BUNDLE_WORKERS = 4
+    # Provider aliases whose default URL is on this host (see LLM::General).
+    LOCAL_PROVIDERS = {"ollama", "lmstudio", "vllm"}
     # Bare URL tokens the LLM emits when it has nothing real to report
     # (schema echoes, "no endpoint" stand-ins). Compared case-folded
     # against the whole path with a single leading slash stripped, so a
@@ -61,6 +63,13 @@ module Analyzer::AI
                          ".eot", ".ttf", ".woff", ".woff2", ".otf", ".mp3", ".mp4", ".avi", ".mov", ".webm", ".zip", ".tar",
                          ".gz", ".7z", ".rar", ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv",
                          ".log", ".sql", ".bak", ".swp", ".jar"] of String
+
+    # Files that exist to hold credentials. Matched on the basename and
+    # withheld from every request — path listing, bundles, per-file prompts
+    # and agent tools — unless `--ai-include-sensitive` is given. Source-code
+    # extensions are deliberately absent from `secrets.*`: `secrets.go` is as
+    # likely a route file as a vault.
+    SENSITIVE_FILE = /\A(?:\.env(?:\..*)?|\.envrc|\.npmrc|\.pypirc|\.netrc|_netrc|\.pgpass|\.htpasswd|\.git-credentials|\.dockercfg|id_(?:rsa|dsa|ecdsa|ed25519)(?:\..*)?|credentials(?:\.(?:json|ya?ml|xml|ini|toml|csv|enc|yml\.enc))?|[\w.-]*[-_]credentials\.json|service[-_]?account[\w.-]*\.json|kubeconfig|secrets?\.(?:json|ya?ml|xml|ini|toml|env|enc|txt|properties)|.*\.(?:pem|key|p12|pfx|jks|keystore|kdbx|ppk|asc|gpg|tfvars|tfvars\.json|tfstate|tfstate\.backup))\z/i
 
     @provider : String
     @model : String
@@ -110,6 +119,8 @@ module Analyzer::AI
       @use_agentic = options["ai_agent"]?.try { |val| any_to_bool(val) } || false
       @agent_max_steps = options["ai_agent_max_steps"]?.try(&.as_i) || 20
       @native_tool_calling_allowlist = parse_native_tool_allowlist(options["ai_native_tools_allowlist"]?.try(&.as_s))
+      @include_sensitive = options["ai_include_sensitive"]?.try { |val| any_to_bool(val) } || false
+      @dry_run = options["ai_dry_run"]?.try { |val| any_to_bool(val) } || false
       @agent_tool_cache = {} of String => String
       @agent_tool_cache_order = [] of String
       options[COVERED_FILES_OPTION]?.try(&.as_a?).try &.each { |path| @covered_files << path.as_s }
@@ -130,8 +141,12 @@ module Analyzer::AI
       begin
         logger.info "AI Analysis using #{Noir::Redact.url(@provider)} with model #{@model} (max tokens: #{@max_tokens})"
 
-        if @use_agentic
+        logger.info "AI dry run previews the classic analysis; the agent loop is not run" if @use_agentic && @dry_run
+        if @use_agentic && !@dry_run
           logger.info "AI Agentic workflow is enabled"
+          if target = egress_target
+            logger.info "The AI agent will send the files it reads to #{target}"
+          end
           if analyze_with_agentic_workflow(adapter)
             logger.info "AI Agentic workflow completed (#{@result.size} endpoints)"
             Fiber.yield
@@ -147,15 +162,19 @@ module Analyzer::AI
         end
 
         if @max_tokens > 0 && target_paths.size > 5
-          analyze_with_bundling(target_paths, adapter)
+          bundled, single = target_paths, [] of String
         else
           # The per-file path sends each file whole, so a file over the
           # token budget goes through bundling, the only path that splits
           # one. The rest stay per-file under --override-analyze-prompt.
-          oversized, small = target_paths.partition { |path| @max_tokens > 0 && over_token_budget?(path) }
-          analyze_with_bundling(oversized, adapter) unless oversized.empty?
-          small.each { |path| analyze_file(path, adapter) }
+          bundled, single = target_paths.partition { |path| @max_tokens > 0 && over_token_budget?(path) }
         end
+        bundles = bundled.empty? ? [] of LLM::Bundle : LLM.bundle_files(prepare_files_for_bundling(bundled), @max_tokens)
+        announce_egress(bundles, single)
+        return @result if @dry_run
+
+        process_bundles_concurrently(bundles, adapter) unless bundles.empty?
+        single.each { |path| analyze_file(path, adapter) }
 
         Fiber.yield
         @result
@@ -172,17 +191,37 @@ module Analyzer::AI
       false
     end
 
-    private def analyze_with_bundling(paths : Array(String), adapter : LLM::Adapter)
-      files_to_bundle = prepare_files_for_bundling(paths)
-      bundles = LLM.bundle_files(files_to_bundle, @max_tokens)
+    # What is about to leave the machine: printed in full under --ai-dry-run,
+    # summarized for a provider that is not on this host. The per-file
+    # estimate is bytes/4, the same rule `LLM.estimate_tokens` uses.
+    private def announce_egress(bundles : Array(LLM::Bundle), single : Array(String))
+      files = (bundles.flat_map(&.paths) + single.map { |path| @base_paths.size > 1 ? path : get_relative_path(base_path, path) }).uniq!.sort!
+      tokens = bundles.sum(&.tokens) + single.sum { |path| (File.info?(path).try(&.size) || 0).to_i // 4 }
+      summary = "#{files.size} files (~#{tokens} tokens, ~#{bundles.size + single.size} requests)"
+      if @dry_run
+        logger.info "AI dry run: #{summary} would be sent to #{egress_target || Noir::Redact.url(@provider)}, plus the file-path list (filter) and endpoint URLs (optimizer); nothing was sent"
+        files.each { |file| logger.sub "➔ #{file}" }
+      elsif target = egress_target
+        logger.info "#{summary} will be sent to #{target}"
+      end
+    end
 
-      process_bundles_concurrently(bundles, adapter)
+    # The host source code is sent to, or nil when it stays on this machine.
+    # An ACP agent runs locally but forwards prompts to its vendor.
+    private def egress_target : String?
+      return @provider if LLM::ACPClient.acp_provider?(@provider)
+      return (LOCAL_PROVIDERS.includes?(@provider.downcase) ? nil : @provider) unless @provider.includes?("://")
+      host = URI.parse(@provider).hostname.to_s
+      return if host == "localhost" || (Socket::IPAddress.valid?(host) && Socket::IPAddress.new(host, 0).loopback?)
+      host
+    rescue URI::Error | Socket::Error
+      Noir::Redact.url(@provider)
     end
 
     private def prepare_files_for_bundling(paths : Array(String)) : Array(Tuple(String, String))
       files = [] of Tuple(String, String)
       paths.each do |path|
-        next if File.directory?(path) || File.symlink?(path) || ignore_extensions.includes?(File.extname(path))
+        next if File.directory?(path) || File.symlink?(path) || ignore_extensions.includes?(File.extname(path)) || sensitive?(path)
 
         # The label is what the model echoes back as `file`, so it has to name
         # one file unambiguously. Base-relative is fine for one base; with
@@ -320,10 +359,12 @@ module Analyzer::AI
 
     private def select_target_paths(adapter : LLM::Adapter) : Array(String)
       locator = CodeLocator.instance
-      all_paths = locator.all_files.reject { |path| covered?(path) }
+      all_paths = locator.all_files.reject { |path| covered?(path) || sensitive?(path) }
 
-      paths = if all_paths.size > 10
+      # A dry run sends nothing, so it previews the unfiltered superset.
+      paths = if all_paths.size > 10 && !@dry_run
                 logger.debug_sub "AI::Filtering files using LLM"
+                egress_target.try { |target| logger.info "Sending #{all_paths.size} file paths to #{target} to select files for analysis" }
                 filter_paths_with_llm(all_paths, adapter)
               else
                 logger.debug_sub "AI::Analyzing all files"
@@ -366,6 +407,7 @@ module Analyzer::AI
         selected = selected.select do |path|
           File.file?(path) &&
             !ignore_extensions.includes?(File.extname(path)) &&
+            !sensitive?(path) &&
             path_within_base?(path)
         end
 
@@ -394,14 +436,14 @@ module Analyzer::AI
       # relative base paths like `.` where the map stores unexpanded
       # paths.
       all_files.select do |path|
-        next false if ignore_extensions.includes?(File.extname(path))
+        next false if ignore_extensions.includes?(File.extname(path)) || sensitive?(path)
         path_within_base?(path)
       end
     end
 
     private def analyze_file(path : String, adapter : LLM::Adapter)
       return if File.directory?(path)
-      return if !File.exists?(path) || ignore_extensions.includes?(File.extname(path))
+      return if !File.exists?(path) || ignore_extensions.includes?(File.extname(path)) || sensitive?(path)
 
       relative_path = get_relative_path(base_path, path)
       File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
@@ -417,7 +459,7 @@ module Analyzer::AI
       endpoints = call_llm_with_cache(
         kind: "ANALYZE",
         system_prompt: LLM::SYSTEM_ANALYZE,
-        payload: compose_prompt_payload(LLM::PromptOverrides.analyze_prompt, content),
+        payload: compose_prompt_payload(LLM::PromptOverrides.analyze_prompt, LLM.untrusted(content)),
         format: LLM::ANALYZE_FORMAT,
         adapter: adapter,
         list_key: "endpoints",
@@ -575,7 +617,7 @@ module Analyzer::AI
 
         logger.verbose "AI agent tool call: #{action[:action]}(#{action[:args].to_json})"
         tool_result = run_agent_tool(action[:action], action[:args])
-        append_agent_message(messages, "user", "Tool result (#{action[:action]}):\n#{compact_tool_result(tool_result)}")
+        append_agent_message(messages, "user", "Tool result (#{action[:action]}):\n#{LLM.untrusted(compact_tool_result(tool_result))}")
       end
 
       false
@@ -778,7 +820,7 @@ module Analyzer::AI
             lines << "#{indent}[D] #{agent_relative_path(full_path)}/"
             walk_directory_tree(full_path, depth + 1, max_depth, lines) if depth < max_depth
           else
-            next if ignore_extensions.includes?(File.extname(full_path))
+            next if ignore_extensions.includes?(File.extname(full_path)) || sensitive?(full_path)
             lines << "#{indent}[F] #{agent_relative_path(full_path)}"
           end
         rescue ex : Exception
@@ -794,6 +836,10 @@ module Analyzer::AI
       resolved = resolve_agent_single_path(path)
       return "ERROR: file '#{path}' is outside base paths or does not exist." if resolved.nil?
       return "ERROR: file '#{path}' is excluded by --exclude-path." if excluded_path?(resolved)
+      # The real path too: an in-base `config.js -> .env` link is allowed through.
+      if sensitive?(resolved) || sensitive?(resolved_real_path(resolved) || resolved)
+        return "ERROR: file '#{path}' is withheld as a credentials file (--ai-include-sensitive to allow)."
+      end
       return "ERROR: '#{path}' is a directory. Use list_directory instead." if File.directory?(resolved)
 
       content = Noir::TextFile.read(resolved)
@@ -858,7 +904,7 @@ module Analyzer::AI
         Dir.glob(glob).each do |file_path|
           break if matches.size >= AGENT_TOOL_MAX_MATCHES
           next if File.directory?(file_path) || File.symlink?(file_path)
-          next if ignore_extensions.includes?(File.extname(file_path))
+          next if ignore_extensions.includes?(File.extname(file_path)) || sensitive?(file_path)
           next unless path_within_base?(file_path)
           next if excluded_path?(file_path)
 
@@ -1176,6 +1222,11 @@ module Analyzer::AI
 
     def ignore_extensions
       IGNORE_EXTENSIONS
+    end
+
+    # The one gate on credentials files leaving the machine; see SENSITIVE_FILE.
+    def sensitive?(path : String) : Bool
+      !@include_sensitive && File.basename(path).matches?(SENSITIVE_FILE)
     end
 
     def max_tokens

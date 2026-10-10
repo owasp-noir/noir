@@ -344,6 +344,8 @@ class ConfigInitializer
       "ai_agent"                     => YAML::Any.new(false),
       "ai_agent_max_steps"           => YAML::Any.new(20),
       "ai_no_optimize"               => YAML::Any.new(false),
+      "ai_include_sensitive"         => YAML::Any.new(false),
+      "ai_dry_run"                   => YAML::Any.new(false),
       "ai_native_tools_allowlist"    => YAML::Any.new(LLM::NativeToolCalling.default_allowlist_csv),
       "ai_scope"                     => YAML::Any.new("all"),
       "ai_max_token"                 => YAML::Any.new(0),
@@ -529,6 +531,12 @@ class ConfigInitializer
 
       # Skip the LLM optimizer pass over AI-found endpoints
       ai_no_optimize: #{options["ai_no_optimize"]}
+
+      # Also send credentials files (.env, *.pem, id_rsa, ...) to the AI provider
+      ai_include_sensitive: #{options["ai_include_sensitive"]}
+
+      # List what the AI analyzer would send to the provider, and send nothing
+      ai_dry_run: #{options["ai_dry_run"]}
 
       # Provider allowlist for native tool-calling (comma-separated)
       # Commented so the built-in list keeps tracking new releases. Uncomment to pin.
