@@ -18,7 +18,7 @@ func main() {
 }
 
 func listA(ctx *fasthttp.RequestCtx) {
-	_ = ctx.QueryArgs().Peek("qa")
+	_ = ctx.QueryArgs().Peek(/* page */ "qa")
 }
 
 func listB(ctx *fasthttp.RequestCtx) {
