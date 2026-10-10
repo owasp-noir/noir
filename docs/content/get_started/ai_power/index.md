@@ -125,9 +125,10 @@ five minutes to generate. The scan ends with an `AI usage:` line giving the
 request count, cache hits and, when the provider reports them, approximate
 input and output tokens.
 
-A 401, 403 or 404 is not retried: it means a bad key, an unknown model or a
-wrong URL. With an OpenAI-compatible provider (all of them except `ollama` and
-`acp:*`), if the first three requests of a run fail that way or cannot connect,
+A 401, 403, 404 or redirect is not retried: it means a bad key, an unknown
+model or a wrong URL. With an OpenAI-compatible provider (all of them except
+`ollama` and `acp:*`), if the first three requests of a run fail that way or
+cannot connect,
 Noir skips the remaining AI requests instead of repeating the same error for
 every file. Files that were not analyzed, for this or any other
 reason, are reported as skipped (the `errors` field in JSON output), and
@@ -291,4 +292,4 @@ Groups files into token-limited bundles and processes them concurrently to maxim
 LLM responses are cached on disk (SHA256-keyed) at `~/.config/noir/cache/ai/` (or `$NOIR_HOME/cache/ai/`; `%APPDATA%\noir\cache\ai\` on Windows). `noir cache info` prints the resolved path. Use `--cache-disable` or `--cache-clear` to control caching.
 
 #### LLM Optimizer
-Post-processing for endpoints the AI analyzer found on its own. It runs automatically whenever a provider and model are set. It normalizes path-parameter syntax (`:id` becomes `{id}`) and fixes parameter types; a rewrite that changes literal path text or a parameter name is discarded. Routes a static analyzer found are never sent. It runs up to 4 requests at a time, at most 100 per scan. Turn it off with `--ai-no-optimize`.
+Post-processing for endpoints the AI analyzer found on its own. It runs automatically with any AI provider, except under `--ai-dry-run`. It normalizes path-parameter syntax (`:id` becomes `{id}`) and fixes parameter types; a rewrite that changes literal path text or a parameter name is discarded. Routes a static analyzer found are never sent. It runs up to 4 requests at a time, at most 100 per scan. Turn it off with `--ai-no-optimize`.
