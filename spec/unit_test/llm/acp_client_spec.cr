@@ -167,6 +167,27 @@ describe LLM::ACPClient do
   end
 end
 
+describe LLM::ACPClient do
+  describe "timeouts" do
+    it "follows NOIR_AI_TIMEOUT for prompts and NOIR_AI_CONNECT_TIMEOUT for other requests" do
+      ENV["NOIR_AI_TIMEOUT"] = "42"
+      ENV["NOIR_AI_CONNECT_TIMEOUT"] = "7"
+      begin
+        LLM::ACPClient.prompt_timeout.should eq(42.seconds)
+        LLM::ACPClient.request_timeout.should eq(7.seconds)
+      ensure
+        ENV.delete("NOIR_AI_TIMEOUT")
+        ENV.delete("NOIR_AI_CONNECT_TIMEOUT")
+      end
+    end
+
+    it "gives initialize room for a first-run npx download by default" do
+      ENV.delete("NOIR_AI_CONNECT_TIMEOUT")
+      (LLM::ACPClient.request_timeout > 30.seconds).should be_true
+    end
+  end
+end
+
 describe LLM::AdapterFactory do
   it "returns ACP adapter for acp providers" do
     adapter = LLM::AdapterFactory.for("acp:codex", "", nil)

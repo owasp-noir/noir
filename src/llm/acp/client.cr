@@ -2,6 +2,7 @@ require "acp"
 require "json"
 require "log"
 require "../response_cleanup"
+require "../http_transport"
 require "./targets"
 
 module LLM
@@ -93,6 +94,21 @@ module LLM
         @event_sink.try(&.call("ACP: cancelled permission request (#{tool}) — no #{allow ? "allow" : "reject"} option offered"))
         JSON.parse(%({"outcome":{"outcome":"cancelled"}}))
       end
+    end
+
+    # Non-prompt requests (initialize, session/new) get a longer default than
+    # the HTTP connect timeout: the first `npx` run downloads the agent
+    # package before it can answer `initialize`, which easily exceeds 30 s.
+    DEFAULT_REQUEST_TIMEOUT = 120.seconds
+
+    def self.request_timeout : Time::Span
+      HttpTransport.duration_from_env(HttpTransport::CONNECT_TIMEOUT_ENV) || DEFAULT_REQUEST_TIMEOUT
+    end
+
+    # A prompt turn is the generation itself, so it takes the same budget
+    # as an HTTP provider's read timeout (`NOIR_AI_TIMEOUT`).
+    def self.prompt_timeout : Time::Span
+      HttpTransport.timeout
     end
 
     def initialize(@provider : String, @model : String, @event_sink : Proc(String, Nil)? = nil)
@@ -228,6 +244,8 @@ module LLM
             stderr: agent_stderr
           )
           client = ACP::Client.new(transport, client_name: "noir")
+          client.request_timeout = self.class.request_timeout.total_seconds
+          client.prompt_timeout = self.class.prompt_timeout.total_seconds
           client.on_update = ->(update : ACP::Protocol::SessionUpdateParams) do
             case u = update.update
             when ACP::Protocol::AgentMessageChunkUpdate
