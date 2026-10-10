@@ -54,44 +54,51 @@ module Analyzer::Elixir
     record Block, key : String, root : Bool, type_name : String?,
       fields : Array(Field), imports : Array(String)
 
-    record FileFacts, blocks : Array(Block), mount : String?, passthrough : Bool
+    # `root` is the app the file belongs to (`mix_project_root`).
+    record FileFacts, blocks : Array(Block), mount : String?, passthrough : Bool, root : String
 
     @camelize = true
+    @mix_dirs = [] of String
 
     def analyze
+      @mix_dirs = get_files_by_basename("mix.exs").map { |f| Noir::PathScope.normalize_root(File.dirname(f)) }
       per_file = ordered_file_scan { |path| collect(path) }
 
-      mount = per_file.compact_map(&.mount).first? || Analyzer::Specification::GraphqlSdlParser::DEFAULT_GRAPHQL_PATH
-      # `adapter: Absinthe.Adapter.Passthrough` / `Underscore` on the plug (or
-      # `Absinthe.run`) keep the schema's snake_case names on the wire.
-      @camelize = per_file.none?(&.passthrough)
-
-      roots = [] of Block
       # ponytail: one global object namespace; two schemas in one repo that
       # reuse an object identifier resolve to the later file's object.
       objects = {} of String => Block
       per_file.each do |facts|
-        facts.blocks.each do |block|
-          if block.root
-            roots << block
-          else
-            objects[block.key] = block
+        facts.blocks.each { |block| objects[block.key] = block unless block.root }
+      end
+
+      # Each app's mount, adapter and root names on their own.
+      per_file.group_by(&.root).each_value do |group|
+        mount = group.compact_map(&.mount).first? || Analyzer::Specification::GraphqlSdlParser::DEFAULT_GRAPHQL_PATH
+        # `adapter: Absinthe.Adapter.Passthrough` / `Underscore` on the plug
+        # (or `Absinthe.run`) keep the schema's snake_case names on the wire.
+        @camelize = group.none?(&.passthrough)
+
+        roots = group.flat_map(&.blocks.select(&.root))
+        type_names = DEFAULT_ROOT_NAMES.dup
+        roots.each { |root| root.type_name.try { |name| type_names[root.key] = name } }
+
+        roots.each do |root|
+          each_field(root, objects, Set(String).new) do |field|
+            args = field.args.map { |arg| {name: external(arg[:name]), type: arg[:type]} }
+            result << Analyzer::Specification::GraphqlSdlParser.field_endpoint(
+              field.path, field.line, root.key, external(field.name), args, field.return_type,
+              "elixir_absinthe", mount, type_names[root.key])
           end
         end
       end
-
-      type_names = DEFAULT_ROOT_NAMES.dup
-      roots.each { |root| root.type_name.try { |name| type_names[root.key] = name } }
-
-      roots.each do |root|
-        each_field(root, objects, Set(String).new) do |field|
-          args = field.args.map { |arg| {name: external(arg[:name]), type: arg[:type]} }
-          result << Analyzer::Specification::GraphqlSdlParser.field_endpoint(
-            field.path, field.line, root.key, external(field.name), args, field.return_type,
-            "elixir_absinthe", mount, type_names[root.key])
-        end
-      end
       result
+    end
+
+    # Shallowest directory above `path` holding a `mix.exs`, or "": an
+    # umbrella's apps share its root, side-by-side projects do not.
+    private def mix_project_root(path : String) : String
+      expanded = Noir::PathScope.expand(path)
+      @mix_dirs.select { |dir| Noir::PathScope.under_normalized_root?(expanded, dir) }.min_by?(&.size) || ""
     end
 
     # Collection replaces the per-file walk; `analyze` drives everything.
@@ -168,7 +175,7 @@ module Analyzer::Elixir
 
       passthrough = content.includes?("Absinthe.Adapter.Passthrough") || content.includes?("Absinthe.Adapter.Underscore")
       return if blocks.empty? && mount.nil? && !passthrough
-      FileFacts.new(blocks, mount, passthrough)
+      FileFacts.new(blocks, mount, passthrough, mix_project_root(path))
     end
 
     # Absinthe's type expression (`non_null(list_of(:post))`, `:string`) as
