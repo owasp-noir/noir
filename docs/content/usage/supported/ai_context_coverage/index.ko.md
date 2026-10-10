@@ -58,6 +58,8 @@ plain 출력에서는 비어있지 않은 컨텍스트를 가진 엔드포인트
 
 비어 있지 않은 컨텍스트에는 `"untrusted_fields": ["name", "path", "snippet"]`도 함께 들어갑니다. 이 필드들은 스캔한 저장소에서 그대로 가져온 값이라, `snippet`에는 그 코드를 작성한 쪽의 주석과 문자열 리터럴이 포함됩니다. 이 출력을 LLM에 넘길 때는 해당 필드를 신뢰할 수 없는 데이터로 다루고 지시문과 분리하세요.
 
+이 구조는 JSON Schema로 [`schemas/ai-context.schema.json`](https://owasp-noir.github.io/noir/schemas/ai-context.schema.json)에 공개되어 있어, 검증기나 안정적인 형식이 필요한 프롬프트에서 그대로 쓸 수 있습니다. 신뢰할 수 없는 필드에는 `"x-noir-untrusted": true`가 붙어 있습니다. 항목의 `kind` 값은 열린 어휘라서 새 값이 추가되어도 스키마는 바뀌지 않습니다.
+
 ## 대표 사용 사례
 
 - **AI SAST**: 엔드포인트 인벤토리와 AI 컨텍스트를 LLM에 함께 넘기면, 라우트 구조를 다시 발견하지 않아도 공격 표면에서 도달 가능한 취약점에 집중할 수 있습니다.

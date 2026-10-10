@@ -289,6 +289,26 @@ describe AIContext do
     YAML.parse(ctx.to_yaml)["untrusted_fields"].as_a.map(&.as_s).should contain("snippet")
   end
 
+  # #3015: docs/static/schemas/ai-context.schema.json is the published
+  # contract; a field added, renamed or re-marked here must change it too.
+  it "matches the published JSON Schema" do
+    schema = JSON.parse(File.read(File.join(__DIR__, "../../../docs/static/schemas/ai-context.schema.json")))
+    entry_schema = schema["$defs"]["entry"]["properties"].as_h
+
+    ctx = AIContext.new
+    full = AIContextEntry.new("k", "n", "s", "d", "p", 1, 50, "x")
+    {% for bucket in %w[guards callees sources sinks validators signals] %}
+      ctx.{{ bucket.id }} << full
+    {% end %}
+    json = JSON.parse(ctx.to_json).as_h
+    json.keys.sort!.should eq(schema["properties"].as_h.keys.sort!)
+    json["sinks"][0].as_h.keys.sort!.should eq(entry_schema.keys.sort!)
+
+    entry_schema.select { |_, prop| prop["x-noir-untrusted"]? }.keys.sort!.should eq(AIContext::UNTRUSTED_FIELDS.to_a.sort!)
+    schema["properties"]["untrusted_fields"]["items"]["enum"].as_a.map(&.as_s).should eq(AIContext::UNTRUSTED_FIELDS.to_a)
+    schema["$defs"]["bucket"]["maxItems"].as_i.should eq(AIContext::MAX_PER_SECTION)
+  end
+
   it "is not empty after a push" do
     ctx = AIContext.new
     ctx.push_guard(AIContextEntry.new("guard", "auth"))
