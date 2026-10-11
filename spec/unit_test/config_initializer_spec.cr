@@ -306,6 +306,35 @@ describe ConfigInitializer do
   end
 
   describe "setup" do
+    it "creates the default config when ~/.config is absent" do
+      {% unless flag?(:windows) %}
+        home = File.tempname("noir-home-spec-")
+        Dir.mkdir(home)
+        saved_home = ENV["HOME"]?
+        saved_noir_home = ENV["NOIR_HOME"]?
+        ENV["HOME"] = home
+        ENV.delete("NOIR_HOME")
+        begin
+          ConfigInitializer.new.setup
+          config_dir = File.join(home, ".config", "noir")
+          File.exists?(File.join(config_dir, "config.yaml")).should be_true
+          Dir.exists?(File.join(config_dir, "passive_rules")).should be_true
+        ensure
+          if s = saved_home
+            ENV["HOME"] = s
+          else
+            ENV.delete("HOME")
+          end
+          if s = saved_noir_home
+            ENV["NOIR_HOME"] = s
+          else
+            ENV.delete("NOIR_HOME")
+          end
+          FileUtils.rm_rf(home)
+        end
+      {% end %}
+    end
+
     it "creates the default config file with 0600 permissions" do
       # The file carries an ai_key field (real provider API keys), so it
       # must not be world-readable on a shared box.

@@ -102,8 +102,7 @@ class ConfigInitializer
     # answers about the user's source. A world-readable parent leaks the
     # cache filenames and contents even though the config file itself is
     # locked down.
-    Dir.mkdir(@config_dir, 0o700) unless Dir.exists?(@config_dir)
-    Dir.mkdir("#{@config_dir}/passive_rules", 0o700) unless Dir.exists?("#{@config_dir}/passive_rules")
+    Dir.mkdir_p("#{@config_dir}/passive_rules", 0o700)
 
     # Written 0600: the file carries an `ai_key` field documented as
     # where real provider API keys go, so it should never be created
