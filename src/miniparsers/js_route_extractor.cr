@@ -1067,8 +1067,10 @@ module Noir
 
     # Memoizes the direct-call patterns built in extract_params_from_context;
     # the alternation is derived from the route's HTTP method, so the key set
-    # is tiny. Fibers are cooperative (no preview_mt), so the plain Hash is
-    # safe under the analyzers' parallel file scans.
+    # is tiny. The plain Hash is safe under the analyzers' parallel file
+    # scans, which run on the default execution context (parallelism 1:
+    # one fiber at a time, whatever OS thread it is on). Not safe to call
+    # from `Noir::WorkerThreads`, whose fibers run in parallel.
     @@direct_call_res = Hash(String, Regex).new
     HANDLER_ANCHOR_RE = /\bfunction\b|=>/
 

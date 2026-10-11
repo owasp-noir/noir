@@ -284,6 +284,7 @@ module Analyzer::Go
     # (with the route's callees), then yields each `(line, endpoint)` pair
     # of the helper body so the caller applies its framework's param
     # patterns. The caller skips the helper bodies in its own line loop.
+    # Endpoints go to `into` (default: `result`).
     def expand_router_builders(content : String,
                                lines : Array(String),
                                path : String,
@@ -291,6 +292,7 @@ module Analyzer::Go
                                callees_by_route : Hash(Int32, Array(Tuple(String, String, Int32))),
                                named : Noir::GoNamedHandler,
                                handle_method : String? = nil,
+                               into emitted_to : Array(Endpoint) = result,
                                & : String, Endpoint ->)
       expansions.each do |fn, rb, pset|
         emitted = [] of Endpoint
@@ -304,7 +306,7 @@ module Analyzer::Go
               callees_by_route[route.line]?.try &.each do |name, callee_path, callee_line|
                 ep.push_callee(Callee.new(name, path: callee_path, line: callee_line))
               end
-              result << ep
+              emitted_to << ep
               named.bind(route, ep)
               emitted << ep
             end

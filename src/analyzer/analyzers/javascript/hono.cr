@@ -11,16 +11,19 @@ module Analyzer::Javascript
     ON_ROUTE_CALL_PATTERN = /\.(?:\s|\n|\r)*on(?:\s|\n|\r)*\(/
 
     def analyze
-      result = [] of Endpoint
-      static_dirs = [] of Hash(String, String)
-
       scan_for_router_mounts
       # HonoX mounts a route module's `new Hono()` app at the module's file
       # path (js_honox); read here, its routes would lose that prefix.
       honox = js_package_owners(["\"honox\""])
 
-      parallel_file_scan do |path|
+      # Per-file results merged below in input order, not appended to a
+      # shared array from the workers: worker completion order varies run
+      # to run (see `Analyzer#ordered_scan_files`), and the static-dir
+      # merge is first-wins.
+      per_file = ordered_scan_files(get_files_by_extensions(DEFAULT_EXTENSIONS)) do |path|
         next if base_relative_path(path).includes?("/app/routes/") && owned_by_js_package?(path, honox)
+        result = [] of Endpoint
+        static_dirs = [] of Hash(String, String)
         # Blanked once here: the `app.on()` pass and `line_to_params` read
         # the text with their own regexes. Lines and columns are kept.
         content = Noir::JSRouteExtractor.strip_js_comments(read_file_content(path))
@@ -53,10 +56,16 @@ module Analyzer::Javascript
         end
 
         collect_static_paths(path, content, static_dirs, :hono)
+        {result, static_dirs}
       rescue e
         logger.debug "Parser failed for #{path}: #{e.message}, falling back to regex"
-        analyze_with_regex(path, result)
+        partial = result || [] of Endpoint
+        analyze_with_regex(path, partial)
+        {partial, static_dirs || [] of Hash(String, String)}
       end
+
+      result = per_file.flat_map(&.[0])
+      static_dirs = per_file.flat_map(&.[1]).uniq! { |dir| {dir["static_path"], dir["file_path"]} }
 
       process_js_static_dirs(static_dirs, result)
 
