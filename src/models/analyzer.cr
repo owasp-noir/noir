@@ -24,9 +24,9 @@ class Analyzer
   # blocking on send and stalling disk I/O. Re-measured (#2362) on a
   # heavy-load corpus (multi-detector + passive-scan + -T + --ai-context,
   # ~80MB of large files): 16 and 64 perform identically (~14.7s avg
-  # either way over 9 interleaved runs). There is no preview_mt build, so
-  # reader and workers are cooperative fibers on one thread with no
-  # blocking-I/O yield point to recover — a deeper buffer just lets the
+  # either way over 9 interleaved runs). Reader and workers share the
+  # default execution context, which runs one fiber at a time, so there is
+  # no blocking-I/O yield point to recover — a deeper buffer just lets the
   # reader run further ahead without unblocking anything. Kept at 16.
   DEFAULT_CONTENT_CHANNEL_CAPACITY = 16
   MAX_ANALYZER_WORKERS             = 64

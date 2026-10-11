@@ -17,7 +17,6 @@ module Analyzer::Go
     BUILDER_TYPE          = "*route.RouterGroup"
 
     def analyze
-      public_dirs = [] of (Hash(String, String))
       package_groups, file_contents = collect_package_groups_ts(import_marker: IMPORT_MARKER)
       # Pre-pass for cross-file identifier-handler resolution (see Gin).
       package_function_bodies = collect_package_function_bodies(file_contents)
@@ -26,12 +25,17 @@ module Analyzer::Go
       # the prefix lives at the call site (see `resolve_router_builder_prefixes`).
       builder_prefixes_by_dir = resolve_router_builder_prefixes(file_contents, package_groups, BUILDER_TYPE)
       framework_dirs = framework_package_dirs(file_contents, IMPORT_MARKER)
-      parallel_analyze(get_files_by_extension(".go")) do |path|
+      # Per-file results merged below in input order, not appended to
+      # `result` from the workers: worker completion order varies run to
+      # run (see `Analyzer#ordered_scan_files`).
+      per_file = ordered_parallel_analyze(get_files_by_extension(".go")) do |path|
         next if GoEngine.go_test_file?(base_relative_path(path))
         next unless File.exists?(path)
         content = file_contents[path]? || read_file_content(path)
         dir = File.dirname(path)
         next unless framework_route_source_candidate?(content, dir, framework_dirs, IMPORT_MARKER, ["Handle", "Static"])
+        file_endpoints = [] of Endpoint
+        file_public_dirs = [] of Hash(String, String)
         lines = GoEngine.strip_comments(content).lines
         last_endpoint = Endpoint.new("", "")
 
@@ -67,7 +71,7 @@ module Analyzer::Go
 
         # `h.Static("/url", "./dir")`.
         Noir::TreeSitterGoRouteExtractor.extract_simple_statics(content).each do |sp|
-          public_dirs << static_dir_entry(path, sp.url_prefix, sp.disk_path)
+          file_public_dirs << static_dir_entry(path, sp.url_prefix, sp.disk_path)
         end
 
         lines.each_with_index do |line, index|
@@ -88,7 +92,7 @@ module Analyzer::Go
                     name, callee_path, callee_line = entry
                     new_endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
                   end
-                  result << new_endpoint
+                  file_endpoints << new_endpoint
                   named.bind(route, new_endpoint)
                   last_endpoint = new_endpoint
                 end
@@ -99,7 +103,7 @@ module Analyzer::Go
                   new_endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
                 end
                 named.bind(route, new_endpoint)
-                result << new_endpoint
+                file_endpoints << new_endpoint
                 last_endpoint = new_endpoint
               end
             end
@@ -108,14 +112,16 @@ module Analyzer::Go
           add_hertz_param_patterns(line, last_endpoint)
         end
 
-        expand_router_builders(content, lines, path, expand_builders, callees_by_route, named, "Handle") do |line, ep|
+        expand_router_builders(content, lines, path, expand_builders, callees_by_route, named, "Handle", file_endpoints) do |line, ep|
           add_hertz_param_patterns(line, ep)
         end
 
         named.each_attribution { |line, ep| add_hertz_param_patterns(line, ep) }
+        {file_endpoints, file_public_dirs}
       end
 
-      resolve_public_dirs(public_dirs)
+      per_file.each { |file_endpoints, _| result.concat(file_endpoints) }
+      resolve_public_dirs(per_file.flat_map(&.[1]))
 
       result
     end

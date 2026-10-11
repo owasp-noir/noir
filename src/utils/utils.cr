@@ -60,7 +60,8 @@ end
 #
 # This used to spawn a fiber and race it against `select ... when timeout`.
 # That could not work: `Regex#matches?` is a single `pcre2_match` FFI call
-# with no yield point, and noir has no `preview_mt` build, so the timeout
+# with no yield point, and the spawned fiber shared the caller's default
+# execution context (parallelism 1, one fiber at a time), so the timeout
 # branch could never be reached while the match was running. Measured
 # directly — with `timeout` set to 10ms, the wrapper returned after 17ms,
 # having run the match to completion. It bounded nothing, and cost a fiber

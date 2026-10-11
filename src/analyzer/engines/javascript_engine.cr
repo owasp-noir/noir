@@ -41,8 +41,12 @@ module Analyzer::Javascript
     # every evaluation — a full PCRE2 JIT compile. Patterns keyed by a
     # discovered name ("req", "query", "body", router vars, ...) are
     # low-cardinality across a scan, so memoize them per analyzer
-    # instance. Fibers are cooperative (no preview_mt), so the plain
-    # Hash is safe under parallel_file_scan.
+    # instance. The plain Hash is safe under parallel_file_scan: its
+    # workers run on the default execution context, which Crystal 1.21
+    # starts with parallelism 1, so they can change OS threads (SYSMON
+    # hands the scheduler off a thread blocked in a syscall) but never run
+    # at the same time. Fibers on `Noir::WorkerThreads` do run in parallel
+    # and must not reach this cache.
     @dynamic_regex_cache = Hash(String, Regex).new
 
     protected def cached_regex(key : String, & : -> Regex) : Regex
