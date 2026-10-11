@@ -4,7 +4,7 @@
 module NoirTechs::Catalog::Ruby
   CLI = {
     :ruby_cli => {
-      :framework => "CLI (OptionParser / Thor / GLI / Slop / TTY::Option / Optimist / Clamp / dry-cli)",
+      :framework => "CLI (OptionParser / Thor / GLI / Slop / TTY::Option / commander / Optimist / Clamp / dry-cli)",
       :language  => "Ruby",
       :similar   => ["ruby-cli", "ruby_cli", "thor", "optparse", "optionparser", "gli", "slop", "tty-option", "optimist", "clamp", "dry-cli"],
       :supported => {
