@@ -3137,7 +3137,7 @@ This is the map: every framework Noir can read, and how much of each one it unde
     </div>
   </article>
   <article class="tech-card">
-    <h3 class="tech-card-title">CLI (parseArgs / commander / yargs / cac / meow / minimist / citty / arg / command-line-args / getopts)</h3>
+    <h3 class="tech-card-title">CLI (parseArgs / commander / yargs / cac / sade / meow / minimist / citty / arg / command-line-args / getopts)</h3>
     <div class="tech-card-row">
       <span class="tech-card-label">Route</span>
       <div class="tech-card-chips">
@@ -5683,7 +5683,7 @@ This is the map: every framework Noir can read, and how much of each one it unde
     </div>
   </article>
   <article class="tech-card">
-    <h3 class="tech-card-title">CLI (OptionParser / Thor / GLI / Slop / TTY::Option / Optimist / Clamp / dry-cli)</h3>
+    <h3 class="tech-card-title">CLI (OptionParser / Thor / GLI / Slop / TTY::Option / commander / Optimist / Clamp / dry-cli)</h3>
     <div class="tech-card-row">
       <span class="tech-card-label">Route</span>
       <div class="tech-card-chips">

@@ -4,7 +4,7 @@
 module NoirTechs::Catalog::Javascript
   CLI = {
     :js_cli => {
-      :framework => "CLI (parseArgs / commander / yargs / cac / meow / minimist / citty / arg / command-line-args / getopts)",
+      :framework => "CLI (parseArgs / commander / yargs / cac / sade / meow / minimist / citty / arg / command-line-args / getopts)",
       :language  => "JavaScript",
       :similar   => ["js-cli", "js_cli", "commander", "yargs", "cac", "meow", "minimist", "oclif", "clipanion", "sade", "citty", "arg", "command-line-args", "getopts"],
       :supported => {
