@@ -139,8 +139,21 @@ if [ "$format" = "json" ] || [ "$format" = "jsonl" ]; then
     if command -v jq >/dev/null 2>&1; then
         jq empty "$output_file" 2>/dev/null || error_exit "Invalid JSON output from Noir" 1
 
-        endpoints_output=$(jq -c . "$output_file")
-        passive_results=$(jq -c '.passive_results // []' "$output_file")
+        if [ "$format" = "jsonl" ]; then
+            # JSONL is one object per line: endpoints (url/method), passive
+            # findings (id/info) and analyzer failures (tech/message). Fold
+            # them back into the single-line document the json format
+            # produces; a multi-line value would corrupt $GITHUB_OUTPUT.
+            endpoints_output=$(jq -cs '{
+                endpoints: map(select(has("url") and has("method"))),
+                passive_results: map(select(has("id") and has("info"))),
+                errors: map(select(has("tech") and has("message")))
+            }' "$output_file")
+            passive_results=$(printf '%s' "$endpoints_output" | jq -c '.passive_results')
+        else
+            endpoints_output=$(jq -c . "$output_file")
+            passive_results=$(jq -c '.passive_results // []' "$output_file")
+        fi
 
         echo "endpoints=$endpoints_output" >> "$github_output"
         echo "passive_results=$passive_results" >> "$github_output"

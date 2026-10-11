@@ -55,38 +55,44 @@ echo "==> image:   $IMAGE"
 echo "==> fixture: ${FIXTURE#"$REPO_ROOT"/}"
 
 # ---------------------------------------------------------------------------
-# Scenario 1: format=json + passive scan — the default, most-used contract.
+# JSON contract (scenarios 1 and 5): json is the default, most-used format.
 # ---------------------------------------------------------------------------
-echo "[1] format=json, passive_scan=true"
-ws="$(run_action json -e INPUT_FORMAT=json -e INPUT_PASSIVE_SCAN=true)"
-if [[ "$ws" == __FAILED__* ]]; then
-  note_fail "entrypoint exited non-zero"
-  cat "${ws#__FAILED__ }/stderr" >&2 || true
-else
-  out="$(gh_output "$ws")"
-  # Every emitted line must be a `name=value` pair. A stray continuation
-  # line means a multi-line value slipped into $GITHUB_OUTPUT, which breaks
-  # the single-line `name=value` format GitHub expects.
-  total=$(printf '%s\n' "$out" | grep -c . || true)
-  named=$(printf '%s\n' "$out" | grep -cE '^(endpoints|passive_results)=' || true)
-  if [[ "$total" -eq 2 && "$named" -eq 2 ]]; then
-    note_pass "exactly 2 well-formed output lines"
+json_contract_scenario() {
+  local label="$1" format="$2"
+  echo "$label"
+  local ws out total named ep pr
+  ws="$(run_action "$format" -e INPUT_FORMAT="$format" -e INPUT_PASSIVE_SCAN=true)"
+  if [[ "$ws" == __FAILED__* ]]; then
+    note_fail "entrypoint exited non-zero"
+    cat "${ws#__FAILED__ }/stderr" >&2 || true
   else
-    note_fail "expected 2 name=value lines, got total=$total named=$named"
+    out="$(gh_output "$ws")"
+    # Every emitted line must be a `name=value` pair. A stray continuation
+    # line means a multi-line value slipped into $GITHUB_OUTPUT, which breaks
+    # the single-line `name=value` format GitHub expects.
+    total=$(printf '%s\n' "$out" | grep -c . || true)
+    named=$(printf '%s\n' "$out" | grep -cE '^(endpoints|passive_results)=' || true)
+    if [[ "$total" -eq 2 && "$named" -eq 2 ]]; then
+      note_pass "exactly 2 well-formed output lines"
+    else
+      note_fail "expected 2 name=value lines, got total=$total named=$named"
+    fi
+    ep="$(printf '%s\n' "$out" | sed -n 's/^endpoints=//p')"
+    if printf '%s' "$ep" | jq -e '.endpoints | length >= 1' >/dev/null 2>&1; then
+      note_pass "endpoints is single-line JSON with >=1 endpoint"
+    else
+      note_fail "endpoints is not valid JSON with a non-empty endpoints[]"
+    fi
+    pr="$(printf '%s\n' "$out" | sed -n 's/^passive_results=//p')"
+    if printf '%s' "$pr" | jq -e 'type == "array"' >/dev/null 2>&1; then
+      note_pass "passive_results is a JSON array"
+    else
+      note_fail "passive_results is not a JSON array"
+    fi
   fi
-  ep="$(printf '%s\n' "$out" | sed -n 's/^endpoints=//p')"
-  if printf '%s' "$ep" | jq -e '.endpoints | length >= 1' >/dev/null 2>&1; then
-    note_pass "endpoints is single-line JSON with >=1 endpoint"
-  else
-    note_fail "endpoints is not valid JSON with a non-empty endpoints[]"
-  fi
-  pr="$(printf '%s\n' "$out" | sed -n 's/^passive_results=//p')"
-  if printf '%s' "$pr" | jq -e 'type == "array"' >/dev/null 2>&1; then
-    note_pass "passive_results is a JSON array"
-  else
-    note_fail "passive_results is not a JSON array"
-  fi
-fi
+}
+
+json_contract_scenario "[1] format=json, passive_scan=true" json
 
 # ---------------------------------------------------------------------------
 # Scenario 2: non-JSON format (yaml) — outputs must degrade to the documented
@@ -163,10 +169,9 @@ diff_scenario "[3] diff_ref + fail_on=added" "." "src"
 # accept a repository root other than the working directory.
 diff_scenario "[4] diff_ref with the repository in a subdirectory" "app" "app/src"
 
-# NOTE: format=jsonl is intentionally not asserted here yet — the current
-# entrypoint mishandles the multi-object JSONL stream (emits multi-line
-# values that corrupt $GITHUB_OUTPUT). Add a jsonl scenario together with the
-# fix for that (stability review, finding M1).
+# JSONL is one object per line; the entrypoint must fold it into the same
+# single-line document the json format produces.
+json_contract_scenario "[5] format=jsonl, passive_scan=true" jsonl
 
 echo
 if [[ "$fail_count" -eq 0 ]]; then
