@@ -33,11 +33,12 @@ See [CONTRIBUTING.md](https://github.com/owasp-noir/noir/blob/main/.github/CONTR
 
 ### Installing Crystal
 
-Noir is built with Crystal. Install it for your platform.
+Noir is built with Crystal (`~> 1.19` in `shard.yml`; CI uses 1.21). Install it for your platform. The first build also compiles the vendored Tree-sitter grammars, so you need a C compiler too.
 
 #### Ubuntu/Debian
 ```sh
 curl -fsSL https://crystal-lang.org/install.sh | sudo bash
+sudo apt install -y libyaml-dev libzstd-dev zlib1g-dev pkg-config
 ```
 
 #### macOS (Homebrew)
@@ -64,7 +65,7 @@ Build the project. The compiled binary ends up at `./bin/noir`.
 shards build
 ```
 
-For a production-grade build (slower compile, 2–3× faster runtime), pass `--release`. Use this when running benchmarks or comparing against a published release; debug builds are noticeably slower and can make a healthy build look like a regression.
+For a production-grade build (slower compile, 2–3× faster runtime), pass `--release`. Use it when you run benchmarks or compare against a published release. Debug builds are noticeably slower and can make a healthy build look like a regression. The `just` recipe uses the same flags as the official release builds (`--release --no-debug --production`).
 
 ```sh
 shards build --release
@@ -72,12 +73,16 @@ shards build --release
 just build-release
 ```
 
-Run the test suite with Crystal's built-in test runner.
+Run the test suite. `just test` compiles the unit and functional suites into one binary (`bin/noir_spec`) and runs both halves in parallel.
 
 ```sh
-crystal spec
+just test
 
-# For more detailed output
+# One functional tester while you work on an analyzer
+just test-func-one javascript/hono
+
+# Or Crystal's built-in test runner
+crystal spec
 crystal spec -v
 ```
 
@@ -95,8 +100,9 @@ Auto-fix issues.
 lib/ameba/bin/ameba.cr --fix
 ```
 
-Or use `just`.
+Or use `just`. `just fix` formats and auto-fixes; `just check` only reports, the same way CI does.
 
 ```sh
 just fix
+just check
 ```

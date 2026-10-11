@@ -15,6 +15,8 @@ sort_by = "weight"
 
 ## 사용 방법
 
+xAI로 Noir를 실행합니다:
+
 ```bash
 noir scan ./spec/functional_test/fixtures/hahwul \
      --ai-provider=xai \

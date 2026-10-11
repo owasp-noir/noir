@@ -24,4 +24,4 @@ To run a rule set from somewhere else (a private repository, a local directory),
 noir scan /app -P --passive-scan-path ./my-rules/
 ```
 
-This replaces the bundled rules for that run. The flag can be repeated to load multiple directories or files. Alternatively, drop extra `.yml`/`.yaml` files into `~/.config/noir/passive_rules/`. Everything in that directory is loaded recursively.
+This replaces the bundled rules for that run. The flag takes directories only (a single file is rejected) and can be repeated to load several of them. Alternatively, drop extra `.yml`/`.yaml` files into `~/.config/noir/passive_rules/`. Everything in that directory is loaded recursively.

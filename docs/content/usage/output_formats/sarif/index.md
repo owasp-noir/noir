@@ -132,8 +132,19 @@ When using passive scan (`-P` or `--passive-scan`), security findings are includ
 *   **Critical/High severity** → `error` level
 *   **Medium severity** → `warning` level
 *   **Low severity** → `note` level
+*   Any other severity → `none`
 
-Each passive scan rule is added to the `rules` array with descriptions, references, and author info.
+By default `-P` keeps only high and critical findings. Lower the bar with `--passive-scan-severity medium` (or `low`) to see the rest.
+
+Each passive scan rule is added to the `rules` array with its name and description, and its first reference as `helpUri`.
+
+### Callees and AI Context
+
+When endpoints carry callees (`--include callee`) or AI review context (`--ai-context`), each endpoint result gets them under `properties.noir.callees` and `properties.noir.ai_context`.
+
+### Diff Mode
+
+With `--diff-path` or `--diff-ref`, `-f sarif` reports only the new attack surface, using the rules `diff-endpoint-added`, `diff-params-added` and `diff-auth-removed`. Removed routes have no line to annotate in the new tree, so they are left out. See [Diff](@/usage/more_features/diff/index.md).
 
 ## Integration Examples
 
@@ -145,24 +156,24 @@ Upload SARIF results to [GitHub Code Scanning](https://docs.github.com/en/code-s
 # Generate SARIF output
 noir scan . -f sarif -o noir-results.sarif --no-log
 
-# Upload to GitHub (using GitHub CLI)
+# Upload to GitHub with the GitHub CLI (the API takes the file gzipped and base64-encoded)
 gh api /repos/:owner/:repo/code-scanning/sarifs \
-  -F sarif=@noir-results.sarif \
-  -F ref=refs/heads/main \
-  -F commit_sha=$(git rev-parse HEAD)
+  -f sarif="$(gzip -c noir-results.sarif | base64 | tr -d '\n')" \
+  -f ref=refs/heads/main \
+  -f commit_sha="$(git rev-parse HEAD)"
 ```
 
 ### GitLab Security Dashboard
 
-Add this job to `.gitlab-ci.yml` to surface findings in GitLab's Security Dashboard:
+GitLab reads SARIF through the `sarif` report type (GitLab Ultimate, recent versions). The `sast` report type expects GitLab's own JSON schema, so don't point it at a SARIF file. Add this job to `.gitlab-ci.yml`:
 
 ```yaml
 noir_scan:
   script:
-    - noir scan . -f sarif -o gl-sast-report.json --no-log
+    - noir scan . -f sarif -o noir.sarif --no-log
   artifacts:
     reports:
-      sast: gl-sast-report.json
+      sarif: noir.sarif
 ```
 
 ### Azure DevOps
@@ -183,5 +194,5 @@ Publish the SARIF file as a build artifact in Azure Pipelines. The SARIF SAST Sc
 
 *   [SARIF Specification v2.1.0](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html)
 *   [GitHub Code Scanning Documentation](https://docs.github.com/en/code-security/code-scanning)
-*   [GitLab SAST Documentation](https://docs.gitlab.com/ee/user/application_security/sast/)
+*   [GitLab SARIF reports](https://docs.gitlab.com/user/application_security/detect/sarif/)
 *   [SARIF Tutorials](https://github.com/microsoft/sarif-tutorials)

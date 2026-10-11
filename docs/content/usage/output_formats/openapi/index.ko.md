@@ -6,9 +6,9 @@ sort_by = "weight"
 
 +++
 
-스캔 결과를 [OpenAPI Specification](https://www.openapis.org/) 문서로 변환합니다. 생성된 스펙은 Swagger UI, Postman, Insomnia 등에 바로 임포트하여 API 문서화, 테스트, 목 서버 생성 등에 활용할 수 있습니다.
+스캔 결과를 [OpenAPI Specification](https://www.openapis.org/) 문서로 변환합니다. 생성된 스펙은 Swagger UI, Postman, Insomnia 등으로 가져와서 API 문서화, 테스트, 목 서버 생성에 쓸 수 있습니다.
 
-Noir는 OAS 2.0(Swagger)과 OAS 3.x를 모두 지원합니다.
+Noir는 OAS 2.0(Swagger)과 OAS 3.x를 모두 지원합니다. `-u`로 서버 주소를 지정하면 OAS 3에서는 `servers`, OAS 2에서는 `host` / `schemes`에 들어갑니다. 지정하지 않으면 OAS 3은 `http://localhost`를 쓰고, OAS 2는 `host`를 넣지 않습니다.
 
 ## 사용법
 
@@ -102,7 +102,7 @@ noir scan . -f oas2
 }
 ```
 
-헤더, 쿠키, path, query 파라미터는 `parameters`로 나가고, 바디는 해당 미디어 타입의 `requestBody`가 됩니다.
+헤더, 쿠키, path, query 파라미터는 `parameters`로 나가고, 본문은 맞는 미디어 타입의 `requestBody`가 됩니다.
 
 * `json` → `application/json`
 * `form` → `application/x-www-form-urlencoded` (형제 `file` 필드가 있으면 `multipart/form-data`)

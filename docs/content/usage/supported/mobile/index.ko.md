@@ -21,7 +21,7 @@ Noir는 모바일 앱이 외부에 노출하는 진입점(딥링크와 exported 
 | Android | `/.well-known/assetlinks.json` | 서버 측 App Links 연결 선언(Digital Asset Links) |
 | iOS | `apple-app-site-association` | 서버 측 유니버설 링크 `paths` / `components` 패턴 |
 
-앞의 여섯 행은 앱 번들에 선언되는 **클라이언트** 측 연결이고, 마지막 두 행은 **서버** 측, 즉 OS가 해당 호스트의 URL에 대해 앱을 열도록 호스트가 게시하는 well-known 파일입니다. 둘 다 동일한 `universal-link` protocol과 출력 모델을 통해 처리됩니다.
+앞의 여섯 행은 앱 번들에 선언되는 **클라이언트** 측 연결이고, 마지막 두 행은 **서버** 측, 즉 그 호스트의 URL을 앱으로 열어도 된다고 OS에 알리기 위해 호스트가 게시하는 well-known 파일입니다. 둘 다 같은 `universal-link` protocol과 출력 모델로 처리합니다.
 
 ## 엔드포인트 모델
 
@@ -38,15 +38,17 @@ plain 출력에서는 `SCHEME` / `INTENT` / `PROVIDER` / `UNIVERSAL` 프리픽�
 
 ```
 SCHEME myapp://complex/:id
+  ○ path: id
   ○ via: .DeepLinkActivity
   ○ action: android.intent.action.VIEW
+  ○ category: android.intent.category.DEFAULT
   ○ host: complex
   ○ package: com.example.myapp
 ```
 
 ## 핸들러 코드와의 연결
 
-스캔에 핸들러 소스가 포함되어 있으면, Noir는 각 딥링크 엔드포인트를 이를 처리하는 코드와 연결합니다.
+스캔 대상에 핸들러 소스가 있으면 Noir는 각 딥링크 엔드포인트를 그것을 처리하는 코드와 연결합니다.
 
 * **Android**: 매니페스트의 컴포넌트(예: `.DeepLinkActivity`)를 해당 `.kt` / `.java` 파일로 해석합니다. 인텐트 처리 메서드(`onCreate`, `onNewIntent`, `onReceive`, …)에서 1-hop callee를 수집하고, 그 안에서 읽는 입력을 파라미터로 만듭니다. `uri.getQueryParameter("q")` → `query` 파라미터(URL에 포함), `get*Extra` 계열 → `extra` 파라미터.
 * **iOS**: 딥링크는 중앙에서 디스패치되므로, Noir는 핸들러를 탐색해 종류별로 연결합니다. `.onOpenURL` / `application(_:open:)` / `scene(_:openURLContexts:)`는 커스텀 스킴에, `userActivity` 핸들러는 유니버설 링크에 붙입니다. `URLQueryItem` 읽기는 `query` 파라미터가 됩니다.

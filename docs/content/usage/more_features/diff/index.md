@@ -69,7 +69,7 @@ GET /profile
 
 ### JSON and YAML Output
 
-Use `-f json` or `-f yaml` for structured output. Results are grouped into three categories.
+Use `-f json` or `-f yaml` for structured output. It has three endpoint lists (`added`, `removed`, `changed`) and a `changes` list.
 
 ```json
 {
@@ -115,7 +115,7 @@ noir scan . --diff-ref origin/main --fail-on auth-removed,added -f markdown-tabl
 | `changed` | an endpoint on both sides has different params or tags |
 | `auth-removed` | an endpoint had the `auth` tag and doesn't now |
 
-`auth-removed` depends on the auth taggers, so it turns on all taggers unless you already passed `-T` or `--use-taggers`. The reason for the failure goes to stderr even with `--no-log`. Exit code `1` is still a usage error and `2` is `--strict`'s incomplete scan, which takes precedence over `3`.
+`auth-removed` depends on the auth taggers. If you passed neither `-T` nor `--use-taggers`, Noir turns on all taggers. If your `--use-taggers` list has no auth tagger, Noir adds the auth taggers to it. The reason for the failure goes to stderr even with `--no-log`. Exit code `1` is still a usage error and `2` is `--strict`'s incomplete scan, which takes precedence over `3`.
 
 The same check works locally from a git `pre-push` hook:
 

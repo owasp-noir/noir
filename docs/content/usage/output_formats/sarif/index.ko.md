@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-SARIF v2.1.0 (Static Analysis Results Interchange Format) 형식으로 결과를 출력합니다. GitHub Code Scanning, GitLab, Azure DevOps 등 주요 CI/CD 플랫폼에서 바로 읽을 수 있는 표준 형식입니다.
+SARIF v2.1.0 (Static Analysis Results Interchange Format) 형식으로 결과를 출력합니다. GitHub Code Scanning, GitLab, Azure DevOps가 바로 읽을 수 있는 표준 형식입니다.
 
 ## 왜 SARIF인가?
 
@@ -127,13 +127,24 @@ SARIF 파일은 `runs` 배열로 구성됩니다. 각 run에는 도구 정보(`d
 
 ### 패시브 스캔 통합
 
-패시브 스캔(`-P` 또는 `--passive-scan`)을 함께 쓰면 보안 발견 사항이 심각도에 따라 SARIF에 포함됩니다.
+패시브 스캔(`-P` 또는 `--passive-scan`)을 함께 쓰면 보안 발견 사항도 SARIF에 들어갑니다. 레벨은 심각도에 따라 정해집니다.
 
 *   **Critical/High** → `error`
 *   **Medium** → `warning`
 *   **Low** → `note`
+*   그 밖의 심각도 → `none`
 
-각 패시브 스캔 규칙은 설명, 참조, 작성자 정보와 함께 `rules` 배열에 추가됩니다.
+`-P`는 기본적으로 high와 critical 결과만 남깁니다. 나머지도 보려면 `--passive-scan-severity medium`(또는 `low`)으로 기준을 낮추세요.
+
+각 패시브 스캔 규칙은 이름, 설명과 함께 `rules` 배열에 들어가고, 첫 번째 참조 링크는 `helpUri`가 됩니다.
+
+### Callee와 AI 컨텍스트
+
+엔드포인트에 callee(`--include callee`)나 AI 리뷰 컨텍스트(`--ai-context`)가 있으면, 각 엔드포인트 result의 `properties.noir.callees`와 `properties.noir.ai_context`에 들어갑니다.
+
+### Diff 모드
+
+`--diff-path`나 `--diff-ref`와 함께 쓰면 `-f sarif`는 새로 생긴 공격 표면만 보고합니다. 규칙은 `diff-endpoint-added`, `diff-params-added`, `diff-auth-removed`입니다. 삭제된 라우트는 새 코드에 표시할 줄이 없어서 빠집니다. 자세한 내용은 [Diff](@/usage/more_features/diff/index.ko.md)를 참고하세요.
 
 ## 통합 예제
 
@@ -145,24 +156,24 @@ SARIF 결과를 [GitHub Code Scanning](https://docs.github.com/en/code-security/
 # SARIF 출력 생성
 noir scan . -f sarif -o noir-results.sarif --no-log
 
-# GitHub에 업로드 (GitHub CLI 사용)
+# GitHub CLI로 업로드 (API는 gzip 압축 후 base64로 인코딩한 파일을 받음)
 gh api /repos/:owner/:repo/code-scanning/sarifs \
-  -F sarif=@noir-results.sarif \
-  -F ref=refs/heads/main \
-  -F commit_sha=$(git rev-parse HEAD)
+  -f sarif="$(gzip -c noir-results.sarif | base64 | tr -d '\n')" \
+  -f ref=refs/heads/main \
+  -f commit_sha="$(git rev-parse HEAD)"
 ```
 
 ### GitLab Security Dashboard
 
-`.gitlab-ci.yml`에 아래 잡을 추가하면 GitLab Security Dashboard에 결과가 표시됩니다.
+GitLab은 `sarif` 리포트 타입으로 SARIF를 읽습니다(GitLab Ultimate, 최신 버전). `sast` 리포트 타입은 GitLab 자체 JSON 스키마를 요구하므로 SARIF 파일을 넣으면 안 됩니다. `.gitlab-ci.yml`에 아래 잡을 추가하세요.
 
 ```yaml
 noir_scan:
   script:
-    - noir scan . -f sarif -o gl-sast-report.json --no-log
+    - noir scan . -f sarif -o noir.sarif --no-log
   artifacts:
     reports:
-      sast: gl-sast-report.json
+      sarif: noir.sarif
 ```
 
 ### Azure DevOps
@@ -183,5 +194,5 @@ Azure Pipelines에서 SARIF 파일을 빌드 아티팩트로 게시하면 SARIF 
 
 *   [SARIF 명세 v2.1.0](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html)
 *   [GitHub Code Scanning 문서](https://docs.github.com/en/code-security/code-scanning)
-*   [GitLab SAST 문서](https://docs.gitlab.com/ee/user/application_security/sast/)
+*   [GitLab SARIF 리포트 문서](https://docs.gitlab.com/user/application_security/detect/sarif/)
 *   [SARIF 튜토리얼](https://github.com/microsoft/sarif-tutorials)

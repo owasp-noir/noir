@@ -16,13 +16,13 @@ sort_by = "weight"
 
 ## 사용법
 
-Tagger는 기본적으로 비활성화되어 있습니다.
+태거는 기본으로 꺼져 있습니다.
 
 **모든 태거 활성화** (`-T` / `--use-all-taggers`)
 
 ```bash
 noir scan <BASE_PATH> -T
-# 동치: noir scan <BASE_PATH> --use-all-taggers
+# 같은 명령: noir scan <BASE_PATH> --use-all-taggers
 ```
 
 **특정 태거만 활성화** (`noir list taggers`로 목록 확인)
@@ -70,7 +70,7 @@ noir scan <BASE_PATH> --use-taggers hunt,oauth
 
 - **파라미터 취약점 클래스**: `hunt`는 알려진 위험 이름과 일치하는 개별 파라미터를 표시합니다(`sqli`, `ssrf`, `idor`, `file-inclusion`, `command-injection` 등).
 - **프로토콜 / 인터페이스**: `graphql`, `soap`, `websocket`, `mcp`, `cors`.
-- **인증 & 토큰**: `oauth`, `jwt`, 그리고 프레임워크 인지 인증 태거(Spring Security, Django, Express 등).
+- **인증 & 토큰**: `oauth`, `jwt`, 그리고 로그인이 필요한 엔드포인트에 `auth` 태그를 붙이는 프레임워크별 인증 태거: `django_auth`, `flask_auth`, `fastapi_auth`, `python_misc_auth`, `spring_auth`, `java_misc_auth`, `ktor_auth`, `scala_auth`, `express_auth`, `nestjs_auth`, `hono_auth`, `js_misc_auth`, `go_auth`, `rust_auth`, `ruby_auth`, `php_auth`, `aspnet_auth`, `fastendpoints_auth`, `elixir_auth`, `swift_auth`, `crystal_auth`, `perl_auth`.
 - **엔드포인트 민감도 & 용도**: 엔드포인트가 *무엇을 위한 것인지* 분류하여, 리뷰어가 가장 중요한 표면에 우선순위를 둘 수 있게 합니다:
   - `pii`: 개인식별정보(주민번호, 카드 정보, 연락처)를 다루는 엔드포인트. 데이터 노출 및 과도한 수집 검토 대상.
   - `admin`: 관리/특권 라우트(`/admin`, 권한 변경 파라미터). 깨진 접근 제어 및 권한 상승의 주요 표적.

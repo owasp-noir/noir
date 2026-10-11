@@ -33,17 +33,26 @@ Not every format turns every `param_type` into a wire body. Use this as a quick 
 | `json` | ✅ (typed field) | ✅ `application/json` | ✅ raw JSON | ✅ JSON body |
 | `form` | ✅ (typed field) | ✅ urlencoded or multipart | ✅ `urlencoded` | ✅ urlencoded body |
 | `file` | ✅ (typed field) | ✅ multipart `format: binary` | ✅ `formdata` file | ✅ multipart upload |
-| `xml` | ✅ (typed field) | ✅ `application/xml` | ✅ raw XML (`<name/>` if empty) | ➖ not baked into the command — use OAS / Postman / JSON |
+| `xml` | ✅ (typed field) | ✅ `application/xml` | ✅ raw XML (`<name/>` if empty) | ➖ not baked into the command; use OAS / Postman / JSON |
 
 Details: [cURL](curl/#xml-request-bodies), [OpenAPI](openapi/), [Postman](more/#postman-collection).
 
 ## Available Formats
 
-*   **[HTTP Client Commands](curl/)**: Executable cURL, HTTPie, and PowerShell commands for testing endpoints, plus [ADB](curl/#adb-android) (Android) and [simctl](curl/#simctl-ios) (iOS) commands for launching mobile deep links, intents, and content providers.
-*   **[JSON and JSONL](json/)**: For piping into other tools and scripts.
-*   **[YAML](yaml/)**: Easier than JSON to read during manual review.
-*   **[OpenAPI Specification (OAS)](openapi/)**: An OpenAPI document generated from your code, for API documentation or import into security tools.
-*   **[SARIF](sarif/)**: The standard format CI/CD security dashboards ingest.
-*   **[HTML Report](html/)**: A self-contained, interactive HTML report.
-*   **[Mermaid Chart](mermaid/)**: Diagrams of the API structure.
-*   **[Additional Formats](more/)**: TOML, JSONL, Postman collections, Markdown tables, and output filters.
+Every value `-f` accepts (`noir list formats` prints the same list):
+
+| Format | Output | Page |
+|---|---|---|
+| `plain` | Plain text (default) | [More](more/) |
+| `json`, `jsonl` | JSON, JSON Lines | [JSON and JSONL](json/) |
+| `yaml` | YAML | [YAML](yaml/) |
+| `toml` | TOML | [More](more/) |
+| `markdown-table` | Markdown table | [More](more/) |
+| `sarif` | SARIF v2.1.0 | [SARIF](sarif/) |
+| `html` | Self-contained HTML report | [HTML](html/) |
+| `curl`, `httpie`, `powershell` | HTTP client commands | [HTTP Client Commands](curl/) |
+| `adb`, `simctl` | Android / iOS launch commands for mobile entry points | [HTTP Client Commands](curl/#adb-android) |
+| `oas2`, `oas3` | OpenAPI 2.0 (Swagger) / 3.x | [OpenAPI](openapi/) |
+| `postman` | Postman collection | [More](more/) |
+| `only-url`, `only-param`, `only-header`, `only-cookie`, `only-tag` | One value per line | [More](more/) |
+| `mermaid` | Mermaid mindmap | [Mermaid](mermaid/) |

@@ -162,9 +162,9 @@ noir scan . -f json --no-log --strict > endpoints.json
 noir scan . -f jsonl --no-log
 ```
 
-Each line is a self-contained endpoint object:
+Each line is a self-contained endpoint object. With `-P`, passive scan findings follow the endpoints, one per line (tell them apart by shape: endpoints have `url` and `method`, findings have `id` and `info`). If an analyzer failed, each failure comes last as its own line with `tech` and `message` (the same entries `errors` holds in JSON). A clean scan writes no such line. Use `--strict` to turn a degraded scan into a non-zero exit code:
 
 ```jsonl
-{"callees":[],"url":"/","method":"GET","internal":false,"details":{"code_paths":[{"path":"src/testapp.cr","line":3}],"technology":"crystal_kemal"},"protocol":"http","kind":"","tags":[],"params":[{"name":"x-api-key","value":"","param_type":"header","tags":[]}]}
-{"callees":[],"url":"/query","method":"POST","internal":false,"details":{"code_paths":[{"path":"src/testapp.cr","line":17}],"technology":"crystal_kemal"},"protocol":"http","kind":"","tags":[],"params":[{"name":"my_auth","value":"","param_type":"cookie","tags":[]},{"name":"query","value":"","param_type":"form","tags":[]}]}
+{"callees":[],"url":"/","method":"GET","internal":false,"details":{"code_paths":[{"path":"./src/testapp.cr","line":3}],"technology":"crystal_kemal"},"protocol":"http","kind":"","tags":[],"params":[{"name":"x-api-key","value":"","param_type":"header","tags":[]}]}
+{"callees":[],"url":"/query","method":"POST","internal":false,"details":{"code_paths":[{"path":"./src/testapp.cr","line":17}],"technology":"crystal_kemal"},"protocol":"http","kind":"","tags":[],"params":[{"name":"my_auth","value":"","param_type":"cookie","tags":[]},{"name":"query","value":"","param_type":"form","tags":[]}]}
 ```

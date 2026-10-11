@@ -8,6 +8,8 @@ sort_by = "weight"
 
 Developer-only flags that do not appear in `--help` output. Names, behavior, and availability may change without notice.
 
+They replace the prompts Noir sends to an LLM, so they only do something when AI analysis is on (`--ai-provider`, plus `--ai-model` for most providers).
+
 Available flags
 
 - `--override-analyze-prompt`: Overrides the internal ANALYZE_PROMPT for individual file analysis.
@@ -23,6 +25,7 @@ When to use these flags
 
 Usage tips
 
+- Pass the prompt as a separate argument. The `--flag=value` form is rejected, and so is a value that starts with `-`.
 - Quote prompt strings to preserve spaces and special characters.
 - For multi-line prompts, read from a file with command substitution.
 - Validate with a small fixture directory before scaling up.
@@ -69,7 +72,7 @@ Notes and caveats
 
 - Output may vary across runs depending on prompt content and LLM behavior.
 - Use single quotes for literal strings if your shell expands characters unexpectedly, or read prompts from files.
-- Ensure LLM environment is configured (API keys, etc.) if your workflow relies on optimization steps.
+- Set up the AI provider first (API key, model). `--override-llm-optimize-prompt` has no effect with `--ai-no-optimize`.
 
 Screenshot examples
 

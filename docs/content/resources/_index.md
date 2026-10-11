@@ -17,4 +17,4 @@ Supplementary references for OWASP Noir: FAQ, troubleshooting, artwork, and how 
 *   **[Artwork](artwork/)**: Official logos, mascots, and visual resources.
 *   **[Contact](contact/)**: How to reach the Noir team.
 
-For information on debugging flags and release procedures, please see the [Development](../development/) section.
+Debug flags and the release process are covered in the [Development](../development/) section.

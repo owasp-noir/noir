@@ -23,7 +23,7 @@ JSON은 다음 단계가 읽는 포맷이야. jq든 스크립트든 AI 감사 �
 noir scan . -f json --no-log
 ```
 
-결과는 `endpoints`, `passive_results`, `errors` 배열을 담은 객체입니다. 각 엔드포인트에는 URL, HTTP 메서드, 파라미터(타입: `query`, `path`, `header`, `cookie`, `form`, `json`, `file`, `xml` 등), 소스 코드 위치(`details.code_paths`), 해당 엔드포인트를 만든 분석기(`details.technology`), 그리고 Tagger가 붙인 보안 태그가 들어갑니다. 아래 예시는 태거를 켠 상태(`-T`)로 만든 것이며, `tags` 배열이 채워진 이유도 그 때문입니다.
+결과는 `endpoints`, `passive_results`, `errors` 배열을 담은 객체입니다. 각 엔드포인트에는 URL, HTTP 메서드, 파라미터(타입: `query`, `path`, `header`, `cookie`, `form`, `json`, `file`, `xml` 등), 소스 코드 위치(`details.code_paths`), 엔드포인트를 만든 분석기(`details.technology`), 그리고 태거가 붙인 보안 태그가 들어갑니다. 아래 예시는 태거를 켠 상태(`-T`)로 만든 것이며, `tags` 배열이 채워진 이유도 그 때문입니다.
 
 같은 엔드포인트를 여러 분석기가 찾으면(예: Go 라우터와 프로젝트의 OpenAPI 문서) Noir는 하나의 항목으로 합칩니다. `details.technology`는 병합에서 이긴 분석기이고, `details.technologies`는 기여한 모든 분석기를 정렬·중복 제거해 담은 목록입니다. 이 목록은 항목이 둘 이상일 때만 출력되므로, 분석기 하나만 본 엔드포인트는 이전과 똑같은 모양입니다. 모든 출처가 필요한 소비자는 `technologies`가 있으면 그것을 읽고, 없으면 `[technology]`로 대체하면 됩니다.
 
@@ -162,9 +162,9 @@ noir scan . -f json --no-log --strict > endpoints.json
 noir scan . -f jsonl --no-log
 ```
 
-아래와 같이 각 줄은 하나의 엔드포인트입니다.
+각 줄은 독립된 엔드포인트 객체 하나입니다. `-P`를 쓰면 엔드포인트 뒤에 패시브 스캔 결과가 한 줄에 하나씩 붙습니다(엔드포인트에는 `url`, `method`가 있고, 패시브 결과에는 `id`, `info`가 있어서 구분할 수 있습니다). 분석기가 실패하면 실패 하나당 `tech`, `message`가 담긴 줄이 맨 뒤에 붙습니다(JSON의 `errors` 항목과 같은 내용). 문제없는 스캔에는 이 줄이 없습니다. 스캔이 온전하지 않을 때 0이 아닌 종료 코드를 받으려면 `--strict`를 쓰세요.
 
 ```jsonl
-{"callees":[],"url":"/","method":"GET","internal":false,"details":{"code_paths":[{"path":"src/testapp.cr","line":3}],"technology":"crystal_kemal"},"protocol":"http","kind":"","tags":[],"params":[{"name":"x-api-key","value":"","param_type":"header","tags":[]}]}
-{"callees":[],"url":"/query","method":"POST","internal":false,"details":{"code_paths":[{"path":"src/testapp.cr","line":17}],"technology":"crystal_kemal"},"protocol":"http","kind":"","tags":[],"params":[{"name":"my_auth","value":"","param_type":"cookie","tags":[]},{"name":"query","value":"","param_type":"form","tags":[]}]}
+{"callees":[],"url":"/","method":"GET","internal":false,"details":{"code_paths":[{"path":"./src/testapp.cr","line":3}],"technology":"crystal_kemal"},"protocol":"http","kind":"","tags":[],"params":[{"name":"x-api-key","value":"","param_type":"header","tags":[]}]}
+{"callees":[],"url":"/query","method":"POST","internal":false,"details":{"code_paths":[{"path":"./src/testapp.cr","line":17}],"technology":"crystal_kemal"},"protocol":"http","kind":"","tags":[],"params":[{"name":"my_auth","value":"","param_type":"cookie","tags":[]},{"name":"query","value":"","param_type":"form","tags":[]}]}
 ```

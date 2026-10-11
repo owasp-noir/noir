@@ -8,20 +8,20 @@ sort_by = "weight"
 
 Noir는 웹 프레임워크와 API 명세뿐만 아니라 CLI 애플리케이션의 **커맨드라인 인터페이스**도 엔드포인트로 추출합니다. CLI 프로그램의 인자 파서 역시 공격 표면입니다. 외부에서 제공되는 플래그, 위치 인자, 환경 변수가 프로그램으로 흘러 들어가 셸, SQL 쿼리, 파일 경로, 네트워크 호출에 도달할 수 있습니다.
 
-Noir는 각 (서브)커맨드를 엔드포인트로 모델링하고, 해당 커맨드가 받는 입력을 기록합니다.
+Noir는 각 (서브)커맨드를 엔드포인트 하나로 보고, 그 커맨드가 받는 입력을 기록합니다.
 
 ## 엔드포인트 모델
 
-CLI 진입점은 `method = "CLI"`, `protocol = "cli"`를 가진 엔드포인트입니다. URL은 커맨드를 가리킵니다:
+CLI 진입점은 `method = "CLI"`, `protocol = "cli"`를 가진 엔드포인트입니다. URL은 커맨드를 가리킵니다.
 
 | URL 형태 | 의미 |
 |---|---|
 | `cli://<binary>` | 루트 커맨드(서브커맨드 없이 실행되는 프로그램) |
 | `cli://<binary>/<subcommand>` | 서브커맨드(`git commit`, `tool serve` 등) |
 
-바이너리 이름은 프로젝트 매니페스트가 있으면 거기서 가져오며(`go.mod`, `Cargo.toml`, `package.json`의 `bin`/`name`, `*.csproj`, `argparse(prog=...)` 등), 없으면 소스 파일 / 디렉터리 이름으로 대체됩니다.
+바이너리 이름은 프로젝트 매니페스트가 있으면 거기서 가져오며(`go.mod`, `Cargo.toml`, `package.json`의 `bin`/`name`, `*.csproj`, `argparse(prog=...)` 등), 없으면 소스 파일이나 디렉터리 이름을 씁니다.
 
-입력은 `param_type`으로 구분되는 파라미터입니다:
+입력은 파라미터로 기록되고 `param_type`으로 구분합니다.
 
 | param_type | 의미 | 예시 |
 |---|---|---|
@@ -29,7 +29,7 @@ CLI 진입점은 `method = "CLI"`, `protocol = "cli"`를 가진 엔드포인트�
 | `argument` | 위치 인자 | `arg1`, `source`, `files` |
 | `env` | 커맨드가 읽는 환경 변수 | `API_TOKEN`, `DATABASE_URL` |
 
-기본 텍스트 출력에서는 `flags` / `arguments` / `env` 섹션으로 렌더링됩니다:
+plain 출력에서는 `flags` / `arguments` / `env` 항목으로 나옵니다.
 
 ```
 CLI cli://mytool/serve
@@ -40,7 +40,7 @@ CLI cli://mytool/serve
 
 ## 지원 언어 및 라이브러리
 
-Noir는 각 언어의 내장 argv / flag / 환경 변수 메커니즘과 주요 CLI 라이브러리를 탐지합니다. 원시(raw) 환경 변수 읽기는 **게이팅**됩니다. 실제 CLI 진입점에 대해서만 노출되므로, 환경에서 설정을 읽는 웹 서버가 잘못된 `cli://` 엔드포인트를 남기지 않습니다.
+Noir는 각 언어의 내장 argv / flag / 환경 변수 메커니즘과 주요 CLI 라이브러리를 탐지합니다. 환경 변수를 직접 읽는 코드는 **조건부로** 잡습니다. 실제 CLI 진입점일 때만 결과에 나오므로, 환경 변수에서 설정을 읽는 웹 서버가 엉뚱한 `cli://` 엔드포인트를 만들지 않습니다.
 
 | 언어 | 내장 | 라이브러리 |
 |---|---|---|
@@ -68,7 +68,7 @@ Noir는 각 언어의 내장 argv / flag / 환경 변수 메커니즘과 주요 
 
 ## 출력 동작
 
-CLI 엔드포인트는 애플리케이션 표면의 일부이므로 구조화된 인벤토리(JSON, JSONL, YAML, TOML, SARIF, Markdown, mermaid, HTML)에 유지됩니다. 반면 HTTP 형태의 출력 및 전송(cURL, HTTPie, PowerShell, OpenAPI 2.0 / 3.0, Postman, 능동 프로브 / 프록시 전송)에서는 **제외**됩니다. 커맨드 실행은 보내는 HTTP 요청이 아니기 때문입니다. HTTP 파라미터 취약점을 분류하는 HUNT 태거도 CLI 입력은 건너뜁니다.
+CLI 엔드포인트는 애플리케이션 표면의 일부이므로 구조화된 인벤토리(JSON, JSONL, YAML, TOML, SARIF, Markdown, mermaid, HTML)에 유지됩니다. 반면 HTTP 형태의 출력 및 전송(cURL, HTTPie, PowerShell, OpenAPI 2.0 / 3.0, Postman, 능동 프로브 / 프록시 전송)에서는 **제외**됩니다. 명령 실행은 보낼 수 있는 HTTP 요청이 아니기 때문입니다. HTTP 파라미터 취약점을 분류하는 HUNT 태거도 CLI 입력은 건너뜁니다.
 
 ## 참고 및 한계
 

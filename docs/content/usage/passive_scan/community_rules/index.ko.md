@@ -14,7 +14,7 @@ sort_by = "weight"
 
 ## 규칙 기여하기
 
-커뮤니티에 규칙을 공유하려면 [noir-passive-rules](https://github.com/owasp-noir/noir-passive-rules) 저장소에 Pull Request를 보내세요. 머지되면 모든 Noir 사용자가 일반적인 규칙 업데이트 흐름을 통해 해당 규칙을 받게 됩니다. 규칙 형식은 [패시브 스캔 규칙](../rule/) 문서를 참고하세요.
+커뮤니티에 규칙을 공유하려면 [noir-passive-rules](https://github.com/owasp-noir/noir-passive-rules) 저장소에 Pull Request를 보내세요. 머지되면 모든 Noir 사용자가 평소의 규칙 업데이트로 그 규칙을 받습니다. 규칙 형식은 [패시브 스캔 규칙](../rule/) 문서를 참고하세요.
 
 ## 서드파티/커스텀 규칙 세트 사용하기
 
@@ -24,4 +24,4 @@ sort_by = "weight"
 noir scan /app -P --passive-scan-path ./my-rules/
 ```
 
-이 플래그를 사용하면 해당 실행에서는 기본 규칙 대신 지정한 규칙이 사용되며, 여러 번 지정해 여러 디렉터리나 파일을 함께 로드할 수 있습니다. 또는 `~/.config/noir/passive_rules/`에 `.yml`/`.yaml` 파일을 추가해도 됩니다. 이 디렉터리는 하위 경로까지 재귀적으로 로드됩니다.
+이 플래그를 쓰면 그 실행에서는 기본 규칙 대신 지정한 규칙을 씁니다. 디렉터리만 받으며(파일 하나를 주면 오류), 여러 번 지정해 여러 디렉터리를 함께 로드할 수 있습니다. 또는 `~/.config/noir/passive_rules/`에 `.yml`/`.yaml` 파일을 추가해도 됩니다. 이 디렉터리는 하위 경로까지 재귀적으로 로드됩니다.

@@ -40,7 +40,7 @@ CLI cli://mytool/serve
 
 ## Supported languages and libraries
 
-Noir detects the built-in argv / flag / environment mechanisms of each language plus its major CLI libraries. Raw environment reads are **gated**: they are only surfaced for genuine CLI entry points, so a web server that reads config from the environment does not leak spurious `cli://` endpoints.
+Noir detects the built-in argv / flag / environment mechanisms of each language plus its major CLI libraries. Raw environment reads are **gated**: they only show up for real CLI entry points, so a web server that reads config from the environment does not leak spurious `cli://` endpoints.
 
 | Language | Built-in | Libraries |
 |---|---|---|

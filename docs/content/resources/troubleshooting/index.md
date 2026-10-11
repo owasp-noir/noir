@@ -16,7 +16,7 @@ Something on fire? Start with the symptom below that matches. Most of these have
 
 - Check that you are pointing to the correct directory: `noir scan ./your-app`
 - Verify that your framework is supported: `noir list techs`
-- Try scanning with `--verbose` to see which technologies were detected
+- Check the detection step in the log. It lists each detected technology; if it says `No technologies detected`, name the framework yourself with `-t`: `noir scan . -t rails`
 - If your framework is not supported, use [AI-Powered Analysis](@/get_started/ai_power/index.md) to detect endpoints
 
 ## Scan Takes Too Long
@@ -25,7 +25,7 @@ Something on fire? Start with the symptom below that matches. Most of these have
 
 - Use `--only-techs` to run just those detectors and skip the rest: `noir scan . --only-techs rails`
   (`--techs` is different: it adds techs to the analyzer set without narrowing detection)
-- Use `--exclude-techs` to drop known irrelevant frameworks from the result
+- Use `--exclude-techs` to skip the analyzers of detected frameworks you don't need (the log marks them `(skip)`)
 - Use `--exclude-path` to skip vendored or generated trees: `--exclude-path "vendor/*,**/node_modules/**"`
 - AI-powered analysis caches responses; subsequent runs on the same codebase will be faster
 
@@ -43,7 +43,8 @@ Something on fire? Start with the symptom below that matches. Most of these have
 
 - Requests fail after `NOIR_AI_CONNECT_TIMEOUT` (default 10s) if the host is unreachable, and after `NOIR_AI_TIMEOUT` (default 300s) if the provider accepts the request but never answers
 - Raise `NOIR_AI_TIMEOUT` when a slow local model legitimately needs longer to generate; lower `--ai-max-token` to send smaller bundles instead
-- Rate limits (HTTP 429) are retried three times with backoff. If warnings persist, reduce `--concurrency`
+- Rate limits (HTTP 429) and transient gateway errors (502, 503, ...) are retried with backoff, up to three attempts in total. If warnings persist, reduce `--concurrency` or cap the run with `--ai-max-requests`
+- If a proxy or gateway drops connections that sit idle while the model generates, add `--ai-stream` (OpenAI-compatible providers)
 
 ## Docker Permission Issues
 
@@ -56,7 +57,7 @@ Something on fire? Start with the symptom below that matches. Most of these have
 
 **Symptom:** Tab completion doesn't work after installation.
 
-- If installed via Homebrew, completions are installed automatically
+- If you installed with Homebrew (`brew install noir` or the `owasp-noir/noir` tap), completions are set up automatically for bash, zsh and fish. Open a new shell
 - For manual setup, see [Shell Completions](@/usage/configurations/shell-completion/index.md)
 - After setting up, restart your shell or run `source ~/.zshrc` (or equivalent)
 

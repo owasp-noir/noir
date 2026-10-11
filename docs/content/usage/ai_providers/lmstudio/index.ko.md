@@ -17,6 +17,8 @@ sort_by = "weight"
 
 ## 사용 방법
 
+LM Studio로 Noir를 실행합니다:
+
 ```bash
 noir scan ./spec/functional_test/fixtures/hahwul \
      --ai-provider=lmstudio \

@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-Connect Noir to Large Language Models (cloud-based, local, or ACP agent-based) for deeper code analysis. AI helps identify endpoints in unsupported languages and frameworks.
+Connect Noir to a large language model (a cloud API, a local runtime, or an ACP agent) to find endpoints in languages and frameworks the static analyzers don't support.
 
 {% mascot(mood="idea") %}
 Static rules don't know your framework? Hand the code to an LLM and I'll still find the endpoints.
@@ -59,7 +59,7 @@ noir scan . --ai-provider acp:codex
 | `--ai-model` | Model name (e.g., `gpt-5.5`), optional for `acp:*` |
 | `--ai-key` | API key (prefer `NOIR_AI_KEY` or `--ai-key-file`: argv is visible in the process list) |
 | `--ai-key-file` | Read the API key from a file (surrounding whitespace is stripped) |
-| `--ai-temperature` | Sampling temperature for every AI request (default: `0.3`, and `0` for `--ai-agent` steps; use `0` for repeatable CI runs). Fixed-sampling models such as GPT-5 and the o-series ignore it |
+| `--ai-temperature` | Sampling temperature for every AI request (default: `0.3`, and `0` for `--ai-agent` steps; use `0` for repeatable CI runs). Fixed-sampling models such as GPT-5, the o-series and recent Claude models ignore it |
 | `--ai-seed` | Sampling seed, sent where the provider supports one (OpenAI-compatible `seed`, Ollama `options.seed`) |
 | `--ai-agent` | Enable agentic AI workflow (iterative tool-calling loop) |
 | `--ai-agent-max-steps` | Max steps for AI agent loop (default: `20`) |
@@ -78,18 +78,18 @@ noir scan . --ai-provider acp:codex
 
 Noir has built-in presets for several popular AI providers:
 
-| Prefix | Default Host |
+| Prefix | Base URL or command |
 |---|---|
-| `openai` | `https://api.openai.com` |
-| `xai` | `https://api.x.ai` |
-| `github` (legacy) | `https://models.github.ai` |
+| `openai` | `https://api.openai.com/v1` |
+| `xai` | `https://api.x.ai/v1` |
+| `github` (legacy) | `https://models.github.ai/inference` |
 | `azure` | `https://models.inference.ai.azure.com` |
 | `openrouter` | `https://openrouter.ai/api/v1` |
-| `anthropic` | `https://api.anthropic.com` (native Messages API) |
+| `anthropic` | `https://api.anthropic.com/v1` (native Messages API) |
 | `gemini` | `https://generativelanguage.googleapis.com/v1beta/openai` |
-| `vllm` | `http://localhost:8000` |
-| `ollama` | `http://localhost:11434` |
-| `lmstudio` | `http://localhost:1234` |
+| `ollama` | `http://localhost:11434/v1` |
+| `lmstudio` | `http://localhost:1234/v1` |
+| `vllm` | `http://localhost:8000/v1` |
 | `acp:codex` | `npx @zed-industries/codex-acp` |
 | `acp:gemini` | `gemini --experimental-acp` |
 | `acp:claude` | `npx @zed-industries/claude-agent-acp` |
@@ -107,9 +107,11 @@ For raw ACP and agent stderr logs, set `NOIR_ACP_RAW_LOG=1`.
 | Variable | Description |
 |---|---|
 | `NOIR_AI_KEY` | API key, used when `--ai-key` is not passed |
+| `ANTHROPIC_API_KEY` | Fallback key for the `anthropic` provider when neither `--ai-key` nor `NOIR_AI_KEY` is set |
 | `NOIR_AI_TIMEOUT` | Seconds to wait for a provider response (default: `300`) |
 | `NOIR_AI_CONNECT_TIMEOUT` | Seconds to wait for the connection itself (default: `10`) |
 | `NOIR_ACP_RAW_LOG` | `1` to show raw ACP and agent stderr logs |
+| `NOIR_CACHE_DISABLE` | `1` to turn off the LLM response cache for every run |
 | `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` | Send AI requests through an `http://` proxy (lowercase names work too). Loopback hosts always go direct |
 | `SSL_CERT_FILE` | CA bundle to trust, for a provider or TLS-intercepting proxy signed by a private CA |
 
@@ -120,7 +122,7 @@ suffixes (`*` matches everything), not IP ranges.
 ### Retries and Failures
 
 Requests that cannot connect, hit a rate limit (HTTP 429), or fail with a
-transient gateway error are retried up to three times with backoff, honoring
+transient gateway error are tried up to three times in total, with backoff, honoring
 `Retry-After` when the provider sends it. A request that connected and then
 timed out is not retried, since the model was still generating. Raise
 `NOIR_AI_TIMEOUT` if a large bundle against a slow local model needs more than
@@ -129,10 +131,8 @@ request count, cache hits and, when the provider reports them, approximate
 input and output tokens.
 
 A 401, 403, 404 or redirect is not retried: it means a bad key, an unknown
-model or a wrong URL. With an OpenAI-compatible provider (all of them except
-`ollama` and `acp:*`), if the first three requests of a run fail that way or
-cannot connect,
-Noir skips the remaining AI requests instead of repeating the same error for
+model or a wrong URL. With any provider except `ollama` and `acp:*`, if the
+first three requests of a run fail that way or cannot connect, Noir skips the remaining AI requests instead of repeating the same error for
 every file. Files that were not analyzed, for this or any other
 reason, are reported as skipped (the `errors` field in JSON output), and
 `--strict` makes the scan exit with code 2.
@@ -202,7 +202,7 @@ flowchart TB
     Start([Start AI Analysis]) --> InitAdapter[Initialize LLM Adapter]
     InitAdapter --> ProviderCheck{Provider Type?}
     
-    ProviderCheck -->|OpenAI/xAI/etc| GeneralAdapter[General Adapter<br/>OpenAI-compatible API]
+    ProviderCheck -->|OpenAI/Anthropic/etc| GeneralAdapter[General Adapter<br/>OpenAI-compatible or<br/>Anthropic Messages API]
     ProviderCheck -->|Ollama/Local| OllamaAdapter[Ollama Adapter]
     ProviderCheck -->|ACP Agent| ACPAdapter[ACP Adapter<br/>Codex/Gemini/Claude/Custom]
     
@@ -283,7 +283,7 @@ flowchart TB
 ### Key Components
 
 #### LLM Adapter Layer
-Provider-agnostic adapters: **General** (OpenAI-compatible APIs), **Ollama** (native `/api/generate`), and **ACP** (agent runtimes like `acp:codex`).
+Provider-agnostic adapters: **General** (OpenAI-compatible APIs, plus Anthropic's native Messages API), **Ollama** (native `/api/generate`), and **ACP** (agent runtimes like `acp:codex`).
 
 #### LLM File Filtering
 For projects with more than 10 files, the LLM filters the file list to identify likely endpoint files before analysis.

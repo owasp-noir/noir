@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-Visualize API endpoints as a [Mermaid mindmap](https://mermaid-js.github.io/mermaid/#/mindmap) to get a bird's-eye view of your API structure.
+Visualize API endpoints as a [Mermaid mindmap](https://mermaid.js.org/syntax/mindmap.html) to get a bird's-eye view of your API structure.
 
 ## Usage
 
@@ -16,7 +16,7 @@ noir scan . -f mermaid
 
 ## Example Output
 
-The mindmap is a tree: the root node is the API, branches are URL path segments, and each HTTP method hangs off the path it serves. Parameters under a method are grouped by where they travel in the request: `query`, `body`, `headers`, `cookies`, and `path`. Path parameters also surface as `param_*` branches (so `/users/{user_id}` becomes a `param_user_id` segment), and WebSocket routes are tagged `websocket`.
+The mindmap is a tree: the root node is the API, branches are URL path segments, and each HTTP method hangs off the path it serves. Parameters under a method are grouped by where they travel in the request: `headers`, `cookies`, `query`, `body` (JSON and form fields), and `path`. Path parameters also surface as `param_*` branches (so `/users/{user_id}` becomes a `param_user_id` segment), and WebSocket routes are tagged `websocket`. Names are made safe for Mermaid: characters other than letters, digits and `_` become `_`, and a name that starts with a digit gets a `path_` prefix (`x-api-key` → `x_api_key`, `/1.html` → `path_1_html`).
 
 <details>
     <summary>Mermaid Output</summary>

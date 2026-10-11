@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-Noir는 일반적인 보안 취약점 탐지를 위한 기본 규칙을 제공합니다. 패시브 스캔 활성화(`-P`) 시 첫 실행에서 규칙을 자동 초기화하고, 업데이트를 확인하며, 선택적으로 자동 업데이트합니다.
+Noir에는 흔한 보안 취약점을 잡는 기본 규칙이 있습니다. 패시브 스캔(`-P`)을 켜면 첫 실행에서 규칙을 자동으로 내려받고, 업데이트를 확인하며, 원하면 자동으로 업데이트합니다.
 
 {% mascot(mood="hacker") %}
 패시브 스캔은 엔드포인트 스캔과 같은 패스에서 돌아. 코드 속 시크릿이나 위험한 호출을 파일과 줄 번호로 알려줘.
@@ -20,13 +20,17 @@ Noir는 일반적인 보안 취약점 탐지를 위한 기본 규칙을 제공�
 | Linux   | `~/.config/noir/passive_rules/`    |
 | Windows | `%APPDATA%\noir\passive_rules\`   |
 
-## 자동 초기화 및 업데이트 확인
+`NOIR_HOME`을 설정하면 규칙은 `$NOIR_HOME/passive_rules/`에 저장됩니다. 실제로 쓰는 디렉터리는 `noir rules path`로 확인할 수 있습니다.
 
-`-P` 활성화 시 Noir는:
+공식 Docker 이미지에는 `/opt/noir/passive_rules`에 규칙 스냅숏이 들어 있습니다. 사용자 디렉터리가 비어 있으면 Noir는 이 스냅숏을 쓰고 클론과 업데이트 확인을 건너뜁니다. 그래서 컨테이너에서는 git이나 네트워크 없이도 `-P`가 동작합니다.
+
+## 자동 초기화와 업데이트 확인
+
+`-P`를 켜면 Noir는 다음을 합니다:
 1. 첫 실행 시 [noir-passive-rules](https://github.com/owasp-noir/noir-passive-rules) 저장소를 `~/.config/noir/passive_rules/`로 클론
-2. 로컬과 원격 저장소를 비교하여 업데이트 확인
+2. 로컬과 원격 저장소를 비교해 업데이트 확인
 3. 규칙이 오래된 경우 알림
-4. 설정 시 자동 업데이트 수행
+4. 설정했다면 자동 업데이트
 
 저장소: https://github.com/owasp-noir/noir-passive-rules
 
@@ -35,7 +39,9 @@ Noir는 일반적인 보안 취약점 탐지를 위한 기본 규칙을 제공�
 - `--passive-scan-auto-update`: 시작 시 규칙 자동 업데이트
 - `--passive-scan-no-update-check`: 업데이트 확인 건너뜀 (에어갭 환경에 유용). 첫 실행 시의 규칙 자동 초기화도 함께 건너뛰므로, 규칙을 한 번도 내려받지 않은 환경에서는 `~/.config/noir/passive_rules/`에 규칙을 직접 넣거나 `--passive-scan-path`를 사용하세요.
 
-두 옵션은 `~/.config/noir/config.yaml`에서도 설정할 수 있습니다.
+두 옵션은 `~/.config/noir/config.yaml`에서도 설정할 수 있습니다(`passive_scan_auto_update`, `passive_scan_no_update_check`).
+
+스캔과 별개로 규칙을 관리할 수도 있습니다. `noir rules update`는 최신 규칙을 받아오고, `noir rules list`는 설치된 규칙 파일을 보여 주며, `noir rules path`는 규칙 디렉터리를 출력합니다.
 
 ## 사용 예시
 
@@ -79,4 +85,4 @@ noir scan /app -P --passive-scan-no-update-check
 
 ## 규칙 사용자 정의
 
-같은 디렉터리에 `.yml` 또는 `.yaml` 규칙 파일을 추가하면 다음 패시브 스캔 시 자동으로 로드됩니다. 기본 규칙 세트를 수정할 필요가 없습니다.
+같은 디렉터리에 `.yml`이나 `.yaml` 규칙 파일을 넣으면 다음 패시브 스캔에서 자동으로 로드됩니다. 기본 규칙 세트는 고치지 않아도 됩니다.

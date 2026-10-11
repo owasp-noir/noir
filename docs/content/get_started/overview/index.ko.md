@@ -12,33 +12,33 @@ next_page_label = "Noir 설치"
 안녕! 나는 Noir의 마스코트 학이야. Noir가 어떤 도구인지 소개할게.
 {% end %}
 
-Noir는 오픈 소스 SAST 도구입니다. 소스 코드를 읽어 애플리케이션이 노출하는 엔드포인트(경로, 메서드, 파라미터, 헤더, 쿠키, 그리고 그 뒤의 소스 파일)를 추출합니다. Shadow API와 문서화되지 않은 경로도 같은 인벤토리에 함께 나옵니다. 별도의 모드가 아닙니다.
+Noir는 오픈 소스 SAST 도구입니다. 소스 코드를 읽어 애플리케이션이 노출하는 엔드포인트(경로, 메서드, 파라미터, 헤더, 쿠키, 그리고 그 뒤의 소스 파일)를 추출합니다. 섀도우 API와 문서화되지 않은 경로도 같은 인벤토리에 함께 나옵니다. 따로 켜는 모드가 아닙니다.
 
-이 인벤토리는 세 대상에게 전달됩니다:
+이 인벤토리는 세 부류의 사용자가 씁니다:
 
 - **사람 리뷰어.** 보안 엔지니어와 코드 감사자는 저장소 전체를 훑는 대신, 공격자가 도달할 수 있는 진입점과 그 주변 파일/파라미터/태그에 곧바로 집중할 수 있습니다.
 - **AI 감사자.** LLM 기반 SAST 에이전트는 같은 진입점 목록에 더해, 엔드포인트별 리뷰 컨텍스트(`--include callee`로 plain 출력의 1-hop callee, `--ai-context`로 guards/callees/sources/sinks/validators/signals)까지 받습니다.
 - **DAST 도구.** ZAP, Burp Suite, Caido는 크롤링만으로는 절대 닿지 못했을 경로까지 포함된 실제 라우트 목록을 스캔 대상으로 받습니다.
 
-<img src="./noir-usage.jpg" alt="noir scan output: the demo app source on the left, the endpoint and passive results with parameters and tags on the right" width="1800" height="830" loading="lazy" decoding="async">
+<img src="./noir-usage.jpg" alt="noir scan 출력: 왼쪽은 데모 앱 소스, 오른쪽은 파라미터와 태그가 붙은 엔드포인트와 패시브 스캔 결과" width="1800" height="830" loading="lazy" decoding="async">
 
 ## Noir가 하는 일
 
-**엔드포인트 추출.** 정적 분석으로 소스에서 엔드포인트, 파라미터, 헤더, 쿠키를 끌어냅니다. 아무도 문서화하지 않은 것까지 포함합니다.
+**엔드포인트 추출.** 정적 분석으로 소스에서 엔드포인트, 파라미터, 헤더, 쿠키를 뽑아냅니다. 아무도 문서화하지 않은 것까지 포함합니다.
 
 **스택 전반 커버.** 단일 바이너리로 Crystal, Go, Java, JavaScript, Kotlin, PHP, Python, Ruby, Rust, Swift 등 32개 언어, 261개 프레임워크를 지원합니다. 플러그인이나 언어별 설정은 필요 없습니다.
 
-**LLM 폴백.** 네이티브로 지원하지 않는 프레임워크거나 정적 규칙으로 처리하기 어려운 커스텀 라우팅이라면, LLM(OpenAI, Ollama 등)을 연결해 빈 자리를 채웁니다.
+**LLM 폴백.** 기본 지원하지 않는 프레임워크이거나 정적 규칙이 통하지 않는 커스텀 라우팅이라면, LLM(OpenAI, Ollama 등)을 연결해 빈자리를 채우세요.
 
-**DAST 스캐너에 공급.** 엔드포인트를 ZAP, Burp Suite, Caido로 프록시 타깃처럼 흘려보내거나, OpenAPI로 내보내 임포트시킵니다. 페이지에서 링크되지 않아 크롤러가 놓치던 경로도 스캔 범위에 들어옵니다.
+**DAST 스캐너에 공급.** 엔드포인트를 ZAP, Burp Suite, Caido에 프록시로 바로 흘려보내거나, OpenAPI로 내보내 가져가게 하세요. 페이지에 링크되지 않아 스캐너가 놓치던 경로도 스캔 범위에 들어옵니다.
 
-**AI SAST에 쓸 만한 컨텍스트 제공.** Noir가 추출한 엔드포인트 인벤토리는 진입점, 소스 파일, 파라미터, 태그로 구성되며, `--include callee`를 쓰면 각 핸들러가 호출하는 1-hop 함수까지 담깁니다. LLM 기반 SAST, 코드 감사자, 보안 에이전트가 공격자 도달 가능한 버그를 찾는 데 필요한 바로 그 컨텍스트입니다. `--ai-context`를 켜면 한 단계 더 나아가, 엔드포인트별로 집약된 리뷰 컨텍스트(guards, callees, sources, sinks, validators, signals)까지 함께 붙어서 모델이 다시 찾아낼 필요가 없습니다. 모델에게 저장소 전체를 훑게 하는 대신, Noir가 매핑해 둔 표면을 그대로 넘기세요.
+**AI SAST에 쓸 만한 컨텍스트 제공.** Noir가 추출한 엔드포인트 인벤토리는 진입점, 소스 파일, 파라미터, 태그로 구성되며, `--include callee`를 쓰면 각 핸들러가 호출하는 1-hop 함수까지 담깁니다. LLM 기반 SAST, 코드 감사자, 보안 에이전트가 공격자가 닿을 수 있는 버그를 찾는 데 필요한 바로 그 컨텍스트입니다. `--ai-context`를 켜면 엔드포인트마다 리뷰 컨텍스트(guards, callees, sources, sinks, validators, signals)까지 붙으므로 모델이 이를 다시 찾을 필요가 없습니다. 모델에게 저장소 전체를 훑게 하는 대신, Noir가 매핑해 둔 표면을 그대로 넘기세요.
 
 **다음 도구가 읽을 형식으로 출력.** JSON, YAML, OpenAPI 명세, CI/CD용 SARIF, cURL, HTTPie, HTML 리포트, Postman 컬렉션 등 파이프라인의 다음 도구가 기대하는 형식으로 결과가 나옵니다.
 
 ## 어떻게 작동하나요?
 
-Noir로 소스 코드를 스캔하면 자동으로:
+소스 코드를 Noir에 넘기면 자동으로:
 
 1. 프로젝트가 사용하는 언어와 프레임워크를 **탐지**
 2. 코드를 **분석**하여 엔드포인트, 파라미터, 헤더를 추출

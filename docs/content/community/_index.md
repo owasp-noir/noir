@@ -14,4 +14,4 @@ OWASP Noir is a community-driven project, and we welcome contributions and feedb
 
 *   **[Articles & Talks](media/)**: Read articles, blog posts, and watch talks about Noir from community members.
 
-For information on contributing to the project, please see the [Development](../development/) section.
+To contribute, start with the [Development](../development/) section.

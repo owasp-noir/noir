@@ -12,7 +12,7 @@ prev_page_label = "Install Noir"
 Noir is installed. Let's take it for a spin! Point it at a project, see what it finds, and learn how to shape the output.
 {% end %}
 
-This page runs through a first scan end to end: pointing Noir at a project, reading what it reports, and shaping the output for your workflow. Each step builds on the one before it, so it's worth following in order the first time through.
+Here you run a first scan end to end: point Noir at a project, read what it reports, and shape the output for your workflow. Each step builds on the one before, so follow them in order the first time.
 
 ## Run a Scan
 
@@ -54,7 +54,7 @@ If your framework isn't listed, you can still use [AI-powered analysis](@/get_st
 
 ## Try Different Output Formats
 
-The default output is a human-readable table. Depending on your workflow, you might want something else:
+The default output is plain text meant for reading in a terminal. Depending on your workflow, you might want something else:
 
 ```bash
 # Machine-readable JSON for scripting and pipelines
@@ -93,7 +93,7 @@ noir scan . --include path
 Combine multiple enrichments with one flag:
 
 ```bash
-noir scan . --include path,techs -f json -o results.json
+noir scan . --include path,techs
 ```
 
 ## Focus Your Scan
@@ -132,11 +132,11 @@ noir scan . --ai-context
 noir scan . --ai-context guards,sinks
 ```
 
-Derived signals stay linked to their supporting feature buckets. Selecting a
-signal keeps its supporting evidence, and selecting a feature bucket keeps
-only the signals linked to that evidence, so filtered exports retain enough
-context to interpret the finding without adding unrelated signals. The
-cross-bucket priority roll-up is included when signals are selected explicitly.
+Filtering keeps related evidence together. When you select `signals`, each
+signal keeps the buckets it was derived from (for example, an `ssrf` signal
+keeps its `sinks` and `sources`). When you select only other buckets, Noir
+keeps just the signals that depend on them. The `priority_review` roll-up
+appears only when you select `signals`.
 
 See [Callee Coverage](@/usage/supported/callee_coverage/index.md) and [AI Context](@/usage/supported/ai_context_coverage/index.md) for the data shape and per-framework support.
 
@@ -154,7 +154,7 @@ See [Callee Coverage](@/usage/supported/callee_coverage/index.md) and [AI Contex
 | `--pvalue TYPE=VAL`   | Fill parameter values in output (TYPE: any / header / cookie / query / form / json / path) |
 | `--only-techs`        | Run only these tech detectors (skip the rest) |
 | `--techs`             | Add these techs to the analyzer set (in addition to auto-detected ones) |
-| `--exclude-techs`     | Skip these frameworks |
+| `--exclude-techs`     | Drop these techs from the results after detection |
 | `--exclude-path`      | Skip files matching a comma-separated glob list. A pattern with `/` matches the path from the scan base, one without matches a file or directory name; a matched directory skips everything under it |
 | `--status-codes`      | Probe each endpoint and attach the observed HTTP status code |
 | `--exclude-codes`     | Drop endpoints whose probed status matches (comma-separated; pairs with `--status-codes`) |
@@ -181,8 +181,8 @@ See [Callee Coverage](@/usage/supported/callee_coverage/index.md) and [AI Contex
 | `--cache-disable`     | Disable the LLM response cache for this run |
 | `--cache-clear`       | Clear the LLM response cache before running |
 | `--strict`            | Exit with code 2 if any analyzer failed or skipped a file (the scan still reports its results) |
-| `--verbose`           | Detailed logging |
-| `--no-log`            | Suppress all logs |
+| `--verbose`           | Verbose logs; also turns on `--include path` and `--use-all-taggers` |
+| `--no-log`            | Suppress logs and show only the results |
 | `--no-color`          | Disable ANSI colors in plain output |
 | `--no-spinner`        | Disable loading spinner animations |
 

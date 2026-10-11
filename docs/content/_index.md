@@ -130,7 +130,7 @@ template = "landing"
       <div class="flow-step" data-reveal>
         <h3>Read what it found</h3>
         <p>Every endpoint carries the file and line it came from, so a finding is one click away from the code that produced it.</p>
-        <code class="flow-cmd">noir scan ./your-project --include path,techs -f json -o endpoints.json</code>
+        <code class="flow-cmd">noir scan ./your-project -f json -o endpoints.json</code>
       </div>
       <div class="flow-step" data-reveal>
         <h3>Hand it to the next tool</h3>

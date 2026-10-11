@@ -33,7 +33,7 @@ jobs:
 ~~~
 
 - `base_path`: Directory to analyze (`-b/--base-path`)
-- `endpoints`: JSON output for post-processing
+- `endpoints`: The JSON result, for later steps to process
 
 ## Inputs
 
@@ -69,16 +69,17 @@ jobs:
 | `no_log` | Hide execution logs and show only results (`--no-log`) | No | `true` |
 
 **Notes:**
-- Pass boolean options as strings (`'true'`/`'false'`)
-- `output_file` writes to a file; the step outputs are produced regardless
-- The `endpoints` / `passive_results` outputs are only populated for `format: 'json'` or `'jsonl'`. Pick one of those if a later step consumes them
+- Pass boolean options as strings (`'true'`/`'false'`).
+- `output_file` is relative to the workspace. Set it when a later step needs the report file. The step outputs are filled either way.
+- `status_codes`, `exclude_codes` and `probe` need `url`. Without it the scan stops with an error.
+- The `endpoints` / `passive_results` outputs are filled for `json` and `jsonl`. With `jsonl`, the lines are folded into the same single document `json` produces.
 
 ## Outputs
 
 | Name | Description |
 |---|---|
-| `endpoints` | The full Noir result document (`{"endpoints":[...],"passive_results":[...]}`) when `format` is `json` or `jsonl`; empty for any other format |
-| `passive_results` | A JSON array of passive-scan findings when `format` is `json` or `jsonl` (`[]` when passive scan is off or found nothing); empty for any other format |
+| `endpoints` | The full Noir result document (`{"endpoints":[...],"passive_results":[...],"errors":[...]}`) when `format` is `json`. Empty for other formats |
+| `passive_results` | A JSON array of passive-scan findings when `format` is `json`. `[]` when passive scan is off, found nothing, or the format isn't JSON |
 
 Consuming outputs:
 
@@ -221,10 +222,13 @@ jobs:
 
 ### Status Code Configuration
 
+Status codes come from live requests, so `url` must point at a running instance of the app:
+
 ~~~yaml
 - uses: owasp-noir/noir@main
   with:
     base_path: '.'
+    url: 'http://localhost:3000'
     status_codes: 'true'       # include HTTP status codes
     exclude_codes: '404,429'   # suppress noisy codes
 ~~~
@@ -241,21 +245,21 @@ jobs:
 
 ## Best Practices
 
-1. Enable passive scanning (`passive_scan: 'true'`) to surface security smells early.
-2. Tune noise with `passive_scan_severity` and `exclude_codes`.
-3. Include paths (`include_path: 'true'`) to speed up triage and code navigation.
-4. Pin frameworks with `techs` when auto‑detection isn’t enough; use `exclude_techs` to avoid irrelevant analyzers.
-5. Persist results with `actions/upload-artifact`
+1. Turn on passive scanning (`passive_scan: 'true'`) to catch security issues early.
+2. Cut noise with `passive_scan_severity` and `exclude_codes`.
+3. Turn on `include_path: 'true'` so each endpoint points to its source file.
+4. Add frameworks with `techs` when auto-detection misses them. Use `exclude_techs` to drop analyzers you don't need.
+5. Keep results with `actions/upload-artifact`.
 
 ## Troubleshooting
 
 **No endpoints found:**
-- Verify `base_path` points to source directory
-- Check repository contains supported frameworks
-- Specify `techs` explicitly
+- Check that `base_path` points to the source directory
+- Check that the repository uses a supported framework
+- Set `techs` explicitly
 
 **Output too large or slow:**
-- Use `format: 'jsonl'` for streaming
+- Write `format: 'jsonl'` to `output_file` (one endpoint per line)
 - Narrow `base_path` or use `techs`/`exclude_techs`
 
 **Hard to diagnose:**
@@ -265,10 +269,8 @@ jobs:
 **HTTP status noise:**
 - Disable with `status_codes: 'false'` or use `exclude_codes`
 
-
-
 ## Implementation Notes
 
-- Runs in Docker container for consistency
-- Inputs map directly to CLI flags
+- The action runs the `ghcr.io/owasp-noir/noir` Docker image. The image tag follows the ref you pin: `@v1.4.0` uses `1.4.0`, `@main` uses `main`, and a commit SHA uses `latest`. If the tag can't be pulled (for example, a branch with no published image), the action falls back to `latest` with a warning.
+- Each input maps to one CLI flag.
 - See supported technologies: `noir list techs`

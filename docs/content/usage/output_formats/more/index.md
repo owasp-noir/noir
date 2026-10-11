@@ -1,16 +1,52 @@
 +++
 title = "Additional Output Formats"
-description = "Specialized output formats like only-url, only-param, markdown-table, and Postman collections."
+description = "Plain text, only-* filters, markdown-table, TOML, and Postman collections."
 weight = 6
 sort_by = "weight"
 
 +++
 
+## Plain Text (Default)
+
+Without `-f`, Noir prints each endpoint followed by its parameters, grouped by where they travel in the request:
+
+```bash
+noir scan . --no-log
+```
+
+```
+GET /
+  ○ headers: 
+    └── x-api-key
+
+POST /query
+  ○ cookies: 
+    └── my_auth
+  ○ body: 
+    └── query
+```
+
+Add `--include` to show more per endpoint: `path` (source file and line), `techs` (the analyzer), and `callee` (functions the handler calls). `--verbose` turns on `--include path` for you.
+
+```bash
+noir scan . --no-log --include path,techs
+```
+
+```
+GET /
+  ○ headers: 
+    └── x-api-key
+  ○ tech: crystal_kemal
+  ○ file: ./src/testapp.cr (line 3)
+```
+
 ## Filtering with `only-*` Formats
 
-Extract a single type of data from scan results.
+Print one kind of value per line, with nothing else around it. Handy for piping into other tools.
 
 ### URLs Only
+
+Query parameters are appended to the URL as `?name=`.
 
 ```bash
 noir scan . -f only-url
@@ -18,11 +54,11 @@ noir scan . -f only-url
 
 ```
 /
+/paren?kind=
 /query
 /token
 /socket
-/1.html
-/2.html
+/api/v1/users/:id
 ```
 
 ### Parameters Only
@@ -32,6 +68,7 @@ noir scan . -f only-param
 ```
 
 ```
+kind
 query
 client_id
 redirect_url
@@ -61,14 +98,17 @@ my_auth
 
 ### Tags Only
 
+Tags come from taggers, so add `-T`:
+
 ```bash
 noir scan . -f only-tag -T
 ```
 
 ```
-sqli
 oauth
+ssrf
 websocket
+idor
 ```
 
 ## Markdown Table
@@ -77,14 +117,14 @@ websocket
 noir scan . -f markdown-table
 ```
 
-| Endpoint    | Protocol | Params                                                              |
-|-------------|----------|---------------------------------------------------------------------|
-| GET /       | http     | `x-api-key (header)`                                                |
-| POST /query | http     | `my_auth (cookie)` `query (form)`                                   |
-| GET /token  | http     | `client_id (form)` `redirect_url (form)` `grant_type (form)`        |
-| GET /socket | ws       |                                                                     |
-| GET /1.html | http     |                                                                     |
-| GET /2.html | http     |                                                                     |
+```markdown
+| Endpoint | Protocol | Params |
+| -------- | -------- | ------ |
+| `GET /` | http | `x-api-key (header)`  |
+| `POST /query` | http | `my_auth (cookie)` `query (form)`  |
+| `GET /token` | http | `client_id (form)` `redirect_url (form)` `grant_type (form)`  |
+| `GET /socket` | ws | - |
+```
 
 ## TOML
 
@@ -98,7 +138,7 @@ callees = []
 url = "/"
 method = "GET"
 internal = false
-details = { code_paths = [{ path = "src/testapp.cr", line = 3 }], technology = "crystal_kemal" }
+details = { code_paths = [{ path = "./src/testapp.cr", line = 3 }], technology = "crystal_kemal" }
 protocol = "http"
 kind = ""
 tags = []
@@ -109,14 +149,14 @@ callees = []
 url = "/query"
 method = "POST"
 internal = false
-details = { code_paths = [{ path = "src/testapp.cr", line = 17 }], technology = "crystal_kemal" }
+details = { code_paths = [{ path = "./src/testapp.cr", line = 17 }], technology = "crystal_kemal" }
 protocol = "http"
 kind = ""
 tags = []
 params = [{ name = "my_auth", value = "", param_type = "cookie", tags = [] }, { name = "query", value = "", param_type = "form", tags = [] }]
 ```
 
-Configuration-style output that's easy to skim in a terminal or paste into a project config when you want to track endpoints alongside other declarative settings. The TOML serializer carries the full endpoint model (including `--include callee` and `--ai-context` fields when those flags are enabled), and is also the format used by `--diff-path` output when combined with `-f toml`.
+Configuration-style output that's easy to skim in a terminal or paste into a project config. It carries the full endpoint model, including the `--include callee` and `--ai-context` fields when those flags are on. TOML can't write an empty array of tables, so `passive_results` and `errors` only show up when they have entries. In diff mode (`--diff-path` or `--diff-ref`), `-f toml` renders the diff in the same format.
 
 ## JSON Lines (JSONL)
 
@@ -128,7 +168,7 @@ JSONL (`-f jsonl`) is covered together with JSON on the [JSON and JSONL](../json
 noir scan . -f postman -u https://api.example.com
 ```
 
-Generates a Postman Collection v2.1 JSON file. Save the output and import it into Postman for interactive API testing.
+Generates a Postman Collection v2.1 JSON file. Save the output and import it into Postman for interactive API testing. The collection defines a `baseUrl` variable set from `-u` (`http://localhost` without it). Without `-u`, request URLs are written as `{{baseUrl}}/path`, so you can switch targets inside Postman.
 
 Request bodies follow the parameter types Noir recorded: `json` becomes a raw JSON body, `form` becomes `urlencoded`, `file` (with any sibling form fields) becomes `formdata` with `type: file`, and `xml` becomes a raw body with `Content-Type: application/xml` (and the Postman raw language set to `xml`). An empty `xml` param becomes a self-closing tag named after the param (`<body/>` when the name is `body`), so the Postman raw editor stays non-empty and the field remains visible. Without those body types, requests stay header/URL-only as in the sample below.
 
@@ -156,6 +196,12 @@ Request bodies follow the parameter types Noir recorded: `json` becomes a raw JS
           "protocol": "https"
         }
       }
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://api.example.com"
     }
   ]
 }

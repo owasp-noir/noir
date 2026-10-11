@@ -20,6 +20,10 @@ Passive scan runs in the same pass as the endpoint scan. Secrets and dangerous c
 | Linux   | `~/.config/noir/passive_rules/`    |
 | Windows | `%APPDATA%\noir\passive_rules\`   |
 
+If `NOIR_HOME` is set, rules live in `$NOIR_HOME/passive_rules/` instead. `noir rules path` prints the directory in use.
+
+The official Docker image ships a rules snapshot at `/opt/noir/passive_rules`. When the user directory is empty, Noir uses that snapshot and skips the clone and the update check, so `-P` works in the container without git or network.
+
 ## Automatic Initialization and Update Checks
 
 With `-P` enabled, Noir:
@@ -35,7 +39,9 @@ Repository: https://github.com/owasp-noir/noir-passive-rules
 - `--passive-scan-auto-update`: Auto-update rules on startup
 - `--passive-scan-no-update-check`: Skip update checks (useful for air-gapped environments). This also skips first-run rule initialization, so on a machine that has never downloaded the rules, place them in `~/.config/noir/passive_rules/` manually (or pass `--passive-scan-path`) first.
 
-Both options are also configurable via `~/.config/noir/config.yaml`.
+Both options are also configurable via `~/.config/noir/config.yaml` (`passive_scan_auto_update`, `passive_scan_no_update_check`).
+
+You can also manage the rules outside a scan: `noir rules update` pulls the latest rules, `noir rules list` shows the installed rule files, and `noir rules path` prints the rules directory.
 
 ## Example Usage
 
