@@ -24,6 +24,7 @@ jobs:
             system "shards install"
             system "shards build --release --no-debug --production"
             bin.install "bin/noir"
+            generate_completions_from_executable(bin/"noir", "completion")
           test: system "#{bin}/noir", "-v"
           update_readme_table: false
           ignore_warnings: true
