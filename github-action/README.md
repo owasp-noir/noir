@@ -115,7 +115,7 @@ jobs:
 
 | Output | Description |
 |--------|-------------|
-| `endpoints` | The full Noir result document (`{"endpoints": [...], "passive_results": [...]}`) when `format` is `json` or `jsonl`. Empty for plain / yaml / oas / mermaid / etc. |
+| `endpoints` | The full Noir result document (`{"endpoints": [...], "passive_results": [...], "errors": [...]}`) when `format` is `json` or `jsonl` (JSONL lines are folded into one document). Empty for plain / yaml / oas / mermaid / etc. |
 | `passive_results` | JSON array of passive-scan findings when `format` is `json` / `jsonl`; otherwise `[]`. |
 
 For non-JSON formats the raw scan output is still written to the file

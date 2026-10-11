@@ -119,7 +119,7 @@ inputs:
     default: "true"
 outputs:
   endpoints:
-    description: Full Noir result document (`{"endpoints":[...],"passive_results":[...]}`) when format=json|jsonl. Empty otherwise.
+    description: Full Noir result document (`{"endpoints":[...],"passive_results":[...],"errors":[...]}`) when format=json|jsonl (JSONL lines are folded into one document). Empty otherwise.
     value: ${{ steps.noir.outputs.endpoints }}
   passive_results:
     description: JSON array of passive-scan findings when format=json|jsonl. `[]` otherwise.
