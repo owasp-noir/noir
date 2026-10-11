@@ -208,10 +208,9 @@ module LLM
       false
     end
 
-    # The native API lives at the server root. The CLI's own help prints
-    # `ollama -> http://localhost:11434/v1`, and that `/v1` is the
-    # OpenAI-compatible mount: appending `/api/generate` to it yields a 404,
-    # so it is dropped before `LLM::Ollama` builds the endpoint URL.
+    # The native API lives at the server root. A URL ending in `/v1` names
+    # the OpenAI-compatible mount: appending `/api/generate` to it yields a
+    # 404, so it is dropped before `LLM::Ollama` builds the endpoint URL.
     def self.ollama_base_url(provider : String) : String
       prov = provider.strip
       return "http://localhost:11434" unless prov.includes?("://")

@@ -384,7 +384,7 @@ module Noir::OptionsParsing
 
     # Echo the user's original spelling (not the lowercased form) so a typo
     # like `Sinkz` reads as it was written.
-    STDERR.puts "ERROR: #{origin}: unknown feature '#{unknown.first}'. Valid: #{NoirAIContext::FEATURES.join(", ")}.".colorize(:red)
+    STDERR.puts "ERROR: #{origin}: unknown feature '#{unknown.first}'. Valid: #{NoirAIContext::ACCEPTED_FEATURES.join(", ")}.".colorize(:red)
     exit(1)
   end
 end
@@ -588,7 +588,7 @@ def run_options_parser
         openrouter → https://openrouter.ai/api/v1
         anthropic  → https://api.anthropic.com/v1 (native Messages API)
         gemini     → https://generativelanguage.googleapis.com/v1beta/openai
-        ollama     → http://localhost:11434/v1
+        ollama     → http://localhost:11434 (native /api/generate)
         lmstudio   → http://localhost:1234/v1
         vllm       → http://localhost:8000/v1
         acp:codex  → npx @zed-industries/codex-acp
