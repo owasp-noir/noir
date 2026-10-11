@@ -340,13 +340,13 @@ Once an extractor outgrows one file, split it into a directory of part files beh
 
 ## Execution model note
 
-`parallel_analyze` workers (and everything built on it: `scan_files`, `parallel_file_scan`) are fibers on Crystal's default execution context. That context runs one scheduler, but when a worker sits in a slow syscall the runtime can hand the scheduler to another thread. So workers finish in no fixed order, and two of them can briefly run at the same time.
+`parallel_analyze` workers (and everything built on it: `scan_files`, `parallel_file_scan`) are fibers on Crystal's default execution context. That context runs one scheduler, but when a worker sits in a slow syscall the runtime can hand the scheduler to another thread. Workers still run one at a time, but a fiber can resume on a different thread and the order they finish in changes from run to run. (Fibers on `Noir::WorkerThreads` are different: that pool really runs in parallel, so keep it to pure work that touches no shared state.)
 
 What that means for an analyzer:
 
 - Don't let the result depend on which file finishes first. A merge where one file can override another (two services that define the same controller name, say) picks a different winner from run to run.
 - Prefer returning per-file results over appending to shared state from workers. `FileScanEngine#analyze` already merges `analyze_file` results in input order. For a custom shape, use `ordered_file_scan`, `ordered_scan_files` or `ordered_parallel_analyze`, which hand back each file's result in input order.
-- If workers must share a mutable collection, guard it with a `Mutex`.
+- If code can be reached from `Noir::WorkerThreads`, guard any shared mutable collection with a `Mutex`.
 
 Some older analyzers still append to a shared `result` from inside the walk. Don't copy that into new code. See [#2770](https://github.com/owasp-noir/noir/pull/2770) and [#2874](https://github.com/owasp-noir/noir/pull/2874) for the bugs that order dependence caused.
 

@@ -339,13 +339,13 @@ extractor가 한 파일로 감당하기 어려워지면 계속 키우지 말고 
 
 ## 실행 모델 참고
 
-`parallel_analyze`의 worker(그리고 그 위에 만든 `scan_files`, `parallel_file_scan`)는 Crystal 기본 execution context 위의 fiber입니다. 이 context는 스케줄러를 하나만 돌리지만, worker가 느린 syscall에 묶이면 런타임이 스케줄러를 다른 스레드로 넘길 수 있습니다. 그래서 worker가 끝나는 순서는 정해져 있지 않고, 두 worker가 잠깐 동시에 실행될 수도 있습니다.
+`parallel_analyze`의 worker(그리고 그 위에 만든 `scan_files`, `parallel_file_scan`)는 Crystal 기본 execution context 위의 fiber입니다. 이 context는 스케줄러를 하나만 돌리지만, worker가 느린 syscall에 묶이면 런타임이 스케줄러를 다른 스레드로 넘길 수 있습니다. worker는 여전히 한 번에 하나씩 실행되지만, fiber가 다른 스레드에서 이어서 실행될 수 있고 끝나는 순서도 실행할 때마다 달라집니다. (`Noir::WorkerThreads`의 fiber는 다릅니다. 이 풀은 실제로 병렬로 돌기 때문에 공유 상태를 건드리지 않는 순수한 작업만 맡기세요.)
 
 분석기를 쓸 때 지킬 점:
 
 - 어떤 파일이 먼저 끝나느냐에 결과가 좌우되면 안 됩니다. 한 파일이 다른 파일을 덮어쓸 수 있는 병합(같은 컨트롤러 이름을 정의한 두 서비스 등)은 실행할 때마다 다른 쪽이 이깁니다.
 - worker에서 공유 상태에 바로 추가하기보다 파일별 결과를 반환하세요. `FileScanEngine#analyze`는 이미 `analyze_file` 결과를 입력 순서대로 합칩니다. 커스텀 모양이라면 파일별 결과를 입력 순서대로 돌려주는 `ordered_file_scan`, `ordered_scan_files`, `ordered_parallel_analyze`를 쓰세요.
-- worker가 꼭 가변 컬렉션을 공유해야 한다면 `Mutex`로 보호하세요.
+- `Noir::WorkerThreads`에서 실행될 수 있는 코드라면 공유하는 가변 컬렉션을 `Mutex`로 보호하세요.
 
 오래된 분석기 중에는 아직 순회 안에서 공유 `result`에 바로 추가하는 것도 있습니다. 새 코드에 그대로 옮기지 마세요. 순서 의존 때문에 생긴 버그는 [#2770](https://github.com/owasp-noir/noir/pull/2770), [#2874](https://github.com/owasp-noir/noir/pull/2874)를 참고하세요.
 
