@@ -72,7 +72,7 @@ jobs:
 - 불리언 옵션은 문자열(`'true'`/`'false'`)로 넘기세요.
 - `output_file`은 워크스페이스 기준 경로입니다. 뒤 스텝에서 리포트 파일이 필요하면 지정하세요. 스텝 출력값은 지정 여부와 관계없이 채워집니다.
 - `status_codes`, `exclude_codes`, `probe`는 `url`이 있어야 합니다. 없으면 스캔이 에러로 멈춥니다.
-- 뒤 스텝에서 `endpoints` / `passive_results` 출력값을 읽는다면 `format: 'json'`을 쓰세요.
+- `endpoints` / `passive_results` 출력값은 `json`과 `jsonl`에서 채워집니다. `jsonl`이면 각 줄을 모아 `json`과 같은 문서 하나로 만듭니다.
 
 ## 출력값(Outputs)
 

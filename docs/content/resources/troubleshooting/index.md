@@ -57,7 +57,7 @@ Something on fire? Start with the symptom below that matches. Most of these have
 
 **Symptom:** Tab completion doesn't work after installation.
 
-- If you installed with `brew install noir` (Homebrew core), completions are set up automatically. The `owasp-noir/noir` tap does not install them, so use the manual setup
+- If you installed with Homebrew (`brew install noir` or the `owasp-noir/noir` tap), completions are set up automatically for bash, zsh and fish. Open a new shell
 - For manual setup, see [Shell Completions](@/usage/configurations/shell-completion/index.md)
 - After setting up, restart your shell or run `source ~/.zshrc` (or equivalent)
 

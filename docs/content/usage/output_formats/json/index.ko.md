@@ -162,7 +162,7 @@ noir scan . -f json --no-log --strict > endpoints.json
 noir scan . -f jsonl --no-log
 ```
 
-각 줄은 독립된 엔드포인트 객체 하나입니다. `-P`를 쓰면 엔드포인트 뒤에 패시브 스캔 결과가 한 줄에 하나씩 붙습니다(엔드포인트에는 `url`, `method`가 있고, 패시브 결과에는 `id`, `info`가 있어서 구분할 수 있습니다). JSONL에는 `errors` 줄이 없으니, 스캔이 온전하지 않은 경우를 잡아내려면 `--strict`를 쓰세요.
+각 줄은 독립된 엔드포인트 객체 하나입니다. `-P`를 쓰면 엔드포인트 뒤에 패시브 스캔 결과가 한 줄에 하나씩 붙습니다(엔드포인트에는 `url`, `method`가 있고, 패시브 결과에는 `id`, `info`가 있어서 구분할 수 있습니다). 분석기가 실패하면 실패 하나당 `tech`, `message`가 담긴 줄이 맨 뒤에 붙습니다(JSON의 `errors` 항목과 같은 내용). 문제없는 스캔에는 이 줄이 없습니다. 스캔이 온전하지 않을 때 0이 아닌 종료 코드를 받으려면 `--strict`를 쓰세요.
 
 ```jsonl
 {"callees":[],"url":"/","method":"GET","internal":false,"details":{"code_paths":[{"path":"./src/testapp.cr","line":3}],"technology":"crystal_kemal"},"protocol":"http","kind":"","tags":[],"params":[{"name":"x-api-key","value":"","param_type":"header","tags":[]}]}

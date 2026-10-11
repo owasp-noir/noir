@@ -38,6 +38,7 @@ noir scan ./spec/functional_test/fixtures/hahwul \
 - The `ollama` preset talks to Ollama's native `/api/generate` API, not the OpenAI-compatible `/v1` mount. Noir sets `num_ctx` to the prompt budget it sized its requests for, so long prompts are not cut to Ollama's small default context.
 - A hosted Ollama or an authenticating proxy can take a bearer token from `--ai-key` or `NOIR_AI_KEY`.
 - `--ai-stream` does not apply to this provider.
+- A custom URL uses the native API only when its host contains `ollama` (for example `http://ollama.internal:11434`). Any other host, such as `http://gpu-box:11434`, goes through the OpenAI-compatible client, so include the mount: `--ai-provider=http://gpu-box:11434/v1`.
 
 > **v0 → v1 migration:** The standalone `--ollama` / `--ollama-model`
 > flags were removed in v1.0. Use the unified `--ai-provider ollama

@@ -72,7 +72,7 @@ jobs:
 - Pass boolean options as strings (`'true'`/`'false'`).
 - `output_file` is relative to the workspace. Set it when a later step needs the report file. The step outputs are filled either way.
 - `status_codes`, `exclude_codes` and `probe` need `url`. Without it the scan stops with an error.
-- If a later step reads the `endpoints` / `passive_results` outputs, use `format: 'json'`.
+- The `endpoints` / `passive_results` outputs are filled for `json` and `jsonl`. With `jsonl`, the lines are folded into the same single document `json` produces.
 
 ## Outputs
 

@@ -57,7 +57,7 @@ sort_by = "weight"
 
 **증상:** 설치 후 탭 자동완성이 동작하지 않습니다.
 
-- `brew install noir`(Homebrew core)로 설치했다면 자동완성이 자동으로 설정됩니다. `owasp-noir/noir` tap은 설치해 주지 않으므로 수동으로 설정하세요
+- Homebrew(`brew install noir` 또는 `owasp-noir/noir` tap)로 설치했다면 bash, zsh, fish 자동완성이 자동으로 설정됩니다. 새 셸을 여세요
 - 수동 설정은 [셸 자동완성](@/usage/configurations/shell-completion/index.ko.md)을 참조하세요
 - 설정 후 셸을 다시 시작하거나 `source ~/.zshrc`(또는 쓰는 셸에 맞는 명령)를 실행하세요
 
