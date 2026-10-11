@@ -162,9 +162,9 @@ noir scan . -f json --no-log --strict > endpoints.json
 noir scan . -f jsonl --no-log
 ```
 
-Each line is a self-contained endpoint object:
+Each line is a self-contained endpoint object. With `-P`, passive scan findings follow the endpoints, one per line (tell them apart by shape: endpoints have `url` and `method`, findings have `id` and `info`). JSONL has no `errors` line, so use `--strict` if you need to catch a degraded scan:
 
 ```jsonl
-{"callees":[],"url":"/","method":"GET","internal":false,"details":{"code_paths":[{"path":"src/testapp.cr","line":3}],"technology":"crystal_kemal"},"protocol":"http","kind":"","tags":[],"params":[{"name":"x-api-key","value":"","param_type":"header","tags":[]}]}
-{"callees":[],"url":"/query","method":"POST","internal":false,"details":{"code_paths":[{"path":"src/testapp.cr","line":17}],"technology":"crystal_kemal"},"protocol":"http","kind":"","tags":[],"params":[{"name":"my_auth","value":"","param_type":"cookie","tags":[]},{"name":"query","value":"","param_type":"form","tags":[]}]}
+{"callees":[],"url":"/","method":"GET","internal":false,"details":{"code_paths":[{"path":"./src/testapp.cr","line":3}],"technology":"crystal_kemal"},"protocol":"http","kind":"","tags":[],"params":[{"name":"x-api-key","value":"","param_type":"header","tags":[]}]}
+{"callees":[],"url":"/query","method":"POST","internal":false,"details":{"code_paths":[{"path":"./src/testapp.cr","line":17}],"technology":"crystal_kemal"},"protocol":"http","kind":"","tags":[],"params":[{"name":"my_auth","value":"","param_type":"cookie","tags":[]},{"name":"query","value":"","param_type":"form","tags":[]}]}
 ```

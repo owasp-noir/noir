@@ -132,7 +132,7 @@ template = "landing"
       <div class="flow-step" data-reveal>
         <h3>찾아낸 결과를 읽으세요</h3>
         <p>모든 엔드포인트는 출처가 된 파일과 줄 번호를 함께 갖고 있어, 결과에서 코드까지 한 번에 이동합니다.</p>
-        <code class="flow-cmd">noir scan ./your-project --include path,techs -f json -o endpoints.json</code>
+        <code class="flow-cmd">noir scan ./your-project -f json -o endpoints.json</code>
       </div>
       <div class="flow-step" data-reveal>
         <h3>다음 도구로 넘기세요</h3>

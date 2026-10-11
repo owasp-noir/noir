@@ -6,9 +6,9 @@ sort_by = "weight"
 
 +++
 
-ACP(Agent Client Protocol) 제공자를 사용하면 Noir가 직접 HTTP LLM API 대신 AI 에이전트 프로세스와 통신합니다.
+ACP(Agent Client Protocol) 제공업체를 사용하면 Noir가 직접 HTTP LLM API 대신 AI 에이전트 프로세스와 통신합니다.
 
-## 지원되는 ACP 제공자
+## 지원되는 ACP 제공업체
 
 - `acp:codex` -> `npx @zed-industries/codex-acp` 실행
 - `acp:gemini` -> `gemini --experimental-acp` 실행
@@ -73,8 +73,8 @@ NOIR_ACP_ALLOW_TOOL_PERMISSIONS=1 noir scan ./myapp --ai-provider=acp:codex
 
 ## 참고
 
-- `acp:*` 제공자에서는 `--ai-key`가 필요하지 않습니다.
+- `acp:*` 제공업체에서는 `--ai-key`가 필요하지 않습니다.
 - `NOIR_AI_TIMEOUT`은 프롬프트 턴 하나의 제한 시간입니다(기본값 `300`초). `NOIR_AI_CONNECT_TIMEOUT`은 에이전트 시작과 세션 생성의 제한 시간입니다(기본값 `120`초. 첫 `npx` 다운로드에 충분한 시간입니다).
 - ACP 요청은 재시도하지 않으며 `--ai-max-requests`에도 포함되지 않습니다.
-- 캐시 플래그(`--cache-disable`, `--cache-clear`)는 다른 AI 제공자와 동일하게 동작합니다.
+- 캐시 플래그(`--cache-disable`, `--cache-clear`)는 다른 AI 제공업체와 동일하게 동작합니다.
 - `acp:claude-code`는 `acp:claude`와 동일하게 동작하는 alias입니다.

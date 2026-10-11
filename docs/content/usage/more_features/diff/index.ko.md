@@ -69,7 +69,7 @@ GET /profile
 
 ### JSON 및 YAML 출력
 
-`-f json` 또는 `-f yaml`을 사용하면 구조화된 출력을 얻을 수 있습니다. 결과는 세 가지 카테고리로 분류됩니다.
+`-f json` 또는 `-f yaml`을 쓰면 구조화된 출력을 얻을 수 있습니다. 엔드포인트 목록 세 개(`added`, `removed`, `changed`)와 `changes` 목록이 들어 있습니다.
 
 ```json
 {
@@ -115,7 +115,7 @@ noir scan . --diff-ref origin/main --fail-on auth-removed,added -f markdown-tabl
 | `changed` | 양쪽에 모두 있는 엔드포인트의 파라미터나 태그가 달라짐 |
 | `auth-removed` | `auth` 태그가 있던 엔드포인트에서 태그가 사라짐 |
 
-`auth-removed`는 auth 태거 결과에 의존하므로, `-T`나 `--use-taggers`를 주지 않았다면 모든 태거를 자동으로 켭니다. 실패 사유는 `--no-log`여도 stderr로 출력됩니다. 종료 코드 `1`은 여전히 사용법 오류, `2`는 `--strict`의 불완전 스캔이며 `2`가 `3`보다 우선합니다.
+`auth-removed`는 auth 태거 결과에 의존합니다. `-T`와 `--use-taggers`를 둘 다 주지 않았다면 Noir가 모든 태거를 켭니다. `--use-taggers` 목록에 auth 태거가 없으면 auth 태거를 목록에 더합니다. 실패 사유는 `--no-log`여도 stderr로 출력됩니다. 종료 코드 `1`은 여전히 사용법 오류, `2`는 `--strict`의 불완전 스캔이며 `2`가 `3`보다 우선합니다.
 
 같은 검사를 로컬의 git `pre-push` 훅에서도 쓸 수 있습니다.
 

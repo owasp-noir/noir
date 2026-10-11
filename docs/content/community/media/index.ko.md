@@ -8,12 +8,12 @@ sort_by = "weight"
 
 ## 발표
 ### 하이라이트: OWASP Seoul (2025년 8월) - Open Source Gardening
-OWASP Seoul 밋업에서 OWASP Noir 소개와 개발 스토리를 다룬 발표입니다.
+OWASP Seoul 밋업에서 OWASP Noir와 개발 과정을 소개한 발표입니다.
 
 <img src="owasp-seoul.jpg" alt="OWASP Seoul 2025 - Open Source Gardening" width="2622" height="1206" loading="lazy" decoding="async">
 
 ## 기사, 블로그 및 링크
-커뮤니티에서 작성한 OWASP Noir 관련 기사입니다. 여기에 추가를 원하시면 알려주세요!
+커뮤니티가 쓴 OWASP Noir 관련 글입니다. 직접 쓴 글을 여기에 올리고 싶다면 알려주세요!
 
 * [Hello Noir 👋🏼](https://www.hahwul.com/2023/08/03/hello-noir/) by Hahwul
 * [API Attack Surface Detection using Noir](https://danaepp.com/api-attack-surface-detection-using-noir) by Dana Epp

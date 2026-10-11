@@ -15,6 +15,8 @@ Noir를 [OpenAI](https://openai.com)에 연결해 GPT-5.5 같은 모델로 LLM �
 
 ## 사용 방법
 
+OpenAI로 Noir를 실행합니다:
+
 ```bash
 noir scan ./spec/functional_test/fixtures/hahwul \
      --ai-provider=openai \

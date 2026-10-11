@@ -16,7 +16,7 @@ Every pose of me lives in the artwork repository. The set below is what these do
 
 ## What's Available
 
-*   **Official Logos**: Various formats and color schemes
+*   **Official Logos**: Several formats and color schemes
 *   **Mascots**: Official mascot designs and illustrations
 *   **Wallpapers**: Desktop wallpapers featuring Noir artwork
 *   **Other Resources**: Visual assets for presentations and documentation

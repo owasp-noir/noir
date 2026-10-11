@@ -74,4 +74,4 @@ Once loaded, the completer registers at `$edit:completion:arg-completer[noir]`. 
 
 ## Homebrew Users
 
-If you installed Noir via Homebrew, completions are already set up; nothing to do here.
+If you installed Noir with Homebrew, completions are already set up. Nothing to do here.

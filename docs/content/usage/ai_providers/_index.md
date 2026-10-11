@@ -8,6 +8,8 @@ sort_by = "weight"
 
 Noir's LLM analysis supports cloud APIs, local runtimes for offline or private use, and ACP agents. Legacy integrations are listed separately so existing configurations remain discoverable.
 
+`--ai-provider` takes a preset name from the table below or any OpenAI-compatible URL (for example `http://localhost:8000/v1`). Pass the API key with `NOIR_AI_KEY` or `--ai-key-file`; `--ai-key` works too, but the key is then visible in the process list.
+
 ## Provider Comparison
 
 | Provider | Type | API Key | Internet | Best For |

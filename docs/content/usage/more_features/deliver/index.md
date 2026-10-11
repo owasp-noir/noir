@@ -31,7 +31,7 @@ Relevant flags:
 
 ### Path templates
 
-A discovered route like `/users/{id}` cannot be requested literally, so noir fills the placeholder before probing **read-only verbs only** (GET, HEAD, OPTIONS). Numeric-looking names (`id`, `page`, `*_id`, …) get `1`; everything else gets `noir`.
+A discovered route like `/users/{id}` cannot be requested literally, so noir fills the placeholder before probing **read-only verbs only** (GET, HEAD, OPTIONS, QUERY). Numeric-looking names (`id`, `page`, `*_id`, …) get `1`; everything else gets `noir`.
 
 POST, PUT, PATCH and DELETE keep the literal template. Filling them would turn a harmless 404 into a real write (`DELETE /users/1` against a live record), so noir does not do it for you. Through a proxy the template still arrives, and you can edit and replay it deliberately.
 
@@ -41,7 +41,7 @@ Override the value with `--pvalue path=...`, which applies to every verb:
 noir scan ./source -u http://localhost:3000 --probe --pvalue path=id=42
 ```
 
-Reported output always keeps the original template; only the outbound request is concretized.
+The automatic fill only touches the outbound request; the report keeps the original template. A `--pvalue path=...` value is different: it is written into the reported URL too (`/users/:id` is reported as `/users/42`).
 
 ### Replay through a proxy
 
@@ -70,7 +70,7 @@ noir scan ./source -u http://localhost:3000 \
 These headers go to the `-u` target and nowhere else. Most endpoints are paths that noir joined onto `-u`, but an endpoint that already carried its own scheme and host in the source (an OAS `servers:` entry, a HAR capture, a hosted-backend URL) keeps that host, and the host came from the code you are scanning. Those endpoints are still probed; your headers are not attached, and noir names the host once so you can see what was withheld:
 
 ```
-▲ Probe: --probe-header values withheld from https://collector.example.com — it is not the --url target.
+▲ Probe: --probe-header values withheld from https://collector.example.com — it is not the --url target. Endpoints on that host are still probed, without your headers.
 ```
 
 Export destinations (`--export-es`, `--export-webhook`) are unaffected: you named those hosts yourself, so `--probe-header` still authenticates them.

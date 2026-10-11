@@ -59,11 +59,36 @@ noir scan ./app --include path,techs,callee --ai-context
 Positional paths and repeated `-b PATH` work the same way. Use whichever
 reads better in your scripts.
 
-> Multiple codebases, whether positional (`noir scan ./api ./worker`) or
-> repeated `-b`, are scoped as sibling roots, the supported monorepo
-> shape. Nested or overlapping roots (e.g. `noir scan /repo /repo/sub`)
-> don't compose cross-base prefixes, since a definition and its use can
-> resolve to different longest-matching roots; prefer sibling layouts.
+> Pass multiple codebases as sibling roots (`noir scan ./api ./worker`,
+> or repeated `-b`). That is the supported monorepo shape. Nested or
+> overlapping roots (e.g. `noir scan /repo /repo/sub`) don't combine route
+> prefixes across bases, because a definition and its use can resolve to
+> different roots.
+
+### Scan flags
+
+`noir scan -h` groups its flags into these sections. Each section has its
+own page with the details.
+
+| Section | Flags | Details |
+|---------|-------|---------|
+| BASE | `-b/--base-path`, `-u/--url` | [Running Noir](@/get_started/running/index.md) |
+| OUTPUT | `-f/--format`, `-o/--output`, `--pvalue`, `--status-codes`, `--exclude-codes`, `--exclude-path`, `--include`, `--ai-context`, `--no-color`, `--no-spinner`, `--no-log`, `--strict` | [Output Formats](@/usage/output_formats/_index.md), [AI Context Coverage](@/usage/supported/ai_context_coverage/index.md) |
+| PASSIVE SCAN | `-P/--passive-scan`, `--passive-scan-path`, `--passive-scan-severity`, `--passive-scan-auto-update`, `--passive-scan-no-update-check` | [Passive Scanning](@/usage/passive_scan/_index.md) |
+| TAGGER | `-T/--use-all-taggers`, `--use-taggers` | [Tagger](@/usage/more_features/tagger/index.md) |
+| PROBE | `--probe`, `--probe-via`, `--probe-header`, `--probe-match`, `--probe-skip`, `--tls-skip-verify` | [Deliver](@/usage/more_features/deliver/index.md) |
+| EXPORT | `--export-es`, `--export-opensearch`, `--export-webhook` | [Deliver](@/usage/more_features/deliver/index.md) |
+| AI Integration | `--ai-provider`, `--ai-model`, `--ai-key`, `--ai-key-file`, `--ai-temperature`, `--ai-seed`, `--ai-agent`, `--ai-agent-max-steps`, `--ai-dry-run`, `--ai-include-sensitive`, `--ai-no-optimize`, `--ai-native-tools-allowlist`, `--ai-scope`, `--ai-max-token`, `--ai-stream`, `--ai-max-requests` | [AI Providers](@/usage/ai_providers/_index.md), [AI Power](@/get_started/ai_power/index.md) |
+| DIFF | `--diff-path`, `--diff-ref`, `--fail-on` | [Diff](@/usage/more_features/diff/index.md) |
+| TECHNOLOGIES | `-t/--techs`, `--only-techs`, `--exclude-techs` | [Tech Commands](@/usage/supported/tech-commands/index.md) |
+| CONFIG | `--config-file`, `--concurrency` | [Configuration File](@/usage/configurations/configuration_file/index.md) |
+| CACHE | `--cache-disable`, `--cache-clear` | [Cache](#cache) below |
+| DEBUG | `-d/--debug`, `--verbose`, `-h/--help` | `--verbose` also turns on `--include path` and `--use-all-taggers` |
+
+A scan exits with `0` on success. `--strict` makes it exit with `2` when
+an analyzer failed or skipped a file, and `--fail-on` makes a diff scan
+exit with `3` when the diff has one of the listed change types. Both
+still write the full report first.
 
 ### Flag consolidation in v1
 
@@ -93,7 +118,7 @@ forms still work as silent aliases throughout v1.x.
 | `noir list taggers`                        | `--list-taggers`                        |
 | `noir help`                                | `--help-all`                            |
 
-The deliver family was split into two semantic sections in `noir scan -h`: **PROBE** for active HTTP replay against the discovered endpoints and **EXPORT** for shipping the endpoint catalog to an external data store (Elasticsearch, OpenSearch, webhook). See [Delivering Results to Other Tools](@/usage/more_features/deliver/index.md) for the full surface, and [Migrating from v0 to v1](@/get_started/migrate_v0_to_v1/index.md) for the rationale and the new exports added in v1.
+The v0 deliver flags are now split into two sections of `noir scan -h`: **PROBE** sends HTTP requests to the discovered endpoints, and **EXPORT** sends the endpoint list to an external store (Elasticsearch, OpenSearch, webhook). See [Delivering Results to Other Tools](@/usage/more_features/deliver/index.md) for every flag, and [Migrating from v0 to v1](@/get_started/migrate_v0_to_v1/index.md) for why it changed and which exports are new in v1.
 
 ### Removed in v1.0
 
@@ -107,8 +132,7 @@ noir scan ./app --ai-provider ollama --ai-model llama3
 
 ## List
 
-`noir list` shows built-in catalogs. These never grow `update`-style
-actions, so they live as static subjects under one namespace.
+`noir list` prints the built-in catalogs.
 
 ```bash
 noir list techs       # supported languages, frameworks, and specs
@@ -178,15 +202,17 @@ via `NOIR_HOME`, or with `--passive-scan-path PATH` at scan time.
 
 ```bash
 noir completion zsh    > "${fpath[1]}/_noir"
-noir completion bash   > /etc/bash_completion.d/noir
+mkdir -p ~/.local/share/bash-completion/completions
+noir completion bash   > ~/.local/share/bash-completion/completions/noir
 noir completion fish   > ~/.config/fish/completions/noir.fish
 noir completion elvish > ~/.config/elvish/lib/noir.elv  # then `use noir` from rc.elv
 ```
 
-The script knows about every subcommand. Typing `noir <TAB>` completes
-the verb list. `noir scan -<TAB>` completes scan flags. The Elvish
-variant registers the same completer at
-`$edit:completion:arg-completer[noir]`.
+The script knows every subcommand. `noir <TAB>` completes the verb list,
+and `noir scan -<TAB>` completes scan flags. The Elvish script registers
+its completer at `$edit:completion:arg-completer[noir]`. See
+[Shell Completion](@/usage/configurations/shell-completion/index.md) for
+per-shell setup.
 
 ## Version
 
@@ -207,7 +233,7 @@ A small set of flags work on every subcommand, not just `scan`:
 |----------------|----------------------------------------------------------------------|
 | `--no-color`   | Strip ANSI color from every command's output (also honors `NO_COLOR`) |
 | `--no-spinner` | Disable the loading spinner while keeping normal logs                 |
-| `-v, --version`| Print the noir version and exit                                       |
+| `-v`, `-V`, `--version` | Print the noir version and exit                              |
 | `-h, --help`   | Show help for the current command                                     |
 
 These may sit on either side of the verb: `noir --no-color list techs`
@@ -228,10 +254,9 @@ noir scan ./app              # v1 form
 noir scan -b ./app           # v1 verb with v0-style flags
 ```
 
-When the first argument (past any global flag) is not a known verb, the
-router falls back to `scan`.
-CI pipelines, GitHub Actions, Dockerfile entrypoints, and shell aliases
-all keep working without edits.
+When the first argument (after any global flag) is not a known verb, Noir
+runs `scan`. CI pipelines, GitHub Actions, Dockerfile entrypoints, and
+shell aliases keep working without edits.
 
 Deprecation warnings will land in a later v1.x release. The verb form
 becomes mandatory only at v2.x.

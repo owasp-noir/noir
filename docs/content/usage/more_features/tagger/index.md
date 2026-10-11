@@ -70,7 +70,7 @@ Taggers span several kinds of security-relevant signal. Run `noir list taggers` 
 
 - **Parameter vulnerability classes**: `hunt` flags individual parameters that match known-risky names (`sqli`, `ssrf`, `idor`, `file-inclusion`, `command-injection`, …).
 - **Protocol / interface**: `graphql`, `soap`, `websocket`, `mcp`, `cors`.
-- **Authentication & tokens**: `oauth`, `jwt`, plus the framework-aware auth taggers (Spring Security, Django, Express, …).
+- **Authentication & tokens**: `oauth`, `jwt`, plus the framework-aware auth taggers, which tag endpoints that require login with `auth`: `django_auth`, `flask_auth`, `fastapi_auth`, `python_misc_auth`, `spring_auth`, `java_misc_auth`, `ktor_auth`, `scala_auth`, `express_auth`, `nestjs_auth`, `hono_auth`, `js_misc_auth`, `go_auth`, `rust_auth`, `ruby_auth`, `php_auth`, `aspnet_auth`, `fastendpoints_auth`, `elixir_auth`, `swift_auth`, `crystal_auth`, `perl_auth`.
 - **Endpoint sensitivity & purpose**: classify *what an endpoint is for* so reviewers can prioritize the highest-stakes surface:
   - `pii`: handles personally identifiable information (SSN, card data, contact details); review for data exposure and over-collection.
   - `admin`: administrative or privileged routes (`/admin`, privilege-mutating parameters); prime targets for broken access control and privilege escalation.

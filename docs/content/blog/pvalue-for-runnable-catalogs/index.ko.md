@@ -51,7 +51,7 @@ noir scan ./app -f curl -u https://api.example.com \
   --pvalue "query=1"
 ```
 
-두 줄을 뒤집으면 `limit`도 `1`이다. catch-all이 먼저 맞았기 때문. catch-all을 앞에 둔 문서 예시는 이 matcher 기준으로는 틀린 순서다. 이름 지정 → 타입 기본값.
+두 줄을 뒤집으면 `limit`도 `1`이다. catch-all이 먼저 맞았기 때문. 몇몇 문서 예시는 아직 catch-all을 앞에 두는데, 이 matcher에서는 틀린 순서다. 이름 지정 → 타입 기본값.
 
 ## 같은 선언, 세 곳에서 이득 보는 지점
 
@@ -66,7 +66,7 @@ noir scan ./api -f curl -u https://staging.example.com \
   -o /tmp/api.curl.sh
 ```
 
-`source`하면 끝. path 템플릿은 curl 빌더가 내보내는 URL에 이미 치환돼 있다. `{id}`를 줄마다 고칠 일 없다.
+`source`하면 끝. path 템플릿은 curl 빌더가 내보내는 URL에 이미 치환돼 있다. `{id}`를 `sed`로 고칠 일 없다.
 
 ### 팀용 Postman / OpenAPI
 
@@ -105,7 +105,7 @@ noir scan ./api -u https://staging.example.com \
 
 `--status-codes`, `--probe`, `--probe-via` 전부 `-u`가 필요하다.
 
-probe path 채움엔 나중에 뼈아픈 안전장치가 있다. `--pvalue path=…`가 없으면 read-only(GET, HEAD, OPTIONS)에만 `1` / `noir`를 자동으로 넣는다. POST / PUT / PATCH / DELETE는 리터럴 템플릿을 유지해서, 실수로 `DELETE /users/1`이 나가지 않는다. 명시적 `--pvalue path=id=42`는 write를 포함한 *모든* verb에 적용된다. 의도적으로 쓰거나, 준비될 때까지 `--probe-skip "POST"` / `--probe-skip "DELETE"`로 write를 막아 둬라.
+probe의 path 채움에는 겪어 봐야 알게 되는 안전장치가 있다. `--pvalue path=…`가 없으면 Noir는 read-only(GET, HEAD, OPTIONS)에만 `1` / `noir`를 자동으로 넣는다. POST / PUT / PATCH / DELETE는 리터럴 템플릿을 유지해서, 실수로 `DELETE /users/1`이 나가지 않는다. 명시적 `--pvalue path=id=42`는 write를 포함한 *모든* verb에 적용된다. 의도적으로 쓰거나, 준비될 때까지 `--probe-skip "POST"` / `--probe-skip "DELETE"`로 write를 막아 둬라.
 
 ## 기본값은 설정 파일에
 
@@ -135,7 +135,7 @@ noir scan ./api --config-file ./ci/noir.yaml
 
 ## 여기서 자주 밟는다
 
-- **이름 없는 param은 값을 못 받는다.** 구멍은 알지만 이름을 모르는 analyzer 결과는 `--pvalue` 전에 빠진다. curl에 이상한 `=42`는 안 생긴다.
+- **이름 없는 param은 값을 못 받는다.** analyzer가 구멍이 있다는 건 알지만 이름을 모르면, 그 구멍은 `--pvalue` 전에 빠진다. curl에 이상한 `=42`는 안 생긴다.
 - **`body`는 `json`으로 들어간다.** `body`로 기록된 param은 optimizer가 아는 버킷으로 정규화되니 `--pvalue json=…`가 닿는다. 새 스크립트에선 옛 `--set-pvalue-*`보다 v1 `--pvalue TYPE=VAL`을 써라.
 - **헤더는 `-u`를 따른다.** `--probe-header`와 probe payload용 `--pvalue header=…`는 `-u` 타깃용이다. 소스에 absolute host가 이미 찍힌 엔드포인트는 그 host를 유지하고, `-u`용 probe 헤더는 빠진다. 직접 지정한 export 목적지는 헤더를 그대로 받는다.
 - **시크릿은 커밋하지 마라.** CI에서 env로 펼쳐라 (`--pvalue "header=Authorization=Bearer $TOKEN"`). `ci/noir.yaml`에 토큰 넣지 말고.

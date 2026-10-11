@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-Turn discovered endpoints into ready-to-run commands for popular HTTP clients. Use `-u` to set the base URL that gets prepended to each path.
+Turn discovered endpoints into ready-to-run commands for common HTTP clients. Use `-u` to set the base URL that gets prepended to each path. Without `-u`, each command targets the bare path (`'/query'`).
 
 ## cURL
 
@@ -85,9 +85,9 @@ Seed the `@filename` / `Get-Item` path with `--pvalue` when you want a real path
 
 For XML bodies, use one of:
 
-- `-f oas2` / `-f oas3` — `application/xml` requestBody (see [OpenAPI](@/usage/output_formats/openapi/index.md))
-- `-f postman` — raw body with `Content-Type: application/xml` (see [Additional Formats](@/usage/output_formats/more/index.md#postman-collection))
-- `-f json` / `-f yaml` / plain — the `xml` param type is preserved on the endpoint record
+- `-f oas2` / `-f oas3`: `application/xml` requestBody (see [OpenAPI](@/usage/output_formats/openapi/index.md))
+- `-f postman`: raw body with `Content-Type: application/xml` (see [Additional Formats](@/usage/output_formats/more/index.md#postman-collection))
+- `-f json` / `-f yaml` / plain: the `xml` param type is preserved on the endpoint record
 
 The HTML report's "copy as curl" button uses the same curl builder, so it has the same limitation.
 

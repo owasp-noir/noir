@@ -10,7 +10,7 @@ sort_by = "weight"
 Almost every v0 invocation still runs on v1 unchanged. This page is a single place to look up the renames, behavior changes, and the few things that explicitly broke.
 {% end %}
 
-This guide is built for skimming. Start with the short version below, then jump only to the CLI, flag, or output sections that your scripts and dashboards actually touch.
+Read the short version below, then jump to the CLI, flag, or output sections that your scripts and dashboards actually touch.
 
 ## The short version
 
@@ -58,12 +58,31 @@ The pre-v1 terminal flags still route to the equivalent verb:
 | `--use-filters VAL` | `--probe-skip VAL` |
 | `--send-es URL` | `--export-es URL` |
 
-All v0 names continue to parse; they're rewritten to the v1 spelling before the OptionParser runs, so existing CI scripts and Dockerfiles need no changes. The v1 `noir scan -h` doesn't list the legacy names so new users see only the canonical surface.
+All v0 names still parse. They're rewritten to the v1 spelling before the option parser runs, so existing CI scripts and Dockerfiles need no changes. `noir scan -h` doesn't list the old names, so new users see only the v1 ones.
 
 New in v1:
 
 * `--export-opensearch URL`: speaks the same HTTP protocol as Elasticsearch.
 * `--export-webhook URL`: POSTs the endpoint catalog as a single JSON document (`{endpoints, endpoint_count, noir_version}`) to any HTTP receiver (Slack incoming webhooks, Discord, Zapier/n8n, custom internal endpoints).
+
+## Consolidated flags: `--include` and `--pvalue`
+
+v0 had one flag per enrichment and one per parameter type. v1 folds each family into a single flag that takes a list or a `TYPE=VAL` pair. The old spellings still work as silent aliases.
+
+| v0 flag | v1 flag |
+| --- | --- |
+| `--include-path` | `--include path` |
+| `--include-techs` | `--include techs` |
+| `--include-callee` | `--include callee` |
+| `--set-pvalue VAL` | `--pvalue VAL` (or `--pvalue any=VAL`) |
+| `--set-pvalue-header VAL` | `--pvalue header=VAL` |
+| `--set-pvalue-cookie VAL` | `--pvalue cookie=VAL` |
+| `--set-pvalue-query VAL` | `--pvalue query=VAL` |
+| `--set-pvalue-form VAL` | `--pvalue form=VAL` |
+| `--set-pvalue-json VAL` | `--pvalue json=VAL` |
+| `--set-pvalue-path VAL` | `--pvalue path=VAL` |
+
+Combine enrichments in one flag (`--include path,techs`) and repeat `--pvalue` for several types.
 
 ## Config file (`~/.config/noir/config.yaml`)
 
@@ -78,13 +97,13 @@ v0 used the same flat shape as the CLI flags, so the YAML keys followed the v0 f
 | `use_matchers` | `probe_match` |
 | `use_filters` | `probe_skip` |
 
-v0 config files load unchanged; `ConfigInitializer` runs a legacy-key migration before merging into the option set. `noir config show` against a v0 config also prints a one-line note listing every v0 key it migrated, so you know what changed.
+v0 config files load unchanged: Noir renames the old keys before it merges the file into the option set. Running `noir config show` on a v0 config also prints a note that lists each v0 key and its v1 name.
 
 If both spellings are present in the same file (mid-migration), the v1 key wins.
 
 ## Behavior changes worth noting
 
-These don't change flag names, just what scans emit. Each is documented in detail in the [v1.0.0 CHANGELOG](https://github.com/owasp-noir/noir/blob/main/CHANGELOG.md#v100); the highlights:
+These don't change flag names, just what scans emit. The [v1.0.0 CHANGELOG](https://github.com/owasp-noir/noir/blob/main/CHANGELOG.md#v100) has the details. The highlights:
 
 * **Default concurrency** scales with the host's CPU count (clamped to 4–32) instead of v0's fixed `"20"`. Explicit `--concurrency N` / `concurrency:` in config, or the `NOIR_CONCURRENCY` env var, still take precedence.
 * **String interpolation** in route paths (Python `f""`, Ruby/Crystal/Elixir `#{}`, PHP `$var`, Kotlin `${}`) is now preserved as a `{name}` placeholder. v0 silently dropped the interpolation segment or leaked the language syntax into the URL. v1 produces a consistent template and registers the placeholder as a path parameter.
@@ -97,7 +116,7 @@ These don't change flag names, just what scans emit. Each is documented in detai
 
 ## Things that explicitly broke
 
-* `--ollama URL` / `--ollama-model NAME`: both deprecated since 2024. Use `--ai-provider ollama [--ai-model NAME]` instead. The CLI prints a one-line migration hint if either flag is passed.
+* `--ollama URL` / `--ollama-model NAME`: both deprecated since 2024. Use `--ai-provider ollama [--ai-model NAME]` instead. If you pass either flag, Noir stops with an error that shows the replacement command.
 
 That's the entire breaking surface.
 
@@ -108,9 +127,9 @@ The install paths haven't changed:
 ```bash
 brew upgrade noir
 # or
-docker pull ghcr.io/owasp-noir/noir:1.0.0
-# or
-gh release download v1.0.0 -R owasp-noir/noir
+docker pull ghcr.io/owasp-noir/noir:latest
+# or (latest release, Linux x86_64 binary)
+gh release download -R owasp-noir/noir --pattern 'noir-v*-linux-x86_64'
 ```
 
-If something stops working that this page didn't predict, please file an issue on [GitHub](https://github.com/owasp-noir/noir/issues). v0→v1 silent breakage is a release-blocker; we'd rather hear about it.
+If something stops working that this page didn't predict, please file an issue on [GitHub](https://github.com/owasp-noir/noir/issues). Silent v0 to v1 breakage is a release blocker, so we want to hear about it.

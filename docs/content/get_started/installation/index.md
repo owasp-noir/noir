@@ -68,7 +68,7 @@ Scan the current directory:
 docker run --rm -v $(pwd):/tmp ghcr.io/owasp-noir/noir:latest noir scan /tmp
 ```
 
-Image tags follow the OCI/Docker convention without the `v` prefix, e.g. `:0.30.0`, `:0.30`, and `:latest`. (Versions up to v0.29.1 used the `:vX.Y.Z` form; update any pinned references.) All available tags are on the [GitHub Packages page](https://github.com/owasp-noir/noir/pkgs/container/noir).
+Release images are tagged without the `v` prefix: `:1.4.0`, `:1.4`, `:1`, and `:latest`. The `:main` tag tracks the main branch. Versions up to v0.29.1 used the `:vX.Y.Z` form, so update any pinned references. All tags are on the [GitHub Packages page](https://github.com/owasp-noir/noir/pkgs/container/noir).
 
 ## Nix
 
@@ -87,7 +87,7 @@ nix profile upgrade noir
 ```
 
 {% alert_info() %}
-**Tip:** In Docker or restricted environments, you may need to enable experimental features. Use the command below.
+In Docker or other restricted environments, you may need to enable experimental features first:
 {% end %}
 
 ```bash
@@ -146,7 +146,7 @@ To install or update:
 
 ## Debian Package (.deb)
 
-Debian/Ubuntu users can use the `.deb` package from [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest). It integrates with `dpkg`/`apt` like any other system package. Both `amd64` and `arm64` are provided.
+Debian/Ubuntu users can use the `.deb` package from [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest). It integrates with `dpkg`/`apt` like any other system package. Both `amd64` and `arm64` are provided; the commands below use `amd64`, so swap in `arm64` on ARM machines.
 
 To install or update:
 
@@ -187,7 +187,7 @@ yay -S noir
 
 ## RPM Package (.rpm)
 
-Fedora, RHEL, CentOS, openSUSE, and other RPM-based distros can use the `.rpm` package from [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest). Both `x86_64` and `aarch64` are provided.
+Fedora, RHEL, CentOS, openSUSE, and other RPM-based distros can use the `.rpm` package from [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest). Both `x86_64` and `aarch64` are provided; the commands below use `x86_64`, so swap in `aarch64` on ARM machines.
 
 To install:
 
@@ -233,7 +233,7 @@ To update:
 
 ## Alpine Package (.apk)
 
-Alpine Linux users can use the `.apk` package from [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest). Both `x86_64` and `aarch64` are provided.
+Alpine Linux users can use the `.apk` package from [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest). Both `x86_64` and `aarch64` are provided; the commands below use `x86_64`, so swap in `aarch64` on ARM machines.
 
 To install or update:
 
@@ -261,12 +261,12 @@ To install or update:
 For custom builds or contributing back to the project.
 
 {% alert_warning() %}
-Requires the [Crystal](https://crystal-lang.org/install/) programming language.
+Building from source requires the Crystal programming language.
 {% end %}
 
-{% alert_info() %}
-**Windows:** besides [Crystal for Windows](https://crystal-lang.org/install/on_windows/), the build compiles the bundled Tree-sitter grammars with a small shell script, so it also needs [Git for Windows](https://gitforwindows.org/) (for `sh`) and `clang` (the "C++ Clang tools for Windows" component of Visual Studio Build Tools, or [LLVM](https://releases.llvm.org/)). Run the steps below from Git Bash; the binary is written to `bin\noir.exe`.
-{% end %}
+Install Crystal from [crystal-lang.org](https://crystal-lang.org/install/) first.
+
+**Windows:** besides [Crystal for Windows](https://crystal-lang.org/install/on_windows/), the build compiles the bundled Tree-sitter grammars with a small shell script, so it also needs [Git for Windows](https://gitforwindows.org/) (for `sh`) and `clang` (the "C++ Clang tools for Windows" component of Visual Studio Build Tools, or [LLVM](https://releases.llvm.org/)). Run the steps below from Git Bash. The binary is written to `bin\noir.exe`.
 
 To install:
 

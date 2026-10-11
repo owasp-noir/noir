@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-`config.yaml` 파일로 기본 옵션을 설정하여 일관된 스캔을 수행할 수 있습니다.
+`config.yaml`에 기본 옵션을 적어 두면 매번 같은 조건으로 스캔할 수 있습니다.
 
 ## 파일 위치
 
@@ -16,13 +16,13 @@ sort_by = "weight"
 | Linux | `~/.config/noir/` |
 | Windows | `%APPDATA%\noir\` |
 
-설정 파일의 값은 명령줄 인자로 재정의할 수 있습니다. 기본 위치가 아닌 곳에서 설정을 불러오려면 `--config-file <경로>`를 사용하세요:
+설정 파일의 값은 기본값이고, 명령줄 플래그가 있으면 플래그가 이깁니다. 기본 위치가 아닌 곳의 설정을 불러오려면 `--config-file <경로>`를 쓰세요.
 
 ```bash
 noir scan . --config-file ./ci/noir.yaml
 ```
 
-설정 파일은 `noir config` 로도 직접 다룰 수 있습니다:
+`noir config`로 설정 파일을 직접 다룰 수도 있습니다.
 
 ```bash
 noir config init   # 기본 설정 생성 (멱등)
@@ -90,7 +90,7 @@ probe: false
 tls_skip_verify: false
 ```
 
-위 설정은 다음 명령과 동일합니다:
+위 설정은 다음 명령과 같습니다.
 
 ```bash
 noir scan /path/to/my/project -f json -u https://api.example.com --exclude-codes "404,500" -T \
@@ -100,19 +100,19 @@ noir scan /path/to/my/project -f json -u https://api.example.com --exclude-codes
 
 ## 키 참고
 
-`noir config init` 는 지원하는 모든 키가 주석으로 달린 파일을 만듭니다. 위 예시는 자주 쓰는 기본값만 보여 주며, CLI 플래그가 항상 설정 파일보다 우선합니다. 아래 키 이름은 생성 파일과 동일합니다(v0 의 `send_es` / `send_proxy` 같은 옛 이름도 읽히지만 v1 이름으로 옮기는 것이 좋습니다).
+`noir config init`은 지원하는 모든 키에 주석을 단 파일을 만듭니다. 위 예시는 그중 일부만 골라 보여 줍니다. CLI 플래그는 항상 설정 파일보다 우선합니다. 아래 키 이름은 생성된 파일과 같습니다. v0의 `send_es` / `send_proxy` 같은 옛 이름도 읽히지만, v1 이름으로 바꿔 두세요.
 
 ### 스캔 경로와 범위
 
 | 키 | 타입 | CLI 대응 | 설명 |
 |---|---|---|---|
-| `base` | string 또는 list | positional 경로 / `-b` | 기본 스캔 경로 |
+| `base` | string 또는 list | 경로 인자 / `-b` | 기본 스캔 경로 |
 | `url` | string | `-u` / `--url` | 경로 앞에 붙는 기본 URL. status/probe 옵션에 필요 |
 | `exclude_path` | CSV glob | `--exclude-path` | 매치되는 파일 건너뛰기 |
 | `techs` | CSV | `-t` / `--techs` | 자동 탐지에 더해 분석기 집합에 기술 추가 |
 | `only_techs` | CSV | `--only-techs` | 실행할 기술 디텍터 제한 |
 | `exclude_techs` | CSV | `--exclude-techs` | 탐지 후 최종 집합에서 기술 제거 |
-| `concurrency` | int | `--concurrency` / `NOIR_CONCURRENCY` | 워커 수 (기본값: CPU 수를 4–32로 clamp). 우선순위: 플래그 > `NOIR_CONCURRENCY` > 설정 파일 > 기본값 |
+| `concurrency` | int | `--concurrency` / `NOIR_CONCURRENCY` | 워커 수 (기본값: CPU 수, 4–32 범위로 제한). 우선순위: 플래그 > `NOIR_CONCURRENCY` > 설정 파일 > 기본값 |
 
 ### 출력
 
@@ -125,7 +125,7 @@ noir scan /path/to/my/project -f json -u https://api.example.com --exclude-codes
 | `no_spinner` | bool | `--no-spinner` | 스피너 애니메이션 비활성화 |
 | `strict` | bool | `--strict` | 분석기 실패/파일 스킵 시 종료 코드 `2` |
 | `status_codes` | bool | `--status-codes` | 프로브 후 HTTP 상태 코드 첨부 (`url` 필요) |
-| `exclude_codes` | CSV | `--exclude-codes` | 프로브 상태 제외 (`status_codes` 와 함께) |
+| `exclude_codes` | CSV | `--exclude-codes` | 프로브로 얻은 상태 코드 중 제외할 값 (`status_codes`와 함께) |
 | `include_path` | bool | `--include path` | `--include` 의 레거시 bool 형태 |
 | `include_techs` | bool | `--include techs` | `--include` 의 레거시 bool 형태 |
 | `include_callee` | bool | `--include callee` | 1-hop 핸들러 callee 첨부 |
@@ -167,15 +167,15 @@ noir scan /path/to/my/project -f json -u https://api.example.com --exclude-codes
 | `probe_skip` | list | `--probe-skip` | 매치되는 엔드포인트 건너뛰기 |
 | `tls_skip_verify` | bool | `--tls-skip-verify` | 프로브/내보내기/웹훅 TLS 검증 건너뛰기 |
 | `export_es` | string | `--export-es` / `--export-opensearch` | Elasticsearch 또는 OpenSearch URL (두 플래그 모두 이 키에 기록) |
-| `export_webhook` | string | `--export-webhook` | 카탈로그 JSON 을 POST 할 URL |
+| `export_webhook` | string | `--export-webhook` | 엔드포인트 목록 JSON을 POST할 URL |
 
-### AI 와 캐시
+### AI와 캐시
 
 | 키 | 타입 | CLI 대응 | 설명 |
 |---|---|---|---|
 | `ai_provider` | string | `--ai-provider` | 제공업체 접두사 또는 전체 URL |
 | `ai_model` | string | `--ai-model` | 모델 이름 |
-| `ai_key` | string | `--ai-key` / `NOIR_AI_KEY` | 공유 설정에서는 환경 변수 권장 |
+| `ai_key` | string | `--ai-key` / `NOIR_AI_KEY` | 공유하는 설정이라면 환경 변수를 쓰세요 |
 | `ai_agent` | bool | `--ai-agent` | 에이전트형 tool-calling 루프 활성화 |
 | `ai_agent_max_steps` | int | `--ai-agent-max-steps` | 에이전트 루프 상한 |
 | `ai_no_optimize` | bool | `--ai-no-optimize` | LLM 옵티마이저 단계를 건너뜀 |
@@ -191,14 +191,14 @@ noir scan /path/to/my/project -f json -u https://api.example.com --exclude-codes
 | `cache_disable` | bool | `--cache-disable` | LLM 응답 캐시 비활성화 |
 | `cache_clear` | bool | `--cache-clear` | 실행 전 캐시 비우기 |
 
-### Diff 와 진단
+### Diff와 진단
 
 | 키 | 타입 | CLI 대응 | 설명 |
 |---|---|---|---|
 | `diff` | string | `--diff-path` | diff 출력용 이전 코드 경로 |
 | `diff_ref` | string | `--diff-ref` | 비교 기준이 될 git 리비전 |
 | `fail_on` | string | `--fail-on` | 종료 코드 `3`을 낼 diff 결과 종류 (쉼표 구분) |
-| `config_file` | string | `--config-file` | 보통 CLI 로만 지정 |
+| `config_file` | string | `--config-file` | 보통 CLI로만 지정 |
 | `debug` | bool | `-d` / `--debug` | 디버그 로깅 |
 | `verbose` | bool | `--verbose` | 상세 로깅 (`--include path` + 모든 태거) |
 

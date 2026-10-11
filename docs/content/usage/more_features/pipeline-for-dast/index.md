@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-Integrate Noir into your DAST pipeline to ensure security tools test all application endpoints.
+Feed Noir's endpoint list into your DAST pipeline so the scanner tests every route the code defines, not only the ones a crawler finds.
 
 {% mascot(mood="call") %}
 I found the routes; your DAST tool scans them. Hand the list over as OpenAPI or push it straight through a proxy.
@@ -14,7 +14,7 @@ I found the routes; your DAST tool scans them. Hand the list over as OpenAPI or 
 
 ## Integrating with a Proxy Tool
 
-Use Noir's `deliver` feature to send discovered endpoints to a proxy like [OWASP ZAP](https://www.zaproxy.org/), [Burp Suite](https://portswigger.net/burp/documentation), [Caido](https://caido.io/), or [Gori](https://gori.io/).
+Use `--probe-via` ([Delivering Results to Other Tools](../deliver/)) to send discovered endpoints to a proxy like [OWASP ZAP](https://www.zaproxy.org/), [Burp Suite](https://portswigger.net/burp/documentation), [Caido](https://caido.io/), or [Gori](https://gori.io/).
 
 ```bash
 noir scan . -u http://localhost:3000 --probe-via "http://localhost:8080"

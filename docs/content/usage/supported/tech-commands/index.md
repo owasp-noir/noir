@@ -1,19 +1,23 @@
 +++
 title = "Managing Technology Scopes"
-description = "Control which technologies Noir scans using the techs and exclude-techs flags."
+description = "Control which technologies Noir scans with the techs, only-techs, and exclude-techs flags."
 weight = 3
 sort_by = "weight"
 
 +++
 
-Noir can include or exclude specific technologies during scanning, letting you focus on relevant frameworks and reduce noise.
+Noir detects the technologies in your code on its own. Use these flags when you want to add, limit, or drop some of them.
 
 ## Flags
 
-*   `--techs <TECHS>`: Add these techs to the analyzer set in addition to auto-detected ones (comma-separated, e.g., `rails,django`).
-*   `--only-techs <TECHS>`: Restrict auto-detection to these tech detectors (comma-separated, e.g., `rails,django`).
-*   `--exclude-techs <TECHS>`: Exclude the specified technologies from the scan.
+*   `-t`, `--techs <TECHS>`: Add these techs to the analyzer set, on top of the auto-detected ones (comma-separated, e.g. `rails,django`).
+*   `--only-techs <TECHS>`: Run only these tech detectors (comma-separated, e.g. `rails,django`).
+*   `--exclude-techs <TECHS>`: Drop these techs from the result after detection.
 *   `noir list techs`: List all technologies Noir supports.
+
+All three flags can be repeated. Tech names accept short forms: `rails` matches `ruby_rails`, and `kemal` matches `crystal_kemal`.
+
+`--techs` and `--only-techs` look alike but work differently. `--only-techs` limits which detectors run, so the scan is faster and only those techs can be found. `--techs` forces a tech's analyzer to run even if detection missed it. Use both for "only these techs, and run them even if they weren't detected".
 
 ### Include specific technologies
 
@@ -37,4 +41,5 @@ noir scan . --exclude-techs express,koa
 
 ```bash
 noir list techs
+noir list techs -f json   # machine-readable
 ```

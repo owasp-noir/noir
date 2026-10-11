@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-Noir can attach a structured **AI review context** to each endpoint. It groups static signals that LLM-based SAST tools, code reviewers, and security agents commonly need to triage a route, without forcing them to walk the repository themselves.
+Noir can attach a structured **AI review context** to each endpoint. It collects the static signals that LLM-based SAST tools, code reviewers, and security agents need to triage a route, so they don't have to walk the repository themselves.
 
 Use `--ai-context` to enable it:
 
@@ -14,7 +14,7 @@ Use `--ai-context` to enable it:
 noir scan . --ai-context
 ```
 
-Pass a comma-separated bucket list to narrow the output to just the categories you care about. The filter applies at the data layer, so JSON / SARIF / YAML / Postman / OAS all see the same selection, not just the plain-text renderer.
+Pass a comma-separated list of buckets to keep only the categories you need. The filter runs on the data itself, so JSON, SARIF, YAML, Postman, and OAS output get the same selection as plain text.
 
 ```bash
 noir scan . --ai-context=guards,sinks       # auth + sinks, plus linked signals
@@ -29,8 +29,9 @@ Derived signals stay linked to their supporting buckets. Selecting `signals`
 keeps the evidence those signals need (for example `ssrf` keeps
 `outbound_http` sinks), and selecting an evidence bucket keeps only the
 signals linked to it (for example `guards,sinks` still surfaces
-`authz_absence`). The cross-bucket `priority_review` roll-up is included
-when `signals` is selected explicitly.
+`authz_absence`). The cross-bucket `priority_review` roll-up appears only
+when `signals` is in the selection (bare `--ai-context` and `all` include
+it).
 
 In plain output, every endpoint with non-empty context grows an `ai_context:` block. Model-based formats expose the same structure under standard locations:
 
@@ -49,7 +50,7 @@ Every context bucket is a list of entries with `kind`, `name`, optional `source`
 | Bucket | Meaning |
 |---|---|
 | `guards` | Authentication / authorization gates detected on the route (middleware, decorators, `requires_auth`, role checks, etc.) |
-| `callees` | The 1-hop handler callees Noir already collects with `--include callee`, re-emitted under the AI context structure for one-stop consumption |
+| `callees` | The 1-hop handler callees Noir already collects with `--include callee`, repeated inside the AI context so everything is in one place |
 | `sources` | Attacker-controlled inputs that reach the handler: each request parameter, header, cookie, and GraphQL field, plus mobile deep-link payloads. A few server-side value sources worth reviewing (a Spring `@Value` secret, a WebSocket CORS policy) land here too |
 | `sinks` | Likely dangerous operations inferred from the handler body or callee names (SQL, command execution, deserialization, template rendering, file I/O, redirects, etc.) |
 | `validators` | Input-validation and sanitization signals (schema validators, parameter coercion, allow-listing patterns) that mitigate sink risk |

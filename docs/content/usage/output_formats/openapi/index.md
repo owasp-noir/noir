@@ -8,7 +8,7 @@ sort_by = "weight"
 
 Convert scan results into an [OpenAPI Specification](https://www.openapis.org/) document. The generated spec can be imported into Swagger UI, Postman, Insomnia, and similar tools for API documentation, testing, or mock generation.
 
-Noir supports both OAS 2.0 (Swagger) and OAS 3.x.
+Noir supports both OAS 2.0 (Swagger) and OAS 3.x. Pass `-u` to set the server address: it fills `servers` in OAS 3 and `host` / `schemes` in OAS 2. Without it, OAS 3 uses `http://localhost` and OAS 2 leaves `host` out.
 
 ## Usage
 

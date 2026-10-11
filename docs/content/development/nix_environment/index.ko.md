@@ -6,11 +6,11 @@ sort_by = "weight"
 
 +++
 
-Nix를 사용하면 머신에 관계없이 동일한 의존성을 가진 재현 가능한 개발 환경을 구성할 수 있습니다. 시스템 전역 패키지와도 분리됩니다.
+Nix로 재현 가능한 개발 환경을 만들 수 있습니다. 어느 머신에서나 의존성이 같고, 시스템 전역 패키지와도 분리됩니다.
 
 ## Nix 설치
 
-다중 사용자(daemon) 설치가 동시 빌드와 격리 면에서 유리합니다. 단일 사용자 설치는 더 간단하지만 백그라운드 데몬 없이 동작합니다.
+다중 사용자(daemon) 설치를 권장합니다. 동시 빌드를 지원하고 격리도 더 잘 됩니다. 단일 사용자 설치는 더 간단하지만 백그라운드 데몬 없이 동작합니다.
 
 ```sh
 # 다중 사용자 설치 (Linux/macOS 권장)
@@ -26,7 +26,7 @@ sh <(curl -L https://nixos.org/nix/install) --no-daemon
 
 ### Flakes 활성화
 
-[Flakes](https://wiki.nixos.org/wiki/Flakes)는 Nix의 재현 가능한 프로젝트 정의 방식입니다. `~/.config/nix/nix.conf`(또는 `/etc/nix/nix.conf`)에 아래 줄을 추가하여 활성화합니다.
+[Flakes](https://wiki.nixos.org/wiki/Flakes)는 재현 가능한 프로젝트를 정의하는 Nix의 최신 방식입니다. `~/.config/nix/nix.conf`(또는 `/etc/nix/nix.conf`)에 아래 줄을 추가해 켭니다.
 
 ```
 experimental-features = nix-command flakes
@@ -46,9 +46,9 @@ shards install
 just build
 ```
 
-## 대안 - Docker에서 Nix 사용
+## 대안: Docker에서 Nix 사용
 
-호스트에 Nix를 설치하고 싶지 않다면, 공식 Nix Docker 이미지로 로컬 레포를 마운트해서 쓸 수 있습니다.
+호스트에 Nix를 설치하고 싶지 않다면 공식 Nix Docker 이미지를 쓰세요. 아래 명령은 로컬 저장소를 컨테이너에 마운트합니다.
 
 ```sh
 docker run -it --rm -v $(pwd):/workspace -w /workspace nixos/nix bash

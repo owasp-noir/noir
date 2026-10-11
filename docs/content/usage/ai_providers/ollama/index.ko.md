@@ -25,11 +25,19 @@ sort_by = "weight"
 
 ## 사용 방법
 
+Ollama로 Noir를 실행합니다:
+
 ```bash
 noir scan ./spec/functional_test/fixtures/hahwul \
      --ai-provider=ollama \
      --ai-model=gemma4
 ```
+
+## 참고
+
+- `ollama` 프리셋은 OpenAI 호환 `/v1` 경로가 아니라 Ollama 네이티브 `/api/generate` API를 사용합니다. Noir는 요청 크기를 잡을 때 쓴 프롬프트 예산에 맞춰 `num_ctx`를 설정하므로, 긴 프롬프트가 Ollama의 작은 기본 컨텍스트에 맞춰 잘리지 않습니다.
+- 호스팅된 Ollama나 인증 프록시를 쓴다면 `--ai-key`나 `NOIR_AI_KEY`로 bearer 토큰을 넘길 수 있습니다.
+- `--ai-stream`은 이 제공업체에는 적용되지 않습니다.
 
 > **v0 → v1 마이그레이션:** 독립적인 `--ollama` / `--ollama-model` 플래그는
 > v1.0에서 제거되었습니다. 위 예시처럼 통합된 `--ai-provider ollama

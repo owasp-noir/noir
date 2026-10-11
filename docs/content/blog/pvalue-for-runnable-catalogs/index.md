@@ -36,7 +36,7 @@ noir scan ./app -f curl -u https://api.example.com \
 | `42` | Every parameter of the targeted type |
 | `id=42` or `id:42` | Only parameters named `id` |
 
-This runs when the endpoint list is cleaned — ahead of curl / HTTPie / PowerShell / OpenAPI / Postman / JSON / YAML and ahead of probe/export. One declaration, every consumer. Format side: [cURL / HTTPie / PowerShell](@/usage/output_formats/curl/index.md). Probe side: [Delivering Results](@/usage/more_features/deliver/index.md).
+This runs when the endpoint list is cleaned, ahead of curl / HTTPie / PowerShell / OpenAPI / Postman / JSON / YAML and ahead of probe/export. One declaration, every consumer. Format side: [cURL / HTTPie / PowerShell](@/usage/output_formats/curl/index.md). Probe side: [Delivering Results](@/usage/more_features/deliver/index.md).
 
 ## Order bites
 
@@ -51,7 +51,7 @@ noir scan ./app -f curl -u https://api.example.com \
   --pvalue "query=1"
 ```
 
-Swap those two lines and `limit` is `1` too — the catch-all fired first. A few doc examples still show the catch-all first; that order is wrong for this matcher. Named rules, then the type-wide default.
+Swap those two lines and `limit` is `1` too: the catch-all fired first. A few doc examples still show the catch-all first; that order is wrong for this matcher. Named rules, then the type-wide default.
 
 ## Same declaration, three places it pays off
 
@@ -66,7 +66,7 @@ noir scan ./api -f curl -u https://staging.example.com \
   -o /tmp/api.curl.sh
 ```
 
-`source` it. Path templates are already substituted in the URL the curl builder emits — no `sed` pass over `{id}`.
+`source` it. Path templates are already substituted in the URL the curl builder emits. No `sed` pass over `{id}`.
 
 ### Postman / OpenAPI for everyone else
 

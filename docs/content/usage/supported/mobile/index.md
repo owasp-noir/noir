@@ -38,8 +38,10 @@ In plain output they render under a `SCHEME` / `INTENT` / `PROVIDER` / `UNIVERSA
 
 ```
 SCHEME myapp://complex/:id
+  ○ path: id
   ○ via: .DeepLinkActivity
   ○ action: android.intent.action.VIEW
+  ○ category: android.intent.category.DEFAULT
   ○ host: complex
   ○ package: com.example.myapp
 ```

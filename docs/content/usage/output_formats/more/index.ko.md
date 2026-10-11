@@ -1,16 +1,52 @@
 +++
 title = "추가 출력 형식"
-description = "only-url, only-param, markdown-table, Postman 컬렉션 등 특수 출력 형식입니다."
+description = "일반 텍스트, only-* 필터, markdown-table, TOML, Postman 컬렉션 형식입니다."
 weight = 6
 sort_by = "weight"
 
 +++
 
+## 일반 텍스트 (기본값)
+
+`-f` 없이 실행하면 엔드포인트마다 파라미터를 함께 출력합니다. 파라미터는 요청에서 실리는 위치별로 묶입니다.
+
+```bash
+noir scan . --no-log
+```
+
+```
+GET /
+  ○ headers: 
+    └── x-api-key
+
+POST /query
+  ○ cookies: 
+    └── my_auth
+  ○ body: 
+    └── query
+```
+
+`--include`로 엔드포인트별 정보를 더 볼 수 있습니다. `path`(소스 파일과 줄 번호), `techs`(분석기), `callee`(핸들러가 호출하는 함수) 중에서 고르세요. `--verbose`를 쓰면 `--include path`가 자동으로 켜집니다.
+
+```bash
+noir scan . --no-log --include path,techs
+```
+
+```
+GET /
+  ○ headers: 
+    └── x-api-key
+  ○ tech: crystal_kemal
+  ○ file: ./src/testapp.cr (line 3)
+```
+
 ## `only-*` 형식으로 필터링
 
-스캔 결과에서 단일 유형의 데이터를 추출합니다.
+한 종류의 값만 한 줄에 하나씩 출력합니다. 다른 도구로 파이프할 때 편합니다.
 
 ### URL만
+
+쿼리 파라미터는 URL 뒤에 `?name=` 형태로 붙습니다.
 
 ```bash
 noir scan . -f only-url
@@ -18,11 +54,11 @@ noir scan . -f only-url
 
 ```
 /
+/paren?kind=
 /query
 /token
 /socket
-/1.html
-/2.html
+/api/v1/users/:id
 ```
 
 ### 파라미터만
@@ -32,6 +68,7 @@ noir scan . -f only-param
 ```
 
 ```
+kind
 query
 client_id
 redirect_url
@@ -61,14 +98,17 @@ my_auth
 
 ### 태그만
 
+태그는 태거가 붙이므로 `-T`를 함께 쓰세요.
+
 ```bash
 noir scan . -f only-tag -T
 ```
 
 ```
-sqli
 oauth
+ssrf
 websocket
+idor
 ```
 
 ## 마크다운 테이블
@@ -77,14 +117,14 @@ websocket
 noir scan . -f markdown-table
 ```
 
-| Endpoint    | Protocol | Params                                                              |
-|-------------|----------|---------------------------------------------------------------------|
-| GET /       | http     | `x-api-key (header)`                                                |
-| POST /query | http     | `my_auth (cookie)` `query (form)`                                   |
-| GET /token  | http     | `client_id (form)` `redirect_url (form)` `grant_type (form)`        |
-| GET /socket | ws       |                                                                     |
-| GET /1.html | http     |                                                                     |
-| GET /2.html | http     |                                                                     |
+```markdown
+| Endpoint | Protocol | Params |
+| -------- | -------- | ------ |
+| `GET /` | http | `x-api-key (header)`  |
+| `POST /query` | http | `my_auth (cookie)` `query (form)`  |
+| `GET /token` | http | `client_id (form)` `redirect_url (form)` `grant_type (form)`  |
+| `GET /socket` | ws | - |
+```
 
 ## TOML
 
@@ -98,7 +138,7 @@ callees = []
 url = "/"
 method = "GET"
 internal = false
-details = { code_paths = [{ path = "src/testapp.cr", line = 3 }], technology = "crystal_kemal" }
+details = { code_paths = [{ path = "./src/testapp.cr", line = 3 }], technology = "crystal_kemal" }
 protocol = "http"
 kind = ""
 tags = []
@@ -109,14 +149,14 @@ callees = []
 url = "/query"
 method = "POST"
 internal = false
-details = { code_paths = [{ path = "src/testapp.cr", line = 17 }], technology = "crystal_kemal" }
+details = { code_paths = [{ path = "./src/testapp.cr", line = 17 }], technology = "crystal_kemal" }
 protocol = "http"
 kind = ""
 tags = []
 params = [{ name = "my_auth", value = "", param_type = "cookie", tags = [] }, { name = "query", value = "", param_type = "form", tags = [] }]
 ```
 
-설정 파일과 같은 형식이라 터미널에서 훑어보기 좋고, 엔드포인트를 다른 선언적 설정과 함께 프로젝트 설정에 붙여넣기에도 적합합니다. TOML 직렬화는 전체 엔드포인트 모델을 그대로 담으며 `--include callee` 와 `--ai-context` 플래그가 켜져 있을 때 그 필드도 포함합니다. `--diff-path` 와 함께 `-f toml` 을 쓰면 diff 결과도 같은 형식으로 출력됩니다.
+설정 파일 같은 형식이라 터미널에서 훑어보기 좋고, 프로젝트 설정에 붙여넣기도 쉽습니다. 엔드포인트 모델 전체를 담으며, `--include callee`와 `--ai-context` 플래그를 켜면 그 필드도 들어갑니다. TOML은 빈 테이블 배열을 쓸 수 없어서 `passive_results`와 `errors`는 항목이 있을 때만 나옵니다. diff 모드(`--diff-path` 또는 `--diff-ref`)에서 `-f toml`을 쓰면 diff 결과도 같은 형식으로 나옵니다.
 
 ## JSON Lines (JSONL)
 
@@ -128,9 +168,9 @@ JSONL(`-f jsonl`)은 [JSON 및 JSONL](../json/) 페이지에서 JSON과 함께 �
 noir scan . -f postman -u https://api.example.com
 ```
 
-Postman Collection v2.1 형식의 JSON 파일을 생성합니다. 출력을 저장한 뒤 Postman에 가져오면 바로 API를 테스트할 수 있습니다.
+Postman Collection v2.1 형식의 JSON 파일을 만듭니다. 출력을 저장해서 Postman으로 가져오면 바로 API를 테스트할 수 있습니다. 컬렉션에는 `-u` 값으로 채운 `baseUrl` 변수가 들어갑니다(`-u`가 없으면 `http://localhost`). `-u` 없이 만들면 요청 URL이 `{{baseUrl}}/path` 형태라서 Postman 안에서 대상을 바꿀 수 있습니다.
 
-요청 바디는 Noir가 기록한 파라미터 타입을 따릅니다. `json`은 raw JSON 바디, `form`은 `urlencoded`, `file`(형제 form 필드 포함)은 `type: file`인 `formdata`, `xml`은 `Content-Type: application/xml`인 raw 바디(Postman raw language는 `xml`)가 됩니다. 값이 비어 있는 `xml` 파라미터는 파라미터 이름을 딴 self-closing 태그로 채워집니다(이름이 `body`이면 `<body/>`) — Postman raw 편집기가 비지 않고 필드가 보이게 하기 위함입니다. 이런 바디 타입이 없으면 아래 예시처럼 헤더/URL만 있는 요청으로 남습니다.
+요청 본문은 Noir가 기록한 파라미터 타입을 따릅니다. `json`은 raw JSON 본문, `form`은 `urlencoded`, `file`(형제 form 필드 포함)은 `type: file`인 `formdata`, `xml`은 `Content-Type: application/xml`인 raw 본문(Postman raw language는 `xml`)가 됩니다. 값이 비어 있는 `xml` 파라미터는 파라미터 이름을 딴 self-closing 태그가 됩니다(이름이 `body`이면 `<body/>`). 그래서 Postman raw 편집기가 비지 않고 필드가 보입니다. 이런 본문 타입이 없으면 아래 예시처럼 헤더와 URL만 있는 요청이 됩니다.
 
 ```json
 {
@@ -156,6 +196,12 @@ Postman Collection v2.1 형식의 JSON 파일을 생성합니다. 출력을 저�
           "protocol": "https"
         }
       }
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://api.example.com"
     }
   ]
 }
