@@ -10,6 +10,9 @@
         <param name="dryRun" type="query"/>
         <to uri="direct:addItem"/>
       </post>
+      <verb method="options" uri="/{id}">
+        <to uri="direct:itemOptions"/>
+      </verb>
     </rest>
     <route>
       <from uri="platform-http:/xml/health?httpMethodRestrict=GET"/>

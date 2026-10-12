@@ -23,6 +23,13 @@ public class RestRoutes extends RouteBuilder {
         .type(Order.class)
         .to("direct:updateOrder");
 
+    rest("/a").patch("/p").to("direct:1")
+      .head("/h").to("direct:2")
+      .verb("options", "/o")
+        .param().name("depth").type(RestParamType.query).endParam()
+        .to("direct:3")
+      .verb("patch").to("direct:4");
+
     from("rest:get:ping").to("direct:ping");
     from("jetty:http://0.0.0.0:8080/legacy").to("direct:legacy");
     from("servlet:/upload?httpMethodRestrict=POST,PUT").to("direct:upload");

@@ -11,6 +11,11 @@ expected_endpoints = [
     Param.new("X-Token", "", "header"),
     Param.new("body", "Order", "json"),
   ]),
+  # `.verb(method, path?)` declares the same routes as the verb methods.
+  Endpoint.new("/api/a/p", "PATCH"),
+  Endpoint.new("/api/a/h", "HEAD"),
+  Endpoint.new("/api/a/o", "OPTIONS", [Param.new("depth", "", "query")]),
+  Endpoint.new("/api/a", "PATCH"),
   Endpoint.new("/api/ping", "GET"),
   Endpoint.new("/legacy", "ANY"),
   Endpoint.new("/upload", "POST"),
@@ -21,6 +26,7 @@ expected_endpoints = [
     Param.new("dryRun", "", "query"),
     Param.new("body", "Item", "json"),
   ]),
+  Endpoint.new("/api/xml/items/{id}", "OPTIONS"),
   Endpoint.new("/xml/health", "GET"),
   # YAML DSL (routes.camel.yaml)
   Endpoint.new("/api/yaml/books/{isbn}", "GET"),

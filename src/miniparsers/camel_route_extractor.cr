@@ -151,7 +151,7 @@ module Noir
 
         links.each do |link|
           method = name(link)
-          if in_param && (method == "endParam" || VERBS.includes?(method) || method == "rest")
+          if in_param && (method.in?("endParam", "verb", "rest") || VERBS.includes?(method))
             add_param(current, param_name, param_type)
             in_param = false
           end
@@ -160,9 +160,10 @@ module Noir
           when "rest", "path"
             base = path_arg(link) if method == "rest" || current.nil?
             current = nil if method == "rest"
-          when .in?(VERBS)
-            path = path_arg(link)
-            current = base && path ? Route.new(method.upcase, URLPath.absolute_join(base, path), Noir::TreeSitter.call_name_row(link), true) : nil
+          when "verb", .in?(VERBS)
+            # `verb("options", "/o")` names verbs that have no method of their own.
+            verb, path = method == "verb" ? {string_arg(link), path_arg(link, 1)} : {method, path_arg(link)}
+            current = verb && base && path ? Route.new(verb.upcase, URLPath.absolute_join(base, path), Noir::TreeSitter.call_name_row(link), true) : nil
             current.try { |route| @routes << route }
           when "param"
             next unless current
@@ -193,16 +194,25 @@ module Noir
       end
 
       private def first_arg(call : Node) : Node?
-        Noir::TreeSitter.field(call, "arguments").try { |args| Noir::TreeSitter.first_named_arg(args) }
+        nth_arg(call, 0)
       end
 
-      # "" for a call with no arguments, nil for an unresolvable one.
-      private def path_arg(call : Node) : String?
-        first_arg(call) ? string_arg(call) : ""
+      private def nth_arg(call : Node, index : Int32) : Node?
+        return unless args = Noir::TreeSitter.field(call, "arguments")
+        Noir::TreeSitter.each_named_arg(args) do |arg|
+          return arg if index == 0
+          index -= 1
+        end
+        nil
       end
 
-      private def string_arg(call : Node) : String?
-        return unless arg = first_arg(call)
+      # "" for a call with no such argument, nil for an unresolvable one.
+      private def path_arg(call : Node, index = 0) : String?
+        nth_arg(call, index) ? string_arg(call, index) : ""
+      end
+
+      private def string_arg(call : Node, index = 0) : String?
+        return unless arg = nth_arg(call, index)
         case Noir::TreeSitter.node_type(arg)
         when "string_literal"
           Noir::TreeSitter.decode_string_literal(arg, @source)
@@ -226,8 +236,10 @@ module Noir
         when "rest"
           base = node["path"]? || node["uri"]? || ""
           node.children.each do |verb|
-            next unless verb.element? && VERBS.includes?(verb.name)
-            route = Route.new(verb.name.upcase, URLPath.absolute_join(base, verb["path"]? || verb["uri"]? || ""), xml_row(verb), true)
+            next unless verb.element?
+            # Camel 3's `<verb method="options">` names verbs without an element.
+            next unless method = verb.name == "verb" ? verb["method"]? : (verb.name if VERBS.includes?(verb.name))
+            route = Route.new(method.upcase, URLPath.absolute_join(base, verb["path"]? || verb["uri"]? || ""), xml_row(verb), true)
             route.body_type = verb["type"]?.try(&.split('.').last)
             verb.children.each do |param|
               next unless param.element? && param.name == "param" && (param_name = param["name"]?)
