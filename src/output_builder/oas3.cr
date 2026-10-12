@@ -25,7 +25,7 @@ class OutputBuilderOas3 < OutputBuilder
       form_properties = {} of String => JSON::Any
       file_properties = {} of String => JSON::Any
 
-      url_parts = split_route_url(endpoint.url)
+      url_parts = split_route_url(endpoint)
       route_query = route_query_parameters(url_parts[:query], endpoint)
       route_query.each do |name, values|
         parameters << openapi_parameter(name, "query", false, values)

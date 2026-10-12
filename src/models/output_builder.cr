@@ -104,9 +104,19 @@ class OutputBuilder
   INLINE_QUERY = /\?([^?\/#]*=[^?#]*)/
 
   # Noir uses this fragment shape to distinguish GraphQL/RPC operations that
-  # share one transport path from literal `#` characters in route paths.
+  # share one transport path from literal `#` characters in route paths
+  # (for techs outside `OPERATION_FRAGMENT_TECHS`).
   GRAPHQL_OPERATION_FRAGMENT  = /#[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*/
   JSON_RPC_OPERATION_FRAGMENT = /#[A-Za-z_][A-Za-z0-9_]*_[A-Za-z_][A-Za-z0-9_]*/
+
+  # Techs whose analyzer writes every `#` in its URLs as an operation
+  # fragment: Aura `/aura#apex://Class/ACTION$method`, Apex SOAP
+  # `/services/Soap/class/LeadService#createLead`, Livewire
+  # `/livewire/update#edit-post.save` and v2 `/livewire/message/form#submit`,
+  # OpenRPC `/rpc#getBalance`. Those names don't all fit the shapes above,
+  # and a shape loose enough to fit them would also split a literal `#` in a
+  # hand-written route. An analyzer that adds such fragments belongs here.
+  OPERATION_FRAGMENT_TECHS = Set{"apex_salesforce", "php_livewire", "openrpc"}
 
   # `scheme://authority` at the head of an absolute endpoint URL.
   ROUTE_AUTHORITY = /\A[a-z][a-z0-9+.\-]*:\/\/[^\/]*/i
@@ -412,14 +422,16 @@ class OutputBuilder
   # `paths` key / Postman URL cannot hold: the query string the route spells
   # out (`admin-ajax.php?action=save_settings`, how WordPress addresses an
   # AJAX handler) and the `#fragment` Noir uses to address many operations on
-  # one path (`POST /graphql#Query.users`, `POST /rpc#eth_getBalance`).
+  # one path (`POST /graphql#Query.users`, `POST /rpc#eth_getBalance`): any
+  # `#` for an endpoint from `OPERATION_FRAGMENT_TECHS`, otherwise only the
+  # GraphQL / JSON-RPC shapes.
   #
   # Deliberately not `URI.parse`: an endpoint URL is a route *pattern*, not a
   # URI. `URI.parse` reads the `?` in `/grp/(?:a|b)/(.*)?` as a query
   # separator, truncating the path to `/grp/(` and handing back a query
   # parameter named `:a|b)/(.*)?` that nothing ever declared.
-  protected def split_route_url(url : String) : NamedTuple(route: String, query: Array(Tuple(String, String)), fragment: String?)
-    route = url
+  protected def split_route_url(endpoint : Endpoint) : NamedTuple(route: String, query: Array(Tuple(String, String)), fragment: String?)
+    route = endpoint.url
     query = [] of Tuple(String, String)
 
     if match = route.match(INLINE_QUERY)
@@ -432,7 +444,15 @@ class OutputBuilder
     end
 
     fragment = nil
-    if match = route.match(GRAPHQL_OPERATION_FRAGMENT) || route.match(JSON_RPC_OPERATION_FRAGMENT)
+    # `technologies` too: a merged endpoint's winning `technology` may be
+    # another source that declared the same URL.
+    details = endpoint.details
+    any_fragment = details.technologies.any? { |tech| OPERATION_FRAGMENT_TECHS.includes?(tech) } ||
+                   details.technology.try { |tech| OPERATION_FRAGMENT_TECHS.includes?(tech) }
+    if any_fragment && (index = route.index('#'))
+      fragment = route[(index + 1)..].presence
+      route = route[0...index]
+    elsif match = route.match(GRAPHQL_OPERATION_FRAGMENT) || route.match(JSON_RPC_OPERATION_FRAGMENT)
       fragment = match[0][1..]
       route = route[0...match.begin]
     end

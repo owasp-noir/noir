@@ -23,7 +23,7 @@ class OutputBuilderPostman < OutputBuilder
       # Giraffe's `/legacy(/?)` to `/legacy(` and emitted a query parameter
       # named `:a|b)/(.*)?` for Drogon's `/grp/(?:a|b)/(.*)?`.
       uri = URI.parse(endpoint.url)
-      url_parts = split_route_url(endpoint.url)
+      url_parts = split_route_url(endpoint)
 
       # Build URL parts
       route_p = route_path(url_parts[:route])
