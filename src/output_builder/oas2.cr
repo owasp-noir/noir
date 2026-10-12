@@ -30,7 +30,7 @@ class OutputBuilderOas2 < OutputBuilder
       has_form = false
       has_file = false
 
-      url_parts = split_route_url(endpoint.url)
+      url_parts = split_route_url(endpoint)
       route_query = route_query_parameters(url_parts[:query], endpoint)
       route_query.each do |name, values|
         parameters << swagger_parameter(name, "query", false, values)

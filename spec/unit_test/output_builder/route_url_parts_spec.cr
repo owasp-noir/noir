@@ -114,6 +114,53 @@ describe "route URL parts in reconstructing builders" do
     end
   end
 
+  describe "operation fragments of techs that own every `#`" do
+    it "splits Aura, SOAP and Livewire action names out of OAS paths" do
+      endpoints = {
+        "/aura#apex://CaseController/ACTION$getCases"   => "apex_salesforce",
+        "/aura#apex://CaseController/ACTION$updateCase" => "apex_salesforce",
+        "/services/Soap/class/LeadService#createLead"   => "apex_salesforce",
+        "/livewire/update#edit-post.save"               => "php_livewire",
+        "/livewire/message/contact-form#submit"         => "php_livewire",
+      }.map do |url, tech|
+        details = Details.new
+        details.technology = tech
+        Endpoint.new(url, "POST", details)
+      end
+
+      [render(OutputBuilderOas2.new(builder_options), endpoints), render(OutputBuilderOas3.new(builder_options), endpoints)].each do |doc|
+        paths = doc["paths"]
+        paths.as_h.keys.sort!.should eq(["/aura", "/livewire/message/contact-form", "/livewire/update", "/services/Soap/class/LeadService"])
+        paths["/aura"]["post"]["x-noir-operations"].as_a.map(&.as_s).should eq(
+          ["apex://CaseController/ACTION$getCases", "apex://CaseController/ACTION$updateCase"])
+        paths["/livewire/update"]["post"]["x-noir-operations"].as_a.map(&.as_s).should eq(["edit-post.save"])
+      end
+
+      postman = render(OutputBuilderPostman.new(builder_options), endpoints)
+      postman["item"][0]["name"].as_s.should eq("POST /aura#apex://CaseController/ACTION$getCases")
+      postman["item"][0]["request"]["url"]["raw"].as_s.should eq("{{baseUrl}}/aura")
+    end
+
+    it "splits for a merged endpoint whose winning technology is another source" do
+      details = Details.new
+      details.technology = "har"
+      details.technologies = ["har", "php_livewire"]
+      doc = render(OutputBuilderOas3.new(builder_options), [Endpoint.new("/livewire/update#edit-post.save", "POST", details)])
+      doc["paths"].as_h.keys.should eq(["/livewire/update"])
+    end
+
+    it "splits camelCase OpenRPC methods and drops a bare trailing `#`" do
+      endpoints = ["/rpc#getBalance", "/rpc#"].map do |url|
+        details = Details.new
+        details.technology = "openrpc"
+        Endpoint.new(url, "POST", details)
+      end
+      doc = render(OutputBuilderOas3.new(builder_options), endpoints)
+      doc["paths"].as_h.keys.should eq(["/rpc"])
+      doc["paths"]["/rpc"]["post"]["x-noir-operations"].as_a.map(&.as_s).should eq(["getBalance"])
+    end
+  end
+
   describe "literal hash path characters" do
     it "keeps them in OAS and Postman paths while still splitting operation fragments" do
       endpoint = Endpoint.new("/hash#frag", "GET")
