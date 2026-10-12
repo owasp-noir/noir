@@ -67,7 +67,7 @@ module Detector::Java
     end
 
     private def project_root_for(path : String) : String
-      base = Noir::PathScope.longest_base(path, @base_paths) || @base_path
+      base = @base_paths.size <= 1 ? @base_path : (Noir::PathScope.longest_base(path, @base_paths) || @base_path)
       Noir::PathScope.marker_root(path, base, {"/src/main/java/", "/src/main/kotlin/"}) || File.dirname(path)
     end
   end

@@ -346,12 +346,12 @@ module Analyzer::Java
     end
 
     # The Maven/Gradle module root: everything above the source root that
-    # holds this file. Default for includers; JAX-RS, Quarkus and Helidon
-    # MP override it, and `JavaEngine.project_root_for` above is the
-    # variant Micronaut and Dropwizard call.
+    # holds this file. Default for includers; JAX-RS and Helidon MP
+    # override it, and `JavaEngine.project_root_for` above is the variant
+    # Micronaut and Dropwizard call.
     private def project_root_for(path : String) : String
       base = configured_base_for(path)
-      Noir::PathScope.marker_root(path, base, {"/src/main/java/", "/src/"}) || base
+      Noir::PathScope.marker_root(path, base, {"/src/main/java/", "/src/main/kotlin/", "/src/"}) || base
     end
 
     private def normalize_optional_path(path : String?) : String

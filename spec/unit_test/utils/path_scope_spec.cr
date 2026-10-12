@@ -208,6 +208,15 @@ describe Noir::PathScope do
       Noir::PathScope.marker_root("/home/src/app/pom.xml", "/home/src/app/", {"/src/"}).should be_nil
     end
 
+    it "keeps a marker that straddles the end of the base" do
+      Noir::PathScope.marker_root("/w/app/src/main/java/A.java", "/w/app/src", {"/src/main/java/"}).should eq("/w/app")
+      Noir::PathScope.marker_root("/w/app/src/main/java/A.java", "/w/app/src/main/java", {"/src/main/java/"}).should eq("/w/app")
+    end
+
+    it "prefers a marker wholly below the base over a straddling one" do
+      Noir::PathScope.marker_root("/w/src/app/src/A.java", "/w/src", {"/src/"}).should eq("/w/src/app")
+    end
+
     it "finds a nested module root" do
       Noir::PathScope.marker_root("/w/src/app/api/src/A.java", "/w/src/app", {"/src/"}).should eq("/w/src/app/api")
     end
