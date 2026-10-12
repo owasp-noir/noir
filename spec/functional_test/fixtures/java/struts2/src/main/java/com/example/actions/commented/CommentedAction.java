@@ -8,6 +8,8 @@ import org.apache.struts2.convention.annotation.Namespace;
 // method or class they annotate.
 @Namespace("/commented") // section root
 public class CommentedAction extends ActionSupport {
+    private String label = "목록";
+
     @Action("list") // note
     public String list() {
         return SUCCESS;
