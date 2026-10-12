@@ -12,6 +12,8 @@ expected_endpoints = [
   # A default-exported `new Hono()` app is mounted at its module's path.
   Endpoint.new("/admin", "GET"),
   Endpoint.new("/admin/reindex/:index", "POST", [Param.new("index", "", "path")]),
+  # So is a `createApp()` app from `honox/factory`; no bogus `GET /api/mw`.
+  Endpoint.new("/api/mw/list", "GET"),
   # Not routes: `_renderer`, `_middleware`, `_404`, the `$counter` island
   # and everything outside `app/routes/`.
 ]
