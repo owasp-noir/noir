@@ -11,6 +11,9 @@ describe "Detect JS Nuxtjs" do
 
     instance.applicable?("nuxt.config.ts").should be_true
     instance.detect("nuxt.config.ts", "export default defineNuxtConfig({})").should be_true
+
+    instance.applicable?("nuxt.config.mjs").should be_true
+    instance.detect("nuxt.config.mjs", "export default defineNuxtConfig({})").should be_true
   end
 
   it "detects nuxt imports in source files" do
@@ -26,22 +29,18 @@ describe "Detect JS Nuxtjs" do
     instance.detect("app.js", "const nuxt = require('nuxt');").should be_true
   end
 
-  it "detects server routes with defineEventHandler including .mts" do
-    instance.applicable?("/server/api/users.mts").should be_true
-    instance.detect("/server/api/users.mts", "export default defineEventHandler((event) => { return []; });").should be_true
-
-    instance.applicable?("/server/api/users.ts").should be_true
-    instance.detect("/server/api/users.ts", "export default defineEventHandler((event) => { return []; });").should be_true
-
-    instance.applicable?("/server/routes/test.mjs").should be_true
-    instance.detect("/server/routes/test.mjs", "export default defineEventHandler((event) => { return []; });").should be_true
-
-    instance.applicable?("/server/routes/test.js").should be_true
-    instance.detect("/server/routes/test.js", "export default defineEventHandler((event) => { return []; });").should be_true
+  it "detects nuxt as a package.json dependency" do
+    instance.applicable?("package.json").should be_true
+    instance.detect("package.json", %({"devDependencies":{"nuxt":"^3.11.0"}})).should be_true
+    instance.detect("package.json", %({"dependencies":{"nitropack":"2.9.0"}})).should be_false
+    instance.detect("package.json", %({"keywords":["nuxt"],"dependencies":{"nitropack":"2.9.0"}})).should be_false
   end
 
-  it "does not detect server route directory without defineEventHandler" do
-    instance.detect("/server/api/users.mts", "export const router = express.Router();").should be_false
+  it "does not claim plain Nitro/h3 server routes" do
+    handler = "export default defineEventHandler((event) => { return []; });"
+    instance.detect("/server/api/users.ts", handler).should be_false
+    instance.detect("/server/routes/test.mjs", handler).should be_false
+    instance.detect("nitro.config.ts", "export default defineNitroConfig({})").should be_false
   end
 
   it "does not detect unrelated files" do

@@ -38,16 +38,32 @@ module Analyzer::Javascript
       )
 
       parallel_file_scan([".js", ".ts", ".mjs", ".mts"]) do |path|
-        # Focus on routes/ directory for Nitro
-        next unless path.includes?("/routes/")
+        api_dir = nitro_api_dir(path, project_roots)
+        next unless api_dir || path.includes?("/routes/")
         next unless path_under_project_roots?(path, project_roots)
-        analyze_nitro_file(path, result, seen, mutex, include_callee)
+        analyze_nitro_file(path, api_dir, result, seen, mutex, include_callee)
       end
 
       result
     end
 
-    private def analyze_nitro_file(path : String, result : Array(Endpoint),
+    # Nitro also serves `<srcDir>/api/` under `/api`, where srcDir is the
+    # project root or its `server/`. Unlike `routes/`, `api/` is only read
+    # directly under a discovered root: it is too common a directory name
+    # (`utils/api/`, `apps/api/`, Next's `pages/api/`) to trust anywhere
+    # else, and with no root found it is not read at all.
+    private def nitro_api_dir(path : String, roots : Array(String)) : String?
+      expanded = Noir::PathScope.expand(path)
+      roots.each do |root|
+        {"/api/", "/server/api/"}.each do |dir|
+          prefix = root + dir
+          return prefix if expanded.starts_with?(prefix)
+        end
+      end
+      nil
+    end
+
+    private def analyze_nitro_file(path : String, api_dir : String?, result : Array(Endpoint),
                                    seen : Hash(Tuple(String, String, String), Int32),
                                    mutex : Mutex, include_callee : Bool)
       # Extract endpoint from file path
@@ -55,20 +71,28 @@ module Analyzer::Javascript
       # routes/users/[id].ts -> /users/:id
       # routes/users.get.ts -> /users (GET only)
       # routes/api/items.ts -> /api/items
+      # api/items.get.ts -> /api/items (GET only)
 
       # Scan-base-relative, never absolute: `String#index` takes the
       # FIRST occurrence, so a same-named directory above the scan base
       # won outright and the derived URL changed with the checkout path.
-      scoped = base_relative_path(path)
-      base_path_idx = scoped.index("/routes/")
-      return if base_path_idx.nil?
+      if api_dir
+        # The api dir itself is the dedup scope, so an `api/x.get.ts` and a
+        # `routes/api/x.get.ts` stay two endpoints for the optimizer to merge.
+        routes_root = api_dir
+        relative_path = "api/" + Noir::PathScope.expand(path)[api_dir.size..]
+      else
+        scoped = base_relative_path(path)
+        base_path_idx = scoped.index("/routes/")
+        return if base_path_idx.nil?
 
-      # Everything above `routes/` identifies the Nitro app this file
-      # belongs to — the dedup scope below.
-      routes_root = scoped[0...base_path_idx]
+        # Everything above `routes/` identifies the Nitro app this file
+        # belongs to — the dedup scope below.
+        routes_root = scoped[0...base_path_idx]
 
-      # Get the path after /routes/
-      relative_path = scoped[(base_path_idx + "/routes/".size)..-1]
+        # Get the path after /routes/
+        relative_path = scoped[(base_path_idx + "/routes/".size)..-1]
+      end
 
       # Remove file extension
       relative_path = relative_path.gsub(/\.(js|ts|mjs|mts)$/, "")
