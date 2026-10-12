@@ -12,12 +12,16 @@ module Analyzer::Javascript
   #   app/routes/(marketing)/about.tsx → GET /about
   #
   # `_renderer`, `_middleware`, `_error`, `_404`, `$island` and `-`-prefixed
-  # modules are not routes. A default-exported `new Hono()` app is mounted at the path.
+  # modules are not routes. A default-exported `new Hono()` or `createApp()`
+  # (`honox/factory`, `hono/factory`) app is mounted at the path.
   class Honox < JavascriptEngine
     analyzer_for "js_honox"
 
     EXTENSIONS = [".ts", ".tsx", ".js", ".jsx"]
     HONO_APP   = /\bnew\s+Hono\b/
+    # `createApp()` only counts when it comes from a Hono factory, not Vue's.
+    FACTORY_APP    = /\bcreateApp\s*\(/
+    FACTORY_IMPORT = /['"]honox?\/factory['"]/
 
     def analyze
       result = [] of Endpoint
@@ -48,7 +52,7 @@ module Analyzer::Javascript
         segments.pop if segments.last == "index"
         url = file_route_url(segments)
 
-        endpoints = if content.matches?(HONO_APP)
+        endpoints = if content.matches?(HONO_APP) || (content.matches?(FACTORY_IMPORT) && content.matches?(FACTORY_APP))
                       mounted_routes(path, content, url, include_callee)
                     else
                       handler_routes(path, content, url, include_callee)
