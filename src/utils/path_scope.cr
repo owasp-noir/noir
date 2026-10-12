@@ -220,6 +220,18 @@ module Noir
       relative.starts_with?("/") ? relative : "/#{relative}"
     end
 
+    # Multi-base overload: resolves the owning base first. Callers with a
+    # per-path base cache (`Analyzer#configured_base_for`) should use that
+    # and call the single-base form instead.
+    def base_relative(path : String, base_paths : Array(String)) : String
+      base = if base_paths.size <= 1
+               base_paths.first?
+             else
+               longest_base(path, base_paths)
+             end
+      base_relative(path, base || "")
+    end
+
     # `path` up to the first of `markers` (tried in order) found at or
     # below `base`, or nil when none is. The search starts where `base`
     # ends: a `/src/` directory above the scan base is the checkout
@@ -233,18 +245,6 @@ module Noir
         end
       end
       nil
-    end
-
-    # Multi-base overload: resolves the owning base first. Callers with a
-    # per-path base cache (`Analyzer#configured_base_for`) should use that
-    # and call the single-base form instead.
-    def base_relative(path : String, base_paths : Array(String)) : String
-      base = if base_paths.size <= 1
-               base_paths.first?
-             else
-               longest_base(path, base_paths)
-             end
-      base_relative(path, base || "")
     end
 
     # Remainder of `path` beneath `base_path`, or the bare basename when
