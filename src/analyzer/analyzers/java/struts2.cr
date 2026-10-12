@@ -4,6 +4,7 @@ require "../../../miniparsers/java_callee_extractor"
 require "../../../miniparsers/java_parameter_extractor_ts"
 require "xml"
 require "../../../utils/xml_comments"
+require "../../../utils/char_offsets"
 
 module Analyzer::Java
   class Struts2 < Analyzer
@@ -317,7 +318,7 @@ module Analyzer::Java
         next if package_name.empty?
 
         if package_index = content.index(/\bpackage\s+#{Regex.escape(package_name)}\s*;/)
-          annotations = annotations_before(content, package_index)
+          annotations = annotations_before(Noir::CharOffsets.new(content), package_index)
           package_annotations[{configured_base_for(path), package_name}] = annotations unless annotations.empty?
         end
       rescue e : Exception
@@ -355,7 +356,9 @@ module Analyzer::Java
       # Scan a comment-blanked copy (same offsets and lines) so a comment
       # after or between annotations (`@Action("x") // note`) does not end
       # the annotation walk; callees keep the raw text `root` came from.
-      visible = JavaEngine.strip_comments(content)
+      # One offset index per file: every per-class/per-method lookup below is
+      # O(log n) instead of rescanning the file from the start (#3042).
+      visible = Noir::CharOffsets.new(JavaEngine.strip_comments(content))
       classes_in(visible, package_name).each do |klass|
         next if klass.abstract?
 
@@ -426,20 +429,20 @@ module Analyzer::Java
       content.matches?(STRUTS_JAVA_SOURCE_RE) || config.rest_enabled?
     end
 
-    private def classes_in(content : String, package_name : String) : Array(JavaClass)
+    private def classes_in(src : Noir::CharOffsets, package_name : String) : Array(JavaClass)
       classes = [] of JavaClass
       scanner = /(?:^|\n)\s*((?:public\s+|protected\s+|private\s+|abstract\s+|final\s+|static\s+)*)class\s+([A-Za-z_][A-Za-z0-9_]*)([^{]*)\{/m
-      content.scan(scanner) do |match|
+      src.content.scan(scanner) do |match|
         modifiers = match[1]
         class_name = match[2]
-        start_offset = match.begin(0)
-        open_brace = match.end(0) - 1
-        close_brace = matching_brace(content, open_brace)
+        start_offset = src.begin(match)
+        open_brace = src.end(match) - 1
+        close_brace = matching_brace(src.chars, open_brace)
         next unless close_brace
 
-        annotations = annotations_before(content, start_offset)
+        annotations = annotations_before(src, start_offset)
         header = match[3]
-        body = content[(open_brace + 1)...close_brace]
+        body = src.slice(open_brace + 1, close_brace)
         classes << JavaClass.new(
           class_name,
           package_name,
@@ -447,47 +450,52 @@ module Analyzer::Java
           header,
           body,
           open_brace + 1,
-          line_number_for(content, start_offset),
+          src.line(start_offset),
           modifiers.includes?("abstract")
         )
       end
       classes
     end
 
-    private def methods_in(body : String, body_offset : Int32, full_content : String) : Array(JavaMethod)
+    private def methods_in(body : String, body_offset : Int32, src : Noir::CharOffsets) : Array(JavaMethod)
       methods = [] of JavaMethod
+      body_byte = src.byte(body_offset)
       scanner = /(?:^|\n)\s*(?:public|protected|private)?\s*(?:static\s+)?(?:final\s+)?[\w<>\[\].?,\s]+\s+([A-Za-z_][A-Za-z0-9_]*)\s*\([^;{}]*\)\s*(?:throws\s+[^{]+)?\{/m
       body.scan(scanner) do |match|
         method_name = match[1]
-        start_offset = body_offset + match.begin(0)
-        annotations = annotations_before(full_content, start_offset)
-        methods << JavaMethod.new(method_name, annotations, line_number_for(full_content, start_offset))
+        start_offset = src.char(body_byte + match.byte_begin(0))
+        annotations = annotations_before(src, start_offset)
+        methods << JavaMethod.new(method_name, annotations, src.line(start_offset))
       end
       methods
     end
 
-    private def annotations_before(content : String, offset : Int32) : String
+    private def annotations_before(src : Noir::CharOffsets, offset : Int32) : String
+      chars = src.chars
       cursor = offset - 1
-      while cursor >= 0 && content[cursor].ascii_whitespace?
+      while cursor >= 0 && chars[cursor].ascii_whitespace?
         cursor -= 1
       end
       end_pos = cursor + 1
 
       loop do
-        while cursor >= 0 && content[cursor].ascii_whitespace?
+        while cursor >= 0 && chars[cursor].ascii_whitespace?
           cursor -= 1
         end
         break if cursor < 0
 
-        if content[cursor] == ')'
-          open_paren = matching_open_paren(content, cursor)
+        if chars[cursor] == ')'
+          open_paren = matching_open_paren(chars, cursor)
           break unless open_paren
-          at_pos = annotation_start_before(content, open_paren)
+          at_pos = annotation_start_before(chars, open_paren)
           break unless at_pos
           cursor = at_pos - 1
         else
-          line_start = content.rindex('\n', cursor) || -1
-          line = content[(line_start + 1)..cursor].strip
+          line_start = cursor
+          while line_start >= 0 && chars[line_start] != '\n'
+            line_start -= 1
+          end
+          line = src.slice(line_start + 1, cursor + 1).strip
           break unless line.matches?(/^@[A-Za-z_][A-Za-z0-9_.]*$/)
           cursor = line_start
         end
@@ -495,7 +503,7 @@ module Analyzer::Java
 
       start_pos = cursor + 1
       return "" if start_pos >= end_pos
-      content[start_pos...end_pos]
+      src.slice(start_pos, end_pos)
     end
 
     private def action_paths_from_annotations(annotations : String) : Array(String)
@@ -742,19 +750,15 @@ module Analyzer::Java
       content.to_slice[0, byte_offset].count('\n'.ord.to_u8) + 1
     end
 
-    private def matching_brace(content : String, open_index : Int32) : Int32?
-      # Scan by CHARACTER via `each_char_with_index`, not a manual
-      # `while index < content.size; content[index]` loop: this walks a
-      # whole class body (can be the entire remainder of a large file), and
-      # Crystal's String#[] is O(n) per access on non-ASCII content, making
-      # the old indexed loop O(n^2) in the worst case. One forward pass here
-      # keeps it O(n) regardless of encoding.
+    # `chars` is the file's shared `CharOffsets#chars`, so the walk starts at
+    # `open_index` instead of re-reading the file prefix for every class.
+    private def matching_brace(chars : Array(Char), open_index : Int32) : Int32?
       depth = 0
       in_string : Char? = nil
       escaped = false
 
-      content.each_char_with_index do |char, index|
-        next if index < open_index
+      (open_index...chars.size).each do |index|
+        char = chars[index]
         if in_string
           if escaped
             escaped = false
@@ -775,11 +779,7 @@ module Analyzer::Java
       nil
     end
 
-    private def matching_open_paren(content : String, close_index : Int32) : Int32?
-      # Same non-ASCII O(n) `String#[]` concern as `matching_brace` above:
-      # materialize once and index the array instead of re-indexing
-      # `content` per character. Returned index stays a CHAR index.
-      chars = content.chars
+    private def matching_open_paren(chars : Array(Char), close_index : Int32) : Int32?
       depth = 0
       index = close_index
       while index >= 0
@@ -796,9 +796,8 @@ module Analyzer::Java
     end
 
     private def matching_close_paren(content : String, open_index : Int32) : Int32?
-      # Same non-ASCII O(n) `String#[]` concern as `matching_brace` above:
-      # materialize once and index the array instead of re-indexing
-      # `content` per character. Returned index stays a CHAR index.
+      # Materialize once and index the array: `String#[]` is O(n) per access
+      # on non-ASCII content. Returned index stays a CHAR index.
       chars = content.chars
       depth = 0
       in_string : Char? = nil
@@ -828,15 +827,15 @@ module Analyzer::Java
       nil
     end
 
-    private def annotation_start_before(content : String, open_paren : Int32) : Int32?
+    private def annotation_start_before(chars : Array(Char), open_paren : Int32) : Int32?
       index = open_paren - 1
-      while index >= 0 && content[index].ascii_whitespace?
+      while index >= 0 && chars[index].ascii_whitespace?
         index -= 1
       end
-      while index >= 0 && (identifier_char?(content[index]) || content[index] == '.')
+      while index >= 0 && (identifier_char?(chars[index]) || chars[index] == '.')
         index -= 1
       end
-      return unless index >= 0 && content[index] == '@'
+      return unless index >= 0 && chars[index] == '@'
       index
     end
 
