@@ -1,6 +1,7 @@
 require "xml"
 require "yaml"
 require "../ext/tree_sitter/tree_sitter"
+require "../utils/http_symbols"
 require "../utils/url_path"
 require "../utils/xml_comments"
 require "./java_route_extractor_ts"
@@ -36,6 +37,12 @@ module Noir
     METHOD_RESTRICT  = /(?:\A|&)httpMethodRestrict=([^&]*)/
     YAML_CONTEXT_KEY = Set{"restConfiguration", "rest-configuration"}
 
+    # Upper-cased `raw` when it names a real HTTP method; the generic
+    # `verb(...)` / `<verb method>` / `rest:` forms take any string.
+    def http_method(raw : String?) : String?
+      raw.try(&.upcase).try { |method| method if ALLOWED_HTTP_METHODS.includes?(method) }
+    end
+
     # A declared param's noir type; Camel's `RestParamType` defaults to path.
     def param_type(raw : String?) : String
       PARAM_TYPES[raw || "path"]? || "query"
@@ -67,9 +74,9 @@ module Noir
       if match[1] == "rest"
         # `rest:get:hello:{me}` = method, path, optional uri template.
         verb, _, path = target.partition(':')
-        return [] of Route unless VERBS.includes?(verb.downcase)
+        return [] of Route unless verb = http_method(verb)
         path, _, template = path.partition(':')
-        return [Route.new(verb.upcase, URLPath.absolute_join(path, template), line, true)]
+        return [Route.new(verb, URLPath.absolute_join(path, template), line, true)]
       end
 
       path = URLPath.absolute_join(target.sub(URI_HOST, ""))
@@ -138,6 +145,7 @@ module Noir
       end
 
       # `rest(base).get(path?)...type(User.class)...param().name(n).type(RestParamType.query).endParam()...`
+      # `verb("options", path?)` is the generic form of a verb link.
       #
       # A base or verb path that does not resolve to a string (a constant
       # from another file, a field, a parameter) drops its routes rather
@@ -151,19 +159,23 @@ module Noir
 
         links.each do |link|
           method = name(link)
-          if in_param && (method == "endParam" || VERBS.includes?(method) || method == "rest")
+          verb_link = method == "verb" || VERBS.includes?(method)
+          if in_param && (method == "endParam" || verb_link || method == "rest")
             add_param(current, param_name, param_type)
             in_param = false
+          end
+
+          if verb_link
+            verb, path = method == "verb" ? {CamelRouteExtractor.http_method(string_arg(link)), path_arg(link, 1)} : {method.upcase, path_arg(link)}
+            current = verb && base && path ? Route.new(verb, URLPath.absolute_join(base, path), Noir::TreeSitter.call_name_row(link), true) : nil
+            current.try { |route| @routes << route }
+            next
           end
 
           case method
           when "rest", "path"
             base = path_arg(link) if method == "rest" || current.nil?
             current = nil if method == "rest"
-          when .in?(VERBS)
-            path = path_arg(link)
-            current = base && path ? Route.new(method.upcase, URLPath.absolute_join(base, path), Noir::TreeSitter.call_name_row(link), true) : nil
-            current.try { |route| @routes << route }
           when "param"
             next unless current
             in_param = true
@@ -172,7 +184,7 @@ module Noir
           when "name"
             param_name = string_arg(link) if in_param
           when "type"
-            next unless current && (arg = first_arg(link))
+            next unless current && (arg = arg_at(link))
             text = Noir::TreeSitter.node_text(arg, @source)
             if in_param
               param_type = text.split('.').last
@@ -192,17 +204,21 @@ module Noir
         Noir::TreeSitter.field(call, "name").try { |node| Noir::TreeSitter.node_text(node, @source) } || ""
       end
 
-      private def first_arg(call : Node) : Node?
-        Noir::TreeSitter.field(call, "arguments").try { |args| Noir::TreeSitter.first_named_arg(args) }
+      private def arg_at(call : Node, index = 0) : Node?
+        return unless args = Noir::TreeSitter.field(call, "arguments")
+        Noir::TreeSitter.each_named_arg(args) do |arg|
+          return arg if index == 0
+          index -= 1
+        end
       end
 
-      # "" for a call with no arguments, nil for an unresolvable one.
-      private def path_arg(call : Node) : String?
-        first_arg(call) ? string_arg(call) : ""
+      # "" for a missing argument, nil for an unresolvable one.
+      private def path_arg(call : Node, index = 0) : String?
+        arg_at(call, index) ? string_arg(call, index) : ""
       end
 
-      private def string_arg(call : Node) : String?
-        return unless arg = first_arg(call)
+      private def string_arg(call : Node, index = 0) : String?
+        return unless arg = arg_at(call, index)
         case Noir::TreeSitter.node_type(arg)
         when "string_literal"
           Noir::TreeSitter.decode_string_literal(arg, @source)
@@ -226,8 +242,10 @@ module Noir
         when "rest"
           base = node["path"]? || node["uri"]? || ""
           node.children.each do |verb|
-            next unless verb.element? && VERBS.includes?(verb.name)
-            route = Route.new(verb.name.upcase, URLPath.absolute_join(base, verb["path"]? || verb["uri"]? || ""), xml_row(verb), true)
+            next unless verb.element?
+            # `<verb method="options">` is the generic form (Camel 2).
+            next unless method = verb.name == "verb" ? http_method(verb["method"]?) : (verb.name.upcase if VERBS.includes?(verb.name))
+            route = Route.new(method, URLPath.absolute_join(base, verb["path"]? || verb["uri"]? || ""), xml_row(verb), true)
             route.body_type = verb["type"]?.try(&.split('.').last)
             verb.children.each do |param|
               next unless param.element? && param.name == "param" && (param_name = param["name"]?)

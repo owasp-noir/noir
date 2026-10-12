@@ -11,6 +11,9 @@ expected_endpoints = [
     Param.new("X-Token", "", "header"),
     Param.new("body", "Order", "json"),
   ]),
+  # Generic `verb(method, path?)`; an unresolvable or non-HTTP method is dropped.
+  Endpoint.new("/api/files/{name}", "OPTIONS"),
+  Endpoint.new("/api/files", "PATCH", [Param.new("mode", "", "query")]),
   Endpoint.new("/api/ping", "GET"),
   Endpoint.new("/legacy", "ANY"),
   Endpoint.new("/upload", "POST"),
@@ -21,6 +24,7 @@ expected_endpoints = [
     Param.new("dryRun", "", "query"),
     Param.new("body", "Item", "json"),
   ]),
+  Endpoint.new("/api/xml/items/{id}", "OPTIONS"),
   Endpoint.new("/xml/health", "GET"),
   # YAML DSL (routes.camel.yaml)
   Endpoint.new("/api/yaml/books/{isbn}", "GET"),
