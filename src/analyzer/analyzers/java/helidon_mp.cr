@@ -138,7 +138,8 @@ module Analyzer::Java
       # may carry a trailing slash depending on how `-b` was
       # passed. Strip it so this root compares equal to the
       # marker-derived root for `.java` files in the same module.
-      JavaEngine.marker_root(path, {"/src/main/java/", "/src/"}) || configured_base_for(path).rstrip('/')
+      base = configured_base_for(path)
+      Noir::PathScope.marker_root(path, base, {"/src/main/java/", "/src/"}) || base.rstrip('/')
     end
   end
 end

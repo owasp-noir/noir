@@ -220,6 +220,21 @@ module Noir
       relative.starts_with?("/") ? relative : "/#{relative}"
     end
 
+    # `path` up to the first of `markers` (tried in order) found at or
+    # below `base`, or nil when none is. The search starts where `base`
+    # ends: a `/src/` directory above the scan base is the checkout
+    # location (`~/src/<project>`), not the module's own source root.
+    def marker_root(path : String, base : String, markers : Enumerable(String)) : String?
+      prefix = base.rstrip('/')
+      start = path.starts_with?(prefix) ? prefix.bytesize : 0
+      markers.each do |marker|
+        if index = path.byte_index(marker, start)
+          return path.byte_slice(0, index)
+        end
+      end
+      nil
+    end
+
     # Multi-base overload: resolves the owning base first. Callers with a
     # per-path base cache (`Analyzer#configured_base_for`) should use that
     # and call the single-base form instead.

@@ -1589,7 +1589,7 @@ module Analyzer::Kotlin
     end
 
     private def project_root_for(path : String) : String
-      Analyzer::Java::JavaEngine.marker_root(path, {"/src/main/kotlin/", "/src/"}) || File.dirname(path)
+      Noir::PathScope.marker_root(path, configured_base_for(path), {"/src/main/kotlin/", "/src/"}) || File.dirname(path)
     end
   end
 end

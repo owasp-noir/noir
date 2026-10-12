@@ -108,21 +108,10 @@ module Analyzer::Java
     end
 
     # Module root of a Maven/Gradle source file: everything before
-    # `/src/main/java/` (or `/src/main/kotlin/`), or the file's own directory
-    # outside that layout.
-    def self.project_root_for(path : String) : String
-      marker_root(path, {"/src/main/java/", "/src/main/kotlin/"}) || File.dirname(path)
-    end
-
-    # `path` up to the first of `markers` (tried in order) it contains, or
-    # nil when it contains none.
-    def self.marker_root(path : String, markers : Enumerable(String)) : String?
-      markers.each do |marker|
-        if index = path.index(marker)
-          return path[...index]
-        end
-      end
-      nil
+    # `/src/main/java/` (or `/src/main/kotlin/`) below `base`, or the file's
+    # own directory outside that layout.
+    def self.project_root_for(path : String, base : String) : String
+      Noir::PathScope.marker_root(path, base, {"/src/main/java/", "/src/main/kotlin/"}) || File.dirname(path)
     end
 
     # `server.servlet.context-path` / `spring.webflux.base-path` of one
@@ -357,28 +346,12 @@ module Analyzer::Java
     end
 
     # The Maven/Gradle module root: everything above the source root that
-    # holds this file.
-    #
-    # The marker is searched inside the scan-base-relative path, never the
-    # absolute one. `String#index` returns the FIRST occurrence, so on an
-    # absolute path a `src/` directory anywhere above the scan base won
-    # outright and the module root resolved to a directory outside the
-    # scan — `application.properties` was then never found and every
-    # `server.servlet.context-path` prefix silently vanished.
-    # Default for includers; JAX-RS, Quarkus and Helidon MP override it,
-    # and `JavaEngine.project_root_for` above is the absolute-path variant
-    # Micronaut and Dropwizard call.
+    # holds this file. Default for includers; JAX-RS, Quarkus and Helidon
+    # MP override it, and `JavaEngine.project_root_for` above is the
+    # variant Micronaut and Dropwizard call.
     private def project_root_for(path : String) : String
       base = configured_base_for(path)
-      relative = Noir::PathScope.base_relative(path, base)
-
-      ["/src/main/java/", "/src/"].each do |marker|
-        if index = relative.index(marker)
-          return base.rstrip('/') + relative[...index]
-        end
-      end
-
-      base
+      Noir::PathScope.marker_root(path, base, {"/src/main/java/", "/src/"}) || base
     end
 
     private def normalize_optional_path(path : String?) : String

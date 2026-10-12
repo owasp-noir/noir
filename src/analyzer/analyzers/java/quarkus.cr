@@ -257,7 +257,8 @@ module Analyzer::Java
     end
 
     private def project_root_for(path : String) : String
-      JavaEngine.marker_root(path, {"/src/main/java/", "/src/"}) || configured_base_for(path)
+      base = configured_base_for(path)
+      Noir::PathScope.marker_root(path, base, {"/src/main/java/", "/src/"}) || base
     end
 
     private def extract_static_resource_endpoints(project_root : String, config : QuarkusPathConfig) : Array(Endpoint)

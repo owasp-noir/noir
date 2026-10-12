@@ -56,7 +56,7 @@ module Analyzer::Java
         result = Noir::TreeSitterHelidonSeExtractor.extract(content, include_callees: include_callee)
         next if result.routes.empty? && result.edges.empty?
 
-        root = JavaEngine.project_root_for(path)
+        root = JavaEngine.project_root_for(path, configured_base_for(path))
         routes_for_root = routes_by_root[root] ||= Hash(String, Array(Tuple(Route, String))).new
         result.routes.each do |route|
           (routes_for_root[route.class_name] ||= [] of Tuple(Route, String)) << {route, path}
