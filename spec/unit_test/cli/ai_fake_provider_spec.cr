@@ -161,4 +161,16 @@ describe "AI analyzer against a fake provider (built binary)" do
       result.stderr.should contain("nothing was sent")
     end
   end
+
+  # The report is the only result of a dry run, so --no-log must not hide it.
+  it "prints the --ai-dry-run report under --no-log" do
+    with_project do |dir, provider|
+      result = run_scan(dir, provider, ["--ai-dry-run", "--no-log"])
+      result.exit_code.should eq(0)
+      provider.bodies.should be_empty
+      result.stderr.should contain("nothing was sent")
+      result.stderr.should contain("➔ app.rb")
+      result.stderr.should_not contain("AI Analysis using")
+    end
+  end
 end

@@ -141,7 +141,7 @@ module Analyzer::AI
       begin
         logger.info "AI Analysis using #{Noir::Redact.url(@provider)} with model #{@model} (max tokens: #{@max_tokens})"
 
-        logger.info "AI dry run previews the classic analysis; the agent loop is not run" if @use_agentic && @dry_run
+        logger.report "AI dry run previews the classic analysis; the agent loop is not run" if @use_agentic && @dry_run
         if @use_agentic && !@dry_run
           logger.info "AI Agentic workflow is enabled"
           if target = egress_target
@@ -157,7 +157,7 @@ module Analyzer::AI
 
         target_paths = select_target_paths(adapter)
         if target_paths.empty?
-          logger.warning "No files selected for AI analysis"
+          @dry_run ? logger.report("AI dry run: no files selected; nothing would be sent") : logger.warning("No files selected for AI analysis")
           return @result
         end
 
@@ -199,8 +199,8 @@ module Analyzer::AI
       tokens = bundles.sum(&.tokens) + single.sum { |path| (File.info?(path).try(&.size) || 0).to_i // 4 }
       summary = "#{files.size} files (~#{tokens} tokens, ~#{bundles.size + single.size} requests)"
       if @dry_run
-        logger.info "AI dry run: #{summary} would be sent to #{egress_target || Noir::Redact.url(@provider)}, plus the file-path list (filter) and endpoint URLs (optimizer); nothing was sent"
-        files.each { |file| logger.sub "➔ #{file}" }
+        logger.report "AI dry run: #{summary} would be sent to #{egress_target || Noir::Redact.url(@provider)}, plus the file-path list (filter) and endpoint URLs (optimizer); nothing was sent"
+        files.each { |file| logger.report_sub "➔ #{file}" }
       elsif target = egress_target
         logger.info "#{summary} will be sent to #{target}"
       end

@@ -67,8 +67,8 @@ class NoirLogger
     new(any_to_bool(options["debug"]), any_to_bool(options["verbose"]), colorize, any_to_bool(options["nolog"]), no_spinner)
   end
 
-  def log(level : LogLevel, message : String)
-    return if @no_log
+  def log(level : LogLevel, message : String, force : Bool = false)
+    return if @no_log && !force
 
     prefix = case level
              when LogLevel::DEBUG
@@ -185,6 +185,16 @@ class NoirLogger
 
   def sub(message)
     return if @no_log
+    write_stderr_line "  " + message
+  end
+
+  # Not gated by --no-log: for a report that is the run's only result,
+  # such as the --ai-dry-run file list.
+  def report(message)
+    log(LogLevel::INFO, message, force: true)
+  end
+
+  def report_sub(message)
     write_stderr_line "  " + message
   end
 
