@@ -34,6 +34,15 @@ expected_endpoints = [
   Endpoint.new("/bulk", "PUT"),
   Endpoint.new("/bulk", "PATCH"),
   Endpoint.new("/v2", "GET"),
+  # `enable_validation=True` handler arguments (src/validation.py).
+  Endpoint.new("/validated/{todo_id}", "GET", [
+    Param.new("todo_id", "", "path"),
+    Param.new("limit", "", "query"),
+    Param.new("X-Tok", "", "header"),
+    Param.new("x-request-id", "", "header"),
+    Param.new("completed", "", "query"),
+  ]),
+  Endpoint.new("/validated", "POST", [Param.new("item", "", "json")]),
 ]
 
 # The app lives in src/ below the scan root, so `from routes import orders`
