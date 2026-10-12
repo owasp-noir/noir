@@ -232,6 +232,23 @@ module Noir
       base_relative(path, base || "")
     end
 
+    # `path` up to the first of `markers` (tried in order) that ends below
+    # `base`, or nil when none does. A marker wholly above the base is the
+    # checkout location (`~/src/<project>`), not the module's own source
+    # root, so it never counts. One that straddles the end of the base
+    # (`-b module/src`) does: below-base matches are tried first, then the
+    # straddling one, per marker.
+    def marker_root(path : String, base : String, markers : Enumerable(String)) : String?
+      prefix = base.rstrip('/')
+      floor = path.starts_with?(prefix) ? prefix.bytesize : 0
+      markers.each do |marker|
+        index = path.byte_index(marker, floor) ||
+                path.byte_index(marker, Math.max(0, floor - marker.bytesize + 1))
+        return path.byte_slice(0, index) if index
+      end
+      nil
+    end
+
     # Remainder of `path` beneath `base_path`, or the bare basename when
     # `path` is outside `base_path` (or no base given). Backs the
     # Python/Dart test-path conventions, which key off the project-relative

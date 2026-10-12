@@ -97,6 +97,16 @@ HOSTILE_ANCESTORS = [
   {"zig/httpz", "test"},
   {"mobile/ios", "Tests"},
   {"specification/strapi", "api"},
+  # JVM module roots are sliced at `/src/`: a checkout under `~/src` or
+  # `.../src/main/java/` must not be mistaken for the module's own.
+  {"java/helidon_mp", "src"},
+  {"java/quarkus_kotlin", "src"},
+  {"java/quarkus", "src/main/java"},
+  {"java/jaxrs", "src/main/java"},
+  {"java/dropwizard", "src/main/java"},
+  {"java/micronaut", "src/main/java"},
+  {"java/helidon_se", "src/main/java"},
+  {"kotlin/spring_context_path", "src/main/kotlin"},
 ]
 
 describe "scan results and the scan base path" do
@@ -122,6 +132,26 @@ describe "scan results and the scan base path" do
 
     scan_under_segment(fixture_path, "latest").should eq(neutral)
     scan_under_segment(fixture_path, "vendored_libs").should eq(neutral)
+  end
+
+  # The other side of the `/src/` slice: a base *inside* the module's
+  # source tree still roots the module just above it, so its
+  # `application.properties` prefix survives.
+  {"java/quarkus", "java/dropwizard_custom_verb", "kotlin/spring_context_path"}.each do |fixture|
+    it "reports the same #{fixture} endpoints from a base at the module's `src/`" do
+      fixture_path = File.join(fixtures_root, fixture)
+      neutral = scan_under_segment(fixture_path, "neutral-parent")
+
+      root = File.tempname("noir-scan-base-module-src")
+      target = File.join(root, File.basename(fixture))
+      begin
+        FileUtils.mkdir_p(root)
+        FileUtils.cp_r(fixture_path, target)
+        scan_endpoints(File.join(target, "src")).should eq(neutral)
+      ensure
+        FileUtils.rm_rf(root) if Dir.exists?(root)
+      end
+    end
   end
 
   # Pointing noir *at* a directory named `tests` is an explicit request for

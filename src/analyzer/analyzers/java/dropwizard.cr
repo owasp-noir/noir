@@ -59,7 +59,7 @@ module Analyzer::Java
         next unless path.ends_with?(".#{JAVA_EXTENSION}")
         next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
-        project_root = JavaEngine.project_root_for(path)
+        project_root = JavaEngine.project_root_for(path, configured_base_for(path))
         next unless dropwizard_roots.includes?(project_root)
 
         content = read_file_content(path)
@@ -130,7 +130,7 @@ module Analyzer::Java
         next unless File.exists?(path)
 
         content = read_file_content(path)
-        roots << JavaEngine.project_root_for(path) if content.matches?(DROPWIZARD_BOOTSTRAP_MARKER_RE)
+        roots << JavaEngine.project_root_for(path, configured_base_for(path)) if content.matches?(DROPWIZARD_BOOTSTRAP_MARKER_RE)
       end
 
       roots

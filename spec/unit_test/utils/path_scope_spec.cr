@@ -199,6 +199,29 @@ describe Noir::PathScope do
     end
   end
 
+  describe ".marker_root" do
+    it "slices at the first marker below the base" do
+      Noir::PathScope.marker_root("/home/src/app/src/main/java/A.java", "/home/src/app", {"/src/main/java/", "/src/"}).should eq("/home/src/app")
+    end
+
+    it "ignores a marker above the base" do
+      Noir::PathScope.marker_root("/home/src/app/pom.xml", "/home/src/app/", {"/src/"}).should be_nil
+    end
+
+    it "keeps a marker that straddles the end of the base" do
+      Noir::PathScope.marker_root("/w/app/src/main/java/A.java", "/w/app/src", {"/src/main/java/"}).should eq("/w/app")
+      Noir::PathScope.marker_root("/w/app/src/main/java/A.java", "/w/app/src/main/java", {"/src/main/java/"}).should eq("/w/app")
+    end
+
+    it "prefers a marker wholly below the base over a straddling one" do
+      Noir::PathScope.marker_root("/w/src/app/src/A.java", "/w/src", {"/src/"}).should eq("/w/src/app")
+    end
+
+    it "finds a nested module root" do
+      Noir::PathScope.marker_root("/w/src/app/api/src/A.java", "/w/src/app", {"/src/"}).should eq("/w/src/app/api")
+    end
+  end
+
   describe ".relative_under" do
     it "returns the path remainder beneath the base" do
       Noir::PathScope.relative_under("/app/api/x.cr", "/app").should eq("api/x.cr")

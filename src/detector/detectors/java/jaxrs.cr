@@ -1,4 +1,5 @@
 require "../../../models/detector"
+require "../../../utils/path_scope"
 
 module Detector::Java
   class JaxRs < Detector
@@ -66,12 +67,8 @@ module Detector::Java
     end
 
     private def project_root_for(path : String) : String
-      {"/src/main/java/", "/src/main/kotlin/"}.each do |marker|
-        if index = path.index(marker)
-          return path[...index]
-        end
-      end
-      File.dirname(path)
+      base = @base_paths.size <= 1 ? @base_path : (Noir::PathScope.longest_base(path, @base_paths) || @base_path)
+      Noir::PathScope.marker_root(path, base, {"/src/main/java/", "/src/main/kotlin/"}) || File.dirname(path)
     end
   end
 end

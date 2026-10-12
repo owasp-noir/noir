@@ -256,10 +256,6 @@ module Analyzer::Java
       Noir::URLPath.join_trimmed(config.http_root_path, rest_base)
     end
 
-    private def project_root_for(path : String) : String
-      JavaEngine.marker_root(path, {"/src/main/java/", "/src/"}) || configured_base_for(path)
-    end
-
     private def extract_static_resource_endpoints(project_root : String, config : QuarkusPathConfig) : Array(Endpoint)
       endpoints = [] of Endpoint
       resources_root = File.join(project_root, "src/main/resources/META-INF/resources")
