@@ -177,6 +177,32 @@ describe "SpringAuthTagger" do
     endpoint.tags.any? { |tag| tag.name == "auth" && tag.description.includes?("anyRequest") }.should be_true
   end
 
+  it "reads every rule of a one-line lambda DSL chain" do
+    tmpdir = File.tempname("spring_one_line_dsl")
+    Dir.mkdir_p(tmpdir)
+    config = File.join(tmpdir, "SecurityConfig.java")
+    File.write(config, <<-JAVA)
+      public class SecurityConfig {
+          @Bean
+          public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+              http.authorizeHttpRequests(auth -> auth.requestMatchers("/public/**").permitAll().anyRequest().authenticated());
+              return http.build();
+          }
+      }
+      JAVA
+    CodeLocator.instance.register_path(config)
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+
+    items = Endpoint.new("/items", "GET")
+    info = Endpoint.new("/public/info", "GET")
+    SpringAuthTagger.new(noir_options).perform([items, info])
+    FileUtils.rm_rf(tmpdir)
+
+    items.tags.map(&.description).should eq(["Protected by Spring Security authenticated via anyRequest()"])
+    info.tags.empty?.should be_true
+  end
+
   it "keeps anyRequest fallback for an unscoped chain when another chain is scoped" do
     temp_dir = File.join(Dir.tempdir, "noir-spring-auth-mixed-chain-#{Process.pid}-#{Time.utc.to_unix_ms}")
     config_path = File.join(temp_dir, "src/main/java/com/example/SecurityConfiguration.java")
