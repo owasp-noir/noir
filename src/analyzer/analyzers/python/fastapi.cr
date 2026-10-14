@@ -1333,7 +1333,9 @@ module Analyzer::Python
     def find_dictionary_params(source : ::String, param : FunctionParameter) : Array(Param)
       new_params = [] of Param
       json_variable_names = [] of ::String
-      codelines = source.split("\n")
+      # Comments out: `# request.query_params.get("old")` is not a read.
+      codelines = source.split("\n").map { |line| strip_python_comment(line) }
+      source = codelines.join('\n')
       if param.type == "Request"
         # Parse JSON variable names
         codelines.each do |codeline|

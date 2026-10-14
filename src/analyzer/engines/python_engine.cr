@@ -1132,7 +1132,7 @@ module Analyzer::Python
     # folded line's continuations become `""`, so indexes (and the line
     # numbers derived from them) still line up. Folded pieces are cut at
     # their `#` comment and stripped; a line that closes on its own comes
-    # back verbatim, and so does one still open after
+    # back cut at its comment only, and so does one still open after
     # `Noir::CallFold::MAX_CONTINUATION_LINES` (a long call, not a wrapped
     # read). Triple-quoted strings are tracked across the block, so a `(`
     # in a docstring opens nothing.
@@ -1142,6 +1142,7 @@ module Analyzer::Python
       i = 0
       while i < lines.size
         delta, triple, comment = python_call_line_scan(lines[i], triple, brackets: true)
+        folded[i] = lines[i].byte_slice(0, comment) if comment < lines[i].bytesize
         start = i
         i += 1
         next unless delta > 0
