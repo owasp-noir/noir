@@ -74,9 +74,12 @@ class OutputBuilderSarif < OutputBuilder
           end
         end
 
-        # Add passive scan results
+        # The message names the rule, never the matched line: the extract is
+        # the secret itself, and SARIF is uploaded to code scanning where
+        # anyone who can read alerts sees it. The location already points
+        # consumers at the line.
         passive_results.each do |result|
-          r.result(result.extract,
+          r.result(result.info.name,
             rule_id: result.id,
             level: map_severity_to_sarif_level(result.info.severity),
             uri: sarif_uri(result.file_path),
