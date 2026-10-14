@@ -61,6 +61,8 @@ module Analyzer::Python
       "POST"         => {["POST"], "form"},
       "COOKIES"      => {nil, "cookie"},
       "META"         => {nil, "header"},
+      "headers"      => {nil, "header"},
+      "FILES"        => {["POST"], "form"},
       "data"         => {["POST", "PUT", "PATCH"], "form"},
       "query_params" => {nil, "query"},
     }
@@ -2059,9 +2061,9 @@ module Analyzer::Python
               next if match.size != 2
               param_name = match[1]
               if field_name == "META"
-                if param_name.starts_with? "HTTP_"
-                  param_name = param_name[5..]
-                end
+                header_name = meta_header_name(param_name)
+                next unless header_name
+                param_name = header_name
               end
 
               # If a specific parameter is found, allow the corresponding methods
@@ -2094,6 +2096,15 @@ module Analyzer::Python
       end
 
       suspicious_params
+    end
+
+    # A `request.META` key as the header the client sends: the WSGI environ
+    # spells `X-Forwarded-For` as `HTTP_X_FORWARDED_FOR`, and Content-Type
+    # and Content-Length without the prefix. Any other key (REMOTE_ADDR,
+    # SERVER_NAME, ...) is server state, not a request header: nil.
+    private def meta_header_name(key : ::String) : ::String?
+      return key.downcase.tr("_", "-") if key.in?("CONTENT_TYPE", "CONTENT_LENGTH")
+      http_header_name(key)
     end
 
     # Filter parameters based on HTTP method
