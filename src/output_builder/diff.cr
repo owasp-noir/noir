@@ -187,16 +187,22 @@ class OutputBuilderDiff < OutputBuilder
     " #{icon} #{text} (#{count}) ".center(40, '─').colorize(color).toggle(@is_color).to_s
   end
 
+  # The structured diff carries `errors` as `-f json` does: an analyzer that
+  # failed on the new side otherwise reads as its endpoints being removed.
+  private def document(result : Result)
+    result.merge(errors: analyzer_failures)
+  end
+
   def print_json(result : Result)
-    ob_puts result.to_json
+    ob_puts document(result).to_json
   end
 
   def print_yaml(result : Result)
-    ob_puts result.to_yaml
+    ob_puts document(result).to_yaml
   end
 
   def print_toml(result : Result)
-    json_str = result.to_json
+    json_str = document(result).to_json
     json_obj = JSON.parse(json_str)
     toml_output = generate_toml_from_diff(json_obj.as_h)
     ob_puts toml_output
@@ -205,7 +211,10 @@ class OutputBuilderDiff < OutputBuilder
   private def generate_toml_from_diff(data : Hash(String, JSON::Any)) : String
     result = String.build do |io|
       data.each do |section, entries|
-        if !entries.as_a.empty?
+        if section == "errors"
+          # `[[errors]]`, the shape `-f toml` gives them.
+          entries.as_a.each { |entry| io << "\n[[errors]]\n" << generate_table_content(entry.as_h) }
+        elsif !entries.as_a.empty?
           # `changes` holds change records, not endpoints.
           item = section == "changes" ? "change" : "endpoint"
           io << "[#{section}]\n"
@@ -228,6 +237,18 @@ class OutputBuilderDiff < OutputBuilder
 
     ob_puts "## Attack surface diff"
     ob_puts ""
+    unless analyzer_failures.empty?
+      ob_puts "### :warning: Analyzer failures"
+      ob_puts ""
+      ob_puts "These analyzers failed or skipped files, so endpoints may be missing from either side of this diff."
+      ob_puts ""
+      ob_puts "| Tech | Error |"
+      ob_puts "| ---- | ----- |"
+      analyzer_failures.each do |failure|
+        ob_puts "| #{markdown_code_span(sanitize_code_span_cell(failure.tech))} | #{sanitize_text_cell(failure.message)} |"
+      end
+      ob_puts ""
+    end
     if result[:added].empty? && result[:removed].empty? && result[:changed].empty?
       ob_puts "No endpoint was added, removed or changed."
       return
