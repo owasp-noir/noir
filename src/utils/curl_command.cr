@@ -51,8 +51,14 @@ module CurlCommand
       content_type = body_type == "json" ? "application/json" : "application/x-www-form-urlencoded"
       parts << "--data-raw"
       parts << shell_quote(body)
-      parts << "-H"
-      parts << shell_quote("Content-Type: #{content_type}")
+      # A header param naming the type (a HAR capture always carries one) is
+      # the real value, and adding ours sent two. An empty one names nothing,
+      # so ours replaces it instead of riding along as `Content-Type;`.
+      unless content_type_given?(headers)
+        headers = headers.reject { |header| content_type?(header) }
+        parts << "-H"
+        parts << shell_quote("Content-Type: #{content_type}")
+      end
     end
 
     append_headers_and_cookies(parts, headers, cookies)
@@ -94,6 +100,15 @@ module CurlCommand
     # or `--form-string` is used; do not force urlencoded/json here.
     append_headers_and_cookies(parts, headers, cookies)
     parts.join(" ")
+  end
+
+  # Whether baked `Name: value` headers carry a non-empty Content-Type.
+  private def self.content_type_given?(headers : Array(String)) : Bool
+    headers.any? { |header| content_type?(header) && !header.partition(": ")[2].empty? }
+  end
+
+  private def self.content_type?(header : String) : Bool
+    header.partition(": ")[0].compare("content-type", case_insensitive: true) == 0
   end
 
   # `-X HEAD` makes curl wait for a body the server never sends, hanging

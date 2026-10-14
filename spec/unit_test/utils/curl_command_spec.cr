@@ -40,6 +40,16 @@ describe CurlCommand do
       cmd.should contain("--cookie 'session=abc123'")
     end
 
+    it "keeps a Content-Type header param instead of adding a second one" do
+      cmd = CurlCommand.build("POST", "/c", "a=1", "form", ["content-type: application/x-www-form-urlencoded; charset=utf-8"], [] of String)
+      cmd.should eq("curl -i -g -X 'POST' '/c' --data-raw 'a=1' -H 'content-type: application/x-www-form-urlencoded; charset=utf-8'")
+    end
+
+    it "lets the body's Content-Type replace an empty Content-Type header param" do
+      cmd = CurlCommand.build("POST", "/c", "{}", "json", ["Content-Type: ", "X-A: 1"], [] of String)
+      cmd.should eq("curl -i -g -X 'POST' '/c' --data-raw '{}' -H 'Content-Type: application/json' -H 'X-A: 1'")
+    end
+
     it "uses -I for HEAD, since -X HEAD waits for a body that never comes" do
       cmd = CurlCommand.build("HEAD", "/test", "", "", [] of String, [] of String)
       cmd.should eq("curl -I -g '/test'")
