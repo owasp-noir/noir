@@ -226,7 +226,7 @@ describe "detection walk coverage reporting" do
   it "reports symlinks it did not follow" do
     temp_dir = File.tempname("noir_symlink_walk")
     inside = File.join(temp_dir, "inside")
-    outside = File.join(temp_dir, "outside")
+    outside = File.tempname("noir_symlink_outside")
     Dir.mkdir_p(inside)
     Dir.mkdir_p(outside)
 
@@ -234,17 +234,40 @@ describe "detection walk coverage reporting" do
       File.write(File.join(temp_dir, "Gemfile"), "gem 'sinatra'\n")
       File.write(File.join(inside, "a.rb"), "require 'sinatra'\nget '/inside' do\nend\n")
       File.write(File.join(outside, "b.rb"), "require 'sinatra'\nget '/outside' do\nend\n")
-      # A directory symlink and a file symlink: the two shapes a pnpm /
-      # Bazel workspace produces, and neither is a `file?` to `File.info?`
-      # with `follow_symlinks: false`.
+      # A directory symlink and a file symlink out of the base: the two
+      # shapes a pnpm / Bazel workspace produces, and neither is a `file?`
+      # to `File.info?` with `follow_symlinks: false`. A dangling link is
+      # lost coverage too.
       File.symlink(outside, File.join(temp_dir, "ext"))
       File.symlink(File.join(outside, "b.rb"), File.join(temp_dir, "extfile.rb"))
+      File.symlink(File.join(temp_dir, "missing.rb"), File.join(temp_dir, "dangling.rb"))
 
       gaps = scan_gaps(temp_dir)
 
       gaps.size.should eq(1)
-      gaps.first.message.should contain("skipped 2 entries")
+      gaps.first.message.should contain("skipped 3 entries")
       gaps.first.message.should contain("symbolic link (not followed)")
+    ensure
+      FileUtils.rm_rf(temp_dir)
+      FileUtils.rm_rf(outside)
+    end
+  end
+
+  # `CLAUDE.md -> AGENTS.md`, `current -> releases/v2`: the walk reaches
+  # the target on its own, so skipping the link loses nothing and must not
+  # fail `--strict`.
+  it "stays silent on symlinks whose target is inside the base" do
+    temp_dir = File.tempname("noir_symlink_in_tree")
+    Dir.mkdir_p(File.join(temp_dir, "releases", "v2"))
+
+    begin
+      File.write(File.join(temp_dir, "Gemfile"), "gem 'sinatra'\n")
+      File.write(File.join(temp_dir, "AGENTS.md"), "# agents\n")
+      File.write(File.join(temp_dir, "releases", "v2", "app.rb"), "require 'sinatra'\nget '/v2' do\nend\n")
+      File.symlink("AGENTS.md", File.join(temp_dir, "CLAUDE.md"))
+      File.symlink(File.join("releases", "v2"), File.join(temp_dir, "current"))
+
+      scan_gaps(temp_dir).should be_empty
     ensure
       FileUtils.rm_rf(temp_dir)
     end

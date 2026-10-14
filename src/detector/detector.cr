@@ -227,6 +227,16 @@ module Noir::Detection
     source_root ? BUILD_OUTPUT_DIR_NAMES : NO_DIR_NAMES
   end
 
+  # True when the symlink at `path` resolves inside one of the scan bases
+  # (`real_bases` are realpaths), so the walk covers its target anyway.
+  # A dangling link, or one that leaves every base, is lost coverage.
+  def symlink_target_scanned?(path : String, real_bases : Array(String)) : Bool
+    target = File.realpath(path)
+    real_bases.any? { |base| Noir::PathScope.under_normalized_root?(target, base) }
+  rescue File::Error
+    false
+  end
+
   # A Composer or `go mod vendor` tree, recognised by its own contents
   # wherever it sits (a nested app whose `composer.json` lives elsewhere).
   def dependency_vendor_dir?(path : String) : Bool
@@ -644,6 +654,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
     # Check `--exclude-path` per base first, then process each accepted path
     # once so passive findings and the analyzer file registry stay unique.
     seen_file_paths = Set(String).new
+    real_bases = base_paths.map { |base| File.realpath(base) rescue Noir::PathScope.normalize_root(base) }
 
     base_paths.each do |base_path|
       # Pre-compute base path prefix for fast relative path calculation
@@ -731,9 +742,12 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
             # workspaces, Bazel's `bazel-*` links) reported zero endpoints
             # for that tree and looked exactly like a clean scan. Entries
             # the walk prunes on purpose, and media files it would have
-            # filtered a step later anyway, are not coverage the user lost.
+            # filtered a step later anyway, are not coverage the user lost;
+            # nor is a link whose target the walk reaches on its own
+            # (`CLAUDE.md -> AGENTS.md`).
             unless info.file?
-              unless Noir::Detection.ignored_dir_entry?(entry, full_path, dir_has_shard, scoped_names) || MediaFilter.media_file?(full_path)
+              unless Noir::Detection.ignored_dir_entry?(entry, full_path, dir_has_shard, scoped_names) || MediaFilter.media_file?(full_path) ||
+                     (info.type.symlink? && Noir::Detection.symlink_target_scanned?(full_path, real_bases))
                 skipped_entries += 1
                 reason = info.type.symlink? ? "symbolic link (not followed)" : "not a regular file (#{info.type})"
                 logger.debug "Skipping #{full_path}: #{reason}"
