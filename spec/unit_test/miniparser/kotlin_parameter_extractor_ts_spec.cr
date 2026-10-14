@@ -289,6 +289,33 @@ describe Noir::TreeSitterKotlinParameterExtractor do
       ])
     end
 
+    it "names JSON body fields by @JsonProperty" do
+      dto = <<-KT
+        package com.example
+
+        data class CreateAccount(
+            @JsonProperty("account_name") val name: String,
+            @field:JsonProperty(value = "iso_currency") val currency: String = "USD",
+            val note: String? = null,
+        ) {
+            @get:JsonProperty("tag_list")
+            var tags: List<String> = emptyList()
+        }
+        KT
+      handler = <<-KT
+        package com.example
+
+        class C {
+            @PostMapping("/x")
+            fun create(@RequestBody req: CreateAccount): String = ""
+        }
+        KT
+
+      fields = Noir::TreeSitterKotlinParameterExtractor.extract_class_fields(dto)
+      params = extract(handler, "C", "create", "POST", fields: fields)
+      params.map(&.name).should eq(["account_name", "iso_currency", "note", "tag_list"])
+    end
+
     it "skips DTO fields that must be null for the active validation group" do
       dto = <<-KT
         package com.example

@@ -817,7 +817,7 @@ module Noir
       if fields = dto_index[type_name]?
         fields.each do |field|
           next unless field.access_modifier == "public" || field.has_setter?
-          sink << Param.new(field.name, param_value(default_value, field.init_value), format)
+          sink << Param.new(field.name_for(format), param_value(default_value, field.init_value), format)
         end
       else
         fallback.call

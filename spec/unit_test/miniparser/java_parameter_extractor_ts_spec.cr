@@ -327,6 +327,41 @@ describe Noir::TreeSitterJavaParameterExtractor do
       params.map(&.name).should eq(["title", "body", "categoryId"])
       params.all? { |p| p.param_type == "json" }.should be_true
     end
+
+    it "names JSON body fields by @JsonProperty, form fields by the Java name" do
+      dto_source = <<-JAVA
+        import lombok.Data;
+        import com.fasterxml.jackson.annotation.JsonProperty;
+        @Data
+        class ProfileRequest {
+            @JsonProperty("display_name")
+            private String displayName;
+            @JsonProperty(value = "e_mail")
+            private String email;
+            private Integer age;
+        }
+        record ProfileRecord(@JsonProperty("nick_name") String nickName, int age) {}
+        JAVA
+      class_fields = Noir::TreeSitterJavaParameterExtractor.extract_class_fields(dto_source)
+
+      controller = <<-JAVA
+        class ProfileController {
+            @PostMapping("/profile")
+            public String add(@RequestBody ProfileRequest req) { return ""; }
+            @PostMapping("/record")
+            public String rec(@RequestBody ProfileRecord req) { return ""; }
+            @PostMapping("/form")
+            public String form(@ModelAttribute ProfileRequest req) { return ""; }
+        }
+        JAVA
+
+      method_params(controller, "ProfileController", "add", "POST", "json", class_fields)
+        .map(&.name).should eq(["display_name", "e_mail", "age"])
+      method_params(controller, "ProfileController", "rec", "POST", "json", class_fields)
+        .map(&.name).should eq(["nick_name", "age"])
+      method_params(controller, "ProfileController", "form", "POST", "form", class_fields)
+        .map(&.name).should eq(["displayName", "email", "age"])
+    end
   end
 
   describe "implicit (un-annotated) parameter binding" do

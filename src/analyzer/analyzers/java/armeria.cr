@@ -1036,7 +1036,7 @@ module Analyzer::Java
         fields.each do |field|
           next unless field.access_modifier == "public" || field.has_setter?
 
-          sink << Param.new(field.name, field.init_value, "json")
+          sink << Param.new(field.json_name, field.init_value, "json")
           emitted = true
         end
       end

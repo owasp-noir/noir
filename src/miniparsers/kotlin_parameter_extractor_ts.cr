@@ -97,11 +97,20 @@ module Noir
       # True when `init_value` came from a `string_literal` node and was
       # therefore already decoded (quotes stripped) on the way in.
       getter? init_string_literal : Bool
+      # Wire name in a JSON body: `@JsonProperty("display_name")`, else `name`.
+      getter json_name : String
 
       def initialize(@name, @access_modifier, @has_setter, @init_value,
                      @null_validation_groups = [] of String, @server_managed = false,
                      @validation_annotations = [] of String,
-                     @init_string_literal = false)
+                     @init_string_literal = false,
+                     json_name : String? = nil)
+        @json_name = json_name || @name
+      end
+
+      # Jackson renames apply to JSON bodies only.
+      def name_for(format : String) : String
+        format == "json" ? @json_name : @name
       end
 
       # The request-ready value of this field's initializer, or "" when the
@@ -705,7 +714,7 @@ module Noir
           fields << FieldInfo.new(
             name, "public", true, init, null_validation_groups(param, source),
             server_managed_field?(param, source, name, init, class_name, class_text), validation_annotations(param, source),
-            init_string
+            init_string, json_property_name(param, source)
           )
         end
       end
@@ -755,7 +764,7 @@ module Noir
             fields << FieldInfo.new(
               name, "public", true, init, null_validation_groups(member, source),
               server_managed_field?(member, source, name, init, class_name, class_text), validation_annotations(member, source),
-              init_string
+              init_string, json_property_name(member, source)
             )
             last_prop_name = name
           else
@@ -765,6 +774,22 @@ module Noir
       end
 
       fields
+    end
+
+    # `@JsonProperty("wire")`, including use-site targets (`@field:` /
+    # `@get:` / `@param:`) and the `value = "wire"` form.
+    JSON_PROPERTY_RE = /@(?:\w+:)?(?:\w+\.)*JsonProperty\s*\(\s*(?:value\s*=\s*)?"([^"]+)"/
+
+    private def json_property_name(decl : LibTreeSitter::TSNode, source : String) : String?
+      Noir::TreeSitter.each_named_child(decl) do |child|
+        case Noir::TreeSitter.node_type(child)
+        when "modifiers", "parameter_modifiers", "annotation"
+          if match = Noir::TreeSitter.node_text(child, source).match(JSON_PROPERTY_RE)
+            return match[1]
+          end
+        end
+      end
+      nil
     end
 
     # True when a `property_declaration` carries a custom getter/setter —
@@ -1165,7 +1190,7 @@ module Noir
     end
 
     private def param_from_field(field : FieldInfo, value : String, param_type : String) : Param
-      param = Param.new(field.name, value, param_type)
+      param = Param.new(field.name_for(param_type), value, param_type)
       unless field.validation_annotations.empty?
         param.add_tag(Tag.new(
           "input-validation",

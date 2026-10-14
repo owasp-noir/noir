@@ -742,7 +742,7 @@ module Noir
                                 format : String) : Array(Param)?
       fields = dto_index[type_name]?
       return unless fields
-      fields.reject(&.server_managed?).map { |field| Param.new(field.name, field.literal_default, format) }
+      fields.reject(&.server_managed?).map { |field| Param.new(field.name_for(format), field.literal_default, format) }
     end
   end
 end

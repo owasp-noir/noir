@@ -156,7 +156,7 @@ module Analyzer::Java
       delete = !deletes.empty? && !deletes.subset_of?(hidden)
 
       line = decl.line + 1
-      body = (candidate.dto_index[entity]? || [] of Noir::TreeSitterJavaParameterExtractor::FieldInfo).map { |field| Param.new(field.name, "", "json") }
+      body = (candidate.dto_index[entity]? || [] of Noir::TreeSitterJavaParameterExtractor::FieldInfo).map { |field| Param.new(field.json_name, "", "json") }
       add(collection, "GET", line, candidate.path, %w[page size sort].map { |name| Param.new(name, "", "query") }) if collection_get
       add(collection, "POST", line, candidate.path, body) if save
       add(item, "GET", line, candidate.path) if item_get
