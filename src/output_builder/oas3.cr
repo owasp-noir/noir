@@ -18,7 +18,7 @@ class OutputBuilderOas3 < OutputBuilder
     query_operation_emitted = false
 
     endpoints.each do |endpoint|
-      next if endpoint.non_http? || regex_literal_route?(endpoint) # deep links, CLI commands and JS regex routes are not OAS paths
+      next if endpoint.non_http? || endpoint.regex_path? # deep links, CLI commands and regex routes are not OAS paths
       parameters = [] of Hash(String, JSON::Any)
       json_properties = {} of String => JSON::Any
       xml_properties = {} of String => JSON::Any

@@ -79,6 +79,7 @@ module Analyzer::Specification
 
       recs.each do |rec|
         endpoint = Endpoint.new(rec.path, "ANY", details_at(details, rec.line))
+        endpoint.kind = "regex" if rec.path_type == "regex" && Noir::URLPath.regex_route?(rec.path)
         endpoint.add_tag(Tag.new("haproxy-path-type", rec.path_type, "haproxy_analyzer"))
         # `add_tag` keeps one tag per name: an ACL behind two `use_backend`
         # rules names both backends in one tag.

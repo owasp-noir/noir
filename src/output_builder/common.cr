@@ -121,7 +121,7 @@ class OutputBuilderCommon < OutputBuilder
         r_buffer << "\n#{r_method} #{r_url}"
       else
         r_kind = "[#{escape_control_chars(endpoint.kind)}]".colorize(:light_magenta).toggle(@is_color)
-        r_name = safe_url.lstrip('/').colorize(:light_yellow).toggle(@is_color)
+        r_name = (endpoint.kind == "regex" ? safe_url : safe_url.lstrip('/')).colorize(:light_yellow).toggle(@is_color)
         r_buffer << "\n#{r_method} #{r_kind} #{r_name}"
       end
 

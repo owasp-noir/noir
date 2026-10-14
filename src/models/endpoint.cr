@@ -63,6 +63,15 @@ struct Endpoint
     mobile? || cli? || realtime?
   end
 
+  # True when the URL is a regular expression rather than a path: a regex
+  # location from an infra config (`kind == "regex"`, set by the nginx,
+  # Apache, Envoy, ... analyzers) or a verbatim JavaScript RegExp literal
+  # (escaped slashes). Reports keep it; OpenAPI, Postman, curl/httpie/
+  # powershell and the probes skip it, since nobody can request a pattern.
+  def regex_path? : Bool
+    @kind == "regex" || @url.includes?("\\/")
+  end
+
   # Free-form metadata for non-HTTP entry points (mobile deep-link
   # schemes, Android intents, universal links: action/category/host/
   # package/...). nil for ordinary endpoints and suppressed from

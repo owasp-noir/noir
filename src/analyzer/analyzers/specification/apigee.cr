@@ -38,18 +38,19 @@ module Analyzer::Specification
             # Each top-level `or` branch pairs its own path with its own verb.
             disjuncts(condition).each do |branch|
               suffixes = positive_matches(branch, PATHSUFFIX_RE).map do |m|
-                REGEX_OPS.includes?(m[1].downcase) ? Noir::URLPath.strip_regex_anchors(m[2]) : m[2]
+                regex = REGEX_OPS.includes?(m[1].downcase)
+                {regex ? Noir::URLPath.strip_regex_anchors(m[2]) : m[2], regex}
               end
               verbs = positive_matches(branch, VERB_RE).map(&.[1].upcase).uniq!
               next if suffixes.empty? && verbs.empty?
 
               emitted = true
-              urls = suffixes.empty? ? [base] : suffixes.map { |suffix| Noir::URLPath.join(base, suffix) }
+              urls = suffixes.empty? ? [{base, false}] : suffixes.map { |suffix, regex| {Noir::URLPath.join(base, suffix), regex} }
               emit(urls, verbs, flow_name, flow_details)
             end
           end
         end
-        emit([base], [] of String, nil, details_at(details, take_line(value_lines(content, BASE_PATH_LINE), base))) unless emitted
+        emit([{base, false}], [] of String, nil, details_at(details, take_line(value_lines(content, BASE_PATH_LINE), base))) unless emitted
       end
 
       @result
@@ -87,11 +88,12 @@ module Analyzer::Specification
       end
     end
 
-    private def emit(urls : Array(String), verbs : Array(String), flow_name : String?, details : Details)
+    private def emit(urls : Array({String, Bool}), verbs : Array(String), flow_name : String?, details : Details)
       verbs = ["ANY"] if verbs.empty?
-      urls.each do |url|
+      urls.each do |url, regex|
         verbs.each do |verb|
           endpoint = Endpoint.new(url, verb, details)
+          endpoint.kind = "regex" if regex && Noir::URLPath.regex_route?(url)
           endpoint.add_tag(Tag.new("apigee-flow", flow_name, "apigee_analyzer")) if flow_name
           @result << endpoint
         end

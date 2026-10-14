@@ -410,9 +410,9 @@ class OutputBuilderHtml < OutputBuilder
   end
 
   # Newline-separated curl commands for the copy-as-curl button, or nil for
-  # non-HTTP endpoints (mobile deep links / CLI commands).
+  # non-HTTP endpoints (mobile deep links / CLI commands) and regex routes.
   private def curl_attribute_for(endpoint : Endpoint, baked) : String?
-    return if endpoint.non_http?
+    return if endpoint.non_http? || endpoint.regex_path?
 
     expand_synthetic_http_methods(endpoint.method).join("\n") do |method|
       CurlCommand.for_endpoint(method, baked, endpoint.params)

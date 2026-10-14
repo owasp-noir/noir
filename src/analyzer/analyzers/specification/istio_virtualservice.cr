@@ -91,10 +91,12 @@ module Analyzer::Specification
     end
 
     private def emit_endpoint(path : String, method : String, path_type : String, hosts : Array(String), origin : String, details : Details)
+      regex = path_type == "regex" && origin == "match" && Noir::URLPath.regex_route?(path)
       path = Noir::URLPath.strip_regex_anchors(path) if path_type == "regex"
       hosts = [""] if hosts.empty?
       hosts.each do |host|
         endpoint = Endpoint.new(path, method, details)
+        endpoint.kind = "regex" if regex
         endpoint.add_tag(Tag.new("virtualservice-path-type", path_type, "istio_virtualservice_analyzer"))
         endpoint.add_tag(Tag.new("virtualservice-host", host, "istio_virtualservice_analyzer")) unless host.empty?
         endpoint.add_tag(Tag.new("virtualservice-source", origin, "istio_virtualservice_analyzer"))

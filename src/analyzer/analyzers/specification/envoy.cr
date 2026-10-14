@@ -85,7 +85,7 @@ module Analyzer::Specification
       return if path.nil? || path.empty?
 
       method = extract_method(match) || "GET"
-      emit(path, method, domains, details)
+      emit(path, method, domains, details, regex: !!(match["safe_regex"]? || match["regex"]?))
 
       if (route_action = route_h[ROUTE_KEY]?) && route_action.as_h?
         if rewrite = route_action["prefix_rewrite"]?.try(&.as_s?)
@@ -132,7 +132,7 @@ module Analyzer::Specification
       return if path.nil? || path.empty?
 
       method = extract_method(match) || "GET"
-      emit(path, method, domains, details)
+      emit(path, method, domains, details, regex: !!(match["safe_regex"]? || match["regex"]?))
 
       if (route_action = route_h["route"]?) && route_action.as_h?
         if rewrite = route_action["prefix_rewrite"]?.try(&.as_s?)
@@ -191,8 +191,9 @@ module Analyzer::Specification
     # The optimizer dedupes on (method, url), so emitting one endpoint per
     # domain would drop every domain but the first. Fold them into a single
     # comma-joined tag instead — same shape as the kamal and apisix analyzers.
-    private def emit(url : String, method : String, domains : Array(String), details : Details)
+    private def emit(url : String, method : String, domains : Array(String), details : Details, regex : Bool = false)
       endpoint = Endpoint.new(url, method, details)
+      endpoint.kind = "regex" if regex && Noir::URLPath.regex_route?(url)
       endpoint.add_tag(Tag.new("envoy-domain", domains.join(", "), "envoy_analyzer")) unless domains.empty?
       @result << endpoint
     end

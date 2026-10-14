@@ -32,8 +32,9 @@ class StatusCodeProbe < Deliver
       # apply before probing. Without it every one of them was handed to
       # Crest, which raised "Unsupported scheme" per endpoint: a mobile scan
       # with --status-codes printed dozens of `Failed to get status code`
-      # errors for endpoints that can never have one.
-      if endpoint.non_http?
+      # errors for endpoints that can never have one. A regex route is a
+      # pattern, not a path, so it has no status code either.
+      if endpoint.non_http? || endpoint.regex_path?
         slots[index] = endpoint
         next
       end

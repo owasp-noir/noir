@@ -180,5 +180,16 @@ module Noir
     def self.strip_regex_anchors(pattern : String) : String
       pattern.lchop('^').sub(/(?:\$|\\Z)\z/, "").gsub("\\.", ".")
     end
+
+    # True when a regex route is not a path anyone can request: pattern
+    # syntax survives `strip_regex_anchors` (`/(a|b)/.*`, `/_?x`), or it is
+    # neither anchored nor rooted (nginx `~ \.php$` matches any URI ending in
+    # `.php`). `^/api/users$` and `.htaccess`'s `^old/page$` are paths. Pass
+    # the pattern as written; a stripped path that starts with `/` gives the
+    # same answer. Analyzers set `Endpoint#kind = "regex"` on these.
+    def self.regex_route?(pattern : String) : Bool
+      path = strip_regex_anchors(pattern)
+      path.matches?(/[()\[\]|*+?\\^$]/) || !(pattern.starts_with?('^') || path.starts_with?('/'))
+    end
   end
 end

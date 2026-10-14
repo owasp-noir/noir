@@ -32,6 +32,8 @@ module Analyzer::Specification
         # `src` is a PCRE regex, and `source` patterns are written with the
         # same anchors in practice.
         endpoint = Endpoint.new(Noir::URLPath.strip_regex_anchors(source), METHOD_ANY, details)
+        # Only `src` is a regex; `source` is path-to-regexp (`:slug*`).
+        endpoint.kind = "regex" if source_key == "src" && Noir::URLPath.regex_route?(source)
         endpoint.add_tag(Tag.new("vercel-rule", rule_kind, "vercel_analyzer"))
         endpoint.add_tag(Tag.new("pattern", "vercel_source_matcher", "vercel_analyzer")) if pattern_source?(source)
 

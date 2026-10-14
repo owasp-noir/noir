@@ -45,6 +45,25 @@ describe "Nginx Analyzer" do
     endpoints.each(&.protocol.should(eq("https")))
   end
 
+  it "marks a regex location as kind regex only while it still reads as a pattern" do
+    endpoints = analyze_nginx <<-CONF
+      server {
+          listen 80;
+          location ~ ^/(fonts|assets)/.*\\.(eot|ttf)$ { expires 1y; }
+          location ~ ^/api/v1/users$                 { proxy_pass http://api; }
+          location ~ \\.php$                          { fastcgi_pass php; }
+          location /plain/                           { proxy_pass http://app; }
+      }
+      CONF
+
+    endpoints.map { |e| {e.url, e.kind} }.sort!.should eq([
+      {".php", "regex"},
+      {"/(fonts|assets)/.*.(eot|ttf)", "regex"},
+      {"/api/v1/users", ""},
+      {"/plain/", ""},
+    ])
+  end
+
   it "emits method-specific endpoints from if (\\$request_method) blocks" do
     endpoints = analyze_nginx <<-CONF
       server {

@@ -7,7 +7,7 @@ require "../utils/curl_command"
 class OutputBuilderCurl < OutputBuilder
   def print(endpoints : Array(Endpoint))
     endpoints.each do |endpoint|
-      next if endpoint.non_http? # mobile deep links / CLI commands aren't HTTP requests
+      next if endpoint.non_http? || endpoint.regex_path? # deep links, CLI commands and regex routes aren't requests
       baked = bake_endpoint(endpoint.url, endpoint.params)
 
       expand_synthetic_http_methods(endpoint.method).each do |method|

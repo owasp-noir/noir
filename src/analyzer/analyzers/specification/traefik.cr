@@ -144,13 +144,18 @@ module Analyzer::Specification
       alternatives.each do |alt|
         methods = [] of String
         paths = [] of String
+        regex_paths = Set(String).new
 
         scan_matchers(alt) do |name, args|
           case name.downcase
           when "path", "pathprefix"
             args.each { |arg| paths << normalize_path(arg) }
           when "pathregexp"
-            args.each { |arg| paths << normalize_path(Noir::URLPath.strip_regex_anchors(arg)) }
+            args.each do |arg|
+              path = normalize_path(Noir::URLPath.strip_regex_anchors(arg))
+              paths << path
+              regex_paths << path if Noir::URLPath.regex_route?(arg.strip)
+            end
           when "method"
             args.each { |arg| methods << arg.upcase }
           end
@@ -167,7 +172,9 @@ module Analyzer::Specification
             key = "#{method}::#{path}"
             next if seen.includes?(key)
             seen << key
-            @result << Endpoint.new(path, method, [] of Param, details)
+            endpoint = Endpoint.new(path, method, [] of Param, details)
+            endpoint.kind = "regex" if regex_paths.includes?(path)
+            @result << endpoint
           end
         end
       end
