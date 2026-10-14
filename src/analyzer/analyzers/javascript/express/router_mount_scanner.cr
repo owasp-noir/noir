@@ -122,7 +122,7 @@ module Analyzer::Javascript
     def scan
       locator = CodeLocator.instance
       main_files = collect_js_files
-      return scan_register_mounts(main_files, locator) if @framework.in?(:fastify, :restify)
+      return scan_register_mounts(main_files, locator) if @framework.in?(:fastify, :restify, :hapi)
       seed_firebase_function_mounts(main_files, locator) if @framework == :express
 
       # Global collections for two-pass processing
@@ -147,8 +147,14 @@ module Analyzer::Javascript
     APPLY_ROUTES_RE = /((?:require\s*\(\s*['"][^'"]+['"]\s*\))|[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?)\s*\.applyRoutes\s*\(\s*[\w$.]+\s*,\s*(?:['"]([^'"]+)['"]|`([^`$]+)`)/
     RESTIFY_ADD_RE  = /\.add\s*\(\s*(?:['"]([^'"]+)['"]|`([^`$]+)`)\s*,\s*((?:require\s*\(\s*['"][^'"]+['"]\s*\))|[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?)\s*\)/
 
+    # Hapi nests the prefix under `routes`, on the options or per plugin item.
+    HAPI_ROUTES_PREFIX_RE = /\broutes\s*:\s*\{[^}]*?\bprefix\s*:\s*(?:['"]([^'"]+)['"]|`([^`$]+)`)/
+    HAPI_PLUGIN_FIELD_RE  = /\A\s*plugin\s*:\s*(.+)\z/m
+
     # Plugin/router mounts whose child lives in another file:
     #   Fastify  `<instance>.register(<plugin>, { prefix: '/p' })`
+    #   Hapi     `server.register(<plugin>, { routes: { prefix: '/p' } })` and
+    #            `server.register([{ plugin: <plugin>, routes: { prefix: '/p' } }])`
     #   Restify  `<router>.applyRoutes(server, '/p')`, `router.add('/p', <router>)`
     # where the child is `require('./users')`, `import('./users')` or an
     # imported binding. Every route the child file registers is served under
@@ -160,8 +166,10 @@ module Analyzer::Javascript
       edges = Hash(String, Array(Tuple(String, Noir::LocatorKey(Array(String)), String))).new
       main_files.each do |file|
         content = CodeLocator.instance.content_for(file) || Noir::TextFile.read(file)
-        next unless @framework == :fastify ? content.includes?(".register") : content.includes?(".applyRoutes") || content.includes?(".add")
-        next if Noir::JSRouteExtractor.other_shared_extractor_framework?(content, @framework)
+        next unless @framework.in?(:fastify, :hapi) ? content.includes?(".register") : content.includes?(".applyRoutes") || content.includes?(".add")
+        # Hapi does not share the route extractor: its analyzer gates files
+        # by project root, and only a `routes: { prefix }` option counts.
+        next if @framework != :hapi && Noir::JSRouteExtractor.other_shared_extractor_framework?(content, @framework)
         content = Noir::JSRouteExtractor.strip_js_comments(content)
         imports = nil.as(NamedTuple(require_map: Hash(String, String), function_map: Hash(String, String), var_to_function: Hash(String, String))?)
 
@@ -206,10 +214,32 @@ module Analyzer::Javascript
           prefix = prefix_match[1]? || prefix_match[2]
           yield plugin, prefix.starts_with?('/') ? prefix : "/#{prefix}"
         end
+      elsif @framework == :hapi
+        content.scan(REGISTER_CALL_RE) do |m|
+          args = extract_use_call_args(content, m.byte_end(0))
+          first = first_top_level_argument(args)
+          options_prefix = hapi_routes_prefix(args[first.size..])
+          first = first.strip
+          items = first.starts_with?('[') && first.ends_with?(']') ? split_at_top_level_commas(first[1...-1]) : [first]
+          items.each do |item|
+            item = item.strip
+            if item.starts_with?('{') && item.ends_with?('}')
+              plugin = split_at_top_level_commas(item[1...-1]).find_value { |field| field.match(HAPI_PLUGIN_FIELD_RE).try(&.[1]) }
+              prefix = hapi_routes_prefix(item) || options_prefix
+            else
+              plugin, prefix = item, options_prefix
+            end
+            yield plugin, prefix if plugin && prefix
+          end
+        end
       else
         content.scan(APPLY_ROUTES_RE) { |m| yield m[1], m[2]? || m[3] }
         content.scan(RESTIFY_ADD_RE) { |m| yield m[3], m[1]? || m[2] }
       end
+    end
+
+    private def hapi_routes_prefix(text : String) : String?
+      text.match(HAPI_ROUTES_PREFIX_RE).try { |m| m[1]? || m[2] }
     end
 
     private def descend_register_mounts(file : String, parent : String,
