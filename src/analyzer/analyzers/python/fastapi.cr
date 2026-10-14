@@ -1306,8 +1306,9 @@ module Analyzer::Python
         "cookie"
       elsif data.matches?(/Header/)
         "header"
-      elsif data.matches?(/Body/) || data.matches?(/Form/) ||
-            data.matches?(/File/) || data.matches?(/UploadFile/)
+      elsif data.matches?(/Body/)
+        "json"
+      elsif data.matches?(/Form/) || data.matches?(/File/)
         "form"
       elsif data.matches?(/Query/)
         "query"
@@ -1349,7 +1350,7 @@ module Analyzer::Python
 
           if !param_name.empty? && !param_type.empty?
             default_value = return_literal_value(param_default.strip)
-            params << Param.new(model_field_wire_name(param_name.strip, param_default), default_value, "form")
+            params << Param.new(model_field_wire_name(param_name.strip, param_default), default_value, "json")
           end
         end
       end

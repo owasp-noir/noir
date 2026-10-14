@@ -2,7 +2,7 @@ require "../../func_spec.cr"
 
 expected_endpoints = [
   Endpoint.new("/api/query/param-required/int", "GET", [Param.new("query", "", "query")]),
-  Endpoint.new("/api/items/{item_id}", "PUT", [Param.new("item_id", "", "path"), Param.new("name", "", "form"), Param.new("size", "", "form")]),
+  Endpoint.new("/api/items/{item_id}", "PUT", [Param.new("item_id", "", "path"), Param.new("name", "", "json"), Param.new("size", "", "json")]),
   # `Header` maps `_` to `-` unless `convert_underscores=False`, so the name
   # a client actually sends is `hidden-header`, not the Python identifier.
   Endpoint.new("/api/hidden_header", "GET", [Param.new("hidden-header", "", "header")]),
@@ -14,10 +14,10 @@ expected_endpoints = [
     Param.new("sess-id", "", "cookie"),
   ]),
   Endpoint.new("/api/aliased_body", "POST", [
-    Param.new("userName", "", "form"),
-    Param.new("v2Name", "", "form"),
-    Param.new("age", "", "form"),
-    Param.new("note", "plain", "form"),
+    Param.new("userName", "", "json"),
+    Param.new("v2Name", "", "json"),
+    Param.new("age", "", "json"),
+    Param.new("note", "plain", "json"),
   ]),
   Endpoint.new("/api/wire_names/annotated", "GET", [
     Param.new("x-api-key", "", "header"),
@@ -50,12 +50,12 @@ expected_endpoints = [
   Endpoint.new("/api/constant/registered/{item_id}", "PUT", [
     Param.new("item_id", "", "path"),
     Param.new("q", "", "query"),
-    Param.new("payload", "", "form"),
+    Param.new("payload", "", "json"),
   ]),
   Endpoint.new("/api/external/{item_id}", "PATCH", [
     Param.new("item_id", "", "path"),
     Param.new("q", "", "query"),
-    Param.new("payload", "", "form"),
+    Param.new("payload", "", "json"),
   ]),
   Endpoint.new("/api/tenants/{tenant_id}/registered", "GET", [
     Param.new("tenant_id", "", "path"),
