@@ -1031,6 +1031,25 @@ describe Noir::TreeSitterGoRouteExtractor do
     ].sort)
   end
 
+  it "keeps the path of Go 1.22 ServeMux host patterns" do
+    source = <<-GO
+      package main
+      import "net/http"
+      func main() {
+          m := http.NewServeMux()
+          m.HandleFunc("api.example.com/v1/status", status)
+          m.HandleFunc("DELETE api.example.com:8443/v1/items/{id}", deleteItem)
+          m.HandleFunc("not a host/x", nope)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_net_http_routes(source)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"ANY", "/v1/status"},
+      {"DELETE", "/v1/items/{id}"},
+    ].sort)
+  end
+
   it "normalizes Go 1.22 ServeMux end-of-path wildcard patterns" do
     source = <<-GO
       package main

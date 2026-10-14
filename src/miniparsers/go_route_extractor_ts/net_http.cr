@@ -79,6 +79,7 @@ module Noir
     # first keeps the tree-sitter parse for the files that can actually
     # match.
     NET_HTTP_HANDLE_MARKER_RE = Regex.union("Handle")
+    NET_HTTP_HOST_RE          = /\A[A-Za-z0-9](?:[A-Za-z0-9.\-]*[A-Za-z0-9])?(?::\d+)?\z/
 
     # Necessary condition for `extract_net_http_routes` to return
     # anything. Exposed so callers can skip the per-directory pre-passes
@@ -376,6 +377,11 @@ module Noir
         end
       end
 
+      # Go 1.22 host pattern (`api.example.com/v1/status`): the route is
+      # the path after the host.
+      if !path.starts_with?('/') && (slash = path.index('/')) && path[0, slash].matches?(NET_HTTP_HOST_RE)
+        path = path[slash..]
+      end
       return unless path.starts_with?("/") || path.starts_with?("{$}")
       path = "/#{path}" unless path.starts_with?("/")
       path = normalize_net_http_pattern_path(path)
