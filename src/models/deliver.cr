@@ -461,10 +461,17 @@ class Deliver
     cookies = params["cookie"]
     return user_headers if discovered.empty? && cookies.empty?
 
+    # Header names are case-insensitive but Hash keys are not, so a plain
+    # merge sent a discovered empty `authorization` next to the user's
+    # `Authorization: Bearer ...`, and servers read the first one.
+    user_names = user_headers.keys.map(&.downcase).to_set
     result = {} of String => String
-    discovered.each { |name, value| result[name] = value }
-    # One `Cookie` header carries the whole jar, per RFC 6265.
-    unless cookies.empty?
+    discovered.each do |name, value|
+      result[name] = value unless user_names.includes?(name.downcase)
+    end
+    # One `Cookie` header carries the whole jar, per RFC 6265. A user
+    # `Cookie` header replaces the discovered jar outright.
+    unless cookies.empty? || user_names.includes?("cookie")
       result["Cookie"] = cookies.map { |name, value| "#{name}=#{value}" }.join("; ")
     end
     result.merge(user_headers)

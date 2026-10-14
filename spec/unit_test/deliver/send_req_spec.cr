@@ -593,6 +593,41 @@ describe SendReq do
       end
     end
 
+    # Header names are case-insensitive; a case-sensitive merge sent both the
+    # discovered empty `authorization` and the user's token, and servers
+    # take the first one.
+    it "lets a --probe-header win over a discovered param of different case" do
+      server = CapturingServer.new
+      begin
+        ep = Endpoint.new(server.url_for("/me"), "GET")
+        ep.params << Param.new("authorization", "", "header")
+
+        options = base_deliver_options
+        options["probe_header"] = YAML::Any.new([YAML::Any.new("Authorization: Bearer tok")])
+        SendReq.new(options).run([ep])
+
+        server.requests.first[:headers].get("Authorization").should eq(["Bearer tok"])
+      ensure
+        server.close
+      end
+    end
+
+    it "lets a --probe-header Cookie replace the discovered cookie jar" do
+      server = CapturingServer.new
+      begin
+        ep = Endpoint.new(server.url_for("/me"), "GET")
+        ep.params << Param.new("sid", "", "cookie")
+
+        options = base_deliver_options
+        options["probe_header"] = YAML::Any.new([YAML::Any.new("cookie: sid=real")])
+        SendReq.new(options).run([ep])
+
+        server.requests.first[:headers].get("Cookie").should eq(["sid=real"])
+      ensure
+        server.close
+      end
+    end
+
     it "withholds --probe-header secrets from a host that isn't the --url target" do
       target = CapturingServer.new
       third_party = CapturingServer.new
