@@ -124,11 +124,12 @@ module Analyzer::Specification
     end
 
     private def emit_endpoint(path : String, method : String, path_type : String, hosts : Array(String), origin : String, details : Details, params : Array(Param) = [] of Param)
+      regex = origin == "match" && path_type.downcase == "regularexpression" && Noir::URLPath.regex_route?(path)
       path = Noir::URLPath.strip_regex_anchors(path) if path_type.downcase == "regularexpression"
       hosts = [""] if hosts.empty?
       hosts.each do |host|
         endpoint = Endpoint.new(path, method, params.dup, details)
-        endpoint.kind = "regex" if origin == "match" && path_type.downcase == "regularexpression" && Noir::URLPath.regex_syntax?(path)
+        endpoint.kind = "regex" if regex
         endpoint.add_tag(Tag.new("gateway-path-type", path_type.downcase, "k8s_gateway_api_analyzer"))
         endpoint.add_tag(Tag.new("gateway-host", host, "k8s_gateway_api_analyzer")) unless host.empty?
         endpoint.add_tag(Tag.new("gateway-source", origin, "k8s_gateway_api_analyzer"))

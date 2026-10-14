@@ -282,13 +282,14 @@ module Analyzer::Specification
       return if path.empty?
 
       # `*Match` directives and `RewriteRule` take regexes.
-      regex = path_type.ends_with?("regex") || path_type == "rewrite-source"
-      path = Noir::URLPath.strip_regex_anchors(path) if regex
+      pattern = path_type.ends_with?("regex") || path_type == "rewrite-source"
+      regex = pattern && Noir::URLPath.regex_route?(path)
+      path = Noir::URLPath.strip_regex_anchors(path) if pattern
       detail = Details.new(PathInfo.new(source_path, line))
       hosts = [""] if hosts.empty?
       hosts.each do |host|
         endpoint = Endpoint.new(path, METHOD_ANY, detail)
-        endpoint.kind = "regex" if regex && Noir::URLPath.regex_syntax?(path)
+        endpoint.kind = "regex" if regex
         endpoint.add_tag(Tag.new("apache-path-type", path_type, "apache_httpd_analyzer"))
         endpoint.add_tag(Tag.new("apache-host", host, "apache_httpd_analyzer")) unless host.empty?
         endpoint.add_tag(Tag.new("apache-source", origin, "apache_httpd_analyzer"))

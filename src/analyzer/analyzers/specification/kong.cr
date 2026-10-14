@@ -78,12 +78,13 @@ module Analyzer::Specification
         # Non-regex routes (including exact `=...`) are tagged as `prefix`.
         regex = path.starts_with?("~")
         path_type = regex ? "regex" : "prefix"
+        pattern_route = regex && Noir::URLPath.regex_route?(path.lchop('~'))
         # In Kong 3.x the leading `~` is the marker that selects regex mode, not
         # a path segment; leaving it in produced URLs like `/~/status/\d+`.
         path = Noir::URLPath.strip_regex_anchors(path.lchop('~')) if regex
         methods.each do |method|
           endpoint = Endpoint.new(path, method, details)
-          endpoint.kind = "regex" if regex && Noir::URLPath.regex_syntax?(path)
+          endpoint.kind = "regex" if pattern_route
           endpoint.add_tag(Tag.new("kong-path-type", path_type, "kong_analyzer"))
           hosts.each { |host| endpoint.add_tag(Tag.new("kong-host", host, "kong_analyzer")) }
           endpoint.add_tag(Tag.new("kong-upstream", upstream, "kong_analyzer")) unless upstream.empty?

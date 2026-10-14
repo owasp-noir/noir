@@ -154,7 +154,7 @@ module Analyzer::Specification
             args.each do |arg|
               path = normalize_path(Noir::URLPath.strip_regex_anchors(arg))
               paths << path
-              regex_paths << path if Noir::URLPath.regex_syntax?(path)
+              regex_paths << path if Noir::URLPath.regex_route?(arg.strip)
             end
           when "method"
             args.each { |arg| methods << arg.upcase }

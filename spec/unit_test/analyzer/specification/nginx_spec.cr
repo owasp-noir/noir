@@ -51,11 +51,13 @@ describe "Nginx Analyzer" do
           listen 80;
           location ~ ^/(fonts|assets)/.*\\.(eot|ttf)$ { expires 1y; }
           location ~ ^/api/v1/users$                 { proxy_pass http://api; }
+          location ~ \\.php$                          { fastcgi_pass php; }
           location /plain/                           { proxy_pass http://app; }
       }
       CONF
 
     endpoints.map { |e| {e.url, e.kind} }.sort!.should eq([
+      {".php", "regex"},
       {"/(fonts|assets)/.*.(eot|ttf)", "regex"},
       {"/api/v1/users", ""},
       {"/plain/", ""},

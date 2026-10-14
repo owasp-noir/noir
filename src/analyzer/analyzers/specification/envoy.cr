@@ -193,7 +193,7 @@ module Analyzer::Specification
     # comma-joined tag instead — same shape as the kamal and apisix analyzers.
     private def emit(url : String, method : String, domains : Array(String), details : Details, regex : Bool = false)
       endpoint = Endpoint.new(url, method, details)
-      endpoint.kind = "regex" if regex && Noir::URLPath.regex_syntax?(url)
+      endpoint.kind = "regex" if regex && Noir::URLPath.regex_route?(url)
       endpoint.add_tag(Tag.new("envoy-domain", domains.join(", "), "envoy_analyzer")) unless domains.empty?
       @result << endpoint
     end
