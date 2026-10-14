@@ -77,4 +77,21 @@ describe Analyzer::Perl::Mojolicious do
 
     mojolicious_routes(analyzer, source).should be_empty
   end
+
+  it "does not emit a nesting parent route that receives children" do
+    source = <<-PERL
+      package App;
+      use Mojo::Base 'Mojolicious', -signatures;
+
+      sub startup ($self) {
+        my $r = $self->routes;
+        my $foo = $r->any('/foo')->to('foo#');
+        $foo->get('/bar')->to('#bar');
+        my $leaf = $r->any('/leaf')->to('leaf#index');
+      }
+      PERL
+
+    mojolicious_routes(analyzer, source).sort.should eq(
+      ["DELETE /leaf", "GET /foo/bar", "GET /leaf", "HEAD /leaf", "OPTIONS /leaf", "PATCH /leaf", "POST /leaf", "PUT /leaf"])
+  end
 end

@@ -29,15 +29,8 @@ expected_endpoints = [
   Endpoint.new("/api/sync", "POST"),
   ws_socket,
   Endpoint.new("/api/legacy", "GET"),
-  # `my $admin = $r->any('/admin')` — the assignment itself defines
-  # a catch-all route at `/admin`, AND grouped children at `/admin/...`.
-  Endpoint.new("/admin", "GET"),
-  Endpoint.new("/admin", "POST"),
-  Endpoint.new("/admin", "PUT"),
-  Endpoint.new("/admin", "DELETE"),
-  Endpoint.new("/admin", "PATCH"),
-  Endpoint.new("/admin", "OPTIONS"),
-  Endpoint.new("/admin", "HEAD"),
+  # `my $admin = $r->any('/admin')` gets children, so it is only a prefix:
+  # a Mojolicious route with children never matches on its own.
   Endpoint.new("/admin/users", "GET"),
   Endpoint.new("/admin/users", "POST"),
   Endpoint.new("/admin/users/:id", "GET", [Param.new("id", "", "path")]),

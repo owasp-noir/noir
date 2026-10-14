@@ -41,6 +41,8 @@ module Analyzer::Perl
     # The bare `$var` sitting immediately left of the call, with nothing
     # between it and the `->`: the `$cache` of `$cache->get("ttl")`.
     TRAILING_VAR_RE = /\$([A-Za-z_]\w*)\s*$/
+    # `$foo->get(` / `$foo->under(` …: `$foo` holds a route with children.
+    NESTED_RECEIVER_RE = /\$([A-Za-z_]\w*)\s*->\s*(?:get|post|put|patch|delete|del|options|head|websocket|any|under|route)\s*\(/
     # Mojolicious names its route object `$r` (or `$routes`/`$route`/`$router`)
     # by universal convention, including in helper subs that receive it as an
     # argument (`sub _api ($r) { $r->get('/x') }`) where no assignment exists
@@ -117,12 +119,18 @@ module Analyzer::Perl
       # records which variables hold a route object at all, so `$cache->get(…)`
       # can be told apart from `$admin->get(…)`.
       var_prefix, path_vars, route_vars = build_prefix_maps(sanitized_lines)
+      parent_vars = nesting_route_vars(sanitized_lines, route_vars)
 
       sanitized_lines.each_with_index do |line, index|
         stripped = line.strip
         next if stripped.empty? || stripped.starts_with?('#')
 
         line_endpoints = line_to_endpoints(line, var_prefix, path_vars, route_vars)
+        # `my $foo = $r->any('/foo')` that later gets `$foo->get('/bar')`:
+        # a route with children never matches on its own.
+        if !line_endpoints.empty? && (assigned = line.match(ASSIGNMENT_HEAD_RE)) && parent_vars.includes?(assigned[1])
+          line_endpoints.clear
+        end
         line_endpoints.each do |endpoint|
           endpoint.details = Details.new(PathInfo.new(file_path, index + 1))
           extract_path_params(endpoint).each { |p| endpoint.push_param(p) unless p.name.empty? }
@@ -360,6 +368,17 @@ module Analyzer::Perl
     # (a cache lookup). It is tracked separately from `var_prefix` because a
     # route object can carry an *empty* prefix (`my $auth = $r->under('')`)
     # and still be a router.
+    # Route variables that receive child routes (`$foo->get(...)`).
+    private def nesting_route_vars(lines : Array(String), route_vars : Set(String)) : Set(String)
+      parents = Set(String).new
+      return parents if route_vars.empty?
+      lines.each do |line|
+        next unless line.includes?("->")
+        line.scan(NESTED_RECEIVER_RE) { |m| parents << m[1] if route_vars.includes?(m[1]) }
+      end
+      parents
+    end
+
     private def build_prefix_maps(lines : Array(String)) : Tuple(Hash(String, String), Hash(String, String), Set(String))
       var_prefix = {} of String => String
       path_vars = {} of String => String
