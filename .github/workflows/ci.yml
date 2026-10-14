@@ -137,7 +137,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        crystal-version: [1.21.0]
+        crystal-version: [1.21.0, 1.22.0]
     steps:
       - uses: actions/checkout@v7
       - name: Refresh apt package indexes
@@ -287,7 +287,7 @@ jobs:
         run: sudo apt-get update
       - uses: crystal-lang/install-crystal@v1
         with:
-          crystal: 1.21.0
+          crystal: 1.22.0
       - name: Regenerate supported docs and counts
         run: crystal run scripts/generate_supported_docs.cr -- -q
       - name: Fail if the committed output is stale
@@ -311,7 +311,7 @@ jobs:
         run: sudo apt-get update
       - uses: crystal-lang/install-crystal@v1
         with:
-          crystal: 1.21.0
+          crystal: 1.22.0
       - name: Cache shards
         uses: actions/cache@v6
         with:
@@ -325,9 +325,9 @@ jobs:
           # This job compiles Ameba, not noir, so it needs no tree-sitter
           # objects — and its cache entries are disjoint from the other jobs'.
           path: ~/.cache/crystal
-          key: crystal-${{ runner.os }}-1.21.0-lint-${{ hashFiles('shard.lock') }}
+          key: crystal-${{ runner.os }}-1.22.0-lint-${{ hashFiles('shard.lock') }}
           restore-keys: |
-            crystal-${{ runner.os }}-1.21.0-lint-
+            crystal-${{ runner.os }}-1.22.0-lint-
       - name: Cache the compiled Ameba binary
         id: ameba-cache
         uses: actions/cache@v6
@@ -339,7 +339,7 @@ jobs:
           # Crystal version is in the key too, so a hit means the binary was
           # built from exactly this source by exactly this compiler.
           path: bin/ameba
-          key: ameba-${{ runner.os }}-1.21.0-${{ hashFiles('shard.lock') }}
+          key: ameba-${{ runner.os }}-1.22.0-${{ hashFiles('shard.lock') }}
       - name: Install dependencies
         run: shards install
       - name: Build Ameba
@@ -361,7 +361,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        crystal-version: [1.21.0]
+        crystal-version: [1.21.0, 1.22.0]
     steps:
       - uses: actions/checkout@v7
       - name: Refresh apt package indexes
@@ -532,7 +532,7 @@ jobs:
         run: sudo apt-get update
       - uses: crystal-lang/install-crystal@v1
         with:
-          crystal: 1.21.0
+          crystal: 1.22.0
       - name: Check shards.nix against shard.lock
         run: crystal run scripts/check_shards_nix.cr
       - uses: cachix/install-nix-action@v31
