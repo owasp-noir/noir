@@ -59,6 +59,7 @@ module Analyzer::Php
       endpoints = [] of Endpoint
       details = Details.new(PathInfo.new(path))
 
+      properties = string_properties(content)
       offset = 0
       while call_start = content.index("register_rest_route", offset)
         paren_open = content.index('(', call_start)
@@ -69,21 +70,26 @@ module Analyzer::Php
           offset = paren_close + 1
           args = content[(paren_open + 1)...paren_close]
 
-          namespace, route = namespace_and_route(args)
-          # The namespace/route must be the first two *positional* args and
-          # both must be plain string literals. A dynamic value ($this->
-          # namespace, concatenation, a WP_REST_Controller subclass) can't be
-          # resolved statically — skip rather than emit a bogus URL such as
-          # /wp-json/books/{id}/GET (which is what naively scanning for the
-          # first two literals anywhere in the arg list would produce).
+          parts = split_top_level_args(args)
+          # The namespace/route are the first two *positional* args, each
+          # string literals, `$this->prop` (a WP_REST_Controller's
+          # `protected $namespace = '...'`) or a `.` concatenation of those.
+          # Anything else can't be resolved statically — skip rather than emit
+          # a bogus URL such as /wp-json/books/{id}/GET (which is what naively
+          # scanning for the first two literals anywhere would produce).
+          namespace = parts[0]?.try { |arg| resolve_string_expr(arg, properties) }
+          route = parts[1]?.try { |arg| resolve_string_expr(arg, properties) }
           if namespace && route
             full_path = build_rest_path(namespace, route)
-            methods = extract_rest_methods(args)
-            methods = ["GET"] if methods.empty?
-            params = extract_wp_path_params(full_path)
+            path_params = extract_wp_path_params(full_path)
 
-            methods.uniq.each do |method|
-              endpoints << Endpoint.new(full_path, method, params.dup, details.dup)
+            rest_handlers(parts[2]? || "").each do |method, arg_names|
+              params = path_params.dup
+              type = method == "GET" || method == "DELETE" ? "query" : "form"
+              arg_names.each do |name|
+                params << Param.new(name, "", type) unless params.any? { |param| param.name == name }
+              end
+              endpoints << Endpoint.new(full_path, method, params, details.dup)
             end
           end
         else
@@ -94,6 +100,80 @@ module Analyzer::Php
       end
 
       endpoints
+    end
+
+    # The verbs a route's third argument registers, each with the `'args'`
+    # names its handler declares. That argument is one handler array or an
+    # array of them, one per verb group.
+    private def rest_handlers(handlers_arg : String) : Hash(String, Array(String))
+      handlers = [handlers_arg]
+      if body = php_array_body(handlers_arg)
+        elements = split_top_level_args(body).map(&.strip).reject(&.empty?)
+        handlers = elements if !elements.empty? && elements.all? { |element| php_array_body(element) }
+      end
+
+      result = {} of String => Array(String)
+      handlers.each do |handler|
+        methods = extract_rest_methods(handler)
+        methods = ["GET"] if methods.empty?
+        names = rest_arg_names(handler)
+        methods.each { |method| (result[method] ||= [] of String).concat(names) }
+      end
+      result
+    end
+
+    REST_ARGS_KEY_RE = /\A['"]args['"]\s*=>\s*/
+    ARRAY_KEY_RE     = /\A['"]([^'"]+)['"]\s*=>/
+
+    # Keys of a handler's `'args' => array( 'per_page' => …, … )`.
+    private def rest_arg_names(handler : String) : Array(String)
+      body = php_array_body(handler)
+      return [] of String unless body
+      split_top_level_args(body).each do |element|
+        element = element.strip
+        next unless key = element.match(REST_ARGS_KEY_RE)
+        args_body = php_array_body(element[key.end(0)..])
+        return [] of String unless args_body
+        return split_top_level_args(args_body).compact_map(&.strip.match(ARRAY_KEY_RE).try(&.[1]))
+      end
+      [] of String
+    end
+
+    # Inside of an `array( … )` / `[ … ]` literal, or nil for anything else.
+    private def php_array_body(expr : String) : String?
+      s = expr.strip
+      if m = s.match(/\Aarray\s*\((.*)\)\z/mi)
+        m[1]
+      elsif s.starts_with?('[') && s.ends_with?(']')
+        s[1...-1]
+      end
+    end
+
+    STRING_PROPERTY_RE = /\b(?:public|protected|private|var)\s+(?:static\s+)?(?:\??[\w\\]+\s+)?\$(\w+)\s*=\s*(?:'([^'\\]*)'|"([^"\\$]*)")/
+
+    # `protected $namespace = 'myplugin/v2';`-style string properties of the
+    # file's classes, for resolving `$this->namespace`. A property inherited
+    # from a class in another file is not seen.
+    private def string_properties(content : String) : Hash(String, String)
+      properties = {} of String => String
+      content.scan(STRING_PROPERTY_RE) { |m| properties[m[1]] ||= m[2]? || m[3] }
+      properties
+    end
+
+    # The value of a string literal, `$this->prop`, or a `.` concatenation of
+    # them; nil when any piece is something else.
+    private def resolve_string_expr(arg : String, properties : Hash(String, String)) : String?
+      String.build do |io|
+        Noir::TopLevelSplit.split(arg, '.', SPLIT_ARGS_RULES).each do |piece|
+          if literal = literal_arg(piece)
+            io << literal
+          elsif (prop = piece.strip.match(/\A\$this->(\w+)\z/)) && (value = properties[prop[1]]?)
+            io << value
+          else
+            return
+          end
+        end
+      end
     end
 
     # `/wp-json/` + namespace + route, collapsing duplicate slashes.
@@ -305,16 +385,6 @@ module Analyzer::Php
         params << Param.new(name, "", "path")
       end
       params
-    end
-
-    # Namespace + route are register_rest_route's first two positional
-    # arguments. Return each only when that whole argument is a single
-    # string literal; a variable/concatenation yields nil so the caller
-    # skips the route instead of misreading a later literal as the route.
-    private def namespace_and_route(args : String) : Tuple(String?, String?)
-      parts = split_top_level_args(args)
-      return {nil, nil} if parts.size < 2
-      {literal_arg(parts[0]), literal_arg(parts[1])}
     end
 
     # A lone single/double-quoted string literal (the entire argument),
