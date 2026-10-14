@@ -132,11 +132,13 @@ module Analyzer::Specification
                   else           "prefix"
                   end
 
-      path = Noir::URLPath.strip_regex_anchors(path) if path_type.starts_with?("regex")
+      regex = path_type.starts_with?("regex")
+      path = Noir::URLPath.strip_regex_anchors(path) if regex
       detail = Details.new(PathInfo.new(details.code_paths.first.path, line))
       hosts = [""] if hosts.empty?
       hosts.each do |host|
         endpoint = Endpoint.new(path, method, detail)
+        endpoint.kind = "regex" if regex && Noir::URLPath.regex_syntax?(path)
         endpoint.add_tag(Tag.new("nginx-path-type", path_type, "nginx_analyzer"))
         endpoint.add_tag(Tag.new("nginx-host", host, "nginx_analyzer")) unless host.empty?
         endpoint.protocol = "https" if tls

@@ -468,12 +468,6 @@ class OutputBuilder
     route.match(ROUTE_AUTHORITY).try(&.[0])
   end
 
-  # Verbatim JavaScript RegExp route literals contain escaped slashes. They
-  # remain useful in ordinary reports but are not valid HTTP catalog paths.
-  protected def regex_literal_route?(endpoint : Endpoint) : Bool
-    endpoint.url.includes?("\\/")
-  end
-
   # The path portion of a route, with any `scheme://authority` prefix removed.
   # Textual rather than `URI#path` for the same reason as `split_route_url`.
   protected def route_path(route : String) : String

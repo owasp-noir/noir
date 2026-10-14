@@ -83,6 +83,7 @@ module Analyzer::Specification
         path = Noir::URLPath.strip_regex_anchors(path.lchop('~')) if regex
         methods.each do |method|
           endpoint = Endpoint.new(path, method, details)
+          endpoint.kind = "regex" if regex && Noir::URLPath.regex_syntax?(path)
           endpoint.add_tag(Tag.new("kong-path-type", path_type, "kong_analyzer"))
           hosts.each { |host| endpoint.add_tag(Tag.new("kong-host", host, "kong_analyzer")) }
           endpoint.add_tag(Tag.new("kong-upstream", upstream, "kong_analyzer")) unless upstream.empty?

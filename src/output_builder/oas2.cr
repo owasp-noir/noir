@@ -21,7 +21,7 @@ class OutputBuilderOas2 < OutputBuilder
     canonical_paths = {} of String => String
 
     endpoints.each do |endpoint|
-      next if endpoint.non_http? || regex_literal_route?(endpoint) # deep links, CLI commands and JS regex routes are not OAS paths
+      next if endpoint.non_http? || endpoint.regex_path? # deep links, CLI commands and regex routes are not OAS paths
       parameters = [] of Hash(String, JSON::Any)
       consumes = [] of String
       cookie_names = [] of String

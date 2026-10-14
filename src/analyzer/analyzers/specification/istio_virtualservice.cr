@@ -95,6 +95,7 @@ module Analyzer::Specification
       hosts = [""] if hosts.empty?
       hosts.each do |host|
         endpoint = Endpoint.new(path, method, details)
+        endpoint.kind = "regex" if path_type == "regex" && origin == "match" && Noir::URLPath.regex_syntax?(path)
         endpoint.add_tag(Tag.new("virtualservice-path-type", path_type, "istio_virtualservice_analyzer"))
         endpoint.add_tag(Tag.new("virtualservice-host", host, "istio_virtualservice_analyzer")) unless host.empty?
         endpoint.add_tag(Tag.new("virtualservice-source", origin, "istio_virtualservice_analyzer"))

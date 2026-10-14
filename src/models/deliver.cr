@@ -172,7 +172,8 @@ class Deliver
     sem = Channel(Nil).new(concurrency_limit)
 
     apply_all(endpoints).each do |endpoint|
-      next if endpoint.non_http? # can't HTTP-probe an app deep link or CLI command
+      next if endpoint.non_http?   # can't HTTP-probe an app deep link or CLI command
+      next if endpoint.regex_path? # a regex location is a pattern, not a path
       # `internal` is set by the Spring analyzer for `@FeignClient` /
       # `@HttpExchange` interfaces, which declare requests the app makes to
       # *other* services — they are not routes this app serves. Probing them

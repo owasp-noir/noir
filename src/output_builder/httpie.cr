@@ -8,7 +8,7 @@ require "json"
 class OutputBuilderHttpie < OutputBuilder
   def print(endpoints : Array(Endpoint))
     endpoints.each do |endpoint|
-      next if endpoint.non_http? # mobile deep links / CLI commands aren't HTTP requests
+      next if endpoint.non_http? || endpoint.regex_path? # deep links, CLI commands and regex routes aren't requests
       baked = bake_endpoint(endpoint.url, endpoint.params)
 
       option_parts = [] of String

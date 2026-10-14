@@ -180,5 +180,13 @@ module Noir
     def self.strip_regex_anchors(pattern : String) : String
       pattern.lchop('^').sub(/(?:\$|\\Z)\z/, "").gsub("\\.", ".")
     end
+
+    # True when a regex route still carries pattern syntax after
+    # `strip_regex_anchors` (`/(a|b)/.*`, `/_?x`), i.e. it is not a path
+    # anyone can request. `^/api/users$` strips to a plain path and stays
+    # requestable. Analyzers set `Endpoint#kind = "regex"` on these.
+    def self.regex_syntax?(path : String) : Bool
+      path.matches?(/[()\[\]|*+?\\^$]/)
+    end
   end
 end
