@@ -779,8 +779,6 @@ module Noir
     TEST_STUB_FILENAME_MARKERS = [
       ".test.",
       ".spec.",
-      "-spec.",
-      "-test.",
       # tsd / expect-type style type-only test files. fastify's
       # `test/types/*.test-d.ts` suites register sample routes purely
       # to assert their inferred typings — no production endpoints,
@@ -788,6 +786,15 @@ module Noir
       # shapes.
       ".test-d.",
     ]
+
+    # The hyphen forms are also ordinary English in production router
+    # names (`routes/ab-test.js`, `routes/api-spec.js`), so they count as
+    # a test only without an HTTP server import, or with a test harness
+    # (a supertest suite imports express too). NestJS's `app.e2e-spec.ts`
+    # is always a test.
+    HYPHEN_TEST_FILENAME_MARKER = Regex.union("-spec.", "-test.")
+    E2E_SPEC_FILENAME_MARKER    = "e2e-spec."
+    TEST_HARNESS_MARKER         = /\bdescribe\s*\(|\bsupertest\b|@nestjs\/testing/
 
     # True when the file's route-shaped calls are almost certainly
     # mock-server stubs (Ember pretender, MSW, nock, ...) rather
@@ -854,10 +861,16 @@ module Noir
     def self.test_stub_only?(file_path : String, content : String,
                              include_client_frameworks : Bool = true) : Bool
       relative_path = CodeLocator.instance.base_relative(file_path)
-      return true if File.basename(file_path).matches?(TEST_STUB_FILENAME_MARKER)
+      basename = File.basename(file_path)
+      return true if basename.matches?(TEST_STUB_FILENAME_MARKER)
       return true if relative_path.matches?(STRICT_TEST_PATH_MARKER)
       has_library = content_matches?(content, TEST_STUB_LIBRARY_MARKER) ||
                     (include_client_frameworks && content_matches?(content, CLIENT_SIDE_FRAMEWORK_MARKER))
+      if basename.matches?(HYPHEN_TEST_FILENAME_MARKER)
+        return basename.includes?(E2E_SPEC_FILENAME_MARKER) ||
+          content_matches?(content, TEST_HARNESS_MARKER) ||
+          !content_matches?(content, HTTP_SERVER_LIBRARY_MARKER)
+      end
       has_path_marker = relative_path.matches?(TEST_STUB_PATH_MARKER)
       return false unless has_library || has_path_marker
       !content_matches?(content, HTTP_SERVER_LIBRARY_MARKER)

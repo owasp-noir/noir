@@ -369,6 +369,7 @@ module Analyzer::Javascript
     # service that calls axios is not taken for a test.
     protected def js_test_file?(path : String) : Bool
       File.basename(path).matches?(Noir::JSRouteExtractor::TEST_STUB_FILENAME_MARKER) ||
+        File.basename(path).matches?(Noir::JSRouteExtractor::HYPHEN_TEST_FILENAME_MARKER) ||
         base_relative_path(path).matches?(Noir::JSRouteExtractor::STRICT_TEST_PATH_MARKER)
     end
 

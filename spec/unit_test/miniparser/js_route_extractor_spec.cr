@@ -522,6 +522,30 @@ describe Noir::JSRouteExtractor do
       Noir::JSRouteExtractor.test_stub_only?("/app/src/server.js", content).should be_false
     end
 
+    # `-test.`/`-spec.` are ordinary words in router names: an A/B-test
+    # router or an API-spec router importing express is production code.
+    it "keeps hyphen-named production routers that import an HTTP server" do
+      content = <<-JS
+        const express = require('express');
+        const router = express.Router();
+        router.post('/assign', (req, res) => res.json({}));
+        module.exports = router;
+        JS
+      Noir::JSRouteExtractor.test_stub_only?("/app/routes/ab-test.js", content).should be_false
+      Noir::JSRouteExtractor.test_stub_only?("/app/routes/api-spec.js", content).should be_false
+    end
+
+    it "still skips hyphen-named test suites that import express" do
+      content = <<-JS
+        const express = require('express');
+        const request = require('supertest');
+        describe('users', () => {
+          it('lists', () => request(app).get('/users').expect(200));
+        });
+        JS
+      Noir::JSRouteExtractor.test_stub_only?("/app/test/users-test.js", content).should be_true
+    end
+
     it "skips Jest-style test files by name" do
       content = <<-JS
         import request from "supertest";
