@@ -204,4 +204,38 @@ describe "swift vapor analyzer" do
     File.delete(temp_file) if temp_file && File.exists?(temp_file)
     Dir.delete(temp_dir) if temp_dir && Dir.exists?(temp_dir)
   end
+
+  it "reads trailing-closure verbs without parens and OPTIONS/HEAD on()" do
+    instance = Analyzer::Swift::Vapor.new(create_test_options)
+
+    temp_dir = File.tempname("swift_vapor_trailing_test")
+    Dir.mkdir_p(temp_dir)
+    temp_file = File.join(temp_dir, "routes.swift")
+
+    File.write(temp_file, <<-SWIFT)
+      import Vapor
+
+      func routes(_ app: Application) throws {
+          app.get { req async in
+              "It works!"
+          }
+          let users = app.grouped("users")
+          users.post { req in "create" }
+          users.group(":id") { user in
+              user.delete { req in
+                  "gone"
+              }
+          }
+          app.on(.OPTIONS, "upload") { req in "ok" }
+          app.on(.HEAD, "ping") { req in "ok" }
+          Environment.get { "not a route" }
+      }
+      SWIFT
+
+    instance.analyze_file(temp_file).map { |e| "#{e.method} #{e.url}" }.sort!.should eq(
+      ["DELETE /users/:id", "GET /", "HEAD /ping", "OPTIONS /upload", "POST /users"])
+  ensure
+    File.delete(temp_file) if temp_file && File.exists?(temp_file)
+    Dir.delete(temp_dir) if temp_dir && Dir.exists?(temp_dir)
+  end
 end

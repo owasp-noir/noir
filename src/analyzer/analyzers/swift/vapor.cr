@@ -9,7 +9,8 @@ module Analyzer::Swift
     # app.get("path") { ... }
     # app.post("path", "segment") { ... }
     # routes.get("path", ":param") { ... }
-    ROUTE_PATTERN    = /([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\.(get|post|put|delete|patch)\s*\(/
+    # users.get { ... }   (trailing closure, no parens: the receiver's own path)
+    ROUTE_PATTERN    = /([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\.(get|post|put|delete|patch)\s*([({])/
     ON_ROUTE_PATTERN = /([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\.on\s*\(/
     # The base may be a dotted receiver (`app.routes.grouped(...)`), an implicit
     # `self` (bare `grouped(...)`), or a single identifier (`router.grouped(...)`).
@@ -20,7 +21,7 @@ module Analyzer::Swift
     # group expression.
     CHAINED_GROUP_PATTERN = /^\s*\.group(?:ed)?\s*\(/
     INLINE_GROUP_PATTERN  = /([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\.grouped\s*\(/
-    INLINE_VERB_PATTERN   = /^\s*\.(?:get|post|put|delete|patch|on)\s*\(/
+    INLINE_VERB_PATTERN   = /^\s*\.(?:(?:get|post|put|delete|patch)\s*[({]|on\s*\()/
 
     # A function parameter (or binding) typed as a Vapor router:
     # `func routes(_ app: Application)`, `func boot(routes: RoutesBuilder)`,
@@ -54,11 +55,10 @@ module Analyzer::Swift
     ROUTER_TYPE_RE = Regex.union("RoutesBuilder", "Router", "Application")
 
     # `route_definition?` runs on every scanned line (route detection, param
-    # lookahead, body-boundary checks). One precompiled `Regex.union` scan
-    # (PCRE2 JIT) replaces six naive `String#includes?` char scans; union
-    # auto-escapes each literal so it is provably equivalent to the
-    # OR-of-substrings it replaces.
-    ROUTE_CALL_RE = Regex.union(".get(", ".post(", ".put(", ".delete(", ".patch(", ".on(")
+    # lookahead, body-boundary checks). A verb may take a trailing closure
+    # with no parens (`app.get { ... }`). The pattern opens with a literal
+    # `.`, so PCRE2 only tries offsets holding one.
+    ROUTE_CALL_RE = /\.(?:(?:get|post|put|delete|patch)\s*[({]|on\s*\()/
 
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
@@ -240,7 +240,7 @@ module Analyzer::Swift
         return unless args
 
         route_args = args[0]
-        method_match = route_args.match(/^\s*\.(GET|POST|PUT|DELETE|PATCH)\s*,(.*)$/)
+        method_match = route_args.match(/^\s*\.(GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD)\s*,(.*)$/)
         return unless method_match
 
         return {match[1], method_match[1], method_match[2], inline_prefix}
@@ -248,6 +248,8 @@ module Analyzer::Swift
 
       if match = line.match(ROUTE_PATTERN)
         return unless router_like?(match[1], prefix_by_receiver)
+        # `users.get { req in ... }` takes no path arguments.
+        return {match[1], match[2].upcase, "", inline_prefix} if match[3] == "{"
 
         args = call_arguments(line, match.end(0) || 0)
         return unless args
