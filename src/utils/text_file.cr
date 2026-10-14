@@ -3,21 +3,13 @@ require "../ext/string_search"
 
 # UTF-8 text reads for the scan pipeline.
 module Noir::TextFile
-  # Reads `path` as UTF-8 text, dropping invalid byte sequences.
+  # Reads `path` as UTF-8 text; bytes that are not valid UTF-8 are read
+  # as Latin-1 (see `decode`).
   #
-  # `File.read(path, encoding: "utf-8", invalid: :skip)` routes the whole
-  # file through `IO::Decoder` and libiconv even though the requested
-  # conversion is UTF-8 to UTF-8. That costs ~4.5x a plain read and
-  # allocates ~12x as much (a decode buffer per chunk on top of the
-  # result). Source trees are overwhelmingly valid UTF-8 already, so read
-  # the bytes straight and only pay for the transcode when they are not.
-  #
-  # The result is byte-identical either way. On valid input the decode is
-  # the identity — it translates no newlines — and invalid input still goes
-  # through the same `invalid: :skip` decode that dropped the bad sequences
-  # before. The fallback decodes the bytes already in hand rather than
-  # re-reading the file, so a file that changes mid-scan cannot yield a
-  # half-and-half result.
+  # Source trees are overwhelmingly valid UTF-8 already, so read the bytes
+  # straight and only pay for `decode` when they are not. The fallback
+  # decodes the bytes already in hand rather than re-reading the file, so
+  # a file that changes mid-scan cannot yield a half-and-half result.
   # UTF-16 byte-order marks. Visual Studio and a good deal of Windows
   # tooling still write source as UTF-16 — `.cs`, `.vb`, `.resx`, `.config`,
   # PowerShell `.ps1` — and in UTF-16 every ASCII character carries a NUL
@@ -110,23 +102,27 @@ module Noir::TextFile
     end
   end
 
-  # `invalid: :skip` decode of bytes already in memory.
+  # Decode bytes that are not valid UTF-8: valid sequences are kept and
+  # every byte of an invalid one is read as Latin-1 (U+0080–U+00FF).
   #
-  # iconv's idea of "invalid" is narrower than UTF-8's: macOS libiconv
-  # passes 5- and 6-byte sequences and code points above U+10FFFF
-  # straight through, so the "decoded" text could still be invalid. The
-  # scan matches file contents with `MATCH_OPTIONS`, which tells PCRE2
-  # not to check — on such a subject its behaviour is undefined, and
-  # without the flag the match raises instead. Drop whatever the decode
-  # left behind, so `read` really does return valid UTF-8.
+  # A file with invalid UTF-8 is almost always a legacy single-byte
+  # encoding (Latin-1/CP1252 PHP, Java and Python sources), where the
+  # `invalid: :skip` decode this replaces turned `/caf\xE9` into `/caf`.
+  # Mapping byte-for-byte keeps the character, never shifts a line, and
+  # yields valid UTF-8 by construction, which `MATCH_OPTIONS` relies on.
+  # Only `read`'s slow path gets here.
   def self.decode(content : String) : String
-    io = IO::Memory.new(content.to_slice)
-    io.set_encoding("utf-8", invalid: :skip)
-    ensure_valid(io.gets_to_end)
-  end
-
-  private def self.ensure_valid(text : String) : String
-    text.valid_encoding? ? text : text.scrub("")
+    String.build(content.bytesize + content.bytesize // 4) do |io|
+      reader = Char::Reader.new(content)
+      while reader.has_next?
+        if byte = reader.error
+          io << byte.unsafe_chr
+        else
+          io << reader.current_char
+        end
+        reader.next_char
+      end
+    end
   end
 
   # Match options for a subject that came from `read` (or from the

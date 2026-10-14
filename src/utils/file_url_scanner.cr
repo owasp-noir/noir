@@ -103,9 +103,7 @@ module Noir
       if cached = CodeLocator.instance.content_for(path)
         cached.each_line.with_index { |line, index| yield line, index }
       else
-        File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-          file.each_line.with_index { |line, index| yield line, index }
-        end
+        Noir::TextFile.read(path).each_line.with_index { |line, index| yield line, index }
       end
     end
 
