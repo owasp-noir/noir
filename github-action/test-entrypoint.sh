@@ -173,6 +173,17 @@ diff_scenario "[4] diff_ref with the repository in a subdirectory" "app" "app/sr
 # single-line document the json format produces.
 json_contract_scenario "[5] format=jsonl, passive_scan=true" jsonl
 
+# A key passed as a literal or through `vars.*` is not masked by GitHub, so
+# the entrypoint's own command echo must not print it.
+echo "[6] ai_key / export_webhook are redacted from the log"
+ws="$(run_action redact -e INPUT_AI_KEY=sk-noir-leak-check -e INPUT_EXPORT_WEBHOOK=http://127.0.0.1:9/hook-leak-check)"
+ws="${ws#__FAILED__ }"
+if grep -q 'Executing command:' "$ws/stdout" && ! grep -qE 'Executing command:.*(sk-noir-leak-check|hook-leak-check)' "$ws/stdout"; then
+  note_pass "command echo hides the secret values"
+else
+  note_fail "command echo printed a secret value (or was missing)"
+fi
+
 echo
 if [[ "$fail_count" -eq 0 ]]; then
   echo "All action entrypoint checks passed."

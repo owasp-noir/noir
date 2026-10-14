@@ -111,7 +111,26 @@ fi
 # Execute
 # ==============================================================================
 
-echo "Executing command: $*"
+# Secrets never reach the log. GitHub masks a value only when it came from
+# `secrets.*`; an `ai_key` passed through `vars.*`, an env value or a literal
+# was printed in plain text here. `::add-mask::` also hides the key if noir
+# itself ever echoes it; the loop covers runs outside GitHub, where that
+# command is just text. A webhook URL is a credential too (Slack and Discord
+# put the token in the path), which noir's own logs already redact.
+[ -n "$ai_key" ] && echo "::add-mask::$ai_key"
+log_cmd=""
+redact_next=false
+for arg in "$@"; do
+    if [ "$redact_next" = "true" ]; then
+        arg="***"
+        redact_next=false
+    fi
+    case "$arg" in
+        --ai-key|--export-webhook) redact_next=true ;;
+    esac
+    log_cmd="${log_cmd:+$log_cmd }$arg"
+done
+echo "Executing command: $log_cmd"
 "$@"
 exit_code=$?
 
