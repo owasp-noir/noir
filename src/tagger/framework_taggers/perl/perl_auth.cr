@@ -59,6 +59,7 @@ class PerlAuthTagger < FrameworkTagger
 
       description = check_route_wrapper(lines, idx) ||
                     check_handler_body(lines, idx) ||
+                    check_lite_under(lines, idx) ||
                     check_global_guard(lines)
       next if description.nil?
 
@@ -97,12 +98,25 @@ class PerlAuthTagger < FrameworkTagger
 
     (start_idx..end_idx).each do |i|
       current = lines[i]
-      # Stop if we fall into the next route/sub declaration.
-      break if i > idx && current.matches?(/^\s*(?:get|post|put|patch|options|del|any|prefix)\s/)
+      # Stop if we fall into the next route/sub declaration — or a
+      # Mojolicious::Lite `under`, whose guard covers the routes after it.
+      break if i > idx && current.matches?(/^\s*(?:get|post|put|patch|options|del|any|prefix|under)\b/)
 
       BODY_PATTERNS.each do |pattern, desc|
         return desc if current.matches?(pattern)
       end
+    end
+    nil
+  end
+
+  # Mojolicious::Lite `under sub { ... }`: every route declared after it
+  # (up to the next `under`) runs behind its callback, so the nearest
+  # `under` above the route decides.
+  # ponytail: file-order only; an `under` scoped inside a `group { }` block
+  # leaks to the routes after the group.
+  private def check_lite_under(lines : Array(String), idx : Int32) : String?
+    (idx - 1).downto(0) do |i|
+      return check_handler_body(lines, i) if lines[i].matches?(/^\s*under\b/)
     end
     nil
   end

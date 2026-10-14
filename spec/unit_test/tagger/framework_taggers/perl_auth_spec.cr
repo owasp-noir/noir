@@ -1,3 +1,4 @@
+require "file_utils"
 require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
@@ -74,5 +75,37 @@ describe "PerlAuthTagger" do
     endpoint.tags[0].name.should eq("auth")
     endpoint.tags[0].description.should contain("Catalyst")
     endpoint.tags[0].description.should_not contain("Dancer2")
+  end
+
+  it "applies a Mojolicious::Lite `under` guard to the routes after it, not before" do
+    dir = File.tempname("noir_perl_under")
+    Dir.mkdir_p(dir)
+    app = File.join(dir, "app.pl")
+    File.write(app, <<-PL)
+      use Mojolicious::Lite -signatures;
+
+      get '/' => sub ($c) {
+        $c->render(text => 'public');
+      };
+
+      under sub ($c) {
+        return 1 if $c->is_user_authenticated;
+        $c->redirect_to('/login');
+        return undef;
+      };
+
+      get '/secret' => sub ($c) {
+        $c->render(text => 'secret');
+      };
+      PL
+
+    begin
+      public_route = perl_auth_tag_for(app, 3, create_test_options, "perl_mojolicious")
+      secret = perl_auth_tag_for(app, 13, create_test_options, "perl_mojolicious")
+      public_route.tags.should be_empty
+      secret.tags.map(&.description).should eq(["Protected by Mojolicious is_user_authenticated"])
+    ensure
+      FileUtils.rm_rf(dir)
+    end
   end
 end
