@@ -118,7 +118,10 @@ class ExpressAuthTagger < FrameworkTagger
 
       # Check the route definition line and a few lines around it (same statement)
       route_lines = get_route_statement(lines, line_num - 1) # 0-indexed
-      route_text = route_lines.join(" ")
+      # Passport needs its strategy string; every other marker is an
+      # identifier, so match those against the code alone.
+      route_text = Noir::CComments.strip(route_lines.join("\n"), quotes: %("'`))
+      route_code = code_only(route_text)
 
       # Check for passport.authenticate in route definition
       PASSPORT_PATTERNS.each do |pattern|
@@ -134,7 +137,7 @@ class ExpressAuthTagger < FrameworkTagger
 
       # Check for JWT middleware
       JWT_MIDDLEWARE_PATTERNS.each do |pattern|
-        if route_text.matches?(pattern)
+        if route_code.matches?(pattern)
           endpoint.add_tag(Tag.new("auth", "Protected by Express JWT middleware", "express_auth"))
           return
         end
@@ -142,8 +145,8 @@ class ExpressAuthTagger < FrameworkTagger
 
       # Check for generic auth middleware names in route definition
       AUTH_MIDDLEWARE_NAMES.each do |pattern|
-        if route_text.matches?(pattern)
-          match = route_text.match(pattern)
+        if route_code.matches?(pattern)
+          match = route_code.match(pattern)
           middleware_name = match ? match[0] : "auth"
           endpoint.add_tag(Tag.new("auth", "Protected by Express #{middleware_name} middleware", "express_auth"))
           return
@@ -282,6 +285,7 @@ class ExpressAuthTagger < FrameworkTagger
   end
 
   private def has_auth_middleware_in_line?(line : String) : Bool
+    line = code_only(line)
     PASSPORT_PATTERNS.any? { |p| line.matches?(p) } ||
       JWT_MIDDLEWARE_PATTERNS.any? { |p| line.matches?(p) } ||
       AUTH_MIDDLEWARE_NAMES.any? { |p| line.matches?(p) }

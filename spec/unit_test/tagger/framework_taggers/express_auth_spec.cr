@@ -397,4 +397,35 @@ describe "ExpressAuthTagger" do
 
     FileUtils.rm_rf(tmpdir)
   end
+
+  it "does not read auth names in path literals or comments as middleware" do
+    tmpdir = File.tempname("express_literals")
+    Dir.mkdir_p(tmpdir)
+    app_js = File.join(tmpdir, "app.js")
+    File.write(app_js, [
+      "const app = express();",
+      "app.get('/oauth/authorize', (req, res) => res.render('consent'));",
+      "app.post('/api/verifyToken', (req, res) => res.json({ ok: true }));",
+      "app.get('/status', (req, res) => res.send('ok')); // TODO add requireAuth here",
+      "app.get('/me', requireAuth, (req, res) => res.json(req.user));",
+    ].join("\n"))
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    CodeLocator.instance.register_path(app_js)
+
+    authorize = Endpoint.new("/oauth/authorize", "GET", [] of Param, Details.new(PathInfo.new(app_js, 2)))
+    verify = Endpoint.new("/api/verifyToken", "POST", [] of Param, Details.new(PathInfo.new(app_js, 3)))
+    status = Endpoint.new("/status", "GET", [] of Param, Details.new(PathInfo.new(app_js, 4)))
+    me = Endpoint.new("/me", "GET", [] of Param, Details.new(PathInfo.new(app_js, 5)))
+
+    ExpressAuthTagger.new(noir_options).perform([authorize, verify, status, me])
+
+    authorize.tags.should be_empty
+    verify.tags.should be_empty
+    status.tags.should be_empty
+    me.tags.map(&.description).should eq(["Protected by Express requireAuth middleware"])
+
+    FileUtils.rm_rf(tmpdir)
+  end
 end

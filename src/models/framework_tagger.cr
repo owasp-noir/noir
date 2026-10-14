@@ -5,6 +5,7 @@ require "./file_helper"
 require "../utils/text_file"
 require "../utils/media_filter"
 require "../utils/path_scope"
+require "../utils/c_comments"
 
 struct SourceContext
   property path : String
@@ -331,6 +332,16 @@ class FrameworkTagger < Tagger
       end
     end
     nil
+  end
+
+  STRING_LITERAL = /"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`/
+
+  # `text` as code alone: C-style comments blanked and every string literal
+  # emptied to `""`. Auth markers are identifiers, so matching them against
+  # raw route text read a path (`'/oauth/authorize'`) or a `// TODO add
+  # requireAuth` note as middleware.
+  def code_only(text : String) : String
+    Noir::CComments.strip(text, quotes: %("'`)).gsub(STRING_LITERAL, %(""))
   end
 
   # Static-asset file extensions. A route ending in one of these serves a
