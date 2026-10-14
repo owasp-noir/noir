@@ -378,7 +378,7 @@ module Analyzer::Php
           parameter_overrides = resource_parameter_overrides_for_statement(call.statement)
           call_line = base_line + offsets.line(call.start_pos) - 1
           resource_entries(kind, call, lexer, call_line).each do |name, statement, line|
-            templates = resource_route_templates(prefix, name, parameter_overrides, kind)
+            templates = resource_route_templates(prefix, name, parameter_overrides, kind, statement.matches?(SHALLOW_RE))
             endpoints.concat(create_resource_endpoints(templates, file_path, line, actions, statement, include_callee, imports, resource_controller_cache))
           end
         end
@@ -917,13 +917,25 @@ module Analyzer::Php
       actions
     end
 
+    SHALLOW_RE = /->\s*shallow\s*\(/
+
     # A singleton acts on the resource path itself; it has no `{id}` member.
-    private def resource_route_templates(prefix : String, resource : String, parameter_overrides : Hash(String, String), kind : String) : Array(ResourceEndpointTemplate)
+    # A `->shallow()` nested resource (`photos.comments`) keeps its member
+    # routes off the parent: `/comments/{comment}`, not
+    # `/photos/{photo}/comments/{comment}`.
+    private def resource_route_templates(prefix : String, resource : String, parameter_overrides : Hash(String, String), kind : String, shallow : Bool) : Array(ResourceEndpointTemplate)
       collection_path = resource_collection_path(prefix, resource, parameter_overrides)
       member_path = if singleton_kind?(kind)
                       collection_path
                     else
-                      "#{collection_path}/{#{resource_param_name_for_segment(resource_segments(resource).last, parameter_overrides)}}"
+                      last = resource_segments(resource).last
+                      member_base = collection_path
+                      if shallow && (dot = resource.rindex('.'))
+                        parent = resource[0...dot]
+                        slash = parent.rindex('/')
+                        member_base = resource_collection_path(prefix, slash ? "#{parent[0..slash]}#{last}" : last, parameter_overrides)
+                      end
+                      "#{member_base}/{#{resource_param_name_for_segment(last, parameter_overrides)}}"
                     end
       [
         ResourceEndpointTemplate.new("index", collection_path, "GET"),
