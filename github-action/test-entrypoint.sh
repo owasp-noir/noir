@@ -178,7 +178,8 @@ json_contract_scenario "[5] format=jsonl, passive_scan=true" jsonl
 echo "[6] ai_key / export_webhook are redacted from the log"
 ws="$(run_action redact -e INPUT_AI_KEY=sk-noir-leak-check -e INPUT_EXPORT_WEBHOOK=http://127.0.0.1:9/hook-leak-check)"
 ws="${ws#__FAILED__ }"
-if grep -q 'Executing command:' "$ws/stdout" && ! grep -qE 'Executing command:.*(sk-noir-leak-check|hook-leak-check)' "$ws/stdout"; then
+if grep -qxF '::add-mask::sk-noir-leak-check' "$ws/stdout" && grep -q 'Executing command:' "$ws/stdout" &&
+  ! grep -qE 'Executing command:.*(sk-noir-leak-check|hook-leak-check)' "$ws/stdout"; then
   note_pass "command echo hides the secret values"
 else
   note_fail "command echo printed a secret value (or was missing)"
