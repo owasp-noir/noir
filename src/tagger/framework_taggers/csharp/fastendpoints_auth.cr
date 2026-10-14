@@ -26,11 +26,11 @@ class FastEndpointsAuthTagger < FrameworkTagger
         return
       end
 
-      description = describe_guard(configure_block)
-      if description
-        endpoint.add_tag(Tag.new("auth", "Protected by FastEndpoints #{description}", "fastendpoints_auth"))
-        return
-      end
+      # FastEndpoints endpoints are secure by default: without
+      # `AllowAnonymous()` they require an authenticated user.
+      description = describe_guard(configure_block) || "default authorization (no AllowAnonymous)"
+      endpoint.add_tag(Tag.new("auth", "Protected by FastEndpoints #{description}", "fastendpoints_auth"))
+      return
     end
   end
 
