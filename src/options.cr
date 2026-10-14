@@ -7,8 +7,11 @@ require "./config_initializer.cr"
 require "./banner.cr"
 require "yaml"
 
-private def append_to_yaml_array(hash : Hash(String, YAML::Any), key : String, value : String)
+# `reset_seen` works as in `append_to_csv_option`: the first CLI occurrence
+# replaces a config-file list instead of appending to it.
+private def append_to_yaml_array(hash : Hash(String, YAML::Any), key : String, value : String, reset_seen : Set(String)? = nil)
   arr = (hash[key]? || YAML::Any.new([] of YAML::Any)).as_a.dup
+  arr.clear if reset_seen && reset_seen.add?(key)
   arr << YAML::Any.new(value)
   hash[key] = YAML::Any.new(arr)
 end
@@ -168,7 +171,7 @@ end
 module Noir::OptionsParsing
   extend self
 
-  def extract_hidden_prompt_flags(noir_options : Hash(String, YAML::Any)) : Array(String)
+  def extract_hidden_prompt_flags(noir_options : Hash(String, YAML::Any), reset_seen : Set(String)? = nil) : Array(String)
     args = ARGV.dup
     filtered = [] of String
     i = 0
@@ -189,7 +192,7 @@ module Noir::OptionsParsing
       end
     end
     filtered = normalize_ai_context_flag(filtered)
-    filtered = extract_legacy_aliases(filtered, noir_options)
+    filtered = extract_legacy_aliases(filtered, noir_options, reset_seen)
     filtered
   end
 
@@ -213,7 +216,7 @@ module Noir::OptionsParsing
     "--include-callee" => "include_callee",
   }
 
-  def extract_legacy_aliases(args : Array(String), noir_options : Hash(String, YAML::Any)) : Array(String)
+  def extract_legacy_aliases(args : Array(String), noir_options : Hash(String, YAML::Any), reset_seen : Set(String)? = nil) : Array(String)
     result = [] of String
     i = 0
     while i < args.size
@@ -226,7 +229,7 @@ module Noir::OptionsParsing
           STDERR.puts "ERROR: #{arg} requires an argument.".colorize(:red)
           exit(1)
         end
-        append_to_yaml_array(noir_options, pvalue_key, args[i + 1])
+        append_to_yaml_array(noir_options, pvalue_key, args[i + 1], reset_seen)
         i += 2
       elsif (eq_idx = arg.index('=')) && (eq_pvalue_key = LEGACY_PVALUE_TARGETS[arg[0...eq_idx]]?)
         # `--set-pvalue=VALUE`. In v0 these were real `parser.on
@@ -237,7 +240,7 @@ module Noir::OptionsParsing
         # the probe aliases, so the two legacy layers also disagreed.
         # Split on the *first* `=` only, so `--set-pvalue=key=val` keeps
         # "key=val" as the value.
-        append_to_yaml_array(noir_options, eq_pvalue_key, arg[(eq_idx + 1)..])
+        append_to_yaml_array(noir_options, eq_pvalue_key, arg[(eq_idx + 1)..], reset_seen)
         i += 1
       else
         result << arg
@@ -315,7 +318,7 @@ module Noir::OptionsParsing
     "path"   => "set_pvalue_path",
   }
 
-  def handle_pvalue(noir_options : Hash(String, YAML::Any), spec : String)
+  def handle_pvalue(noir_options : Hash(String, YAML::Any), spec : String, reset_seen : Set(String)? = nil)
     type, value = if idx = spec.index('=')
                     {spec[0...idx], spec[(idx + 1)..]}
                   else
@@ -335,7 +338,7 @@ module Noir::OptionsParsing
       exit(1)
     end
 
-    append_to_yaml_array(noir_options, key, value)
+    append_to_yaml_array(noir_options, key, value, reset_seen)
   end
 
   INCLUDE_TARGETS = {
@@ -405,11 +408,11 @@ def run_options_parser
   noir_options = config_init.read_config
   noir_options["config_file"] = YAML::Any.new(override_config_path) if override_config_path
 
-  extracted_args = Noir::OptionsParsing.extract_hidden_prompt_flags(noir_options)
-
-  # Tracks CSV flags whose first CLI occurrence must override (not append to)
-  # a config-file value. See append_to_csv_option.
+  # Tracks CSV and array flags whose first CLI occurrence must override (not
+  # append to) a config-file value. See append_to_csv_option.
   csv_reset_seen = Set(String).new
+
+  extracted_args = Noir::OptionsParsing.extract_hidden_prompt_flags(noir_options, csv_reset_seen)
 
   OptionParser.parse(extracted_args) do |parser|
     parser.banner = base_help
@@ -421,7 +424,7 @@ def run_options_parser
       # Normalize once, here: the base string is echoed verbatim into every
       # reported `code_path`, so `-b rem2`, `-b rem2///` and `-b ./rem2`
       # otherwise describe the same tree with three different report bodies.
-      append_to_yaml_array(noir_options, "base", Noir::PathScope.normalize_base(v))
+      append_to_yaml_array(noir_options, "base", Noir::PathScope.normalize_base(v), csv_reset_seen)
     end
     parser.on "-u URL", "--url http://...", "Prepend this base URL to every discovered path; required for --status-codes, --probe, and --probe-via" do |v|
       noir_options["url"] = YAML::Any.new(v)
@@ -439,7 +442,7 @@ def run_options_parser
     end
 
     parser.on "--pvalue TYPE=VAL", "Set parameter value (TYPE: any|header|cookie|query|form|json|path; repeatable)" do |v|
-      Noir::OptionsParsing.handle_pvalue(noir_options, v)
+      Noir::OptionsParsing.handle_pvalue(noir_options, v, csv_reset_seen)
     end
 
     parser.on "--status-codes", "Display HTTP status codes" do
@@ -497,7 +500,7 @@ def run_options_parser
       noir_options["passive_scan"] = YAML::Any.new(true)
     end
     parser.on "--passive-scan-path PATH", "Use a custom passive-rule directory (replaces the bundled rules; repeatable)" do |v|
-      append_to_yaml_array(noir_options, "passive_scan_path", v)
+      append_to_yaml_array(noir_options, "passive_scan_path", v, csv_reset_seen)
     end
     parser.on "--passive-scan-severity LVL", "Min severity (critical|high|medium|low, default: high)" do |v|
       lvl = v.downcase
@@ -549,10 +552,10 @@ def run_options_parser
       append_to_yaml_array(noir_options, "probe_header", v)
     end
     parser.on "--probe-match VAL", "Only probe endpoints matching pattern (repeatable)" do |v|
-      append_to_yaml_array(noir_options, "probe_match", v)
+      append_to_yaml_array(noir_options, "probe_match", v, csv_reset_seen)
     end
     parser.on "--probe-skip VAL", "Skip endpoints matching pattern (repeatable)" do |v|
-      append_to_yaml_array(noir_options, "probe_skip", v)
+      append_to_yaml_array(noir_options, "probe_skip", v, csv_reset_seen)
     end
     parser.on "--tls-skip-verify", "Skip TLS cert verification for probe/export/webhook (insecure; for self-signed hosts)" do
       noir_options["tls_skip_verify"] = YAML::Any.new(true)
@@ -770,7 +773,7 @@ def run_options_parser
   # Everything after `--` joins them verbatim — no `starts_with?("-")` skip,
   # because that is exactly what the marker exists to switch off.
   (extracted_args.reject(&.starts_with?("-")) + end_of_options).each do |positional|
-    append_to_yaml_array(noir_options, "base", Noir::PathScope.normalize_base(positional))
+    append_to_yaml_array(noir_options, "base", Noir::PathScope.normalize_base(positional), csv_reset_seen)
   end
 
   # Validate the *effective* feature list, not just the one `--ai-context`

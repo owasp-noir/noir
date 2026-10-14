@@ -563,6 +563,43 @@ describe "run_options_parser" do
     end
   end
 
+  # Array flags had no reset at all, so `-b` added to the config file's
+  # `base:` and both trees were scanned.
+  describe "array flags override the config file rather than appending to it" do
+    array_cases = [
+      {flag: "--passive-scan-path", key: "passive_scan_path"},
+      {flag: "--probe-match", key: "probe_match"},
+      {flag: "--probe-skip", key: "probe_skip"},
+      {flag: "--set-pvalue-query", key: "set_pvalue_query"},
+    ]
+
+    array_cases.each do |c|
+      it "#{c[:flag]}: CLI values replace the config list" do
+        with_config_argv("#{c[:key]}:\n  - from_config\n", [c[:flag], "one", c[:flag], "two"]) do |options|
+          options[c[:key]].as_a.map(&.as_s).should eq(["one", "two"])
+        end
+      end
+
+      it "#{c[:flag]}: config list is kept when the flag is absent" do
+        with_config_argv("#{c[:key]}:\n  - from_config\n", [] of String) do |options|
+          options[c[:key]].as_a.map(&.as_s).should eq(["from_config"])
+        end
+      end
+    end
+
+    it "--pvalue: CLI values replace the config list" do
+      with_config_argv("set_pvalue_header:\n  - from_config\n", ["--pvalue", "header=one"]) do |options|
+        options["set_pvalue_header"].as_a.map(&.as_s).should eq(["one"])
+      end
+    end
+
+    it "-b and positional paths replace the config base" do
+      with_config_argv("base:\n  - ./from_config\n", ["./positional"]) do |options|
+        options["base"].as_a.map(&.as_s).should eq(["app", "positional"])
+      end
+    end
+  end
+
   # In v0 these were real `parser.on "--set-pvalue VALUE"` entries, so
   # Crystal's OptionParser accepted both spellings. The v1 hand-rolled
   # extractor only matched the bare token, so the `=` form fell through to
