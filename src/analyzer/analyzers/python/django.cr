@@ -489,7 +489,7 @@ module Analyzer::Python
             next
           end
 
-          if imported_urlconf_path = extract_imported_include_target(view, package_map)
+          if imported_urlconf_path = extract_imported_include_target(view, package_map, django_urls.filepath)
             new_django_urls = DjangoUrls.new("#{django_urls.prefix}#{route}", imported_urlconf_path, django_urls.basepath)
             unless @visited_url_paths.has_key? new_django_urls.filepath
               extract_endpoints(new_django_urls).each do |endpoint|
@@ -806,7 +806,7 @@ module Analyzer::Python
           next
         end
 
-        if imported_urlconf_path = extract_imported_include_target(view, package_map)
+        if imported_urlconf_path = extract_imported_include_target(view, package_map, current_app_config_path)
           new_django_urls = DjangoUrls.new(nested_prefix, imported_urlconf_path, @django_base_path)
           unless @visited_url_paths.has_key? new_django_urls.filepath
             extract_endpoints(new_django_urls).each do |endpoint|
@@ -1174,12 +1174,12 @@ module Analyzer::Python
       nil
     end
 
-    private def extract_imported_include_target(view : ::String, package_map) : ::String?
+    private def extract_imported_include_target(view : ::String, package_map, urlconf_path : ::String) : ::String?
       include_match = view.match(/\binclude\s*\(\s*(?:\(\s*)?([A-Za-z_][A-Za-z0-9_]*)\b/)
       return unless include_match
 
       target_name = include_match[1]
-      return if view.includes?("#{target_name}.urls")
+      return imported_module_urls(target_name, urlconf_path) if view.includes?("#{target_name}.urls")
       imported = package_map[target_name]?
       return unless imported
 
@@ -1188,6 +1188,20 @@ module Analyzer::Python
       return unless File.exists?(filepath)
 
       filepath
+    end
+
+    # `include(shop.urls)` after `import shop.urls` (or `import shop`): the
+    # `shop/urls.py` urlconf. `X.urls` is otherwise a DRF router's url list,
+    # which is never an imported module, so this resolves nothing for it.
+    private def imported_module_urls(name : ::String, urlconf_path : ::String) : ::String?
+      symbols = Noir::ImportGraph::Python.find_imported_symbols(@django_base_path, urlconf_path, read_file_content(urlconf_path))
+      if (target = symbols["#{name}.urls"]?) && target[1].empty?
+        return target[0]
+      end
+      module_file, attr = symbols[name]? || return
+      return unless attr.empty? && File.basename(module_file) == "__init__.py"
+      dir = File.dirname(module_file)
+      {File.join(dir, "urls.py"), File.join(dir, "urls", "__init__.py")}.find { |candidate| File.file?(candidate) }
     end
 
     private def extract_local_urlpattern_endpoints(django_urls : DjangoUrls,
@@ -1240,7 +1254,7 @@ module Analyzer::Python
           next
         end
 
-        if imported_urlconf_path = extract_imported_include_target(view, package_map)
+        if imported_urlconf_path = extract_imported_include_target(view, package_map, django_urls.filepath)
           new_django_urls = DjangoUrls.new(join_url_parts(django_urls.prefix, nested_mount).lchop("/"), imported_urlconf_path, django_urls.basepath)
           unless @visited_url_paths.has_key? new_django_urls.filepath
             extract_endpoints(new_django_urls).each do |endpoint|
