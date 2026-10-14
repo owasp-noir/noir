@@ -243,9 +243,15 @@ class AspnetAuthTagger < FrameworkTagger
     attrs
   end
 
+  # Scans the action from its declaration to its end: the brace that closes
+  # its body, or the `;` of an expression body (`Public() => Ok("x");`) or
+  # one-statement route, so the next action's checks are never read.
   private def check_action_body(lines : Array(String), method_line : Int32) : String?
-    idx = method_line + 1
-    end_idx = [method_line + 15, lines.size - 1].min
+    idx = method_line
+    # ponytail: braces inside strings/comments skew the depth; the cap bounds it.
+    end_idx = [method_line + 200, lines.size - 1].min
+    depth = 0
+    opened = false
 
     while idx <= end_idx
       current = lines[idx].strip
@@ -254,6 +260,9 @@ class AspnetAuthTagger < FrameworkTagger
         return desc if current.matches?(pattern)
       end
 
+      depth += current.count('{') - current.count('}')
+      opened ||= current.includes?('{')
+      break if opened ? depth <= 0 : current.ends_with?(';')
       idx += 1
     end
 

@@ -67,6 +67,40 @@ describe "AspnetAuthTagger" do
     endpoint.tags[0].description.should contain("Roles")
   end
 
+  it "bounds the action-body check to the action itself" do
+    noir_options = create_test_options
+    tmpdir = File.tempname("aspnet_action_body")
+    Dir.mkdir_p(tmpdir)
+    controller = File.join(tmpdir, "ItemsController.cs")
+    File.write(controller, [
+      "public class ItemsController : ControllerBase",                      # 1
+      "{",                                                                  # 2
+      "    [HttpGet(\"public\")]",                                          # 3
+      "    public IActionResult Public() => Ok(\"x\");",                    # 4
+      "",                                                                   # 5
+      "    [HttpGet(\"me\")]",                                              # 6
+      "    public IActionResult Me()",                                      # 7
+      "    {",                                                              # 8
+      "        if (!User.Identity.IsAuthenticated) return Unauthorized();", # 9
+      "        return Ok(\"me\");",                                         # 10
+      "    }",                                                              # 11
+      "}",                                                                  # 12
+    ].join("\n"))
+    noir_options["base"] = YAML::Any.new(tmpdir)
+
+    endpoints = {4 => "/public", 7 => "/me"}.map do |line, url|
+      details = Details.new(PathInfo.new(controller, line))
+      details.technology = "cs_aspnet_core_mvc"
+      Endpoint.new(url, "GET", [] of Param, details)
+    end
+    AspnetAuthTagger.new(noir_options).perform(endpoints)
+
+    endpoints[0].tags.empty?.should be_true
+    endpoints[1].tags.map(&.description).should eq(["Protected by ASP.NET User.Identity.IsAuthenticated"])
+
+    FileUtils.rm_rf(tmpdir)
+  end
+
   describe "Minimal API fluent .RequireAuthorization()" do
     it "detects .RequireAuthorization() chained on the route statement" do
       noir_options = create_test_options
