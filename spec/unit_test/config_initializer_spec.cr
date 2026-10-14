@@ -157,12 +157,6 @@ describe ConfigInitializer do
     end
   end
 
-  # Every consumer of these keys reads them through `YAML::Any#as_i`. A
-  # quoted number parses as a String and used to raise "Cast from String to
-  # Int64 failed" inside the AI analyzer — caught as an analyzer failure, so
-  # the run exited 0 with AI analysis silently skipped. The generated
-  # template models the quoted spelling itself (`concurrency: "…"`), so it is
-  # the shape users copy.
   describe "unknown_key_warnings" do
     it "names an unknown key and suggests the closest real one" do
       known = ConfigInitializer.new.default_options.keys
@@ -173,6 +167,12 @@ describe ConfigInitializer do
     end
   end
 
+  # Every consumer of these keys reads them through `YAML::Any#as_i`. A
+  # quoted number parses as a String and used to raise "Cast from String to
+  # Int64 failed" inside the AI analyzer — caught as an analyzer failure, so
+  # the run exited 0 with AI analysis silently skipped. The generated
+  # template models the quoted spelling itself (`concurrency: "…"`), so it is
+  # the shape users copy.
   describe "integer key coercion" do
     it "coerces a quoted ai_max_token into an Int" do
       with_noir_home("ai_max_token: \"4000\"\n") do |options|
