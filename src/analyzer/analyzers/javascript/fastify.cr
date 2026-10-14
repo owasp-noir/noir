@@ -8,6 +8,8 @@ module Analyzer::Javascript
   class Fastify < JavascriptEngine
     analyzer_for "js_fastify"
 
+    PACKAGE_MARKERS = ["\"fastify\"", "\"@fastify/", "\"fastify-plugin\"", "\"@platformatic/"]
+
     def analyze
       result = [] of Endpoint
       static_dirs = [] of Hash(String, String)
@@ -25,8 +27,13 @@ module Analyzer::Javascript
       # Cross-file `register(require('./x'), { prefix })` prefixes, read back
       # by the shared route extractor through `CodeLocator`.
       RouterMountScanner.new(all_files, @base_paths, base_path, logger, :fastify).scan
+      # A sibling Hapi service's plugin module (`server.route({ method,
+      # path })`, no import) reads as a Fastify route config; only the
+      # closest package.json tells them apart. No package.json: keep it.
+      owners = js_package_owners(PACKAGE_MARKERS)
 
       parallel_file_scan do |path|
+        next if (package_dir = js_package_dir(path, owners)) && !owners[package_dir]
         # The plugin-prefix, route-config and QUERY passes below read the
         # text with their own regexes; blanking comments keeps lines.
         content = Noir::JSRouteExtractor.strip_js_comments(read_file_content(path))
