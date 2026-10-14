@@ -546,20 +546,25 @@ module Noir
     end
 
     # Finds calls to any of the named builder functions and returns
-    # `[{func_name, first_arg_identifier}]`. The first argument names the
-    # group passed in (`addUserRoutes(v1)` -> `{"addUserRoutes", "v1"}`),
-    # which the caller resolves to a prefix via the package group map.
-    def collect_router_builder_callsites(source : String, builders : Set(String)) : Array(Tuple(String, String))
-      calls = [] of Tuple(String, String)
+    # `[{func_name, first_arg_identifier, qualifier}]`. The first argument
+    # names the group passed in (`addUserRoutes(v1)` ->
+    # `{"addUserRoutes", "v1", ""}`), which the caller resolves to a prefix
+    # via the package group map; `qualifier` is the package alias of a
+    # cross-package call (`routes.AddUsers(v1)` -> `"routes"`).
+    # An inline `addX(api.Group("/posts"))` comes back as the composed
+    # prefix when `groups` knows `api` (`/api/v1/posts`), else as the literal.
+    def collect_router_builder_callsites(source : String, builders : Set(String),
+                                         groups : Hash(String, String) = Hash(String, String).new) : Array(Tuple(String, String, String))
+      calls = [] of Tuple(String, String, String)
       return calls if builders.empty?
       Noir::TreeSitter.parse_go(source) do |root|
         Noir::TreeSitter.walk(root) do |node|
           next unless Noir::TreeSitter.node_type(node) == "call_expression"
           fn = Noir::TreeSitter.field(node, "function")
           next unless fn
-          fn_name = Noir::TreeSitter.node_text(fn, source).split(".").last
-          next unless builders.includes?(fn_name)
-          name = fn_name
+          fn_text = Noir::TreeSitter.node_text(fn, source)
+          qualifier, _, name = fn_text.rpartition('.')
+          next unless builders.includes?(name)
           args = Noir::TreeSitter.field(node, "arguments")
           next unless args
           first_arg = nil
@@ -584,17 +589,19 @@ module Noir
                                end
                              end
                            end
-                           lit
+                           operand = Noir::TreeSitter.field(gfn, "operand")
+                           parent = operand && groups[Noir::TreeSitter.node_text(operand, source)]?
+                           lit && parent ? group_join(parent, lit) : lit
                          end
                        end
                      end
           if arg_text
-            calls << {name, arg_text}
+            calls << {name, arg_text, qualifier}
           else
             # Non-identifier, non-inline-Group arg (e.g. expr, func result,
             # root router, etc.) — record so caller can apply "all sites must
             # resolve" guard and fall back to whole-file pass.
-            calls << {name, "__unresolved__"}
+            calls << {name, "__unresolved__", qualifier}
           end
         end
       end

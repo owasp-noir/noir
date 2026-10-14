@@ -217,10 +217,12 @@ module Analyzer::Go
     #
     # Builds `{dir => {builder_fn => set(prefixes)}}` by (1) collecting
     # every helper across the directory's files and (2) resolving each call
-    # site `F(arg)` to the prefix `arg` denotes via the directory group map.
-    # A helper called with several groups accumulates each prefix; one with
-    # any unresolved call site (the root router, a computed value) is left
-    # out so the whole-file pass keeps its routes.
+    # site `F(arg)` to the prefix `arg` denotes via the caller's directory
+    # group map. A call from another package (`routes.F(api)`) counts when
+    # the caller imports the helper's package. A helper called with several
+    # groups accumulates each prefix; one with any unresolved call site (the
+    # root router, a computed value) is left out so the whole-file pass
+    # keeps its routes.
     def resolve_router_builder_prefixes(file_contents : Hash(String, String),
                                         package_groups : Hash(String, Hash(String, String)),
                                         builder_type : String) : Hash(String, Hash(String, Set(String)))
@@ -229,6 +231,7 @@ module Analyzer::Go
       files_by_dir = Hash(String, Array(String)).new
       file_contents.each_key { |p| (files_by_dir[File.dirname(p)] ||= [] of String) << p }
 
+      builders_by_dir = Hash(String, Set(String)).new
       files_by_dir.each do |dir, paths|
         builders = Set(String).new
         paths.each do |p|
@@ -236,28 +239,56 @@ module Analyzer::Go
           next unless content && content.includes?(builder_type)
           Noir::TreeSitterGoRouteExtractor.collect_router_group_builders(content, type_name).each_key { |fn| builders << fn }
         end
-        next if builders.empty?
+        builders_by_dir[dir] = builders unless builders.empty?
+      end
+      return result if builders_by_dir.empty?
 
+      # Import path of each builder package, for cross-package call sites.
+      builder_imports = Hash(String, String).new
+      modules = collect_go_modules
+      builders_by_dir.each_key do |dir|
+        if import_path = import_path_for_dir(dir, modules)
+          builder_imports[import_path] = dir
+        end
+      end
+
+      prefixes_by_dir = Hash(String, Hash(String, Set(String))).new
+      unresolved_by_dir = Hash(String, Set(String)).new
+      files_by_dir.each do |dir, paths|
         group_map = package_groups[dir]? || Hash(String, String).new
-        prefixes = Hash(String, Set(String)).new
-        unresolved = Set(String).new
         paths.each do |p|
           content = file_contents[p]?
           next unless content
-          Noir::TreeSitterGoRouteExtractor.collect_router_builder_callsites(content, builders).each do |fn, arg|
+          names = builders_by_dir[dir]?.try(&.dup) || Set(String).new
+          imported = builder_imports.select { |import_path, _| content.includes?(import_path) }
+          imported.each_value { |d| names.concat(builders_by_dir[d]) }
+          next if names.empty?
+          aliases = nil
+          Noir::TreeSitterGoRouteExtractor.collect_router_builder_callsites(content, names, group_map).each do |fn, arg, qualifier|
+            target = if qualifier.empty?
+                       dir if builders_by_dir[dir]?.try(&.includes?(fn))
+                     elsif !imported.empty?
+                       aliases ||= Noir::GoCalleeExtractor.extract_import_aliases(content)
+                       d = aliases[qualifier]?.try { |import_path| imported[import_path]? }
+                       d if d && builders_by_dir[d].includes?(fn)
+                     end
+            next unless target
             prefix = group_map[arg]?
             prefix = arg if prefix.nil? && arg.starts_with?("/")
             if prefix
-              (prefixes[fn] ||= Set(String).new) << prefix
+              ((prefixes_by_dir[target] ||= Hash(String, Set(String)).new)[fn] ||= Set(String).new) << prefix
             else
-              unresolved << fn
+              (unresolved_by_dir[target] ||= Set(String).new) << fn
             end
           end
         end
-        prefixes.reject! { |fn, _| unresolved.includes?(fn) }
-        result[dir] = prefixes unless prefixes.empty?
       end
 
+      prefixes_by_dir.each do |dir, prefixes|
+        unresolved = unresolved_by_dir[dir]?
+        prefixes.reject! { |fn, _| unresolved.includes?(fn) } if unresolved
+        result[dir] = prefixes unless prefixes.empty?
+      end
       result
     end
 
