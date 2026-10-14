@@ -157,6 +157,16 @@ describe ConfigInitializer do
     end
   end
 
+  describe "unknown_key_warnings" do
+    it "names an unknown key and suggests the closest real one" do
+      known = ConfigInitializer.new.default_options.keys
+      ConfigInitializer.unknown_key_warnings(["no_log", "base", "zzzzzz"], known).should eq([
+        "WARNING: unknown config key 'no_log' (did you mean 'nolog'?); it has no effect.",
+        "WARNING: unknown config key 'zzzzzz'; it has no effect.",
+      ])
+    end
+  end
+
   # Every consumer of these keys reads them through `YAML::Any#as_i`. A
   # quoted number parses as a String and used to raise "Cast from String to
   # Int64 failed" inside the AI analyzer — caught as an analyzer failure, so

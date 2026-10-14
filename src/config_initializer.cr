@@ -2,6 +2,7 @@ require "file"
 require "log"
 require "yaml"
 require "colorize"
+require "levenshtein"
 require "./utils/home.cr"
 require "./llm/native_tool_calling"
 
@@ -140,6 +141,15 @@ class ConfigInitializer
     ""
   end
 
+  # One warning per key that is not a config key, with the closest real key
+  # as a hint when there is one.
+  def self.unknown_key_warnings(keys : Array(String), known : Array(String)) : Array(String)
+    (keys - known).map do |key|
+      hint = Levenshtein.find(key, known).try { |name| " (did you mean '#{name}'?)" }
+      "WARNING: unknown config key '#{key}'#{hint}; it has no effect."
+    end
+  end
+
   def read_config
     # Ensure the config file is set up
     setup
@@ -175,6 +185,13 @@ class ConfigInitializer
       # Which keys get which coercion is read off the type of their
       # default, so a new boolean/integer/array option needs no list.
       defaults = default_options
+
+      # A misspelled key (`no_log` for `nolog`, the GitHub Action's input
+      # name) used to do nothing, silently. Name it so the user can fix it.
+      ConfigInitializer.unknown_key_warnings(symbolized_hash.keys, defaults.keys).each do |warning|
+        STDERR.puts warning.colorize(:yellow)
+      end
+
       defaults.each do |key, default|
         next unless default.raw.is_a?(Bool)
         value = symbolized_hash[key]?
