@@ -260,7 +260,8 @@ module Analyzer::Go
           content = file_contents[p]?
           next unless content
           names = builders_by_dir[dir]?.try(&.dup) || Set(String).new
-          imported = builder_imports.select { |import_path, _| content.includes?(import_path) }
+          # Quoted, so `"app/routes"` is not matched by `"app/routes/admin"`.
+          imported = builder_imports.select { |import_path, _| content.includes?(%("#{import_path}")) }
           imported.each_value { |d| names.concat(builders_by_dir[d]) }
           next if names.empty?
           aliases = nil
