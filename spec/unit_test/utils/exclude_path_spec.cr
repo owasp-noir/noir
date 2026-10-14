@@ -87,6 +87,12 @@ describe Noir::ExcludePath do
     Noir::ExcludePath.new("././legacy").excluded?("legacy/old.js").should be_true
   end
 
+  it "treats a gitignore-style leading / as anchored at the scan base" do
+    Noir::ExcludePath.new("/legacy").excluded?("legacy/lib/index.tsx").should be_true
+    Noir::ExcludePath.new("/legacy/*").excluded?("legacy/old.js").should be_true
+    Noir::ExcludePath.new("/legacy").excluded?("src/legacy/old.js").should be_false
+  end
+
   it "keeps a ./-prefixed file pattern anchored at the scan base" do
     matcher = Noir::ExcludePath.new("./app.js")
     matcher.excluded?("app.js").should be_true
