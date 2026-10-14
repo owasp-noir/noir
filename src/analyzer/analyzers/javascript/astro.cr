@@ -40,8 +40,16 @@ module Analyzer::Javascript
     def analyze
       result = [] of Endpoint
       mutex = Mutex.new
+      # `src/pages/` is also Next.js's pages router, so in a monorepo only
+      # files under an Astro project root count. No root found waves
+      # everything through, as for SvelteKit and Nitro.
+      project_roots = discover_js_project_roots(
+        ["\"astro\""],
+        ["astro.config.mjs", "astro.config.js", "astro.config.ts", "astro.config.mts", "astro.config.cjs"]
+      )
 
       parallel_file_scan(EXTENSIONS) do |path|
+        next unless path_under_project_roots?(path, project_roots)
         # Scan-base-relative, never absolute: `String#index` takes the
         # FIRST occurrence, so a same-named directory above the scan base
         # won outright and the derived URL changed with the checkout path.
