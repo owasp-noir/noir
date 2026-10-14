@@ -223,4 +223,32 @@ describe "OutputBuilderSarif" do
     uris.should eq(["sar/d1/a%20b.go", "sar/d2/x%23frag%3Fq.go", "sar/d3/a%2520b.go", "a%3Ab/(x)@y.go", "file:///C:/src/main.go"])
     uris.each { |uri| URI.decode(uri.lchop("file:///")).should eq(paths[uris.index!(uri)]) }
   end
+
+  it "gives each file one URI shape and names the relative base" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderSarif.new(options)
+    builder.io = IO::Memory.new
+
+    # `-b .`, `-b $PWD` and a path outside the working directory.
+    paths = ["./app/app.py", File.join(Dir.current, "app/app.py"), "/srv/other/app.py"]
+    endpoints = paths.map_with_index do |path, i|
+      Endpoint.new("/e#{i}", "GET", Details.new(PathInfo.new(path, 1)))
+    end
+
+    builder.print(endpoints)
+    run = JSON.parse(builder.io.to_s)["runs"][0]
+    locations = run["results"].as_a.map(&.["locations"][0]["physicalLocation"]["artifactLocation"])
+
+    locations.map(&.["uri"].as_s).should eq(["app/app.py", "app/app.py", "file:///srv/other/app.py"])
+    locations.map(&.["uriBaseId"]?.try(&.as_s)).should eq(["%SRCROOT%", "%SRCROOT%", nil])
+    # `file:///C:/…` on Windows, `file:///home/…` elsewhere.
+    base = run["originalUriBaseIds"]["%SRCROOT%"]["uri"].as_s
+    URI.decode(base).should eq("file:///#{Path.new(Dir.current).to_posix.to_s.lchop('/')}/")
+  end
 end

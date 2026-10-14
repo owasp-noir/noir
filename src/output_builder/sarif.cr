@@ -88,7 +88,7 @@ class OutputBuilderSarif < OutputBuilder
       end
     end
 
-    attach_noir_properties(log.to_json, endpoints)
+    attach_noir_properties(sarif_with_srcroot(log).to_json, endpoints)
   end
 
   private def attach_noir_properties(message : String, endpoints : Array(Endpoint)) : String
