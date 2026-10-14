@@ -34,8 +34,8 @@ module Noir
         end
 
         if rd = router_depth
-          if visible.match(/\.nest\s*\{/) && (match = line.match(/"([^"]*)"\s*\.\s*nest\s*\{/))
-            nests << FunctionalNest.new(depth + 1, match[1])
+          if visible.match(/\.nest\s*\{/) && (prefix = functional_nest_prefix(line))
+            nests << FunctionalNest.new(depth + 1, prefix)
           end
 
           if visible.match(/\b(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s*\(/) &&
@@ -64,6 +64,24 @@ module Noir
           depth += opens - closes
         end
       end
+    end
+
+    # Calls other than `path(...)` inside a nest predicate — `accept(JSON)`,
+    # `queryParam("k", "v")` — never carry the prefix.
+    NEST_PREDICATE_CALL_RE = /\b(?!path\b)[A-Za-z_]\w*\s*\([^()]*\)/
+
+    # Path prefix of a `<predicate>.nest {` line: `"/x".nest`,
+    # `path("/x").nest`, `(accept(JSON) and "/x").nest`. Nil for a
+    # path-less predicate such as `accept(JSON).nest`.
+    private def functional_nest_prefix(line : String) : String?
+      nest_idx = line =~ /\.\s*nest\s*\{/
+      return unless nest_idx
+
+      predicate = line[0...nest_idx]
+      if stmt_start = predicate.rindex(/[{};]/)
+        predicate = predicate[(stmt_start + 1)..]
+      end
+      predicate.gsub(NEST_PREDICATE_CALL_RE, "").match(/"([^"]*)"/).try &.[1]
     end
 
     private def inline_functional_route_callees(line : String, line_number : Int32) : Array(NamedTuple(name: String, line: Int32))

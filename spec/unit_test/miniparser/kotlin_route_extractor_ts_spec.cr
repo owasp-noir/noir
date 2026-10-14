@@ -422,6 +422,35 @@ describe Noir::TreeSitterKotlinRouteExtractor do
     ])
   end
 
+  it "takes WebFlux nest prefixes from path() and combined predicates" do
+    source = <<-KT
+      package com.example
+
+      class RouterConfiguration {
+          fun routes(h: Handler) = router {
+              (accept(APPLICATION_JSON) and "/v1").nest {
+                  GET("/legacy", h::legacy)
+                  accept(APPLICATION_JSON).nest {
+                      POST("/things", h::create)
+                  }
+              }
+              path("/p").nest { DELETE("/q", h::q) }
+              queryParam("mode", "x").nest {
+                  GET("/mode", h::mode)
+              }
+          }
+      }
+      KT
+
+    routes = Noir::TreeSitterKotlinRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([
+      {"GET", "/v1/legacy"},
+      {"POST", "/v1/things"},
+      {"DELETE", "/p/q"},
+      {"GET", "/mode"},
+    ])
+  end
+
   it "ignores non-mapping annotations" do
     source = <<-KT
       class X {
