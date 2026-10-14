@@ -101,10 +101,18 @@ end
     # rejects an empty string, so `File.exists?("")` raised instead of
     # returning false — and took a whole analyzer down with it (classic
     # ASP.NET MVC checks an optional, often-empty RouteConfig path).
-    def self.exists?(path : Path | String) : Bool
-      return false if path.to_s.empty?
-      previous_def
-    end
+    # Crystal 1.22 added `follow_symlinks:`; the signature must match for `previous_def`.
+    {% if compare_versions(Crystal::VERSION, "1.22.0") >= 0 %}
+      def self.exists?(path : Path | String, *, follow_symlinks : Bool = true) : Bool
+        return false if path.to_s.empty?
+        previous_def
+      end
+    {% else %}
+      def self.exists?(path : Path | String) : Bool
+        return false if path.to_s.empty?
+        previous_def
+      end
+    {% end %}
   end
 
   class Dir
