@@ -336,7 +336,9 @@ class Deliver
       next unless param.value.empty?
       next if param.name.empty?
 
-      fillers[param.name] = NUMERIC_PATH_PARAM_RE.matches?(param.name) ? "1" : "noir"
+      # `underscore` splits camelCase (`userId` -> `user_id`) so the
+      # suffix rule sees ASP.NET / JAX-RS spellings too.
+      fillers[param.name] = NUMERIC_PATH_PARAM_RE.matches?(param.name.underscore) ? "1" : "noir"
     end
     return url if fillers.empty?
 
