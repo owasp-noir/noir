@@ -1508,7 +1508,7 @@ module Analyzer::Ruby
           permit_buf = "#{buf} #{line}"
           permit_mask = "#{permit_mask} #{blank_quoted(line)}"
           permit_lines += 1
-        elsif line.includes?("permit") && (masked = blank_quoted(line)).matches?(/permit\s*\(/)
+        elsif (line.includes?("permit") || line.includes?("expect")) && (masked = blank_quoted(line)).matches?(PERMIT_OPEN)
           permit_buf = line
           permit_mask = masked
           permit_lines = 1
@@ -1516,7 +1516,8 @@ module Analyzer::Ruby
         if buf = permit_buf
           if args = permit_args(buf, permit_mask)
             permit_buf = nil
-            permit_names(args).each do |name|
+            names = permit_mask.match(PERMIT_OPEN).try(&.[0].starts_with?("params")) ? expect_names(args) : permit_names(args)
+            names.each do |name|
               next if this_method.empty?
               params_body_by_action[this_method] ||= [] of Param
               params_body_by_action[this_method] << Param.new(name, "", param_type)
@@ -1571,12 +1572,15 @@ module Analyzer::Ruby
 
     PERMIT_MAX_LINES = 200
     PERMIT_SPLIT     = Noir::TopLevelSplit::Rules.new
+    # `permit(` or Rails 8's `params.expect(` (strong params in one call).
+    PERMIT_OPEN = /params\.expect\s*\(|permit\s*\(/
 
-    # Text between the parens of the first `permit(`, or nil while unbalanced.
-    # `mask` is `text` with string literals blanked (see `blank_quoted`); the
-    # parens are counted on it and the result is sliced from `text`.
+    # Text between the parens of the first `permit(` / `params.expect(`, or nil
+    # while unbalanced. `mask` is `text` with string literals blanked (see
+    # `blank_quoted`); the parens are counted on it and the result is sliced
+    # from `text`.
     private def permit_args(text : String, mask : String) : String?
-      return unless m = mask.match(/permit\s*\(/)
+      return unless m = mask.match(PERMIT_OPEN)
       open = m.byte_end(0)
       depth = 0
       mask.to_slice[open..].each_with_index do |b, i|
@@ -1622,6 +1626,23 @@ module Analyzer::Ruby
       Noir::TopLevelSplit.split(args, ',', PERMIT_SPLIT).each do |entry|
         if m = entry.match(/\A:?(?:"([a-z_][a-z0-9_]*)"|'([a-z_][a-z0-9_]*)'|([a-z_][a-z0-9_]*))\s*(?::(?!:)|=>|\z)/)
           names << (m[1]? || m[2]? || m[3]).to_s
+        end
+      end
+      names
+    end
+
+    # Param names from a `params.expect(...)` argument list. `product: [ :name ]`
+    # (and the array-of-hashes form `comments: [[ :body ]]`) names the root key
+    # whose inner list holds the fields, so the fields are the params; a bare
+    # `:id` / `tags: []` is a param itself.
+    private def expect_names(args : String) : Array(String)
+      names = [] of String
+      Noir::TopLevelSplit.split(args, ',', PERMIT_SPLIT).each do |entry|
+        if (m = entry.match(/\A:?["']?[a-z_][a-z0-9_]*["']?\s*(?::(?!:)|=>)\s*\[(.*)\]\s*\z/m)) &&
+           !(inner = m[1].strip.lchop('[').rchop(']').strip).empty?
+          names.concat(permit_names(inner))
+        else
+          names.concat(permit_names(entry))
         end
       end
       names

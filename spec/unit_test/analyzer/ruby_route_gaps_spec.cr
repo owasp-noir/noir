@@ -1,0 +1,63 @@
+require "../../spec_helper"
+require "../../../src/models/noir"
+require "file_utils"
+
+# Ruby routing shapes that real apps use and the analyzers used to miss.
+# Each example scans a throwaway tree end to end, so detection, analysis
+# and optimization all run as they do from the CLI.
+private def scan_ruby_tree(files : Hash(String, String)) : Array(Endpoint)
+  root = File.tempname("noir-ruby-route-gaps")
+  files.each do |rel, body|
+    path = File.join(root, rel)
+    FileUtils.mkdir_p(File.dirname(path))
+    File.write(path, body)
+  end
+  options = create_test_options
+  options["base"] = YAML::Any.new([YAML::Any.new(root)])
+  runner = NoirRunner.new(options)
+  runner.detect
+  runner.analyze
+  runner.endpoints
+ensure
+  CodeLocator.instance.reset_files
+  FileUtils.rm_rf(root) if root
+end
+
+private def find_ep(endpoints : Array(Endpoint), method : String, url : String) : Endpoint
+  endpoints.find { |e| e.method == method && e.url == url } ||
+    fail "missing #{method} #{url} in #{endpoints.map { |e| "#{e.method} #{e.url}" }}"
+end
+
+private def param_names(endpoint : Endpoint, type : String) : Array(String)
+  endpoint.params.select(&.param_type.==(type)).map(&.name).sort!
+end
+
+RAILS_GEMFILE = %(source "https://rubygems.org"\ngem "rails"\n)
+
+describe "Ruby route gaps" do
+  it "reads Rails 8 params.expect as strong params" do
+    endpoints = scan_ruby_tree({
+      "Gemfile"                                => RAILS_GEMFILE,
+      "config/routes.rb"                       => "Rails.application.routes.draw do\n  resources :products\nend\n",
+      "app/controllers/products_controller.rb" => <<-RUBY,
+        class ProductsController < ApplicationController
+          def create
+            @product = Product.new(product_params)
+          end
+
+          def update
+            @product.update(params.expect(product: [[ :sku ]]))
+          end
+
+          private
+            def product_params
+              params.expect(product: [ :name, :price, tags: [] ])
+            end
+        end
+        RUBY
+    })
+
+    param_names(find_ep(endpoints, "POST", "/products"), "form").should eq(%w[name price tags])
+    param_names(find_ep(endpoints, "PATCH", "/products/1"), "form").should eq(%w[sku])
+  end
+end
