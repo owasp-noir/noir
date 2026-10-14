@@ -10,6 +10,9 @@ module Analyzer::Specification
 
     # A `{{ var }}` / `{{ _.var }}` placeholder.
     TEMPLATE_VAR = /\{\{\s*(?:_\.)?([A-Za-z0-9_.-]+)\s*\}\}/
+    # A `{{ var }}` or a `{% response ... %}` template tag, either of which may
+    # stand unquoted as a JSON body value.
+    BODY_PLACEHOLDER = /#{TEMPLATE_VAR}|\{%.*?%\}/
 
     def analyze
       each_spec_file(Noir::LocatorKeys::INSOMNIA_JSON) do |path|
@@ -370,12 +373,7 @@ module Analyzer::Specification
     end
 
     private def process_json_body_text(text : String, params : Array(Param))
-      parsed = parse_json_lenient(text)
-      if h = parsed.as_h?
-        h.each { |k, _| add_param(params, k, "", "json") }
-      end
-    rescue e
-      logger.debug "Failed to parse Insomnia JSON body: #{e}"
+      json_body_pairs(text, BODY_PLACEHOLDER).each { |k, _| add_param(params, k, "", "json") }
     end
 
     # `key` / `value` / `token` are templated the same way the URL is —

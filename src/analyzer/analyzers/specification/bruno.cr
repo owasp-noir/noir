@@ -114,7 +114,7 @@ module Analyzer::Specification
             params << Param.new(k, v, "header")
           end
         when "body:json"
-          extract_json_body(block.body).each { |p| params << p }
+          json_body_pairs(block.body, MUSTACHE_VAR).each { |k, v| params << Param.new(k, v, "json") }
         when "body:form-urlencoded"
           parse_kv_lines(block.body).each do |k, v|
             params << Param.new(k, v, "form")
@@ -137,23 +137,6 @@ module Analyzer::Specification
     rescue e
       @logger.debug "Exception processing .bru block"
       @logger.debug_sub e
-    end
-
-    private def extract_json_body(raw : String) : Array(Param)
-      params = [] of Param
-      stripped = raw.strip
-      return params if stripped.empty?
-      begin
-        parsed = parse_json_lenient(stripped)
-        if hash = parsed.as_h?
-          hash.each do |k, v|
-            params << Param.new(k, v.to_s, "json")
-          end
-        end
-      rescue
-        # Non-JSON or templated body (e.g. {{var}}) — skip silently.
-      end
-      params
     end
   end
 end

@@ -335,4 +335,16 @@ describe "Postman Analyzer" do
 
     endpoints.map(&.url).should eq ["/health"]
   end
+
+  it "keeps raw JSON body params next to unquoted {{var}} values" do
+    endpoints = analyze_postman <<-JSON
+      {
+        "info": {"name": "x", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"},
+        "item": [{"name": "u", "request": {"method": "PUT", "url": "https://api.example.com/pets",
+          "body": {"mode": "raw", "raw": "{\\"name\\": \\"{{n}}\\", \\"age\\": {{age}}, \\"id\\": {{$randomInt}}}"}}}]
+      }
+      JSON
+
+    endpoints[0].params.select(&.param_type.==("json")).map(&.name).should eq(["name", "age", "id"])
+  end
 end

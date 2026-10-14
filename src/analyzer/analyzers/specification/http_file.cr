@@ -194,18 +194,10 @@ module Analyzer::Specification
       stripped = body.strip
       return params if stripped.empty?
 
-      # Prefer a JSON object body; fall back to `application/x-www-form-
-      # urlencoded`. A templated body (`{ "id": {{x}} }`) is invalid JSON and
-      # has no `=` pairs, so it is skipped silently — same as Bruno.
-      begin
-        parsed = parse_json_lenient(stripped)
-        if hash = parsed.as_h?
-          hash.each { |k, v| add_param(params, k, v.to_s, "json") }
-          return params
-        end
-      rescue
-        # Not JSON — try form encoding below.
-      end
+      # Prefer a JSON object body (an unquoted `{{x}}` value is tolerated);
+      # fall back to `application/x-www-form-urlencoded`.
+      json_body_pairs(stripped, MUSTACHE_VAR).each { |k, v| add_param(params, k, v, "json") }
+      return params unless params.empty?
 
       if stripped.includes?('=') && !stripped.includes?('{')
         stripped.split('&').each do |pair|

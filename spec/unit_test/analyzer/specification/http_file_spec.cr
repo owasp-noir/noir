@@ -133,4 +133,18 @@ describe "HTTP/REST File Analyzer" do
 
     endpoints.map(&.url).should eq ["/api/local", "/api/users/:id"]
   end
+
+  it "keeps JSON body params next to an unquoted {{var}} value" do
+    endpoints = analyze_http_file <<-HTTP
+      POST https://api.example.com/orders
+      Content-Type: application/json
+
+      {
+        "productId": {{productId}},
+        "quantity": 1
+      }
+      HTTP
+
+    endpoints[0].params.select(&.param_type.==("json")).map(&.name).should eq(["productId", "quantity"])
+  end
 end

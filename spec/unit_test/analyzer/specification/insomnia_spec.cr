@@ -216,4 +216,16 @@ describe "Insomnia Analyzer" do
 
     endpoints.map(&.url).should eq ["/health"]
   end
+
+  it "keeps JSON body params next to unquoted template values" do
+    endpoints = analyze_insomnia_json <<-JSON
+      {"_type": "export", "__export_format": 4, "resources": [
+        {"_id": "req_1", "parentId": "wrk_1", "_type": "request", "method": "POST", "url": "https://shop.example.com/orders",
+         "body": {"mimeType": "application/json", "text": "{\\"product_id\\": {{ _.product_id }}, \\"ref\\": {% response 'body', 'req_0', 'b64::JC5pZA==::46b', 'never', 60 %}, \\"quantity\\": 2}"}},
+        {"_id": "wrk_1", "parentId": null, "_type": "workspace", "name": "Shop"}
+      ]}
+      JSON
+
+    endpoints[0].params.select(&.param_type.==("json")).map(&.name).should eq(["product_id", "ref", "quantity"])
+  end
 end

@@ -25,4 +25,21 @@ describe "Bruno Analyzer" do
 
     endpoints.map(&.url).should eq(["/users/:id"])
   end
+
+  it "keeps JSON body params next to an unquoted {{var}} value" do
+    endpoints = analyze_bru <<-BRU
+      post {
+        url: /users
+      }
+
+      body:json {
+        {
+          "name": "Kim",
+          "age": {{age}}
+        }
+      }
+      BRU
+
+    endpoints[0].params.map { |p| {p.name, p.param_type} }.should eq([{"name", "json"}, {"age", "json"}])
+  end
 end
