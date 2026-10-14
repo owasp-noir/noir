@@ -4,15 +4,15 @@ expected_endpoints = [
   Endpoint.new("/", "GET"),
   Endpoint.new("/pages/*", "GET"),
   Endpoint.new("/about", "GET"),
-  Endpoint.new("/Articles", "GET"),
-  Endpoint.new("/Articles", "POST"),
-  Endpoint.new("/Articles/{id}", "GET", [Param.new("id", "", "path")]),
-  Endpoint.new("/Articles/{id}", "PUT", [Param.new("id", "", "path")]),
-  Endpoint.new("/Articles/{id}", "PATCH", [Param.new("id", "", "path")]),
-  Endpoint.new("/Articles/{id}", "DELETE", [Param.new("id", "", "path")]),
+  Endpoint.new("/articles", "GET"),
+  Endpoint.new("/articles", "POST"),
+  Endpoint.new("/articles/{id}", "GET", [Param.new("id", "", "path")]),
+  Endpoint.new("/articles/{id}", "PUT", [Param.new("id", "", "path")]),
+  Endpoint.new("/articles/{id}", "PATCH", [Param.new("id", "", "path")]),
+  Endpoint.new("/articles/{id}", "DELETE", [Param.new("id", "", "path")]),
   # resources() honours only (RouteBuilder map keys)
-  Endpoint.new("/Comments", "GET"),
-  Endpoint.new("/Comments/{id}", "GET", [Param.new("id", "", "path")]),
+  Endpoint.new("/comments", "GET"),
+  Endpoint.new("/comments/{id}", "GET", [Param.new("id", "", "path")]),
   # legacy _method in the options argument
   Endpoint.new("/legacy-post", "POST"),
   Endpoint.new("/admin/dashboard", "GET"),
@@ -30,11 +30,20 @@ expected_endpoints = [
   Endpoint.new("/v1.0/status", "GET"),
   # Static Router facade form
   Endpoint.new("/legacy/ping", "GET"),
+  # Dasherized prefix/resources names; nested resources() callback
+  Endpoint.new("/super-admin/reports", "GET"),
+  Endpoint.new("/api/blog-posts", "GET"),
+  Endpoint.new("/api/blog-posts", "POST"),
+  Endpoint.new("/api/blog-posts/{id}", "GET", [Param.new("id", "", "path")]),
+  Endpoint.new("/api/blog-posts/{id}", "PUT", [Param.new("id", "", "path")]),
+  Endpoint.new("/api/blog-posts/{id}", "PATCH", [Param.new("id", "", "path")]),
+  Endpoint.new("/api/blog-posts/{id}", "DELETE", [Param.new("id", "", "path")]),
+  Endpoint.new("/api/blog-posts/{blog_post_id}/replies", "GET", [Param.new("blog_post_id", "", "path")]),
   # Typed closure scope
   Endpoint.new("/typed/ping", "GET"),
 ]
 
 FunctionalTester.new("fixtures/php/cakephp/", {
   :techs     => 2,  # Detection still sees php_cakephp and php_pure
-  :endpoints => 22, # Analysis suppresses redundant php_pure file endpoints
+  :endpoints => 30, # Analysis suppresses redundant php_pure file endpoints
 }, expected_endpoints).perform_tests

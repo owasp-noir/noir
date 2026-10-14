@@ -1089,13 +1089,6 @@ module Analyzer::Php
       singularize_resource_segment(segment).gsub('-', '_')
     end
 
-    private def singularize_resource_segment(segment : String) : String
-      return segment[0...-3] + "y" if segment.ends_with?("ies") && segment.size > 3
-      return segment[0...-2] if segment.ends_with?("ses") && segment.size > 3
-      return segment[0...-1] if segment.ends_with?("s") && segment.size > 1
-      segment
-    end
-
     private def extract_methods_from_array(methods_str : String) : Array(String)
       methods = [] of String
       method_matches = methods_str.scan(/['"]([^'"]+)['"]/)

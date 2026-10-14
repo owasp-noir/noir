@@ -113,8 +113,8 @@ module Analyzer::Php
         end
 
         resource_name = route_match[2]
-        full_resource_path = build_full_path(prefix, resource_name)
         args = route_match[3]
+        full_resource_path = build_full_path(prefix, resource_url_name(resource_name, args))
         endpoints.concat(create_resource_endpoints(full_resource_path, file_path, include_callee, resource_name, args))
         pos = route_match.byte_end(0)
       end
@@ -135,7 +135,7 @@ module Analyzer::Php
     # `Router` facade used by older apps and plugin route files (croogo).
     CONNECT_REGEX    = /(\$\w+|Router)(?:->|::)connect\s*\(\s*['"]([^'"]+)['"](.*?);/mi
     RESOURCE_REGEX   = /(\$\w+|Router)(?:->|::)resources\s*\(\s*['"]([^'"]+)['"](#{CALL_ARGS_TAIL})/mi
-    SCOPE_OPEN_REGEX = /(?:\$\w+|Router)(?:->|::)(scope|prefix|plugin)\s*\(/mi
+    SCOPE_OPEN_REGEX = /(?:\$\w+|Router)(?:->|::)(scope|prefix|plugin|resources)\s*\(/mi
     VERB_REGEXES     = {
       "GET"     => /(\$\w+|Router)(?:->|::)get\s*\(\s*['"]([^'"]+)['"](?:\s*,\s*\[(.*?)\])?/mi,
       "POST"    => /(\$\w+|Router)(?:->|::)post\s*\(\s*['"]([^'"]+)['"](?:\s*,\s*\[(.*?)\])?/mi,
@@ -180,6 +180,9 @@ module Analyzer::Php
       return unless closure
 
       prelude = context[0...closure.begin(0)]
+      # Only `resources()` may omit the closure; a `;` before it means the
+      # closure found belongs to a later statement.
+      return if method == "resources" && prelude.includes?(';')
       brace_pos = pos + closure.end(0) - 1
       body_end = find_matching_php_close_brace(content, brace_pos)
       return unless body_end
@@ -187,31 +190,48 @@ module Analyzer::Php
       {scope_prefix_from_prelude(prelude, method), content[(brace_pos + 1)...body_end], brace_pos + 1, body_end}
     end
 
-    # Resolve the URL prefix a scope/prefix/plugin contributes. `scope`/`prefix`
-    # take the path as their first string argument; `plugin` takes the plugin
-    # name, with the mounted path supplied separately as a `'path' => '/x'`
-    # option (falling back to the dasherized plugin name).
+    PATH_OPTION_RE = /['"]path['"]\s*=>\s*['"]([^'"]*)['"]/i
+
+    # Resolve the URL prefix a scope/prefix/plugin/resources contributes.
+    # `scope` takes the path itself as its first string argument. `prefix` and
+    # `plugin` take a name, mounted at an explicit `'path' => '/x'` option or
+    # else at the dasherized name (`Admin` -> `/admin`). A `resources()`
+    # callback nests under the member path, `/recipes/{recipe_id}`
+    # (`RouteBuilder::resources`).
     private def scope_prefix_from_prelude(prelude : String, method : String) : String
-      if method == "plugin"
-        if path = prelude.match(/['"]path['"]\s*=>\s*['"]([^'"]*)['"]/i)
-          return path[1]
-        end
-        name = prelude.match(/['"]([^'"]+)['"]/)
-        return name ? "/#{name[1].downcase}" : ""
-      end
-
-      # `prefix('v10', ['path' => '/v1.0'], ...)` mounts under the explicit
-      # `path` option, NOT the dasherized prefix name — honour it like `plugin`
-      # does (`scope('/api', ...)` has no such option, so it falls through to
-      # its first string arg, the path itself).
-      if method == "prefix"
-        if path = prelude.match(/['"]path['"]\s*=>\s*['"]([^'"]*)['"]/i)
-          return path[1]
-        end
-      end
-
       first = prelude.match(/['"]([^'"]*)['"]/)
-      first ? first[1] : ""
+      name = first ? first[1] : ""
+      case method
+      when "scope"
+        name
+      when "resources"
+        id = singularize_resource_segment(cake_delimit(name, '_'))
+        "/#{resource_url_name(name, prelude)}/{#{id}_id}"
+      else
+        if path = prelude.match(PATH_OPTION_RE)
+          path[1]
+        else
+          name.empty? ? "" : "/#{cake_delimit(name, '-')}"
+        end
+      end
+    end
+
+    # URL segment of `resources('BlogPosts')`: the `'path'` option, else the
+    # dasherized name (`blog-posts`, the default `'inflect' => 'dasherize'`).
+    private def resource_url_name(name : String, args : String) : String
+      if path = args.match(PATH_OPTION_RE)
+        path[1]
+      else
+        cake_delimit(name, '-')
+      end
+    end
+
+    # CakePHP `Inflector::dasherize` (delimiter '-') / `underscore` ('_'):
+    # `BlogPosts` -> `blog-posts` / `blog_posts`.
+    private def cake_delimit(name : String, delimiter : Char) : String
+      name.tr(delimiter == '-' ? "_" : "-", delimiter.to_s)
+        .gsub(/(?<=\w)([A-Z])/) { |upper| "#{delimiter}#{upper}" }
+        .downcase
     end
 
     private def inside_scope_body?(pos : Int32, scopes : Array(Scope)) : Bool
