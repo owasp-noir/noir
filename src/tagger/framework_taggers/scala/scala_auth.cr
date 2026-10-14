@@ -65,16 +65,34 @@ class ScalaAuthTagger < FrameworkTagger
     end
   end
 
+  # The route's own block plus the few lines above it (annotations, a
+  # wrapping action), never reaching into a neighbouring route's block.
   private def check_auth_patterns(lines : Array(String), line_idx : Int32) : String?
-    start_idx = [line_idx - 5, 0].max
-    end_idx = [line_idx + 10, lines.size - 1].min
-
     all_patterns = PLAY_AUTH_PATTERNS + SCALATRA_AUTH_PATTERNS
-    (start_idx..end_idx).each do |idx|
+
+    # Upward, stopping at the end of the previous block.
+    idx = line_idx - 1
+    while idx >= 0 && idx >= line_idx - 5
       current = lines[idx]
+      break if current.strip.ends_with?('}')
       all_patterns.each do |pattern, desc|
         return desc if current.matches?(pattern)
       end
+      idx -= 1
+    end
+
+    # Downward, through the brace that closes the route's block.
+    end_idx = [line_idx + 10, lines.size - 1].min
+    depth = 0
+    opened = false
+    (line_idx..end_idx).each do |i|
+      current = lines[i]
+      all_patterns.each do |pattern, desc|
+        return desc if current.matches?(pattern)
+      end
+      depth += current.count('{') - current.count('}')
+      opened ||= current.includes?('{')
+      break if opened && depth <= 0
     end
 
     nil

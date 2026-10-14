@@ -143,6 +143,39 @@ describe "ScalaAuthTagger" do
     FileUtils.rm_rf(tmpdir)
   end
 
+  it "bounds a Scalatra route's check to its own block" do
+    noir_options = create_test_options
+    tmpdir = File.tempname("scalatra_block")
+    Dir.mkdir_p(tmpdir)
+    servlet = File.join(tmpdir, "MyServlet.scala")
+    File.write(servlet, [
+      "class MyServlet extends ScalatraServlet with AuthenticationSupport {", # 1
+      "  get(\"/\") {",                                                       # 2
+      "    \"hello\"",                                                        # 3
+      "  }",                                                                  # 4
+      "  get(\"/me\") {",                                                     # 5
+      "    if (!isAuthenticated) halt(401)",                                  # 6
+      "    \"me\"",                                                           # 7
+      "  }",                                                                  # 8
+      "  get(\"/about\") {",                                                  # 9
+      "    \"about\"",                                                        # 10
+      "  }",                                                                  # 11
+      "}",                                                                    # 12
+    ].join("\n"))
+    noir_options["base"] = YAML::Any.new(tmpdir)
+
+    endpoints = {2 => "/", 5 => "/me", 9 => "/about"}.map do |line, url|
+      details = Details.new(PathInfo.new(servlet, line))
+      details.technology = "scala_scalatra"
+      Endpoint.new(url, "GET", [] of Param, details)
+    end
+    ScalaAuthTagger.new(noir_options).perform(endpoints)
+    FileUtils.rm_rf(tmpdir)
+
+    endpoints.map(&.tags.size).should eq([0, 1, 0])
+    endpoints[1].tags[0].description.should contain("isAuthenticated")
+  end
+
   it "returns correct target_techs" do
     ScalaAuthTagger.target_techs.should contain("scala_play")
     ScalaAuthTagger.target_techs.should contain("scala_akka")
