@@ -66,23 +66,23 @@ describe "Ruby route gaps" do
     endpoints = scan_ruby_tree({
       "Gemfile"          => RAILS_GEMFILE,
       "config/routes.rb" => <<-RUBY,
-      Rails.application.routes.draw do
-        resources :posts, shallow: true do
-          resources :comments do
-            member do
-              post :approve
+        Rails.application.routes.draw do
+          resources :posts, shallow: true do
+            resources :comments do
+              member do
+                post :approve
+              end
+            end
+          end
+          namespace :admin do
+            shallow do
+              resources :posts do
+                resources :comments
+              end
             end
           end
         end
-        namespace :admin do
-          shallow do
-            resources :posts do
-              resources :comments
-            end
-          end
-        end
-      end
-      RUBY
+        RUBY
       "app/controllers/comments_controller.rb"       => controller,
       "app/controllers/admin/comments_controller.rb" => controller,
     })
@@ -103,16 +103,16 @@ describe "Ruby route gaps" do
     endpoints = scan_ruby_tree({
       "Gemfile"          => RAILS_GEMFILE,
       "config/routes.rb" => <<-RUBY,
-      Rails.application.routes.draw do
-        controller :static do
-          get :privacy
-          get :terms
+        Rails.application.routes.draw do
+          controller :static do
+            get :privacy
+            get :terms
+          end
+          scope controller: :pages do
+            get :about
+          end
         end
-        scope controller: :pages do
-          get :about
-        end
-      end
-      RUBY
+        RUBY
       "app/controllers/pages_controller.rb" => "class PagesController < ApplicationController\n  def about\n    params[:lang]\n  end\nend\n",
     })
 
@@ -125,14 +125,14 @@ describe "Ruby route gaps" do
     endpoints = scan_ruby_tree({
       "Gemfile"         => %(source "https://rubygems.org"\ngem "grape"\n),
       "app/api/root.rb" => <<-RUBY,
-       module API
-         class Root < Grape::API
-           prefix :api
-           mount API::Users
-           mount API::Social => "/social"
-         end
-       end
-       RUBY
+        module API
+          class Root < Grape::API
+            prefix :api
+            mount API::Users
+            mount API::Social => "/social"
+          end
+        end
+        RUBY
       "app/api/users.rb" => <<-RUBY,
         module API
           class Users < Grape::API
@@ -212,36 +212,36 @@ describe "Ruby route gaps" do
     endpoints = scan_ruby_tree({
       "Gemfile"          => %(gem "hanami", "~> 2.1"\n),
       "config/routes.rb" => <<-RUBY,
-      module Bookshelf
-        class Routes < Hanami::Routes
-          get "/books", to: "books.index"
-          post "/books", to: "books.create"
-          slice :admin, at: "/admin" do
+        module Bookshelf
+          class Routes < Hanami::Routes
             get "/books", to: "books.index"
+            post "/books", to: "books.create"
+            slice :admin, at: "/admin" do
+              get "/books", to: "books.index"
+            end
           end
         end
-      end
-      RUBY
+        RUBY
       "app/actions/books/index.rb" => <<-RUBY,
-      class Index < Bookshelf::Action
-        params do
-          optional(:page).value(:integer)
+        class Index < Bookshelf::Action
+          params do
+            optional(:page).value(:integer)
+          end
+          def handle(request, response)
+            request.params[:page]
+          end
         end
-        def handle(request, response)
-          request.params[:page]
-        end
-      end
-      RUBY
+        RUBY
       "app/actions/books/create.rb" => <<-RUBY,
-      class Create < Bookshelf::Action
-        params do
-          required(:title).filled(:string)
+        class Create < Bookshelf::Action
+          params do
+            required(:title).filled(:string)
+          end
+          def handle(request, response)
+            request.params[:title]
+          end
         end
-        def handle(request, response)
-          request.params[:title]
-        end
-      end
-      RUBY
+        RUBY
       "slices/admin/actions/books/index.rb" => "class Index < Admin::Action\n  def handle(request, response)\n    request.params[:q]\n  end\nend\n",
     })
 

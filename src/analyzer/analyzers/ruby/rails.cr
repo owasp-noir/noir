@@ -80,11 +80,11 @@ module Analyzer::Ruby
       property controller_scope : String?
       # `shallow do` / `resources ..., shallow: true`: nested resources below
       # this frame get shallow member routes.
-      property shallow : Bool
+      property? shallow : Bool
       # A shallow-nested resources frame: its member path stands on its own
       # (`comments/1`, not `posts/1/comments/1`), so it replaces the enclosing
       # resources' paths for everything nested under it.
-      property shallow_member : Bool
+      property? shallow_member : Bool
 
       def initialize(@kind : Symbol, @path : String = "", @controller_subdir : String = "",
                      @resource_name : String? = nil, @controller_path : String? = nil,
@@ -1097,7 +1097,7 @@ module Analyzer::Ruby
       rf = stack[resources_idx]
       seg = rf.path
       # A shallow resource's member routes drop the parents' segments.
-      if rf.shallow_member && route_scope != "collection" && route_scope != "new"
+      if rf.shallow_member? && route_scope != "collection" && route_scope != "new"
         parts = shallow_path_prefix(stack[0, resources_idx]).split('/', remove_empty: true)
       end
       case route_scope
@@ -1368,7 +1368,7 @@ module Analyzer::Ruby
     private def current_path_prefix(stack : Array(Frame)) : String
       parts = [] of String
       stack.each_with_index do |f, i|
-        parts = shallow_path_prefix(stack[0, i]).split('/', remove_empty: true) if f.shallow_member
+        parts = shallow_path_prefix(stack[0, i]).split('/', remove_empty: true) if f.shallow_member?
         next if f.path.empty?
         parts << f.path
       end
@@ -1380,7 +1380,7 @@ module Analyzer::Ruby
     # member routes without it (`/comments/1`).
     private def shallow_nested?(stack : Array(Frame), options : Hash(String, String)) : Bool
       return false unless parent_resources_frame(stack)
-      options["shallow"]? == "true" || stack.any?(&.shallow)
+      options["shallow"]? == "true" || stack.any?(&.shallow?)
     end
 
     # The path a shallow member route hangs off: every enclosing segment
