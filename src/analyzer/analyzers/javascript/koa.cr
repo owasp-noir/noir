@@ -69,6 +69,8 @@ module Analyzer::Javascript
     KOA_PREFIX_ARG_RE = /\A['"]([^'"]+)['"]\z/
     KOA_ROUTES_ARG_RE = /\A(\w+)\.routes\s*\(\s*\)\z/
     KOA_BARE_ARG_RE   = /\A(\w+)\z/
+    # `const api = new Router({ prefix: '/api' })`
+    KOA_CTOR_PREFIX_RE = /(\w+)\s*=\s*new\s+\w*Router\s*\(\s*\{[^}]*?\bprefix\s*:\s*['"]([^'"]+)['"]/
 
     # Resolve koa-router cross-file mount prefixes and seed them into
     # CodeLocator under each imported child router's file key. Each file
@@ -116,6 +118,9 @@ module Analyzer::Javascript
         # argument is a router (`use('/u', auth, users.routes(),
         # users.allowedMethods())`); a bare `child` only as the sole router
         # argument. A `factory()` call (e.g. `bodyParser()`) is middleware.
+        # The parent's own `new Router({ prefix })` precedes the mount path.
+        ctor_prefixes = Hash(String, String).new
+        content.scan(KOA_CTOR_PREFIX_RE) { |m| ctor_prefixes[m[1]] = m[2] }
         edges = [] of Tuple(String, String, String)
         content.scan(KOA_USE_CALL_RE) do |m|
           args = Noir::JSLiteralScanner.extract_paren_content_at_byte(content, m.byte_end(0)).try(&.content)
@@ -126,6 +131,7 @@ module Analyzer::Javascript
             mount = literal[1]
             parts.shift
           end
+          mount = Noir::URLPath.join(ctor_prefixes[m[1]]? || "", mount)
           parts.each do |part|
             child = part.match(KOA_ROUTES_ARG_RE) || (parts.size == 1 ? part.match(KOA_BARE_ARG_RE) : nil)
             edges << {m[1], mount, child[1]} if child
