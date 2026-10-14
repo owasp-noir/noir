@@ -134,7 +134,7 @@ describe "OutputBuilderCurl" do
 
     line.should contain("--form-string 'name='")
     line.should contain("-F 'avatar=@avatar'")
-    line.should contain("-H 'AUTHORIZATION: '")
+    line.should contain("-H 'AUTHORIZATION;'")
     line.should_not contain("--data-raw")
     line.should_not contain("Content-Type: application/x-www-form-urlencoded")
   end

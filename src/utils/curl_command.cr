@@ -94,8 +94,11 @@ module CurlCommand
 
   private def self.append_headers_and_cookies(parts : Array(String), headers : Array(String), cookies : Array(String))
     headers.each do |header|
+      # curl drops `-H 'Name: '` (and `Accept: ` removes its default
+      # Accept); `Name;` is its syntax for sending the header empty.
+      name, _, value = header.partition(": ")
       parts << "-H"
-      parts << shell_quote(header)
+      parts << shell_quote(value.empty? ? "#{name};" : header)
     end
 
     cookies.each do |cookie|

@@ -18,7 +18,7 @@ noir scan . -f curl -u https://www.example.com
 
 Example output:
 ```bash
-curl -i -g -X 'GET' 'https://www.example.com/' -H 'x-api-key: '
+curl -i -g -X 'GET' 'https://www.example.com/' -H 'x-api-key;'
 curl -i -g -X 'POST' 'https://www.example.com/query' --data-raw 'query=' -H 'Content-Type: application/x-www-form-urlencoded' --cookie 'my_auth='
 curl -i -g -X 'GET' 'https://www.example.com/token' --data-raw 'client_id=&redirect_url=&grant_type=' -H 'Content-Type: application/x-www-form-urlencoded'
 ```

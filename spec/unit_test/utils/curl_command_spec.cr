@@ -39,6 +39,11 @@ describe CurlCommand do
       cmd.should contain("-H 'x-api-key: key123'")
       cmd.should contain("--cookie 'session=abc123'")
     end
+
+    it "sends an empty header with curl's `Name;` syntax" do
+      cmd = CurlCommand.build("GET", "/test", "", "", ["X-Token: ", "Accept: "], [] of String)
+      cmd.should eq("curl -i -g -X 'GET' '/test' -H 'X-Token;' -H 'Accept;'")
+    end
   end
 
   describe ".build_multipart" do
