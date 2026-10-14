@@ -21,6 +21,16 @@ module Analyzer::Specification
       server_base_path(servers.as_a.compact_map { |server_obj| server_url_yaml(server_obj) if server_obj.as_h? })
     end
 
+    # A path item's or operation's own `servers`, which replace the
+    # enclosing ones, or `fallback` when it declares none usable.
+    private def scoped_base_path(servers : (JSON::Any | YAML::Any)?, fallback : String) : String
+      return fallback unless list = servers.try(&.as_a?)
+      urls = list.compact_map do |server_obj|
+        server_obj.is_a?(JSON::Any) ? (server_url_json(server_obj) if server_obj.as_h?) : (server_url_yaml(server_obj) if server_obj.as_h?)
+      end
+      urls.any? { |url| (server_url_path(url) rescue nil) } ? server_base_path(urls) : fallback
+    end
+
     # Maps an OAS3 request-body content type to a Noir param type.
     private def param_type_for_content(content_type : String) : String?
       media_type = content_type.split(';', 2).first.strip.downcase
@@ -385,10 +395,13 @@ module Analyzer::Specification
           end
         end
 
+        path_base = scoped_base_path(path_item_h["servers"]?, base_path)
+
         path_item_h.each do |method, method_obj|
           next unless HTTP_METHODS.includes?(method.to_s.downcase)
           params = path_level_params.dup
           effective_security = global_security
+          op_base = scoped_base_path(method_obj.as_h?.try(&.["servers"]?), path_base)
 
           begin
             if method_obj_h = method_obj.as_h?
@@ -412,9 +425,9 @@ module Analyzer::Specification
 
           op_details = operation_details(details, line_index, ["paths", path, method])
           if params.size > 0
-            @result << Endpoint.new(join_base_path(base_path, path), method.upcase, params, op_details)
+            @result << Endpoint.new(join_base_path(op_base, path), method.upcase, params, op_details)
           else
-            @result << Endpoint.new(join_base_path(base_path, path), method.upcase, op_details)
+            @result << Endpoint.new(join_base_path(op_base, path), method.upcase, op_details)
           end
         rescue e
           record_skipped_entry(doc.path, "#{method.to_s.upcase} #{path}", e)
@@ -448,10 +461,13 @@ module Analyzer::Specification
           end
         end
 
+        path_base = scoped_base_path(path_item_h[YAML::Any.new("servers")]?, base_path)
+
         path_item_h.each do |method, method_obj|
           next unless HTTP_METHODS.includes?(method.to_s.downcase)
           params = path_level_params.dup
           effective_security = global_security
+          op_base = scoped_base_path(method_obj.as_h?.try(&.[YAML::Any.new("servers")]?), path_base)
 
           begin
             if method_obj_h = method_obj.as_h?
@@ -477,9 +493,9 @@ module Analyzer::Specification
 
           op_details = operation_details(details, line_index, ["paths", path.to_s, method.to_s])
           if params.size > 0
-            @result << Endpoint.new(join_base_path(base_path, path.to_s), method.to_s.upcase, params, op_details)
+            @result << Endpoint.new(join_base_path(op_base, path.to_s), method.to_s.upcase, params, op_details)
           else
-            @result << Endpoint.new(join_base_path(base_path, path.to_s), method.to_s.upcase, op_details)
+            @result << Endpoint.new(join_base_path(op_base, path.to_s), method.to_s.upcase, op_details)
           end
         rescue e
           record_skipped_entry(doc.path, "#{method.to_s.upcase} #{path}", e)

@@ -71,4 +71,41 @@ describe "OAS3 Analyzer" do
       FileUtils.rm_rf(dir)
     end
   end
+
+  it "lets path-level and operation-level servers replace the root ones" do
+    dir = File.tempname("noir_oas3_scoped_servers")
+    Dir.mkdir_p(dir)
+    begin
+      yaml = <<-YAML
+        openapi: 3.0.3
+        info: {title: t, version: "1"}
+        servers: [{url: https://api.example.com/v2}]
+        paths:
+          /pets:
+            servers: [{url: https://files.example.com/upload}]
+            get:
+              responses: {"200": {description: ok}}
+            post:
+              servers: [{url: /ops}]
+              responses: {"200": {description: ok}}
+          /owners:
+            servers: [{url: "files.example.com"}]
+            get:
+              responses: {"200": {description: ok}}
+        YAML
+      File.write(File.join(dir, "openapi.yaml"), yaml)
+      File.write(File.join(dir, "openapi.json"), YAML.parse(yaml).to_json)
+      CodeLocator.instance.clear_all
+      CodeLocator.instance.push(Noir::LocatorKeys::OAS3_YAML, File.join(dir, "openapi.yaml"))
+      CodeLocator.instance.push(Noir::LocatorKeys::OAS3_JSON, File.join(dir, "openapi.json"))
+      options = create_test_options
+      options["base"] = YAML::Any.new([YAML::Any.new(dir)])
+
+      expected = [{"GET", "/upload/pets"}, {"POST", "/ops/pets"}, {"GET", "/v2/owners"}]
+      Analyzer::Specification::Oas3.new(options).analyze.map { |e| {e.method, e.url} }.should eq(expected + expected)
+    ensure
+      CodeLocator.instance.clear_all
+      FileUtils.rm_rf(dir)
+    end
+  end
 end
