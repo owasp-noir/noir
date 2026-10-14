@@ -265,7 +265,9 @@ describe "detection walk coverage reporting" do
       File.write(File.join(temp_dir, "AGENTS.md"), "# agents\n")
       File.write(File.join(temp_dir, "releases", "v2", "app.rb"), "require 'sinatra'\nget '/v2' do\nend\n")
       File.symlink("AGENTS.md", File.join(temp_dir, "CLAUDE.md"))
-      File.symlink(File.join("releases", "v2"), File.join(temp_dir, "current"))
+      # Absolute target: on Windows a relative directory target is checked
+      # against the cwd, so the link is created as a broken file link.
+      File.symlink(File.join(temp_dir, "releases", "v2"), File.join(temp_dir, "current"))
 
       scan_gaps(temp_dir).should be_empty
     ensure
