@@ -72,6 +72,24 @@ expected_endpoints = [
   Endpoint.new("/v1/local/status", "GET", [
     Param.new("region", "", "query"),
   ]),
+  # Pydantic body models: docstrings, comments and `:` inside a default
+  # do not end the field list, base-class fields are inherited, and
+  # `Optional[...]` / `Annotated[..., Body()]` still name the model.
+  Endpoint.new("/api/orders", "POST", [
+    Param.new("customer_id", "", "json"),
+    Param.new("label", "", "json"),
+    Param.new("quantity", "1", "json"),
+  ]),
+  Endpoint.new("/api/orders/{order_id}", "PATCH", [
+    Param.new("order_id", "", "path"),
+    Param.new("customer_id", "", "json"),
+    Param.new("label", "", "json"),
+  ]),
+  Endpoint.new("/api/orders/{order_id}", "PUT", [
+    Param.new("order_id", "", "path"),
+    Param.new("customer_id", "", "json"),
+    Param.new("quantity", "1", "json"),
+  ]),
   Endpoint.new("/assets/*", "GET"),
   Endpoint.new("/main", "GET"),
 ]

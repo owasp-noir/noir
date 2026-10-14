@@ -212,3 +212,33 @@ api.add_api_websocket_route(
     "/ws/registered/{channel}",
     endpoint=registered_websocket_handler,
 )
+
+
+class OrderBase(BaseModel):
+    """Shared order fields.
+
+    note: prose in a docstring, not a field
+    """
+    # the customer placing the order
+    customer_id: int
+    label: str = Field(..., description="Display name: shown in the UI")
+
+
+class OrderCreate(OrderBase):
+    model_config = {"extra": "forbid"}
+    quantity: int = 1  # how many
+
+
+@api.post("/orders")
+async def create_order(order: OrderCreate):
+    return order
+
+
+@api.patch("/orders/{order_id}")
+async def patch_order(order_id: int, order: Optional[OrderBase] = None):
+    return order
+
+
+@api.put("/orders/{order_id}")
+async def put_order(order_id: int, order: Annotated[OrderCreate, Body()]):
+    return order
