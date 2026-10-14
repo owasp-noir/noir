@@ -537,8 +537,13 @@ module Analyzer::Rust
           # Strip a turbofish so `req.header::<&str>("x")` /
           # `req.parse_json::<T>()` match like their bare forms.
           base = fn_text.gsub(/::<[^>]*>/, "")
-          if (base == "req.query" || base.ends_with?(".parse_queries")) && !endpoint.params.any? { |p| p.name == "query" && p.param_type == "query" }
-            endpoint.push_param(Param.new("query", "", "query"))
+          # `req.query::<T>("page")` / `req.form::<T>("name")` read one named
+          # field; `req.parse_queries::<T>()` binds a whole struct.
+          if base == "req.query" || base.ends_with?(".parse_queries") || base == "req.form"
+            type = base == "req.form" ? "form" : "query"
+            name = base.ends_with?(".parse_queries") ? nil : first_string_literal_text(Noir::TreeSitter.field(node, "arguments"), source)
+            name ||= type
+            endpoint.push_param(Param.new(name, "", type)) unless endpoint.params.any? { |p| p.name == name && p.param_type == type }
           end
           # Salvo's request-side body extractors: `req.parse_json::<T>()` /
           # `req.extract::<T>()` (JSON) and `req.parse_form::<T>()` (form).
