@@ -10,7 +10,7 @@ Turn discovered endpoints into ready-to-run commands for common HTTP clients. Us
 
 ## cURL
 
-[cURL](https://curl.se/) is the most widely used command-line HTTP client. The generated commands include `-i` (show response headers), `-g` (disable URL globbing so `{id}` and `[..]` are sent literally), `-X` (HTTP method), `--data-raw` (urlencoded or JSON bodies, with the matching `Content-Type` header), `-F` (multipart uploads), `-H` (headers), and `--cookie` as appropriate.
+[cURL](https://curl.se/) is the most widely used command-line HTTP client. The generated commands include `-i` (show response headers), `-g` (disable URL globbing so `{id}` and `[..]` are sent literally), `-X` (HTTP method; HEAD gets `-I` instead), `--data-raw` (urlencoded or JSON bodies, with the matching `Content-Type` header), `-F` (multipart uploads), `-H` (headers), and `--cookie` as appropriate.
 
 ```bash
 noir scan . -f curl -u https://www.example.com

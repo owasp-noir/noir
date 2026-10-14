@@ -40,6 +40,11 @@ describe CurlCommand do
       cmd.should contain("--cookie 'session=abc123'")
     end
 
+    it "uses -I for HEAD, since -X HEAD waits for a body that never comes" do
+      cmd = CurlCommand.build("HEAD", "/test", "", "", [] of String, [] of String)
+      cmd.should eq("curl -I -g '/test'")
+    end
+
     it "sends an empty header with curl's `Name;` syntax" do
       cmd = CurlCommand.build("GET", "/test", "", "", ["X-Token: ", "Accept: "], [] of String)
       cmd.should eq("curl -i -g -X 'GET' '/test' -H 'X-Token;' -H 'Accept;'")

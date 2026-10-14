@@ -30,7 +30,11 @@ module CurlCommand
 
   # The curl command for one verb of a baked endpoint: multipart when it has
   # a file field, `--data-raw` otherwise.
+  #
+  # HEAD goes out bodiless: `-I` refuses to combine with `--data-raw`/`-F`.
   def self.for_endpoint(method : String, baked, params) : String
+    return build(method, baked[:url], "", "", baked[:header], baked[:cookie]) if method == "HEAD"
+
     text_fields, file_fields = form_fields(params)
     if file_fields.empty?
       build(method, baked[:url], baked[:body], baked[:body_type], baked[:header], baked[:cookie])
@@ -41,7 +45,7 @@ module CurlCommand
 
   def self.build(method : String, url : String, body : String, body_type : String,
                  headers : Array(String), cookies : Array(String)) : String
-    parts = ["curl", "-i", "-g", "-X", shell_quote(method), shell_quote(url)]
+    parts = ["curl"] + method_flags(method) << shell_quote(url)
 
     unless body.empty?
       content_type = body_type == "json" ? "application/json" : "application/x-www-form-urlencoded"
@@ -73,7 +77,7 @@ module CurlCommand
                            text_fields : Array(Tuple(String, String)),
                            file_fields : Array(Tuple(String, String)),
                            headers : Array(String), cookies : Array(String)) : String
-    parts = ["curl", "-i", "-g", "-X", shell_quote(method), shell_quote(url)]
+    parts = ["curl"] + method_flags(method) << shell_quote(url)
 
     text_fields.each do |name, value|
       parts << "--form-string"
@@ -90,6 +94,12 @@ module CurlCommand
     # or `--form-string` is used; do not force urlencoded/json here.
     append_headers_and_cookies(parts, headers, cookies)
     parts.join(" ")
+  end
+
+  # `-X HEAD` makes curl wait for a body the server never sends, hanging
+  # on a keep-alive connection; `-I` is curl's HEAD request.
+  private def self.method_flags(method : String) : Array(String)
+    method == "HEAD" ? ["-I", "-g"] : ["-i", "-g", "-X", shell_quote(method)]
   end
 
   private def self.append_headers_and_cookies(parts : Array(String), headers : Array(String), cookies : Array(String))

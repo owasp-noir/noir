@@ -64,9 +64,10 @@ describe "OutputBuilderCurl" do
     builder.print([Endpoint.new("/wildcard", "ANY")])
     lines = builder.io.to_s.split("\n").reject(&.empty?)
 
-    lines.size.should eq(WILDCARD_HTTP_METHODS.size)
-    lines.map { |line| line.split("'")[1] }.should eq(WILDCARD_HTTP_METHODS)
-    lines.any?(&.includes?("'ANY'")).should be_false
+    expected = WILDCARD_HTTP_METHODS.map do |method|
+      method == "HEAD" ? "curl -I -g '/wildcard'" : "curl -i -g -X '#{method}' '/wildcard'"
+    end
+    lines.should eq(expected)
   end
 
   it "prints a QUERY endpoint with its body intact" do
@@ -169,6 +170,31 @@ describe "OutputBuilderCurl" do
     line.should_not contain("-F 'path=")
     line.should_not contain("-F 'kind=")
     line.should contain("-F 'avatar=@avatar'")
+  end
+
+  # `-I` refuses to combine with `--data-raw` or `-F`, so the HEAD an ANY
+  # route expands into goes out without the body.
+  it "prints HEAD as a bodiless -I request" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderCurl.new(options)
+    builder.io = IO::Memory.new
+
+    form = Endpoint.new("/any", "HEAD")
+    form.push_param(Param.new("name", "x", "form"))
+    form.push_param(Param.new("sid", "abc", "cookie"))
+    upload = Endpoint.new("/upload", "HEAD")
+    upload.push_param(Param.new("avatar", "", "file"))
+
+    builder.print([form, upload])
+    lines = builder.io.to_s.split("\n").reject(&.empty?)
+
+    lines.should eq(["curl -I -g '/any' --cookie 'sid=abc'", "curl -I -g '/upload'"])
   end
 
   # A raw `q=red shoes & socks` is a URL curl rejects (space), a `#` turns

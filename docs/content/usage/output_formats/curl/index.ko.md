@@ -10,7 +10,7 @@ sort_by = "weight"
 
 ## cURL
 
-[cURL](https://curl.se/)은 가장 널리 쓰이는 커맨드라인 HTTP 클라이언트입니다. 생성되는 명령에는 `-i`(응답 헤더 표시), `-g`(URL globbing을 꺼서 `{id}`, `[..]`를 그대로 보냄), `-X`(HTTP 메서드), `--data-raw`(urlencoded 또는 JSON 본문, 맞는 `Content-Type` 헤더와 함께), `-F`(multipart 업로드), `-H`(헤더), `--cookie`(쿠키)가 필요에 따라 들어갑니다.
+[cURL](https://curl.se/)은 가장 널리 쓰이는 커맨드라인 HTTP 클라이언트입니다. 생성되는 명령에는 `-i`(응답 헤더 표시), `-g`(URL globbing을 꺼서 `{id}`, `[..]`를 그대로 보냄), `-X`(HTTP 메서드, HEAD는 대신 `-I`), `--data-raw`(urlencoded 또는 JSON 본문, 맞는 `Content-Type` 헤더와 함께), `-F`(multipart 업로드), `-H`(헤더), `--cookie`(쿠키)가 필요에 따라 들어갑니다.
 
 ```bash
 noir scan . -f curl -u https://www.example.com
