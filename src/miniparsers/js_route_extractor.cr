@@ -326,9 +326,11 @@ module Noir
               end
             end
             unless containing_registers.empty?
-              containing_registers.sort_by! { |_, span| span }
-              anonymous_prefix = containing_registers.first[0]
-              prefixes = [anonymous_prefix]
+              # Nested registers compose, outermost first, under the
+              # file's own cross-file prefix.
+              containing_registers.sort_by! { |_, span| -span }
+              anonymous_prefix = containing_registers.reduce("") { |joined, (prefix, _)| URLPath.join(joined, prefix) }
+              prefixes = (file_prefixes.empty? ? [""] : file_prefixes).map { |file_prefix| URLPath.join(file_prefix, anonymous_prefix) }
             end
           end
           if prefixes.empty? && start_byte >= 0 && !prefixes_by_binding.empty?

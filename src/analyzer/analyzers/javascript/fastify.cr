@@ -260,8 +260,15 @@ module Analyzer::Javascript
       ranges
     end
 
+    # Every prefixed plugin body around `offset`, joined outermost first:
+    # `register(async (i) => { i.register(async (v2) => { … }, { prefix: '/v2' }) }, { prefix: '/internal' })`
+    # serves the inner routes under `/internal/v2`. A body seen twice (a named
+    # plugin registered under several prefixes) keeps its first prefix.
     private def plugin_prefix_at(ranges : Array(Tuple(Int32, Int32, String)), offset : Int32) : String
-      ranges.find { |open_brace, close_brace, _| offset >= open_brace && offset <= close_brace }.try(&.[2]) || ""
+      ranges.select { |open_brace, close_brace, _| offset >= open_brace && offset <= close_brace }
+        .uniq! { |open_brace, close_brace, _| {open_brace, close_brace} }
+        .sort_by! { |open_brace, close_brace, _| open_brace - close_brace }
+        .reduce("") { |joined, range| Noir::URLPath.join(joined, range[2]) }
     end
 
     # `<instance>.route({` / `<instance>.query('/…'` on any receiver: a
