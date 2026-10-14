@@ -5,6 +5,115 @@ module Analyzer::Elixir
   class Plug < ElixirEngine
     analyzer_for "elixir_plug"
 
+    # A `forward "/p", to: Mod` (Plug.Router) or `forward "/p", Mod`
+    # (Phoenix router). `path`/`line` locate the statement.
+    record Forward, path : String, line : Int32, prefix : String, target : String
+
+    FORWARD_RE      = /(?:^|[^.\w])forward\s*\(?\s*["']([^"']+)["']\s*,\s*(?:to:\s*)?([A-Z]\w*(?:\.[A-Z]\w*)*)/
+    SCOPE_OPENER_RE = /^\s*scope\s*\(?\s*(?:["']([^"']*)["'])?\s*,?\s*([A-Z]\w*(?:\.[A-Z]\w*)*)?/
+
+    # A child router reached through `forward` serves its routes under the
+    # forward path only, and the forward itself is not a route. Collect the
+    # forwards of every scanned router (Plug or Phoenix), then re-root the
+    # child's routes and drop the forward endpoint.
+    def analyze
+      super
+      routers = plug_router_modules
+      return @result if routers.empty?
+
+      forwards = collect_forwards(routers)
+      return @result if forwards.empty?
+
+      module_by_path = routers.invert
+      forwarded_at = forwards.map { |fwd| {fwd.path, fwd.line} }.to_set
+      prefix_cache = {} of String => Array(String)
+
+      rerooted = [] of Endpoint
+      @result.each do |endpoint|
+        location = endpoint.details.code_paths.first?
+        next if endpoint.method == "FORWARD" && location && forwarded_at.includes?({location.path, location.line || 0})
+
+        mod = location.try { |loc| module_by_path[loc.path]? }
+        prefixes = mod ? forward_prefixes(mod, forwards, module_by_path, prefix_cache, Set(String).new) : [] of String
+        if prefixes.empty?
+          rerooted << endpoint
+          next
+        end
+
+        prefixes.each do |prefix|
+          copy = Endpoint.new(Noir::URLPath.join_absorbing(prefix, endpoint.url), endpoint.method, endpoint.params, endpoint.details)
+          endpoint.callees.each { |callee| copy.push_callee(callee) }
+          rerooted << copy
+        end
+      end
+      @result = rerooted
+    end
+
+    # Full mount paths of `mod`: each forward to it, under the mount paths
+    # of the router that forward sits in (when that router is itself
+    # forwarded to).
+    private def forward_prefixes(mod : String,
+                                 forwards : Array(Forward),
+                                 module_by_path : Hash(String, String),
+                                 cache : Hash(String, Array(String)),
+                                 visiting : Set(String)) : Array(String)
+      if cached = cache[mod]?
+        return cached
+      end
+      return [] of String if visiting.includes?(mod)
+      visiting << mod
+
+      prefixes = [] of String
+      forwards.each do |fwd|
+        next unless fwd.target == mod
+        parent = module_by_path[fwd.path]?
+        parent_prefixes = parent ? forward_prefixes(parent, forwards, module_by_path, cache, visiting) : [] of String
+        if parent_prefixes.empty?
+          prefixes << fwd.prefix
+        else
+          parent_prefixes.each { |pp| prefixes << Noir::URLPath.join_absorbing(pp, fwd.prefix) }
+        end
+      end
+      visiting.delete(mod)
+      cache[mod] = prefixes.uniq
+    end
+
+    # Forwards to a scanned Plug.Router in any Elixir file. Phoenix `scope`
+    # blocks contribute their path and module alias; the walk counts
+    # `do`/`end` depth, so a scope opener must end its line with `do`.
+    private def collect_forwards(routers : Hash(String, String)) : Array(Forward)
+      forwards = [] of Forward
+      scan_target_files.each do |path|
+        next unless scan_accepts?(path)
+        content = read_file_content(path)
+        next unless content.includes?("forward")
+
+        scopes = [] of Tuple(String, String, Int32) # prefix, module, depth inside
+        depth = 0
+        own_module = routers.key_for?(path)
+        content.each_line.with_index do |line, index|
+          code = strip_trailing_comment(line)
+          if code.includes?("forward") && (match = code.match(FORWARD_RE))
+            scope_module = scopes.map(&.[1]).reject(&.empty?).join('.')
+            target = resolve_plug_router(match[2], scope_module, routers)
+            if target && target != own_module
+              prefix = scopes.reduce("") { |acc, scope| Noir::URLPath.join_absorbing(acc, scope[0]) }
+              forwards << Forward.new(path, index + 1, Noir::URLPath.join_absorbing(prefix, match[1]), target)
+            end
+          end
+
+          depth += elixir_block_depth_delta(code.strip)
+          if code.includes?("scope") && code.rstrip.ends_with?("do") && (opener = code.match(SCOPE_OPENER_RE))
+            scopes << {opener[1]? || "", opener[2]? || "", depth}
+          end
+          while (last = scopes.last?) && depth < last[2]
+            scopes.pop
+          end
+        end
+      end
+      forwards
+    end
+
     def analyze_file(path : String) : Array(Endpoint)
       # Extension and `*_test.exs` filtering live in ElixirEngine's
       # `parallel_file_scan`; Plug only needs the remaining .ex/.exs

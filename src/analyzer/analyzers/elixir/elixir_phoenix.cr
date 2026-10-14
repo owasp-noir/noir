@@ -2,6 +2,7 @@ require "../../engines/elixir_engine"
 require "../../../utils/url_path"
 require "../../../utils/top_level_split"
 require "../../../utils/call_fold"
+require "../../../utils/http_symbols"
 
 module Analyzer::Elixir
   class Phoenix < ElixirEngine
@@ -15,6 +16,9 @@ module Analyzer::Elixir
     # Store mapping of route -> controller/action for parameter extraction
     @route_map : Hash(RouteMapKey, ControllerAction) = Hash(RouteMapKey, ControllerAction).new
     @route_macros : Hash(String, RouteMacro) = Hash(String, RouteMacro).new
+    # Plug.Router modules a `forward` can mount; the Plug analyzer emits
+    # their routes under the forward path, so the forward is not a route.
+    @plug_routers = {} of String => String
     # Reverse index built once after route discovery:
     #   base -> normalized controller key -> action -> endpoints
     # Replaces the previous per-controller O(|routes|) scan of `@result`.
@@ -96,6 +100,7 @@ module Analyzer::Elixir
 
     def analyze
       collect_route_macros
+      @plug_routers = plug_router_modules
 
       # First pass: collect routes via the engine's parallel file scan.
       super
@@ -1092,7 +1097,8 @@ module Analyzer::Elixir
       end
 
       if line.includes?("forward")
-        line.scan(/(?:^|[^.\w])forward\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
+        line.scan(/(?:^|[^.\w])forward\s*(?:\(\s*)?['"](.+?)['"](?:\s*,\s*(?:to:\s*)?([A-Z]\w*(?:\.[A-Z]\w*)*))?/) do |match|
+          next if (target = match[2]?) && resolve_plug_router(target, scope_module, @plug_routers)
           endpoints << Endpoint.new(scoped_route_path(scope_prefix, match[1]), "FORWARD")
         end
       end
