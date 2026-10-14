@@ -146,6 +146,14 @@ expected_endpoints = [
   Endpoint.new("/shared/users/{id}", "GET", [Param.new("id", "", "path")]),
   Endpoint.new("/v3/ping", "GET"),
   Endpoint.new("/v3/pong", "GET"),
+  # NestedBuilderRouter.java — andNest, builder .path(...), path-less verbs.
+  Endpoint.new("/clinic", "GET"),
+  Endpoint.new("/clinic-admin/stats", "GET"),
+  Endpoint.new("/clinic-admin/cache", "DELETE"),
+  Endpoint.new("/person/{id}", "GET", [Param.new("id", "", "path")]),
+  Endpoint.new("/person", "GET"),
+  Endpoint.new("/person", "POST"),
+  Endpoint.new("/vets", "GET"),
 ]
 
 FunctionalTester.new("fixtures/java/spring/", {
