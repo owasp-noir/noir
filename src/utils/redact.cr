@@ -18,8 +18,10 @@ module Noir::Redact
   private URL_IN_TEXT = %r{[a-z][a-z0-9+.\-]*://[^\s"',\]]+}i
 
   # Userinfo of a URL. Greedy up to the last `@` of the authority, so a raw
-  # `@` inside the password is covered too.
-  private USERINFO = %r{(?<=://)[^/?#\s]*@}
+  # `@` inside the password is covered too. Applied to the whole text, not
+  # per `URL_IN_TEXT` match: that one stops at `'` and `,`, which a password may
+  # hold (`http://admin:pa'ss@host`), and the cut-off match had no `@`.
+  private USERINFO = %r{(?<=://)[^/?#\s"\]]*@}
 
   # A query value; AI gateways take `?key=` / `?code=` credentials.
   private QUERY_VALUE = /(?<=[?&])([^=&#]*)=[^&#]*/
@@ -43,8 +45,8 @@ module Noir::Redact
   # Mask userinfo and query values of every URL in `text`, keeping the
   # query parameter names.
   def self.url(text : String) : String
-    text.gsub(URL_IN_TEXT) do |match|
-      masked = match.sub(USERINFO, "#{MASK}@")
+    text.gsub(USERINFO, "#{MASK}@").gsub(URL_IN_TEXT) do |match|
+      masked = match
       if query = masked.index('?')
         masked = masked[0...query] + masked[query..].gsub(QUERY_VALUE, "\\1=#{MASK}")
       end
