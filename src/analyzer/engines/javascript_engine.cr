@@ -234,20 +234,20 @@ module Analyzer::Javascript
       params = [] of Param
       # Extract query parameters from getQuery or useQuery
       # Pattern 1: Direct access - getQuery(event).param
-      sanitized.scan(/(?:getQuery|useQuery|getValidatedQuery)\s*\(\s*event(?:\s*,[\s\S]*?)?\s*\)\.(\w+)/) do |m|
+      sanitized.scan(/(?:getQuery|useQuery|getValidatedQuery)\s*(?:<[^()]*?>\s*)?\(\s*event(?:\s*,[\s\S]*?)?\s*\)\.(\w+)/) do |m|
         params << Param.new(m[1], "", "query")
       end
-      sanitized.scan(/(?:getQuery|useQuery|getValidatedQuery)\s*\(\s*event(?:\s*,[\s\S]*?)?\s*\)\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |m|
+      sanitized.scan(/(?:getQuery|useQuery|getValidatedQuery)\s*(?:<[^()]*?>\s*)?\(\s*event(?:\s*,[\s\S]*?)?\s*\)\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |m|
         params << Param.new(m[1], "", "query")
       end
-      sanitized.scan(/(?:const|let|var)\s*\{\s*([^}]+?)\s*\}\s*=\s*(?:await\s+)?(?:getQuery|useQuery|getValidatedQuery)\s*\(\s*event(?:\s*,[\s\S]*?)?\s*\)/) do |m|
+      sanitized.scan(/(?:const|let|var)\s*\{\s*([^}]+?)\s*\}\s*=\s*(?:await\s+)?(?:getQuery|useQuery|getValidatedQuery)\s*(?:<[^()]*?>\s*)?\(\s*event(?:\s*,[\s\S]*?)?\s*\)/) do |m|
         extract_destructure_params(m[1]).each do |param_name|
           params << Param.new(param_name, "", "query")
         end
       end
 
       # Pattern 2: Variable assignment - const query = getQuery(event); query.param
-      sanitized.scan(/(?:const|let|var)\s+(\w+)\s*=\s*(?:await\s+)?(?:getQuery|useQuery|getValidatedQuery)\s*\(\s*event(?:\s*,[\s\S]*?)?\s*\)/) do |var_match|
+      sanitized.scan(/(?:const|let|var)\s+(\w+)\s*=\s*(?:await\s+)?(?:getQuery|useQuery|getValidatedQuery)\s*(?:<[^()]*?>\s*)?\(\s*event(?:\s*,[\s\S]*?)?\s*\)/) do |var_match|
         query_var = var_match[1]
         sanitized.scan(cached_regex("h3:query_dot:#{query_var}") { /#{Regex.escape(query_var)}\.(\w+)/ }) do |m|
           param_name = m[1]
@@ -263,13 +263,13 @@ module Analyzer::Javascript
       # Extract body parameters from readBody
       if sanitized.includes?("readBody") || sanitized.includes?("readValidatedBody")
         # Try to extract body field access patterns
-        sanitized.scan(/(?:const|let|var)\s*\{\s*([^}]+?)\s*\}\s*=\s*(?:await\s+)?(?:readBody|readValidatedBody)\s*\(\s*event(?:\s*,[\s\S]*?)?\s*\)/) do |m|
+        sanitized.scan(/(?:const|let|var)\s*\{\s*([^}]+?)\s*\}\s*=\s*(?:await\s+)?(?:readBody|readValidatedBody)\s*(?:<[^()]*?>\s*)?\(\s*event(?:\s*,[\s\S]*?)?\s*\)/) do |m|
           extract_destructure_params(m[1]).each do |param_name|
             params << Param.new(param_name, "", "body")
           end
         end
         body_vars = ["body", "data"]
-        sanitized.scan(/(?:const|let|var)\s+(\w+)\s*=\s*(?:await\s+)?(?:readBody|readValidatedBody)\s*\(\s*event(?:\s*,[\s\S]*?)?\s*\)/) do |m|
+        sanitized.scan(/(?:const|let|var)\s+(\w+)\s*=\s*(?:await\s+)?(?:readBody|readValidatedBody)\s*(?:<[^()]*?>\s*)?\(\s*event(?:\s*,[\s\S]*?)?\s*\)/) do |m|
           body_vars << m[1] unless body_vars.includes?(m[1])
         end
         body_vars.each do |body_var|
