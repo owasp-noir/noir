@@ -68,7 +68,7 @@ module Analyzer::Php
 
           method_body = extract_php_method_body_after(content, route_start)
 
-          full_path = build_full_path(class_prefix_for_position(class_prefixes, route_start), route_path)
+          full_path = build_full_path(class_prefix_for_position(class_prefixes, route_start), route_path).presence || "/"
           params = extract_brace_path_params(full_path)
           # Extract additional parameters from method body
           params.concat(extract_method_params(method_body[0])) if method_body
@@ -105,7 +105,7 @@ module Analyzer::Php
 
           method_body = extract_php_method_body_after(content, route_start)
 
-          full_path = build_full_path(class_prefix_for_position(class_prefixes, route_start), route_path)
+          full_path = build_full_path(class_prefix_for_position(class_prefixes, route_start), route_path).presence || "/"
           params = extract_brace_path_params(full_path)
           # Extract additional parameters from method body
           params.concat(extract_method_params(method_body[0])) if method_body
@@ -179,11 +179,11 @@ module Analyzer::Php
       # (Shopware's whole storefront) was dropped. A negative-lookbehind on a
       # word char accepts any non-word boundary (start, comma, paren, newline,
       # space) while still rejecting `subpath:` / `routePath:`.
-      if path_match = context.match(/(?<!\w)path\s*[:=]\s*['"]([^'"]+)['"]/i)
+      if path_match = context.match(/(?<!\w)path\s*[:=]\s*['"]([^'"]*)['"]/i)
         return path_match[1]
       end
 
-      if path_match = context.match(/^\s*['"]([^'"]+)['"]/)
+      if path_match = context.match(/^\s*['"]([^'"]*)['"]/)
         return path_match[1]
       end
 

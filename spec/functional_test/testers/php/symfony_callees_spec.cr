@@ -83,7 +83,7 @@ expected_endpoints = [
 
 FunctionalTester.new("fixtures/php/symfony/", {
   :techs     => 2,
-  :endpoints => 25, # +4 from StorefrontController multi-line routes (no callees)
+  :endpoints => 27, # +4 StorefrontController multi-line routes, +2 TaskController (no callees)
 }, expected_endpoints, {
   "include_callee" => YAML::Any.new(true),
 }).perform_tests
