@@ -21,7 +21,8 @@ module Analyzer::Java
 
     include JavaEngine
 
-    QUARKUS_MARKERS = ["io.quarkus", "quarkus.io"]
+    QUARKUS_MARKERS   = ["io.quarkus", "quarkus.io"]
+    QUARKUS_MANIFESTS = Set{"pom.xml", "build.gradle", "build.gradle.kts"}
     alias ApplicationBaseKey = Tuple(String, String)
 
     private struct QuarkusPathConfig
@@ -125,12 +126,16 @@ module Analyzer::Java
       roots = Set(String).new
 
       file_list.each do |path|
-        next unless jvm_source?(path)
+        # The starter's resources import only `jakarta.ws.rs`; Quarkus
+        # shows up solely in the build manifest that sits at the root.
+        manifest = QUARKUS_MANIFESTS.includes?(File.basename(path))
+        next unless manifest || jvm_source?(path)
         next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
 
         content = read_file_content(path)
-        roots << project_root_for(path) if QUARKUS_MARKERS.any? { |marker| content.includes?(marker) }
+        next unless QUARKUS_MARKERS.any? { |marker| content.includes?(marker) }
+        roots << (manifest ? File.dirname(path) : project_root_for(path))
       end
 
       roots
