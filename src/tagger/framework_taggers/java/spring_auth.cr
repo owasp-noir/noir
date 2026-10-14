@@ -31,6 +31,8 @@ class SpringAuthTagger < FrameworkTagger
   # drops its `anyRequest()` fallback. The `\s*\(` boundary rejects the plural.
   SCOPE_MATCHER_CALL = /\b(?:securityMatcher|antMatcher)\s*\(/
 
+  KOTLIN_FUN_DECLARATION = /(?:^|\s)fun\s/
+
   def initialize(options : Hash(String, YAML::Any))
     super
     @security_rules = [] of NamedTuple(pattern: String, method: String?, description: String, protected_rule: Bool)
@@ -218,6 +220,9 @@ class SpringAuthTagger < FrameworkTagger
       break if current_line.starts_with?("public ") || current_line.starts_with?("private ") || current_line.starts_with?("protected ")
       break if current_line.starts_with?("class ") || current_line.starts_with?("}")
       break if current_line.ends_with?("}")
+      # The previous handler's declaration: a Kotlin `fun admin() = "admin"`
+      # or a bodiless interface method `String admin();`.
+      break if current_line.ends_with?(";") || current_line.matches?(KOTLIN_FUN_DECLARATION)
 
       ANNOTATION_PATTERNS.each do |pattern|
         if current_line.matches?(pattern)

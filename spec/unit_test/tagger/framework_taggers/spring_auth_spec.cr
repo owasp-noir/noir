@@ -553,4 +553,32 @@ describe "SpringAuthTagger (class-level annotations)" do
     endpoint = run_spring_class_level(mixed, 7)
     endpoint.tags.any? { |t| t.name == "auth" }.should be_false
   end
+
+  it "stops the annotation walk at the previous handler's bodiless declaration" do
+    kotlin = <<-KT
+      @RestController
+      class AdminController {
+          @PreAuthorize("hasRole('ADMIN')")
+          @GetMapping("/admin")
+          fun admin() = "admin"
+
+          @GetMapping("/health")
+          fun health() = "ok"
+      }
+      KT
+    run_spring_class_level(kotlin, 7, "kt").tags.any? { |t| t.name == "auth" }.should be_false
+    run_spring_class_level(kotlin, 4, "kt").tags.any? { |t| t.name == "auth" }.should be_true
+
+    java_interface = <<-JAVA
+      public interface AdminApi {
+          @PreAuthorize("hasRole('ADMIN')")
+          @GetMapping("/admin")
+          String admin();
+          @GetMapping("/health")
+          String health();
+      }
+      JAVA
+    run_spring_class_level(java_interface, 5).tags.any? { |t| t.name == "auth" }.should be_false
+    run_spring_class_level(java_interface, 3).tags.any? { |t| t.name == "auth" }.should be_true
+  end
 end
