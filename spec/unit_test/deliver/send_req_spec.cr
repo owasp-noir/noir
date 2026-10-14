@@ -612,6 +612,29 @@ describe SendReq do
       end
     end
 
+    # `req.headers['content-length']` / `['host']` are reads, not values; sent
+    # empty, `Content-Length: ""` raised before the request left.
+    it "drops discovered framing headers so the request is still sent" do
+      server = CapturingServer.new
+      begin
+        ep = Endpoint.new(server.url_for("/tenant"), "GET")
+        ep.params << Param.new("host", "", "header")
+        ep.params << Param.new("content-length", "", "header")
+        ep.params << Param.new("Transfer-Encoding", "", "header")
+        ep.params << Param.new("connection", "", "header")
+        ep.params << Param.new("X-Tenant", "acme", "header")
+
+        SendReq.new(base_deliver_options).run([ep])
+
+        server.requests.size.should eq(1)
+        headers = server.requests.first[:headers]
+        headers["X-Tenant"]?.should eq("acme")
+        headers.get("Host").should eq(["#{server.address.address}:#{server.address.port}"])
+      ensure
+        server.close
+      end
+    end
+
     it "lets a --probe-header Cookie replace the discovered cookie jar" do
       server = CapturingServer.new
       begin
