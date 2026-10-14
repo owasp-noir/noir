@@ -359,7 +359,7 @@ class OutputBuilderDiff < OutputBuilder
         end
       end
     end
-    ob_puts log.to_json
+    ob_puts sarif_with_srcroot(log).to_json
   end
 
   private def sarif_result(run, endpoint : Endpoint, rule_id : String, level : Sarif::Level, message : String)

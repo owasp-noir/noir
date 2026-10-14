@@ -4,6 +4,7 @@ require "./endpoint"
 require "./passive_scan"
 require "../utils/*"
 require "colorize"
+require "sarif"
 
 # Process-wide registry of `-o` file handles, one per output path.
 #
@@ -553,18 +554,52 @@ class OutputBuilder
   # file named `a b.go`, `x#frag?q.go` or `a%20b.go` read back as a broken
   # URI, a fragment, a query or a different file. Everything outside RFC
   # 3986's path characters is percent-encoded (`:` too, which would otherwise
-  # read as a scheme in a first segment). Windows separators become `/` and
-  # a drive-lettered path becomes `file:///C:/…`, since `C:` would itself
-  # parse as a scheme.
+  # read as a scheme in a first segment). Windows separators become `/`.
+  #
+  # One shape per file however `-b` was spelled: a path under the working
+  # directory is relative to it with no `./` (`-b .` and `-b $PWD` agree, and
+  # `sarif_with_srcroot` names that base), anything else is a `file://` URI
+  # (`file:///C:/…` too, since a bare `C:` would parse as a scheme). `../x`
+  # leaves the working directory, so it takes the absolute form.
   protected def sarif_uri(path : String) : String
-    path = Path.new(path).to_posix.to_s
+    path = Path.new(path).to_posix.normalize.to_s
+    path = Path.posix(SARIF_SRCROOT_PREFIX).join(path).normalize.to_s if path.starts_with?("../")
+    sarif_encode(path.lchop(SARIF_SRCROOT_PREFIX))
+  end
+
+  private def sarif_encode(path : String) : String
     String.build do |io|
       if path.size >= 3 && path[0].ascii_letter? && path[1] == ':' && path[2] == '/'
         io << "file:///" << path[0, 2]
         path = path[2..]
+      elsif path.starts_with?('/')
+        io << "file://"
       end
       URI.encode(path, io) { |byte| URI.unreserved?(byte) || SARIF_URI_KEPT.includes?(byte.unsafe_chr) }
     end
+  end
+
+  SARIF_SRCROOT        = "%SRCROOT%"
+  SARIF_SRCROOT_PREFIX = "#{Path.new(Dir.current).to_posix.to_s.rstrip('/')}/"
+
+  # Marks every relative URI in `log` as relative to `%SRCROOT%` and
+  # declares that base as the working directory, so a consumer (GitHub code
+  # scanning) can map the files without guessing.
+  protected def sarif_with_srcroot(log : Sarif::SarifLog) : Sarif::SarifLog
+    log.runs.each do |run|
+      relative = false
+      run.results.try &.each do |result|
+        result.locations.try &.each do |location|
+          artifact = location.physical_location.try(&.artifact_location)
+          next unless artifact && (uri = artifact.uri)
+          next if uri.starts_with?("file:")
+          artifact.uri_base_id = SARIF_SRCROOT
+          relative = true
+        end
+      end
+      run.original_uri_base_ids = {SARIF_SRCROOT => Sarif::ArtifactLocation.new(uri: sarif_encode(SARIF_SRCROOT_PREFIX))} if relative
+    end
+    log
   end
 
   # Path characters `sarif_uri` leaves as they are: RFC 3986's sub-delims,
