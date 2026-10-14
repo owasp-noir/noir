@@ -31,12 +31,12 @@ class EndpointOptimizer
   end
 
   # `key=value` or `key:value`, split on whichever separator comes first;
-  # no separator (or a `*` key) applies the value to every param. A `:`
-  # opening `://` is a URL value (`https://x/`), not a `key:value` split.
+  # no separator (or a `*` key) applies the value to every param. A value
+  # that is itself a URL (`http://h:8080/cb?a=b`) is kept whole.
   private def parse_rules(yaml_rules : Array(YAML::Any)) : Array(PValueRule)
     yaml_rules.map do |pvalue|
       pvalue_str = pvalue.to_s
-      if separator = pvalue_str.index(/=|:(?!\/\/)/)
+      if !pvalue_str.matches?(%r{\A[A-Za-z][A-Za-z0-9+.\-]*://}) && (separator = pvalue_str.index(/[=:]/))
         key = pvalue_str[0, separator]
         value = pvalue_str[(separator + 1)..]
       end

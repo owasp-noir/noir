@@ -1800,5 +1800,19 @@ describe "EndpointOptimizer source-document merges" do
     options["set_pvalue_query"] = YAML::Any.new([YAML::Any.new("https://evil.example/")])
     optimizer = EndpointOptimizer.new(logger, options)
     optimizer.apply_pvalue("query", "q", "").should eq("https://evil.example/")
+
+    options["set_pvalue_query"] = YAML::Any.new([YAML::Any.new("http://localhost:8080/cb?a=b")])
+    EndpointOptimizer.new(logger, options).apply_pvalue("query", "q", "").should eq("http://localhost:8080/cb?a=b")
+    options["set_pvalue_query"] = YAML::Any.new([YAML::Any.new("cb=http://localhost:8080/x")])
+    EndpointOptimizer.new(logger, options).apply_pvalue("query", "cb", "").should eq("http://localhost:8080/x")
+  end
+
+  it "keeps two collection templates that would fold into each other" do
+    optimizer = EndpointOptimizer.new(logger, create_test_options)
+    result = optimizer.optimize_endpoints([
+      tech_endpoint("/users/:userId", "GET", "postman", "c.postman_collection.json"),
+      tech_endpoint("/users/:id", "GET", "postman", "c.postman_collection.json"),
+    ])
+    result.size.should eq(1)
   end
 end

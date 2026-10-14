@@ -308,7 +308,10 @@ class EndpointOptimizer
       next unless candidates = templates[{source.method, concrete_segments.size}]?
 
       candidates.each do |target_idx, template_segments|
-        next if target_idx == source_idx
+        # A collection `:id` URL is both a source and a template, so two of
+        # them would fold into each other and both vanish; a template that
+        # already folded away is gone too.
+        next if target_idx == source_idx || removed.includes?(target_idx)
         next unless template_matches_concrete_example?(template_segments, concrete_segments)
 
         endpoints[target_idx] = merge_endpoint_context(endpoints[target_idx], source)
