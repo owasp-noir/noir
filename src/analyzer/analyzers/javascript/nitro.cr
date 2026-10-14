@@ -112,8 +112,8 @@ module Analyzer::Javascript
       # Convert [id] to :id for dynamic routes
       relative_path = relative_path.gsub(/\[(\w+)\]/, ":\\1")
 
-      # Convert [...slug] catch-all routes
-      relative_path = relative_path.gsub(/\[\.\.\.(\w+)\]/, "*")
+      # Convert [...slug] and unnamed [...] catch-all routes
+      relative_path = relative_path.gsub(/\[\.\.\.\w*\]/, "*")
 
       # Build the URL
       url = "/#{relative_path}"

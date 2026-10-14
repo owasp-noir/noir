@@ -209,12 +209,11 @@ module Analyzer::Javascript
       path
     end
 
+    # An unnamed catch-all (`[...].ts`) is h3's `_` param.
     private def convert_nuxt_segments(path : String) : String
       path.split("/").map do |segment|
-        if m = segment.match(/^\[\[\.\.\.(\w+)\]\]$/)
-          ":#{m[1]}"
-        elsif m = segment.match(/^\[\.\.\.(\w+)\]$/)
-          ":#{m[1]}"
+        if m = segment.match(/^\[{1,2}\.\.\.(\w*)\]{1,2}$/)
+          ":#{m[1].presence || "_"}"
         elsif m = segment.match(/^\[(\w+)\]$/)
           ":#{m[1]}"
         else
