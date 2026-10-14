@@ -52,7 +52,7 @@ describe "terminal escapes in stdout formats" do
   {% end %}
 
   it "shows them as \\xNN in the shell-quoted commands" do
-    render(OutputBuilderCurl.new(terminal_options), [hostile_endpoint]).should contain("'/x\\x1b]8;;http://evil.example\\x07click?q\\x1b[2J='")
+    render(OutputBuilderCurl.new(terminal_options), [hostile_endpoint]).should contain("'/x\\x1b]8;;http://evil.example\\x07click?q%1B%5B2J='")
   end
 
   it "keeps the PowerShell string faithful with a [char] subexpression" do
