@@ -20,6 +20,7 @@ module Analyzer::Go
       # the prefix lives at the call site (see `resolve_router_builder_prefixes`).
       builder_prefixes_by_dir = resolve_router_builder_prefixes(file_contents, package_groups, BUILDER_TYPE)
       framework_dirs = framework_package_dirs(file_contents, IMPORT_MARKER)
+      named_scope = named_handler_scope(file_contents)
       parallel_analyze(get_files_by_extension(".go")) do |path|
         next if GoEngine.go_test_file?(base_relative_path(path))
         next unless File.exists?(path)
@@ -45,7 +46,7 @@ module Analyzer::Go
           routes_by_line[r.line] << r
         end
 
-        named = Noir::GoNamedHandler.new(content, path, ts_routes)
+        named = Noir::GoNamedHandler.new(content, path, ts_routes, named_scope)
         expand_builders = router_builder_expansions(content, BUILDER_TYPE, builder_prefixes_by_dir[dir]?, cross_file_groups)
         suppress_ranges = expand_builders.map { |_, rb, _| rb.start_row..rb.end_row }
 

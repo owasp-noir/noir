@@ -49,6 +49,7 @@ module Analyzer::Go
         {Noir::TreeSitterGoRouteExtractor.extract_beego_routes(content, ts_controller_methods_for_directory(package_controller_methods, File.dirname(path))),
          Noir::TreeSitterGoRouteExtractor.extract_routes(content)}
       end
+      named_scope = named_handler_scope(file_contents)
       parallel_analyze(get_files_by_extension(".go")) do |path|
         next if GoEngine.go_test_file?(base_relative_path(path))
         next unless File.exists?(path)
@@ -83,7 +84,7 @@ module Analyzer::Go
         external_fns = ts_function_bodies_for_directory(package_function_bodies, File.dirname(path))
         callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns)
         controller_method_bodies = ts_controller_method_bodies_for_directory(package_controller_method_bodies, File.dirname(path))
-        named = Noir::GoNamedHandler.new(content, path, verb_routes)
+        named = Noir::GoNamedHandler.new(content, path, verb_routes, named_scope)
 
         lines.each_with_index do |line, index|
           next if named.claim?(index, line)

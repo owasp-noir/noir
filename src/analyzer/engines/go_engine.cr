@@ -552,6 +552,24 @@ module Analyzer::Go
       Noir::GoCalleeExtractor.lazy_package_bodies_if(callees_needed?, file_contents)
     end
 
+    # Lookup scope for `Noir::GoNamedHandler`: a named handler declared in
+    # another file of the route's package, or in a scanned package it
+    # imports (`handlers.List`). Not gated on callees: the handler body is
+    # where the route's request params are read. Packages are parsed only
+    # when a route names a handler outside its own file.
+    def named_handler_scope(file_contents : Hash(String, String)) : Noir::GoNamedHandler::Scope
+      import_dirs = Hash(String, String).new
+      modules = collect_go_modules
+      unless modules.empty?
+        file_contents.each_key.map { |path| File.dirname(path) }.to_set.each do |dir|
+          if import_path = import_path_for_dir(dir, modules)
+            import_dirs[import_path] ||= dir
+          end
+        end
+      end
+      Noir::GoNamedHandler.scope(file_contents, import_dirs)
+    end
+
     # --- Beego controller-method pre-pass --------------------------------
     #
     # Builds a per-directory `{controller_type => [http_verb_methods]}` map
