@@ -246,7 +246,8 @@ module Analyzer::Elixir
           next
         end
 
-        found = line_to_endpoint(line, path, scope_prefix, scope_module, base, string_bindings)
+        # A trailing comment (`get "/s", C, :s # get "/old", ...`) is not a route.
+        found = line_to_endpoint(strip_trailing_comment(line), path, scope_prefix, scope_module, base, string_bindings)
         consumed = 1
         # `get "/page", # note` + newline + `PageController, :home`: a verb
         # route wrapped after a comma reads as nothing on its first line.
@@ -475,6 +476,7 @@ module Analyzer::Elixir
         # (resources `update` → PUT+PATCH) only walks the body once per
         # type, not once per endpoint.
         params_by_method = {} of String => Array(Param)
+        param_keys = action_param_keys(signature, lines, body_start, block_end)
 
         matching_endpoints.each do |endpoint|
           append_code_path(endpoint.details, PathInfo.new(controller_path, index + 1))
@@ -482,11 +484,61 @@ module Analyzer::Elixir
           params = params_by_method[endpoint.method] ||=
             extract_params_from_function_block(lines, body_start, block_end, endpoint.method)
           params.each { |param| endpoint.push_param(param) }
+          unless param_keys.empty?
+            path_names = endpoint.url.scan(/[:*](\w+)/).map(&.[1]).to_set
+            param_type = endpoint.method == "GET" ? "query" : "form"
+            param_keys.each do |key|
+              endpoint.push_param(Param.new(key, "", param_type)) unless path_names.includes?(key)
+            end
+          end
 
           attach_elixir_callees(endpoint, callees) if callees
         end
 
         index += 1
+      end
+    end
+
+    # String keys an action reads from its params map: the top-level keys of
+    # a `%{"user" => user_params}` head pattern, and `params["q"]` /
+    # `Map.get(params, "page")` reads of the variable bound to the map.
+    private def action_param_keys(signature : String, lines : Array(String), body_start : Int32, block_end : Int32) : Array(String)
+      keys = [] of String
+      return keys unless args = enclosed_span(signature, '(', ')')
+      return keys unless pattern = split_top_level_commas(args)[1]?
+      pattern = pattern.strip
+
+      if (map_open = pattern.index("%{")) && (inner = enclosed_span(pattern[(map_open + 1)..], '{', '}'))
+        split_top_level_commas(inner).each do |entry|
+          if key = entry.match(/\A\s*"([^"]+)"\s*=>/)
+            keys << key[1]
+          end
+        end
+      end
+
+      # `params`, `%{...} = params` or `params = %{...}` binds the whole map.
+      if bound = pattern.match(/(?:\A|[^=]=)\s*([a-z]\w*)\s*\z/) || pattern.match(/\A([a-z]\w*)\s*=[^>]/)
+        var = bound[1]
+        read_re = /(?<![\w.])#{Regex.escape(var)}\[\s*"([^"]+)"\s*\]|Map\.(?:get|fetch!?)\(\s*#{Regex.escape(var)}\s*,\s*"([^"]+)"/
+        lines[(body_start + 1)...block_end].each do |line|
+          next unless line.includes?(var)
+          strip_trailing_comment(line).scan(read_re) { |m| keys << (m[1]? || m[2]) }
+        end
+      end
+
+      keys.uniq
+    end
+
+    # The text inside the first `open`...`close` pair of `text`, nesting
+    # counted (string contents are not special-cased).
+    private def enclosed_span(text : String, open : Char, close : Char) : String?
+      return unless start = text.index(open)
+      depth = 0
+      text.each_char_with_index do |char, i|
+        next if i < start
+        depth += 1 if char == open
+        depth -= 1 if char == close
+        return text[(start + 1)...i] if depth == 0
       end
     end
 
