@@ -1328,6 +1328,22 @@ module Noir
     # i.e. httprouter's `router.Handle("GET", "/x", h)` or Echo's `e.Add("QUERY", "/x", h)`.
     # Distinct from `decode_verb_call` because the first positional argument is the
     # method, not the path. Returns nil when the shape doesn't match.
+    # `[]string{"PUT", http.MethodPatch}` -> `"PUT|PATCH"`, the
+    # pipe-separated form Goyave's `Route` also accepts as a string.
+    private def method_list(literal : LibTreeSitter::TSNode, source : String) : String
+      verbs = [] of String
+      if body = Noir::TreeSitter.field(literal, "body")
+        Noir::TreeSitter.walk(body) do |node|
+          case Noir::TreeSitter.node_type(node)
+          when "interpreted_string_literal", "raw_string_literal", "selector_expression"
+            verb = decode_method_token(node, source)
+            verbs << verb unless verb.empty?
+          end
+        end
+      end
+      verbs.join('|')
+    end
+
     private def decode_handle_call(call : LibTreeSitter::TSNode,
                                    source : String,
                                    groups : Hash(String, String),
@@ -1374,7 +1390,11 @@ module Noir
           collect_handler_arg_texts(arg, source, handler_args) unless path_lit.nil?
         else
           if method_lit.nil?
-            candidate = decode_method_token(arg, source)
+            candidate = if Noir::TreeSitter.node_type(arg) == "composite_literal"
+                          method_list(arg, source)
+                        else
+                          decode_method_token(arg, source)
+                        end
             method_lit = candidate unless candidate.empty?
           end
           unless path_lit.nil?
