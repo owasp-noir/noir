@@ -141,4 +141,46 @@ describe "scala akka route extraction" do
     File.delete(temp_file) if temp_file && File.exists?(temp_file)
     Dir.delete(temp_dir) if temp_dir && Dir.exists?(temp_dir)
   end
+
+  it "reports each route's method line and reads formField(s)" do
+    options = create_test_options
+    instance = Analyzer::Scala::Akka.new(options)
+
+    temp_dir = File.tempname("scala_akka_lines_test")
+    Dir.mkdir_p(temp_dir)
+    temp_file = File.join(temp_dir, "Routes.scala")
+
+    File.write(temp_file, <<-SCALA)
+      import akka.http.scaladsl.server.Directives._
+
+      object Routes {
+        val route =
+          path("avatar") {
+            concat(
+              get {
+                complete("")
+              },
+              put {
+                formFields("file", "kind".as[Int]) { (f, k) =>
+                  formField("note") { n => complete("") }
+                }
+              }
+            )
+          }
+      }
+      SCALA
+
+    endpoints = instance.analyze_file(temp_file)
+    get_endpoint = endpoints.find! { |e| e.method == "GET" && e.url == "/avatar" }
+    put_endpoint = endpoints.find! { |e| e.method == "PUT" && e.url == "/avatar" }
+
+    get_endpoint.details.code_paths.first.line.should eq(7)
+    put_endpoint.details.code_paths.first.line.should eq(10)
+    put_endpoint.params.map { |p| {p.name, p.param_type} }.should eq([
+      {"file", "form"}, {"kind", "form"}, {"note", "form"},
+    ])
+  ensure
+    File.delete(temp_file) if temp_file && File.exists?(temp_file)
+    Dir.delete(temp_dir) if temp_dir && Dir.exists?(temp_dir)
+  end
 end
