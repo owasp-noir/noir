@@ -179,6 +179,12 @@ module Analyzer::Specification
 
       if path_node = url["path"]?
         url_path = extract_path_from_path_node(path_node, variables)
+        # `host: ["{{baseUrl}}"]` with baseUrl `http://h/v1` carries a base
+        # path the `path` array leaves out; the raw/string form keeps it.
+        unless url_path.empty?
+          base = host_base_path(url["host"]?, variables)
+          url_path = join_base_path(base, url_path) unless base.empty?
+        end
       end
       url_path = extract_path_from_url(raw) if url_path.empty? && !raw.empty?
 
@@ -269,6 +275,16 @@ module Analyzer::Specification
       end
 
       segments.empty? ? "" : normalize_path("/#{segments.join("/")}")
+    end
+
+    # The path part of a URL object's resolved `host`, "" when it has none.
+    private def host_base_path(host_node : JSON::Any?, variables : Hash(String, String)) : String
+      return "" unless host_node
+      host = host_node.as_s? || host_node.as_a?.try(&.map { |s| scalar_to_s(s) || "" }.join(".")) || ""
+      host = resolve_vars(host, variables)
+      return "" unless host.includes?('/')
+      path = extract_path_from_url(host)
+      path == "/" ? "" : path.rstrip('/')
     end
 
     private def extract_query_params(url_string : String) : Array(Param)
