@@ -109,9 +109,19 @@ class ScalaAuthTagger < FrameworkTagger
 
     while idx >= 0 && idx >= line_idx - 20
       current = lines[idx]
-      balance += current.count('}') - current.count('{')
+      # Right to left, so `} ~ authenticateBasic(…) {` (closes a sibling,
+      # opens the enclosing block) still reads as an opener.
+      opens = false
+      current.reverse.each_char do |char|
+        if char == '}'
+          balance += 1
+        elsif char == '{'
+          balance -= 1
+          opens = true if balance < 0
+        end
+      end
 
-      if balance < 0
+      if opens
         stripped = current.strip
         AKKA_AUTH_PATTERNS.each do |pattern, desc|
           return desc if stripped.matches?(pattern)

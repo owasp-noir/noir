@@ -117,6 +117,30 @@ describe "ScalaAuthTagger" do
     endpoint.tags.empty?.should be_true
   end
 
+  it "reads a directive that opens on the line closing a sibling route" do
+    tmpdir = File.tempname("akka_tilde")
+    Dir.mkdir_p(tmpdir)
+    file = File.join(tmpdir, "Routes.scala")
+    File.write(file, [
+      "val route =",
+      "  path(\"a\") { get { complete(\"a\") } } ~ authenticateBasic(\"realm\", auth) { user =>",
+      "    path(\"b\") {",
+      "      get {",
+      "        complete(\"b\")",
+      "      }",
+      "    }",
+      "  }",
+    ].join("\n"))
+
+    details = Details.new(PathInfo.new(file, 4))
+    details.technology = "scala_akka"
+    endpoint = Endpoint.new("/b", "GET", [] of Param, details)
+    ScalaAuthTagger.new(create_test_options).perform([endpoint])
+
+    endpoint.tags.map(&.description).should eq(["Protected by Akka HTTP authenticateBasic"])
+    FileUtils.rm_rf(tmpdir)
+  end
+
   it "handles empty code_paths gracefully" do
     noir_options = create_test_options
     noir_options["base"] = YAML::Any.new(fixture_base)
