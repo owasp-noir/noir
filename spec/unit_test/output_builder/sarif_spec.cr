@@ -127,7 +127,9 @@ describe "OutputBuilderSarif" do
     passive_result_item = results.find { |r| r["ruleId"].as_s == "test-rule" }
     passive_result_item = passive_result_item.should_not be_nil
     passive_result_item["level"].as_s.should eq("error")
-    passive_result_item["message"]["text"].as_s.should eq("test finding")
+    # The rule name, not the extract: the extract is the secret itself.
+    passive_result_item["message"]["text"].as_s.should eq("Test Rule Name")
+    output.should_not contain("test finding")
     passive_result_item["locations"][0]["physicalLocation"]["artifactLocation"]["uri"].as_s.should eq("test.cr")
     passive_result_item["locations"][0]["physicalLocation"]["region"]["startLine"].as_i.should eq(10)
 
