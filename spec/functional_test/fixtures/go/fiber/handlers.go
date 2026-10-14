@@ -44,7 +44,7 @@ func setupAdditionalRoutes(app *fiber.App) {
 	// POST with form and header combined
 	app.Post("/upload", func(c *fiber.Ctx) error {
 		c.FormValue("file_name")
-		c.GetRespHeader("Content-Length")
+		c.Get("Content-Length")
 		return c.SendString("uploaded")
 	})
 }

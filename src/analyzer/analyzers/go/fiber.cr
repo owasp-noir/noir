@@ -112,6 +112,8 @@ module Analyzer::Go
       result
     end
 
+    REQUEST_HEADER_GET_RE = /\b(?:c|ctx)\.Get\(\s*"([^"]+)"/
+
     private def add_fiber_param_patterns(line : String, ep : Endpoint)
       if line.includes?(".Query(") || line.includes?(".FormValue(") ||
          line.includes?(".Params(") || line.includes?(".ParamsInt(")
@@ -129,18 +131,13 @@ module Analyzer::Go
         add_param_to_endpoint(Param.new("body", "", "json"), ep)
       end
 
-      if line.includes?("GetRespHeader(")
-        match = line.match(/GetRespHeader\(\s*\"(.*)\"\s*\)/)
-        if match
-          ep.params << Param.new(match[1], "", "header")
-        end
-      end
-
-      if line.includes?("Vary(")
-        match = line.match(/Vary\(\s*\"(.*)\"\s*\)/)
-        if match
-          ep.params << Param.new("Vary", match[1], "header")
-        end
+      # `c.Get("X-Api-Key")` reads a request header (`GetRespHeader` and
+      # `Vary` act on the response, so they are not request params). The
+      # context receiver is pinned to the conventional names so a cache or
+      # config `Get` is not read as a header; a path literal is a route
+      # registration (`app.Get("/x", h)`).
+      if line.includes?(".Get(") && (match = line.match(REQUEST_HEADER_GET_RE)) && !match[1].starts_with?("/")
+        add_param_to_endpoint(Param.new(match[1], "", "header"), ep)
       end
 
       if line.includes?("Cookies(") &&
