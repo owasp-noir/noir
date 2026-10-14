@@ -111,7 +111,19 @@ fi
 # Execute
 # ==============================================================================
 
-echo "Executing command: $*"
+# GitHub masks only `secrets.*` values, so an ai_key from `vars.*` or a
+# literal was printed here. Mask it for GitHub, and redact both secret flags
+# (a webhook URL carries its token in the path) for any other runner.
+[ -n "$ai_key" ] && echo "::add-mask::$ai_key"
+log_cmd=""
+prev=""
+for arg in "$@"; do
+    shown=$arg
+    case $prev in --ai-key|--export-webhook) shown="***" ;; esac
+    log_cmd="${log_cmd:+$log_cmd }$shown"
+    prev=$arg
+done
+echo "Executing command: $log_cmd"
 "$@"
 exit_code=$?
 
