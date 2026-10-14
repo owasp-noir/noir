@@ -1,3 +1,4 @@
+require "file_utils"
 require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
@@ -71,5 +72,32 @@ describe "SwiftAuthTagger" do
     tagger.perform([endpoint])
 
     endpoint.tags.empty?.should be_true
+  end
+
+  it "does not read the next route's body after a one-line closure" do
+    tmpdir = File.tempname("swift_oneline")
+    Dir.mkdir_p(tmpdir)
+    routes = File.join(tmpdir, "routes.swift")
+    File.write(routes, [
+      "func routes(_ app: Application) throws {",
+      "    app.get(\"hello\") { req in \"Hello\" }",
+      "    app.get(\"me\") { req -> String in",
+      "        let user = try req.auth.require(User.self)",
+      "        return user.name",
+      "    }",
+      "}",
+    ].join("\n"))
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+
+    hello = Endpoint.new("/hello", "GET", [] of Param, Details.new(PathInfo.new(routes, 2)))
+    me = Endpoint.new("/me", "GET", [] of Param, Details.new(PathInfo.new(routes, 3)))
+    SwiftAuthTagger.new(noir_options).perform([hello, me])
+
+    hello.tags.should be_empty
+    me.tags.map(&.description).should eq(["Protected by Vapor req.auth.require"])
+
+    FileUtils.rm_rf(tmpdir)
   end
 end

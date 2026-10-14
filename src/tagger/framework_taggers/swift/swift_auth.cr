@@ -103,23 +103,21 @@ class SwiftAuthTagger < FrameworkTagger
   end
 
   private def check_handler_auth(lines : Array(String), route_line : Int32) : String?
-    idx = route_line + 1
     end_idx = [route_line + 15, lines.size - 1].min
-    brace_depth = 1 # We start inside the route closure's opening {
+    brace_depth = 0
 
-    while idx <= end_idx
+    (route_line..end_idx).each do |idx|
       current = lines[idx]
-      stripped = current.strip
 
       HANDLER_AUTH_PATTERNS.each do |pattern, desc|
-        return desc if stripped.matches?(pattern)
+        return desc if current.matches?(pattern)
       end
 
-      # Track braces to stop at end of this route's closure
+      # Track braces from the route line itself, so a closure that opens and
+      # closes there (`app.get("hello") { req in "Hello" }`) ends the walk
+      # instead of reading the next route's body as this one's.
       brace_depth += current.count('{') - current.count('}')
       break if brace_depth <= 0
-
-      idx += 1
     end
 
     nil
