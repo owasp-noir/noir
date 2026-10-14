@@ -100,8 +100,10 @@ module Analyzer::Javascript
     # sibling), so emit a POST. `load`-only `+page.server` files add no
     # endpoint of their own.
     private def analyze_page_server(path : String, relative : String, result : Array(Endpoint), mutex : Mutex)
+      # Comments blanked in place (line numbers kept), so a commented-out
+      # export is not a route.
       content = begin
-        read_file_content(path)
+        Noir::JSRouteExtractor.strip_js_comments(read_file_content(path))
       rescue e
         logger.debug "Error reading #{path}: #{e.message}"
         return
@@ -130,8 +132,10 @@ module Analyzer::Javascript
 
     private def analyze_api_route(path : String, relative : String, result : Array(Endpoint), mutex : Mutex, include_callee : Bool)
       url = url_for(relative)
+      # Comments blanked in place (line numbers kept), so a commented-out
+      # export is not a route.
       content = begin
-        read_file_content(path)
+        Noir::JSRouteExtractor.strip_js_comments(read_file_content(path))
       rescue e
         logger.debug "Error reading #{path}: #{e.message}"
         return

@@ -9,6 +9,8 @@ expected_endpoints = [
   Endpoint.new("/api/posts/{id}.json", "GET", [
     Param.new("id", "", "path"),
   ]),
+  # The commented-out `DELETE` export beside it is not a route.
+  Endpoint.new("/api/session", "GET"),
 ]
 
 FunctionalTester.new("fixtures/javascript/astro_endpoints/", {

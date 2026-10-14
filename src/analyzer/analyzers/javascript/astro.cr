@@ -89,8 +89,10 @@ module Analyzer::Javascript
     private def analyze_api_route(path : String, relative : String, result : Array(Endpoint), mutex : Mutex)
       url = url_for(relative)
 
+      # Comments blanked in place (line numbers kept), so a commented-out
+      # export is not a route.
       content = begin
-        read_file_content(path)
+        Noir::JSRouteExtractor.strip_js_comments(read_file_content(path))
       rescue e
         logger.debug "Error reading #{path}: #{e.message}"
         return

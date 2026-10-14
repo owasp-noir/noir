@@ -37,8 +37,10 @@ module Analyzer::Javascript
         # SolidStart routes every module, so colocated tests would be pages.
         next if relative.includes?(".test.") || relative.includes?(".spec.")
 
+        # Comments blanked in place (line numbers kept), so a commented-out
+        # export is not a route.
         content = begin
-          read_file_content(path)
+          Noir::JSRouteExtractor.strip_js_comments(read_file_content(path))
         rescue e
           logger.debug "Error reading #{path}: #{e.message}"
           next
