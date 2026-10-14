@@ -216,6 +216,50 @@ module Analyzer::Dart
       Noir::DartCalleeExtractor.callees_for_body(body, path, start_line)
     end
 
+    # Request-input reads. `uri` is dart:io's and Dart Frog's request URI,
+    # `url`/`requestedUri` are Shelf's.
+    QUERY_PARAM_REGEX  = /\.(?:uri|url|requestedUri)\s*\.\s*queryParameters(?:All)?\s*\[\s*r?["']([^"']+?)["']\s*\]/
+    HEADER_VALUE_REGEX = /\.headers\s*\.\s*value\s*\(\s*r?["']([^"']+?)["']/
+    HEADER_INDEX_REGEX = /\.headers\s*\[\s*r?["']([^"']+?)["']\s*\]/
+    # `final q = request.url.queryParameters;` / `final body = await
+    # request.json();` / `jsonDecode(await request.readAsString())` — the
+    # variable is then read as `q['x']`.
+    QUERY_ALIAS_REGEX = /\b([A-Za-z_]\w*)\s*=\s*[\w.]*\.(?:uri|url|requestedUri)\s*\.\s*queryParameters(?:All)?\s*;/
+    JSON_BODY_REGEX   = /\.(?:json|readAsString)\s*\(\s*\)/
+    JSON_ALIAS_REGEX  = /\b([A-Za-z_]\w*)\s*=\s*(?:await\s+)?(?:jsonDecode\s*\(\s*(?:await\s+)?)?[\w.]*\.(?:json|readAsString)\s*\(\s*\)/
+    FORM_BODY_REGEX   = /\.formData\s*\(\s*\)/
+    INDEX_READ_REGEX  = /(?<![\w$.])([A-Za-z_]\w*)\s*\[\s*r?["']([^"']+?)["']\s*\]/
+
+    # Query, header and body inputs a handler body reads. `body` should be
+    # comment-stripped. A body read whose keys can't be seen becomes one
+    # `body` param, as in the dart:io analyzer.
+    def request_params(body : String) : Array(Param)
+      params = [] of Param
+      add = ->(name : String, type : String) do
+        params << Param.new(name, "", type) unless params.any? { |p| p.name == name && p.param_type == type }
+      end
+      body.scan(QUERY_PARAM_REGEX) { |m| add.call(m[1], "query") }
+      body.scan(HEADER_VALUE_REGEX) { |m| add.call(m[1], "header") }
+      body.scan(HEADER_INDEX_REGEX) { |m| add.call(m[1], "header") }
+
+      query_aliases = body.scan(QUERY_ALIAS_REGEX).map(&.[1])
+      json_aliases = body.scan(JSON_ALIAS_REGEX).map(&.[1])
+      json_keys = false
+      unless query_aliases.empty? && json_aliases.empty?
+        body.scan(INDEX_READ_REGEX) do |m|
+          if query_aliases.includes?(m[1])
+            add.call(m[2], "query")
+          elsif json_aliases.includes?(m[1])
+            add.call(m[2], "json")
+            json_keys = true
+          end
+        end
+      end
+      add.call("body", "json") if !json_keys && body.matches?(JSON_BODY_REGEX)
+      add.call("body", "form") if body.matches?(FORM_BODY_REGEX)
+      params
+    end
+
     # Build an endpoint from an already-normalized URL, promoting every
     # `{name}` capture in it to a path param and attaching the callees.
     # Analyzers whose endpoints carry extra state (Dart Frog's websocket

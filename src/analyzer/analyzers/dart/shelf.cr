@@ -50,7 +50,8 @@ module Analyzer::Dart
       path: String,
       line: Int32,
       file: String,
-      callees: Array(Noir::DartCalleeExtractor::Entry))
+      callees: Array(Noir::DartCalleeExtractor::Entry),
+      params: Array(Param))
 
     alias Mount = NamedTuple(prefix: String, child: String)
 
@@ -135,6 +136,7 @@ module Analyzer::Dart
       co = Noir::CharOffsets.new(cleaned)
       fco = include_callee ? (cleaned.same?(content) ? co : Noir::CharOffsets.new(content)) : nil
       classes = class_ranges(cleaned, co)
+      defs = function_defs(cleaned)
 
       decls = [] of RouterDecl
       cleaned.scan(/(?:^|[;{}=(,\s])(?:final|var|const|late)\s+(?:[A-Za-z_][\w<>,\s\?]*\s+)?([A-Za-z_]\w*)\s*=\s*Router\s*\(\s*\)/) do |match|
@@ -158,12 +160,12 @@ module Analyzer::Dart
         mounts = [] of Mount
 
         # Cascades attached directly to the `Router()` expression.
-        scan_cascades(cleaned, co, end_idx, cascade_end, fco, path, routes, mounts)
+        scan_cascades(cleaned, co, end_idx, cascade_end, fco, defs, path, routes, mounts)
 
         # Direct method calls referencing the router variable elsewhere
         # in the file. We scan the cleaned source so refs inside
         # strings or comments are ignored.
-        scan_direct_calls(cleaned, co, decl, decls, classes, fco, path, routes, mounts)
+        scan_direct_calls(cleaned, co, decl, decls, classes, fco, defs, path, routes, mounts)
 
         # A router built inside a class (e.g. a `Router get router =>`
         # getter) is reached from the outside as `ClassName().router`,
@@ -230,12 +232,13 @@ module Analyzer::Dart
 
         line = co.line(match_begin)
         callees = fco ? annotation_callees(fco, close_paren, path) : [] of Noir::DartCalleeExtractor::Entry
+        params = body_params(cleaned, co.byte(close_paren + 1), cleaned.bytesize)
 
         key = owner || "@route:#{path}"
         info = result[key]? || {routes: [] of Route, mounts: [] of Mount}
         routes = info[:routes].dup
         verbs.each do |verb|
-          routes << {verb: verb, path: route_path, line: line, file: path, callees: callees}
+          routes << {verb: verb, path: route_path, line: line, file: path, callees: callees, params: params}
         end
         result[key] = {routes: routes, mounts: info[:mounts]}
       end
@@ -363,6 +366,7 @@ module Analyzer::Dart
                               start_idx : Int32,
                               end_idx : Int32,
                               fco : Noir::CharOffsets?,
+                              defs : Hash(String, Int32),
                               path : String,
                               routes : Array(Route),
                               mounts : Array(Mount))
@@ -388,7 +392,7 @@ module Analyzer::Dart
           if j < chars.size && chars[j] == '(' && relevant_method?(name)
             close_paren = Helper.find_matching_paren(cleaned, j, co)
             if close_paren && close_paren < end_idx
-              handle_call(name, co, j, close_paren, fco, path, routes, mounts)
+              handle_call(name, co, j, close_paren, fco, defs, path, routes, mounts)
               i = close_paren + 1
               next
             end
@@ -409,6 +413,7 @@ module Analyzer::Dart
                                   decls : Array(RouterDecl),
                                   classes : Array(ClassRange),
                                   fco : Noir::CharOffsets?,
+                                  defs : Hash(String, Int32),
                                   path : String,
                                   routes : Array(Route),
                                   mounts : Array(Mount))
@@ -431,7 +436,7 @@ module Analyzer::Dart
         open_paren = match_end - 1
         close_paren = Helper.find_matching_paren(cleaned, open_paren, co)
         next unless close_paren
-        handle_call(method, co, open_paren, close_paren, fco, path, routes, mounts)
+        handle_call(method, co, open_paren, close_paren, fco, defs, path, routes, mounts)
       end
     end
 
@@ -456,6 +461,7 @@ module Analyzer::Dart
                             open_paren : Int32,
                             close_paren : Int32,
                             fco : Noir::CharOffsets?,
+                            defs : Hash(String, Int32),
                             path : String,
                             routes : Array(Route),
                             mounts : Array(Mount))
@@ -475,17 +481,49 @@ module Analyzer::Dart
         child = extract_mount_child(args[1])
         return unless child
         mounts << {prefix: normalize_path(literal), child: child}
-      when "all"
-        callees = fco && args.size >= 2 ? handler_callees(args[1], fco, close_paren, path, line) : [] of Noir::DartCalleeExtractor::Entry
-        ANY_ROUTE_HTTP_METHODS.each do |verb|
-          routes << {verb: verb, path: normalize_path(literal), line: line, file: path, callees: callees}
-        end
       else
-        verb = HTTP_METHOD_MAP[method]?
-        return unless verb
+        verbs = method == "all" ? ANY_ROUTE_HTTP_METHODS : [HTTP_METHOD_MAP[method]?].compact
+        return if verbs.empty?
         callees = fco && args.size >= 2 ? handler_callees(args[1], fco, close_paren, path, line) : [] of Noir::DartCalleeExtractor::Entry
-        routes << {verb: verb, path: normalize_path(literal), line: line, file: path, callees: callees}
+        params = args.size >= 2 ? handler_params(args[1], co, close_paren, defs) : [] of Param
+        verbs.each do |verb|
+          routes << {verb: verb, path: normalize_path(literal), line: line, file: path, callees: callees, params: params}
+        end
       end
+    end
+
+    # A named function or method declaration (`Response _echo(Request r) {`,
+    # `Future<Response> _list(Request r) async =>`): name to the BYTE offset
+    # of its name in the cleaned source. Built once per file so a handler
+    # reference is a lookup, not a rescan.
+    FUNCTION_DEF_REGEX = /(?<![\w$.])([A-Za-z_$][\w$]*)\s*\([^(){};]*\)\s*(?:async\*?|sync\*)?\s*(?:\{|=>)/
+
+    private def function_defs(cleaned : String) : Hash(String, Int32)
+      defs = {} of String => Int32
+      cleaned.scan(FUNCTION_DEF_REGEX) { |m| defs[m[1]] = m.byte_begin(0) unless defs.has_key?(m[1]) }
+      defs
+    end
+
+    # Request inputs the route's handler reads: an inline lambda's body
+    # (bounded by the route call), or the body of the same-file function a
+    # bare reference (`_echo`, `this._echo`) names.
+    private def handler_params(handler_arg : String,
+                               co : Noir::CharOffsets,
+                               close_paren : Int32,
+                               defs : Hash(String, Int32)) : Array(Param)
+      stripped = handler_arg.strip
+      if stripped.starts_with?('(')
+        body_params(co.content, co.byte(close_paren - handler_arg.size), co.byte(close_paren))
+      elsif stripped.matches?(Helper::HANDLER_REFERENCE_REGEX) && (start_b = defs[stripped.split('.').last]?)
+        body_params(co.content, start_b, co.content.bytesize)
+      else
+        [] of Param
+      end
+    end
+
+    private def body_params(cleaned : String, start_b : Int32, limit : Int32) : Array(Param)
+      body_info = Noir::DartCalleeExtractor.extract_body_after(cleaned, start_b, limit)
+      body_info ? Helper.request_params(body_info[0]) : [] of Param
     end
 
     # Best-effort callee extraction for the route handler. Inline lambdas
@@ -561,7 +599,9 @@ module Analyzer::Dart
       if info
         info[:routes].each do |route|
           full_path = mount_join(prefix, route[:path])
-          endpoints << Helper.build_endpoint(full_path, route[:verb], route[:file], route[:line], route[:callees])
+          endpoint = Helper.build_endpoint(full_path, route[:verb], route[:file], route[:line], route[:callees])
+          route[:params].each { |param| endpoint.push_param(param) }
+          endpoints << endpoint
         end
         info[:mounts].each do |mnt|
           child_prefix = mount_join(prefix, mnt[:prefix])
