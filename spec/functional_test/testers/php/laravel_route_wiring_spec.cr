@@ -14,9 +14,11 @@ expected_endpoints = [
   Endpoint.new("/modern-home", "GET"),
   Endpoint.new("/webhooks/stripe", "POST"),
   Endpoint.new("/api/bare-items", "GET"),
+  # modern: `withRouting(health: '/up')`
+  Endpoint.new("/up", "GET"),
 ]
 
 FunctionalTester.new("fixtures/php/laravel_route_wiring/", {
   :techs     => 2,
-  :endpoints => 7,
+  :endpoints => 8,
 }, expected_endpoints).perform_tests

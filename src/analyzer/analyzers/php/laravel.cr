@@ -76,6 +76,10 @@ module Analyzer::Php
         endpoints.concat(analyze_routes_file(path))
       end
 
+      if path.ends_with?("/bootstrap/app.php")
+        endpoints.concat(analyze_health_route(path))
+      end
+
       # Analyze Laravel controller files
       if path.includes?("app/Http/Controllers/") && path.ends_with?(".php")
         endpoints.concat(analyze_controller_file(path))
@@ -110,6 +114,21 @@ module Analyzer::Php
         Noir::SkippedFiles.record(tech, path, e.message.presence || e.class.name)
       end
       endpoints
+    end
+
+    HEALTH_ROUTE_RE = /\bhealth\s*:\s*['"]([^'"]+)['"]/
+
+    # Laravel 11+ `->withRouting(..., health: '/up')` registers a GET
+    # health-check route at the given path.
+    private def analyze_health_route(path : String) : Array(Endpoint)
+      content = read_file_content(path)
+      return [] of Endpoint unless content.includes?("withRouting")
+      content = php_code(content)
+      routing = content.index("withRouting")
+      health = routing.try { |at| content.match(HEALTH_ROUTE_RE, at) }
+      return [] of Endpoint unless health
+      details = Details.new(PathInfo.new(path, line_number_for_index(content, health.begin(0))))
+      [Endpoint.new("/#{health[1].lstrip('/')}", "GET", [] of Param, details)]
     end
 
     # A route file's URL prefix comes from where the app loads it, not from

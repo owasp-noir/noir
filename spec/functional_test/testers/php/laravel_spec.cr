@@ -69,9 +69,11 @@ expected_endpoints = [
   # group closure — both the file and the group prefix must be recognized.
   Endpoint.new("/internal/status", "GET"),
   Endpoint.new("/internal/sync", "POST"),
+  # bootstrap/app.php `withRouting(health: '/up')`
+  Endpoint.new("/up", "GET"),
 ]
 
 FunctionalTester.new("fixtures/php/laravel/", {
   :techs     => 2,  # Detection still sees both php_laravel and php_pure
-  :endpoints => 80, # Analysis suppresses redundant php_pure and unprefixed group endpoints
+  :endpoints => 81, # Analysis suppresses redundant php_pure and unprefixed group endpoints
 }, expected_endpoints).perform_tests
