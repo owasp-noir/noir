@@ -386,6 +386,9 @@ module Analyzer::Python
                                        handler_line : Int32,
                                        controller_prefixes : Hash(::String, ::String)) : Tuple(::String, ::String)?
       handler_indent = lines[handler_line].size - lines[handler_line].lstrip.size
+      # A module-level handler has no enclosing class: walking back to the
+      # top of the file for each one made a flat routes module quadratic.
+      return if handler_indent == 0 || controller_prefixes.empty?
       idx = handler_line - 1
 
       while idx >= 0

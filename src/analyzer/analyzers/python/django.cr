@@ -1430,6 +1430,45 @@ module Analyzer::Python
       ""
     end
 
+    # A views module split once, with where each `def NAME(` / `class NAME(`
+    # first matches: every URL pattern pointing into the module used to
+    # re-split it and regex-search it from the top, so N views in one file
+    # cost O(N * file).
+    private record ViewFileIndex,
+      content : ::String,
+      lines : Array(::String),
+      defs : Hash(::String, Tuple(Int32, Int32)),
+      classes : Hash(::String, Tuple(Int32, Int32)) do
+      # The file from a `{line, byte column}` position on, as lines.
+      def tail(start : Tuple(Int32, Int32)) : Array(::String)
+        line, column = start
+        [lines[line].byte_slice(column)] + lines[(line + 1)..]
+      end
+    end
+
+    VIEW_DEF_RE   = /(?:async\s+)?def\s+([^\s(]+)\s*\(/
+    VIEW_CLASS_RE = /class\s+([^\s(:]+)\s*[\(:]/
+
+    @view_file_index = Hash(::String, ViewFileIndex).new
+
+    private def view_file_index(filepath : ::String) : ViewFileIndex
+      @view_file_index[filepath] ||= begin
+        content = read_file_content(filepath)
+        lines = content.split("\n")
+        defs = Hash(::String, Tuple(Int32, Int32)).new
+        classes = Hash(::String, Tuple(Int32, Int32)).new
+        lines.each_with_index do |line, index|
+          if line.includes?("def")
+            line.scan(VIEW_DEF_RE) { |m| defs.put_if_absent(m[1]) { {index, m.byte_begin(0)} } }
+          end
+          if line.includes?("class")
+            line.scan(VIEW_CLASS_RE) { |m| classes.put_if_absent(m[1]) { {index, m.byte_begin(0)} } }
+          end
+        end
+        ViewFileIndex.new(content, lines, defs, classes)
+      end
+    end
+
     # Extract endpoints from a given file
     def extract_endpoints_from_file(url : ::String, filepath : ::String, function_or_class_name : ::String)
       @logger.debug "Extracting endpoints from #{filepath}"
@@ -1438,14 +1477,15 @@ module Analyzer::Python
       suspicious_http_methods = ["GET"]
       suspicious_params = Array(Param).new
 
-      content = read_file_content(filepath)
-      content_lines = content.split "\n"
+      view_file = view_file_index(filepath)
+      content = view_file.content
+      content_lines = view_file.lines
 
       # Function Based View
-      function_start_index = content.index /(?:async\s+)?def\s+#{function_or_class_name}\s*\(/
+      function_start = view_file.defs[function_or_class_name]?
       restricted = false
-      unless function_start_index.nil?
-        function_codeblock = parse_code_block(content[function_start_index..])
+      unless function_start.nil?
+        function_codeblock = parse_code_block(view_file.tail(function_start))
         unless function_codeblock.nil?
           lines = function_codeblock.split "\n"
           function_define_line = lines[0]
@@ -1455,7 +1495,8 @@ module Analyzer::Python
           # Walk every contiguous decorator line (not just the one
           # directly above the def) so a method-restricting decorator
           # under, say, `@login_required` is still seen.
-          index = content_lines.index(function_define_line)
+          # No earlier line can equal it: it would hold an earlier `def`.
+          index = content_lines.index(function_define_line, function_start[0])
           unless index.nil?
             restricted_methods = nil
             index -= 1
@@ -1519,7 +1560,7 @@ module Analyzer::Python
           # method), but they all share the same handler body. The
           # codeblock starts at the `def` line, so `body_start_line` is
           # that line's 0-based index — derived from the char offset.
-          body_start_line = content[0, function_start_index].count('\n')
+          body_start_line = function_start[0]
           definition_line = body_start_line + 1
           handler_callees = build_callees_from(
             function_codeblock,
@@ -1541,9 +1582,10 @@ module Analyzer::Python
       end
 
       # Class Based View
-      class_start_index = content.index /class\s+#{function_or_class_name}\s*[\(:]/
-      unless class_start_index.nil?
-        class_codeblock = parse_python_class_codeblock(content, class_start_index) || parse_code_block(content[class_start_index..])
+      class_start = view_file.classes[function_or_class_name]?
+      unless class_start.nil?
+        class_lines = view_file.tail(class_start)
+        class_codeblock = parse_python_class_codeblock(class_lines) || parse_code_block(class_lines)
         unless class_codeblock.nil?
           lines = class_codeblock.split "\n"
           class_define_line = lines[0]
@@ -1574,7 +1616,7 @@ module Analyzer::Python
             end
           end
 
-          body_start_line = content[0, class_start_index].count('\n')
+          body_start_line = class_start[0]
           class_definition_line = body_start_line + 1
           method_callees = Hash(String, Array(Callee)).new
           method_lines = Hash(String, Int32).new
@@ -1867,7 +1909,10 @@ module Analyzer::Python
     end
 
     private def parse_python_class_codeblock(content : ::String, class_start_index : Int32) : ::String?
-      lines = content[class_start_index..].split("\n")
+      parse_python_class_codeblock(content[class_start_index..].split("\n"))
+    end
+
+    private def parse_python_class_codeblock(lines : Array(::String)) : ::String?
       return if lines.empty?
 
       class_indent = lines[0].size - lines[0].lstrip.size
