@@ -73,10 +73,9 @@ class Deliver
     end
   end
 
-  def initialize(options : Hash(String, YAML::Any))
+  def initialize(options : Hash(String, YAML::Any), @logger : NoirLogger = NoirLogger.from_options(options))
     @options = options
     @proxy = options["probe_via"].to_s
-    @logger = NoirLogger.from_options(options)
 
     options["probe_header"].as_a.each do |set_header|
       raw = set_header.to_s

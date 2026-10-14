@@ -1,29 +1,13 @@
 require "../models/deliver"
 require "../models/endpoint"
-require "../models/logger"
-require "../utils/http_symbols"
-require "../utils/utils"
-require "crest"
-require "wait_group"
 
 # Fills in `details.status_code` for every endpoint (`--status-codes`) and
 # drops the ones whose code the user excluded (`--exclude-codes`).
 #
-# A `Deliver` subclass for the request it builds, not for delivery: it sends
-# the same URL (`probe_url` fills path templates) and the same headers
-# (`probe_headers`: discovered header/cookie params plus `--probe-header`,
-# withheld off the `--url` origin) as every other probe. It used to send the
-# raw template with no headers, so an app behind auth answered 401 to every
-# route and `--exclude-codes 401` dropped the real ones. It still ignores
-# `--probe-match` / `--probe-skip`: those apply in `Deliver#apply_all`, which
-# only the senders call — a status probe answers "does this route respond,
-# and with what" for the whole catalog.
+# A `Deliver` subclass so it requests the same URL (`probe_url`) with the
+# same headers (`probe_headers`) as every other probe. `--probe-match` /
+# `--probe-skip` still don't apply: only the senders call `apply_all`.
 class StatusCodeProbe < Deliver
-  def initialize(options : Hash(String, YAML::Any), logger : NoirLogger)
-    super(options)
-    @logger = logger
-  end
-
   def apply(endpoints : Array(Endpoint)) : Array(Endpoint)
     @logger.sub "➔ Updating status codes."
 
