@@ -235,8 +235,8 @@ describe "OutputBuilderSarif" do
     builder = OutputBuilderSarif.new(options)
     builder.io = IO::Memory.new
 
-    # `-b .`, `-b $PWD` and a path outside the working directory.
-    paths = ["./app/app.py", File.join(Dir.current, "app/app.py"), "/srv/other/app.py"]
+    # `-b .`, `-b $PWD`, `-b ./app/..`, and paths outside the working directory.
+    paths = ["./app/app.py", File.join(Dir.current, "app/app.py"), "./app/../app/app.py", "/srv/other/app.py", "../other/app.py"]
     endpoints = paths.map_with_index do |path, i|
       Endpoint.new("/e#{i}", "GET", Details.new(PathInfo.new(path, 1)))
     end
@@ -245,8 +245,11 @@ describe "OutputBuilderSarif" do
     run = JSON.parse(builder.io.to_s)["runs"][0]
     locations = run["results"].as_a.map(&.["locations"][0]["physicalLocation"]["artifactLocation"])
 
-    locations.map(&.["uri"].as_s).should eq(["app/app.py", "app/app.py", "file:///srv/other/app.py"])
-    locations.map(&.["uriBaseId"]?.try(&.as_s)).should eq(["%SRCROOT%", "%SRCROOT%", nil])
+    uris = locations.map(&.["uri"].as_s)
+    uris[0, 4].should eq(["app/app.py", "app/app.py", "app/app.py", "file:///srv/other/app.py"])
+    uris[4].should start_with("file:///")
+    uris[4].should end_with("/other/app.py")
+    locations.map(&.["uriBaseId"]?.try(&.as_s)).should eq(["%SRCROOT%", "%SRCROOT%", "%SRCROOT%", nil, nil])
     # `file:///C:/…` on Windows, `file:///home/…` elsewhere.
     base = run["originalUriBaseIds"]["%SRCROOT%"]["uri"].as_s
     URI.decode(base).should eq("file:///#{Path.new(Dir.current).to_posix.to_s.lchop('/')}/")

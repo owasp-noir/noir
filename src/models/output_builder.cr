@@ -559,10 +559,15 @@ class OutputBuilder
   # One shape per file however `-b` was spelled: a path under the working
   # directory is relative to it with no `./` (`-b .` and `-b $PWD` agree, and
   # `sarif_with_srcroot` names that base), anything else is a `file://` URI
-  # (`file:///C:/…` too, since a bare `C:` would parse as a scheme).
+  # (`file:///C:/…` too, since a bare `C:` would parse as a scheme). `../x`
+  # leaves the working directory, so it takes the absolute form.
   protected def sarif_uri(path : String) : String
-    path = Path.new(path).to_posix.to_s.lchop(SARIF_SRCROOT_PREFIX)
-    path = path.sub(/\A(?:\.\/)+/, "")
+    path = Path.new(path).to_posix.normalize.to_s
+    path = Path.posix(SARIF_SRCROOT_PREFIX).join(path).normalize.to_s if path.starts_with?("../")
+    sarif_encode(path.lchop(SARIF_SRCROOT_PREFIX))
+  end
+
+  private def sarif_encode(path : String) : String
     String.build do |io|
       if path.size >= 3 && path[0].ascii_letter? && path[1] == ':' && path[2] == '/'
         io << "file:///" << path[0, 2]
@@ -575,7 +580,7 @@ class OutputBuilder
   end
 
   SARIF_SRCROOT        = "%SRCROOT%"
-  SARIF_SRCROOT_PREFIX = "#{Path.new(Dir.current).to_posix}/"
+  SARIF_SRCROOT_PREFIX = "#{Path.new(Dir.current).to_posix.to_s.rstrip('/')}/"
 
   # Marks every relative URI in `log` as relative to `%SRCROOT%` and
   # declares that base as the working directory, so a consumer (GitHub code
@@ -592,7 +597,7 @@ class OutputBuilder
           relative = true
         end
       end
-      run.original_uri_base_ids = {SARIF_SRCROOT => Sarif::ArtifactLocation.new(uri: "#{sarif_uri(SARIF_SRCROOT_PREFIX.rchop)}/")} if relative
+      run.original_uri_base_ids = {SARIF_SRCROOT => Sarif::ArtifactLocation.new(uri: sarif_encode(SARIF_SRCROOT_PREFIX))} if relative
     end
     log
   end
