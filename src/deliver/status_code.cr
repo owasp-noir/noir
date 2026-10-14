@@ -9,19 +9,19 @@ require "wait_group"
 # Fills in `details.status_code` for every endpoint (`--status-codes`) and
 # drops the ones whose code the user excluded (`--exclude-codes`).
 #
-# Deliberately not a `Deliver` subclass, even though it is the other thing in
-# noir that fires HTTP requests at discovered endpoints. A status probe runs
-# before delivery, ignores `--probe-match` / `--probe-skip`, and sends none of
-# the `--probe-header` values — it exists to answer "does this route respond,
-# and with what", not to replay traffic. Inheriting the sender base would
-# quietly give it all three.
-class StatusCodeProbe
-  include ProbeConcurrency
-
-  @options : Hash(String, YAML::Any)
-  @logger : NoirLogger
-
-  def initialize(@options : Hash(String, YAML::Any), @logger : NoirLogger)
+# A `Deliver` subclass for the request it builds, not for delivery: it sends
+# the same URL (`probe_url` fills path templates) and the same headers
+# (`probe_headers`: discovered header/cookie params plus `--probe-header`,
+# withheld off the `--url` origin) as every other probe. It used to send the
+# raw template with no headers, so an app behind auth answered 401 to every
+# route and `--exclude-codes 401` dropped the real ones. It still ignores
+# `--probe-match` / `--probe-skip`: those apply in `Deliver#apply_all`, which
+# only the senders call — a status probe answers "does this route respond,
+# and with what" for the whole catalog.
+class StatusCodeProbe < Deliver
+  def initialize(options : Hash(String, YAML::Any), logger : NoirLogger)
+    super(options)
+    @logger = logger
   end
 
   def apply(endpoints : Array(Endpoint)) : Array(Endpoint)
@@ -88,7 +88,8 @@ class StatusCodeProbe
     is_json = !endpoint_hash["json"].empty?
     body = is_json ? endpoint_hash["json"] : endpoint_hash["form"]
 
-    perform_request(get_symbol(request_method), wire_url(endpoint.url), endpoint_hash["query"], body, is_json)
+    perform_request(get_symbol(request_method), probe_url(endpoint, request_method), endpoint_hash["query"], body, is_json,
+      probe_headers(endpoint))
   end
 
   # A Set dedupes repeated codes (--exclude-codes 404,404,500) for free and
@@ -108,7 +109,8 @@ class StatusCodeProbe
 
   # The single point where a request leaves the process, so specs can drive
   # `apply` against canned responses by overriding this one method.
-  def perform_request(method, url, params = {} of String => String, form = {} of String => String, json = false)
+  def perform_request(method, url, params = {} of String => String, form = {} of String => String, json = false,
+                      headers = {} of String => String)
     # `handle_errors: false, max_redirects: 0` — the same pair SendReq and
     # SendWithProxy send, and for the same reasons.
     #
@@ -137,6 +139,7 @@ class StatusCodeProbe
       params: params,
       form: form,
       json: json,
+      headers: headers,
       handle_errors: false,
       max_redirects: 0,
       connect_timeout: connect_timeout,

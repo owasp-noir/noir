@@ -9,18 +9,24 @@ require "../utils/http_symbols"
 require "../utils/url_origin"
 require "../utils/redact"
 
-# Max concurrent in-flight probe requests, the outbound TLS context and the
-# wire form of an endpoint URL, shared
-# by every class that fires requests at discovered endpoints. Bounds the
-# fiber/socket fan-out so a large endpoint set can't exhaust file descriptors. Backed by the validated
-# --concurrency value (already clamped to a sane ceiling).
-#
-# A module rather than a `Deliver` method because `StatusCodeProbe` is
-# deliberately not a `Deliver` subclass (see its class comment) yet has to
-# bound its fan-out exactly the same way. Keeping the rule in one place is what
-# stops the two from drifting again: the status probe was strictly sequential
-# for exactly as long as this lived on `Deliver` alone.
-module ProbeConcurrency
+class Deliver
+  @logger : NoirLogger
+  @options : Hash(String, YAML::Any)
+  getter proxy : String
+  getter headers : Hash(String, String) = {} of String => String
+  @matchers : Array(String)
+  @filters : Array(String)
+  # Origin of `--url`, resolved lazily (see `target_origin`) and the set of
+  # off-target origins already warned about, so the warning fires once per
+  # host instead of once per endpoint.
+  @target_origin : String? = nil
+  @target_origin_resolved = false
+  @offhost_origins = Set(String).new
+  @offhost_mutex = Mutex.new
+
+  # Max concurrent in-flight probe requests. Bounds the fiber/socket fan-out
+  # so a large endpoint set can't exhaust file descriptors. Backed by the
+  # validated --concurrency value (already clamped to a sane ceiling).
   DEFAULT_PROBE_CONCURRENCY = 16
 
   protected def concurrency_limit : Int32
@@ -66,24 +72,6 @@ module ProbeConcurrency
       end
     end
   end
-end
-
-class Deliver
-  include ProbeConcurrency
-
-  @logger : NoirLogger
-  @options : Hash(String, YAML::Any)
-  getter proxy : String
-  getter headers : Hash(String, String) = {} of String => String
-  @matchers : Array(String)
-  @filters : Array(String)
-  # Origin of `--url`, resolved lazily (see `target_origin`) and the set of
-  # off-target origins already warned about, so the warning fires once per
-  # host instead of once per endpoint.
-  @target_origin : String? = nil
-  @target_origin_resolved = false
-  @offhost_origins = Set(String).new
-  @offhost_mutex = Mutex.new
 
   def initialize(options : Hash(String, YAML::Any))
     @options = options

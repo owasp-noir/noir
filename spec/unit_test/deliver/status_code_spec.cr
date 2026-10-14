@@ -18,8 +18,13 @@ class TestStatusCodeProbe < StatusCodeProbe
   property last_request_params : Hash(String, String)?
   property last_request_body : Hash(String, String)?
   property last_request_json : Bool?
+  property last_request_url : String?
+  property last_request_headers : Hash(String, String)?
 
-  def perform_request(method, url, params = {} of String => String, form = {} of String => String, json = false)
+  def perform_request(method, url, params = {} of String => String, form = {} of String => String, json = false,
+                      headers = {} of String => String)
+    @last_request_url = url
+    @last_request_headers = headers
     @last_request_method = method
     @last_request_params = params
     @last_request_body = form
@@ -246,6 +251,34 @@ describe StatusCodeProbe do
     body["data"].should eq("value")
 
     runner.last_request_json.should be_true
+  end
+
+  it "fills path templates and sends --probe-header like the other probes" do
+    header_options = options.dup
+    header_options["probe_header"] = YAML::Any.new([YAML::Any.new("Authorization: Bearer t")])
+    header_options["url"] = YAML::Any.new("http://example.com")
+    endpoint = Endpoint.new("http://example.com/a/:id", "GET")
+    endpoint.params << Param.new("id", "", "path")
+    endpoint.params << Param.new("X-Api-Key", "k", "header")
+
+    runner = TestStatusCodeProbe.new(header_options, NoirLogger.new(false, false, false, true))
+    runner.apply([endpoint])
+
+    runner.last_request_url.should eq("http://example.com/a/1")
+    headers = runner.last_request_headers.should_not be_nil
+    headers["Authorization"].should eq("Bearer t")
+    headers["X-Api-Key"].should eq("k")
+  end
+
+  it "withholds --probe-header from endpoints off the --url origin" do
+    header_options = options.dup
+    header_options["probe_header"] = YAML::Any.new([YAML::Any.new("Authorization: Bearer t")])
+    header_options["url"] = YAML::Any.new("http://target.example")
+
+    runner = TestStatusCodeProbe.new(header_options, NoirLogger.new(false, false, false, true))
+    runner.apply([Endpoint.new("http://example.com/200", "GET")])
+
+    runner.last_request_headers.should eq({} of String => String)
   end
 
   it "uses GET as the representative status probe for synthetic ANY methods" do
