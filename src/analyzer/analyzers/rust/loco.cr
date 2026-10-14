@@ -119,14 +119,17 @@ module Analyzer::Rust
         args = Noir::TreeSitter.field(node, "arguments")
         next unless args
         route_path = first_string_literal_text(args, source)
-        # Route paths are always string literals beginning with `/`; this
-        # filters out unrelated `.add(...)` calls (sets, vectors, …).
-        next unless route_path && route_path.starts_with?("/")
+        next unless route_path
 
         verb_handlers = collect_method_handlers(args, source)
         next if verb_handlers.empty?
 
         prefix = find_chain_prefix(node, source)
+        # A slash-less literal (`.add("{id}", get(h))`, the shape `cargo
+        # loco generate scaffold` emits) is only a route on a real builder
+        # chain — one with a `.prefix(...)` or rooted at `Routes::new()`.
+        # Elsewhere it filters out unrelated `.add(...)` calls.
+        next unless route_path.starts_with?("/") || prefix || routes_new_chain?(node, source)
         full_path = absolute_scope_join(prefix, route_path)
         row = call_line(node)
 
@@ -191,6 +194,22 @@ module Analyzer::Rust
         node = receiver
       end
       nil
+    end
+
+    # True when the `.add(...)` receiver chain bottoms out at `Routes::new()`.
+    private def routes_new_chain?(add_call : LibTreeSitter::TSNode, source : String) : Bool
+      node = add_call
+      256.times do
+        fn = Noir::TreeSitter.field(node, "function")
+        return false unless fn
+        unless Noir::TreeSitter.node_type(fn) == "field_expression"
+          return Noir::TreeSitter.node_text(fn, source).ends_with?("Routes::new")
+        end
+        receiver = Noir::TreeSitter.field(fn, "value")
+        return false unless receiver && Noir::TreeSitter.node_type(receiver) == "call_expression"
+        node = receiver
+      end
+      false
     end
 
     private def absolute_scope_join(prefix : String?, route_path : String) : String
