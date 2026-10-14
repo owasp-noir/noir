@@ -1,6 +1,7 @@
 require "../../../utils/path_scope"
 require "../../../utils/top_level_split"
 require "../../../utils/c_comments"
+require "../../../utils/char_offsets"
 require "../../../miniparsers/dart_callee_extractor"
 
 module Analyzer::Dart
@@ -61,10 +62,12 @@ module Analyzer::Dart
     # Both the argument and the result stay in CHAR space, consistent with
     # `Regex::MatchData#begin`, `Analyzer#line_number_for_index` and the
     # `char_index_to_byte_index` conversions the analyzers use for callee
-    # extraction.
-    def find_matching_paren(text : String, open_idx : Int32) : Int32?
+    # extraction. Pass `offsets` (built over `text`) when calling once per
+    # route: without it the char-to-byte seek is O(open_idx) per call on
+    # any source holding a multi-byte char.
+    def find_matching_paren(text : String, open_idx : Int32, offsets : Noir::CharOffsets? = nil) : Int32?
       depth = 0
-      each_code_char(text, open_idx, text.size) do |c, i|
+      each_code_char(text, open_idx, text.size, offsets) do |c, i|
         case c
         when '('
           depth += 1
@@ -113,8 +116,8 @@ module Analyzer::Dart
     # Yields each char outside string literals, with its CHAR index, from
     # `start` up to `limit`. Reads from a byte offset: materialising
     # `text.chars` cost O(file) per call, so a many-route file was O(n^2).
-    private def each_code_char(text : String, start : Int32, limit : Int32, &)
-      byte = text.char_index_to_byte_index(start)
+    private def each_code_char(text : String, start : Int32, limit : Int32, offsets : Noir::CharOffsets? = nil, &)
+      byte = offsets ? offsets.byte(start) : text.char_index_to_byte_index(start)
       return unless byte
       reader = Char::Reader.new(text, byte)
       i = start
