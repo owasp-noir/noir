@@ -175,8 +175,12 @@ module Noir
         # lines, so a stray quote costs one line rather than the file.
         while @current_char != quote_char && @current_char != '\0' && @current_char != '\n'
           # Handle escape sequences (a `\` before a newline continues the line)
-          if @current_char == '\\' && (peek == quote_char || peek == '\\' || peek == '\n')
+          if @current_char == '\\' && (peek == quote_char || peek == '\\' || peek == '\n' || peek == '\r')
             advance
+            # CRLF line continuation: the `\r` was escaped, the `\n` with it.
+            if @current_char == '\r' && peek == '\n'
+              advance
+            end
           end
 
           io << @current_char

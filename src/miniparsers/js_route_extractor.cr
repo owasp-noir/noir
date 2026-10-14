@@ -1544,7 +1544,9 @@ module Noir
           builder << char
           last_sig = i unless char.whitespace?
           if escaped
-            escaped = false
+            # `\` + CRLF continues the line: the `\n` after the escaped `\r`
+            # is escaped too.
+            escaped = char == '\r'
           elsif char == '\\'
             escaped = true
           elsif (state == :single && char == '\'') ||

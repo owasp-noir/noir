@@ -27,6 +27,11 @@ module Noir
     # Keywords that can precede a regex literal in JavaScript
     REGEX_PRECEDING_KEYWORDS = ["return", "case", "throw", "in", "of", "typeof", "instanceof", "void", "delete", "new"]
 
+    # Words a string operand may follow with no space between (minified
+    # `import{a}from"./x"`, `export*from"./x"`, `await"x"`). Not `else`/`do`:
+    # JSX prose writes `else's` and `do's` far more often than code does.
+    STRING_PRECEDING_KEYWORDS = REGEX_PRECEDING_KEYWORDS + ["from", "import", "export", "yield", "await"]
+
     # Characters that can precede a regex literal (operators/punctuation expecting expression).
     # '<' is deliberately absent: `a < /re/` is never written, while JSX
     # closing tags (`</div>`) put a '/' after '<' on every other line.
@@ -241,6 +246,11 @@ module Noir
           if c == '\\' && pos + 1 < size
             emit(io, window, pending_ws, c)
             pos += 1
+            # `\` + CRLF: emit the escaped `\r` and its `\n` together.
+            if chr(src, pos) == '\r' && pos + 1 < size && chr(src, pos + 1) == '\n'
+              emit(io, window, pending_ws, '\r')
+              pos += 1
+            end
           end
           emit(io, window, pending_ws, chr(src, pos))
           pos += 1
@@ -503,7 +513,13 @@ module Noir
         quote = char
         pos += 1
         while pos < size && (c = chr(src, pos)) != quote && c != '\n'
-          pos += c == '\\' ? 2 : 1
+          pos += if c != '\\'
+                   1
+                 elsif pos + 2 < size && chr(src, pos + 1) == '\r' && chr(src, pos + 2) == '\n'
+                   3 # `\` + CRLF line continuation
+                 else
+                   2
+                 end
         end
         pos += 1 if pos < size && chr(src, pos) == quote
         return pos
@@ -530,7 +546,7 @@ module Noir
       while start > 0 && pos - start <= KEYWORD_WINDOW && ident_char?(chr(src, start - 1))
         start -= 1
       end
-      REGEX_PRECEDING_KEYWORDS.includes?(word_string(src, start, pos))
+      STRING_PRECEDING_KEYWORDS.includes?(word_string(src, start, pos))
     end
 
     # Are the `//` at `pos` the slashes of an `http://` / `https://` URL in

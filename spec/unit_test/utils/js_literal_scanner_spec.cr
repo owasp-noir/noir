@@ -296,4 +296,19 @@ describe Noir::JSLiteralScanner do
       end
     end
   end
+
+  describe "minified string operands and CRLF continuations" do
+    it "opens a string glued to from/import/export/await" do
+      src = %q(import{a}from"./routes//v1";export*from"./x")
+      Noir::JSLiteralScanner.quote_opens_string?(src.chars, src.index!('"')).should be_true
+      Noir::JSLiteralScanner.quote_opens_string?(src.chars, src.rindex!("\"./x")).should be_true
+      Noir::JSLiteralScanner.quote_opens_string?("someone else's".chars, 12).should be_false
+    end
+
+    it "keeps a backslash-CRLF continuation inside the string" do
+      src = "f('abc\\\r\ndef)', 1)"
+      Noir::JSLiteralScanner.find_matching_paren(src, 1).should eq(src.size - 1)
+      Noir::JSLiteralScanner.find_matching_paren_at_byte(src, 1).should eq(src.size - 1)
+    end
+  end
 end
