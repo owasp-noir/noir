@@ -345,7 +345,7 @@ describe "Postman Analyzer" do
       }
       JSON
 
-    endpoints[0].params.select(&.param_type.==("json")).map(&.name).should eq(["name", "age", "id"])
+    endpoints[0].params.select(&.param_type.==("json")).map { |p| {p.name, p.value} }.should eq([{"name", "{{n}}"}, {"age", ""}, {"id", ""}])
   end
 
   it "keeps the base path a host variable carries in a URL object" do
