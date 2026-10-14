@@ -102,6 +102,13 @@ module Analyzer::Specification
       return if method.nil? || url_raw.nil?
       idx += 1
 
+      # REST Client / JetBrains split a long query over indented lines that
+      # start with `?` or `&`; they belong to the URL, not the headers.
+      while idx < size && lines[idx].starts_with?(/[ \t]/) && lines[idx].lstrip.starts_with?(/[?&]/)
+        url_raw += resolve_vars(lines[idx].strip, env)
+        idx += 1
+      end
+
       params = [] of Param
 
       # Headers run until the first blank line.

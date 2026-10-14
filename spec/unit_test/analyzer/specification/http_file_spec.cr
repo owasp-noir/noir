@@ -147,4 +147,20 @@ describe "HTTP/REST File Analyzer" do
 
     endpoints[0].params.select(&.param_type.==("json")).map(&.name).should eq(["productId", "quantity"])
   end
+
+  it "reads indented ?/& continuation lines as query params, not headers" do
+    endpoints = analyze_http_file <<-HTTP
+      GET https://api.example.com/comments
+          ?page=2
+          &pageSize=10
+      Accept: application/json
+      HTTP
+
+    endpoints[0].url.should eq("/comments")
+    endpoints[0].params.map { |p| {p.name, p.value, p.param_type} }.should eq([
+      {"Accept", "application/json", "header"},
+      {"page", "2", "query"},
+      {"pageSize", "10", "query"},
+    ])
+  end
 end
