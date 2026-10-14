@@ -33,7 +33,9 @@ module Analyzer::Php
         byte == 0x0B_u8 || byte == 0x0C_u8 || byte == 0x0D_u8
     end
 
-    private record PhpArrayEntry, key : String, value : String?, array_body : String?
+    # `key_pos` / `body_pos` are byte offsets, in the parsed text, of the key
+    # and of the array value's interior (0 when the value is not an array).
+    private record PhpArrayEntry, key : String, value : String?, array_body : String?, key_pos : Int32, body_pos : Int32
 
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
@@ -82,21 +84,22 @@ module Analyzer::Php
 
     private def analyze_config_routes(path : String, content : String) : Array(Endpoint)
       endpoints = [] of Endpoint
-      route_blocks(content).each do |block|
-        endpoints.concat(parse_routes_block(block, "", ["GET"], path))
+      route_blocks(content).each do |block, block_line|
+        endpoints.concat(parse_routes_block(block, block_line, "", ["GET"], path))
       end
       endpoints
     end
 
-    private def route_blocks(content : String) : Array(String)
-      blocks = [] of String
+    # Each `'routes' => [...]` interior with the line it starts on.
+    private def route_blocks(content : String) : Array(Tuple(String, Int32))
+      blocks = [] of Tuple(String, Int32)
       offset = 0
 
       while match = content.match(/['"]routes['"]\s*=>\s*(?:\[|array\s*\()/i, offset)
         open_pos = match[0].ends_with?("[") ? match.end(0) - 1 : match.end(0) - 1
         close_pos = find_matching_delimiter(content, open_pos)
         if close_pos
-          blocks << content[(open_pos + 1)...close_pos]
+          blocks << {content[(open_pos + 1)...close_pos], line_number_for_index(content, open_pos)}
           offset = close_pos + 1
         else
           offset = match.end(0)
@@ -106,14 +109,14 @@ module Analyzer::Php
       blocks
     end
 
-    private def parse_routes_block(block : String, prefix : String, inherited_methods : Array(String), path : String) : Array(Endpoint)
+    private def parse_routes_block(block : String, block_line : Int32, prefix : String, inherited_methods : Array(String), path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
-      details = Details.new(PathInfo.new(path))
 
       parse_top_level_entries(block).each do |route_entry|
         body = route_entry.array_body
         next unless body
 
+        details = Details.new(PathInfo.new(path, line_in(block, block_line, route_entry.key_pos)))
         entry_info = route_entry_info(body)
         methods = entry_info[:methods].empty? ? inherited_methods : entry_info[:methods]
         child_routes = entry_info[:child_routes]
@@ -132,7 +135,9 @@ module Analyzer::Php
         end
 
         if child_routes
-          endpoints.concat(parse_routes_block(child_routes, full_path, methods, path))
+          body_line = line_in(block, block_line, route_entry.body_pos)
+          child_line = line_in(body, body_line, child_routes.body_pos)
+          endpoints.concat(parse_routes_block(child_routes.array_body || "", child_line, full_path, methods, path))
         end
       end
 
@@ -143,7 +148,7 @@ module Analyzer::Php
       route_path: String?,
       methods: Array(String),
       constraints: Hash(String, String),
-      child_routes: String?,
+      child_routes: PhpArrayEntry?,
       hostname: Bool,
       may_terminate: Bool)
       entries = parse_top_level_entries(body)
@@ -171,7 +176,7 @@ module Analyzer::Php
 
       constraints = extract_constraints(options_entries)
       constraints = nested_route_info[:constraints] if constraints.empty? && nested_route_info
-      child_routes = array_entry(entries, "child_routes")
+      child_routes = entries.find { |entry| entry.key == "child_routes" && entry.array_body }
 
       may_terminate = !type_value.downcase.includes?("part")
       if value = raw_entry(entries, "may_terminate")
@@ -190,7 +195,6 @@ module Analyzer::Php
 
     private def analyze_programmatic_routes(path : String, content : String, include_callee : Bool) : Array(Endpoint)
       endpoints = [] of Endpoint
-      details = Details.new(PathInfo.new(path))
       working_content = strip_php_comments(content)
 
       # The path literal must stay on one line and contain no quotes. The
@@ -203,6 +207,7 @@ module Analyzer::Php
       pos = 0
       while match = offsets.match(verb_regex, pos)
         route_path = normalize_laminas_route_path(match[4])
+        details = Details.new(PathInfo.new(path, offsets.line(offsets.begin(match))))
         methods = match[2].downcase == "any" ? ANY_ROUTE_HTTP_METHODS : [match[2].upcase]
         handler_body, next_pos, body_start_line = extract_handler_body_with_end(offsets, offsets.end(match))
 
@@ -234,6 +239,7 @@ module Analyzer::Php
         if call_close
           call_content = working_content.byte_slice(call_open + 1, call_close - call_open - 1)
           route_path = normalize_laminas_route_path(match[3])
+          details = Details.new(PathInfo.new(path, offsets.line(offsets.begin(match))))
           methods = extract_methods_from_route_call(call_content)
           params = extract_laminas_path_params(route_path)
 
@@ -442,6 +448,7 @@ module Analyzer::Php
         pos = skip_ws_and_commas(bytes, pos)
         break if pos >= size
 
+        key_pos = pos
         key_info = read_php_string(bytes, pos)
         unless key_info
           pos += 1
@@ -465,15 +472,15 @@ module Analyzer::Php
             next
           end
 
-          entries << PhpArrayEntry.new(key, nil, String.new(bytes[(array_start + 1)...close_pos]))
+          entries << PhpArrayEntry.new(key, nil, String.new(bytes[(array_start + 1)...close_pos]), key_pos, array_start + 1)
           pos = close_pos + 1
         elsif value_info = read_php_string(bytes, pos)
           value, after_value = value_info
-          entries << PhpArrayEntry.new(key, value, nil)
+          entries << PhpArrayEntry.new(key, value, nil, key_pos, 0)
           pos = after_value
         else
           value, after_value = read_raw_value(bytes, pos)
-          entries << PhpArrayEntry.new(key, value, nil)
+          entries << PhpArrayEntry.new(key, value, nil, key_pos, 0)
           pos = after_value
         end
       end
@@ -756,6 +763,11 @@ module Analyzer::Php
 
     private def raw_entry(entries : Array(PhpArrayEntry), key : String) : String?
       entries.find { |entry| entry.key == key }.try { |entry| entry.value || entry.array_body }
+    end
+
+    # Line of byte offset `pos` in `text`, which starts on line `base_line`.
+    private def line_in(text : String, base_line : Int32, pos : Int32) : Int32
+      base_line + text.to_slice[0, pos.clamp(0, text.bytesize)].count('\n'.ord.to_u8)
     end
 
     private def array_entry(entries : Array(PhpArrayEntry), key : String) : String?

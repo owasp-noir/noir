@@ -87,7 +87,6 @@ module Analyzer::Php
                                        include_callee : Bool,
                                        base_line : Int32 = 1) : Array(Endpoint)
       endpoints = [] of Endpoint
-      details = Details.new(PathInfo.new(file_path))
 
       working_content = content
 
@@ -121,6 +120,7 @@ module Analyzer::Php
       pos = 0
       while m = offsets.match(verb_regex, pos)
         after_args = offsets.end(m)
+        details = Details.new(PathInfo.new(file_path, base_line + offsets.line(offsets.begin(m)) - 1))
 
         verb = m[2].upcase
         methods = verb == "ANY" ? ANY_VERBS : [verb]
@@ -145,6 +145,7 @@ module Analyzer::Php
       pos = 0
       while m = offsets.match(map_regex, pos)
         after_args = offsets.end(m)
+        details = Details.new(PathInfo.new(file_path, base_line + offsets.line(offsets.begin(m)) - 1))
 
         methods = m[2].scan(/['"]([^'"]+)['"]/).map(&.[1].upcase)
 

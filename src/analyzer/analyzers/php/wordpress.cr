@@ -47,17 +47,17 @@ module Analyzer::Php
       return endpoints unless rest || hooks
 
       content = php_code(content)
-      endpoints.concat(analyze_rest_routes(content, path)) if rest
-      endpoints.concat(analyze_action_hooks(content, path)) if hooks
+      offsets = Noir::CharOffsets.new(content)
+      endpoints.concat(analyze_rest_routes(content, path, offsets)) if rest
+      endpoints.concat(analyze_action_hooks(content, path, offsets)) if hooks
 
       endpoints
     end
 
     # -- REST API --------------------------------------------------------
 
-    private def analyze_rest_routes(content : String, path : String) : Array(Endpoint)
+    private def analyze_rest_routes(content : String, path : String, offsets : Noir::CharOffsets) : Array(Endpoint)
       endpoints = [] of Endpoint
-      details = Details.new(PathInfo.new(path))
 
       properties = string_properties(content)
       offset = 0
@@ -82,6 +82,7 @@ module Analyzer::Php
           if namespace && route
             full_path = build_rest_path(namespace, route)
             path_params = extract_wp_path_params(full_path)
+            details = Details.new(PathInfo.new(path, offsets.line(call_start)))
 
             rest_handlers(parts[2]? || "").each do |method, arg_names|
               params = path_params.dup
@@ -220,9 +221,8 @@ module Analyzer::Php
 
     # -- Admin AJAX / admin-post ----------------------------------------
 
-    private def analyze_action_hooks(content : String, path : String) : Array(Endpoint)
+    private def analyze_action_hooks(content : String, path : String, offsets : Noir::CharOffsets) : Array(Endpoint)
       endpoints = [] of Endpoint
-      details = Details.new(PathInfo.new(path))
       seen = Set(String).new
 
       # add_action('wp_ajax_foo', ...) / wp_ajax_nopriv_foo
@@ -241,6 +241,7 @@ module Analyzer::Php
 
         base_path = hook_prefix.starts_with?("wp_ajax_") ? ADMIN_AJAX_PATH : ADMIN_POST_PATH
         url = "#{base_path}?action=#{action}"
+        details = Details.new(PathInfo.new(path, offsets.line(offsets.begin(match))))
 
         DISPATCH_METHODS.each do |method|
           dedup_key = "#{method} #{url}"

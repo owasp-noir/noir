@@ -44,9 +44,12 @@ module Analyzer::Php
     private def analyze_routes_content(content : String,
                                        prefix : String,
                                        file_path : String,
-                                       include_callee : Bool) : Array(Endpoint)
+                                       include_callee : Bool,
+                                       base_line : Int32 = 1) : Array(Endpoint)
       endpoints = [] of Endpoint
-      details = Details.new(PathInfo.new(file_path))
+      offsets = Noir::CharOffsets.new(content)
+      # Line of a route matched at byte offset `byte`.
+      line_at = ->(byte : Int32) { base_line + offsets.line(offsets.char(byte)) - 1 }
 
       # `scope()`/`prefix()`/`plugin()` each open a nested RouteBuilder whose
       # routes inherit a URL prefix. Extract their bodies first so the verb
@@ -74,6 +77,7 @@ module Analyzer::Php
         full_path = build_full_path(prefix, route_path)
         target = extract_controller_action_target(options_str)
         methods = extract_connect_methods(statement)
+        details = Details.new(PathInfo.new(file_path, line_at.call(route_match.byte_begin(0))))
 
         methods.each do |method|
           params = extract_route_params(full_path)
@@ -97,7 +101,8 @@ module Analyzer::Php
           full_path = build_full_path(prefix, route_path)
           params = extract_route_params(full_path)
           target = extract_controller_action_target(route_match[3]?)
-          endpoint = Endpoint.new(full_path, method, params, details.dup)
+          details = Details.new(PathInfo.new(file_path, line_at.call(route_match.byte_begin(0))))
+          endpoint = Endpoint.new(full_path, method, params, details)
           attach_route_target_callees(endpoint, target, file_path) if include_callee
           endpoints << endpoint
           pos = route_match.byte_end(0)
@@ -115,14 +120,15 @@ module Analyzer::Php
         resource_name = route_match[2]
         args = route_match[3]
         full_resource_path = build_full_path(prefix, resource_url_name(resource_name, args))
-        endpoints.concat(create_resource_endpoints(full_resource_path, file_path, include_callee, resource_name, args))
+        details = Details.new(PathInfo.new(file_path, line_at.call(route_match.byte_begin(0))))
+        endpoints.concat(create_resource_endpoints(full_resource_path, file_path, details, include_callee, resource_name, args))
         pos = route_match.byte_end(0)
       end
 
       # 4. Recurse into each scope/prefix/plugin body with its prefix applied.
       scopes.each do |scope|
         new_prefix = build_full_path(prefix, scope.prefix)
-        endpoints.concat(analyze_routes_content(scope.body, new_prefix, file_path, include_callee))
+        endpoints.concat(analyze_routes_content(scope.body, new_prefix, file_path, include_callee, line_at.call(scope.body_start)))
       end
 
       endpoints
@@ -286,11 +292,11 @@ module Analyzer::Php
 
     private def create_resource_endpoints(resource_path : String,
                                           file_path : String,
+                                          details : Details,
                                           include_callee : Bool,
                                           controller_name : String,
                                           args : String) : Array(Endpoint)
       endpoints = [] of Endpoint
-      details = Details.new(PathInfo.new(file_path))
 
       # RouteBuilder's resource map: {path, verb, controller action, map key}.
       # `only` names the map keys (`create`/`update`), not the actions.
