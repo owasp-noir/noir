@@ -228,21 +228,24 @@ module Noir
         return pos
       end
 
-      # Skip string literals (single/double quotes)
-      if char == '"' || char == '\''
+      # Skip string literals (single/double quotes). The literal ends at an
+      # unescaped newline too, which is left for the caller to scan.
+      if (char == '"' || char == '\'') && quote_opens_string?(src, pos)
         quote = char
         emit(io, window, pending_ws, char)
         pos += 1
-        while pos < size && chr(src, pos) != quote
-          if chr(src, pos) == '\\' && pos + 1 < size
-            emit(io, window, pending_ws, chr(src, pos))
+        while pos < size && (c = chr(src, pos)) != quote && c != '\n'
+          if c == '\\' && pos + 1 < size
+            emit(io, window, pending_ws, c)
             pos += 1
           end
-          emit(io, window, pending_ws, chr(src, pos)) if pos < size
+          emit(io, window, pending_ws, chr(src, pos))
           pos += 1
         end
-        emit(io, window, pending_ws, quote) if pos < size && chr(src, pos) == quote
-        pos += 1
+        if pos < size && chr(src, pos) == quote
+          emit(io, window, pending_ws, quote)
+          pos += 1
+        end
         return pos
       end
 
@@ -492,18 +495,14 @@ module Noir
         return pos
       end
 
-      # Skip string literals
-      if char == '"' || char == '\''
+      # Skip string literals, which end at an unescaped newline too
+      if (char == '"' || char == '\'') && quote_opens_string?(src, pos)
         quote = char
         pos += 1
-        while pos < size && chr(src, pos) != quote
-          if chr(src, pos) == '\\' && pos + 1 < size
-            pos += 2
-          else
-            pos += 1
-          end
+        while pos < size && (c = chr(src, pos)) != quote && c != '\n'
+          pos += c == '\\' ? 2 : 1
         end
-        pos += 1
+        pos += 1 if pos < size && chr(src, pos) == quote
         return pos
       end
 
@@ -511,6 +510,28 @@ module Noir
       return template_literal_end(src, size, pos) if char == '`'
 
       nil
+    end
+
+    # Does the quote at `pos` open a string literal? JavaScript never puts
+    # a string right after a name, so a quote glued to a word is prose: JSX
+    # text such as `<p>We don't track you</p>`, whose apostrophe would
+    # otherwise open a string that hides every delimiter after it. Keywords
+    # that take an operand are the exception (`return'x'`, minified
+    # `case"a":`). Non-ASCII counts as a word char, so the byte and char
+    # walks agree on a multi-byte letter before the quote.
+    def self.quote_opens_string?(src, pos : Int32) : Bool
+      return true if pos == 0 || !ident_char?(chr(src, pos - 1))
+
+      # Stop past the longest keyword: a longer word is no keyword.
+      start = pos - 1
+      while start > 0 && pos - start <= KEYWORD_WINDOW && ident_char?(chr(src, start - 1))
+        start -= 1
+      end
+      REGEX_PRECEDING_KEYWORDS.includes?(word_string(src, start, pos))
+    end
+
+    private def self.ident_char?(char : Char) : Bool
+      word_char?(char) || char.ord >= 0x80
     end
 
     # Does the '/' at `pos` start a regex literal, judged by looking back

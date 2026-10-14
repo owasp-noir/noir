@@ -889,6 +889,25 @@ describe Noir::JSRouteExtractor do
       stripped.should contain("app.get('/x', h);")
       stripped.should_not contain("gone")
     end
+
+    it "does not open a string at an apostrophe in JSX text" do
+      content = <<-JSX
+        const el = <p>We don't track you</p>;
+        // gone
+        app.get('/x', h);
+        JSX
+
+      stripped = Noir::JSRouteExtractor.strip_js_comments(content)
+      stripped.should contain("app.get('/x', h);")
+      stripped.should_not contain("gone")
+    end
+
+    it "ends a stray string at the newline" do
+      content = "const el = <p>'quoted</p>;\n// gone\napp.get('/x', h);"
+
+      stripped = Noir::JSRouteExtractor.strip_js_comments(content)
+      stripped.should_not contain("gone")
+    end
   end
   describe "line_for_char_pos" do
     it "resolves a char index on non-ASCII content" do
@@ -928,6 +947,33 @@ describe Noir::JSRouteExtractor do
         lines = endpoints.to_h { |e| {"#{e.method} #{e.url}", e.details.code_paths.first.line} }
         lines["GET /users"].should eq(6)
         lines["POST /items"].should eq(10)
+      ensure
+        file.delete
+      end
+    end
+  end
+
+  describe "routes after JSX text with an apostrophe" do
+    it "keeps every route and handler param below it" do
+      content = <<-JS
+        app.get('/about', (c) => {
+          const name = c.req.query('name')
+          return c.html(<p>We don't track you, {name}</p>)
+        })
+
+        app.post('/submit', async (c) => {
+          const token = c.req.header('X-Token')
+          return c.text('ok')
+        })
+        JS
+      file = File.tempfile("noir_js_jsx", ".tsx")
+      begin
+        File.write(file.path, content)
+        endpoints = Noir::JSRouteExtractor.extract_routes(file.path, content)
+        endpoints.map { |e| {e.method, e.url, e.params.map(&.name)} }.uniq!.should eq([
+          {"GET", "/about", ["name"]},
+          {"POST", "/submit", ["X-Token"]},
+        ])
       ensure
         file.delete
       end

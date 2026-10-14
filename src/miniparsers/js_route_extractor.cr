@@ -1519,11 +1519,8 @@ module Noir
             escaped = false
             in_char_class = false
           else
-            case char
-            when '\''
-              state = :single
-            when '"'
-              state = :double
+            if (char == '\'' || char == '"') && JSLiteralScanner.quote_opens_string?(chars, i)
+              state = char == '\'' ? :single : :double
             end
           end
           builder << char
@@ -1536,7 +1533,8 @@ module Noir
           elsif char == '\\'
             escaped = true
           elsif (state == :single && char == '\'') ||
-                (state == :double && char == '"')
+                (state == :double && char == '"') ||
+                char == '\n' # string literals cannot span lines unescaped
             state = :code
           end
         when :regex

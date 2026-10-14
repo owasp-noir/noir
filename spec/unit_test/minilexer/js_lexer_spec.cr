@@ -230,5 +230,14 @@ describe Noir::JSLexer do
         tokens.last.value.should eq("z")
       end
     end
+
+    it "lexes a JSX apostrophe as prose and ends a stray string at the newline" do
+      tokens = Noir::JSLexer.new("<p>We don't</p>\n'z'").tokenize
+      tokens.last.type.should eq(:string)
+      tokens.last.value.should eq("z")
+      tokens = Noir::JSLexer.new("<p>'quoted</p>\n'z'").tokenize
+      tokens.last.value.should eq("z")
+      Noir::JSLexer.new("return'x'").tokenize.last.type.should eq(:string)
+    end
   end
 end

@@ -82,6 +82,13 @@ expected_endpoints = [
   Endpoint.new("/nested-search", "QUERY", [
     Param.new("term", "", "json"),
   ]),
+  # jsx.tsx: routes after JSX text holding an apostrophe
+  Endpoint.new("/about", "GET", [
+    Param.new("name", "", "query"),
+  ]),
+  Endpoint.new("/submit", "POST", [
+    Param.new("X-Token", "", "header"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/javascript/hono/", {

@@ -76,7 +76,13 @@ module Noir
           add_token(:dot, ".")
           advance
         when '"', '\''
-          tokenize_string
+          if JSLiteralScanner.quote_opens_string?(@chars, @position)
+            tokenize_string
+          else
+            # Prose apostrophe (JSX text such as `don't`), not a string.
+            add_token(:unknown, @current_char.to_s)
+            advance
+          end
         when '`'
           tokenize_template_literal
         when '+'
@@ -165,9 +171,11 @@ module Noir
       # reallocated the whole accumulated value on every char, turning long
       # literals quadratic.
       string_value = String.build do |io|
-        while @current_char != quote_char && @current_char != '\0'
-          # Handle escape sequences
-          if @current_char == '\\' && (peek == quote_char || peek == '\\')
+        # An unescaped newline ends it too: string literals cannot span
+        # lines, so a stray quote costs one line rather than the file.
+        while @current_char != quote_char && @current_char != '\0' && @current_char != '\n'
+          # Handle escape sequences (a `\` before a newline continues the line)
+          if @current_char == '\\' && (peek == quote_char || peek == '\\' || peek == '\n')
             advance
           end
 
