@@ -21,7 +21,9 @@ module Noir::Redact
   # `@` inside the password is covered too. Applied to the whole text, not
   # per `URL_IN_TEXT` match: that one stops at `'` and `,`, which a password may
   # hold (`http://admin:pa'ss@host`), and the cut-off match had no `@`.
-  private USERINFO = %r{(?<=://)[^/?#\s"\]]*@}
+  # It stops at `',` too: an option dump lists values as `['a', 'b']`, and
+  # crossing into the next entry would mask an email's host as userinfo.
+  private USERINFO = %r{(?<=://)(?:(?!',)[^/?#\s"\]])*@}
 
   # A query value; AI gateways take `?key=` / `?code=` credentials.
   private QUERY_VALUE = /(?<=[?&])([^=&#]*)=[^&#]*/

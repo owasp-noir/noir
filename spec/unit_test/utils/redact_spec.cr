@@ -45,6 +45,7 @@ describe Noir::Redact do
     Noir::Redact.option("url", any("http://x.com/a@b")).should eq("http://x.com/a@b")
     Noir::Redact.url("via http://admin:s3cr,et@127.0.0.1:9.").should eq("via http://***@127.0.0.1:9.")
     Noir::Redact.url("https://u:p'w@host/").should eq("https://***@host/")
+    Noir::Redact.url("['http://api.example.com','ops@corp.com']").should eq("['http://api.example.com','ops@corp.com']")
   end
 
   it "reduces a webhook URL to its origin" do
