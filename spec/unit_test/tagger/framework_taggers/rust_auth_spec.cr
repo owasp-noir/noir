@@ -182,4 +182,33 @@ describe "RustAuthTagger" do
 
     FileUtils.rm_rf(tmpdir)
   end
+
+  it "keeps an Axum layer's tag when the layered router is nested under a prefix" do
+    tmpdir = File.tempname("axum_layer_nest")
+    Dir.mkdir_p(File.join(tmpdir, "src"))
+    main_rs = File.join(tmpdir, "src", "main.rs")
+    File.write(main_rs, [
+      "fn app() -> Router {",
+      "    let api = Router::new()",
+      "        .route(\"/users\", get(list))",
+      "        .layer(middleware::from_fn(require_auth));",
+      "    Router::new().nest(\"/api\", api).route(\"/health\", get(health))",
+      "}",
+    ].join("\n"))
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    CodeLocator.instance.register_path(main_rs)
+
+    endpoints = [{"/api/users", 3}, {"/health", 5}].map do |url, line|
+      details = Details.new(PathInfo.new(main_rs, line))
+      details.technology = "rust_axum"
+      Endpoint.new(url, "GET", [] of Param, details)
+    end
+    RustAuthTagger.new(noir_options).perform(endpoints)
+
+    endpoints.reject(&.tags.empty?).map(&.url).should eq(["/api/users"])
+
+    FileUtils.rm_rf(tmpdir)
+  end
 end

@@ -56,7 +56,7 @@ class RustAuthTagger < FrameworkTagger
 
   def initialize(options : Hash(String, YAML::Any))
     super
-    @middleware_scopes = [] of {prefix: String, exact: Bool, description: String}
+    @middleware_scopes = [] of {prefix: String, exact: Bool, local: Bool, description: String}
   end
 
   def self.target_techs : Array(String)
@@ -121,6 +121,7 @@ class RustAuthTagger < FrameworkTagger
             @middleware_scopes << {
               prefix:      path,
               exact:       kind == "route",
+              local:       true,
               description: "Protected by Rust #{middleware_name} middleware on #{path}",
             }
           end
@@ -128,6 +129,7 @@ class RustAuthTagger < FrameworkTagger
           @middleware_scopes << {
             prefix:      prefix,
             exact:       false,
+            local:       false,
             description: "Protected by Rust #{middleware_name} middleware on #{prefix}",
           }
         end
@@ -333,7 +335,13 @@ class RustAuthTagger < FrameworkTagger
     url = endpoint.url
 
     @middleware_scopes.each do |scope|
-      covered = scope[:exact] ? url == scope[:prefix] : PrefixScope.prefix_covers?(scope[:prefix], url)
+      prefix = scope[:prefix]
+      covered = scope[:exact] ? url == prefix : PrefixScope.prefix_covers?(prefix, url)
+      # An Axum layer names router-local paths; that router may itself be
+      # `.nest`ed, so `/users` also covers `/api/users`.
+      if !covered && scope[:local] && prefix.starts_with?('/') && prefix.size > 1
+        covered = url.ends_with?(prefix) || (!scope[:exact] && url.includes?("#{prefix}/"))
+      end
       return scope[:description] if covered
     end
 
