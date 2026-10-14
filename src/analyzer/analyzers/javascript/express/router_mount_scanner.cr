@@ -1039,8 +1039,13 @@ module Analyzer::Javascript
         return {key: nil, note: "", var: router_var}
       end
 
-      nil
+      # A same-file router (`const v1 = express.Router()`): nothing to key,
+      # but its imported children (`v1.use('/users', usersRouter)`) resolve
+      # their parent prefix through the variable.
+      {key: nil, note: "", var: router_var} if router_var.matches?(LOCAL_ROUTER_VAR_RE)
     end
+
+    LOCAL_ROUTER_VAR_RE = /\A[A-Za-z_$][\w$]*\z/
 
     # Unified helper: Resolve router variable and store prefix to CodeLocator
     private def resolve_and_store_router_prefix(
@@ -1130,7 +1135,53 @@ module Analyzer::Javascript
       file_contexts : Hash(String, FileContext),
       locator : CodeLocator,
     )
-      remaining = global_deferred_mounts
+      remaining = resolve_deferred_fix_point(global_deferred_mounts, file_contexts, locator)
+
+      # Pass 3 is Express's alone. Its "no other mount reached this child"
+      # guard reads the shared prefix table, so it is only sound for a
+      # scanner that saw every mount. Hono's scanner skips Express files: it
+      # missed `app.use('/legacy', groups())`, placed the unplaced
+      # `router.use('/api/v3/groups', …)` at the root, and whether Express
+      # then reported a phantom `/api/v3/groups/:gid` depended on which
+      # analyzer started first. (A `.use()` is never a Hono sub-app mount.)
+      return unless @framework == :express
+
+      # A same-file router mounted on an app that is not named `app`
+      # (`server.use('/api', apiRouter)`) is placed at the root first, so
+      # the routers it mounts in turn resolve under it rather than at `/`.
+      if place_unplaced_local_mounts(remaining, file_contexts)
+        remaining = resolve_deferred_fix_point(remaining, file_contexts, locator)
+      end
+      place_unplaced_mounts(remaining, file_contexts, locator)
+    end
+
+    # Mounts of same-file routers whose parent was never located: their
+    # variable takes the mount prefix, as `place_unplaced_mounts` does for
+    # imported children. Returns whether any variable was placed.
+    private def place_unplaced_local_mounts(
+      remaining : Array(Tuple(String, String, String, String)),
+      file_contexts : Hash(String, FileContext),
+    ) : Bool
+      eligible = remaining.compact_map do |main_file, _caller, prefix, router_var|
+        ctx = file_contexts[main_file]? || next
+        target = router_prefix_target(router_var, nil, main_file,
+          ctx[:require_map], ctx[:function_map], ctx[:var_to_function])
+        next unless target && target[:key].nil?
+        var = target[:var] || next
+        {ctx[:var_prefix], var, prefix} if ctx[:var_prefix][var].empty?
+      end
+
+      eligible.each do |var_prefix, var, prefix|
+        var_prefix[var] << prefix unless var_prefix[var].includes?(prefix)
+      end
+      !eligible.empty?
+    end
+
+    private def resolve_deferred_fix_point(
+      remaining : Array(Tuple(String, String, String, String)),
+      file_contexts : Hash(String, FileContext),
+      locator : CodeLocator,
+    ) : Array(Tuple(String, String, String, String))
       max_iterations = 10
       iteration = 0
 
@@ -1171,14 +1222,7 @@ module Analyzer::Javascript
         break unless resolved_any
       end
 
-      # Pass 3 is Express's alone. Its "no other mount reached this child"
-      # guard reads the shared prefix table, so it is only sound for a
-      # scanner that saw every mount. Hono's scanner skips Express files: it
-      # missed `app.use('/legacy', groups())`, placed the unplaced
-      # `router.use('/api/v3/groups', …)` at the root, and whether Express
-      # then reported a phantom `/api/v3/groups/:gid` depended on which
-      # analyzer started first. (A `.use()` is never a Hono sub-app mount.)
-      place_unplaced_mounts(remaining, file_contexts, locator) if @framework == :express
+      remaining
     end
 
     # PASS 3: mounts whose parent router was never located.
