@@ -1737,7 +1737,7 @@ describe "EndpointOptimizer source-document merges" do
     result = optimizer.optimize_endpoints([collection, code])
     result.size.should eq(1)
     result[0].url.should eq("/users/:id")
-    result[0].params.map { |param| {param.name, param.param_type} }.sort.should eq([{"id", "path"}, {"q", "query"}])
+    result[0].params.map { |param| {param.name, param.param_type} }.sort!.should eq([{"id", "path"}, {"q", "query"}])
   end
 
   it "keeps a noise-named header the code reads when a collection sorts first" do
@@ -1772,7 +1772,7 @@ describe "EndpointOptimizer source-document merges" do
       tech_endpoint("/users/42", "GET", "postman", "c.postman_collection.json"),
       tech_endpoint("/items/7", "GET", "postman", "c.postman_collection.json"),
     ])
-    result.map(&.url).sort.should eq(["/items/<int:id>", "/users/:id"])
+    result.map(&.url).sort!.should eq(["/items/<int:id>", "/users/:id"])
   end
 
   it "prefers a rule naming the param over a type-wide default regardless of order" do
