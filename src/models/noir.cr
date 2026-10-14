@@ -37,6 +37,9 @@ class NoirRunner
   # `Noir::SkippedFiles` at the end of each phase rather than read live, so
   # the diff runner's own detect pass cannot wipe this runner's findings.
   @scan_failures = [] of AnalyzerFailure
+  # Routes `--exclude-codes` dropped from this scan's report. They are still
+  # in the code, so the diff must not call the old side's copy "removed".
+  @status_excluded = Set({String, String}).new
 
   getter options, techs, endpoints, logger, passive_results
   setter endpoints, techs
@@ -214,7 +217,13 @@ class NoirRunner
 
     # Set status code
     if any_to_bool(@options["status_codes"]) || !@options["exclude_codes"].to_s.empty?
-      @endpoints = StatusCodeProbe.new(@options, @logger).apply(@endpoints)
+      probed = StatusCodeProbe.new(@options, @logger).apply(@endpoints)
+      kept = probed.map { |endpoint| {endpoint.url, endpoint.method} }.to_set
+      @endpoints.each do |endpoint|
+        route = {endpoint.url, endpoint.method}
+        @status_excluded << route unless kept.includes?(route)
+      end
+      @endpoints = probed
     end
 
     # Taggers and the AI-context builder match route text; see
@@ -344,7 +353,8 @@ class NoirRunner
     # Either scan dying makes the diff unreliable; SARIF says so through
     # `executionSuccessful`.
     builder.analyzer_failures = analyzer_failures + diff_app.analyzer_failures
-    result = builder.diff(@endpoints, diff_app.endpoints)
+    old_endpoints = diff_app.endpoints.reject { |endpoint| @status_excluded.includes?({endpoint.url, endpoint.method}) }
+    result = builder.diff(@endpoints, old_endpoints)
 
     case options["format"]
     when "yaml"

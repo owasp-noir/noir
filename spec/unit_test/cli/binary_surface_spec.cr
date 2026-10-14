@@ -607,6 +607,22 @@ describe "noir CLI surface (built binary)" do
       end
     end
 
+    # The new side still drops 404s; a route present on both sides that
+    # 404s live was then reported as removed although the code keeps it.
+    it "does not report a route still in the code as removed when it is excluded by status" do
+      server = HTTP::Server.new(&.response.status_code=(404))
+      address = server.bind_tcp("127.0.0.1", 0)
+      spawn { server.listen }
+      Fiber.yield
+      begin
+        result = run_noir(["scan", FIXTURE, "--diff-path", FIXTURE, "--exclude-codes", "404",
+                           "-u", "http://127.0.0.1:#{address.port}", "--no-color", "--no-log", "-f", "json"])
+        JSON.parse(result.stdout)["removed"].as_a.should be_empty
+      ensure
+        server.close
+      end
+    end
+
     it "refuses --diff-ref together with --diff-path" do
       result = run_noir(["scan", FIXTURE, "--diff-ref", "HEAD", "--diff-path", DIFF_FIXTURE,
                          "--no-color", "--no-log"])
