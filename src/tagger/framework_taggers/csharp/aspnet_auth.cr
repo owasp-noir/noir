@@ -140,10 +140,12 @@ class AspnetAuthTagger < FrameworkTagger
   end
 
   private def has_allow_anonymous?(lines : Array(String), method_line : Int32) : Bool
+    return true if minimal_api_statement(lines, method_line).try(&.matches?(ALLOW_ANONYMOUS_PATTERN))
     idx = method_line - 1
     while idx >= 0 && idx >= method_line - 5
       current = lines[idx].strip
       break if current.empty? && idx < method_line - 1
+      break if current.ends_with?(';')
       return true if current.matches?(ALLOW_ANONYMOUS_PATTERN)
       idx -= 1
     end
@@ -151,10 +153,19 @@ class AspnetAuthTagger < FrameworkTagger
   end
 
   private def check_method_attributes(lines : Array(String), method_line : Int32) : String?
+    if statement = minimal_api_statement(lines, method_line)
+      AUTHORIZE_PATTERNS.each do |pattern, desc|
+        return desc if statement.matches?(pattern)
+      end
+    end
+
     idx = method_line - 1
     while idx >= 0 && idx >= method_line - 8
       current = lines[idx].strip
       break if current.empty? && idx < method_line - 1
+      # The end of the previous statement: what sits above it decorates
+      # something else (`app.MapGet("/a", [Authorize] () => ...);`).
+      break if current.ends_with?(';')
 
       AUTHORIZE_PATTERNS.each do |pattern, desc|
         return desc if current.matches?(pattern)
@@ -188,6 +199,13 @@ class AspnetAuthTagger < FrameworkTagger
       return check_minimal_api_fluent(lines, idx, depth + 1)
     end
     nil
+  end
+
+  # A minimal API route carries its attributes on the handler lambda inside
+  # its own statement (`app.MapGet("/x", [Authorize] () => ...)`), never on
+  # the lines above it.
+  private def minimal_api_statement(lines : Array(String), line_idx : Int32) : String?
+    statement_at(lines, line_idx) if lines[line_idx].matches?(MINIMAL_API_RECEIVER)
   end
 
   private def statement_at(lines : Array(String), line_idx : Int32) : String

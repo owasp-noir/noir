@@ -95,6 +95,35 @@ describe "AspnetAuthTagger" do
       FileUtils.rm_rf(tmpdir)
     end
 
+    it "reads [Authorize] on the route's own lambda, not the previous statement's" do
+      noir_options = create_test_options
+      tmpdir = File.tempname("aspnet_minimal_lambda")
+      Dir.mkdir_p(tmpdir)
+      program = File.join(tmpdir, "Program.cs")
+      File.write(program, [
+        "var app = builder.Build();",
+        "",
+        "app.MapGet(\"/secret\", [Authorize] () => \"secret\");",
+        "app.MapGet(\"/open\", () => \"open\");",
+        "app.Run();",
+      ].join("\n"))
+      noir_options["base"] = YAML::Any.new(tmpdir)
+
+      secret_details = Details.new(PathInfo.new(program, 3))
+      secret_details.technology = "cs_aspnet_core_minimal_api"
+      secret = Endpoint.new("/secret", "GET", [] of Param, secret_details)
+      open_details = Details.new(PathInfo.new(program, 4))
+      open_details.technology = "cs_aspnet_core_minimal_api"
+      open = Endpoint.new("/open", "GET", [] of Param, open_details)
+
+      AspnetAuthTagger.new(noir_options).perform([secret, open])
+
+      secret.tags.map(&.description).should eq(["Protected by ASP.NET [Authorize]"])
+      open.tags.empty?.should be_true
+
+      FileUtils.rm_rf(tmpdir)
+    end
+
     it "does not tag a route whose chain opts out via .AllowAnonymous()" do
       noir_options = create_test_options
       tmpdir = File.tempname("aspnet_minimal_anon")
