@@ -1,8 +1,11 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
+require "../prefix_scope"
 
 @[Noir::TaggerFor(key: "hono_auth", name: "Hono Auth Tagger", desc: "Identifies Hono authentication patterns (bearerAuth, jwt, basicAuth, custom middleware)", order: 250)]
 class HonoAuthTagger < FrameworkTagger
+  include PrefixScope
+
   # Hono official auth middleware
   HONO_AUTH_MIDDLEWARE = [
     {/\bbearerAuth\s*\(/, "Hono bearerAuth middleware"},
@@ -57,17 +60,10 @@ class HonoAuthTagger < FrameworkTagger
         lines.each do |line|
           stripped = line.strip
 
-          # Match app.use('/prefix', authMiddleware) or app.use(auth)
+          # Match app.use('/prefix', authMiddleware), app.use('/prefix/*', …)
+          # and the app-wide app.use('*', …)
           if stripped =~ /(?:app|router|hono)\.use\s*\(\s*['"]([^'"]+)['"]\s*,/
             prefix = $1
-            if has_auth_middleware_in_line?(stripped)
-              @use_auth_scopes << {prefix: prefix, description: "Protected by Hono app.use() auth on #{prefix}"}
-            end
-          end
-
-          # app.use('/prefix/*', ...)
-          if stripped =~ /(?:app|router|hono)\.use\s*\(\s*['"]([^'"]+\*)['"]\s*,/
-            prefix = $1.gsub("*", "")
             if has_auth_middleware_in_line?(stripped)
               @use_auth_scopes << {prefix: prefix, description: "Protected by Hono app.use() auth on #{prefix}"}
             end
@@ -202,12 +198,9 @@ class HonoAuthTagger < FrameworkTagger
   private def check_use_scopes(endpoint : Endpoint) : String?
     url = endpoint.url
     @use_auth_scopes.each do |scope|
-      prefix = scope[:prefix]
-      # Normalize Hono /* prefixes and do proper prefix matching
-      normalized = prefix.gsub(/\/\*$/, "/")
-      if url.starts_with?(normalized) || url.starts_with?(prefix)
-        return scope[:description]
-      end
+      # A trailing Hono wildcard (`/admin/*`, `*`) is the prefix itself;
+      # `*` alone is the root.
+      return scope[:description] if prefix_covers?(scope[:prefix].rchop('*'), url)
     end
     nil
   end

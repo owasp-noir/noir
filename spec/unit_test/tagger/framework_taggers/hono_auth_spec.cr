@@ -139,4 +139,42 @@ describe "HonoAuthTagger" do
 
     FileUtils.rm_rf(tmpdir)
   end
+
+  it "applies an app.use('*') auth middleware to every route, segment-aware for prefixes" do
+    tmpdir = File.tempname("hono_wildcard")
+    Dir.mkdir_p(tmpdir)
+    index_ts = File.join(tmpdir, "index.ts")
+    File.write(index_ts, [
+      "const app = new Hono()",
+      "app.use('*', bearerAuth({ token }))",
+      "app.get('/api/page', (c) => {",
+      "  return c.json({ message: 'You are authorized' })",
+      "})",
+    ].join("\n"))
+    admin_ts = File.join(tmpdir, "admin.ts")
+    File.write(admin_ts, [
+      "const app = new Hono()",
+      "app.use('/admin/*', jwt({ secret }))",
+      "app.get('/administration', (c) => c.text('x'))",
+      "app.get('/admin/stats', (c) => c.text('x'))",
+    ].join("\n"))
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    CodeLocator.instance.register_path(index_ts)
+
+    page = Endpoint.new("/api/page", "GET", [] of Param, Details.new(PathInfo.new(index_ts, 3)))
+    HonoAuthTagger.new(noir_options).perform([page])
+    page.tags.map(&.description).should eq(["Protected by Hono app.use() auth on *"])
+
+    CodeLocator.instance.clear_all
+    CodeLocator.instance.register_path(admin_ts)
+    administration = Endpoint.new("/administration", "GET", [] of Param, Details.new(PathInfo.new(admin_ts, 3)))
+    stats = Endpoint.new("/admin/stats", "GET", [] of Param, Details.new(PathInfo.new(admin_ts, 4)))
+    HonoAuthTagger.new(noir_options).perform([administration, stats])
+    administration.tags.should be_empty
+    stats.tags.map(&.description).should eq(["Protected by Hono app.use() auth on /admin/*"])
+
+    FileUtils.rm_rf(tmpdir)
+  end
 end
