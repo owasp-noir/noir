@@ -88,7 +88,8 @@ module Analyzer::Java
           end
 
           Noir::TreeSitterJaxRsExtractor.extract_routes_from(root, content, dto_index, bean_index, subresource_sources,
-            custom_verb_annotations: custom_verb_annotations, include_callees: include_callee).each do |route|
+            custom_verb_annotations: custom_verb_annotations, include_callees: include_callee,
+            project_constants: java_project_constants(path)).each do |route|
             @result << jvm_route_endpoint(route, Noir::URLPath.join_trimmed(configured_base_path, route.path), route.file_path || path)
           end
         end
@@ -160,7 +161,7 @@ module Analyzer::Java
           key = {project_root, package_name}
           next if base_paths.has_key?(key)
 
-          if base_path = Noir::TreeSitterJaxRsExtractor.extract_application_path_from(root, content)
+          if base_path = Noir::TreeSitterJaxRsExtractor.extract_application_path_from(root, content, java_project_constants(path))
             base_paths[key] = base_path
           end
         end

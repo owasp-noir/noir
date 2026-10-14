@@ -147,9 +147,10 @@ module Noir
     # responsibility.
     def extract_routes_from(root : LibTreeSitter::TSNode,
                             source : String,
-                            external_meta_mappings = Hash(String, ClassMapping).new) : Array(Route)
+                            external_meta_mappings = Hash(String, ClassMapping).new,
+                            constants : Hash(String, String)? = nil) : Array(Route)
       routes = [] of Route
-      constants = extract_string_constants_from(root, source)
+      constants ||= extract_string_constants_from(root, source)
       meta_mappings = external_meta_mappings.dup
       collect_meta_mappings(root, source, constants, meta_mappings)
       walk_classes(root, source, [""], [] of String, [] of Param, routes, constants, meta_mappings)
@@ -167,8 +168,9 @@ module Noir
 
     def extract_interface_routes_from(root : LibTreeSitter::TSNode,
                                       source : String,
-                                      external_meta_mappings = Hash(String, ClassMapping).new) : Hash(String, Array(Route))
-      constants = extract_string_constants_from(root, source)
+                                      external_meta_mappings = Hash(String, ClassMapping).new,
+                                      constants : Hash(String, String)? = nil) : Hash(String, Array(Route))
+      constants ||= extract_string_constants_from(root, source)
       meta_mappings = external_meta_mappings.dup
       collect_meta_mappings(root, source, constants, meta_mappings)
       routes = Hash(String, Array(Route)).new { |hash, key| hash[key] = [] of Route }
@@ -178,8 +180,9 @@ module Noir
 
     def extract_controller_interface_implementations_from(root : LibTreeSitter::TSNode,
                                                           source : String,
-                                                          external_meta_mappings = Hash(String, ClassMapping).new) : Array(ControllerInterfaceImplementation)
-      constants = extract_string_constants_from(root, source)
+                                                          external_meta_mappings = Hash(String, ClassMapping).new,
+                                                          constants : Hash(String, String)? = nil) : Array(ControllerInterfaceImplementation)
+      constants ||= extract_string_constants_from(root, source)
       meta_mappings = external_meta_mappings.dup
       collect_meta_mappings(root, source, constants, meta_mappings)
       implementations = [] of ControllerInterfaceImplementation
@@ -187,11 +190,35 @@ module Noir
       implementations
     end
 
-    def extract_string_constants_from(root : LibTreeSitter::TSNode, source : String) : Hash(String, String)
+    # `project_constants` seeds the table with other files' qualified
+    # constants (`Paths.API`, `com.ex.Paths.API`, see
+    # `JavaEngine#java_project_constants`) so `@RequestMapping(Paths.API)`
+    # and `BASE = Paths.API + "/x"` resolve across files. This file's own
+    # qualified keys overwrite the seed. Only the names this file actually
+    # spells are copied — the project table can be thousands of entries.
+    def extract_string_constants_from(root : LibTreeSitter::TSNode,
+                                      source : String,
+                                      project_constants : Hash(String, String)? = nil) : Hash(String, String)
       constants = Hash(String, String).new
+      if project_constants && !project_constants.empty?
+        source.scan(DOTTED_NAME_RE) do |match|
+          chain = match[0]
+          # `Paths.API.length()` spells `Paths.API` as a prefix.
+          dot = chain.index('.')
+          while dot
+            name = chain[...(chain.index('.', dot + 1) || chain.size)]
+            if value = project_constants[name]?
+              constants[name] = value
+            end
+            dot = chain.index('.', dot + 1)
+          end
+        end
+      end
       collect_string_constants(root, source, package_name(root, source), [] of String, constants)
       constants
     end
+
+    DOTTED_NAME_RE = /(?<![\w$])[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+/
 
     # ---- private helpers ----------------------------------------------
 
@@ -1181,7 +1208,9 @@ module Noir
         return
       end
 
-      if ty == "field_declaration" && string_field?(node, source)
+      # Interface fields (`interface Routes { String BASE = "/v3"; }`) are
+      # `constant_declaration` nodes — implicitly `public static final`.
+      if (ty == "field_declaration" || ty == "constant_declaration") && string_field?(node, source)
         Noir::TreeSitter.each_named_child(node) do |child|
           next unless Noir::TreeSitter.node_type(child) == "variable_declarator"
           name = Noir::TreeSitter.field(child, "name")
@@ -1193,8 +1222,10 @@ module Noir
           constants[const_name] ||= resolved
           unless class_stack.empty?
             class_name = class_stack.join(".")
-            constants["#{class_name}.#{const_name}"] ||= resolved
-            constants["#{package_name}.#{class_name}.#{const_name}"] ||= resolved unless package_name.empty?
+            # `=`, not `||=`: a qualified key is unique within one file, so
+            # this only ever replaces a project-wide seed of the same name.
+            constants["#{class_name}.#{const_name}"] = resolved
+            constants["#{package_name}.#{class_name}.#{const_name}"] = resolved unless package_name.empty?
           end
         end
       end

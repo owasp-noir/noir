@@ -186,7 +186,7 @@ module Analyzer::Java
             # the per-route parameter walks (and the WebSocket branches
             # below) instead of rebuilding it — a full recursive tree walk
             # — on every emitted route.
-            file_constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants_from(root, content)
+            file_constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants_from(root, content, java_project_constants(path))
 
             # The method-declaration index used to resolve callee call
             # sites is likewise file-scoped; build it once (only when
@@ -196,7 +196,7 @@ module Analyzer::Java
             # Same for the handler-method lookups below (built on the first route).
             param_index = nil.as(Noir::TreeSitterJavaParameterExtractor::FileIndex?)
 
-            Noir::TreeSitterJavaRouteExtractor.extract_routes_from(root, content, visible_meta_mappings).each do |route|
+            Noir::TreeSitterJavaRouteExtractor.extract_routes_from(root, content, visible_meta_mappings, file_constants).each do |route|
               is_feign_client = feign_clients.includes?(route.class_name)
               is_http_exchange_client = http_exchange_clients.includes?(route.class_name)
               is_internal_client = is_feign_client || is_http_exchange_client
@@ -241,7 +241,7 @@ module Analyzer::Java
               @result << endpoint
             end
 
-            Noir::TreeSitterJavaRouteExtractor.extract_controller_interface_implementations_from(root, content, visible_meta_mappings).each do |implementation|
+            Noir::TreeSitterJavaRouteExtractor.extract_controller_interface_implementations_from(root, content, visible_meta_mappings, file_constants).each do |implementation|
               implementation.interface_names.each do |interface_name|
                 next if implementation.paths.empty?
                 # Concrete @Override that re-declares its own mapping
@@ -344,7 +344,10 @@ module Analyzer::Java
           # when callees are requested (and constants are resolved once,
           # not once-per-block).
           Noir::TreeSitter.parse_java(content) do |root|
-            constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants_from(root, content)
+            # Every non-annotation `.java` file lands here; only router
+            # files are worth seeding (a copy of) the project table into.
+            project_constants = content_matches?(content, REGEX_ROUTER_CODE_BLOCK) ? java_project_constants(path) : nil
+            constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants_from(root, content, project_constants)
             content.scan(REGEX_ROUTER_CODE_BLOCK) do |route_code|
               method_code = route_code[0]
               # Pick up `nest(RequestPredicates.path("/prefix"), ...)`
@@ -434,7 +437,7 @@ module Analyzer::Java
         next unless needs_stomp || needs_meta
 
         Noir::TreeSitter.parse_java(content) do |root|
-          constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants_from(root, content)
+          constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants_from(root, content, java_project_constants(path))
 
           if needs_stomp
             collected = collect_stomp_application_prefixes(content, constants)
@@ -487,7 +490,8 @@ module Analyzer::Java
           next if package_name.empty?
 
           visible_meta_mappings = visible_meta_annotation_mappings(path, content, package_name, meta_annotation_index)
-          Noir::TreeSitterJavaRouteExtractor.extract_interface_routes_from(root, content, visible_meta_mappings).each do |interface_name, routes|
+          constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants_from(root, content, java_project_constants(path))
+          Noir::TreeSitterJavaRouteExtractor.extract_interface_routes_from(root, content, visible_meta_mappings, constants).each do |interface_name, routes|
             routes.each do |route|
               index.add(project_root_for(path), package_name, interface_name, SpringInterfaceRouteEntry.new(route, path, content, package_name))
             end

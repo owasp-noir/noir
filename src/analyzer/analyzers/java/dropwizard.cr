@@ -92,7 +92,8 @@ module Analyzer::Java
           base_path = path_config.base_path
 
           Noir::TreeSitterJaxRsExtractor.extract_routes_from(root, content, dto_index, bean_index, subresource_sources,
-            custom_verb_annotations: custom_verb_annotations, include_callees: include_callee).each do |route|
+            custom_verb_annotations: custom_verb_annotations, include_callees: include_callee,
+            project_constants: java_project_constants(path)).each do |route|
             line = route.line + 1
             details = Details.new(PathInfo.new(route.file_path || path, line))
             endpoint = Endpoint.new(Noir::URLPath.join_trimmed(base_path, route.path), route.verb, route.params, details)

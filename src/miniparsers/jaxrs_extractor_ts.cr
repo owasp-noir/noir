@@ -146,10 +146,11 @@ module Noir
                             subresource_sources : Hash(String, SourceEntry) = {} of String => SourceEntry,
                             *,
                             custom_verb_annotations : Hash(String, String) = {} of String => String,
-                            include_callees : Bool = false) : Array(Route)
+                            include_callees : Bool = false,
+                            project_constants : Hash(String, String)? = nil) : Array(Route)
       routes = [] of Route
       classes = collect_classes(root, source)
-      constants = TreeSitterJavaRouteExtractor.extract_string_constants_from(root, source)
+      constants = TreeSitterJavaRouteExtractor.extract_string_constants_from(root, source, project_constants)
       classes.each_value do |decl|
         next unless Noir::TreeSitter.node_type(decl) == "class_declaration"
         class_name = type_identifier_text(decl, source)
@@ -186,8 +187,10 @@ module Noir
       collect_classes(root, source).keys
     end
 
-    def extract_application_path_from(root : LibTreeSitter::TSNode, source : String) : String?
-      constants = TreeSitterJavaRouteExtractor.extract_string_constants_from(root, source)
+    def extract_application_path_from(root : LibTreeSitter::TSNode,
+                                      source : String,
+                                      project_constants : Hash(String, String)? = nil) : String?
+      constants = TreeSitterJavaRouteExtractor.extract_string_constants_from(root, source, project_constants)
       collect_classes(root, source).each_value do |decl|
         class_name = type_identifier_text(decl, source)
         if path = annotation_string_value(decl, "ApplicationPath", source, constants, class_name)
