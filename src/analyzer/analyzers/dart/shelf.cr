@@ -306,9 +306,12 @@ module Analyzer::Dart
     end
 
     # Callees of the `=>`/`{` body starting at or after BYTE offset `start_b`
-    # of the original source.
-    private def callees_after(fco : Noir::CharOffsets, start_b : Int32, path : String) : Array(Noir::DartCalleeExtractor::Entry)
-      body_info = Noir::DartCalleeExtractor.extract_body_after(fco.content, start_b)
+    # of the original source, and ending by BYTE offset `limit`.
+    private def callees_after(fco : Noir::CharOffsets,
+                              start_b : Int32,
+                              path : String,
+                              limit : Int32 = fco.content.bytesize) : Array(Noir::DartCalleeExtractor::Entry)
+      body_info = Noir::DartCalleeExtractor.extract_body_after(fco.content, start_b, limit)
       return [] of Noir::DartCalleeExtractor::Entry unless body_info
 
       body, body_start, _ = body_info
@@ -502,7 +505,10 @@ module Analyzer::Dart
       end
 
       # close_paren is a CHAR index; extract_body_after scans by BYTE offset.
-      callees_after(fco, fco.byte(close_paren - handler_arg.size), path)
+      # The lambda ends with the route call: unbounded, an arrow body ran to
+      # the next `;`, which for a `..get(...)..get(...)` cascade is the end
+      # of the whole chain, so every route took every later route's callees.
+      callees_after(fco, fco.byte(close_paren - handler_arg.size), path, fco.byte(close_paren))
     end
 
     private def extract_mount_child(arg : String) : String?

@@ -4,7 +4,7 @@ require "../../../src/models/code_locator"
 require "../../../src/utils/http_symbols"
 require "../../../src/analyzer/analyzers/dart/shelf"
 
-private def scan_shelf(files : Hash(String, String)) : Tuple(Array(Endpoint), Time::Span)
+private def scan_shelf(files : Hash(String, String), callees : Bool = false) : Tuple(Array(Endpoint), Time::Span)
   temp_dir = File.tempname("dart_shelf")
   CodeLocator.instance.clear_all
   files.each do |relative, content|
@@ -15,6 +15,7 @@ private def scan_shelf(files : Hash(String, String)) : Tuple(Array(Endpoint), Ti
   end
   options = create_test_options
   options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+  options["include_callee"] = YAML::Any.new(true) if callees
   endpoints = [] of Endpoint
   elapsed = Time.measure { endpoints = Analyzer::Dart::Shelf.new(options).analyze }
   {endpoints, elapsed}
@@ -42,5 +43,22 @@ describe Analyzer::Dart::Shelf do
     ascii.size.should eq(3000)
     cjk.map(&.url).should eq(ascii.map(&.url))
     cjk_time.should be < ascii_time * 4 + 1.second
+  end
+
+  # An arrow handler's body ran to the next `;`, which in a `..get(...)`
+  # cascade is the end of the whole chain: every route rescanned the rest.
+  it "bounds a cascade arrow handler's callee body at its route call" do
+    source = String.build do |io|
+      io << "import 'package:shelf_router/shelf_router.dart';\nfinal r = Router()\n"
+      1000.times { |i| io << "  ..get('/p#{i}', (req) => Response.ok(render#{i}()))\n" }
+      io << ";\n"
+    end
+
+    plain, plain_time = scan_shelf({"bin/server.dart" => source})
+    with_callees, callee_time = scan_shelf({"bin/server.dart" => source}, callees: true)
+
+    with_callees.map(&.url).should eq(plain.map(&.url))
+    with_callees.find! { |e| e.url == "/p0" }.callees.map(&.name).sort!.should eq(["Response.ok", "render0"])
+    callee_time.should be < plain_time * 4 + 1.second
   end
 end
