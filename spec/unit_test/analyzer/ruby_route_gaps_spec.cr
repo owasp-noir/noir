@@ -98,4 +98,26 @@ describe "Ruby route gaps" do
     urls.should_not contain("GET /posts/1/comments/1")
     urls.should_not contain("GET /admin/posts/1/comments/1")
   end
+
+  it "routes symbol verbs inside a Rails controller block to that controller" do
+    endpoints = scan_ruby_tree({
+      "Gemfile"          => RAILS_GEMFILE,
+      "config/routes.rb" => <<-RUBY,
+      Rails.application.routes.draw do
+        controller :static do
+          get :privacy
+          get :terms
+        end
+        scope controller: :pages do
+          get :about
+        end
+      end
+      RUBY
+      "app/controllers/pages_controller.rb" => "class PagesController < ApplicationController\n  def about\n    params[:lang]\n  end\nend\n",
+    })
+
+    find_ep(endpoints, "GET", "/privacy")
+    find_ep(endpoints, "GET", "/terms")
+    param_names(find_ep(endpoints, "GET", "/about"), "query").should eq(%w[lang])
+  end
 end

@@ -696,13 +696,17 @@ module Analyzer::Ruby
       # e.g. inside a bare `namespace :apps`. The symbol is a literal
       # path segment (`/api/v1/apps/verify_credentials`), not a resource
       # action. Requires an explicit destination so a bare `get :foo`
-      # with no controller context isn't fabricated into a route.
-      if (am = rest.match(/^\s*:(\w+)\b/)) && explicit_route_destination?(rest)
+      # with no controller context isn't fabricated into a route. A
+      # `controller :pages do` / `scope controller: :pages do` block is that
+      # context: `get :privacy` there is `pages#privacy`.
+      scoped_controller = current_controller_scope(stack)
+      if (am = rest.match(/^\s*:(\w+)\b/)) && (scoped_controller || explicit_route_destination?(rest))
         segment = am[1]
         prefix = current_path_prefix_for_route(stack, route_scope)
         url = prefix.empty? ? "/#{segment}" : "/#{prefix}/#{segment}"
 
-        ctrl_action = parse_controller_action(rest, current_controller_scope(stack))
+        ctrl_action = parse_controller_action(rest, scoped_controller)
+        ctrl_action ||= {scoped_controller, segment} if scoped_controller && !explicit_route_destination?(rest)
         ctrl_path = nil.as(String?)
         action_name = nil.as(String?)
         action_params = [] of Param
