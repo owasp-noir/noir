@@ -163,6 +163,16 @@ describe ConfigInitializer do
   # the run exited 0 with AI analysis silently skipped. The generated
   # template models the quoted spelling itself (`concurrency: "…"`), so it is
   # the shape users copy.
+  describe "unknown_key_warnings" do
+    it "names an unknown key and suggests the closest real one" do
+      known = ConfigInitializer.new.default_options.keys
+      ConfigInitializer.unknown_key_warnings(["no_log", "base", "zzzzzz"], known).should eq([
+        "WARNING: unknown config key 'no_log' (did you mean 'nolog'?); it has no effect.",
+        "WARNING: unknown config key 'zzzzzz'; it has no effect.",
+      ])
+    end
+  end
+
   describe "integer key coercion" do
     it "coerces a quoted ai_max_token into an Int" do
       with_noir_home("ai_max_token: \"4000\"\n") do |options|
