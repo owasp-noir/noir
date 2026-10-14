@@ -44,19 +44,114 @@ module Analyzer::Clojure
     # so it is provably equivalent to the OR-of-substrings it replaces.
     COMPOJURE_SOURCE_RE = Regex.union("compojure.core", "compojure.api", "defroutes", "(context")
 
+    # A `(defroutes name ...)` body, mountable by `(context "/p" [] name)`.
+    record RoutesDef, path : String, source : String, body_start : Int32, form_end : Int32
+
+    NS_FORM_RE = /\(\s*ns\s/
+
+    @defroutes = {} of String => RoutesDef
+    # Defroutes reached only through a `context`: not served at the root.
+    @context_only = Set(String).new
+    @expanding = Set(String).new
+
     def analyze
       include_callee = callees_needed?
+      sources = [] of Tuple(String, String)
       all_files.each do |path|
         next unless Noir::ClojureScanner.clojure_file?(path)
 
         content = read_file_content(path)
         next unless compojure_source?(content)
 
+        sources << {path, content}
+      end
+
+      index_mounted_routes(sources)
+      sources.each do |path, content|
         scan_forms(content, 0, content.bytesize, "", path, include_callee)
       end
 
       Fiber.yield
       @result
+    end
+
+    # Index every `defroutes` and count how often each is mounted by a
+    # `context`. One that appears nowhere else (outside `ns` forms) is
+    # context-only.
+    private def index_mounted_routes(sources : Array(Tuple(String, String)))
+      context_refs = Hash(String, Int32).new(0)
+      sources.each do |path, content|
+        index_forms(content, 0, content.bytesize, path, context_refs)
+      end
+
+      context_refs.each do |name, count|
+        next unless @defroutes.has_key?(name)
+        @context_only << name if symbol_occurrences(name, sources) == count + 1
+      end
+    end
+
+    private def index_forms(source : String, start_index : Int32, end_index : Int32, path : String, context_refs : Hash(String, Int32))
+      i = start_index
+      while i < end_index
+        case source.byte_at(i).unsafe_chr
+        when ';'
+          i = Noir::ClojureScanner.skip_comment(source, i, end_index)
+        when '"'
+          i = Noir::ClojureScanner.skip_string(source, i, end_index) + 1
+        when '#'
+          i = Noir::ClojureScanner.skip_hash(source, i, end_index)
+        when '('
+          form_end = Noir::ClojureScanner.find_matching_delimiter(source, i, '(', ')', end_index)
+          break if form_end <= i
+
+          symbol_start = Noir::ClojureScanner.skip_ws_and_comments(source, i + 1, form_end)
+          symbol, after_symbol = Noir::ClojureScanner.read_symbol(source, symbol_start, form_end)
+          case Noir::ClojureScanner.base_symbol(symbol)
+          when "defroutes"
+            name_start = Noir::ClojureScanner.skip_ws_and_comments(source, after_symbol, form_end)
+            name, body_start = Noir::ClojureScanner.read_symbol(source, name_start, form_end)
+            @defroutes[name] ||= RoutesDef.new(path, source, body_start, form_end) unless name.empty?
+          when "context"
+            each_context_symbol(source, after_symbol, form_end) { |name| context_refs[name] += 1 }
+          end
+          index_forms(source, after_symbol, form_end, path, context_refs)
+          i = form_end + 1
+        else
+          i += 1
+        end
+      end
+    end
+
+    # Bare symbols mounted by a `context` form, after its path and binding.
+    private def each_context_symbol(source : String, args_start : Int32, form_end : Int32, &)
+      context_path, path_end = route_path_literal(source, args_start, form_end)
+      return unless context_path
+
+      i = resource_end_of_value(source, path_end + 1, form_end) # binding vector
+      while i < form_end
+        i = Noir::ClojureScanner.skip_ws_and_comments(source, i, form_end)
+        break if i >= form_end
+        value_end = resource_end_of_value(source, i, form_end)
+        break if value_end <= i
+        yield Noir::ClojureScanner.base_symbol(source.byte_slice(i, value_end - i)) if source.byte_at(i).unsafe_chr.ascii_letter?
+        i = value_end
+      end
+    end
+
+    # Bare-symbol occurrences of `name` across the sources, `ns` forms
+    # excluded (a `:refer [name]` is not a mount).
+    private def symbol_occurrences(name : String, sources : Array(Tuple(String, String))) : Int32
+      symbol_re = /(?:^|[\s(\[{'@~^#\/])#{Regex.escape(name)}(?=[\s)\]},]|$)/
+      sources.sum do |_, content|
+        next 0 unless content.includes?(name)
+        if (ns = content.match(NS_FORM_RE)) && (ns_start = ns.byte_begin(0))
+          ns_end = Noir::ClojureScanner.find_matching_delimiter(content, ns_start, '(', ')', content.bytesize)
+          if ns_end > ns_start
+            content = content.byte_slice(0, ns_start) + content.byte_slice(ns_end + 1)
+          end
+        end
+        content.scan(symbol_re).size
+      end
     end
 
     private def compojure_source?(content : String) : Bool
@@ -90,7 +185,17 @@ module Analyzer::Clojure
             context_path = normalize_route_path(context_path) if context_path
             next_prefix = context_path ? Noir::URLPath.absolute_join(prefix, context_path) : prefix
             scan_forms(source, after_symbol, form_end, next_prefix, path, include_callee)
-          when "defroutes", "routes"
+            # `(context "/users" [] user-routes)` mounts a `defroutes` by name.
+            each_context_symbol(source, after_symbol, form_end) do |name|
+              next unless (mounted = @defroutes[name]?) && @expanding.add?(name)
+              scan_forms(mounted.source, mounted.body_start, mounted.form_end, next_prefix, mounted.path, include_callee)
+              @expanding.delete(name)
+            end
+          when "defroutes"
+            name_start = Noir::ClojureScanner.skip_ws_and_comments(source, after_symbol, form_end)
+            name, _ = Noir::ClojureScanner.read_symbol(source, name_start, form_end)
+            scan_forms(source, after_symbol, form_end, prefix, path, include_callee) unless @context_only.includes?(name)
+          when "routes"
             scan_forms(source, after_symbol, form_end, prefix, path, include_callee)
           when "resource"
             # compojure.api.resource: `(resource {:get {...} :post {...}})`
