@@ -1722,3 +1722,71 @@ describe "EndpointOptimizer" do
     end
   end
 end
+
+describe "EndpointOptimizer source-document merges" do
+  logger = NoirLogger.new(false, false, false, false)
+
+  it "keeps the code's path params when a collection that sorts first is promoted" do
+    optimizer = EndpointOptimizer.new(logger, create_test_options)
+    collection = tech_endpoint("/users/:userId", "GET", "postman", "aaa.postman_collection.json")
+    collection.params << Param.new("userId", "42", "path")
+    code = tech_endpoint("/users/:id", "GET", "js_express", "server.js", 3)
+    code.params << Param.new("id", "", "path")
+    code.params << Param.new("q", "", "query")
+
+    result = optimizer.optimize_endpoints([collection, code])
+    result.size.should eq(1)
+    result[0].url.should eq("/users/:id")
+    result[0].params.map { |param| {param.name, param.param_type} }.sort.should eq([{"id", "path"}, {"q", "query"}])
+  end
+
+  it "keeps a noise-named header the code reads when a collection sorts first" do
+    optimizer = EndpointOptimizer.new(logger, create_test_options)
+    collection = tech_endpoint("/cors", "POST", "postman", "aaa.postman_collection.json")
+    collection.params << Param.new("Accept", "", "header")
+    code = tech_endpoint("/cors", "POST", "js_express", "server.js", 3)
+    code.params << Param.new("origin", "", "header")
+
+    result = optimizer.optimize_endpoints([collection, code])
+    result[0].params.map(&.name).should eq(["origin"])
+  end
+
+  it "gives struct copies their own params and tags" do
+    optimizer = EndpointOptimizer.new(logger, create_test_options)
+    admin = tech_endpoint("/admin/stats", "GET", "rust_warp", "main.rs", 7)
+    open = admin
+    open.url = "/public/stats"
+
+    result = optimizer.optimize_endpoints([admin, open])
+    result[0].params << Param.new("leak", "", "path")
+    result[0].add_tag(Tag.new("admin", "", "test"))
+    result[1].params.should be_empty
+    result[1].tags.should be_empty
+  end
+
+  it "folds a concrete collection request into a colon or angle-bracket template" do
+    optimizer = EndpointOptimizer.new(logger, create_test_options)
+    result = optimizer.optimize_endpoints([
+      tech_endpoint("/users/:id", "GET", "js_express", "server.js", 3),
+      tech_endpoint("/items/<int:id>", "GET", "python_flask", "app.py", 3),
+      tech_endpoint("/users/42", "GET", "postman", "c.postman_collection.json"),
+      tech_endpoint("/items/7", "GET", "postman", "c.postman_collection.json"),
+    ])
+    result.map(&.url).sort.should eq(["/items/<int:id>", "/users/:id"])
+  end
+
+  it "prefers a rule naming the param over a type-wide default regardless of order" do
+    options = create_test_options
+    options["set_pvalue_query"] = YAML::Any.new([YAML::Any.new("1"), YAML::Any.new("limit=10")])
+    optimizer = EndpointOptimizer.new(logger, options)
+    optimizer.apply_pvalue("query", "limit", "").should eq("10")
+    optimizer.apply_pvalue("query", "page", "").should eq("1")
+  end
+
+  it "keeps a URL value whole instead of splitting it at the scheme colon" do
+    options = create_test_options
+    options["set_pvalue_query"] = YAML::Any.new([YAML::Any.new("https://evil.example/")])
+    optimizer = EndpointOptimizer.new(logger, options)
+    optimizer.apply_pvalue("query", "q", "").should eq("https://evil.example/")
+  end
+end

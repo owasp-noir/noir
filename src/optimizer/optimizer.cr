@@ -142,20 +142,26 @@ class EndpointOptimizer
       # one field (`-H 'Host: a' -H 'Host: b'`), which is not a request any
       # server can answer. Deduping here makes the emitted list agree with
       # what every consumer already computes from it.
-      if endpoint.params.present?
-        tiny_tmp.params = [] of Param
-        seen_params = Set(Tuple(String, String)).new
-        endpoint.params.each do |param|
-          next if param.name.includes?(" ") || param.name.blank?
-          next unless seen_params.add?({param.name, param.request_type})
-          # `request_type`, not `param_type`: the fourteen analyzers that
-          # spell a request body `body` rather than `json` produce params no
-          # `--pvalue json=` (or `--pvalue any=`) rule ever matched, so their
-          # fields stayed empty in every output and in the probe payload.
-          # Every other consumer already dispatches on the canonical bucket.
-          param.value = apply_pvalue(param.request_type, param.name, param.value).to_s
-          tiny_tmp.params << param
-        end
+      #
+      # The arrays are always rebuilt, even when empty: an analyzer that
+      # emits one struct per mount prefix (`ep = endpoint`) hands over copies
+      # sharing one `params`/`tags`/`callees` array, and the path-param pass
+      # and the taggers append in place — so a param or an auth tag added to
+      # `/admin/x` showed up on its `/public/x` sibling.
+      tiny_tmp.params = [] of Param
+      tiny_tmp.tags = endpoint.tags.dup
+      tiny_tmp.callees = endpoint.callees.dup
+      seen_params = Set(Tuple(String, String)).new
+      endpoint.params.each do |param|
+        next if param.name.includes?(" ") || param.name.blank?
+        next unless seen_params.add?({param.name, param.request_type})
+        # `request_type`, not `param_type`: the fourteen analyzers that
+        # spell a request body `body` rather than `json` produce params no
+        # `--pvalue json=` (or `--pvalue any=`) rule ever matched, so their
+        # fields stayed empty in every output and in the probe payload.
+        # Every other consumer already dispatches on the canonical bucket.
+        param.value = apply_pvalue(param.request_type, param.name, param.value).to_s
+        tiny_tmp.params << param
       end
 
       # An endpoint with no URL is not addressable, so it cannot be reported.
@@ -302,6 +308,7 @@ class EndpointOptimizer
       next unless candidates = templates[{source.method, concrete_segments.size}]?
 
       candidates.each do |target_idx, template_segments|
+        next if target_idx == source_idx
         next unless template_matches_concrete_example?(template_segments, concrete_segments)
 
         endpoints[target_idx] = merge_endpoint_context(endpoints[target_idx], source)
@@ -320,7 +327,9 @@ class EndpointOptimizer
   private def concrete_example_source?(endpoint : Endpoint) : Bool
     return false if endpoint.url.empty?
     return false if endpoint.url.matches?(ABSOLUTE_URL_RE)
-    return false if templated_url?(endpoint.url)
+    # Only `{}` disqualifies: a collection's `/users/:userId` is a path
+    # variable the request fills in, so it still folds into a code template.
+    return false if endpoint.url.includes?("{") && endpoint.url.includes?("}")
     return false if graphql_endpoint?(endpoint)
     collection_endpoint?(endpoint)
   end
@@ -333,7 +342,7 @@ class EndpointOptimizer
   end
 
   private def templated_url?(url : String) : Bool
-    url.includes?("{") && url.includes?("}")
+    (url.includes?("{") && url.includes?("}")) || url.matches?(WHOLE_SEGMENT_PLACEHOLDER_RE)
   end
 
   private def collection_endpoint?(endpoint : Endpoint) : Bool
@@ -387,7 +396,8 @@ class EndpointOptimizer
   end
 
   private def placeholder_segment?(segment : String) : Bool
-    !!segment.match(/\A\{[A-Za-z_][A-Za-z0-9_]*(?::[^{}]+)?\}\z/)
+    # `{id}` / `{id:regex}`, Express/Rails `:id`, Flask `<id>` / `<int:id>`.
+    segment.matches?(/\A(?:\{[A-Za-z_][A-Za-z0-9_]*(?::[^{}]+)?\}|:[A-Za-z_]\w*|<(?:[A-Za-z_]\w*:)?[A-Za-z_]\w*>)\z/)
   end
 
   private def example_path_value?(segment : String) : Bool
@@ -401,7 +411,9 @@ class EndpointOptimizer
     if graphql_endpoint?(target) || graphql_endpoint?(source)
       target = merge_graphql_params(target, source)
     else
-      merge_params(target, source, source_collection_pair?(target, source))
+      # The template's URL is kept, so the example's path params (a
+      # collection's `:userId` variable) would name slots it does not have.
+      merge_params(target, source, source_collection_pair?(target, source), skip_path: target.url != source.url)
     end
 
     source.tags.each { |tag| merge_tag(target, tag) }
@@ -460,6 +472,14 @@ class EndpointOptimizer
 
     details = target.details
     details.technology = source.details.technology if source.details.technology
+    # The document's path params name the document's slots; once the URL is
+    # the code's spelling (`/users/:id`, not `/users/:userId`), only the
+    # code's path params describe it. `merge_params` skipped the source's
+    # path params for exactly this mismatch, so take them now.
+    if target.url != source.url
+      target.params.reject! { |param| param.param_type == "path" }
+      source.params.each { |param| target.params << param if param.param_type == "path" }
+    end
     target.url = source.url
 
     promoted = [] of PathInfo
@@ -471,7 +491,12 @@ class EndpointOptimizer
     end
     details.code_paths = promoted
     target.details = details
-    target.params.reject! { |param| collection_noise_header_param?(param) }
+    # Strip the collection's boilerplate headers, but not one the handler
+    # itself reads (`req.headers['origin']`): that one is real input.
+    target.params.reject! do |param|
+      collection_noise_header_param?(param) &&
+        source.params.none? { |own| own.name == param.name && own.request_type == param.request_type }
+    end
     target
   end
 
