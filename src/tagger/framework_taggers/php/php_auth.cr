@@ -33,6 +33,10 @@ class PhpAuthTagger < FrameworkTagger
   LARAVEL_GROUP_OPEN       = /(?:->|::)group\s*\(\s*(?:\[(?:[^\[\]]|\[[^\]]*\])*\]\s*,\s*)?(?:static\s+)?(?:function|fn)\b/
   LARAVEL_GROUP_MIDDLEWARE = /['"]middleware['"]\s*=>\s*(?:\[[^\]]*?)?['"](?:auth(?::[\w,]+)?|verified)['"]/
 
+  # `Route::get(...)->withoutMiddleware('auth')`: the route opts out of the
+  # auth middleware its group applies.
+  LARAVEL_WITHOUT_AUTH = [{/->withoutMiddleware\s*\(\s*(?:\[[^\]]*)?['"]auth(?::[\w,]+)?['"]/, ""}]
+
   # Laravel controller middleware
   LARAVEL_CONTROLLER_MIDDLEWARE = [
     {/\$this->middleware\s*\(\s*['"]auth['"]/, "Laravel controller auth middleware"},
@@ -161,17 +165,21 @@ class PhpAuthTagger < FrameworkTagger
       next if line_num < 1 || line_num > lines.size
       line_idx = line_num - 1
 
-      # Check route-level middleware (Laravel + Slim groups etc.)
-      route_patterns = LARAVEL_ROUTE_MIDDLEWARE + SLIM_YII_CI_PATTERNS
-      description = check_patterns_near_line(lines, line_idx, route_patterns, 3)
-      if description
-        endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "php_auth"))
-        return
-      end
+      # A route that calls `->withoutMiddleware('auth')` is outside the auth
+      # middleware its group (or the group-opening line above it) applies.
+      unless check_patterns_near_line(lines, line_idx, LARAVEL_WITHOUT_AUTH, 10)
+        # Check route-level middleware (Laravel + Slim groups etc.)
+        route_patterns = LARAVEL_ROUTE_MIDDLEWARE + SLIM_YII_CI_PATTERNS
+        description = check_patterns_near_line(lines, line_idx, route_patterns, 3)
+        if description
+          endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "php_auth"))
+          return
+        end
 
-      if description = group_auth_lines(path_info.path, lines)[line_idx]
-        endpoint.add_tag(Tag.new("auth", "Protected by #{description} (group)", "php_auth"))
-        return
+        if description = group_auth_lines(path_info.path, lines)[line_idx]
+          endpoint.add_tag(Tag.new("auth", "Protected by #{description} (group)", "php_auth"))
+          return
+        end
       end
 
       # Check controller constructor middleware (walk back to find class)
