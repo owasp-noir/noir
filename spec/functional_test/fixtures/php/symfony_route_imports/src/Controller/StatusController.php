@@ -12,4 +12,10 @@ class StatusController
     {
         return new Response();
     }
+
+    public function help(): string
+    {
+        // Route-shaped text inside a string literal is not a route.
+        return "Use #[Route('/in-string')] to declare routes";
+    }
 }

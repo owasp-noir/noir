@@ -97,7 +97,8 @@ module Analyzer::Php
       # present (`@Route` or `#[Route`).
       return endpoints unless content.includes?("Route")
       return endpoints unless content.includes?("@Route") || content.includes?("#[Route")
-      content = php_code(content)
+      lexer = Noir::PhpLexer.new(content)
+      content = lexer.without_comments
 
       class_prefixes = extract_class_route_prefixes(content)
       import_prefixes = import_prefixes_for(path)
@@ -117,6 +118,10 @@ module Analyzer::Php
           next unless route_start
           offset = route_start + full_match.size
           next if route_applies_to_class?(content, offset)
+          # An attribute is code; `#[Route(...)]` written inside a string
+          # literal is text. (`@Route` lives in a docblock, so it can't be
+          # checked this way.)
+          next if full_match.starts_with?('#') && !lexer.in_code?(route_start)
 
           # Extract methods from the annotation/attribute itself
           methods = extract_methods_from_symfony_context(full_match)
