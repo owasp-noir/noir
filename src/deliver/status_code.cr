@@ -1,29 +1,13 @@
 require "../models/deliver"
 require "../models/endpoint"
-require "../models/logger"
-require "../utils/http_symbols"
-require "../utils/utils"
-require "crest"
-require "wait_group"
 
 # Fills in `details.status_code` for every endpoint (`--status-codes`) and
 # drops the ones whose code the user excluded (`--exclude-codes`).
 #
-# Deliberately not a `Deliver` subclass, even though it is the other thing in
-# noir that fires HTTP requests at discovered endpoints. A status probe runs
-# before delivery, ignores `--probe-match` / `--probe-skip`, and sends none of
-# the `--probe-header` values — it exists to answer "does this route respond,
-# and with what", not to replay traffic. Inheriting the sender base would
-# quietly give it all three.
-class StatusCodeProbe
-  include ProbeConcurrency
-
-  @options : Hash(String, YAML::Any)
-  @logger : NoirLogger
-
-  def initialize(@options : Hash(String, YAML::Any), @logger : NoirLogger)
-  end
-
+# A `Deliver` subclass so it requests the same URL (`probe_url`) with the
+# same headers (`probe_headers`) as every other probe. `--probe-match` /
+# `--probe-skip` still don't apply: only the senders call `apply_all`.
+class StatusCodeProbe < Deliver
   def apply(endpoints : Array(Endpoint)) : Array(Endpoint)
     @logger.sub "➔ Updating status codes."
 
@@ -88,7 +72,8 @@ class StatusCodeProbe
     is_json = !endpoint_hash["json"].empty?
     body = is_json ? endpoint_hash["json"] : endpoint_hash["form"]
 
-    perform_request(get_symbol(request_method), wire_url(endpoint.url), endpoint_hash["query"], body, is_json)
+    perform_request(get_symbol(request_method), probe_url(endpoint, request_method), endpoint_hash["query"], body, is_json,
+      probe_headers(endpoint))
   end
 
   # A Set dedupes repeated codes (--exclude-codes 404,404,500) for free and
@@ -108,7 +93,8 @@ class StatusCodeProbe
 
   # The single point where a request leaves the process, so specs can drive
   # `apply` against canned responses by overriding this one method.
-  def perform_request(method, url, params = {} of String => String, form = {} of String => String, json = false)
+  def perform_request(method, url, params = {} of String => String, form = {} of String => String, json = false,
+                      headers = {} of String => String)
     # `handle_errors: false, max_redirects: 0` — the same pair SendReq and
     # SendWithProxy send, and for the same reasons.
     #
@@ -137,6 +123,7 @@ class StatusCodeProbe
       params: params,
       form: form,
       json: json,
+      headers: headers,
       handle_errors: false,
       max_redirects: 0,
       connect_timeout: connect_timeout,
