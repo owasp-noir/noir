@@ -107,7 +107,7 @@ module Noir::TextFile
   #
   # A file with invalid UTF-8 is almost always a legacy single-byte
   # encoding (Latin-1/CP1252 PHP, Java and Python sources), where the
-  # `invalid: :skip` decode this replaces turned `/caf\xE9` into `/caf`.
+  # `invalid: :skip` decode this replaces turned `/men\xFC` into `/men`.
   # Mapping byte-for-byte keeps the character, never shifts a line, and
   # yields valid UTF-8 by construction, which `MATCH_OPTIONS` relies on.
   # Only `read`'s slow path gets here.

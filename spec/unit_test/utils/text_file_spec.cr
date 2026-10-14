@@ -25,7 +25,7 @@ describe Noir::TextFile do
   end
 
   # Invalid UTF-8 is nearly always a legacy single-byte encoding, so each
-  # bad byte reads as Latin-1: `/caf\xE9` stays `/café` rather than `/caf`.
+  # bad byte reads as Latin-1: `/men\xFC` stays `/menü` rather than `/men`.
   it "reads invalid bytes as Latin-1 and keeps valid UTF-8 around them" do
     dir = File.tempname("noir-text-file")
     Dir.mkdir_p(dir)
