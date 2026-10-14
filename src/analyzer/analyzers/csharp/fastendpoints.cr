@@ -25,7 +25,16 @@ module Analyzer::CSharp
     # "Endpoint" without declaring a FastEndpoints class.
     ENDPOINT_SOURCE_RE = /\bFastEndpoints\b|:\s*(?:[A-Za-z_][\w.]*\s*,\s*)*(?:Endpoint(?:WithoutRequest)?\b|Ep\s*<)/
 
-    VERB_CALL_REGEX       = /\b(Get|Post|Put|Patch|Delete|Options|Head)\s*\(\s*"([^"]+)"/m
+    # `Post("/a", "/b")` registers every literal, not just the first.
+    VERB_CALL_REGEX       = /\b(Get|Post|Put|Patch|Delete|Options|Head)\s*\(\s*("[^)]*)\)/m
+    GROUP_CALL_REGEX      = /\bGroup\s*<\s*(?:[\w.]+\.)?(\w+)\s*>\s*\(\s*\)/
+    PREFIX_OVERRIDE_REGEX = /\bRoutePrefixOverride\s*\(\s*@?"([^"]*)"/
+    # `app.UseFastEndpoints(c => c.Endpoints.RoutePrefix = "api")`.
+    ROUTE_PREFIX_REGEX = /\.\s*Endpoints\s*\.\s*RoutePrefix\s*=\s*@?"([^"]*)"/
+    # `sealed class Admin : Group { public Admin() { Configure("admin", ...); } }`
+    # and the nested `class Sub : SubGroup<Admin>`.
+    GROUP_CLASS_REGEX     = /\bclass\s+(\w+)\s*:\s*(?:Group\b|SubGroup\s*<\s*(?:[\w.]+\.)?(\w+)\s*>)/
+    GROUP_PREFIX_REGEX    = /\bConfigure\s*\(\s*@?"([^"]*)"/
     VERBS_CALL_REGEX      = /\bVerbs\s*\(\s*([^)]*)\)/m
     ROUTES_CALL_REGEX     = /\bRoutes\s*\(\s*([^)]*)\)/m
     HTTP_VERB_TOKEN_REGEX = /(?:Http\.)?(GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)/
@@ -55,12 +64,42 @@ module Analyzer::CSharp
       return @result if endpoint_files.empty?
 
       request_types = build_request_type_index(cs_files, wanted)
+      route_prefixes, groups = collect_route_prefixes(cs_files)
 
       endpoint_files.each do |file|
-        analyze_file(file, read_file_content(file), include_callee, request_types)
+        analyze_file(file, read_file_content(file), include_callee, request_types, route_prefixes, groups)
       end
 
       @result
+    end
+
+    # The global `RoutePrefix` per scan base, and each endpoint group's own
+    # `Configure("prefix")` with its `SubGroup<T>` parent.
+    private def collect_route_prefixes(files : Array(String)) : Tuple(Hash(String, String), Hash(String, Tuple(String, String?)))
+      route_prefixes = Hash(String, String).new
+      groups = Hash(String, Tuple(String, String?)).new
+      files.each do |file|
+        next unless File.exists?(file)
+        content = read_file_content(file)
+        next unless content.includes?("RoutePrefix") || content.includes?("Group")
+        code = Noir::CSharpLexer.new(content).code_source
+        if match = ROUTE_PREFIX_REGEX.match(code)
+          route_prefixes[configured_base_for(file)] ||= match[1]
+        end
+        code.scan(GROUP_CLASS_REGEX) do |group|
+          prefix = GROUP_PREFIX_REGEX.match(code, group.end).try(&.[1]) || ""
+          groups[group[1]] = {prefix, group[2]?}
+        end
+      end
+      {route_prefixes, groups}
+    end
+
+    private def group_prefix(name : String, groups : Hash(String, Tuple(String, String?)), depth = 0) : String
+      group = groups[name]?
+      return "" unless group && depth < 8
+      prefix, parent = group
+      return prefix unless parent
+      [group_prefix(parent, groups, depth + 1), prefix].reject(&.empty?).join('/')
     end
 
     # Request-DTO names referenced by an `Endpoint<TRequest[, TResponse]>` base
@@ -159,8 +198,10 @@ module Analyzer::CSharp
       [] of Param
     end
 
-    private def analyze_file(file : String, content : String, include_callee : Bool, request_types : Hash(RequestTypeKey, Array(RequestTypeDef)))
+    private def analyze_file(file : String, content : String, include_callee : Bool, request_types : Hash(RequestTypeKey, Array(RequestTypeDef)),
+                             route_prefixes : Hash(String, String), groups : Hash(String, Tuple(String, String?)))
       base_path = configured_base_for(file)
+      global_prefix = route_prefixes[base_path]? || ""
       lines = content.lines
       i = 0
       while i < lines.size
@@ -178,7 +219,12 @@ module Analyzer::CSharp
               routes, methods = parse_configure(configure_block)
               if !routes.empty? && !methods.empty?
                 request_params = resolve_request_params(request_types, base_path, request_type, file)
-                routes.each do |route|
+                code_block = strip_csharp_comments(configure_block)
+                prefix = PREFIX_OVERRIDE_REGEX.match(code_block).try(&.[1]) || global_prefix
+                group = GROUP_CALL_REGEX.match(code_block).try { |m| group_prefix(m[1], groups) } || ""
+                routes.each do |raw_route|
+                  # FastEndpoints builds `{RoutePrefix}/{group prefix}/{route}`.
+                  route = [prefix, group, raw_route].map(&.strip('/')).reject(&.empty?).join('/')
                   methods.each do |http_method|
                     endpoint = build_endpoint(route, http_method, file, i + 1, request_params)
                     next if endpoint.nil?
@@ -274,11 +320,11 @@ module Analyzer::CSharp
 
       # Verb-style: Get("/users/{id}")
       configure_block.scan(VERB_CALL_REGEX) do |match|
-        verb = match[1]?.to_s.upcase
-        path = match[2]?.to_s
-        next if verb.empty? || path.empty?
-        methods << verb
-        routes << path
+        verb = match[1].upcase
+        match[2].scan(/"([^"]+)"/) do |literal|
+          methods << verb
+          routes << literal[1]
+        end
       end
 
       # Routes("/a", "/b") additional/alternative paths
@@ -395,6 +441,10 @@ module Analyzer::CSharp
       {io.to_s, i}
     end
 
+    LEADING_ATTRIBUTES_RE = /\A(?:\[[^\]]*\]\s*)+/
+    # The first string argument of the attribute the text starts at.
+    ATTRIBUTE_NAME_ARG_RE = /\A\[\w+\s*\(\s*@?"([^"]+)"/
+
     private def extract_props_from_block(block : String) : Array(Param)
       params = [] of Param
       from_attr_map = {
@@ -408,7 +458,7 @@ module Analyzer::CSharp
         # not a request-side binding, so skip rather than mis-tag as
         # `header`.
         "FromClaim"         => "service",
-        "BindFrom"          => nil,
+        "BindFrom"          => "",
         "QueryParam"        => "query",
         "RouteParam"        => "path",
         "FromKeyedServices" => "service",
@@ -416,33 +466,40 @@ module Analyzer::CSharp
       }
       lines = block.lines
       pending_type : String? = nil
+      pending_name : String? = nil
       pending_skip = false
 
       lines.each do |raw_line|
         line = raw_line.strip
         next if line.empty?
         next if line.starts_with?("//")
-        if line.starts_with?("[") && line.ends_with?("]")
+        # Attributes may sit on their own line or lead the property's.
+        if attrs = line.match(LEADING_ATTRIBUTES_RE)
+          attr_text = attrs[0]
           from_attr_map.each do |attr, ptype|
-            if line.includes?("[#{attr}")
-              if ptype.nil?
-                pending_skip = true
-              elsif ptype == "service"
-                pending_skip = true
-              else
-                pending_type = ptype
+            next unless attr_text.includes?("[#{attr}")
+            if ptype == "service"
+              pending_skip = true
+            else
+              pending_type = ptype unless ptype.empty?
+              # `[BindFrom("last_name")]` / `[FromHeader("X-Tenant")]` bind
+              # the property under that name.
+              if name = ATTRIBUTE_NAME_ARG_RE.match(attr_text[(attr_text.index("[#{attr}") || 0)..]).try(&.[1])
+                pending_name = name
               end
             end
           end
-          next
+          line = attr_text.size < line.size ? line[attr_text.size..].strip : ""
+          next if line.empty?
         end
 
         if match = line.match(Common::AUTO_PROPERTY_RE)
           name = match[1]
           unless pending_skip
-            params << Param.new(name, "", pending_type || "")
+            params << Param.new(pending_name || name, "", pending_type || "")
           end
           pending_type = nil
+          pending_name = nil
           pending_skip = false
           next
         end
