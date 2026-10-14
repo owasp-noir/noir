@@ -7,6 +7,7 @@ module Analyzer::Ruby
 
     def analyze
       include_callee = callees_needed?
+      rack_mounts = build_rack_mounts
 
       parallel_file_scan do |path|
         next unless path.ends_with?(".rb") || path.ends_with?(".ru")
@@ -28,6 +29,7 @@ module Analyzer::Ruby
         active_route_endpoints = [] of Endpoint
         active_route_depth = nil.as(Int32?)
         prefix_stack = [] of NamedTuple(depth: Int32, path: String)
+        mount_prefix = ""
         depth = 0
         lines.each_with_index do |line, index|
           next unless line.valid_encoding?
@@ -41,6 +43,12 @@ module Analyzer::Ruby
 
           line_delta = sinatra_depth_delta(line)
 
+          # A modular app's routes live under whatever `config.ru` maps
+          # its class to.
+          if !rack_mounts.empty? && (cm = stripped.match(RACK_CLASS_DEF_RE))
+            mount_prefix = rack_mount_prefix(rack_mounts, path, cm[1]) || mount_prefix
+          end
+
           if ns = stripped.match(/^namespace\s*\(?\s*['"]([^'"]+)['"]\s*\)?\s*(?:do\b|\{)/)
             prefix_stack << {depth: depth + 1, path: ns[1]}
           end
@@ -48,7 +56,7 @@ module Analyzer::Ruby
           route_endpoints = line_to_endpoints(stripped)
           unless route_endpoints.empty?
             route_endpoints.each do |endpoint|
-              endpoint.url = sinatra_prefixed_path(prefix_stack, endpoint.url)
+              endpoint.url = sinatra_prefixed_path(prefix_stack, endpoint.url, mount_prefix)
               details = Details.new(PathInfo.new(path, index + 1))
               endpoint.details = details
               attach_do_block_callees(endpoint, lines, index, path) if include_callee
@@ -92,6 +100,59 @@ module Analyzer::Ruby
       end
 
       @result
+    end
+
+    # One `config.ru` mapping: the class it runs and the path it is mapped
+    # at, scoped to the rackup file's directory tree.
+    record RackMount, root : String, klass : String, prefix : String
+
+    RACK_MAP_RE       = /^map\s*\(?\s*['"]([^'"]*)['"]\s*\)?\s*(?:do\b|\{)/
+    RACK_RUN_RE       = /^run\s*\(?\s*(?:::)?([A-Z][\w:]*)\s*\)?\s*$/
+    RACK_URLMAP_RE    = /Rack::URLMap\.new\s*\(([^)]*)\)/m
+    RACK_URLMAP_PAIR  = /['"]([^'"]*)['"]\s*=>\s*(?:::)?([A-Z][\w:]*)/
+    RACK_CLASS_DEF_RE = /^class\s+(?:::)?([A-Z][\w:]*)/
+
+    # `map "/api/v1" do run Api end` and `run Rack::URLMap.new("/x" => App)`
+    # in every rackup file. Class names compare on their last `::` segment.
+    # ponytail: a mapped class's prefix applies from its `class` line to the
+    # end of the file (or the next mapped class), not to its exact `end`;
+    # good enough for one-app-per-file.
+    private def build_rack_mounts : Array(RackMount)
+      mounts = [] of RackMount
+      get_files_by_extension(".ru").each do |path|
+        content = ruby_source(path)
+        next unless content.includes?("map") || content.includes?("URLMap")
+        root = File.dirname(path)
+        maps = [] of NamedTuple(depth: Int32, path: String)
+        depth = 0
+        content.each_line do |line|
+          stripped = Noir::RubyCalleeExtractor.strip_comment(line, preserve_strings: true).strip
+          if mm = stripped.match(RACK_MAP_RE)
+            maps << {depth: depth + 1, path: mm[1]}
+          elsif rm = stripped.match(RACK_RUN_RE)
+            prefix = sinatra_prefixed_path(maps, "")
+            mounts << RackMount.new(root, rm[1].split("::").last, prefix) unless prefix == "/"
+          end
+          depth += sinatra_depth_delta(line)
+          while !maps.empty? && maps.last[:depth] > depth
+            maps.pop
+          end
+        end
+        content.scan(RACK_URLMAP_RE) do |um|
+          um[1].scan(RACK_URLMAP_PAIR) do |pair|
+            prefix = sinatra_prefixed_path([] of NamedTuple(depth: Int32, path: String), pair[1])
+            mounts << RackMount.new(root, pair[2].split("::").last, prefix) unless prefix == "/"
+          end
+        end
+      end
+      mounts
+    end
+
+    # nil for a class no rackup file maps (a nested helper class keeps the
+    # enclosing app's prefix).
+    private def rack_mount_prefix(mounts : Array(RackMount), path : String, klass : String) : String?
+      name = klass.split("::").last
+      mounts.find { |m| m.klass == name && path.starts_with?("#{m.root}/") }.try(&.prefix)
     end
 
     private def line_to_endpoints(content : String) : Array(Endpoint)
@@ -184,8 +245,9 @@ module Analyzer::Ruby
       params
     end
 
-    private def sinatra_prefixed_path(prefix_stack : Array(NamedTuple(depth: Int32, path: String)), path : String) : String
+    private def sinatra_prefixed_path(prefix_stack : Array(NamedTuple(depth: Int32, path: String)), path : String, mount_prefix : String = "") : String
       parts = [] of String
+      append_sinatra_path(parts, mount_prefix)
       prefix_stack.each { |entry| append_sinatra_path(parts, entry[:path]) }
       append_sinatra_path(parts, path)
       parts.empty? ? "/" : "/#{parts.join("/")}"

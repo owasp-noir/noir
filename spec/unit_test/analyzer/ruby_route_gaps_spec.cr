@@ -165,4 +165,24 @@ describe "Ruby route gaps" do
     param_names(find_ep(endpoints, "GET", "/api/users"), "query").should eq(%w[page])
     param_names(find_ep(endpoints, "POST", "/api/users"), "json").should eq(%w[name])
   end
+
+  it "prefixes modular Sinatra apps with their config.ru mapping" do
+    endpoints = scan_ruby_tree({
+      "Gemfile"   => %(source "https://rubygems.org"\ngem "sinatra"\n),
+      "config.ru" => <<-RUBY,
+        require_relative "app/api"
+        map "/api/v1" do
+          run Api::App
+        end
+        run Rack::URLMap.new("/admin" => Admin, "/" => Web)
+        RUBY
+      "app/api.rb"   => "require 'sinatra/base'\nmodule Api\n  class App < Sinatra::Base\n    get '/items' do\n    end\n  end\nend\n",
+      "app/admin.rb" => "require 'sinatra/base'\nclass Admin < Sinatra::Base\n  get '/stats' do\n  end\nend\n",
+      "app/web.rb"   => "require 'sinatra/base'\nclass Web < Sinatra::Base\n  get '/hello' do\n  end\nend\n",
+    })
+
+    find_ep(endpoints, "GET", "/api/v1/items")
+    find_ep(endpoints, "GET", "/admin/stats")
+    find_ep(endpoints, "GET", "/hello")
+  end
 end
