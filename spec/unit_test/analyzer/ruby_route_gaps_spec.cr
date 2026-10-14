@@ -185,4 +185,26 @@ describe "Ruby route gaps" do
     find_ep(endpoints, "GET", "/admin/stats")
     find_ep(endpoints, "GET", "/hello")
   end
+
+  it "reads only HTTP_* Rack env keys as headers, by their header name" do
+    route = <<-RUBY
+      get '/whoami' do
+        auth = request.env["omniauth.auth"]
+        ip = request.env["REMOTE_ADDR"]
+        ua = request.env["HTTP_USER_AGENT"]
+      end
+      RUBY
+    sinatra = scan_ruby_tree({
+      "Gemfile" => %(source "https://rubygems.org"\ngem "sinatra"\n),
+      "app.rb"  => "require 'sinatra'\n#{route}",
+    })
+    padrino = scan_ruby_tree({
+      "Gemfile"    => %(source "https://rubygems.org"\ngem "padrino"\n),
+      "app/app.rb" => "class Demo < Padrino::Application\n#{route}end\n",
+    })
+
+    {sinatra, padrino}.each do |endpoints|
+      param_names(find_ep(endpoints, "GET", "/whoami"), "header").should eq(%w[User-Agent])
+    end
+  end
 end

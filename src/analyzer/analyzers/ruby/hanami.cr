@@ -522,13 +522,8 @@ module Analyzer::Ruby
           end
         end
 
-        # Extract environment headers from request.env['HTTP_*']
-        line.scan(/request\.env\[['"]HTTP_(.+?)['"]\]/) do |match|
-          if match.size > 1
-            # Convert HTTP_USER_AGENT to User-Agent format
-            header_name = match[1].split('_').map(&.capitalize).join('-')
-            endpoint.push_param(Param.new(header_name, "", "header"))
-          end
+        each_rack_env_header(line) do |header_name|
+          endpoint.push_param(Param.new(header_name, "", "header"))
         end
       end
     end

@@ -164,6 +164,17 @@ module Analyzer::Ruby
       false
     end
 
+    # `request.env["HTTP_USER_AGENT"]` is the `User-Agent` request header.
+    # Other Rack env keys (`REMOTE_ADDR`, `omniauth.auth`, `rack.session`)
+    # are server or middleware state, not anything the client sends.
+    RACK_ENV_HEADER_RE = /request\.env\[\s*['"]HTTP_([^'"]+)['"]\s*\]/
+
+    protected def each_rack_env_header(line : String, &)
+      line.scan(RACK_ENV_HEADER_RE) do |m|
+        yield m[1].split('_').map(&.capitalize).join('-')
+      end
+    end
+
     # Ruby's `"#{expr}"` interpolation in a route literal — e.g.
     # `get "#{PREFIX}/items"` — used to leak the raw `#{PREFIX}`
     # text into the URL. Rewrite it as a `{expr}` placeholder so

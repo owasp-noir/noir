@@ -6,12 +6,12 @@ require "../../func_spec.cr"
 expected_endpoints = [
   Endpoint.new("/one", "GET", [
     Param.new("q1", "", "query"),
-    Param.new("HTTP_X_H1", "", "header"),
+    Param.new("X-H1", "", "header"),
   ]),
   Endpoint.new("/split", "GET", [
     Param.new("q2", "", "query"),
     Param.new("q3", "", "query"),
-    Param.new("HTTP_X_H2", "", "header"),
+    Param.new("X-H2", "", "header"),
     Param.new("c2", "", "cookie"),
   ]),
 ]

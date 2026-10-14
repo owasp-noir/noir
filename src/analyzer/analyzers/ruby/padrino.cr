@@ -248,9 +248,8 @@ module Analyzer::Ruby
         params << Param.new(name, "", "query") unless name.empty?
       end
 
-      content.scan(/request\.env\[\s*['"]([^'"]+)['"]\s*\]/) do |m|
-        name = m[1].strip
-        params << Param.new(name, "", "header") unless name.empty?
+      each_rack_env_header(content) do |name|
+        params << Param.new(name, "", "header")
       end
 
       content.scan(/headers\[\s*(?::(\w+)|['"]([^'"]+)['"])\s*\]/) do |m|
