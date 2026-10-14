@@ -16,6 +16,10 @@ module Analyzer::Python
     REGEX_ROOT_URLCONF = /\s*ROOT_URLCONF\s*=\s*r?['"]([^'"\\]*)['"]/
     # The optional `(` admits the tuple form `include(("app.urls", "app"))`.
     REGEX_INCLUDE_URLS = /\binclude\s*\(\s*(?:\(\s*)?r?['"]([^'"\\]*)['"]/
+    # `router = routers.DefaultRouter(trailing_slash=False)`
+    DRF_SLASHLESS_ROUTER_RE = /\b([A-Za-z_][A-Za-z0-9_]*)\s*(?::[^=\n]+)?=\s*[A-Za-z_][\w.]*Router\s*\([^)]*\btrailing_slash\s*=\s*False\b/
+    # `http_method_names = ["get", "post"]` on a view class.
+    DRF_HTTP_METHOD_NAMES_RE = /^\s+http_method_names\s*=\s*[\[(]([^\])]*)[\])]/m
 
     # `def get(...)` / `async def post(...)` method heads in class-based
     # views. Precompiled — an interpolated literal would be recompiled on
@@ -1114,6 +1118,10 @@ module Analyzer::Python
       registrations = Hash(::String, Array(DjangoDrfRegistration)).new do |hash, key|
         hash[key] = [] of DjangoDrfRegistration
       end
+      # `DefaultRouter(trailing_slash=False)` drops the `/` DRF appends to
+      # every route it builds.
+      slashless = Set(::String).new
+      content.scan(DRF_SLASHLESS_ROUTER_RE) { |match| slashless << match[1] }
       lines = content.split("\n")
 
       lines.each_with_index do |line, index|
@@ -1135,7 +1143,7 @@ module Analyzer::Python
         view_ref = clean_python_reference(view_ref)
         next if view_ref.empty?
 
-        registrations[register_match[1]] << DjangoDrfRegistration.new(prefix, view_ref)
+        registrations[register_match[1]] << DjangoDrfRegistration.new(prefix, view_ref, !slashless.includes?(register_match[1]))
       end
 
       registrations
@@ -1361,7 +1369,7 @@ module Analyzer::Python
 
       filepath, class_name = resolved
       route_base = join_url_parts(django_urls.prefix, mount_route, registration.prefix)
-      extract_drf_viewset_endpoints(route_base, filepath, class_name)
+      extract_drf_viewset_endpoints(route_base, filepath, class_name, registration.trailing_slash)
     end
 
     private def extract_drf_router_endpoints_for_router(django_urls : DjangoUrls,
@@ -1686,7 +1694,8 @@ module Analyzer::Python
       end
     end
 
-    private def extract_drf_viewset_endpoints(route_base : ::String, filepath : ::String, class_name : ::String) : Array(Endpoint)
+    private def extract_drf_viewset_endpoints(route_base : ::String, filepath : ::String, class_name : ::String,
+                                              trailing_slash : Bool = true) : Array(Endpoint)
       endpoints = [] of Endpoint
       content = read_file_content(filepath)
       class_start_index = content.index /class\s+#{class_name}\s*[\(:]/
@@ -1739,8 +1748,14 @@ module Analyzer::Python
         end
       end
 
+      # View.dispatch refuses any verb missing from `http_method_names`.
+      if allowed = class_codeblock.match(DRF_HTTP_METHOD_NAMES_RE)
+        verbs = allowed[1].scan(/['"]([A-Za-z]+)['"]/).map(&.[1].upcase)
+        actions.select! { |action| verbs.includes?(action.method) }
+      end
+
       actions.each do |action|
-        endpoint_path = drf_action_path(route_base, lookup_param, action)
+        endpoint_path = drf_action_path(route_base, lookup_param, action, trailing_slash)
         params = filter_params(action.method, action.params)
         params << Param.new(lookup_param, "", "path") if action.detail
         params = dedupe_params(params)
@@ -1915,11 +1930,13 @@ module Analyzer::Python
       "pk"
     end
 
-    private def drf_action_path(route_base : ::String, lookup_param : ::String, action : DjangoDrfAction) : ::String
+    private def drf_action_path(route_base : ::String, lookup_param : ::String, action : DjangoDrfAction,
+                                trailing_slash : Bool) : ::String
       parts = [route_base]
       parts << "{#{lookup_param}}" if action.detail
       parts << action.path unless action.path.empty?
-      ensure_trailing_slash(join_url_parts(parts))
+      path = join_url_parts(parts)
+      trailing_slash ? ensure_trailing_slash(path) : path
     end
 
     private def join_url_parts(parts : Array(::String)) : ::String
@@ -2140,9 +2157,9 @@ module Analyzer::Python
     end
 
     struct DjangoDrfRegistration
-      property prefix, view_ref
+      property prefix, view_ref, trailing_slash
 
-      def initialize(@prefix : ::String, @view_ref : ::String)
+      def initialize(@prefix : ::String, @view_ref : ::String, @trailing_slash : Bool = true)
       end
     end
 
