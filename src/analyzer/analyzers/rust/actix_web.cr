@@ -1055,30 +1055,36 @@ module Analyzer::Rust
     # through `call_expression` / `field_expression` until exhausted.
     private def extract_web_verbs(node : LibTreeSitter::TSNode, source : String) : Array(String)
       verbs = [] of String
+      any = false
       walk_calls(node) do |call|
         function = Noir::TreeSitter.field(call, "function")
         next unless function
-        case Noir::TreeSitter.node_type(function)
-        when "scoped_identifier"
-          # `web::get()` is a `call_expression` whose function is a
-          # `scoped_identifier` ending in a verb.
-          text = Noir::TreeSitter.node_text(function, source)
-          if (last = text.split("::").last?) && HTTP_VERBS.includes?(last)
-            verbs << last.upcase
+        # `web::get()` is a `call_expression` whose function is a
+        # `scoped_identifier` ending in a verb. A bare `get()` /
+        # `post()` comes from a glob import (`use actix_web::web::*;`);
+        # we only reach here through a `.route(...)` verb-expression
+        # argument, so a bare verb name is unambiguously a route
+        # constructor (not `map.get(k)`, which is a `field_expression`).
+        type = Noir::TreeSitter.node_type(function)
+        next unless type == "scoped_identifier" || type == "identifier"
+        text = Noir::TreeSitter.node_text(function, source)
+        last = text.split("::").last
+        if HTTP_VERBS.includes?(last)
+          verbs << last.upcase
+        elsif last == "route"
+          # `web::route()` answers every method unless a guard narrows it.
+          any = true
+        elsif last == "method" || (last == "Method" && text.includes?("guard::"))
+          # `web::method(Method::PATCH)` / `guard::Method(Method::PATCH)`.
+          if (m = Noir::TreeSitter.node_text(call, source).match(/Method::([A-Z]+)\b/)) && ALLOWED_HTTP_METHODS.includes?(m[1])
+            verbs << m[1]
           end
-        when "identifier"
-          # Bare `get()` / `post()` — actix re-exports the route
-          # constructors under `web::`, so a glob import
-          # (`use actix_web::web::*;`) makes them unqualified
-          # identifiers. We only reach here through a `.route(...)`
-          # verb-expression argument, so a bare verb name is
-          # unambiguously a route constructor (not `map.get(k)`, which
-          # is a method call / `field_expression`).
-          text = Noir::TreeSitter.node_text(function, source)
-          verbs << text.upcase if HTTP_VERBS.includes?(text)
+        elsif text.includes?("guard::") && ALLOWED_HTTP_METHODS.includes?(last.upcase)
+          # `web::route().guard(guard::Post())`.
+          verbs << last.upcase
         end
       end
-      verbs.uniq
+      verbs.empty? && any ? ["ANY"] : verbs.uniq
     end
 
     private def walk_calls(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
