@@ -874,7 +874,21 @@ module Analyzer::Rust
       endpoint.push_param(Param.new("query", "", "query")) if extractor_param?(text, "Query")
       endpoint.push_param(Param.new("body", "", "json")) if extractor_param?(text, "Json")
       endpoint.push_param(Param.new("form", "", "form")) if extractor_param?(text, "Form")
+      # `TypedHeader<Authorization<Bearer>>` / `TypedHeader<headers::UserAgent>`:
+      # the `headers` crate type names its header (`UserAgent` → `User-Agent`).
+      if m = text.match(TYPED_HEADER_RE)
+        name = TYPED_HEADER_NAMES[m[1]]? || m[1].gsub(/(?<=[a-z0-9])(?=[A-Z])/, "-")
+        endpoint.push_param(Param.new(name, "", "header"))
+      end
     end
+
+    TYPED_HEADER_RE    = /TypedHeader\s*<\s*(?:[A-Za-z_]\w*::)*([A-Z]\w*)/
+    TYPED_HEADER_NAMES = {
+      "ETag"                => "ETag",
+      "Te"                  => "TE",
+      "SecWebsocketKey"     => "Sec-WebSocket-Key",
+      "SecWebsocketVersion" => "Sec-WebSocket-Version",
+    }
 
     # Precompiled per extractor type; interpolated regex literals here would
     # be recompiled on every function parameter.
