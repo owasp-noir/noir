@@ -1223,29 +1223,8 @@ module Analyzer::Python
       {depth, triple, bytes.size}
     end
 
-    # `line` up to its first `#` outside a single-line quoted string.
-    # Per-line like `python_delimiter_delta`: a line inside a multi-line
-    # triple-quoted string is not recognised as such.
     def strip_python_comment(line : ::String) : ::String
-      return line unless line.includes?('#')
-      in_quote : Char? = nil
-      escaped = false
-      line.each_char_with_index do |ch, index|
-        if in_quote
-          if escaped
-            escaped = false
-          elsif ch == '\\'
-            escaped = true
-          elsif ch == in_quote
-            in_quote = nil
-          end
-        elsif ch == '\'' || ch == '"'
-          in_quote = ch
-        elsif ch == '#'
-          return line[0, index]
-        end
-      end
-      line
+      Helper.strip_python_comment(line)
     end
 
     # Push mount prefixes from every node that already has some along the

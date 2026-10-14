@@ -1,3 +1,6 @@
+# `Analyzer` must be the class before this file opens it as a namespace.
+require "../../../models/analyzer"
+
 module Analyzer::Python
   # Shared path helpers for the Python framework analyzers. Kept
   # framework-agnostic so each analyzer can opt in without duplicating
@@ -10,6 +13,31 @@ module Analyzer::Python
       normalized = path.gsub(/\/+/, "/")
       normalized = "/#{normalized}" unless normalized.starts_with?("/")
       normalized
+    end
+
+    # `line` up to its first `#` outside a single-line quoted string.
+    # Per-line like `python_delimiter_delta`: a line inside a multi-line
+    # triple-quoted string is not recognised as such.
+    def strip_python_comment(line : ::String) : ::String
+      return line unless line.includes?('#')
+      in_quote : Char? = nil
+      escaped = false
+      line.each_char_with_index do |ch, index|
+        if in_quote
+          if escaped
+            escaped = false
+          elsif ch == '\\'
+            escaped = true
+          elsif ch == in_quote
+            in_quote = nil
+          end
+        elsif ch == '\'' || ch == '"'
+          in_quote = ch
+        elsif ch == '#'
+          return line[0, index]
+        end
+      end
+      line
     end
 
     def normalized_join(prefix : ::String, path : ::String) : ::String
