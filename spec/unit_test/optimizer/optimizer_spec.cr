@@ -1444,6 +1444,18 @@ describe "EndpointOptimizer" do
       result[1].params[0].name.should eq("remaining")
     end
 
+    it "names optional and multi-segment brace params without their markers" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      result = optimizer.add_path_parameters([
+        Endpoint.new("/users/{userId}/posts/{postId?}", "GET"), # hapi / ASP.NET optional
+        Endpoint.new("/files/{path*}", "GET"),                  # hapi multi-segment
+        Endpoint.new("/pair/{parts*2}", "GET"),
+      ])
+      result[0].params.map(&.name).should eq(["userId", "postId"])
+      result[1].params.map(&.name).should eq(["path"])
+      result[2].params.map(&.name).should eq(["parts"])
+    end
+
     it "ignores bare glob splats that are not real parameter names" do
       optimizer = EndpointOptimizer.new(logger, options)
       endpoints = [
