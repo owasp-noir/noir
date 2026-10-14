@@ -176,7 +176,7 @@ module Analyzer::Php
       return unless pos < content.size
 
       context = content[pos..]
-      closure = context.match(/(?:static\s+)?function\s*\([^)]*\)\s*(?:use\s*\([^)]*\)\s*)?\{/mi)
+      closure = context.match(/(?:static\s+)?function\s*\([^)]*\)\s*(?:use\s*\([^)]*\)\s*)?(?::\s*[^{=]+)?\{/mi)
       return unless closure
 
       prelude = context[0...closure.begin(0)]

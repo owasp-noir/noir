@@ -30,9 +30,11 @@ expected_endpoints = [
   Endpoint.new("/v1.0/status", "GET"),
   # Static Router facade form
   Endpoint.new("/legacy/ping", "GET"),
+  # Typed closure scope
+  Endpoint.new("/typed/ping", "GET"),
 ]
 
 FunctionalTester.new("fixtures/php/cakephp/", {
   :techs     => 2,  # Detection still sees php_cakephp and php_pure
-  :endpoints => 21, # Analysis suppresses redundant php_pure file endpoints
+  :endpoints => 22, # Analysis suppresses redundant php_pure file endpoints
 }, expected_endpoints).perform_tests

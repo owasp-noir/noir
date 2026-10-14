@@ -170,7 +170,7 @@ module Analyzer::Php
 
     private def extract_route_groups(content : String) : Array(RouteGroup)
       groups = [] of RouteGroup
-      group_regex = /Route::group\s*\(\s*['"]([^'"]*)['"]\s*,\s*(?:static\s+)?function\s*\([^)]*\)\s*(?:use\s*\([^)]*\)\s*)?\{/mi
+      group_regex = /Route::group\s*\(\s*['"]([^'"]*)['"]\s*,\s*(?:static\s+)?function\s*\([^)]*\)\s*(?:use\s*\([^)]*\)\s*)?(?::\s*[^{=]+)?\{/mi
       pos = 0
 
       loop do

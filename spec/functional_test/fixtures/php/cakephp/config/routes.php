@@ -45,6 +45,11 @@ return static function (RouteBuilder $routes) {
         $builder->get('/status', ['controller' => 'Api', 'action' => 'status']);
     });
 
+    // A typed closure (`: void` return type) still opens a prefixed scope.
+    $routes->scope('/typed', function (RouteBuilder $builder): void {
+        $builder->get('/ping', ['controller' => 'Pages', 'action' => 'ping']);
+    });
+
     // Static Router facade form used by older apps and plugin route files.
     Router::scope('/legacy', function (RouteBuilder $routes) {
         $routes->get('/ping', ['controller' => 'Legacy', 'action' => 'ping']);

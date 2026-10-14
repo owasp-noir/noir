@@ -77,7 +77,7 @@ module Analyzer::Php
       # Match only the header up to the opening `{`, then balance braces with the
       # engine's matcher. The old fixed-depth regex silently failed on 4+ levels
       # of brace nesting, so inner routes lost the group prefix entirely.
-      group_header = /\$routes->group\s*\(\s*['"]([^'"]+)['"]\s*(?:,\s*(\[(?:[^\[\]]|\[[^\[\]]*\])*\]))?\s*,\s*(?:static\s+)?function\s*\([^)]*\)\s*(?:use\s*\([^)]*\)\s*)?\{/mi
+      group_header = /\$routes->group\s*\(\s*['"]([^'"]+)['"]\s*(?:,\s*(\[(?:[^\[\]]|\[[^\[\]]*\])*\]))?\s*,\s*(?:static\s+)?function\s*\([^)]*\)\s*(?:use\s*\([^)]*\)\s*)?(?::\s*[^{=]+)?\{/mi
       loop do
         match = working_content.match(group_header)
         break unless match
@@ -104,7 +104,7 @@ module Analyzer::Php
       end
 
       # 2. Environment routes: $routes->environment('env', function($routes) { ... }) — preserve prefix
-      env_header = /\$routes->environment\s*\(\s*['"][^'"]+['"]\s*,\s*(?:static\s+)?function\s*\([^)]*\)\s*(?:use\s*\([^)]*\)\s*)?\{/mi
+      env_header = /\$routes->environment\s*\(\s*['"][^'"]+['"]\s*,\s*(?:static\s+)?function\s*\([^)]*\)\s*(?:use\s*\([^)]*\)\s*)?(?::\s*[^{=]+)?\{/mi
       loop do
         match = working_content.match(env_header)
         break unless match
