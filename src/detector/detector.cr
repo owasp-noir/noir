@@ -229,10 +229,15 @@ module Noir::Detection
 
   # True when the symlink at `path` resolves inside one of the scan bases
   # (`real_bases` are realpaths), so the walk covers its target anyway.
-  # A dangling link, or one that leaves every base, is lost coverage.
+  # A dangling link, or one that leaves every base, is lost coverage — and
+  # so is one into a directory the walk may prune (`vendor/`, `deps/`,
+  # `node_modules/`): over-reporting a link there beats hiding a lost tree.
   def symlink_target_scanned?(path : String, real_bases : Array(String)) : Bool
     target = File.realpath(path)
-    real_bases.any? { |base| Noir::PathScope.under_normalized_root?(target, base) }
+    real_bases.any? do |base|
+      next false unless Noir::PathScope.under_normalized_root?(target, base)
+      target[base.size..].split('/').none? { |part| IGNORED_DIR_NAMES.includes?(part) || MIX_SCOPED_DIR_NAMES.includes?(part) }
+    end
   rescue File::Error
     false
   end

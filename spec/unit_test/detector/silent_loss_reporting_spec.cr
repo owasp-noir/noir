@@ -273,6 +273,22 @@ describe "detection walk coverage reporting" do
     end
   end
 
+  it "reports an in-tree symlink whose target sits in a pruned directory" do
+    temp_dir = File.tempname("noir_symlink_vendor")
+    Dir.mkdir_p(File.join(temp_dir, "vendor", "pkg", "api"))
+
+    begin
+      File.write(File.join(temp_dir, "composer.json"), "{}\n")
+      File.write(File.join(temp_dir, "vendor", "pkg", "api", "routes.php"), "<?php\n")
+      Dir.mkdir_p(File.join(temp_dir, "src"))
+      File.symlink(File.join("..", "vendor", "pkg", "api"), File.join(temp_dir, "src", "api"))
+
+      scan_gaps(temp_dir).should_not be_empty
+    ensure
+      FileUtils.rm_rf(temp_dir)
+    end
+  end
+
   # `File.info?` answers `nil` for every `stat(2)` failure, and the walk used
   # to `next` on that without a word — no counter, no log line, no `errors`
   # entry. The reachable case is a path longer than `PATH_MAX`: a generated
