@@ -67,7 +67,7 @@ module Analyzer::Ruby
     # Crystal doesn't cache/memoize a `Regex.new(String)` call the way it
     # embeds a non-interpolated regex *literal* at compile time. Precompile
     # both patterns once at class load instead.
-    PARSE_OPTIONS_VALUE_PATTERN = "nil|['\"][^'\"]+['\"]|:[a-zA-Z_]\\w*|\\[[^\\]]*\\]|%i[\\[\\(][^\\]\\)]*[\\]\\)]|%w[\\[\\(][^\\]\\)]*[\\]\\)]"
+    PARSE_OPTIONS_VALUE_PATTERN = "nil|true\\b|false\\b|['\"][^'\"]+['\"]|:[a-zA-Z_]\\w*|\\[[^\\]]*\\]|%i[\\[\\(][^\\]\\)]*[\\]\\)]|%w[\\[\\(][^\\]\\)]*[\\]\\)]"
     PARSE_OPTIONS_KEY_VALUE_RE  = Regex.new("(\\w+):\\s*(#{PARSE_OPTIONS_VALUE_PATTERN})")
     PARSE_OPTIONS_HASHROCKET_RE = Regex.new(":(\\w+)\\s*=>\\s*(#{PARSE_OPTIONS_VALUE_PATTERN})")
 
@@ -78,10 +78,18 @@ module Analyzer::Ruby
       property resource_name : String?
       property controller_path : String?
       property controller_scope : String?
+      # `shallow do` / `resources ..., shallow: true`: nested resources below
+      # this frame get shallow member routes.
+      property shallow : Bool
+      # A shallow-nested resources frame: its member path stands on its own
+      # (`comments/1`, not `posts/1/comments/1`), so it replaces the enclosing
+      # resources' paths for everything nested under it.
+      property shallow_member : Bool
 
       def initialize(@kind : Symbol, @path : String = "", @controller_subdir : String = "",
                      @resource_name : String? = nil, @controller_path : String? = nil,
-                     @controller_scope : String? = nil)
+                     @controller_scope : String? = nil, @shallow : Bool = false,
+                     @shallow_member : Bool = false)
       end
     end
 
@@ -399,6 +407,7 @@ module Analyzer::Ruby
         when "member"     then scan.stack << Frame.new(:member) if opens_block
         when "collection" then scan.stack << Frame.new(:collection) if opens_block
         when "new"        then scan.stack << Frame.new(:new) if opens_block
+        when "shallow"    then scan.stack << Frame.new(:neutral, shallow: true) if opens_block
         when "get", "post", "put", "patch", "delete", "head", "options", "query"
           handle_verb_route(directive.upcase, args, scan)
         when "match" then handle_match(args, scan)
@@ -642,7 +651,8 @@ module Analyzer::Ruby
       # resources/routes inside its block, so carry it on the frame's
       # controller_subdir for children to inherit.
       stack << Frame.new(:resources, path: child_path, resource_name: name,
-        controller_path: existing_controller_path, controller_subdir: options["module"]? || "")
+        controller_path: existing_controller_path, controller_subdir: options["module"]? || "",
+        shallow: options["shallow"]? == "true", shallow_member: shallow_nested?(stack, options))
     end
 
     # get "path" / post :action / delete "path" => "ctrl#action" — the HTTP
@@ -1082,6 +1092,10 @@ module Analyzer::Ruby
 
       rf = stack[resources_idx]
       seg = rf.path
+      # A shallow resource's member routes drop the parents' segments.
+      if rf.shallow_member && route_scope != "collection" && route_scope != "new"
+        parts = shallow_path_prefix(stack[0, resources_idx]).split('/', remove_empty: true)
+      end
       case route_scope
       when "collection"
         seg = seg[0, seg.size - 2] if seg.ends_with?("/1")
@@ -1158,6 +1172,7 @@ module Analyzer::Ruby
       except_list = parse_symbol_list(options["except"]?)
       url_segment = options["path"]? || name
       path_prefix = current_path_prefix(stack)
+      member_prefix = shallow_nested?(stack, options) ? shallow_path_prefix(stack) : path_prefix
 
       candidates = [] of String
       candidates << "#{framework_root}/app/controllers/#{file_base}_controller.rb"
@@ -1180,6 +1195,7 @@ module Analyzer::Ruby
         @result.concat(controller_to_endpoint(
           ctrl_path, @url, url_segment,
           path_prefix: path_prefix,
+          member_prefix: member_prefix,
           only: only_list,
           except: except_list,
           singular: singular,
@@ -1327,6 +1343,7 @@ module Analyzer::Ruby
 
     private def normalize_option_value(raw : String) : String
       return "" if raw == "nil"
+      return raw if raw == "true" || raw == "false"
       if raw.starts_with?('"') || raw.starts_with?('\'')
         raw[1, raw.size - 2]
       elsif raw.starts_with?(':')
@@ -1346,11 +1363,26 @@ module Analyzer::Ruby
 
     private def current_path_prefix(stack : Array(Frame)) : String
       parts = [] of String
-      stack.each do |f|
+      stack.each_with_index do |f, i|
+        parts = shallow_path_prefix(stack[0, i]).split('/', remove_empty: true) if f.shallow_member
         next if f.path.empty?
         parts << f.path
       end
       parts.join("/")
+    end
+
+    # Rails `shallow`: a resource nested in a shallow scope keeps its
+    # collection routes under the parent (`/posts/1/comments`) but serves its
+    # member routes without it (`/comments/1`).
+    private def shallow_nested?(stack : Array(Frame), options : Hash(String, String)) : Bool
+      return false unless parent_resources_frame(stack)
+      options["shallow"]? == "true" || stack.any?(&.shallow)
+    end
+
+    # The path a shallow member route hangs off: every enclosing segment
+    # except the resources' own.
+    private def shallow_path_prefix(stack : Array(Frame)) : String
+      stack.compact_map { |f| f.path unless f.kind == :resources || f.path.empty? }.join("/")
     end
 
     private def current_controller_subdir(stack : Array(Frame)) : String
@@ -1367,6 +1399,7 @@ module Analyzer::Ruby
       @url : String,
       resource : String,
       path_prefix : String = "",
+      member_prefix : String = path_prefix,
       only : Array(String) = [] of String,
       except : Array(String) = [] of String,
       singular : Bool = false,
@@ -1398,7 +1431,7 @@ module Analyzer::Ruby
       end
 
       index_url = compose_url(path_prefix, "/#{resource}")
-      member_url = compose_url(path_prefix, singular ? "/#{resource}" : "/#{resource}/1")
+      member_url = compose_url(member_prefix, singular ? "/#{resource}" : "/#{resource}/1")
 
       methods.each do |method|
         case method

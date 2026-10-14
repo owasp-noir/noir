@@ -60,4 +60,42 @@ describe "Ruby route gaps" do
     param_names(find_ep(endpoints, "POST", "/products"), "form").should eq(%w[name price tags])
     param_names(find_ep(endpoints, "PATCH", "/products/1"), "form").should eq(%w[sku])
   end
+
+  it "gives shallow-nested Rails resources unnested member routes" do
+    controller = "class CommentsController < ApplicationController\n  def index; end\n  def create; end\n  def show; end\n  def destroy; end\nend\n"
+    endpoints = scan_ruby_tree({
+      "Gemfile"          => RAILS_GEMFILE,
+      "config/routes.rb" => <<-RUBY,
+      Rails.application.routes.draw do
+        resources :posts, shallow: true do
+          resources :comments do
+            member do
+              post :approve
+            end
+          end
+        end
+        namespace :admin do
+          shallow do
+            resources :posts do
+              resources :comments
+            end
+          end
+        end
+      end
+      RUBY
+      "app/controllers/comments_controller.rb"       => controller,
+      "app/controllers/admin/comments_controller.rb" => controller,
+    })
+    urls = endpoints.map { |e| "#{e.method} #{e.url}" }
+
+    urls.should contain("GET /posts/1/comments")
+    urls.should contain("POST /posts/1/comments")
+    urls.should contain("GET /comments/1")
+    urls.should contain("DELETE /comments/1")
+    urls.should contain("POST /comments/1/approve")
+    urls.should contain("GET /admin/posts/1/comments")
+    urls.should contain("GET /admin/comments/1")
+    urls.should_not contain("GET /posts/1/comments/1")
+    urls.should_not contain("GET /admin/posts/1/comments/1")
+  end
 end
