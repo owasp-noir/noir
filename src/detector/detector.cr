@@ -85,6 +85,13 @@ module Noir::Detection
   # their endpoints with `"errors": []`.
   MANIFEST_SCOPED_DIR_NAMES = Set{"vendor", "dist", "build", "target", "out", "tmp", "coverage"}
 
+  # Mix fetches every dependency's source into `deps/` and compiles into
+  # `_build/`. Scanning them reports Plug/Phoenix's own docs and generator
+  # templates as routes, and their `defmacro get`/`scope` shadow the app's
+  # router calls. Only next to `mix.exs`: elsewhere `deps/` is an ordinary
+  # directory name.
+  MIX_SCOPED_DIR_NAMES = MANIFEST_SCOPED_DIR_NAMES + Set{"deps", "_build"}
+
   # The build-output subset, also pruned next to a `src/` directory or a
   # `tsconfig.json`: a Gradle subproject configured from the root
   # `subprojects {}` block has no build file of its own, and a TypeScript
@@ -210,10 +217,13 @@ module Noir::Detection
   # walk to prune among its children.
   def scoped_dir_names(entries : Array(Noir::DirListing::Entry)) : Set(String)
     source_root = false
+    manifest = false
     entries.each do |listed|
-      return MANIFEST_SCOPED_DIR_NAMES if BUILD_MANIFESTS.includes?(listed.name)
+      return MIX_SCOPED_DIR_NAMES if listed.name == "mix.exs"
+      manifest ||= BUILD_MANIFESTS.includes?(listed.name)
       source_root ||= listed.name == "tsconfig.json" || (listed.name == "src" && !!listed.info.try(&.directory?))
     end
+    return MANIFEST_SCOPED_DIR_NAMES if manifest
     source_root ? BUILD_OUTPUT_DIR_NAMES : NO_DIR_NAMES
   end
 

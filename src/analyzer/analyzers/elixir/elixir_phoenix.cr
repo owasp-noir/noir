@@ -64,6 +64,16 @@ module Analyzer::Elixir
       |\bdefmacro\s+
     /x
 
+    # Phoenix's own router DSL. A bare call to one of these is the built-in
+    # macro, even when some other module in the tree defines a `defmacro`
+    # of the same name (Plug.Router's `get`, an in-app mini router): only
+    # the router module's own macro (`current_module` lookup) or an explicit
+    # `Mod.get(...)` may override it.
+    ROUTER_DSL_NAMES = STANDARD_ROUTE_METHODS.keys.to_set + Set{
+      "match", "resources", "scope", "socket", "live", "live_dashboard",
+      "forward", "pipe_through", "pipeline", "plug",
+    }
+
     struct ControllerAction
       property controller : String
       property action : String
@@ -682,7 +692,7 @@ module Analyzer::Elixir
                       @route_macros["#{module_name}.#{name}"]?
                     elsif current_module && @route_macros.has_key?("#{current_module}.#{name}")
                       @route_macros["#{current_module}.#{name}"]
-                    else
+                    elsif !ROUTER_DSL_NAMES.includes?(name)
                       @route_macros[name]?
                     end
       return unless route_macro
