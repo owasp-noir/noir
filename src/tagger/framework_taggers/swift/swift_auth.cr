@@ -3,16 +3,21 @@ require "../../../models/endpoint"
 
 @[Noir::TaggerFor(key: "swift_auth", name: "Swift Auth Tagger", desc: "Identifies Vapor/Kitura/Hummingbird authentication patterns", order: 220)]
 class SwiftAuthTagger < FrameworkTagger
+  # `.grouped(` followed by any earlier arguments, so a pattern after it
+  # matches at the start of ANY argument: `app.grouped(UserToken.authenticator(),
+  # User.guardMiddleware())` is guarded by its second one.
+  GROUPED_ARG = /\.grouped\s*\((?:[^(),]*(?:\([^()]*\)[^(),]*)?,\s*)*\s*/.source
+
   # Vapor middleware patterns
   VAPOR_MIDDLEWARE_PATTERNS = [
-    {/\.grouped\s*\(\s*\w*[Aa]uth\w*/, "Vapor auth middleware group"},
-    {/\.grouped\s*\(\s*User\.authenticator\(\)/, "Vapor User.authenticator()"},
-    {/\.grouped\s*\(\s*Token\.authenticator\(\)/, "Vapor Token.authenticator()"},
-    {/\.grouped\s*\(\s*User\.guardMiddleware\(\)/, "Vapor User.guardMiddleware()"},
-    {/\.grouped\s*\(\s*\w+\.guardMiddleware\(\)/, "Vapor guardMiddleware"},
-    {/\.grouped\s*\(\s*BearerAuthenticator/, "Vapor BearerAuthenticator"},
-    {/\.grouped\s*\(\s*BasicAuthenticator/, "Vapor BasicAuthenticator"},
-    {/\.grouped\s*\(\s*SessionAuthenticator/, "Vapor SessionAuthenticator"},
+    {/#{GROUPED_ARG}\w*[Aa]uth\w*/, "Vapor auth middleware group"},
+    {/#{GROUPED_ARG}User\.authenticator\(\)/, "Vapor User.authenticator()"},
+    {/#{GROUPED_ARG}Token\.authenticator\(\)/, "Vapor Token.authenticator()"},
+    {/#{GROUPED_ARG}User\.guardMiddleware\(\)/, "Vapor User.guardMiddleware()"},
+    {/#{GROUPED_ARG}\w+\.guardMiddleware\(\)/, "Vapor guardMiddleware"},
+    {/#{GROUPED_ARG}BearerAuthenticator/, "Vapor BearerAuthenticator"},
+    {/#{GROUPED_ARG}BasicAuthenticator/, "Vapor BasicAuthenticator"},
+    {/#{GROUPED_ARG}SessionAuthenticator/, "Vapor SessionAuthenticator"},
   ]
 
   # Auth requirement in route handler

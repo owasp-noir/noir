@@ -100,4 +100,32 @@ describe "SwiftAuthTagger" do
 
     FileUtils.rm_rf(tmpdir)
   end
+
+  it "matches auth middleware in any .grouped() argument" do
+    tmpdir = File.tempname("swift_grouped")
+    Dir.mkdir_p(tmpdir)
+    routes = File.join(tmpdir, "routes.swift")
+    File.write(routes, [
+      "func routes(_ app: Application) throws {",
+      "    let tokenProtected = app.grouped(UserToken.authenticator(), User.guardMiddleware())",
+      "    tokenProtected.get(\"profile\") { req -> String in",
+      "        return \"profile\"",
+      "    }",
+      "    let logged = app.grouped(RequestLogger(), CORSMiddleware())",
+      "    logged.get(\"open\") { req in \"open\" }",
+      "}",
+    ].join("\n"))
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+
+    profile = Endpoint.new("/profile", "GET", [] of Param, Details.new(PathInfo.new(routes, 3)))
+    open = Endpoint.new("/open", "GET", [] of Param, Details.new(PathInfo.new(routes, 7)))
+    SwiftAuthTagger.new(noir_options).perform([profile, open])
+
+    profile.tags.map(&.description).should eq(["Protected by Vapor User.guardMiddleware()"])
+    open.tags.should be_empty
+
+    FileUtils.rm_rf(tmpdir)
+  end
 end
