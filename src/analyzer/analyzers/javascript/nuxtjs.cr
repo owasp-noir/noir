@@ -122,7 +122,7 @@ module Analyzer::Javascript
       # Read file content to extract parameters
       begin
         content = read_file_content(path)
-        sanitized = Noir::JSRouteExtractor.strip_js_comments(content)
+        h3_params = h3_event_params(Noir::JSRouteExtractor.strip_js_comments(content))
         callees = include_callee ? Noir::JSCalleeExtractor.callees_for_default_event_handler(content, path, language: javascript_source_language(path)) : [] of Noir::JSCalleeExtractor::Entry
 
         methods.each do |method|
@@ -138,105 +138,7 @@ module Analyzer::Javascript
             end
           end
 
-          # Extract query parameters from getQuery or useQuery
-          # Pattern 1: Direct access - getQuery(event).param
-          sanitized.scan(/(?:getQuery|useQuery|getValidatedQuery)\s*\(\s*event(?:\s*,[\s\S]*?)?\s*\)\.(\w+)/) do |m|
-            param_name = m[1]
-            param = Param.new(param_name, "", "query")
-            endpoint.push_param(param)
-          end
-          sanitized.scan(/(?:getQuery|useQuery|getValidatedQuery)\s*\(\s*event(?:\s*,[\s\S]*?)?\s*\)\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |m|
-            param_name = m[1]
-            param = Param.new(param_name, "", "query")
-            endpoint.push_param(param)
-          end
-          sanitized.scan(/(?:const|let|var)\s*\{\s*([^}]+?)\s*\}\s*=\s*(?:await\s+)?(?:getQuery|useQuery|getValidatedQuery)\s*\(\s*event(?:\s*,[\s\S]*?)?\s*\)/) do |m|
-            extract_destructure_params(m[1]).each do |param_name|
-              param = Param.new(param_name, "", "query")
-              endpoint.push_param(param)
-            end
-          end
-
-          # Pattern 2: Variable assignment - const query = getQuery(event); query.param
-          sanitized.scan(/(?:const|let|var)\s+(\w+)\s*=\s*(?:await\s+)?(?:getQuery|useQuery|getValidatedQuery)\s*\(\s*event(?:\s*,[\s\S]*?)?\s*\)/) do |var_match|
-            query_var = var_match[1]
-            sanitized.scan(cached_regex("nuxtjs:query_dot:#{query_var}") { /#{Regex.escape(query_var)}\.(\w+)/ }) do |m|
-              param_name = m[1]
-              # Skip common non-parameter properties like 'toString', 'valueOf', etc.
-              next if ["toString", "valueOf", "constructor"].includes?(param_name)
-              param = Param.new(param_name, "", "query")
-              endpoint.push_param(param)
-            end
-            sanitized.scan(cached_regex("nuxtjs:query_bracket:#{query_var}") { /#{Regex.escape(query_var)}\s*\[\s*['"]([^'"]+)['"]\s*\]/ }) do |m|
-              param_name = m[1]
-              param = Param.new(param_name, "", "query")
-              endpoint.push_param(param)
-            end
-          end
-
-          # Extract body parameters from readBody
-          if sanitized.includes?("readBody") || sanitized.includes?("readValidatedBody")
-            # Try to extract body field access patterns
-            sanitized.scan(/(?:const|let|var)\s*\{\s*([^}]+?)\s*\}\s*=\s*(?:await\s+)?(?:readBody|readValidatedBody)\s*\(\s*event(?:\s*,[\s\S]*?)?\s*\)/) do |m|
-              extract_destructure_params(m[1]).each do |param_name|
-                param = Param.new(param_name, "", "body")
-                endpoint.push_param(param)
-              end
-            end
-            body_vars = ["body", "data"]
-            sanitized.scan(/(?:const|let|var)\s+(\w+)\s*=\s*(?:await\s+)?(?:readBody|readValidatedBody)\s*\(\s*event(?:\s*,[\s\S]*?)?\s*\)/) do |m|
-              body_vars << m[1] unless body_vars.includes?(m[1])
-            end
-            body_vars.each do |body_var|
-              sanitized.scan(cached_regex("nuxtjs:var_dot:#{body_var}") { /\b#{Regex.escape(body_var)}\.(\w+)/ }) do |m|
-                param_name = m[1]
-                param = Param.new(param_name, "", "body")
-                endpoint.push_param(param)
-              end
-              sanitized.scan(cached_regex("nuxtjs:var_bracket:#{body_var}") { /\b#{Regex.escape(body_var)}\s*\[\s*['"]([^'"]+)['"]\s*\]/ }) do |m|
-                param_name = m[1]
-                param = Param.new(param_name, "", "body")
-                endpoint.push_param(param)
-              end
-            end
-          end
-
-          # Extract header parameters from getHeader or getHeaders
-          sanitized.scan(/(?:getHeader|getRequestHeader)\s*\(\s*event\s*,\s*['"]([^'"]+)['"]/) do |m|
-            header_name = m[1]
-            param = Param.new(header_name, "", "header")
-            endpoint.push_param(param)
-          end
-          sanitized.scan(/getHeaders\s*\(\s*event\s*\)\.(\w+)/) do |m|
-            header_name = m[1]
-            param = Param.new(header_name, "", "header")
-            endpoint.push_param(param)
-          end
-          sanitized.scan(/(?:const|let|var)\s+(\w+)\s*=\s*getHeaders\s*\(\s*event\s*\)/) do |m|
-            headers_var = m[1]
-            sanitized.scan(cached_regex("nuxtjs:var_dot:#{headers_var}") { /\b#{Regex.escape(headers_var)}\.(\w+)/ }) do |mm|
-              header_name = mm[1]
-              param = Param.new(header_name, "", "header")
-              endpoint.push_param(param)
-            end
-            sanitized.scan(cached_regex("nuxtjs:var_bracket:#{headers_var}") { /\b#{Regex.escape(headers_var)}\s*\[\s*['"]([^'"]+)['"]\s*\]/ }) do |mm|
-              header_name = mm[1]
-              param = Param.new(header_name, "", "header")
-              endpoint.push_param(param)
-            end
-          end
-
-          # Extract cookie parameters from getCookie
-          sanitized.scan(/getCookie\s*\(\s*event\s*,\s*['"]([^'"]+)['"]/) do |m|
-            cookie_name = m[1]
-            param = Param.new(cookie_name, "", "cookie")
-            endpoint.push_param(param)
-          end
-          sanitized.scan(/getRouterParam\s*\(\s*event\s*,\s*['"]([^'"]+)['"]/) do |m|
-            param_name = m[1]
-            param = Param.new(param_name, "", "path")
-            endpoint.push_param(param)
-          end
+          h3_params.each { |param| endpoint.push_param(param) }
 
           attach_js_callees(endpoint, callees) if include_callee
 
@@ -319,21 +221,6 @@ module Analyzer::Javascript
           segment
         end
       end.join("/")
-    end
-
-    private def extract_destructure_params(destructure : String) : Array(String)
-      return [] of String if destructure.includes?("{") || destructure.includes?("(") ||
-                             destructure.includes?("<")
-
-      destructure.split(",").map do |part|
-        clean = part.split("=").first.strip
-        clean = clean.lchop("...").strip
-        clean = clean.split(":").first.strip if clean.includes?(":")
-        clean = clean[1..-2] if clean.size >= 2 &&
-                                ((clean.starts_with?("'") && clean.ends_with?("'")) ||
-                                (clean.starts_with?("\"") && clean.ends_with?("\"")))
-        clean
-      end.select(&.match(/^[A-Za-z_$][\w$-]*$/))
     end
   end
 end
