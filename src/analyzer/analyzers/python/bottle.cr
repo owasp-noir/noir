@@ -350,7 +350,10 @@ module Analyzer::Python
       methods.each do |method|
         endpoint = Endpoint.new(route_path, method, details)
         path_params.each { |p| endpoint.push_param(p) }
-        request_params.each { |p| endpoint.push_param(p) }
+        # One handler serving several verbs: a body is only read on the ones
+        # that can carry it.
+        method_params = methods.size > 1 ? get_filtered_params(method, request_params) : request_params
+        method_params.each { |p| endpoint.push_param(p) }
         handler_callees.each { |c| endpoint.push_callee(c) }
         result << endpoint
       end
@@ -381,9 +384,15 @@ module Analyzer::Python
 
     # Bottle attributes whose parameter type is independent of HTTP method.
     # Maps the Python accessor name on `request.<name>` to the noir param_type.
+    # `params` merges query and form values; it is reported as query, the
+    # slot every method can carry.
     DICT_ACCESSORS = {
       "query"   => "query",
+      "GET"     => "query",
+      "params"  => "query",
       "forms"   => "form",
+      "POST"    => "form",
+      "files"   => "form",
       "json"    => "json",
       "headers" => "header",
       "cookies" => "cookie",
@@ -449,9 +458,12 @@ module Analyzer::Python
         end
       end
 
-      # Bottle-specific cookie helper.
+      # Bottle-specific cookie and header helpers.
       body.scan(/request\.get_cookie\s*\(\s*['"]([^'"]+)['"]/) do |m|
         record.call(m[1], "cookie")
+      end
+      body.scan(/request\.get_header\s*\(\s*['"]([^'"]+)['"]/) do |m|
+        record.call(m[1], "header")
       end
 
       json_variables.each do |var|
