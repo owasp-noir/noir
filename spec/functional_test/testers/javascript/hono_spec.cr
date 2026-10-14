@@ -86,6 +86,9 @@ expected_endpoints = [
   Endpoint.new("/about", "GET", [
     Param.new("name", "", "query"),
   ]),
+  Endpoint.new("/docs", "GET", [
+    Param.new("lang", "", "query"),
+  ]),
   Endpoint.new("/submit", "POST", [
     Param.new("X-Token", "", "header"),
   ]),

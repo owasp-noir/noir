@@ -92,7 +92,7 @@ module Noir
           add_token(:assign, "=")
           advance
         when '/'
-          if peek == '/' # Single line comment
+          if peek == '/' && !JSLiteralScanner.url_slashes?(@chars, @position) # Single line comment
             skip_line_comment
           elsif peek == '*' # Multi line comment
             skip_multiline_comment

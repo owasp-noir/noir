@@ -902,6 +902,14 @@ describe Noir::JSRouteExtractor do
       stripped.should_not contain("gone")
     end
 
+    it "keeps an http(s) URL in JSX text and still blanks real comments" do
+      content = "const el = <p>Docs at https://hono.dev</p>; // gone\napp.get('/x', h);"
+
+      stripped = Noir::JSRouteExtractor.strip_js_comments(content)
+      stripped.should contain("https://hono.dev</p>;")
+      stripped.should_not contain("gone")
+    end
+
     it "ends a stray string at the newline" do
       content = "const el = <p>'quoted</p>;\n// gone\napp.get('/x', h);"
 

@@ -1493,7 +1493,7 @@ module Noir
         when :code
           if char == '/' && i + 1 < len
             nxt = chars[i + 1]
-            if nxt == '/'
+            if nxt == '/' && !JSLiteralScanner.url_slashes?(chars, i)
               state = :line_comment
               builder << "  "
               i += 2

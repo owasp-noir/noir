@@ -239,5 +239,11 @@ describe Noir::JSLexer do
       tokens.last.value.should eq("z")
       Noir::JSLexer.new("return'x'").tokenize.last.type.should eq(:string)
     end
+
+    it "does not skip a JSX-text URL as a line comment" do
+      tokens = Noir::JSLexer.new("(<p>See https://a.dev</p>)").tokenize
+      tokens.last.type.should eq(:rparen)
+      Noir::JSLexer.new("x // https://a.dev )").tokenize.map(&.type).should eq([:identifier])
+    end
   end
 end

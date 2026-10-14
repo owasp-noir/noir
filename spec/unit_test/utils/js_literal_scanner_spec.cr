@@ -280,4 +280,20 @@ describe Noir::JSLiteralScanner do
       end
     end
   end
+
+  describe "URLs in JSX text" do
+    it "does not open a comment at the slashes of an http(s) URL" do
+      src = "(<p>Docs at https://hono.dev for {name}</p>)"
+      Noir::JSLiteralScanner.find_matching_paren(src, 0).should eq(src.size - 1)
+      Noir::JSLiteralScanner.find_matching_paren_at_byte(src, 0).should eq(src.size - 1)
+      result = Noir::JSLiteralScanner.extract_paren_content(src, 1).should_not be_nil
+      result.end_pos.should eq(src.size - 1)
+    end
+
+    it "still reads comments that only look URL-like" do
+      ["{ a:// }\n}", "{ xhttp://a }\n}", "{ http:// }\n}", "{ ftp://a }\n}"].each do |src|
+        Noir::JSLiteralScanner.find_matching_brace(src, 0).should eq(src.size - 1)
+      end
+    end
+  end
 end

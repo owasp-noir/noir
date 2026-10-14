@@ -32,6 +32,9 @@ module Noir
     # closing tags (`</div>`) put a '/' after '<' on every other line.
     REGEX_PRECEDING_CHARS = Set{'(', '[', '{', ',', ':', ';', '=', '!', '&', '|', '?', '+', '-', '*', '%', '>', '~', '^'}
 
+    # Schemes whose `://` in JSX text is not a comment (see `url_slashes?`).
+    URL_SCHEMES = {"http", "https"}
+
     # The regex-context checks only ever look at the tail of the scanned
     # output: the last non-whitespace char, and `ends_with?` against the
     # keywords above (longest: "instanceof", 10 chars). A rolling window of
@@ -211,7 +214,7 @@ module Noir
       char = chr(src, pos)
 
       # Skip single-line comments
-      if char == '/' && pos + 1 < size && chr(src, pos + 1) == '/'
+      if char == '/' && pos + 1 < size && chr(src, pos + 1) == '/' && !url_slashes?(src, pos)
         while pos < size && chr(src, pos) != '\n'
           pos += 1
         end
@@ -478,7 +481,7 @@ module Noir
       char = chr(src, pos)
 
       # Skip single-line comments
-      if char == '/' && pos + 1 < size && chr(src, pos + 1) == '/'
+      if char == '/' && pos + 1 < size && chr(src, pos + 1) == '/' && !url_slashes?(src, pos)
         while pos < size && chr(src, pos) != '\n'
           pos += 1
         end
@@ -528,6 +531,22 @@ module Noir
         start -= 1
       end
       REGEX_PRECEDING_KEYWORDS.includes?(word_string(src, start, pos))
+    end
+
+    # Are the `//` at `pos` the slashes of an `http://` / `https://` URL in
+    # JSX text (`<p>Docs at https://hono.dev</p>`) rather than a comment
+    # opener? Code never glues a comment to a bare `http:` and a non-space
+    # char. Not a comment, the `//` then reads as an empty regex after ':'.
+    def self.url_slashes?(src, pos : Int32) : Bool
+      return false unless pos >= 5 && pos + 2 < src.size
+      return false if chr(src, pos - 1) != ':' || chr(src, pos + 2).whitespace?
+
+      start = pos - 1
+      while start > 0 && pos - 1 - start < 5 && chr(src, start - 1).ascii_letter?
+        start -= 1
+      end
+      return false if start > 0 && ident_char?(chr(src, start - 1))
+      URL_SCHEMES.includes?(word_string(src, start, pos - 1).downcase)
     end
 
     private def self.ident_char?(char : Char) : Bool
