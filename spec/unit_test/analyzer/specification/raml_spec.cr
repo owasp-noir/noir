@@ -93,3 +93,44 @@ describe "RAML !include resolution" do
     end
   end
 end
+
+describe "RAML resource type parameters" do
+  after_each { CodeLocator.instance.clear_all }
+
+  it "substitutes <<params>> and merges optional methods of a resource type" do
+    with_temp_dir("noir_raml_type_params") do |dir|
+      entry = File.join(dir, "api.raml")
+      File.write(entry, <<-RAML)
+        #%RAML 1.0
+        title: T
+        baseUri: https://api.example.com/v1
+        types:
+          Song:
+            properties:
+              title: string
+        resourceTypes:
+          collection:
+            post:
+              body:
+                application/json:
+                  type: <<item>>
+            delete?:
+              headers:
+                X-<<resourcePathName>>-Token:
+            patch?:
+              queryParameters:
+                at: string
+        /songs:
+          type: { collection: { item: Song } }
+          delete:
+        RAML
+
+      endpoints = analyze_raml(dir, entry)
+
+      endpoints.map { |e| {e.method, e.url, e.params.map(&.name)} }.sort!.should eq([
+        {"DELETE", "/v1/songs", ["X-songs-Token"]},
+        {"POST", "/v1/songs", ["title"]},
+      ])
+    end
+  end
+end
