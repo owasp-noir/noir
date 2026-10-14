@@ -229,4 +229,60 @@ describe "DjangoAuthTagger" do
       CodeLocator.instance.clear_all
     end
   end
+
+  it "reads @method_decorator(login_required) and wrapped class headers" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("django_method_decorator")
+    Dir.mkdir_p(tmpdir)
+    views = File.join(tmpdir, "views.py")
+    File.write(views, <<-PY)
+      @method_decorator(login_required, name="dispatch")
+      class DashboardView(View):
+          def get(self, request):
+              return HttpResponse("dash")
+
+
+      class ProfileView(View):
+          @method_decorator(login_required)
+          def get(self, request):
+              return HttpResponse("p")
+
+
+      class WrappedView(
+          LoginRequiredMixin,
+          View,
+      ):
+          def get(self, request):
+              return HttpResponse("w")
+
+
+      @method_decorator(login_required, name="post")
+      class FormView(View):
+          def get(self, request):
+              return HttpResponse("f")
+
+
+      class OpenView(View):
+          def get(self, request):
+              return HttpResponse("o")
+      PY
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      dash, profile, wrapped, form, open = [3, 9, 17, 23, 28].map do |line|
+        Endpoint.new("/#{line}", "GET", [] of Param, Details.new(PathInfo.new(views, line)))
+      end
+
+      DjangoAuthTagger.new(noir_options).perform([dash, profile, wrapped, form, open])
+
+      dash.tags.map(&.description).should eq(["Protected by Django login_required decorator"])
+      profile.tags.map(&.description).should eq(["Protected by Django login_required decorator"])
+      wrapped.tags.map(&.description).should eq(["Protected by Django LoginRequiredMixin"])
+      form.tags.should be_empty
+      open.tags.should be_empty
+    ensure
+      FileUtils.rm_rf(tmpdir)
+    end
+  end
 end
