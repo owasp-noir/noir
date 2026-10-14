@@ -102,6 +102,21 @@ describe "ScalaAuthTagger" do
     endpoint.tags.empty?.should be_true
   end
 
+  it "does not take a sibling object's balanced authorize block as enclosing" do
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(fixture_base)
+
+    # Routes.scala line 43 sits in HealthRoutes, right after AdminRoutes'
+    # `authorize(hasAdminRole) { … }` closes.
+    details = Details.new(PathInfo.new(routes_path, 43))
+    details.technology = "scala_akka"
+    endpoint = Endpoint.new("/public/health", "GET", [] of Param, details)
+
+    ScalaAuthTagger.new(noir_options).perform([endpoint])
+
+    endpoint.tags.empty?.should be_true
+  end
+
   it "handles empty code_paths gracefully" do
     noir_options = create_test_options
     noir_options["base"] = YAML::Any.new(fixture_base)

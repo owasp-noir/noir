@@ -100,17 +100,23 @@ class ScalaAuthTagger < FrameworkTagger
 
   private def check_enclosing_auth(lines : Array(String), line_idx : Int32) : String?
     # Walk backwards for Akka HTTP auth directives wrapping this route
+    # Only a line that opens a block still open at the route encloses it.
+    # A balanced sibling (`authorize(x) { … }` in the object above) does
+    # not: counting `<= 0` let it through once the route's own openers
+    # were subtracted.
     idx = line_idx - 1
-    brace_depth = 0
+    balance = 0
 
     while idx >= 0 && idx >= line_idx - 20
       current = lines[idx]
-      stripped = current.strip
+      balance += current.count('}') - current.count('{')
 
-      brace_depth += current.count('}') - current.count('{')
-
-      AKKA_AUTH_PATTERNS.each do |pattern, desc|
-        return desc if stripped.matches?(pattern) && brace_depth <= 0
+      if balance < 0
+        stripped = current.strip
+        AKKA_AUTH_PATTERNS.each do |pattern, desc|
+          return desc if stripped.matches?(pattern)
+        end
+        balance = 0
       end
 
       idx -= 1
