@@ -240,7 +240,7 @@ module Analyzer::CSharp::MinimalApiSupport
 
     extra_params = extract_params_from_block(block)
     extra_params.concat(extract_bind_params_from_file(block, file_lines, masked_lines))
-    extra_params.concat(extract_delegate_params(block, route, methods.first))
+    extra_params.concat(extract_delegate_params(block, route, methods.first, file_lines, masked_lines))
 
     # Method-group handlers — `MapGet("/items", GetItems)` — carry the route
     # on the `Map` line but keep their parameters and body in the referenced
@@ -469,14 +469,12 @@ module Analyzer::CSharp::MinimalApiSupport
     params.uniq(&.name)
   end
 
-  private def extract_delegate_params(block : String, route : String, http_method : String) : Array(Param)
+  private def extract_delegate_params(block : String, route : String, http_method : String,
+                                      lines : Array(String), masked_lines : Array(String)) : Array(Param)
     lambda_params = extract_lambda_param_list(block)
     return [] of Param if lambda_params.empty?
 
-    route_params = extract_route_placeholders(route)
-    split_csharp_parameters(lambda_params).compact_map do |param_def|
-      delegate_param_to_noir_param(param_def, route_params, http_method)
-    end.uniq!(&.name)
+    bound_handler_params(lambda_params, route, http_method, lines, masked_lines)
   end
 
   private def extract_lambda_param_list(block : String) : String
@@ -522,7 +520,7 @@ module Analyzer::CSharp::MinimalApiSupport
     cleaned = param_def.strip
     return if cleaned.empty?
 
-    explicit_name = extract_explicit_binding_name(cleaned)
+    explicit_name = Common.explicit_binding_name(cleaned)
     param_type = Common.binding_attribute_type(cleaned)
     cleaned = cleaned.gsub(/\[[^\]]+\]\s*/, "").strip
     cleaned = cleaned.sub(/=.*/, "").strip
@@ -556,14 +554,6 @@ module Analyzer::CSharp::MinimalApiSupport
     Param.new(name, "", param_type || "query")
   end
 
-  private def extract_explicit_binding_name(param_def : String) : String?
-    if match = param_def.match(/\[From(?:Query|Route|Body|Header|Form)\s*\([^\]]*(?:Name\s*=\s*)?"([^"]+)"/)
-      return match[1]
-    end
-
-    nil
-  end
-
   private def service_binding?(type_name : String, full_definition : String, param_type : String?) : Bool
     return true if param_type == "service"
     return true if SERVICE_BINDING_TYPES.includes?(type_name)
@@ -577,6 +567,9 @@ module Analyzer::CSharp::MinimalApiSupport
 
   private def default_delegate_param_type(type_name : String, http_method : String) : String
     return "query" if SIMPLE_BINDING_TYPES.includes?(type_name)
+    # `IFormFile` / `IFormFileCollection` / `IFormCollection` bind from the
+    # multipart form, never the JSON body.
+    return "form" if Common::SERVICE_FORM_INPUT_TYPES.includes?(type_name)
 
     case http_method
     when "POST", "PUT", "PATCH"
@@ -751,6 +744,12 @@ module Analyzer::CSharp::MinimalApiSupport
     list = list.strip
     return [] of Param if list.empty?
 
+    bound_handler_params(list, route, http_method, lines, masked_lines)
+  end
+
+  # Params bound from a handler's parameter list — an inline lambda's or a
+  # method group's — expanding `[AsParameters]` bundle types.
+  private def bound_handler_params(list : String, route : String, http_method : String, lines : Array(String), masked_lines : Array(String)) : Array(Param)
     route_params = extract_route_placeholders(route)
     params = [] of Param
     split_csharp_parameters(list).each do |pdef|
@@ -852,7 +851,7 @@ module Analyzer::CSharp::MinimalApiSupport
   # (members bind from query/route/header, never the body) and honours an
   # explicit `[FromHeader]`/`[FromQuery]`/`[FromRoute]` on the member.
   private def as_parameters_member_to_param(member_def : String, route_params : Array(String), http_method : String) : Param?
-    explicit_name = extract_explicit_binding_name(member_def)
+    explicit_name = Common.explicit_binding_name(member_def)
     param_type = Common.binding_attribute_type(member_def)
     cleaned = member_def.gsub(/\[[^\]]*\]\s*/, "").strip
     cleaned = cleaned.sub(/=.*/, "").strip
@@ -871,7 +870,13 @@ module Analyzer::CSharp::MinimalApiSupport
     return if service_binding?(type_name, cleaned, param_type)
     return if param_type == "service"
 
-    param_type ||= route_params.includes?(name) ? "path" : "query"
+    param_type ||= if route_params.includes?(name)
+                     "path"
+                   elsif Common::SERVICE_FORM_INPUT_TYPES.includes?(type_name)
+                     "form"
+                   else
+                     "query"
+                   end
     Param.new(name, "", param_type)
   end
 end
