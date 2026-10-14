@@ -25,13 +25,16 @@ class CrystalAuthTagger < FrameworkTagger
   # Lucky auth patterns
   LUCKY_AUTH_PATTERNS = [
     {/include Auth::RequireSignIn/, "Lucky Auth::RequireSignIn"},
-    {/include Auth::AllowGuests/, "Lucky Auth::AllowGuests"},
     {/before require_sign_in/, "Lucky require_sign_in before action"},
     # A bare `current_user` reference (e.g. `UserSerializer.new(current_user)`
     # in a handler body) is not sign-in enforcement; it false-positived on
     # any action that merely reads the user. The real signals above
     # (RequireSignIn / require_sign_in) cover Lucky auth.
   ]
+
+  # Lucky's opt-out of the sign-in `BrowserAction` requires: the action is
+  # public, so nothing above it in the class may tag it.
+  LUCKY_ALLOW_GUESTS = /include\s+Auth::AllowGuests\b/
 
   # Grip/Marten auth patterns
   GENERIC_FILTER_PATTERNS = [
@@ -86,6 +89,7 @@ class CrystalAuthTagger < FrameworkTagger
     idx = route_line
     while idx >= 0
       current = lines[idx].strip
+      return if current.matches?(LUCKY_ALLOW_GUESTS)
 
       ENCLOSING_AUTH_PATTERNS.each do |pattern, desc|
         return desc if current.matches?(pattern)

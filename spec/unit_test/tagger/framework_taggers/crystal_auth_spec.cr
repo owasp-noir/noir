@@ -157,6 +157,47 @@ describe "CrystalAuthTagger" do
     FileUtils.rm_rf(tmpdir) if tmpdir
   end
 
+  it "treats Lucky include Auth::AllowGuests as public, not protected" do
+    tmpdir = File.tempname("lucky_allow_guests")
+    Dir.mkdir_p(tmpdir)
+    guest = File.join(tmpdir, "index.cr")
+    member = File.join(tmpdir, "show.cr")
+    File.write(guest, <<-CR)
+      class Home::Index < BrowserAction
+        include Auth::AllowGuests
+
+        get "/" do
+          html Lucky::WelcomePage
+        end
+      end
+      CR
+    File.write(member, <<-CR)
+      class Me::Show < BrowserAction
+        include Auth::RequireSignIn
+
+        get "/me" do
+          html ShowPage
+        end
+      end
+      CR
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    at = ->(url : String, file : String) do
+      details = Details.new(PathInfo.new(file, 4))
+      details.technology = "crystal_lucky"
+      Endpoint.new(url, "GET", [] of Param, details)
+    end
+    home = at.call("/", guest)
+    me = at.call("/me", member)
+
+    CrystalAuthTagger.new(noir_options).perform([home, me])
+    home.tags.should be_empty
+    me.tags.map(&.description).should eq(["Protected by Lucky Auth::RequireSignIn"])
+  ensure
+    FileUtils.rm_rf(tmpdir) if tmpdir
+  end
+
   it "returns correct target_techs" do
     CrystalAuthTagger.target_techs.should contain("crystal_kemal")
     CrystalAuthTagger.target_techs.should contain("crystal_amber")
