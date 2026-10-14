@@ -79,7 +79,7 @@ module Analyzer::Scala
           HTTP_METHODS.each do |method|
             method_param_scopes = extract_method_param_scopes(route_scope, method)
             unless method_param_scopes.empty?
-              endpoint = create_endpoint(full_path, method.upcase, path)
+              endpoint = create_endpoint(full_path, method.upcase, path, method_line(structural_lines, index, block_end, method))
 
               extract_path_params(endpoint, full_path)
 
@@ -109,7 +109,7 @@ module Analyzer::Scala
           HTTP_METHODS.each do |method|
             method_param_scopes = extract_method_param_scopes(route_scope, method)
             unless method_param_scopes.empty?
-              endpoint = create_endpoint(full_path, method.upcase, path)
+              endpoint = create_endpoint(full_path, method.upcase, path, method_line(structural_lines, index, block_end, method))
               extract_path_params(endpoint, full_path)
               extract_params_from_block(endpoint, method_param_scopes.join("\n"))
               attach_method_callees(endpoint, lines, structural_lines, index, block_end, method, path) if include_callee
@@ -137,7 +137,7 @@ module Analyzer::Scala
               next if method_param_scopes.empty?
 
               route_ranges << {index, block_end}
-              endpoint = create_endpoint(full_path, method.upcase, path)
+              endpoint = create_endpoint(full_path, method.upcase, path, method_line(structural_lines, index, block_end, method))
               extract_path_params(endpoint, full_path)
               extract_params_from_block(endpoint, method_param_scopes.join("\n"))
               attach_method_callees(endpoint, lines, structural_lines, index, block_end, method, path) if include_callee
@@ -249,6 +249,15 @@ module Analyzer::Scala
           params_content.scan(/Symbol\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
             param_name = match[1]
             endpoint.push_param(Param.new(param_name, "", "query"))
+          end
+        end
+      end
+
+      # Extract form fields: formField("name") / formFields("a", "b".as[Int]) { ... }
+      if block.includes?("formField")
+        block.scan(/formFields?\s*\(([^)]*)\)/) do |match|
+          match[1].scan(/"([^"]+)"|'(\w+)/) do |field|
+            endpoint.push_param(Param.new(field[1]? || field[2], "", "form"))
           end
         end
       end
@@ -468,9 +477,19 @@ module Analyzer::Scala
       end
     end
 
+    # 1-based line of the first `method` directive in the route block
+    # `[start, finish]`, or the route directive's own line.
+    private def method_line(structural_lines : Array(String), start : Int32, finish : Int32, method : String) : Int32
+      regex = METHOD_SCOPE_PATTERNS[method]
+      (start..finish).each do |i|
+        return i + 1 if (structural_lines[i]? || "").matches?(regex)
+      end
+      start + 1
+    end
+
     # Create an endpoint with the given path and method
-    private def create_endpoint(path : String, method : String, source : String)
-      details = Details.new(PathInfo.new(source))
+    private def create_endpoint(path : String, method : String, source : String, line : Int32)
+      details = Details.new(PathInfo.new(source, line))
       params = [] of Param
 
       Endpoint.new(path, method, params, details)

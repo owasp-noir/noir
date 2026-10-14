@@ -186,7 +186,7 @@ module Analyzer::Java
             # the per-route parameter walks (and the WebSocket branches
             # below) instead of rebuilding it — a full recursive tree walk
             # — on every emitted route.
-            file_constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants_from(root, content)
+            file_constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants_from(root, content, java_project_constants(path))
 
             # The method-declaration index used to resolve callee call
             # sites is likewise file-scoped; build it once (only when
@@ -196,7 +196,7 @@ module Analyzer::Java
             # Same for the handler-method lookups below (built on the first route).
             param_index = nil.as(Noir::TreeSitterJavaParameterExtractor::FileIndex?)
 
-            Noir::TreeSitterJavaRouteExtractor.extract_routes_from(root, content, visible_meta_mappings).each do |route|
+            Noir::TreeSitterJavaRouteExtractor.extract_routes_from(root, content, visible_meta_mappings, file_constants).each do |route|
               is_feign_client = feign_clients.includes?(route.class_name)
               is_http_exchange_client = http_exchange_clients.includes?(route.class_name)
               is_internal_client = is_feign_client || is_http_exchange_client
@@ -241,7 +241,7 @@ module Analyzer::Java
               @result << endpoint
             end
 
-            Noir::TreeSitterJavaRouteExtractor.extract_controller_interface_implementations_from(root, content, visible_meta_mappings).each do |implementation|
+            Noir::TreeSitterJavaRouteExtractor.extract_controller_interface_implementations_from(root, content, visible_meta_mappings, file_constants).each do |implementation|
               implementation.interface_names.each do |interface_name|
                 next if implementation.paths.empty?
                 # Concrete @Override that re-declares its own mapping
@@ -344,7 +344,10 @@ module Analyzer::Java
           # when callees are requested (and constants are resolved once,
           # not once-per-block).
           Noir::TreeSitter.parse_java(content) do |root|
-            constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants_from(root, content)
+            # Every non-annotation `.java` file lands here; only router
+            # files are worth seeding (a copy of) the project table into.
+            project_constants = content_matches?(content, REGEX_ROUTER_CODE_BLOCK) ? java_project_constants(path) : nil
+            constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants_from(root, content, project_constants)
             content.scan(REGEX_ROUTER_CODE_BLOCK) do |route_code|
               method_code = route_code[0]
               # Pick up `nest(RequestPredicates.path("/prefix"), ...)`
@@ -434,7 +437,7 @@ module Analyzer::Java
         next unless needs_stomp || needs_meta
 
         Noir::TreeSitter.parse_java(content) do |root|
-          constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants_from(root, content)
+          constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants_from(root, content, java_project_constants(path))
 
           if needs_stomp
             collected = collect_stomp_application_prefixes(content, constants)
@@ -487,7 +490,8 @@ module Analyzer::Java
           next if package_name.empty?
 
           visible_meta_mappings = visible_meta_annotation_mappings(path, content, package_name, meta_annotation_index)
-          Noir::TreeSitterJavaRouteExtractor.extract_interface_routes_from(root, content, visible_meta_mappings).each do |interface_name, routes|
+          constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants_from(root, content, java_project_constants(path))
+          Noir::TreeSitterJavaRouteExtractor.extract_interface_routes_from(root, content, visible_meta_mappings, constants).each do |interface_name, routes|
             routes.each do |route|
               index.add(project_root_for(path), package_name, interface_name, SpringInterfaceRouteEntry.new(route, path, content, package_name))
             end
@@ -871,7 +875,11 @@ module Analyzer::Java
 
         args = code[(open_idx + 1)...close_idx]
         arg_list = top_level_arguments(args)
-        path = resolve_router_path(arg_list.first? || "", constants)
+        first_arg = arg_list.first? || ""
+        # Builder `.GET(h::list)` / `.POST(req -> …)` has no pattern of its
+        # own: it matches the enclosing `path(...)` / `nest(...)` prefix.
+        path_less = first_arg.includes?("::") || first_arg.includes?("->")
+        path = path_less ? "" : resolve_router_path(first_arg, constants)
         next unless path
 
         # The handler is the second argument of `.GET("/x", this::handle)`
@@ -880,7 +888,8 @@ module Analyzer::Java
         # 1-hop callees out of that handler body (WebFlux/servlet-fn
         # RouterFunction handlers carry the real behaviour worth surfacing
         # for ai-context).
-        handler_ref = arg_list.size >= 2 ? handler_method_reference(arg_list[1]) : ""
+        handler_arg = path_less ? first_arg : arg_list[1]?
+        handler_ref = handler_arg ? handler_method_reference(handler_arg) : ""
         # Two positions: the match start decides which `nest(...)` range the
         # call sits in, while the verb is where the route itself is written —
         # `.route(\n  GET("/hello")` declares the route on the `GET` line, not
@@ -949,19 +958,22 @@ module Analyzer::Java
                                       constants : Hash(String, String)) : Array(Tuple(Int32, Int32, String))
       regions = [] of Tuple(Int32, Int32, String)
 
-      offset = 0
-      while nest_marker = code.index("nest", offset)
-        offset = nest_marker + 4
-        next unless nest_call_name?(code, nest_marker)
-
-        open_idx = code.index('(', nest_marker)
-        next unless open_idx
+      # `nest(path("/p"), …)` / `.andNest(path("/p"), …)` carry the prefix
+      # in a predicate; the builder's `.path("/p", b -> …)` carries it as a
+      # plain first argument.
+      code.scan(NEST_CALL_RE) do |match|
+        open_idx = (match.end || 0) - 1
         close_idx = find_matching_paren(code, open_idx)
         next unless close_idx
 
         args = code[(open_idx + 1)...close_idx]
         predicate = first_argument(args)
-        next unless prefix = path_predicate_prefix(predicate, constants)
+        prefix = if match[1]?
+                   path_predicate_prefix(predicate, constants)
+                 elsif args.includes?("->")
+                   resolve_router_path(predicate, constants)
+                 end
+        next unless prefix
 
         regions << {open_idx, close_idx, prefix}
       end
@@ -969,16 +981,7 @@ module Analyzer::Java
       regions
     end
 
-    private def nest_call_name?(code : String, nest_marker : Int32) : Bool
-      before = nest_marker.zero? ? '\0' : code[nest_marker - 1]
-      return false if before.ascii_alphanumeric? || before == '_'
-
-      after_idx = nest_marker + 4
-      while after_idx < code.size && code[after_idx].ascii_whitespace?
-        after_idx += 1
-      end
-      after_idx < code.size && code[after_idx] == '('
-    end
+    NEST_CALL_RE = /(?<![\w$])(?:(nest|andNest)|(?<=\.)path)\s*\(/
 
     private def first_argument(args : String) : String
       depth = 0

@@ -95,7 +95,13 @@ module Analyzer::Javascript
     # treats as authoritative.
     ROOT_CONFIG_BASENAMES   = ["fresh.config.ts", "fresh.config.js", "fresh.config.mjs"]
     DENO_MANIFEST_BASENAMES = ["deno.json", "deno.jsonc"]
-    FRESH_IMPORT_MARKER     = /\$fresh\//
+    # Fresh 1 maps `$fresh/`; Fresh 2 (`jsr:@fresh/init`) maps the bare
+    # `fresh` specifier to `jsr:@fresh/core`.
+    FRESH_IMPORT_MARKER = /\$fresh\/|@fresh\//
+    # Fresh 2's programmatic router: `const app = new App()` imported from
+    # `fresh`, then `app.get("/api2/:name", handler)` beside `app.fsRoutes()`.
+    FRESH_APP_MARKER = /\bnew\s+App\b/
+    FRESH_APP_IMPORT = /from\s+["'](?:fresh|jsr:@fresh\/core[^"']*|@fresh\/core)["']/
 
     def analyze
       result = [] of Endpoint
@@ -116,7 +122,11 @@ module Analyzer::Javascript
         # won outright and the derived URL changed with the checkout path.
         scoped = base_relative_path(path)
         idx = scoped.index("/routes/")
-        next if idx.nil?
+        if idx.nil?
+          app_routes = app_route_endpoints(path)
+          mutex.synchronize { result.concat(app_routes) } unless app_routes.empty?
+          next
+        end
 
         relative = scoped[(idx + "/routes/".size)..-1]
         leaf = strip_extension(File.basename(relative))
@@ -146,6 +156,17 @@ module Analyzer::Javascript
       end
 
       result
+    end
+
+    # `app.get(path, handler)` on a Fresh 2 `App`; the verb-call shape is
+    # the shared extractor's.
+    private def app_route_endpoints(path : String) : Array(Endpoint)
+      content = read_file_content(path)
+      return [] of Endpoint unless content.matches?(FRESH_APP_MARKER) && content.matches?(FRESH_APP_IMPORT)
+      Noir::JSRouteExtractor.extract_routes(path, content, @is_debug, include_callees: callees_needed?).map do |endpoint|
+        endpoint.url.scan(/:(\w+)/) { |m| endpoint.push_param(Param.new(m[1], "", "path")) }
+        endpoint
+      end
     end
 
     private def attach_handler_callees(endpoint : Endpoint, content : String, path : String, verb : String)
@@ -292,11 +313,14 @@ module Analyzer::Javascript
       content.matches?(/export\s+default\b/)
     end
 
+    # Fresh 2 wraps the object: `export const handler = define.handlers({`.
+    HANDLER_OBJECT_RE = /export\s+(?:const|let|var)\s+handler\b\s*(?::[^=]+)?=\s*(?:define\.handlers\s*(?:<[^>]*>)?\s*\(\s*)?(\{)/
+
     # Carve the `{...}` object literal out of `export const handler =
     # { ... }` (or `: Handlers = {...}`). Returns nil when the
     # handler is a function, a callable reference, or absent.
     private def extract_handler_object(content : String) : String?
-      m = content.match(/export\s+(?:const|let|var)\s+handler\b\s*(?::[^=]+)?=\s*(\{)/)
+      m = content.match(HANDLER_OBJECT_RE)
       return unless m
       after_match = m.byte_end(0)
       return unless after_match

@@ -248,11 +248,12 @@ module Analyzer::Specification
     # Top-level keys (and stringified values) of a JSON object request body.
     # API clients allow an unquoted placeholder as a JSON value (`"n":
     # {{count}}`), which is invalid JSON, so a failed parse is retried with
-    # every `placeholder` match nulled out.
+    # every `placeholder` in value position nulled out. A quoted one
+    # (`"{{name}}"`) follows a `"`, so it keeps its text.
     protected def json_body_pairs(text : String, placeholder : Regex) : Array(Tuple(String, String))
       stripped = text.strip
       return [] of Tuple(String, String) unless stripped.starts_with?('{')
-      parsed = json_any?(stripped) || json_any?(stripped.gsub(placeholder, "null"))
+      parsed = json_any?(stripped) || json_any?(stripped.gsub(/([:\[,]\s*)(?:#{placeholder})/) { "#{$1}null" })
       hash = parsed.try(&.as_h?)
       return [] of Tuple(String, String) unless hash
       hash.map { |k, v| {k, v.to_s} }

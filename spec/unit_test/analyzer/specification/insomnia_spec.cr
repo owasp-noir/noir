@@ -216,4 +216,30 @@ describe "Insomnia Analyzer" do
 
     endpoints.map(&.url).should eq ["/health"]
   end
+
+  it "keeps JSON body params next to unquoted template values" do
+    endpoints = analyze_insomnia_json <<-JSON
+      {"_type": "export", "__export_format": 4, "resources": [
+        {"_id": "req_1", "parentId": "wrk_1", "_type": "request", "method": "POST", "url": "https://shop.example.com/orders",
+         "body": {"mimeType": "application/json", "text": "{\\"product_id\\": {{ _.product_id }}, \\"ref\\": {% response 'body', 'req_0', 'b64::JC5pZA==::46b', 'never', 60 %}, \\"quantity\\": 2}"}},
+        {"_id": "wrk_1", "parentId": null, "_type": "workspace", "name": "Shop"}
+      ]}
+      JSON
+
+    endpoints[0].params.select(&.param_type.==("json")).map(&.name).should eq(["product_id", "ref", "quantity"])
+  end
+
+  it "resolves variables from the request's folder environments" do
+    endpoints = analyze_insomnia_json <<-JSON
+      {"_type": "export", "__export_format": 4, "resources": [
+        {"_id": "req_1", "parentId": "fld_2", "_type": "request", "method": "GET", "url": "{{ _.users_api }}/users/{{ _.user_id }}"},
+        {"_id": "fld_2", "parentId": "fld_1", "_type": "request_group", "name": "Inner", "environment": {"users_api": "https://users.example.com/v2"}},
+        {"_id": "fld_1", "parentId": "wrk_1", "_type": "request_group", "name": "Outer", "environment": {"users_api": "https://old.example.com/v1", "user_id": "42"}},
+        {"_id": "wrk_1", "parentId": null, "_type": "workspace", "name": "Shop"},
+        {"_id": "env_1", "parentId": "wrk_1", "_type": "environment", "name": "Base", "data": {"user_id": "7"}}
+      ]}
+      JSON
+
+    endpoints.map(&.url).should eq(["/v2/users/42"])
+  end
 end

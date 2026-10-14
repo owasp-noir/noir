@@ -20,7 +20,7 @@ module Analyzer::Java
     # Bare `route(path).handler(...)` — candidate set for lambda/terminal
     # handlers; method-ref form is handled by REGEX_ROUTE_ANY_HANDLER.
     REGEX_ROUTE_HANDLER_OPEN   = /(\w+)\.route\s*\(([^)]*)\)\s*\.handler\s*\(/i
-    REGEX_ROUTE_SUB_ROUTER     = /(\w+)\.route\s*\(([^)]*)\)\s*\.subRouter\s*\(/i
+    REGEX_ROUTE_SUB_ROUTER     = /(\w+)\.route\s*\(([^)]*)\)\s*\.subRouter\s*\(\s*(\w+)\s*\)/i
     REGEX_MOUNTSUBPATH         = /(\w+)\.mountSubRouter\s*\(([^)]*)\)/i
     REGEX_STATIC_HANDLER_ROUTE = /(\w+)\.route\s*\(([^)]*)\)\s*\.handler\s*\([^;]*StaticHandler\.create\s*\(/im
     # Outbound client types — same verb names as Router, never server routes.
@@ -63,8 +63,12 @@ module Analyzer::Java
       getter parent_router : String
       getter endpoint : String
       getter child_router : String
+      # `route("/admin/*").subRouter(child)`: the raw pattern, surfaced as
+      # one ANY route when the child declares no routes of its own here.
+      getter catch_all : String?
+      getter line : Int32
 
-      def initialize(@parent_router, @endpoint, @child_router)
+      def initialize(@parent_router, @endpoint, @child_router, @catch_all = nil, @line = 0)
       end
     end
 
@@ -119,7 +123,14 @@ module Analyzer::Java
         routes_by_router = route_candidates.group_by(&.router_name)
         mounts.each do |mount|
           child_routes = routes_by_router[mount.child_router]?
-          next unless child_routes
+          unless child_routes
+            # A sub-router built elsewhere (an event-bus bridge, another
+            # file) still exposes its mount pattern.
+            if catch_all = mount.catch_all
+              @result << build_endpoint(catch_all, "ANY", Details.new(PathInfo.new(path, mount.line)))
+            end
+            next
+          end
 
           child_routes.each do |child|
             endpoint = Noir::URLPath.join_trimmed(mount.endpoint, child.endpoint)
@@ -231,22 +242,6 @@ module Analyzer::Java
 
         body = lambda_body_of(handler_arg)
         next unless body && terminal_handler_body?(body)
-
-        candidates << RouteCandidate.new(router_name, "ANY", endpoint, route_line(content, match))
-      end
-
-      # `router.route("/prefix/*").subRouter(child)` exposes the child
-      # router under that path without constraining the HTTP method.
-      # Treat it like the explicit `mountSubRouter` form; unlike generic
-      # middleware handlers, this is a concrete mounted route surface.
-      content.scan(REGEX_ROUTE_SUB_ROUTER) do |match|
-        next if match.size < 3
-        router_name = match[1]
-        args = split_top_level_args(match[2])
-        next unless args.size == 1
-
-        endpoint = resolve_route_path_arg(args[0], constants)
-        next if endpoint.nil? || endpoint.empty?
 
         candidates << RouteCandidate.new(router_name, "ANY", endpoint, route_line(content, match))
       end
@@ -590,6 +585,20 @@ module Analyzer::Java
         next unless vertx_route_path?(endpoint)
 
         mounts << MountCandidate.new(parent_router, endpoint, child_router)
+      end
+
+      # Vert.x 4's `router.route("/prefix/*").subRouter(child)` is the same
+      # mount, spelled with the wildcard the sub-router consumes.
+      content.scan(REGEX_ROUTE_SUB_ROUTER) do |match|
+        args = split_top_level_args(match[2])
+        next unless args.size == 1
+
+        pattern = resolve_route_path_arg(args[0], constants)
+        next if pattern.nil? || pattern.empty?
+        next unless vertx_route_path?(pattern)
+
+        prefix = pattern.rchop("*").rchop("/")
+        mounts << MountCandidate.new(match[1], prefix, match[3], pattern, route_line(content, match))
       end
 
       mounts.uniq

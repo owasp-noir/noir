@@ -37,6 +37,10 @@ Route::resource('photos', ProductController::class)
 Route::apiResource('admin/widgets', ProductController::class)
     ->except(['destroy'])
     ->parameters(['widgets' => 'widget']);
+// Shallow nesting: member routes drop the parent segment.
+Route::apiResource('posts.notes', ProductController::class)
+    ->shallow()
+    ->only(['index', 'show']);
 
 Route::group(['prefix' => 'admin'], function () {
     Route::get('/settings', function () {

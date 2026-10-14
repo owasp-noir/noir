@@ -28,6 +28,12 @@ expected_endpoints = [
   Endpoint.new("/wp-admin/admin-post.php?action=export_csv", "POST", [Param.new("action", "export_csv", "query")]),
   Endpoint.new("/wp-admin/admin-post.php?action=public_submit", "GET", [Param.new("action", "public_submit", "query")]),
   Endpoint.new("/wp-admin/admin-post.php?action=public_submit", "POST", [Param.new("action", "public_submit", "query")]),
+
+  # WP_REST_Controller: `$this->namespace`, `'/' . $this->rest_base`, and
+  # each handler's `'args'` keys
+  Endpoint.new("/wp-json/itemsplugin/v2/items", "GET", [Param.new("per_page", "", "query")]),
+  Endpoint.new("/wp-json/itemsplugin/v2/items", "POST", [Param.new("title", "", "form")]),
+  Endpoint.new("/wp-json/itemsplugin/v2/items/{id}", "DELETE", [Param.new("id", "", "path")]),
 ]
 
 FunctionalTester.new("fixtures/php/wordpress/", {

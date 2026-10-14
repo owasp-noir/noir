@@ -27,10 +27,18 @@ module Noir
     # Keywords that can precede a regex literal in JavaScript
     REGEX_PRECEDING_KEYWORDS = ["return", "case", "throw", "in", "of", "typeof", "instanceof", "void", "delete", "new"]
 
+    # Words a string operand may follow with no space between (minified
+    # `import{a}from"./x"`, `export*from"./x"`, `await"x"`). Not `else`/`do`:
+    # JSX prose writes `else's` and `do's` far more often than code does.
+    STRING_PRECEDING_KEYWORDS = REGEX_PRECEDING_KEYWORDS + ["from", "import", "export", "yield", "await"]
+
     # Characters that can precede a regex literal (operators/punctuation expecting expression).
     # '<' is deliberately absent: `a < /re/` is never written, while JSX
     # closing tags (`</div>`) put a '/' after '<' on every other line.
     REGEX_PRECEDING_CHARS = Set{'(', '[', '{', ',', ':', ';', '=', '!', '&', '|', '?', '+', '-', '*', '%', '>', '~', '^'}
+
+    # Schemes whose `://` in JSX text is not a comment (see `url_slashes?`).
+    URL_SCHEMES = {"http", "https"}
 
     # The regex-context checks only ever look at the tail of the scanned
     # output: the last non-whitespace char, and `ends_with?` against the
@@ -211,7 +219,7 @@ module Noir
       char = chr(src, pos)
 
       # Skip single-line comments
-      if char == '/' && pos + 1 < size && chr(src, pos + 1) == '/'
+      if char == '/' && pos + 1 < size && chr(src, pos + 1) == '/' && !url_slashes?(src, pos)
         while pos < size && chr(src, pos) != '\n'
           pos += 1
         end
@@ -228,21 +236,29 @@ module Noir
         return pos
       end
 
-      # Skip string literals (single/double quotes)
-      if char == '"' || char == '\''
+      # Skip string literals (single/double quotes). The literal ends at an
+      # unescaped newline too, which is left for the caller to scan.
+      if (char == '"' || char == '\'') && quote_opens_string?(src, pos)
         quote = char
         emit(io, window, pending_ws, char)
         pos += 1
-        while pos < size && chr(src, pos) != quote
-          if chr(src, pos) == '\\' && pos + 1 < size
-            emit(io, window, pending_ws, chr(src, pos))
+        while pos < size && (c = chr(src, pos)) != quote && c != '\n'
+          if c == '\\' && pos + 1 < size
+            emit(io, window, pending_ws, c)
             pos += 1
+            # `\` + CRLF: emit the escaped `\r` and its `\n` together.
+            if chr(src, pos) == '\r' && pos + 1 < size && chr(src, pos + 1) == '\n'
+              emit(io, window, pending_ws, '\r')
+              pos += 1
+            end
           end
-          emit(io, window, pending_ws, chr(src, pos)) if pos < size
+          emit(io, window, pending_ws, chr(src, pos))
           pos += 1
         end
-        emit(io, window, pending_ws, quote) if pos < size && chr(src, pos) == quote
-        pos += 1
+        if pos < size && chr(src, pos) == quote
+          emit(io, window, pending_ws, quote)
+          pos += 1
+        end
         return pos
       end
 
@@ -475,7 +491,7 @@ module Noir
       char = chr(src, pos)
 
       # Skip single-line comments
-      if char == '/' && pos + 1 < size && chr(src, pos + 1) == '/'
+      if char == '/' && pos + 1 < size && chr(src, pos + 1) == '/' && !url_slashes?(src, pos)
         while pos < size && chr(src, pos) != '\n'
           pos += 1
         end
@@ -492,18 +508,20 @@ module Noir
         return pos
       end
 
-      # Skip string literals
-      if char == '"' || char == '\''
+      # Skip string literals, which end at an unescaped newline too
+      if (char == '"' || char == '\'') && quote_opens_string?(src, pos)
         quote = char
         pos += 1
-        while pos < size && chr(src, pos) != quote
-          if chr(src, pos) == '\\' && pos + 1 < size
-            pos += 2
-          else
-            pos += 1
-          end
+        while pos < size && (c = chr(src, pos)) != quote && c != '\n'
+          pos += if c != '\\'
+                   1
+                 elsif pos + 2 < size && chr(src, pos + 1) == '\r' && chr(src, pos + 2) == '\n'
+                   3 # `\` + CRLF line continuation
+                 else
+                   2
+                 end
         end
-        pos += 1
+        pos += 1 if pos < size && chr(src, pos) == quote
         return pos
       end
 
@@ -511,6 +529,44 @@ module Noir
       return template_literal_end(src, size, pos) if char == '`'
 
       nil
+    end
+
+    # Does the quote at `pos` open a string literal? JavaScript never puts
+    # a string right after a name, so a quote glued to a word is prose: JSX
+    # text such as `<p>We don't track you</p>`, whose apostrophe would
+    # otherwise open a string that hides every delimiter after it. Keywords
+    # that take an operand are the exception (`return'x'`, minified
+    # `case"a":`). Non-ASCII counts as a word char, so the byte and char
+    # walks agree on a multi-byte letter before the quote.
+    def self.quote_opens_string?(src, pos : Int32) : Bool
+      return true if pos == 0 || !ident_char?(chr(src, pos - 1))
+
+      # Stop past the longest keyword: a longer word is no keyword.
+      start = pos - 1
+      while start > 0 && pos - start <= KEYWORD_WINDOW && ident_char?(chr(src, start - 1))
+        start -= 1
+      end
+      STRING_PRECEDING_KEYWORDS.includes?(word_string(src, start, pos))
+    end
+
+    # Are the `//` at `pos` the slashes of an `http://` / `https://` URL in
+    # JSX text (`<p>Docs at https://hono.dev</p>`) rather than a comment
+    # opener? Code never glues a comment to a bare `http:` and a non-space
+    # char. Not a comment, the `//` then reads as an empty regex after ':'.
+    def self.url_slashes?(src, pos : Int32) : Bool
+      return false unless pos >= 5 && pos + 2 < src.size
+      return false if chr(src, pos - 1) != ':' || chr(src, pos + 2).whitespace?
+
+      start = pos - 1
+      while start > 0 && pos - 1 - start < 5 && chr(src, start - 1).ascii_letter?
+        start -= 1
+      end
+      return false if start > 0 && ident_char?(chr(src, start - 1))
+      URL_SCHEMES.includes?(word_string(src, start, pos - 1).downcase)
+    end
+
+    private def self.ident_char?(char : Char) : Bool
+      word_char?(char) || char.ord >= 0x80
     end
 
     # Does the '/' at `pos` start a regex literal, judged by looking back

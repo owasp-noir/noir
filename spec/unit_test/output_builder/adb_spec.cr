@@ -124,7 +124,9 @@ describe "OutputBuilderAdb" do
     builder.print([intent])
     out = builder.io.to_s.strip
 
-    out.should eq("adb shell am start -n 'com.example.app/.FooActivity' --es 'token' ''")
+    # The empty value needs both quote layers too: with one, the device shell
+    # gets no argument at all and every following extra shifts by one.
+    out.should eq("adb shell am start -n 'com.example.app/.FooActivity' --es 'token' ''\\'''\\'''")
   end
 
   it "skips HTTP endpoints and only emits Android launches" do

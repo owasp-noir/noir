@@ -43,7 +43,7 @@ describe Noir::TreeSitterAdonisJsExtractor do
     ].sort)
   end
 
-  it "expands .resource into the five REST API routes" do
+  it "expands an .apiOnly() resource into the REST API routes" do
     source = <<-TS
       Route.resource('articles', 'ArticlesController').apiOnly()
       TS
@@ -54,7 +54,42 @@ describe Noir::TreeSitterAdonisJsExtractor do
       {"POST", "/articles"},
       {"GET", "/articles/:id"},
       {"PUT", "/articles/:id"},
+      {"PATCH", "/articles/:id"},
       {"DELETE", "/articles/:id"},
+    ].sort)
+  end
+
+  it "adds the create and edit form routes without .apiOnly()" do
+    source = <<-TS
+      router.resource('posts', PostsController)
+      TS
+
+    routes = Noir::TreeSitterAdonisJsExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"GET", "/posts"},
+      {"GET", "/posts/create"},
+      {"POST", "/posts"},
+      {"GET", "/posts/:id"},
+      {"GET", "/posts/:id/edit"},
+      {"PUT", "/posts/:id"},
+      {"PATCH", "/posts/:id"},
+      {"DELETE", "/posts/:id"},
+    ].sort)
+  end
+
+  it "nests dotted resource names under the parent's id param" do
+    source = <<-TS
+      router.resource('posts.comments', CommentsController).apiOnly().only(['index', 'store', 'update'])
+      router.resource('categories.posts', PostsController).only(['show']).as('cat_posts')
+      TS
+
+    routes = Noir::TreeSitterAdonisJsExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"GET", "/posts/:post_id/comments"},
+      {"POST", "/posts/:post_id/comments"},
+      {"PUT", "/posts/:post_id/comments/:id"},
+      {"PATCH", "/posts/:post_id/comments/:id"},
+      {"GET", "/categories/:category_id/posts/:id"},
     ].sort)
   end
 
@@ -76,10 +111,12 @@ describe Noir::TreeSitterAdonisJsExtractor do
       TS
 
     routes = Noir::TreeSitterAdonisJsExtractor.extract_routes(source)
-    # index (GET /tags), store (POST /tags), show (GET /tags/:id) remain.
+    # index, create, store, show and edit remain.
     routes.map { |r| {r.verb, r.path} }.sort!.should eq([
       {"GET", "/tags"},
+      {"GET", "/tags/create"},
       {"GET", "/tags/:id"},
+      {"GET", "/tags/:id/edit"},
       {"POST", "/tags"},
     ].sort)
   end

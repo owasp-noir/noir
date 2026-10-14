@@ -8,7 +8,6 @@ expected_endpoints = [
     Param.new("name", "", "form"),
     Param.new("auth", "", "cookie"),
     Param.new("X-API-Key", "", "header"),
-    Param.new("Vary", "Origin", "header"),
   ]),
   Endpoint.new("/secret.html", "GET"),
   Endpoint.new("/ws", "GET"),
@@ -56,7 +55,15 @@ expected_endpoints = [
   Endpoint.new("/admin/query-group", "QUERY"),
 ]
 
-FunctionalTester.new("fixtures/go/fiber/", {
+tester = FunctionalTester.new("fixtures/go/fiber/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
-}, expected_endpoints).perform_tests
+}, expected_endpoints)
+tester.perform_tests
+
+# `c.GetRespHeader(...)` and `c.Vary(...)` act on the response.
+it "does not read fiber response headers as request params", tags: "functional" do
+  update = tester.endpoints.find! { |endpoint| endpoint.url == "/update" }
+  update.params.map(&.name).should_not contain("X-Resp-Only")
+  update.params.map(&.name).should_not contain("Vary")
+end

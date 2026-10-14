@@ -122,7 +122,7 @@ module Analyzer::Javascript
     def scan
       locator = CodeLocator.instance
       main_files = collect_js_files
-      return scan_register_mounts(main_files, locator) if @framework.in?(:fastify, :restify)
+      return scan_register_mounts(main_files, locator) if @framework.in?(:fastify, :restify, :hapi)
       seed_firebase_function_mounts(main_files, locator) if @framework == :express
 
       # Global collections for two-pass processing
@@ -147,8 +147,14 @@ module Analyzer::Javascript
     APPLY_ROUTES_RE = /((?:require\s*\(\s*['"][^'"]+['"]\s*\))|[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?)\s*\.applyRoutes\s*\(\s*[\w$.]+\s*,\s*(?:['"]([^'"]+)['"]|`([^`$]+)`)/
     RESTIFY_ADD_RE  = /\.add\s*\(\s*(?:['"]([^'"]+)['"]|`([^`$]+)`)\s*,\s*((?:require\s*\(\s*['"][^'"]+['"]\s*\))|[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?)\s*\)/
 
+    # Hapi nests the prefix under `routes`, on the options or per plugin item.
+    HAPI_ROUTES_PREFIX_RE = /\broutes\s*:\s*\{[^}]*?\bprefix\s*:\s*(?:['"]([^'"]+)['"]|`([^`$]+)`)/
+    HAPI_PLUGIN_FIELD_RE  = /\A\s*plugin\s*:\s*(.+)\z/m
+
     # Plugin/router mounts whose child lives in another file:
     #   Fastify  `<instance>.register(<plugin>, { prefix: '/p' })`
+    #   Hapi     `server.register(<plugin>, { routes: { prefix: '/p' } })` and
+    #            `server.register([{ plugin: <plugin>, routes: { prefix: '/p' } }])`
     #   Restify  `<router>.applyRoutes(server, '/p')`, `router.add('/p', <router>)`
     # where the child is `require('./users')`, `import('./users')` or an
     # imported binding. Every route the child file registers is served under
@@ -160,8 +166,10 @@ module Analyzer::Javascript
       edges = Hash(String, Array(Tuple(String, Noir::LocatorKey(Array(String)), String))).new
       main_files.each do |file|
         content = CodeLocator.instance.content_for(file) || Noir::TextFile.read(file)
-        next unless @framework == :fastify ? content.includes?(".register") : content.includes?(".applyRoutes") || content.includes?(".add")
-        next if Noir::JSRouteExtractor.other_shared_extractor_framework?(content, @framework)
+        next unless @framework.in?(:fastify, :hapi) ? content.includes?(".register") : content.includes?(".applyRoutes") || content.includes?(".add")
+        # Hapi does not share the route extractor: its analyzer gates files
+        # by project root, and only a `routes: { prefix }` option counts.
+        next if @framework != :hapi && Noir::JSRouteExtractor.other_shared_extractor_framework?(content, @framework)
         content = Noir::JSRouteExtractor.strip_js_comments(content)
         imports = nil.as(NamedTuple(require_map: Hash(String, String), function_map: Hash(String, String), var_to_function: Hash(String, String))?)
 
@@ -206,10 +214,32 @@ module Analyzer::Javascript
           prefix = prefix_match[1]? || prefix_match[2]
           yield plugin, prefix.starts_with?('/') ? prefix : "/#{prefix}"
         end
+      elsif @framework == :hapi
+        content.scan(REGISTER_CALL_RE) do |m|
+          args = extract_use_call_args(content, m.byte_end(0))
+          first = first_top_level_argument(args)
+          options_prefix = hapi_routes_prefix(args[first.size..])
+          first = first.strip
+          items = first.starts_with?('[') && first.ends_with?(']') ? split_at_top_level_commas(first[1...-1]) : [first]
+          items.each do |item|
+            item = item.strip
+            if item.starts_with?('{') && item.ends_with?('}')
+              plugin = split_at_top_level_commas(item[1...-1]).find_value { |field| field.match(HAPI_PLUGIN_FIELD_RE).try(&.[1]) }
+              prefix = hapi_routes_prefix(item) || options_prefix
+            else
+              plugin, prefix = item, options_prefix
+            end
+            yield plugin, prefix if plugin && prefix
+          end
+        end
       else
         content.scan(APPLY_ROUTES_RE) { |m| yield m[1], m[2]? || m[3] }
         content.scan(RESTIFY_ADD_RE) { |m| yield m[3], m[1]? || m[2] }
       end
+    end
+
+    private def hapi_routes_prefix(text : String) : String?
+      text.match(HAPI_ROUTES_PREFIX_RE).try { |m| m[1]? || m[2] }
     end
 
     private def descend_register_mounts(file : String, parent : String,
@@ -1009,8 +1039,13 @@ module Analyzer::Javascript
         return {key: nil, note: "", var: router_var}
       end
 
-      nil
+      # A same-file router (`const v1 = express.Router()`): nothing to key,
+      # but its imported children (`v1.use('/users', usersRouter)`) resolve
+      # their parent prefix through the variable.
+      {key: nil, note: "", var: router_var} if router_var.matches?(LOCAL_ROUTER_VAR_RE)
     end
+
+    LOCAL_ROUTER_VAR_RE = /\A[A-Za-z_$][\w$]*\z/
 
     # Unified helper: Resolve router variable and store prefix to CodeLocator
     private def resolve_and_store_router_prefix(
@@ -1100,7 +1135,53 @@ module Analyzer::Javascript
       file_contexts : Hash(String, FileContext),
       locator : CodeLocator,
     )
-      remaining = global_deferred_mounts
+      remaining = resolve_deferred_fix_point(global_deferred_mounts, file_contexts, locator)
+
+      # Pass 3 is Express's alone. Its "no other mount reached this child"
+      # guard reads the shared prefix table, so it is only sound for a
+      # scanner that saw every mount. Hono's scanner skips Express files: it
+      # missed `app.use('/legacy', groups())`, placed the unplaced
+      # `router.use('/api/v3/groups', …)` at the root, and whether Express
+      # then reported a phantom `/api/v3/groups/:gid` depended on which
+      # analyzer started first. (A `.use()` is never a Hono sub-app mount.)
+      return unless @framework == :express
+
+      # A same-file router mounted on an app that is not named `app`
+      # (`server.use('/api', apiRouter)`) is placed at the root first, so
+      # the routers it mounts in turn resolve under it rather than at `/`.
+      if place_unplaced_local_mounts(remaining, file_contexts)
+        remaining = resolve_deferred_fix_point(remaining, file_contexts, locator)
+      end
+      place_unplaced_mounts(remaining, file_contexts, locator)
+    end
+
+    # Mounts of same-file routers whose parent was never located: their
+    # variable takes the mount prefix, as `place_unplaced_mounts` does for
+    # imported children. Returns whether any variable was placed.
+    private def place_unplaced_local_mounts(
+      remaining : Array(Tuple(String, String, String, String)),
+      file_contexts : Hash(String, FileContext),
+    ) : Bool
+      eligible = remaining.compact_map do |main_file, _caller, prefix, router_var|
+        ctx = file_contexts[main_file]? || next
+        target = router_prefix_target(router_var, nil, main_file,
+          ctx[:require_map], ctx[:function_map], ctx[:var_to_function])
+        next unless target && target[:key].nil?
+        var = target[:var] || next
+        {ctx[:var_prefix], var, prefix} if ctx[:var_prefix][var].empty?
+      end
+
+      eligible.each do |var_prefix, var, prefix|
+        var_prefix[var] << prefix unless var_prefix[var].includes?(prefix)
+      end
+      !eligible.empty?
+    end
+
+    private def resolve_deferred_fix_point(
+      remaining : Array(Tuple(String, String, String, String)),
+      file_contexts : Hash(String, FileContext),
+      locator : CodeLocator,
+    ) : Array(Tuple(String, String, String, String))
       max_iterations = 10
       iteration = 0
 
@@ -1141,14 +1222,7 @@ module Analyzer::Javascript
         break unless resolved_any
       end
 
-      # Pass 3 is Express's alone. Its "no other mount reached this child"
-      # guard reads the shared prefix table, so it is only sound for a
-      # scanner that saw every mount. Hono's scanner skips Express files: it
-      # missed `app.use('/legacy', groups())`, placed the unplaced
-      # `router.use('/api/v3/groups', …)` at the root, and whether Express
-      # then reported a phantom `/api/v3/groups/:gid` depended on which
-      # analyzer started first. (A `.use()` is never a Hono sub-app mount.)
-      place_unplaced_mounts(remaining, file_contexts, locator) if @framework == :express
+      remaining
     end
 
     # PASS 3: mounts whose parent router was never located.

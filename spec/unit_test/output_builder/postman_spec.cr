@@ -545,4 +545,18 @@ describe "OutputBuilderPostman Parameters and Bodies" do
     body["raw"].as_s.should eq("<root/>")
     body["options"]["raw"]["language"].as_s.should eq("xml")
   end
+
+  it "form-encodes query values in url.raw" do
+    builder = OutputBuilderPostman.new(options)
+    builder.io = IO::Memory.new
+
+    search = Endpoint.new("/search", "GET")
+    search.push_param(Param.new("q", "red shoes & socks", "query"))
+    search.push_param(Param.new("sort", "price#asc", "query"))
+
+    builder.print([search])
+    url = JSON.parse(builder.io.to_s)["item"][0]["request"]["url"]
+
+    url["raw"].as_s.should eq("{{baseUrl}}/search?q=red+shoes+%26+socks&sort=price%23asc")
+  end
 end

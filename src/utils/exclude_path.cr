@@ -56,12 +56,21 @@ module Noir
       @active = !patterns.empty?
     end
 
-    # `./tests` → `tests`, `././tests` → `tests`. A pattern that is nothing
-    # but `./` is left alone: stripping it would leave an empty pattern.
+    # `./tests` → `tests`, `././tests` → `tests`, and the gitignore-style
+    # anchored `/tests` → `tests` (the candidate path loses its leading `/`
+    # too, so an anchored pattern otherwise matched nothing). A pattern that
+    # is nothing but `./` is left alone: stripping it would leave an empty
+    # pattern.
     def self.strip_dot_slash(pattern : String) : String
       stripped = pattern
-      while stripped.starts_with?("./")
-        stripped = stripped[2..]
+      loop do
+        if stripped.starts_with?("./")
+          stripped = stripped[2..]
+        elsif stripped.starts_with?('/')
+          stripped = stripped[1..]
+        else
+          break
+        end
       end
       stripped.empty? ? pattern : stripped
     end

@@ -16,6 +16,10 @@ module Analyzer::Python
     REGEX_ROOT_URLCONF = /\s*ROOT_URLCONF\s*=\s*r?['"]([^'"\\]*)['"]/
     # The optional `(` admits the tuple form `include(("app.urls", "app"))`.
     REGEX_INCLUDE_URLS = /\binclude\s*\(\s*(?:\(\s*)?r?['"]([^'"\\]*)['"]/
+    # `router = routers.DefaultRouter(trailing_slash=False)`
+    DRF_SLASHLESS_ROUTER_RE = /\b([A-Za-z_][A-Za-z0-9_]*)\s*(?::[^=\n]+)?=\s*[A-Za-z_][\w.]*Router\s*\([^)]*\btrailing_slash\s*=\s*False\b/
+    # `http_method_names = ["get", "post"]` on a view class.
+    DRF_HTTP_METHOD_NAMES_RE = /^\s+http_method_names\s*=\s*[\[(]([^\])]*)[\])]/m
 
     # `def get(...)` / `async def post(...)` method heads in class-based
     # views. Precompiled — an interpolated literal would be recompiled on
@@ -57,6 +61,8 @@ module Analyzer::Python
       "POST"         => {["POST"], "form"},
       "COOKIES"      => {nil, "cookie"},
       "META"         => {nil, "header"},
+      "headers"      => {nil, "header"},
+      "FILES"        => {["POST"], "form"},
       "data"         => {["POST", "PUT", "PATCH"], "form"},
       "query_params" => {nil, "query"},
     }
@@ -489,7 +495,7 @@ module Analyzer::Python
             next
           end
 
-          if imported_urlconf_path = extract_imported_include_target(view, package_map)
+          if imported_urlconf_path = extract_imported_include_target(view, package_map, django_urls.filepath)
             new_django_urls = DjangoUrls.new("#{django_urls.prefix}#{route}", imported_urlconf_path, django_urls.basepath)
             unless @visited_url_paths.has_key? new_django_urls.filepath
               extract_endpoints(new_django_urls).each do |endpoint|
@@ -806,7 +812,7 @@ module Analyzer::Python
           next
         end
 
-        if imported_urlconf_path = extract_imported_include_target(view, package_map)
+        if imported_urlconf_path = extract_imported_include_target(view, package_map, current_app_config_path)
           new_django_urls = DjangoUrls.new(nested_prefix, imported_urlconf_path, @django_base_path)
           unless @visited_url_paths.has_key? new_django_urls.filepath
             extract_endpoints(new_django_urls).each do |endpoint|
@@ -1114,6 +1120,10 @@ module Analyzer::Python
       registrations = Hash(::String, Array(DjangoDrfRegistration)).new do |hash, key|
         hash[key] = [] of DjangoDrfRegistration
       end
+      # `DefaultRouter(trailing_slash=False)` drops the `/` DRF appends to
+      # every route it builds.
+      slashless = Set(::String).new
+      content.scan(DRF_SLASHLESS_ROUTER_RE) { |match| slashless << match[1] }
       lines = content.split("\n")
 
       lines.each_with_index do |line, index|
@@ -1135,7 +1145,7 @@ module Analyzer::Python
         view_ref = clean_python_reference(view_ref)
         next if view_ref.empty?
 
-        registrations[register_match[1]] << DjangoDrfRegistration.new(prefix, view_ref)
+        registrations[register_match[1]] << DjangoDrfRegistration.new(prefix, view_ref, !slashless.includes?(register_match[1]))
       end
 
       registrations
@@ -1174,12 +1184,12 @@ module Analyzer::Python
       nil
     end
 
-    private def extract_imported_include_target(view : ::String, package_map) : ::String?
+    private def extract_imported_include_target(view : ::String, package_map, urlconf_path : ::String) : ::String?
       include_match = view.match(/\binclude\s*\(\s*(?:\(\s*)?([A-Za-z_][A-Za-z0-9_]*)\b/)
       return unless include_match
 
       target_name = include_match[1]
-      return if view.includes?("#{target_name}.urls")
+      return imported_module_urls(target_name, urlconf_path) if view.includes?("#{target_name}.urls")
       imported = package_map[target_name]?
       return unless imported
 
@@ -1188,6 +1198,20 @@ module Analyzer::Python
       return unless File.exists?(filepath)
 
       filepath
+    end
+
+    # `include(shop.urls)` after `import shop.urls` (or `import shop`): the
+    # `shop/urls.py` urlconf. `X.urls` is otherwise a DRF router's url list,
+    # which is never an imported module, so this resolves nothing for it.
+    private def imported_module_urls(name : ::String, urlconf_path : ::String) : ::String?
+      symbols = Noir::ImportGraph::Python.find_imported_symbols(@django_base_path, urlconf_path, read_file_content(urlconf_path))
+      if (target = symbols["#{name}.urls"]?) && target[1].empty?
+        return target[0]
+      end
+      module_file, attr = symbols[name]? || return
+      return unless attr.empty? && File.basename(module_file) == "__init__.py"
+      dir = File.dirname(module_file)
+      {File.join(dir, "urls.py"), File.join(dir, "urls", "__init__.py")}.find { |candidate| File.file?(candidate) }
     end
 
     private def extract_local_urlpattern_endpoints(django_urls : DjangoUrls,
@@ -1240,7 +1264,7 @@ module Analyzer::Python
           next
         end
 
-        if imported_urlconf_path = extract_imported_include_target(view, package_map)
+        if imported_urlconf_path = extract_imported_include_target(view, package_map, django_urls.filepath)
           new_django_urls = DjangoUrls.new(join_url_parts(django_urls.prefix, nested_mount).lchop("/"), imported_urlconf_path, django_urls.basepath)
           unless @visited_url_paths.has_key? new_django_urls.filepath
             extract_endpoints(new_django_urls).each do |endpoint|
@@ -1347,7 +1371,7 @@ module Analyzer::Python
 
       filepath, class_name = resolved
       route_base = join_url_parts(django_urls.prefix, mount_route, registration.prefix)
-      extract_drf_viewset_endpoints(route_base, filepath, class_name)
+      extract_drf_viewset_endpoints(route_base, filepath, class_name, registration.trailing_slash)
     end
 
     private def extract_drf_router_endpoints_for_router(django_urls : DjangoUrls,
@@ -1406,6 +1430,45 @@ module Analyzer::Python
       ""
     end
 
+    # A views module split once, with where each `def NAME(` / `class NAME(`
+    # first matches: every URL pattern pointing into the module used to
+    # re-split it and regex-search it from the top, so N views in one file
+    # cost O(N * file).
+    private record ViewFileIndex,
+      content : ::String,
+      lines : Array(::String),
+      defs : Hash(::String, Tuple(Int32, Int32)),
+      classes : Hash(::String, Tuple(Int32, Int32)) do
+      # The file from a `{line, byte column}` position on, as lines.
+      def tail(start : Tuple(Int32, Int32)) : Array(::String)
+        line, column = start
+        [lines[line].byte_slice(column)] + lines[(line + 1)..]
+      end
+    end
+
+    VIEW_DEF_RE   = /(?:async\s+)?def\s+([^\s(]+)\s*\(/
+    VIEW_CLASS_RE = /class\s+([^\s(:]+)\s*[\(:]/
+
+    @view_file_index = Hash(::String, ViewFileIndex).new
+
+    private def view_file_index(filepath : ::String) : ViewFileIndex
+      @view_file_index[filepath] ||= begin
+        content = read_file_content(filepath)
+        lines = content.split("\n")
+        defs = Hash(::String, Tuple(Int32, Int32)).new
+        classes = Hash(::String, Tuple(Int32, Int32)).new
+        lines.each_with_index do |line, index|
+          if line.includes?("def")
+            line.scan(VIEW_DEF_RE) { |m| defs.put_if_absent(m[1]) { {index, m.byte_begin(0)} } }
+          end
+          if line.includes?("class")
+            line.scan(VIEW_CLASS_RE) { |m| classes.put_if_absent(m[1]) { {index, m.byte_begin(0)} } }
+          end
+        end
+        ViewFileIndex.new(content, lines, defs, classes)
+      end
+    end
+
     # Extract endpoints from a given file
     def extract_endpoints_from_file(url : ::String, filepath : ::String, function_or_class_name : ::String)
       @logger.debug "Extracting endpoints from #{filepath}"
@@ -1414,14 +1477,15 @@ module Analyzer::Python
       suspicious_http_methods = ["GET"]
       suspicious_params = Array(Param).new
 
-      content = read_file_content(filepath)
-      content_lines = content.split "\n"
+      view_file = view_file_index(filepath)
+      content = view_file.content
+      content_lines = view_file.lines
 
       # Function Based View
-      function_start_index = content.index /(?:async\s+)?def\s+#{function_or_class_name}\s*\(/
+      function_start = view_file.defs[function_or_class_name]?
       restricted = false
-      unless function_start_index.nil?
-        function_codeblock = parse_code_block(content[function_start_index..])
+      unless function_start.nil?
+        function_codeblock = parse_code_block(view_file.tail(function_start))
         unless function_codeblock.nil?
           lines = function_codeblock.split "\n"
           function_define_line = lines[0]
@@ -1431,7 +1495,8 @@ module Analyzer::Python
           # Walk every contiguous decorator line (not just the one
           # directly above the def) so a method-restricting decorator
           # under, say, `@login_required` is still seen.
-          index = content_lines.index(function_define_line)
+          # No earlier line can equal it: it would hold an earlier `def`.
+          index = content_lines.index(function_define_line, function_start[0])
           unless index.nil?
             restricted_methods = nil
             index -= 1
@@ -1495,7 +1560,7 @@ module Analyzer::Python
           # method), but they all share the same handler body. The
           # codeblock starts at the `def` line, so `body_start_line` is
           # that line's 0-based index — derived from the char offset.
-          body_start_line = content[0, function_start_index].count('\n')
+          body_start_line = function_start[0]
           definition_line = body_start_line + 1
           handler_callees = build_callees_from(
             function_codeblock,
@@ -1517,9 +1582,10 @@ module Analyzer::Python
       end
 
       # Class Based View
-      class_start_index = content.index /class\s+#{function_or_class_name}\s*[\(:]/
-      unless class_start_index.nil?
-        class_codeblock = parse_python_class_codeblock(content, class_start_index) || parse_code_block(content[class_start_index..])
+      class_start = view_file.classes[function_or_class_name]?
+      unless class_start.nil?
+        class_lines = view_file.tail(class_start)
+        class_codeblock = parse_python_class_codeblock(class_lines) || parse_code_block(class_lines)
         unless class_codeblock.nil?
           lines = class_codeblock.split "\n"
           class_define_line = lines[0]
@@ -1550,7 +1616,7 @@ module Analyzer::Python
             end
           end
 
-          body_start_line = content[0, class_start_index].count('\n')
+          body_start_line = class_start[0]
           class_definition_line = body_start_line + 1
           method_callees = Hash(String, Array(Callee)).new
           method_lines = Hash(String, Int32).new
@@ -1672,7 +1738,8 @@ module Analyzer::Python
       end
     end
 
-    private def extract_drf_viewset_endpoints(route_base : ::String, filepath : ::String, class_name : ::String) : Array(Endpoint)
+    private def extract_drf_viewset_endpoints(route_base : ::String, filepath : ::String, class_name : ::String,
+                                              trailing_slash : Bool = true) : Array(Endpoint)
       endpoints = [] of Endpoint
       content = read_file_content(filepath)
       class_start_index = content.index /class\s+#{class_name}\s*[\(:]/
@@ -1725,8 +1792,14 @@ module Analyzer::Python
         end
       end
 
+      # View.dispatch refuses any verb missing from `http_method_names`.
+      if allowed = class_codeblock.match(DRF_HTTP_METHOD_NAMES_RE)
+        verbs = allowed[1].scan(/['"]([A-Za-z]+)['"]/).map(&.[1].upcase)
+        actions.select! { |action| verbs.includes?(action.method) }
+      end
+
       actions.each do |action|
-        endpoint_path = drf_action_path(route_base, lookup_param, action)
+        endpoint_path = drf_action_path(route_base, lookup_param, action, trailing_slash)
         params = filter_params(action.method, action.params)
         params << Param.new(lookup_param, "", "path") if action.detail
         params = dedupe_params(params)
@@ -1836,7 +1909,10 @@ module Analyzer::Python
     end
 
     private def parse_python_class_codeblock(content : ::String, class_start_index : Int32) : ::String?
-      lines = content[class_start_index..].split("\n")
+      parse_python_class_codeblock(content[class_start_index..].split("\n"))
+    end
+
+    private def parse_python_class_codeblock(lines : Array(::String)) : ::String?
       return if lines.empty?
 
       class_indent = lines[0].size - lines[0].lstrip.size
@@ -1901,11 +1977,13 @@ module Analyzer::Python
       "pk"
     end
 
-    private def drf_action_path(route_base : ::String, lookup_param : ::String, action : DjangoDrfAction) : ::String
+    private def drf_action_path(route_base : ::String, lookup_param : ::String, action : DjangoDrfAction,
+                                trailing_slash : Bool) : ::String
       parts = [route_base]
       parts << "{#{lookup_param}}" if action.detail
       parts << action.path unless action.path.empty?
-      ensure_trailing_slash(join_url_parts(parts))
+      path = join_url_parts(parts)
+      trailing_slash ? ensure_trailing_slash(path) : path
     end
 
     private def join_url_parts(parts : Array(::String)) : ::String
@@ -2028,9 +2106,9 @@ module Analyzer::Python
               next if match.size != 2
               param_name = match[1]
               if field_name == "META"
-                if param_name.starts_with? "HTTP_"
-                  param_name = param_name[5..]
-                end
+                header_name = meta_header_name(param_name)
+                next unless header_name
+                param_name = header_name
               end
 
               # If a specific parameter is found, allow the corresponding methods
@@ -2063,6 +2141,15 @@ module Analyzer::Python
       end
 
       suspicious_params
+    end
+
+    # A `request.META` key as the header the client sends: the WSGI environ
+    # spells `X-Forwarded-For` as `HTTP_X_FORWARDED_FOR`, and Content-Type
+    # and Content-Length without the prefix. Any other key (REMOTE_ADDR,
+    # SERVER_NAME, ...) is server state, not a request header: nil.
+    private def meta_header_name(key : ::String) : ::String?
+      return key.downcase.tr("_", "-") if key.in?("CONTENT_TYPE", "CONTENT_LENGTH")
+      http_header_name(key)
     end
 
     # Filter parameters based on HTTP method
@@ -2126,9 +2213,9 @@ module Analyzer::Python
     end
 
     struct DjangoDrfRegistration
-      property prefix, view_ref
+      property prefix, view_ref, trailing_slash
 
-      def initialize(@prefix : ::String, @view_ref : ::String)
+      def initialize(@prefix : ::String, @view_ref : ::String, @trailing_slash : Bool = true)
       end
     end
 

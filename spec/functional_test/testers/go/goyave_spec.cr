@@ -10,6 +10,9 @@ expected_endpoints = [
   ]),
   Endpoint.new("/api/users", "GET"),
   Endpoint.new("/api/version", "GET"),
+  # `api.Route([]string{"PUT", http.MethodPatch}, ...)`: one route per method.
+  Endpoint.new("/api/users/{userID}", "PUT", [Param.new("userID", "", "path")]),
+  Endpoint.new("/api/users/{userID}", "PATCH", [Param.new("userID", "", "path")]),
   Endpoint.new("/static/index.html", "GET"),
 ]
 

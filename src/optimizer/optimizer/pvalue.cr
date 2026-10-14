@@ -8,14 +8,13 @@ class EndpointOptimizer
     end
   end
 
-  # Apply parameter values based on configuration
+  # Apply parameter values based on configuration. A rule naming the param
+  # beats a type-wide default whatever the flag order, so
+  # `--pvalue query=1 --pvalue query=limit=10` gives `limit` 10.
   def apply_pvalue(param_type, param_name, param_value) : String
     if rules = @pvalue_rules[param_type]?
-      rules.each do |rule|
-        if rule.key.nil? || rule.key == param_name
-          return rule.value
-        end
-      end
+      rule = rules.find { |candidate| candidate.key == param_name } || rules.find(&.key.nil?)
+      return rule.value if rule
     end
 
     param_value.to_s
@@ -32,11 +31,12 @@ class EndpointOptimizer
   end
 
   # `key=value` or `key:value`, split on whichever separator comes first;
-  # no separator (or a `*` key) applies the value to every param.
+  # no separator (or a `*` key) applies the value to every param. A value
+  # that is itself a URL (`http://h:8080/cb?a=b`) is kept whole.
   private def parse_rules(yaml_rules : Array(YAML::Any)) : Array(PValueRule)
     yaml_rules.map do |pvalue|
       pvalue_str = pvalue.to_s
-      if separator = pvalue_str.index(/[=:]/)
+      if !pvalue_str.matches?(%r{\A[A-Za-z][A-Za-z0-9+.\-]*://}) && (separator = pvalue_str.index(/[=:]/))
         key = pvalue_str[0, separator]
         value = pvalue_str[(separator + 1)..]
       end

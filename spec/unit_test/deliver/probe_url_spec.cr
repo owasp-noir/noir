@@ -24,6 +24,11 @@ describe "Deliver#probe_url" do
   options["base"] = YAML::Any.new([YAML::Any.new(".")])
   probe = ProbeUrlProbe.new(options)
 
+  it "treats camelCase numeric names (userId, orderNumber, pageIndex) as numbers" do
+    endpoint = path_endpoint("http://h/u/{userId}/{orderNumber}/{pageIndex}/{userName}", "userId", "orderNumber", "pageIndex", "userName")
+    probe.url_for(endpoint).should eq("http://h/u/1/1/1/noir")
+  end
+
   describe "the Express-style :name form" do
     it "fills a lone :name" do
       probe.url_for(path_endpoint("http://h/users/:id", "id")).should eq("http://h/users/1")

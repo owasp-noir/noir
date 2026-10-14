@@ -43,6 +43,9 @@ describe Noir::Redact do
     Noir::Redact.option("url", any("http://user:p@ss@x.com:8080/a?b=1")).should eq("http://***@x.com:8080/a?b=***")
     Noir::Redact.option("export_es", any("https://elastic:pw@[::1]:9200/idx")).should eq("https://***@[::1]:9200/idx")
     Noir::Redact.option("url", any("http://x.com/a@b")).should eq("http://x.com/a@b")
+    Noir::Redact.url("via http://admin:s3cr,et@127.0.0.1:9.").should eq("via http://***@127.0.0.1:9.")
+    Noir::Redact.url("https://u:p'w@host/").should eq("https://***@host/")
+    Noir::Redact.url("['http://api.example.com','ops@corp.com']").should eq("['http://api.example.com','ops@corp.com']")
   end
 
   it "reduces a webhook URL to its origin" do

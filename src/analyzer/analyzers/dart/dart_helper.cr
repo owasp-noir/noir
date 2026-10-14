@@ -1,6 +1,7 @@
 require "../../../utils/path_scope"
 require "../../../utils/top_level_split"
 require "../../../utils/c_comments"
+require "../../../utils/char_offsets"
 require "../../../miniparsers/dart_callee_extractor"
 
 module Analyzer::Dart
@@ -61,10 +62,12 @@ module Analyzer::Dart
     # Both the argument and the result stay in CHAR space, consistent with
     # `Regex::MatchData#begin`, `Analyzer#line_number_for_index` and the
     # `char_index_to_byte_index` conversions the analyzers use for callee
-    # extraction.
-    def find_matching_paren(text : String, open_idx : Int32) : Int32?
+    # extraction. Pass `offsets` (built over `text`) when calling once per
+    # route: without it the char-to-byte seek is O(open_idx) per call on
+    # any source holding a multi-byte char.
+    def find_matching_paren(text : String, open_idx : Int32, offsets : Noir::CharOffsets? = nil) : Int32?
       depth = 0
-      each_code_char(text, open_idx, text.size) do |c, i|
+      each_code_char(text, open_idx, text.size, offsets) do |c, i|
         case c
         when '('
           depth += 1
@@ -113,8 +116,8 @@ module Analyzer::Dart
     # Yields each char outside string literals, with its CHAR index, from
     # `start` up to `limit`. Reads from a byte offset: materialising
     # `text.chars` cost O(file) per call, so a many-route file was O(n^2).
-    private def each_code_char(text : String, start : Int32, limit : Int32, &)
-      byte = text.char_index_to_byte_index(start)
+    private def each_code_char(text : String, start : Int32, limit : Int32, offsets : Noir::CharOffsets? = nil, &)
+      byte = offsets ? offsets.byte(start) : text.char_index_to_byte_index(start)
       return unless byte
       reader = Char::Reader.new(text, byte)
       i = start
@@ -211,6 +214,50 @@ module Analyzer::Dart
       body, body_start, _ = body_info
       start_line = Noir::DartCalleeExtractor.line_number_for(content, body_start)
       Noir::DartCalleeExtractor.callees_for_body(body, path, start_line)
+    end
+
+    # Request-input reads. `uri` is dart:io's and Dart Frog's request URI,
+    # `url`/`requestedUri` are Shelf's.
+    QUERY_PARAM_REGEX  = /\.(?:uri|url|requestedUri)\s*\.\s*queryParameters(?:All)?\s*\[\s*r?["']([^"']+?)["']\s*\]/
+    HEADER_VALUE_REGEX = /\.headers\s*\.\s*value\s*\(\s*r?["']([^"']+?)["']/
+    HEADER_INDEX_REGEX = /\.headers\s*\[\s*r?["']([^"']+?)["']\s*\]/
+    # `final q = request.url.queryParameters;` / `final body = await
+    # request.json();` / `jsonDecode(await request.readAsString())` — the
+    # variable is then read as `q['x']`.
+    QUERY_ALIAS_REGEX = /\b([A-Za-z_]\w*)\s*=\s*[\w.]*\.(?:uri|url|requestedUri)\s*\.\s*queryParameters(?:All)?\s*;/
+    JSON_BODY_REGEX   = /\.(?:json|readAsString)\s*\(\s*\)/
+    JSON_ALIAS_REGEX  = /\b([A-Za-z_]\w*)\s*=\s*(?:await\s+)?(?:jsonDecode\s*\(\s*(?:await\s+)?)?[\w.]*\.(?:json|readAsString)\s*\(\s*\)/
+    FORM_BODY_REGEX   = /\.formData\s*\(\s*\)/
+    INDEX_READ_REGEX  = /(?<![\w$.])([A-Za-z_]\w*)\s*\[\s*r?["']([^"']+?)["']\s*\]/
+
+    # Query, header and body inputs a handler body reads. `body` should be
+    # comment-stripped. A body read whose keys can't be seen becomes one
+    # `body` param, as in the dart:io analyzer.
+    def request_params(body : String) : Array(Param)
+      params = [] of Param
+      add = ->(name : String, type : String) do
+        params << Param.new(name, "", type) unless params.any? { |p| p.name == name && p.param_type == type }
+      end
+      body.scan(QUERY_PARAM_REGEX) { |m| add.call(m[1], "query") }
+      body.scan(HEADER_VALUE_REGEX) { |m| add.call(m[1], "header") }
+      body.scan(HEADER_INDEX_REGEX) { |m| add.call(m[1], "header") }
+
+      query_aliases = body.scan(QUERY_ALIAS_REGEX).map(&.[1])
+      json_aliases = body.scan(JSON_ALIAS_REGEX).map(&.[1])
+      json_keys = false
+      unless query_aliases.empty? && json_aliases.empty?
+        body.scan(INDEX_READ_REGEX) do |m|
+          if query_aliases.includes?(m[1])
+            add.call(m[2], "query")
+          elsif json_aliases.includes?(m[1])
+            add.call(m[2], "json")
+            json_keys = true
+          end
+        end
+      end
+      add.call("body", "json") if !json_keys && body.matches?(JSON_BODY_REGEX)
+      add.call("body", "form") if body.matches?(FORM_BODY_REGEX)
+      params
     end
 
     # Build an endpoint from an already-normalized URL, promoting every

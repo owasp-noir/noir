@@ -24,7 +24,9 @@ module Analyzer::Php
     @form_request_params = {} of String => Array(Param)
     @source_cache_mutex = Mutex.new
 
-    private record RouteGroup, prefix : String, body : String, body_start : Int32, body_end : Int32
+    # `controller` is the class a `Route::controller(X::class)->group(...)`
+    # names: routes in the body give only the action, `Route::get('/x', 'show')`.
+    private record RouteGroup, prefix : String, body : String, body_start : Int32, body_end : Int32, controller : String?
 
     private record ResourceRouteCall, resource : String, statement : String, start_pos : Int32
 
@@ -43,7 +45,8 @@ module Analyzer::Php
       imports : Hash(String, String),
       route_groups : Array(RouteGroup),
       skip_ranges : Array(Range(Int32, Int32)),
-      handler_bodies : Array(Range(Int32, Int32))
+      handler_bodies : Array(Range(Int32, Int32)),
+      controller : String?
 
     # {body, controller file, body start line, request params}
     alias ControllerActionBody = Tuple(String, String, Int32, Array(Param))
@@ -74,6 +77,10 @@ module Analyzer::Php
       # `channels.php` (broadcast channels) contribute nothing.
       if laravel_route_file?(path)
         endpoints.concat(analyze_routes_file(path))
+      end
+
+      if path.ends_with?("/bootstrap/app.php")
+        endpoints.concat(analyze_health_route(path))
       end
 
       # Analyze Laravel controller files
@@ -110,6 +117,21 @@ module Analyzer::Php
         Noir::SkippedFiles.record(tech, path, e.message.presence || e.class.name)
       end
       endpoints
+    end
+
+    HEALTH_ROUTE_RE = /\bhealth\s*:\s*['"]([^'"]+)['"]/
+
+    # Laravel 11+ `->withRouting(..., health: '/up')` registers a GET
+    # health-check route at the given path.
+    private def analyze_health_route(path : String) : Array(Endpoint)
+      content = read_file_content(path)
+      return [] of Endpoint unless content.includes?("withRouting")
+      content = php_code(content)
+      routing = content.index("withRouting")
+      health = routing.try { |at| content.match(HEALTH_ROUTE_RE, at) }
+      return [] of Endpoint unless health
+      details = Details.new(PathInfo.new(path, line_number_for_index(content, health.begin(0))))
+      [Endpoint.new("/#{health[1].lstrip('/')}", "GET", [] of Param, details)]
     end
 
     # A route file's URL prefix comes from where the app loads it, not from
@@ -269,7 +291,8 @@ module Analyzer::Php
                                        include_callee : Bool,
                                        base_line : Int32 = 1,
                                        imports : Hash(String, String) = EMPTY_IMPORTS,
-                                       php_mode : Bool = false) : Array(Endpoint)
+                                       php_mode : Bool = false,
+                                       controller : String? = nil) : Array(Endpoint)
       endpoints = [] of Endpoint
       # One structural pass over this file/body. `PhpLexer` masks strings,
       # comments and heredoc/nowdoc bodies a single time; every
@@ -288,7 +311,7 @@ module Analyzer::Php
       # `"Try Route::get(...)"` string, or a `<<<SQL … SQL` heredoc doesn't
       # surface as a real endpoint.
       skip_ranges = lexer.skip_ranges
-      ctx = RouteScanContext.new(offsets, file_path, include_callee, base_line, lexer, imports, route_groups, skip_ranges, collect_handler_bodies(offsets, base_line, lexer))
+      ctx = RouteScanContext.new(offsets, file_path, include_callee, base_line, lexer, imports, route_groups, skip_ranges, collect_handler_bodies(offsets, base_line, lexer), controller)
 
       # 1. Verb routes. Every scan below walks the body the same way, with the
       # same guards — `each_laravel_route` holds that walk once. What differs
@@ -355,7 +378,7 @@ module Analyzer::Php
           parameter_overrides = resource_parameter_overrides_for_statement(call.statement)
           call_line = base_line + offsets.line(call.start_pos) - 1
           resource_entries(kind, call, lexer, call_line).each do |name, statement, line|
-            templates = resource_route_templates(prefix, name, parameter_overrides, kind)
+            templates = resource_route_templates(prefix, name, parameter_overrides, kind, statement.matches?(SHALLOW_RE))
             endpoints.concat(create_resource_endpoints(templates, file_path, line, actions, statement, include_callee, imports, resource_controller_cache))
           end
         end
@@ -366,7 +389,7 @@ module Analyzer::Php
       route_groups.each do |group|
         new_prefix = group.prefix.empty? ? prefix : build_full_path(prefix, group.prefix)
         group_base_line = base_line + offsets.line(group.body_start) - 1
-        endpoints.concat(analyze_routes_content(group.body, new_prefix, file_path, include_callee, group_base_line, imports, php_mode: true))
+        endpoints.concat(analyze_routes_content(group.body, new_prefix, file_path, include_callee, group_base_line, imports, php_mode: true, controller: group.controller || controller))
       end
 
       endpoints
@@ -458,7 +481,7 @@ module Analyzer::Php
       action_pos = offsets.end(route_match)
       route_line = ctx.base_line + offsets.line(offsets.begin(route_match)) - 1
       handler_body, next_pos, body_start_line = extract_inline_closure_body(offsets, action_pos, ctx.base_line, ctx.lexer)
-      action = handler_body ? nil : resolve_route_action(offsets, action_pos, ctx.file_path, ctx.imports)
+      action = handler_body ? nil : resolve_route_action(offsets, action_pos, ctx.file_path, ctx.imports, ctx.controller)
       input_params = if handler_body
                        illuminate_request_params(handler_body)
                      else
@@ -527,8 +550,9 @@ module Analyzer::Php
     private def resolve_route_action(offsets : Noir::CharOffsets,
                                      action_pos : Int32,
                                      routes_file_path : String,
-                                     imports : Hash(String, String)) : ControllerActionBody?
-      action = extract_route_action(offsets, action_pos)
+                                     imports : Hash(String, String),
+                                     controller : String?) : ControllerActionBody?
+      action = extract_route_action(offsets, action_pos, controller)
       return unless action
       resolve_controller_action_body(action[0], action[1], routes_file_path, imports)
     end
@@ -613,7 +637,7 @@ module Analyzer::Php
     # Parse the controller reference that follows a route's path argument.
     # Returns {class, method} where `class` may be a short name (resolved
     # later via `use` imports) or a fully-qualified `\App\...` name.
-    private def extract_route_action(offsets : Noir::CharOffsets, pos : Int32) : Tuple(String, String)?
+    private def extract_route_action(offsets : Noir::CharOffsets, pos : Int32, controller : String?) : Tuple(String, String)?
       scan_pos = pos
       while offsets.ascii_whitespace?(scan_pos)
         scan_pos += 1
@@ -633,6 +657,11 @@ module Analyzer::Php
       # Single-action (`__invoke`) controller: Controller::class
       if m = offsets.match(/\G([A-Za-z_\\][\w\\]*)::class\s*\)/, scan_pos)
         return {m[1], "__invoke"}
+      end
+
+      # A bare 'method' inside a `Route::controller(X::class)->group(...)`
+      if controller && (m = offsets.match(/\G['"]([A-Za-z_]\w*)['"]/, scan_pos))
+        return {controller, m[1]}
       end
 
       nil
@@ -763,6 +792,10 @@ module Analyzer::Php
       !range.nil? && range.covers?(pos)
     end
 
+    # `Route::controller(X::class)` in a group's chain, or the
+    # `'controller' => X::class` group attribute.
+    GROUP_CONTROLLER_RE = /(?:(?:->|::)controller\s*\(\s*|['"]controller['"]\s*=>\s*)([A-Za-z_\\][\w\\]*)::class/i
+
     private def extract_route_groups(content : String, lexer : Noir::PhpLexer) : Array(RouteGroup)
       groups = [] of RouteGroup
       # `[^;()]*` (not `[^;]*?`) keeps each chained-call repetition unambiguous,
@@ -780,7 +813,8 @@ module Analyzer::Php
         if body_info
           body, body_start, body_end = body_info
           prelude = content[group_start...body_start]
-          groups << RouteGroup.new(extract_group_prefix(prelude), body, body_start, body_end)
+          controller = prelude.match(GROUP_CONTROLLER_RE).try(&.[1])
+          groups << RouteGroup.new(extract_group_prefix(prelude), body, body_start, body_end, controller)
           pos = body_end + 1
         else
           pos = group_match.end(0)
@@ -883,13 +917,25 @@ module Analyzer::Php
       actions
     end
 
+    SHALLOW_RE = /->\s*shallow\s*\(/
+
     # A singleton acts on the resource path itself; it has no `{id}` member.
-    private def resource_route_templates(prefix : String, resource : String, parameter_overrides : Hash(String, String), kind : String) : Array(ResourceEndpointTemplate)
+    # A `->shallow()` nested resource (`photos.comments`) keeps its member
+    # routes off the parent: `/comments/{comment}`, not
+    # `/photos/{photo}/comments/{comment}`.
+    private def resource_route_templates(prefix : String, resource : String, parameter_overrides : Hash(String, String), kind : String, shallow : Bool) : Array(ResourceEndpointTemplate)
       collection_path = resource_collection_path(prefix, resource, parameter_overrides)
       member_path = if singleton_kind?(kind)
                       collection_path
                     else
-                      "#{collection_path}/{#{resource_param_name_for_segment(resource_segments(resource).last, parameter_overrides)}}"
+                      last = resource_segments(resource).last
+                      member_base = collection_path
+                      if shallow && (dot = resource.rindex('.'))
+                        parent = resource[0...dot]
+                        slash = parent.rindex('/')
+                        member_base = resource_collection_path(prefix, slash ? "#{parent[0..slash]}#{last}" : last, parameter_overrides)
+                      end
+                      "#{member_base}/{#{resource_param_name_for_segment(last, parameter_overrides)}}"
                     end
       [
         ResourceEndpointTemplate.new("index", collection_path, "GET"),
@@ -1087,13 +1133,6 @@ module Analyzer::Php
       end
 
       singularize_resource_segment(segment).gsub('-', '_')
-    end
-
-    private def singularize_resource_segment(segment : String) : String
-      return segment[0...-3] + "y" if segment.ends_with?("ies") && segment.size > 3
-      return segment[0...-2] if segment.ends_with?("ses") && segment.size > 3
-      return segment[0...-1] if segment.ends_with?("s") && segment.size > 1
-      segment
     end
 
     private def extract_methods_from_array(methods_str : String) : Array(String)

@@ -85,6 +85,13 @@ module Noir::Detection
   # their endpoints with `"errors": []`.
   MANIFEST_SCOPED_DIR_NAMES = Set{"vendor", "dist", "build", "target", "out", "tmp", "coverage"}
 
+  # Mix fetches every dependency's source into `deps/` and compiles into
+  # `_build/`. Scanning them reports Plug/Phoenix's own docs and generator
+  # templates as routes, and their `defmacro get`/`scope` shadow the app's
+  # router calls. Only next to `mix.exs`: elsewhere `deps/` is an ordinary
+  # directory name.
+  MIX_SCOPED_DIR_NAMES = MANIFEST_SCOPED_DIR_NAMES + Set{"deps", "_build"}
+
   # The build-output subset, also pruned next to a `src/` directory or a
   # `tsconfig.json`: a Gradle subproject configured from the root
   # `subprojects {}` block has no build file of its own, and a TypeScript
@@ -210,11 +217,29 @@ module Noir::Detection
   # walk to prune among its children.
   def scoped_dir_names(entries : Array(Noir::DirListing::Entry)) : Set(String)
     source_root = false
+    manifest = false
     entries.each do |listed|
-      return MANIFEST_SCOPED_DIR_NAMES if BUILD_MANIFESTS.includes?(listed.name)
+      return MIX_SCOPED_DIR_NAMES if listed.name == "mix.exs"
+      manifest ||= BUILD_MANIFESTS.includes?(listed.name)
       source_root ||= listed.name == "tsconfig.json" || (listed.name == "src" && !!listed.info.try(&.directory?))
     end
+    return MANIFEST_SCOPED_DIR_NAMES if manifest
     source_root ? BUILD_OUTPUT_DIR_NAMES : NO_DIR_NAMES
+  end
+
+  # True when the symlink at `path` resolves inside one of the scan bases
+  # (`real_bases` are realpaths), so the walk covers its target anyway.
+  # A dangling link, or one that leaves every base, is lost coverage — and
+  # so is one into a directory the walk may prune (`vendor/`, `deps/`,
+  # `node_modules/`): over-reporting a link there beats hiding a lost tree.
+  def symlink_target_scanned?(path : String, real_bases : Array(String)) : Bool
+    target = File.realpath(path)
+    real_bases.any? do |base|
+      next false unless Noir::PathScope.under_normalized_root?(target, base)
+      target[base.size..].split('/').none? { |part| IGNORED_DIR_NAMES.includes?(part) || MIX_SCOPED_DIR_NAMES.includes?(part) }
+    end
+  rescue File::Error
+    false
   end
 
   # A Composer or `go mod vendor` tree, recognised by its own contents
@@ -388,23 +413,6 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
   detector_list = build_detector_list(options)
   mutex = Mutex.new
 
-  # Handle --only-techs: filter detector_list to only specified techs
-  only_techs_value = options["only_techs"]?.to_s
-  if !only_techs_value.empty?
-    only_techs_list = NoirTechs.resolve_tech_list(only_techs_value)
-
-    if only_techs_list.empty?
-      logger.error "No valid technologies specified in --only-techs. No detectors will be run."
-      detector_list.clear
-    else
-      logger.info "Filtering detectors to: #{only_techs_list.join(", ")}"
-      detector_list.select! do |detector|
-        only_techs_list.includes?(detector.name)
-      end
-      logger.debug "Using #{detector_list.size} detector(s)"
-    end
-  end
-
   # Handle -t/--techs: add techs directly (without detection validation)
   if !options["techs"].to_s.empty?
     # Stripped, like `--only-techs` and like the CLI validator: without it
@@ -421,6 +429,25 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
         logger.success "Added #{tech} to techs."
         techs << similar_tech
       end
+    end
+  end
+
+  # Handle --only-techs: filter detector_list to only specified techs.
+  # A `-t` tech keeps its detector too: spec detectors register the spec
+  # files their analyzer reads, so dropping one empties that analyzer.
+  only_techs_value = options["only_techs"]?.to_s
+  if !only_techs_value.empty?
+    only_techs_list = NoirTechs.resolve_tech_list(only_techs_value)
+
+    if only_techs_list.empty?
+      logger.error "No valid technologies specified in --only-techs. No detectors will be run."
+      detector_list.clear
+    else
+      logger.info "Filtering detectors to: #{only_techs_list.join(", ")}"
+      detector_list.select! do |detector|
+        only_techs_list.includes?(detector.name) || techs.includes?(detector.name)
+      end
+      logger.debug "Using #{detector_list.size} detector(s)"
     end
   end
 
@@ -634,6 +661,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
     # Check `--exclude-path` per base first, then process each accepted path
     # once so passive findings and the analyzer file registry stay unique.
     seen_file_paths = Set(String).new
+    real_bases = base_paths.map { |base| File.realpath(base) rescue Noir::PathScope.normalize_root(base) }
 
     base_paths.each do |base_path|
       # Pre-compute base path prefix for fast relative path calculation
@@ -721,9 +749,12 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
             # workspaces, Bazel's `bazel-*` links) reported zero endpoints
             # for that tree and looked exactly like a clean scan. Entries
             # the walk prunes on purpose, and media files it would have
-            # filtered a step later anyway, are not coverage the user lost.
+            # filtered a step later anyway, are not coverage the user lost;
+            # nor is a link whose target the walk reaches on its own
+            # (`CLAUDE.md -> AGENTS.md`).
             unless info.file?
-              unless Noir::Detection.ignored_dir_entry?(entry, full_path, dir_has_shard, scoped_names) || MediaFilter.media_file?(full_path)
+              unless Noir::Detection.ignored_dir_entry?(entry, full_path, dir_has_shard, scoped_names) || MediaFilter.media_file?(full_path) ||
+                     (info.type.symlink? && Noir::Detection.symlink_target_scanned?(full_path, real_bases))
                 skipped_entries += 1
                 reason = info.type.symlink? ? "symbolic link (not followed)" : "not a regular file (#{info.type})"
                 logger.debug "Skipping #{full_path}: #{reason}"

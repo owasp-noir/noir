@@ -522,6 +522,30 @@ describe Noir::JSRouteExtractor do
       Noir::JSRouteExtractor.test_stub_only?("/app/src/server.js", content).should be_false
     end
 
+    # `-test.`/`-spec.` are ordinary words in router names: an A/B-test
+    # router or an API-spec router importing express is production code.
+    it "keeps hyphen-named production routers that import an HTTP server" do
+      content = <<-JS
+        const express = require('express');
+        const router = express.Router();
+        router.post('/assign', (req, res) => res.json({}));
+        module.exports = router;
+        JS
+      Noir::JSRouteExtractor.test_stub_only?("/app/routes/ab-test.js", content).should be_false
+      Noir::JSRouteExtractor.test_stub_only?("/app/routes/api-spec.js", content).should be_false
+    end
+
+    it "still skips hyphen-named test suites that import express" do
+      content = <<-JS
+        const express = require('express');
+        const request = require('supertest');
+        describe('users', () => {
+          it('lists', () => request(app).get('/users').expect(200));
+        });
+        JS
+      Noir::JSRouteExtractor.test_stub_only?("/app/test/users-test.js", content).should be_true
+    end
+
     it "skips Jest-style test files by name" do
       content = <<-JS
         import request from "supertest";
@@ -889,6 +913,33 @@ describe Noir::JSRouteExtractor do
       stripped.should contain("app.get('/x', h);")
       stripped.should_not contain("gone")
     end
+
+    it "does not open a string at an apostrophe in JSX text" do
+      content = <<-JSX
+        const el = <p>We don't track you</p>;
+        // gone
+        app.get('/x', h);
+        JSX
+
+      stripped = Noir::JSRouteExtractor.strip_js_comments(content)
+      stripped.should contain("app.get('/x', h);")
+      stripped.should_not contain("gone")
+    end
+
+    it "keeps an http(s) URL in JSX text and still blanks real comments" do
+      content = "const el = <p>Docs at https://hono.dev</p>; // gone\napp.get('/x', h);"
+
+      stripped = Noir::JSRouteExtractor.strip_js_comments(content)
+      stripped.should contain("https://hono.dev</p>;")
+      stripped.should_not contain("gone")
+    end
+
+    it "ends a stray string at the newline" do
+      content = "const el = <p>'quoted</p>;\n// gone\napp.get('/x', h);"
+
+      stripped = Noir::JSRouteExtractor.strip_js_comments(content)
+      stripped.should_not contain("gone")
+    end
   end
   describe "line_for_char_pos" do
     it "resolves a char index on non-ASCII content" do
@@ -928,6 +979,33 @@ describe Noir::JSRouteExtractor do
         lines = endpoints.to_h { |e| {"#{e.method} #{e.url}", e.details.code_paths.first.line} }
         lines["GET /users"].should eq(6)
         lines["POST /items"].should eq(10)
+      ensure
+        file.delete
+      end
+    end
+  end
+
+  describe "routes after JSX text with an apostrophe" do
+    it "keeps every route and handler param below it" do
+      content = <<-JS
+        app.get('/about', (c) => {
+          const name = c.req.query('name')
+          return c.html(<p>We don't track you, {name}</p>)
+        })
+
+        app.post('/submit', async (c) => {
+          const token = c.req.header('X-Token')
+          return c.text('ok')
+        })
+        JS
+      file = File.tempfile("noir_js_jsx", ".tsx")
+      begin
+        File.write(file.path, content)
+        endpoints = Noir::JSRouteExtractor.extract_routes(file.path, content)
+        endpoints.map { |e| {e.method, e.url, e.params.map(&.name)} }.uniq!.should eq([
+          {"GET", "/about", ["name"]},
+          {"POST", "/submit", ["X-Token"]},
+        ])
       ensure
         file.delete
       end

@@ -25,5 +25,10 @@ Route::any('any-route', 'index/anyRoute');
 
 // 7. Route::rule with '*' (any method)
 Route::rule('rule-route', 'index/ruleRoute', '*');
+
+// 8. Typed closure (`: void` return type) still opens a prefixed group
+Route::group('typed', function (): void {
+    Route::get('ping', 'index/ping');
+});
 // Route::get('dead-line', 'index/hello');
 /* Route::post('dead-block', 'index/save'); */

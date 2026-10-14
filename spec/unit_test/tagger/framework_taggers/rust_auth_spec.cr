@@ -1,3 +1,4 @@
+require "file_utils"
 require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
@@ -141,5 +142,73 @@ describe "RustAuthTagger" do
     tagger.perform([endpoint])
 
     endpoint.tags.empty?.should be_true
+  end
+
+  it "applies an Axum layer to every route above it in the chain, and only those" do
+    tmpdir = File.tempname("axum_layer")
+    Dir.mkdir_p(File.join(tmpdir, "src"))
+    main_rs = File.join(tmpdir, "src", "main.rs")
+    File.write(main_rs, [
+      "fn app() -> Router {",
+      "    let protected = Router::new()",
+      "        .route(\"/me\", get(me))",
+      "        .route(\"/admin\", get(admin))",
+      "        .route_layer(middleware::from_fn_with_state(state.clone(), auth))",
+      "        .route(\"/login\", post(login))",
+      "        .route(\"/\", get(root));",
+      "    let api = Router::new()",
+      "        .route(\"/a\", get(a))",
+      "        .route(\"/b\", get(b))",
+      "        .layer(middleware::from_fn(auth))",
+      "        .route(\"/c\", get(c));",
+      "    protected.merge(api)",
+      "}",
+    ].join("\n"))
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    CodeLocator.instance.register_path(main_rs)
+
+    urls = {"/me" => 3, "/admin" => 4, "/login" => 6, "/" => 7, "/a" => 9, "/b" => 10, "/c" => 12}
+    endpoints = urls.map do |url, line|
+      details = Details.new(PathInfo.new(main_rs, line))
+      details.technology = "rust_axum"
+      Endpoint.new(url, "GET", [] of Param, details)
+    end
+    RustAuthTagger.new(noir_options).perform(endpoints)
+
+    tagged = endpoints.reject(&.tags.empty?).map(&.url)
+    tagged.should eq(["/me", "/admin", "/a", "/b"])
+
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  it "keeps an Axum layer's tag when the layered router is nested under a prefix" do
+    tmpdir = File.tempname("axum_layer_nest")
+    Dir.mkdir_p(File.join(tmpdir, "src"))
+    main_rs = File.join(tmpdir, "src", "main.rs")
+    File.write(main_rs, [
+      "fn app() -> Router {",
+      "    let api = Router::new()",
+      "        .route(\"/users\", get(list))",
+      "        .layer(middleware::from_fn(require_auth));",
+      "    Router::new().nest(\"/api\", api).route(\"/health\", get(health))",
+      "}",
+    ].join("\n"))
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    CodeLocator.instance.register_path(main_rs)
+
+    endpoints = [{"/api/users", 3}, {"/health", 5}].map do |url, line|
+      details = Details.new(PathInfo.new(main_rs, line))
+      details.technology = "rust_axum"
+      Endpoint.new(url, "GET", [] of Param, details)
+    end
+    RustAuthTagger.new(noir_options).perform(endpoints)
+
+    endpoints.reject(&.tags.empty?).map(&.url).should eq(["/api/users"])
+
+    FileUtils.rm_rf(tmpdir)
   end
 end

@@ -16,9 +16,16 @@ expected_endpoints = [
   Endpoint.new("/api/items", "POST", [Param.new("title", "", "form")]),
   Endpoint.new("/api/items/{itemId}", "GET", [Param.new("itemId", "", "path")]),
   Endpoint.new("/api/admin/stats", "GET"),
+  Endpoint.new("/accounts", "GET"),
+  Endpoint.new("/hook", "GET"),
+  Endpoint.new("/hook", "POST"),
+  Endpoint.new("/hook", "PUT"),
+  Endpoint.new("/hook", "PATCH"),
+  Endpoint.new("/hook", "DELETE"),
+  Endpoint.new("/hook", "OPTIONS"),
 ]
 
 FunctionalTester.new("fixtures/php/slim/", {
   :techs     => 2,  # Detection still sees php_slim and php_pure
-  :endpoints => 12, # Analysis suppresses the redundant php_pure file endpoint
+  :endpoints => 19, # Analysis suppresses the redundant php_pure file endpoint
 }, expected_endpoints).perform_tests

@@ -5,6 +5,9 @@ module Analyzer::Specification
   class Postman < SpecificationEngine
     analyzer_for "postman"
 
+    # `{{var}}`, plus the `{{$guid}}` dynamic variables Postman generates.
+    POSTMAN_VAR = /\{\{\s*\$?[A-Za-z0-9_.-]+\s*\}\}/
+
     def analyze
       each_spec_file(Noir::LocatorKeys::POSTMAN_JSON) do |postman_file|
         content = read_file_content(postman_file)
@@ -99,15 +102,8 @@ module Analyzer::Specification
           # Try to parse as JSON
           if body["raw"]?
             raw_content = scalar_to_s(body["raw"]?) || ""
-            begin
-              json_body = parse_json_lenient(raw_content)
-              if json_body.as_h?
-                json_body.as_h.each do |key, value|
-                  push_param_once(params, Param.new(key, value.to_s, "json"))
-                end
-              end
-            rescue
-              # Not JSON, treat as raw body
+            json_body_pairs(raw_content, POSTMAN_VAR).each do |key, value|
+              push_param_once(params, Param.new(key, value, "json"))
             end
           end
         when "urlencoded"
@@ -183,6 +179,12 @@ module Analyzer::Specification
 
       if path_node = url["path"]?
         url_path = extract_path_from_path_node(path_node, variables)
+        # `host: ["{{baseUrl}}"]` with baseUrl `http://h/v1` carries a base
+        # path the `path` array leaves out; the raw/string form keeps it.
+        unless url_path.empty?
+          base = host_base_path(url["host"]?, variables)
+          url_path = join_base_path(base, url_path) unless base.empty?
+        end
       end
       url_path = extract_path_from_url(raw) if url_path.empty? && !raw.empty?
 
@@ -273,6 +275,16 @@ module Analyzer::Specification
       end
 
       segments.empty? ? "" : normalize_path("/#{segments.join("/")}")
+    end
+
+    # The path part of a URL object's resolved `host`, "" when it has none.
+    private def host_base_path(host_node : JSON::Any?, variables : Hash(String, String)) : String
+      return "" unless host_node
+      host = host_node.as_s? || host_node.as_a?.try(&.map { |s| scalar_to_s(s) || "" }.join(".")) || ""
+      host = resolve_vars(host, variables)
+      return "" unless host.includes?('/')
+      path = extract_path_from_url(host)
+      path == "/" ? "" : path.rstrip('/')
     end
 
     private def extract_query_params(url_string : String) : Array(Param)

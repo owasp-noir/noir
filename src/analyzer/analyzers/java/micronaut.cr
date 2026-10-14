@@ -89,11 +89,12 @@ module Analyzer::Java
         dto_index = dto_builder.build_for(path, content)
         imports = java_imports(content)
 
-        Noir::TreeSitterMicronautExtractor.extract_routes(content, dto_index, include_callees: include_callee).each do |route|
+        project_constants = java_project_constants(path)
+        Noir::TreeSitterMicronautExtractor.extract_routes(content, dto_index, include_callees: include_callee, project_constants: project_constants).each do |route|
           @result << jvm_route_endpoint(route, Noir::URLPath.join_trimmed(base_path, route.path), path)
         end
 
-        Noir::TreeSitterMicronautExtractor.extract_controller_interface_implementations(content).each do |implementation|
+        Noir::TreeSitterMicronautExtractor.extract_controller_interface_implementations(content, project_constants).each do |implementation|
           implementation.interface_names.each do |interface_name|
             visible_interface_routes(interface_route_index, path, package_name, imports, interface_name).each do |entry|
               entry_route = entry.route
@@ -140,7 +141,7 @@ module Analyzer::Java
         next if package_name.empty?
 
         dto_index = dto_builder.build_for(path, content)
-        Noir::TreeSitterMicronautExtractor.extract_interface_routes(content, dto_index, include_callees: include_callee).each do |interface_name, routes|
+        Noir::TreeSitterMicronautExtractor.extract_interface_routes(content, dto_index, include_callees: include_callee, project_constants: java_project_constants(path)).each do |interface_name, routes|
           routes.each do |route|
             index.add(JavaEngine.project_root_for(path, configured_base_for(path)), package_name, interface_name, MicronautInterfaceRouteEntry.new(route, path, content, package_name))
           end

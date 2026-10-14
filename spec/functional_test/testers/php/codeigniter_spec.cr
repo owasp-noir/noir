@@ -41,9 +41,10 @@ expected_endpoints = [
   Endpoint.new("/api/items", "POST"),
   Endpoint.new("/tenant/{num}/billing", "GET", [Param.new("num", "", "path")]),
   Endpoint.new("/debug", "GET"),
+  Endpoint.new("/typed/ping", "GET"),
 ]
 
 FunctionalTester.new("fixtures/php/codeigniter/", {
   :techs     => 2,  # Detection still sees php_codeigniter and php_pure
-  :endpoints => 41, # Analysis suppresses redundant php_pure file endpoints
+  :endpoints => 42, # Analysis suppresses redundant php_pure file endpoints
 }, expected_endpoints).perform_tests

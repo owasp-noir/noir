@@ -116,10 +116,11 @@ module Noir
     def extract_routes(source : String,
                        dto_index : Hash(String, Array(TreeSitterJavaParameterExtractor::FieldInfo)) = {} of String => Array(TreeSitterJavaParameterExtractor::FieldInfo),
                        *,
-                       include_callees : Bool = false) : Array(Route)
+                       include_callees : Bool = false,
+                       project_constants : Hash(String, String)? = nil) : Array(Route)
       routes = [] of Route
       Noir::TreeSitter.parse_java(source) do |root|
-        constants = TreeSitterJavaRouteExtractor.extract_string_constants_from(root, source)
+        constants = TreeSitterJavaRouteExtractor.extract_string_constants_from(root, source, project_constants)
         walk_classes(root) do |decl|
           collect_class_routes(decl, source, dto_index, routes, include_callees, constants)
         end
@@ -130,10 +131,11 @@ module Noir
     def extract_interface_routes(source : String,
                                  dto_index : Hash(String, Array(TreeSitterJavaParameterExtractor::FieldInfo)) = {} of String => Array(TreeSitterJavaParameterExtractor::FieldInfo),
                                  *,
-                                 include_callees : Bool = false) : Hash(String, Array(Route))
+                                 include_callees : Bool = false,
+                                 project_constants : Hash(String, String)? = nil) : Hash(String, Array(Route))
       routes = Hash(String, Array(Route)).new { |hash, key| hash[key] = [] of Route }
       Noir::TreeSitter.parse_java(source) do |root|
-        routes = extract_interface_routes_from(root, source, dto_index, include_callees: include_callees)
+        routes = extract_interface_routes_from(root, source, dto_index, include_callees: include_callees, project_constants: project_constants)
       end
       routes
     end
@@ -142,8 +144,9 @@ module Noir
                                       source : String,
                                       dto_index : Hash(String, Array(TreeSitterJavaParameterExtractor::FieldInfo)) = {} of String => Array(TreeSitterJavaParameterExtractor::FieldInfo),
                                       *,
-                                      include_callees : Bool = false) : Hash(String, Array(Route))
-      constants = TreeSitterJavaRouteExtractor.extract_string_constants_from(root, source)
+                                      include_callees : Bool = false,
+                                      project_constants : Hash(String, String)? = nil) : Hash(String, Array(Route))
+      constants = TreeSitterJavaRouteExtractor.extract_string_constants_from(root, source, project_constants)
       routes = Hash(String, Array(Route)).new { |hash, key| hash[key] = [] of Route }
       walk_interfaces(root) do |decl|
         collect_interface_routes(decl, source, dto_index, routes, include_callees, constants)
@@ -151,17 +154,19 @@ module Noir
       routes.reject { |_name, interface_routes| interface_routes.empty? }
     end
 
-    def extract_controller_interface_implementations(source : String) : Array(ControllerInterfaceImplementation)
+    def extract_controller_interface_implementations(source : String,
+                                                     project_constants : Hash(String, String)? = nil) : Array(ControllerInterfaceImplementation)
       implementations = [] of ControllerInterfaceImplementation
       Noir::TreeSitter.parse_java(source) do |root|
-        implementations = extract_controller_interface_implementations_from(root, source)
+        implementations = extract_controller_interface_implementations_from(root, source, project_constants)
       end
       implementations
     end
 
     def extract_controller_interface_implementations_from(root : LibTreeSitter::TSNode,
-                                                          source : String) : Array(ControllerInterfaceImplementation)
-      constants = TreeSitterJavaRouteExtractor.extract_string_constants_from(root, source)
+                                                          source : String,
+                                                          project_constants : Hash(String, String)? = nil) : Array(ControllerInterfaceImplementation)
+      constants = TreeSitterJavaRouteExtractor.extract_string_constants_from(root, source, project_constants)
       implementations = [] of ControllerInterfaceImplementation
       walk_controller_interface_implementations(root, source, implementations, constants)
       implementations
@@ -812,7 +817,7 @@ module Noir
       if fields = dto_index[type_name]?
         fields.each do |field|
           next unless field.access_modifier == "public" || field.has_setter?
-          sink << Param.new(field.name, param_value(default_value, field.init_value), format)
+          sink << Param.new(field.name_for(format), param_value(default_value, field.init_value), format)
         end
       else
         fallback.call

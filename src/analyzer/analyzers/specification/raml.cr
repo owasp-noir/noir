@@ -15,6 +15,8 @@ module Analyzer::Specification
     # The root spec being walked, which unread `!include`s are reported
     # against. Same per-spec reset as `@libraries`.
     @spec_path = ""
+    # The spec's baseUri path, which `<<resourcePath>>` leaves out.
+    @base_path = ""
 
     def analyze
       each_spec_file(Noir::LocatorKeys::RAML_SPEC) do |raml_spec|
@@ -41,7 +43,7 @@ module Analyzer::Specification
         next unless yaml_obj.as_h?
 
         @libraries = collect_libraries(yaml_obj, source_dir)
-        base_path = base_path_from(yaml_obj)
+        base_path = @base_path = base_path_from(yaml_obj)
         default_media = media_types_from(yaml_obj[YAML::Any.new("mediaType")]?)
         types = yaml_obj[YAML::Any.new("types")]? || YAML::Any.new(nil)
         schemas = yaml_obj[YAML::Any.new("schemas")]? || YAML::Any.new(nil)
@@ -179,7 +181,7 @@ module Analyzer::Specification
       node = resolved[:node]
       return unless h = node.as_h?
       type_node = resource_type_node(h, resource_types, definitions_dir)
-      type_h = type_node.try(&.[:node].as_h?)
+      type_h = type_node.try { |t| substitute_template(t[:node], template_values(h, path)).as_h? }
       type_dir = type_node.try(&.[:source_dir]) || source_dir
 
       resource_uri_params = inherited_uri_params.dup
@@ -196,7 +198,9 @@ module Analyzer::Specification
 
       methods.each do |method|
         operation_nodes = [] of ResolvedNode
-        if type_method = lookup_case_insensitive(type_h, method)
+        # `get?:` in a resource type applies only where the resource itself
+        # declares `get`, which is the only way `method` reaches here for it.
+        if type_method = lookup_case_insensitive(type_h, method) || lookup_case_insensitive(type_h, "#{method}?")
           operation_nodes << resolve_include(type_method, type_dir)
         end
         if method_node = lookup_case_insensitive(h, method)
@@ -238,6 +242,39 @@ module Analyzer::Specification
     rescue e
       @logger.debug "Exception of #{source}/#{path}"
       @logger.debug_sub e
+    end
+
+    TEMPLATE_PARAM = /<<\s*([A-Za-z0-9_]+)\s*>>/
+
+    # The `<<name>>` values a resource type is applied with: the arguments of
+    # `type: { collection: { item: Song } }` plus the reserved
+    # `resourcePath` / `resourcePathName`. Transform functions
+    # (`<<name | !singularize>>`) are not evaluated and stay unresolved.
+    private def template_values(resource_h : Hash(YAML::Any, YAML::Any), path : String) : Hash(String, String)
+      values = {
+        "resourcePath"     => path[@base_path.size..],
+        "resourcePathName" => path.split('/').reverse!.find { |segment| !segment.empty? && !segment.includes?('{') } || "",
+      }
+      if args = resource_h[YAML::Any.new("type")]?.try(&.as_h?).try(&.first_value?).try(&.as_h?)
+        args.each { |name, value| values[name.to_s] = value.as_s? || value.to_s }
+      end
+      values
+    end
+
+    # `node` with every `<<name>>` in its keys and string values replaced.
+    private def substitute_template(node : YAML::Any, values : Hash(String, String)) : YAML::Any
+      if s = node.as_s?
+        return node unless s.includes?("<<")
+        YAML::Any.new(s.gsub(TEMPLATE_PARAM) { |match| values[$1]? || match })
+      elsif h = node.as_h?
+        substituted = {} of YAML::Any => YAML::Any
+        h.each { |key, value| substituted[substitute_template(key, values)] = substitute_template(value, values) }
+        YAML::Any.new(substituted)
+      elsif a = node.as_a?
+        YAML::Any.new(a.map { |value| substitute_template(value, values) })
+      else
+        node
+      end
     end
 
     private def build_endpoint(

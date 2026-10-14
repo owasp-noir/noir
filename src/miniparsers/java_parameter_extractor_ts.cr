@@ -97,8 +97,17 @@ module Noir
       getter access_modifier : String # "public", "private", "protected", ""
       getter? has_setter : Bool
       getter init_value : String # "" when no initializer
+      # Wire name in a JSON body: `@JsonProperty("display_name")`, else `name`.
+      getter json_name : String
 
-      def initialize(@name, @access_modifier, @has_setter, @init_value)
+      def initialize(@name, @access_modifier, @has_setter, @init_value, json_name : String? = nil)
+        @json_name = json_name || @name
+      end
+
+      # Jackson renames apply to JSON bodies only; form/query binding goes
+      # through Spring's `WebDataBinder`, which uses the Java name.
+      def name_for(format : String) : String
+        format == "json" ? @json_name : @name
       end
     end
 
@@ -181,9 +190,16 @@ module Noir
         next unless name_node
         name = Noir::TreeSitter.node_text(name_node, source)
         next if name.empty?
-        fields << FieldInfo.new(name, "public", true, "")
+        fields << FieldInfo.new(name, "public", true, "", json_property_name(component, source))
       end
       fields
+    end
+
+    # `@JsonProperty("wire_name")` / `@JsonProperty(value = "wire_name")` on
+    # a field or record component; nil when absent or nameless.
+    private def json_property_name(decl : LibTreeSitter::TSNode, source : String) : String?
+      return unless ann = annotation_node_on(decl, source, "JsonProperty")
+      annotation_string_arg(ann, source).presence
     end
 
     # Map each `class` to the simple name of its superclass
@@ -659,7 +675,7 @@ module Noir
                                      source : String,
                                      lombok_setters : Bool = false) : Array(FieldInfo)
       # First pass: collect field declarations.
-      declared = [] of Tuple(String, String, String) # name, access, init_value
+      declared = [] of Tuple(String, String, String, String?) # name, access, init_value, json_name
       setter_targets = Set(String).new
 
       Noir::TreeSitter.each_named_child(body) do |member|
@@ -683,7 +699,7 @@ module Noir
           if value_node = Noir::TreeSitter.field(dec, "value")
             init = Noir::TreeSitter.node_text(value_node, source)
           end
-          declared << {name, access, init}
+          declared << {name, access, init, json_property_name(member, source)}
         when "method_declaration"
           mn = Noir::TreeSitter.field(member, "name")
           next unless mn
@@ -695,9 +711,9 @@ module Noir
         end
       end
 
-      declared.map do |name, access, init|
+      declared.map do |name, access, init, json_name|
         has_setter = lombok_setters || setter_targets.includes?(name)
-        FieldInfo.new(name, access, has_setter, init)
+        FieldInfo.new(name, access, has_setter, init, json_name)
       end
     end
 
@@ -955,7 +971,7 @@ module Noir
           # `init_value` is raw Java source and only becomes a value when it
           # is one. See `Noir::JvmLiteral`.
           expanded_default = default_value || Noir::JvmLiteral.value_of(field.init_value)
-          sink << Param.new(field.name, expanded_default, effective_format)
+          sink << Param.new(field.name_for(effective_format), expanded_default, effective_format)
         end
       end
 

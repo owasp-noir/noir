@@ -23,6 +23,7 @@ module Analyzer::Go
       # build the file_contents hash via a dedicated helper.
       file_contents = read_package_file_contents
       package_function_bodies = lazy_package_bodies(file_contents)
+      named_scope = named_handler_scope(file_contents)
       parallel_analyze(get_files_by_extension(".go")) do |path|
         next if GoEngine.go_test_file?(base_relative_path(path))
         next unless File.exists?(path)
@@ -70,7 +71,7 @@ module Analyzer::Go
           routes_by_line[r.line] << r
         end
 
-        named = Noir::GoNamedHandler.new(content, path, ts_routes)
+        named = Noir::GoNamedHandler.new(content, path, ts_routes, named_scope)
 
         # Resolve 1-hop callees for every route (see Gin).
         route_rows = Set(Int32).new

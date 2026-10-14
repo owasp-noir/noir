@@ -41,6 +41,11 @@ func main() {
 			response.String(http.StatusOK, "v1")
 		})
 
+		// Multi-method route
+		api.Route([]string{"PUT", http.MethodPatch}, "/users/{userID}", func(response *goyave.Response, request *goyave.Request) {
+			response.String(http.StatusOK, "updated")
+		})
+
         // Static files
         router.Static(&osfs.FS{}, "/static", false)
 	})

@@ -15,6 +15,18 @@ module Analyzer::Php
         get_files_by_extension(".yml")
     end
 
+    # A YAML route import (`resource: ../src/Controller/Api/`, `type:
+    # attribute`, `prefix: /api/v1`): attribute routes in files under `path`
+    # are mounted under each of `prefixes`.
+    private record RouteImport, path : String, prefixes : Array(String)
+
+    @route_imports = [] of RouteImport
+
+    def analyze
+      @route_imports = collect_route_imports
+      super
+    end
+
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       include_callee = callees_needed?
@@ -25,13 +37,55 @@ module Analyzer::Php
       end
 
       # Analyze YAML route files
-      if path.ends_with?(".yaml") || path.ends_with?(".yml")
-        if path.includes?("config") && (path.includes?("routes") || path.includes?("routing"))
-          endpoints.concat(analyze_yaml_routes(path))
-        end
-      end
+      endpoints.concat(analyze_yaml_routes(path)) if yaml_route_file?(path)
 
       endpoints
+    end
+
+    private def yaml_route_file?(path : String) : Bool
+      (path.ends_with?(".yaml") || path.ends_with?(".yml")) &&
+        path.includes?("config") && (path.includes?("routes") || path.includes?("routing"))
+    end
+
+    # Every directory/file import declared in the YAML route configs.
+    # Imports of other route files (`.yaml`/`.xml`) and bundle paths
+    # (`@AcmeBundle/...`) are not followed.
+    private def collect_route_imports : Array(RouteImport)
+      imports = [] of RouteImport
+      php_source_files.each do |path|
+        next unless yaml_route_file?(path)
+        # A file that fails to parse is reported by `analyze_yaml_routes`.
+        routes = begin
+          YAML.parse(read_file_content(path)).as_h?
+        rescue
+          nil
+        end
+        next unless routes
+
+        routes.each_value do |route|
+          route_h = route.as_h?
+          next unless route_h
+          resource_node = route_h[YAML::Any.new("resource")]?
+          resource = resource_node.try { |node| node.as_s? || node.as_h?.try(&.[YAML::Any.new("path")]?.try(&.as_s?)) }
+          next if resource.nil? || resource.starts_with?('@') || resource.matches?(/\.(?:ya?ml|xml)\z/i)
+
+          # `prefix` is one path, or a locale => path map.
+          prefix_node = route_h[YAML::Any.new("prefix")]?
+          prefixes = prefix_node.try { |node| node.as_s?.try { |prefix| [prefix] } || node.as_h?.try(&.values.compact_map(&.as_s?)) }
+          prefixes = [""] if prefixes.nil? || prefixes.empty?
+          imports << RouteImport.new(File.expand_path(resource, File.dirname(path)).rstrip('/'), prefixes)
+        end
+      end
+      imports
+    end
+
+    # URL prefixes for a controller file: those of every import covering it,
+    # or just "" when no import does.
+    private def import_prefixes_for(path : String) : Array(String)
+      file = File.expand_path(path)
+      prefixes = @route_imports.select { |import| file == import.path || file.starts_with?("#{import.path}/") }
+        .flat_map(&.prefixes).uniq!
+      prefixes.empty? ? [""] : prefixes
     end
 
     private def analyze_php_routes(path : String, include_callee : Bool) : Array(Endpoint)
@@ -43,80 +97,52 @@ module Analyzer::Php
       # present (`@Route` or `#[Route`).
       return endpoints unless content.includes?("Route")
       return endpoints unless content.includes?("@Route") || content.includes?("#[Route")
-      content = php_code(content)
+      lexer = Noir::PhpLexer.new(content)
+      content = lexer.without_comments
 
       class_prefixes = extract_class_route_prefixes(content)
+      import_prefixes = import_prefixes_for(path)
 
-      # Look for route annotations (@Route) - more flexible pattern
-      # Track offset to find each match correctly
-      offset = 0
-      content.scan(/@Route\s*\((.*?)\)/m) do |match|
-        route_path = extract_symfony_route_path(match[1])
-        next unless route_path
+      # Route annotations (@Route) first, then PHP 8 attributes (#[Route]).
+      # Track offset to find each match correctly.
+      {/@Route\s*\((.*?)\)/m, /#\[Route\s*\((.*?)\)\]/m}.each do |route_regex|
+        offset = 0
+        content.scan(route_regex) do |match|
+          route_path = extract_symfony_route_path(match[1])
+          next unless route_path
 
-        full_match = match[0]
+          full_match = match[0]
 
-        # Find this specific match starting from current offset
-        route_start = content.index(full_match, offset)
-        if route_start
+          # Find this specific match starting from current offset
+          route_start = content.index(full_match, offset)
+          next unless route_start
           offset = route_start + full_match.size
           next if route_applies_to_class?(content, offset)
+          # An attribute is code; `#[Route(...)]` written inside a string
+          # literal is text. (`@Route` lives in a docblock, so it can't be
+          # checked this way.)
+          next if full_match.starts_with?('#') && !lexer.in_code?(route_start)
 
-          # Extract methods from the annotation itself
+          # Extract methods from the annotation/attribute itself
           methods = extract_methods_from_symfony_context(full_match)
           methods = ["GET"] if methods.empty?
 
           method_body = extract_php_method_body_after(content, route_start)
-
-          full_path = build_full_path(class_prefix_for_position(class_prefixes, route_start), route_path)
-          params = extract_brace_path_params(full_path)
           # Extract additional parameters from method body
-          params.concat(extract_method_params(method_body[0])) if method_body
-
+          body_params = method_body ? extract_method_params(method_body[0]) : [] of Param
           route_line = line_number_for_index(content, route_start)
+          class_path = build_full_path(class_prefix_for_position(class_prefixes, route_start), route_path)
 
-          methods.each do |method|
-            details = Details.new(PathInfo.new(path, route_line))
-            endpoint = Endpoint.new(full_path, method.upcase, params, details)
-            attach_method_callees(endpoint, method_body, path) if include_callee
-            endpoints << endpoint
-          end
-        end
-      end
+          import_prefixes.each do |import_prefix|
+            full_path = build_full_path(import_prefix, class_path).presence || "/"
+            params = extract_brace_path_params(full_path) + body_params
 
-      # Look for route attributes (#[Route]) - PHP 8 style
-      # Track offset to find each match correctly
-      offset = 0
-      content.scan(/#\[Route\s*\((.*?)\)\]/m) do |match|
-        route_path = extract_symfony_route_path(match[1])
-        next unless route_path
-
-        full_match = match[0]
-
-        # Find this specific match starting from current offset
-        route_start = content.index(full_match, offset)
-        if route_start
-          offset = route_start + full_match.size
-          next if route_applies_to_class?(content, offset)
-
-          # Extract methods from the attribute itself
-          methods = extract_methods_from_symfony_context(full_match)
-          methods = ["GET"] if methods.empty?
-
-          method_body = extract_php_method_body_after(content, route_start)
-
-          full_path = build_full_path(class_prefix_for_position(class_prefixes, route_start), route_path)
-          params = extract_brace_path_params(full_path)
-          # Extract additional parameters from method body
-          params.concat(extract_method_params(method_body[0])) if method_body
-
-          route_line = line_number_for_index(content, route_start)
-
-          methods.each do |method|
-            details = Details.new(PathInfo.new(path, route_line))
-            endpoint = Endpoint.new(full_path, method.upcase, params, details)
-            attach_method_callees(endpoint, method_body, path) if include_callee
-            endpoints << endpoint
+            methods.each do |method|
+              details = Details.new(PathInfo.new(path, route_line))
+              endpoint = Endpoint.new(full_path, method.upcase, params, details)
+              attach_method_callees(endpoint, method_body, path) if include_callee
+              endpoints << endpoint
+            end
           end
         end
       end
@@ -179,11 +205,11 @@ module Analyzer::Php
       # (Shopware's whole storefront) was dropped. A negative-lookbehind on a
       # word char accepts any non-word boundary (start, comma, paren, newline,
       # space) while still rejecting `subpath:` / `routePath:`.
-      if path_match = context.match(/(?<!\w)path\s*[:=]\s*['"]([^'"]+)['"]/i)
+      if path_match = context.match(/(?<!\w)path\s*[:=]\s*['"]([^'"]*)['"]/i)
         return path_match[1]
       end
 
-      if path_match = context.match(/^\s*['"]([^'"]+)['"]/)
+      if path_match = context.match(/^\s*['"]([^'"]*)['"]/)
         return path_match[1]
       end
 

@@ -114,7 +114,7 @@ module Analyzer::Specification
             params << Param.new(k, v, "header")
           end
         when "body:json"
-          extract_json_body(block.body).each { |p| params << p }
+          json_body_pairs(block.body, MUSTACHE_VAR).each { |k, v| params << Param.new(k, v, "json") }
         when "body:form-urlencoded"
           parse_kv_lines(block.body).each do |k, v|
             params << Param.new(k, v, "form")
@@ -130,51 +130,13 @@ module Analyzer::Specification
       resolved_url = url
       return if resolved_method.nil? || resolved_url.nil?
 
-      url_path = extract_path_from_url(resolved_url)
+      url_path = template_url_path(resolved_url, MUSTACHE_VAR)
       return if url_path.empty?
 
       @result << Endpoint.new(url_path, resolved_method, params, details)
     rescue e
       @logger.debug "Exception processing .bru block"
       @logger.debug_sub e
-    end
-
-    private def extract_json_body(raw : String) : Array(Param)
-      params = [] of Param
-      stripped = raw.strip
-      return params if stripped.empty?
-      begin
-        parsed = parse_json_lenient(stripped)
-        if hash = parsed.as_h?
-          hash.each do |k, v|
-            params << Param.new(k, v.to_s, "json")
-          end
-        end
-      rescue
-        # Non-JSON or templated body (e.g. {{var}}) — skip silently.
-      end
-      params
-    end
-
-    private def extract_path_from_url(url_string : String) : String
-      stripped = url_string.strip
-      return "" if stripped.empty?
-
-      # Drop query string; structured params live in the `query` block.
-      q_idx = stripped.index('?')
-      stripped = stripped[0...q_idx] if q_idx
-
-      if stripped =~ /^https?:\/\//i
-        rest = stripped.sub(/^https?:\/\//i, "")
-        slash_idx = rest.index('/')
-        if slash_idx
-          path = rest[slash_idx..]
-          return path.empty? ? "/" : path
-        end
-        return "/"
-      end
-
-      stripped.starts_with?('/') ? stripped : "/#{stripped}"
     end
   end
 end

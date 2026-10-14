@@ -16,6 +16,8 @@ module Analyzer::Python
     HANDLER_LIST_RE = /^(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=\[/
 
     @file_content_cache = Hash(::String, ::String).new
+    @file_lines_cache = Hash(::String, Array(::String)).new
+    @class_line_cache = Hash(::String, Hash(::String, Int32)).new
     @routes = Hash(::String, Array(Tuple(Int32, ::String, ::String, ::String))).new
     @import_modules_cache = Hash(::String, Hash(::String, Tuple(::String, Int32))).new
 
@@ -448,11 +450,15 @@ module Analyzer::Python
 
     private def extract_endpoints_from_class_in_file(file_path : ::String, route_path : ::String, handler_class : ::String, endpoints : Array(Endpoint)) : Bool
       lines = read_file_lines(file_path)
+      # Nothing before the class's first definition line matters, so start
+      # there instead of re-walking the file for every route.
+      return false unless start = class_line_index(file_path, lines)[handler_class]?
 
       class_found = false
       class_is_websocket = false
       class_indent = 0
-      lines.each_with_index do |line, line_index|
+      (start...lines.size).each do |line_index|
+        line = lines[line_index]
         stripped = line.strip
         if (m = stripped.match(CLASS_DEF_REGEX)) && m[1] == handler_class && !class_found
           class_found = true
@@ -599,8 +605,21 @@ module Analyzer::Python
     end
 
     private def read_file_lines(file_path : ::String) : Array(::String)
-      content = memoized_file_content(file_path)
-      content.split("\n")
+      @file_lines_cache[file_path] ||= memoized_file_content(file_path).split("\n")
+    end
+
+    # First line each class is defined on, per file.
+    private def class_line_index(file_path : ::String, lines : Array(::String)) : Hash(::String, Int32)
+      @class_line_cache[file_path] ||= begin
+        index = Hash(::String, Int32).new
+        lines.each_with_index do |line, line_index|
+          next unless line.includes?("class")
+          if m = line.strip.match(CLASS_DEF_REGEX)
+            index.put_if_absent(m[1]) { line_index }
+          end
+        end
+        index
+      end
     end
 
     # Per-analyzer memo over `Analyzer#read_file_content`.

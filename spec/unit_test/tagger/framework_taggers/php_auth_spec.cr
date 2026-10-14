@@ -313,4 +313,37 @@ describe "PhpAuthTagger (expanded targets)" do
       FileUtils.rm_rf(tmpdir)
     end
   end
+
+  it "drops the group tag from a route that calls withoutMiddleware('auth')" do
+    tmpdir = File.tempname("php_group_without")
+    Dir.mkdir_p(tmpdir)
+    routes = File.join(tmpdir, "web.php")
+    File.write(routes, <<-PHP)
+      <?php
+      Route::middleware('auth')->group(function () {
+          Route::get('/help', function () { return view('help'); })->withoutMiddleware('auth');
+          Route::get('/dashboard', function () { return view('dashboard'); });
+          Route::get('/faq', function () {
+              return view('faq');
+          })->withoutMiddleware(['auth']);
+          Route::get('/settings', function () { return view('settings'); });
+      });
+      PHP
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(line : Int32) { Endpoint.new("/#{line}", "GET", [] of Param, Details.new(PathInfo.new(routes, line))) }
+      help, dashboard, faq, settings = [3, 4, 5, 8].map { |line| at.call(line) }
+
+      PhpAuthTagger.new(noir_options).perform([dashboard, help, faq, settings])
+
+      dashboard.tags.map(&.description).should eq(["Protected by Laravel auth middleware (group)"])
+      settings.tags.map(&.description).should eq(["Protected by Laravel auth middleware (group)"])
+      help.tags.should be_empty
+      faq.tags.should be_empty
+    ensure
+      FileUtils.rm_rf(tmpdir)
+    end
+  end
 end

@@ -626,6 +626,11 @@ module Noir::CLI::ScanCommand
       diff_options["probe_via"] = YAML::Any.new("")
       diff_options["export_es"] = YAML::Any.new("")
       diff_options["export_webhook"] = YAML::Any.new("")
+      # The status-code probe is a probe too, and `--exclude-codes` on the
+      # old side dropped every removed endpoint (they 404 now) before the
+      # diff could name it.
+      diff_options["status_codes"] = YAML::Any.new(false)
+      diff_options["exclude_codes"] = YAML::Any.new("")
 
       app_diff = NoirRunner.new diff_options
       app.logger.info "Running Noir with Diff mode."

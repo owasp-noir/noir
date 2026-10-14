@@ -12,21 +12,20 @@ expected_endpoints = [
   Endpoint.new("/users/:id", "DELETE", [Param.new("id", "", "path")]),
   Endpoint.new("/health", "HEAD"),
   Endpoint.new("/api/*path", "OPTIONS", [Param.new("path", "", "path")]),
-  Endpoint.new("/api", "GET"), # This is from the forward statement
   Endpoint.new("/webhook", "POST"),
   Endpoint.new("/webhook", "PUT"),
   Endpoint.new("/simple", "GET"),
   # RFC 10008 HTTP QUERY method: bare `query/2` macro and `via: :query`
   Endpoint.new("/reports", "QUERY", [Param.new("filters", "", "form")]),
   Endpoint.new("/webhook-query", "QUERY"),
-  # ApiRouter endpoints
-  Endpoint.new("/status", "GET"),
-  Endpoint.new("/data", "POST"),
-  Endpoint.new("/data/:type", "GET", [Param.new("type", "", "path")]),
-  Endpoint.new("/search/api", "GET", [Param.new("query", "", "query"), Param.new("page", "", "query")]),
-  Endpoint.new("/api/create", "POST", [Param.new("title", "", "form"), Param.new("description", "", "form")]),
-  Endpoint.new("/api/secured", "GET", [Param.new("x-api-token", "", "header"), Param.new("authorization", "", "header")]),
-  Endpoint.new("/api/session", "GET", [Param.new("api_token", "", "cookie"), Param.new("api_user", "", "cookie")]),
+  # ApiRouter endpoints, mounted by `forward "/api", to: ElixirPlug.ApiRouter`
+  Endpoint.new("/api/status", "GET"),
+  Endpoint.new("/api/data", "POST"),
+  Endpoint.new("/api/data/:type", "GET", [Param.new("type", "", "path")]),
+  Endpoint.new("/api/search/api", "GET", [Param.new("query", "", "query"), Param.new("page", "", "query")]),
+  Endpoint.new("/api/api/create", "POST", [Param.new("title", "", "form"), Param.new("description", "", "form")]),
+  Endpoint.new("/api/api/secured", "GET", [Param.new("x-api-token", "", "header"), Param.new("authorization", "", "header")]),
+  Endpoint.new("/api/api/session", "GET", [Param.new("api_token", "", "cookie"), Param.new("api_user", "", "cookie")]),
 ]
 
 FunctionalTester.new("fixtures/elixir/plug/", {

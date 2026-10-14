@@ -1,6 +1,7 @@
 require "../../spec_helper"
 require "file_utils"
 require "json"
+require "http/server"
 require "../../../src/cli/catalog"
 
 # End-to-end specs for the CLI front door, driven through the *built
@@ -586,6 +587,39 @@ describe "noir CLI surface (built binary)" do
         JSON.parse(result.stdout)["removed"].as_a.should_not be_empty
       ensure
         FileUtils.rm_rf(empty)
+      end
+    end
+
+    # The old side is detection-only. Its endpoints were status-probed too,
+    # and every removed route answers 404 on the live target, so
+    # `--exclude-codes 404` hid the whole removed list.
+    it "does not status-probe or --exclude-codes the old side" do
+      server = HTTP::Server.new(&.response.status_code=(404))
+      address = server.bind_tcp("127.0.0.1", 0)
+      spawn { server.listen }
+      Fiber.yield
+      begin
+        result = run_noir(["scan", FIXTURE, "--diff-path", DIFF_FIXTURE, "--exclude-codes", "404",
+                           "-u", "http://127.0.0.1:#{address.port}", "--no-color", "--no-log", "-f", "json"])
+        JSON.parse(result.stdout)["removed"].as_a.should_not be_empty
+      ensure
+        server.close
+      end
+    end
+
+    # The new side still drops 404s; a route present on both sides that
+    # 404s live was then reported as removed although the code keeps it.
+    it "does not report a route still in the code as removed when it is excluded by status" do
+      server = HTTP::Server.new(&.response.status_code=(404))
+      address = server.bind_tcp("127.0.0.1", 0)
+      spawn { server.listen }
+      Fiber.yield
+      begin
+        result = run_noir(["scan", FIXTURE, "--diff-path", FIXTURE, "--exclude-codes", "404",
+                           "-u", "http://127.0.0.1:#{address.port}", "--no-color", "--no-log", "-f", "json"])
+        JSON.parse(result.stdout)["removed"].as_a.should be_empty
+      ensure
+        server.close
       end
     end
 

@@ -61,7 +61,16 @@ module Analyzer::Php
     # list entry) and its value — a string literal (`string`), a nested
     # array's interior (`inner`, lexer char range), or other scalar text
     # (`raw`, e.g. `false`).
-    private record ArrayEntry, key : String?, string : String?, inner : Range(Int32, Int32)?, raw : String?
+    # `pos` is where the entry starts (its key, else its value).
+    private record ArrayEntry, key : String?, string : String?, inner : Range(Int32, Int32)?, raw : String?, pos : Int32
+
+    # The config file the rules come from; `at` gives the details for a rule
+    # starting at char `pos`.
+    private record RuleSource, path : String, offsets : Noir::CharOffsets do
+      def at(pos : Int32) : Details
+        Details.new(PathInfo.new(path, offsets.line(pos)))
+      end
+    end
 
     # Parse urlManager.rules entries inside Yii2 config files:
     #   "GET /posts" => "post/index"
@@ -82,48 +91,48 @@ module Analyzer::Php
       close = lexer.matching_delimiter(open)
       return [] of Endpoint unless close
 
-      rules_endpoints(lexer, (open + 1)...close, "", Details.new(PathInfo.new(path)), 0)
+      rules_endpoints(lexer, (open + 1)...close, "", RuleSource.new(path, Noir::CharOffsets.new(content)), 0)
     end
 
     # GroupUrlRule nesting beyond this is not followed.
     MAX_RULE_GROUP_DEPTH = 16
 
     private def rules_endpoints(lexer : Noir::PhpLexer, range : Range(Int32, Int32), prefix : String,
-                                details : Details, depth : Int32) : Array(Endpoint)
+                                src : RuleSource, depth : Int32) : Array(Endpoint)
       endpoints = [] of Endpoint
       array_entries(lexer, range).each do |entry|
         if (key = entry.key) && (route = entry.string)
           next if route.empty?
           methods, pattern = split_rule_key(key)
-          endpoints.concat(rule_endpoints(methods, join_rule_path(prefix, pattern), details))
+          endpoints.concat(rule_endpoints(methods, join_rule_path(prefix, pattern), src.at(entry.pos)))
         elsif inner = entry.inner
           # An array value is a rule config whatever its key: UrlManager
           # only reads a string key as the pattern of a string rule.
-          endpoints.concat(array_rule_endpoints(lexer, inner, prefix, details, depth))
+          endpoints.concat(array_rule_endpoints(lexer, inner, prefix, src, depth))
         end
       end
       endpoints
     end
 
     private def array_rule_endpoints(lexer : Noir::PhpLexer, range : Range(Int32, Int32), prefix : String,
-                                     details : Details, depth : Int32) : Array(Endpoint)
+                                     src : RuleSource, depth : Int32) : Array(Endpoint)
       options = {} of String => ArrayEntry
       array_entries(lexer, range).each { |entry| entry.key.try { |k| options[k] ||= entry } }
 
       if rules = options["rules"]?.try(&.inner)
         # yii\web\GroupUrlRule: `prefix` leads every pattern declared inside.
         if depth >= MAX_RULE_GROUP_DEPTH
-          details.code_paths.first?.try { |code_path| Noir::SkippedFiles.record(tech, code_path.path, "GroupUrlRule nesting deeper than #{MAX_RULE_GROUP_DEPTH} levels") }
+          Noir::SkippedFiles.record(tech, src.path, "GroupUrlRule nesting deeper than #{MAX_RULE_GROUP_DEPTH} levels")
           return [] of Endpoint
         end
         group_prefix = join_rule_path(prefix, options["prefix"]?.try(&.string) || "")
-        rules_endpoints(lexer, rules, group_prefix, details, depth + 1)
+        rules_endpoints(lexer, rules, group_prefix, src, depth + 1)
       elsif options.has_key?("controller")
-        rest_rule_endpoints(lexer, range, options, details)
+        rest_rule_endpoints(lexer, range, options, src.at(range.begin))
       elsif pattern = options["pattern"]?.try(&.string)
         verbs = option_strings(lexer, options["verb"]?).map(&.upcase)
         verbs = ["GET"] if verbs.empty?
-        rule_endpoints(verbs, join_rule_path(prefix, pattern), details)
+        rule_endpoints(verbs, join_rule_path(prefix, pattern), src.at(range.begin))
       else
         [] of Endpoint
       end
@@ -190,6 +199,7 @@ module Analyzer::Php
       spans = lexer.spans
       span_index = spans.bsearch_index { |(_, s, _)| s >= range.begin } || spans.size
       key = nil
+      key_pos = nil
       value_start = nil
       i = range.begin
       stop = range.end
@@ -208,11 +218,13 @@ module Analyzer::Php
             end
             if key.nil? && lexer.masked[j]? == '=' && lexer.masked[j + 1]? == '>'
               key = text
+              key_pos = s
               i = j + 2
               value_start = i
             else
-              entries << ArrayEntry.new(key, text, nil, nil)
+              entries << ArrayEntry.new(key, text, nil, nil, key_pos || s)
               key = nil
+              key_pos = nil
               value_start = nil
               i = e
             end
@@ -225,22 +237,24 @@ module Analyzer::Php
         c = lexer.masked[i]
         if c == '[' || c == '('
           close = lexer.matching_delimiter(i) || stop
-          entries << ArrayEntry.new(key, nil, (i + 1)...close, nil)
+          entries << ArrayEntry.new(key, nil, (i + 1)...close, nil, key_pos || i)
           key = nil
+          key_pos = nil
           value_start = nil
           i = close + 1
           next
         elsif c == ','
           if (k = key) && (from = value_start)
-            entries << ArrayEntry.new(k, nil, nil, lexer.source(from...i).strip)
+            entries << ArrayEntry.new(k, nil, nil, lexer.source(from...i).strip, key_pos || from)
           end
           key = nil
+          key_pos = nil
           value_start = nil
         end
         i += 1
       end
       if (k = key) && (from = value_start)
-        entries << ArrayEntry.new(k, nil, nil, lexer.source(from...stop).strip)
+        entries << ArrayEntry.new(k, nil, nil, lexer.source(from...stop).strip, key_pos || from)
       end
       entries
     end
@@ -325,11 +339,14 @@ module Analyzer::Php
       is_rest = content.match(/extends\s+\\?yii\\rest\\(?:Active)?Controller/) ||
                 (content.match(/use\s+yii\\rest\\(?:Active)?Controller\s*;/) &&
                  content.match(/extends\s+(?:Active)?Controller\b/))
+      offsets = Noir::CharOffsets.new(content)
       if is_rest
+        # The actions are inherited: report the class declaration's line.
+        class_line = content.match(/\bclass\s+\w+/).try { |m| offsets.line(offsets.begin(m)) }
         REST_ACTIONS.each do |action, methods|
           route_path = "/#{controller_name}/#{action}"
           methods.each do |method|
-            details = Details.new(PathInfo.new(path))
+            details = Details.new(PathInfo.new(path, class_line))
             endpoints << Endpoint.new(route_path, method, [] of Param, details)
           end
         end
@@ -365,7 +382,7 @@ module Analyzer::Php
           seen.add(param.name)
         end
 
-        details = Details.new(PathInfo.new(path))
+        details = Details.new(PathInfo.new(path, offsets.line(method_start)))
         methods = infer_methods_from_body(method_body)
 
         methods.each do |method|

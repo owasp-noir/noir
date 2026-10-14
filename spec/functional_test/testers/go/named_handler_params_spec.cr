@@ -69,3 +69,20 @@ crossfile.perform_tests
 it "does not credit a local method of another receiver type", tags: "functional" do
   param_names(crossfile, "/users").should_not contain("server_only")
 end
+
+# A named handler declared in another file of the route's package (bare
+# function or method) or in a scanned package it imports (`handlers.Create`)
+# still owns its accessors; the line loop never walks those files.
+crosspkg = FunctionalTester.new("fixtures/go/named_handler_crossfile/", {
+  :techs     => 1,
+  :endpoints => 4,
+}, [
+  Endpoint.new("/sibling", "GET", [Param.new("page", "", "query")]),
+  Endpoint.new("/method", "GET", [Param.new("X-Token", "", "header")]),
+  Endpoint.new("/imported", "POST", [Param.new("nickname", "", "form")]),
+])
+crosspkg.perform_tests
+
+it "credits cross-file handler params to their route only", tags: "functional" do
+  param_names(crosspkg, "/last").should be_empty
+end

@@ -134,9 +134,11 @@ expected_endpoints = [
   Endpoint.new("/rule-route", "DELETE"),
   Endpoint.new("/rule-route", "OPTIONS"),
   Endpoint.new("/rule-route", "HEAD"),
+  # Typed closure group
+  Endpoint.new("/typed/ping", "GET"),
 ]
 
 FunctionalTester.new("fixtures/php/thinkphp/", {
   :techs     => 2,
-  :endpoints => 43,
+  :endpoints => 44,
 }, expected_endpoints).perform_tests

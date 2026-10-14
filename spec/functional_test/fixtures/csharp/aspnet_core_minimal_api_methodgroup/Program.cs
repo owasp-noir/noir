@@ -19,6 +19,12 @@ app.MapPost("/products", CreateProduct);
 // header members expand, the injected service member is dropped.
 app.MapGet("/search", Search);
 
+// A bundle on an inline lambda expands exactly like on a method group.
+app.MapGet("/search-inline", ([AsParameters] InlineSearch query) => Results.Ok());
+
+// An uploaded file binds from the multipart form, not the JSON body.
+app.MapPost("/upload", (IFormFile file, [FromForm] string title) => Results.Ok());
+
 // Services injected straight into a lambda are not request parameters.
 app.MapGet("/inventory", (IProductRepository repository, AppDbContext db, ILogger<Program> logger) =>
 {
@@ -57,6 +63,7 @@ static IResult Search([AsParameters] ProductSearch query, IProductRepository rep
 }
 
 record CreateOrderRequest(string Sku, int Quantity);
+record InlineSearch(string? Term, int Page = 1, [FromHeader(Name = "X-Tenant")] string Tenant = "");
 record CreateProductRequest(string Name, decimal Price);
 
 class ProductSearch

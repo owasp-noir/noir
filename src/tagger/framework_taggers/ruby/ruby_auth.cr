@@ -188,14 +188,14 @@ class RubyAuthTagger < FrameworkTagger
       return if authn_desc || authz_desc || controller[:skipped] || controller[:opted_out]
 
       # Check Sinatra/Rack patterns in context
-      description = check_sinatra_auth(lines, line_idx)
+      description = check_sinatra_auth(lines, line_idx, endpoint.url)
       if description
         endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "ruby_auth"))
         return
       end
 
       # Check Grape patterns (before blocks, http_basic, etc.)
-      description = check_grape_auth(lines, line_idx)
+      description = check_grape_auth(lines, line_idx, endpoint.url)
       if description
         endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "ruby_auth"))
         return
@@ -447,21 +447,8 @@ class RubyAuthTagger < FrameworkTagger
     nil
   end
 
-  private def check_sinatra_auth(lines : Array(String), route_line : Int32) : String?
-    # Check surrounding context for Sinatra auth patterns
-    start_idx = [route_line - 15, 0].max
-
-    (start_idx...route_line).each do |idx|
-      current = lines[idx].strip
-
-      SINATRA_AUTH_PATTERNS.each do |pattern, desc|
-        if current.matches?(pattern)
-          return desc
-        end
-      end
-    end
-
-    nil
+  private def check_sinatra_auth(lines : Array(String), route_line : Int32, url : String) : String?
+    match_route_scope(lines, route_line, SINATRA_AUTH_PATTERNS, url)
   end
 
   private def extract_action_name(lines : Array(String), line_idx : Int32) : String?
@@ -471,21 +458,66 @@ class RubyAuthTagger < FrameworkTagger
     match ? match[1] : nil
   end
 
-  private def check_grape_auth(lines : Array(String), route_line : Int32) : String?
-    # Grape uses before { } blocks, often near the top of the class or inside resource/namespace
-    start_idx = [route_line - 20, 0].max
+  private def check_grape_auth(lines : Array(String), route_line : Int32, url : String) : String?
+    match_route_scope(lines, route_line, GRAPE_AUTH_PATTERNS, url)
+  end
 
-    (start_idx...route_line).each do |idx|
-      current = lines[idx].strip
-
-      GRAPE_AUTH_PATTERNS.each do |pattern, desc|
-        if current.matches?(pattern)
-          return desc
-        end
-      end
+  # Sinatra/Grape guards that cover the route at `route_line`: its own block
+  # (the route line and everything indented under it), plus the `before`
+  # filters, `use` middleware and `http_basic` settings of its enclosing
+  # scopes above it. Statements indented deeper than the walk's current
+  # scope sit inside a sibling block — an earlier route's body, or the
+  # `helpers do def protected! ... end` that *defines* a guard — and are not
+  # read. A fixed-size look-back read exactly those, and never the route's
+  # own `protected!` call.
+  # ponytail: filters declared below the route are not seen; Sinatra applies
+  # them anyway — scan forward too if that shape turns up.
+  private def match_route_scope(lines : Array(String), route_line : Int32, patterns, url : String) : String?
+    scope = ruby_block_lines(lines, route_line)
+    indent = line_indent(lines[route_line])
+    (route_line - 1).downto(0) do |idx|
+      stripped = lines[idx].strip
+      next if stripped.empty? || stripped.starts_with?('#')
+      current = line_indent(lines[idx])
+      next if current > indent
+      indent = current
+      next unless stripped.matches?(/^(?:before|use|http_basic)\b/)
+      next unless filter_covers?(stripped, url)
+      scope.concat(ruby_block_lines(lines, idx))
     end
 
+    scope.each do |line|
+      patterns.each do |pattern, desc|
+        return desc if line.matches?(pattern)
+      end
+    end
     nil
+  end
+
+  # `before '/admin/*' do` only runs for matching paths; a bare `before do`
+  # runs for all. The pattern is matched against the URL's tail, since a
+  # filter inside a `namespace` is relative to it.
+  private def filter_covers?(statement : String, url : String) : Bool
+    return true unless m = statement.match(/^before\s*\(?\s*['"]([^'"]+)['"]/)
+    pattern = Regex.escape(m[1]).gsub("\\*", ".*").gsub(/:\w+/, "[^/]+")
+    url.matches?(Regex.new("#{pattern}\\z"))
+  end
+
+  # The line at `idx` and the lines indented under it — its block body.
+  private def ruby_block_lines(lines : Array(String), idx : Int32) : Array(String)
+    block = [lines[idx].strip]
+    indent = line_indent(lines[idx])
+    ((idx + 1)...lines.size).each do |j|
+      stripped = lines[j].strip
+      next if stripped.empty?
+      break if line_indent(lines[j]) <= indent
+      block << stripped
+    end
+    block
+  end
+
+  private def line_indent(line : String) : Int32
+    line.size - line.lstrip.size
   end
 
   private def check_roda_auth(lines : Array(String), route_line : Int32) : NamedTuple(authn: String?, authz: String?)

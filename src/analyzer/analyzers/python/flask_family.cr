@@ -225,6 +225,71 @@ module Analyzer::Python
       list && list.size > 1 ? list : [prefix]
     end
 
+    @import_symbols_cache = Hash(::String, Hash(::String, Tuple(::String, ::String))).new
+
+    # Where the blueprint a `register_blueprint(<expr>)` call names is
+    # declared, as {file, declared name}. The call site routinely spells it
+    # differently from the declaration (`users_bp` for `bp as users_bp`,
+    # `posts.bp`, `auth_blueprint`), and routes are keyed on the declared one.
+    private def blueprint_declaration(path : ::String, expr : ::String) : Tuple(::String, ::String)?
+      gv = get_parser(path).@global_variables[expr]?
+      return {gv.path, gv.name} if gv && gv.type == "Blueprint"
+      imported_declaration(path, expr)
+    end
+
+    # Resolve `name` (`bp`, `users_bp`, `views.bp`) used in `path` through
+    # the file's imports, including ones indented inside `create_app()`,
+    # to {declaring file, declared name}.
+    private def imported_declaration(path : ::String, name : ::String) : Tuple(::String, ::String)?
+      symbols = imported_symbols(path)
+      if (target = symbols[name]?) && !target[1].empty?
+        return target
+      end
+      dot = name.rindex('.') || return
+      if (target = symbols[name[0, dot]]?) && target[1].empty?
+        {target[0], name[(dot + 1)..]}
+      end
+    end
+
+    private def imported_symbols(path : ::String) : Hash(::String, Tuple(::String, ::String))
+      @import_symbols_cache[path] ||= Noir::ImportGraph::Python.find_imported_symbols(
+        python_package_root(path), path, fetch_file_content(path))
+    end
+
+    # The directory absolute imports in `path` resolve against: the parent
+    # of the outermost package (`__init__.py` directory) holding the file.
+    private def python_package_root(path : ::String) : ::String
+      dir = File.dirname(path)
+      while File.exists?(File.join(dir, "__init__.py"))
+        parent = File.dirname(dir)
+        break if parent == dir
+        dir = parent
+      end
+      dir
+    end
+
+    # Prefixes a route on `router_name` in `path` is served under.
+    private def router_prefixes(path_api_instances : Hash(::String, Hash(::String, ::String)),
+                                registered : Hash(::String, Hash(::String, Array(::String))),
+                                path : ::String, router_name : ::String) : Array(::String)
+      if prefix = path_api_instances[path]?.try(&.[router_name]?)
+        route_prefixes(registered, path, router_name, prefix)
+      else
+        imported_router_prefixes(path_api_instances, registered, path, router_name) || [""]
+      end
+    end
+
+    # Prefixes for a route on a blueprint the route file imports rather
+    # than declares (`from . import auth` in `auth/views.py`): the ones
+    # resolved for it in the declaring file. Nil when it isn't imported.
+    private def imported_router_prefixes(path_api_instances : Hash(::String, Hash(::String, ::String)),
+                                         registered : Hash(::String, Hash(::String, Array(::String))),
+                                         path : ::String, router_name : ::String) : Array(::String)?
+      decl_path, decl_name = imported_declaration(path, router_name) || return
+      prefix = path_api_instances[decl_path]?.try(&.[decl_name]?) || return
+      route_prefixes(registered, decl_path, decl_name, prefix)
+    end
+
     private def apply_nested_blueprint_prefixes(path_api_instances : Hash(::String, Hash(::String, ::String)),
                                                 own_api_instances : Hash(::String, Hash(::String, ::String)),
                                                 blueprint_mounts : Hash(::String, Array(Tuple(::String, ::String, ::String?))),

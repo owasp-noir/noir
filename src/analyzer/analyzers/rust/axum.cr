@@ -874,7 +874,21 @@ module Analyzer::Rust
       endpoint.push_param(Param.new("query", "", "query")) if extractor_param?(text, "Query")
       endpoint.push_param(Param.new("body", "", "json")) if extractor_param?(text, "Json")
       endpoint.push_param(Param.new("form", "", "form")) if extractor_param?(text, "Form")
+      # `TypedHeader<Authorization<Bearer>>` / `TypedHeader<headers::UserAgent>`:
+      # the `headers` crate type names its header (`UserAgent` → `User-Agent`).
+      if m = text.match(TYPED_HEADER_RE)
+        name = TYPED_HEADER_NAMES[m[1]]? || m[1].gsub(/(?<=[a-z0-9])(?=[A-Z])/, "-")
+        endpoint.push_param(Param.new(name, "", "header"))
+      end
     end
+
+    TYPED_HEADER_RE    = /TypedHeader\s*<\s*(?:[A-Za-z_]\w*::)*([A-Z]\w*)/
+    TYPED_HEADER_NAMES = {
+      "ETag"                => "ETag",
+      "Te"                  => "TE",
+      "SecWebsocketKey"     => "Sec-WebSocket-Key",
+      "SecWebsocketVersion" => "Sec-WebSocket-Version",
+    }
 
     # Precompiled per extractor type; interpolated regex literals here would
     # be recompiled on every function parameter.
@@ -1228,7 +1242,6 @@ module Analyzer::Rust
     # small function graph and propagates prefixes through `.merge(child)` and
     # nested `.nest("/child", child)` edges.
     private def build_cross_nest_index : Hash(NestScopedKey, Array(String))
-      direct = Hash(NestScopedKey, Array(String)).new
       edges = Hash(NestScopedKey, Array(NestEdge)).new
 
       all_files.each do |fpath|
@@ -1242,35 +1255,21 @@ module Analyzer::Rust
           Noir::TreeSitter.parse_rust(src) do |root|
             let_calls = build_let_call_index(root, src)
             collect_cross_router_edges(root, src, base, primary_module(fpath), test_regions, let_calls, edges)
-            walk(root) do |node|
-              next unless Noir::TreeSitter.node_type(node) == "call_expression"
-              next if RustEngine.inside_test_region?(node, test_regions)
-              name = field_call_name(node, src)
-              next unless name && NEST_NAMES.includes?(name)
-              args = named_arguments(node)
-              next unless args.size >= 2
-              prefix = string_literal_content(args[0], src)
-              next unless prefix
-              call = resolve_router_call(args[1], src, let_calls)
-              next unless call
-              mod, leaf = scoped_module_leaf(call, src)
-              next unless mod && leaf
-              key = {base, mod, leaf}
-              bucket = (direct[key] ||= [] of String)
-              bucket << prefix unless bucket.includes?(prefix)
-            end
           end
         rescue e
           logger.debug "axum cross-nest index error #{fpath}: #{e}"
         end
       end
 
+      # Seed only from routers nobody nests or merges: a `.nest("/users", …)`
+      # inside `api_router()` is not a root mount when `main` nests
+      # `api_router()` under `/api/v1`, so seeding it directly emitted a
+      # phantom prefix-less `/users/...` copy of every route.
+      nested = Set(NestScopedKey).new
+      edges.each_value { |children| children.each { |child, _| nested.add(child) } }
       index = Hash(NestScopedKey, Array(String)).new
-      direct.each do |key, prefixes|
-        prefixes.each do |prefix|
-          add_cross_prefix(index, key, prefix)
-          propagate_cross_prefix(key, prefix, edges, index, Set(NestScopedKey).new)
-        end
+      edges.each_key do |parent|
+        propagate_cross_prefix(parent, "", edges, index, Set(NestScopedKey).new) unless nested.includes?(parent)
       end
       index
     end
@@ -1343,7 +1342,13 @@ module Analyzer::Rust
       stack.add(parent)
       if children = edges[parent]?
         children.each do |child, child_prefix|
-          composed = child_prefix.empty? ? prefix : nest_join(prefix, child_prefix)
+          composed = if child_prefix.empty?
+                       prefix
+                     elsif prefix.empty?
+                       child_prefix
+                     else
+                       nest_join(prefix, child_prefix)
+                     end
           add_cross_prefix(index, child, composed)
           propagate_cross_prefix(child, composed, edges, index, stack)
         end
@@ -1354,6 +1359,7 @@ module Analyzer::Rust
     private def add_cross_prefix(index : Hash(NestScopedKey, Array(String)),
                                  key : NestScopedKey,
                                  prefix : String)
+      return if prefix.empty?
       bucket = (index[key] ||= [] of String)
       bucket << prefix unless bucket.includes?(prefix)
     end

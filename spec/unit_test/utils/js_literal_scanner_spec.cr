@@ -127,11 +127,11 @@ describe Noir::JSLiteralScanner do
       result.end_pos.should eq(13)
     end
 
-    it "keeps the historical past-the-end position for unterminated strings" do
+    it "stops at the end of the input for unterminated strings" do
       result = Noir::JSLiteralScanner.extract_paren_content("('ab", 1)
       result = result.should_not be_nil
       result.content.should eq("'ab")
-      result.end_pos.should eq(5)
+      result.end_pos.should eq(4)
     end
 
     it "matches braces across a keyword-context regex containing a brace" do
@@ -241,6 +241,74 @@ describe Noir::JSLiteralScanner do
       ].each do |src|
         Noir::JSLiteralScanner.find_matching_brace(src, 0).should eq(src.size - 1)
       end
+    end
+  end
+
+  describe "quotes in JSX text" do
+    jsx = <<-JSX
+      app.get('/about', (c) => {
+        return c.html(<p>We don't track you, {name}</p>)
+      })
+      app.post('/submit', h)
+      JSX
+
+    it "does not open a string at an apostrophe glued to a word" do
+      open = jsx.index!("(")
+      close = jsx.index!("})") + 1
+      Noir::JSLiteralScanner.find_matching_paren(jsx, open).should eq(close)
+      Noir::JSLiteralScanner.find_matching_paren_at_byte(jsx, open).should eq(close)
+      brace = jsx.index!("{")
+      Noir::JSLiteralScanner.find_matching_brace(jsx, brace).should eq(close - 1)
+      result = Noir::JSLiteralScanner.extract_paren_content(jsx, open + 1).should_not be_nil
+      result.end_pos.should eq(close)
+    end
+
+    it "agrees between the char and byte walks after a non-ASCII letter" do
+      src = "(<p>Café's menu</p>)"
+      Noir::JSLiteralScanner.find_matching_paren(src, 0).should eq(src.size - 1)
+      Noir::JSLiteralScanner.find_matching_paren_at_byte(src, 0).should eq(src.bytesize - 1)
+    end
+
+    it "ends a stray string at the newline instead of running to EOF" do
+      src = "{\n  <p>'quoted</p>\n}"
+      Noir::JSLiteralScanner.find_matching_brace(src, 0).should eq(src.size - 1)
+    end
+
+    it "still reads strings after operators, punctuation and operand keywords" do
+      ["{ return'}' }", "{ x = typeof\"}\" }", "{ case'}': y }", "{ f(a,'}') }", "{ s = 'a\\\n}' }"].each do |src|
+        Noir::JSLiteralScanner.find_matching_brace(src, 0).should eq(src.size - 1)
+      end
+    end
+  end
+
+  describe "URLs in JSX text" do
+    it "does not open a comment at the slashes of an http(s) URL" do
+      src = "(<p>Docs at https://hono.dev for {name}</p>)"
+      Noir::JSLiteralScanner.find_matching_paren(src, 0).should eq(src.size - 1)
+      Noir::JSLiteralScanner.find_matching_paren_at_byte(src, 0).should eq(src.size - 1)
+      result = Noir::JSLiteralScanner.extract_paren_content(src, 1).should_not be_nil
+      result.end_pos.should eq(src.size - 1)
+    end
+
+    it "still reads comments that only look URL-like" do
+      ["{ a:// }\n}", "{ xhttp://a }\n}", "{ http:// }\n}", "{ ftp://a }\n}"].each do |src|
+        Noir::JSLiteralScanner.find_matching_brace(src, 0).should eq(src.size - 1)
+      end
+    end
+  end
+
+  describe "minified string operands and CRLF continuations" do
+    it "opens a string glued to from/import/export/await" do
+      src = %q(import{a}from"./routes//v1";export*from"./x")
+      Noir::JSLiteralScanner.quote_opens_string?(src.chars, src.index!('"')).should be_true
+      Noir::JSLiteralScanner.quote_opens_string?(src.chars, src.rindex!("\"./x")).should be_true
+      Noir::JSLiteralScanner.quote_opens_string?("someone else's".chars, 12).should be_false
+    end
+
+    it "keeps a backslash-CRLF continuation inside the string" do
+      src = "f('abc\\\r\ndef)', 1)"
+      Noir::JSLiteralScanner.find_matching_paren(src, 1).should eq(src.size - 1)
+      Noir::JSLiteralScanner.find_matching_paren_at_byte(src, 1).should eq(src.size - 1)
     end
   end
 end

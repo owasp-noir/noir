@@ -18,7 +18,7 @@ describe "Detect JVM frameworks in Kotlin sources" do
     Detector::Java::Quarkus.new(options).detect("Routes.kt", "import io.quarkus.vertx.web.Route").should be_true
   end
 
-  it "not a Kotlin build script" do
-    Detector::Java::Quarkus.new(options).detect("build.gradle.kts", "id(\"io.quarkus\")").should be_false
+  it "not a Kotlin script that merely mentions Quarkus" do
+    Detector::Java::Quarkus.new(options).detect("tasks.kts", "id(\"io.quarkus\")").should be_false
   end
 end

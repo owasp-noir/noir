@@ -6,7 +6,9 @@ module Detector::Javascript
       extensions: %w[.js .mjs .cjs .jsx .ts .tsx],
       basenames: %w[package.json deno.json deno.jsonc]
 
-    FRESH_MARKER = /\$fresh\//
+    # Fresh 1 maps `$fresh/`; Fresh 2 (`jsr:@fresh/init`) maps `fresh` to
+    # `jsr:@fresh/core` in deno.json and imports the bare specifier.
+    FRESH_MARKER = /\$fresh\/|@fresh\//
 
     def detect(filename : String, file_contents : String) : Bool
       base = File.basename(filename)

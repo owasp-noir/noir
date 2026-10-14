@@ -354,6 +354,40 @@ module Analyzer::Java
       Noir::PathScope.marker_root(path, base, {"/src/main/java/", "/src/main/kotlin/", "/src/"}) || base
     end
 
+    # A file that declares no `static final String` and no interface (whose
+    # fields are implicitly static final) has no constant another file
+    # could reference.
+    JAVA_STRING_CONSTANT_RE = /\bstatic\s+final\s+(?:java\.lang\.)?String\b|\bfinal\s+static\s+(?:java\.lang\.)?String\b|\binterface\s/
+
+    @java_project_constants : Hash(String, Hash(String, String))? = nil
+
+    # Qualified (`Paths.API`, `com.ex.Paths.API`) String constants from
+    # every `.java` source under `path`'s configured base, so a controller
+    # can use a constant declared in another class or interface. One pass
+    # per analyzer run; the per-file tables are memoized by content in
+    # `TreeSitterJavaRouteExtractor.extract_string_constants`, so analyzers
+    # sharing a scan parse each file once. Bare names stay file-local —
+    # merging them project-wide would let unrelated classes collide.
+    #
+    # ponytail: same-simple-name classes in different packages share the
+    # `Class.NAME` key (first one wins); key on imports if that bites.
+    private def java_project_constants(path : String) : Hash(String, String)
+      tables = @java_project_constants ||= begin
+        by_base = Hash(String, Hash(String, String)).new
+        get_files_by_extension(".java").each do |file|
+          next if JavaEngine.test_path?(base_relative_path(file))
+          content = read_file_content(file)
+          next unless content_matches?(content, JAVA_STRING_CONSTANT_RE)
+          table = by_base[configured_base_for(file)] ||= Hash(String, String).new
+          Noir::TreeSitterJavaRouteExtractor.extract_string_constants(content).each do |name, value|
+            table[name] ||= value if name.includes?('.')
+          end
+        end
+        by_base
+      end
+      tables[configured_base_for(path)]? || Hash(String, String).new
+    end
+
     private def normalize_optional_path(path : String?) : String
       return "" unless path
 

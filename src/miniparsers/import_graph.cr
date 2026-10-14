@@ -462,18 +462,90 @@ module Noir::ImportGraph::Python
     file_base_path = File.dirname(file_path) if file_path.ends_with? ".py"
 
     import_map = Hash(String, Tuple(String, Int32)).new
+    each_import_statement(content) do |from_import, names|
+      add_python_imports(import_map, app_base_path, file_base_path, from_import, names)
+    end
+    import_map
+  end
+
+  # Map each name an import binds to `{declaring file, original name}`.
+  # `from pkg.mod import bp as users_bp` keys `users_bp` to
+  # `{pkg/mod.py, "bp"}`, so a caller can find the object where it was
+  # declared, under the name it was declared with. A name that binds a
+  # module (`from . import views`, `import shop.urls`) maps to that
+  # module's file (`__init__.py` for a package) with an empty original
+  # name; a plain `import a.b` is keyed on the whole dotted `a.b`.
+  def self.find_imported_symbols(app_base_path : String,
+                                 file_path : String,
+                                 content : String? = nil) : Hash(String, Tuple(String, String))
+    content = Noir::TextFile.read(file_path) if content.nil?
+    file_dir = file_path.ends_with?(".py") ? File.dirname(file_path) : file_path
+
+    symbols = Hash(String, Tuple(String, String)).new
+    each_import_statement(content) do |from_import, names|
+      package_path = app_base_path
+      module_dotted = from_import
+      if from_import.starts_with?(".")
+        dots = from_import.size - from_import.lstrip('.').size
+        package_path = file_dir
+        (dots - 1).times { package_path = File.dirname(package_path) }
+        module_dotted = from_import[dots..]
+      end
+
+      names.split(",").each do |spec|
+        name, _, alias_name = spec.strip.partition(/\s+as\s+/)
+        next if name.empty? || name == "*"
+        local = alias_name.empty? ? name : alias_name.strip
+        if from_import.empty?
+          file = resolve_module_file(package_path, name)
+          symbols[local] = {file, ""} if file
+        elsif file = resolve_module_file(package_path, module_dotted.empty? ? name : "#{module_dotted}.#{name}")
+          symbols[local] = {file, ""}
+        elsif file = resolve_module_file(package_path, module_dotted)
+          symbols[local] = {file, name}
+        end
+      end
+    end
+    symbols
+  end
+
+  # The `.py` file a dotted module path names under `package_path`: the
+  # leaf module, or the package's `__init__.py`. An empty path names the
+  # `package_path` package itself.
+  private def self.resolve_module_file(package_path : String, dotted : String) : String?
+    dir = package_path
+    segments = dotted.empty? ? [] of String : dotted.split(".")
+    segments.each_with_index do |segment, index|
+      candidate = File.join(dir, segment)
+      if index == segments.size - 1 && File.file?("#{candidate}.py")
+        return "#{candidate}.py"
+      elsif File.directory?(candidate)
+        dir = candidate
+      else
+        return
+      end
+    end
+    init = File.join(dir, "__init__.py")
+    File.file?(init) ? init : nil
+  end
+
+  # Yield every `import` / `from … import …` statement as `{from part,
+  # comma-separated names}` (the from part is empty for a plain
+  # `import`). Indented imports count too: an app factory routinely
+  # imports its blueprints inside `create_app()`.
+  private def self.each_import_statement(content : String, &) : Nil
     # A parenthesised import still waiting for its `)`: the `from` part
     # and the names collected so far. Collected per line with comments
     # cut first, so neither a `(`/`)` in a `#` comment nor a CRLF
     # terminator can shift where the name list starts or stops.
     open_from : String? = nil
     open_names = String::Builder.new
-    content.each_line do |line|
+    content.each_line do |raw_line|
       if from = open_from
-        code = strip_import_comment(line)
+        code = strip_import_comment(raw_line)
         if close = code.index(')')
           open_names << code[0, close]
-          add_python_imports(import_map, app_base_path, file_base_path, from, open_names.to_s)
+          yield from, open_names.to_s
           open_from = nil
         else
           open_names << code << '\n'
@@ -481,6 +553,7 @@ module Noir::ImportGraph::Python
         next
       end
 
+      line = raw_line.lstrip
       from_import = ""
       imports = ""
 
@@ -502,19 +575,17 @@ module Noir::ImportGraph::Python
         if open = code.index('(')
           rest = code[(open + 1)..]
           if close = rest.index(')')
-            add_python_imports(import_map, app_base_path, file_base_path, from_import, rest[0, close])
+            yield from_import, rest[0, close]
           else
             open_from = from_import
             open_names = String::Builder.new
             open_names << rest << '\n'
           end
         else
-          add_python_imports(import_map, app_base_path, file_base_path, from_import, code)
+          yield from_import, code
         end
       end
     end
-
-    import_map
   end
 
   # `line` up to its first `#`. Import statements carry no string

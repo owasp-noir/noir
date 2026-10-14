@@ -291,7 +291,13 @@ module Analyzer::Rust
     private def add_typed_extractor(let_decl : LibTreeSitter::TSNode,
                                     source : String,
                                     endpoint : Endpoint)
+      # `let Animal { name, legs } = req.body_json().await?;` names the
+      # type in the destructuring pattern instead of an annotation.
       type_node = Noir::TreeSitter.field(let_decl, "type")
+      if type_node.nil? && (pattern = Noir::TreeSitter.field(let_decl, "pattern")) &&
+         Noir::TreeSitter.node_type(pattern) == "struct_pattern"
+        type_node = Noir::TreeSitter.field(pattern, "type")
+      end
       return unless type_node
       value = Noir::TreeSitter.field(let_decl, "value")
       return unless value

@@ -50,6 +50,9 @@ expected_endpoints = [
   Endpoint.new("/products", "POST", [Param.new("sku", "", "form"), Param.new("price", "", "form")]),
   Endpoint.new("/photos", "GET"),
   Endpoint.new("/photos/{photo}", "GET", [Param.new("photo", "", "path")]),
+  # ->shallow() nested resource
+  Endpoint.new("/posts/{post}/notes", "GET", [Param.new("post", "", "path")]),
+  Endpoint.new("/notes/{note}", "GET", [Param.new("note", "", "path")]),
   Endpoint.new("/admin/widgets", "GET"),
   Endpoint.new("/admin/widgets/{widget}", "GET", [Param.new("widget", "", "path")]),
   Endpoint.new("/admin/widgets/{widget}", "PATCH", [Param.new("widget", "", "path")]),
@@ -69,9 +72,11 @@ expected_endpoints = [
   # group closure — both the file and the group prefix must be recognized.
   Endpoint.new("/internal/status", "GET"),
   Endpoint.new("/internal/sync", "POST"),
+  # bootstrap/app.php `withRouting(health: '/up')`
+  Endpoint.new("/up", "GET"),
 ]
 
 FunctionalTester.new("fixtures/php/laravel/", {
   :techs     => 2,  # Detection still sees both php_laravel and php_pure
-  :endpoints => 80, # Analysis suppresses redundant php_pure and unprefixed group endpoints
+  :endpoints => 83, # Analysis suppresses redundant php_pure and unprefixed group endpoints
 }, expected_endpoints).perform_tests

@@ -10,6 +10,13 @@ class DjangoAuthTagger < FrameworkTagger
     /\@staff_member_required/,
   ]
 
+  # `@method_decorator(login_required)` on a method, or
+  # `@method_decorator([never_cache, login_required], name="dispatch")` on the
+  # class. Its argument runs to the next decorator.
+  METHOD_DECORATOR      = /@method_decorator\s*\(([^@]*)/
+  METHOD_DECORATOR_AUTH = /^\s*\[?\s*(?:[\w.]+\s*,\s*)*(login_required|permission_required|user_passes_test|staff_member_required)\b/
+  METHOD_DECORATOR_NAME = /\bname\s*=\s*['"](\w+)['"]/
+
   MIXIN_PATTERNS = [
     /LoginRequiredMixin/,
     /PermissionRequiredMixin/,
@@ -172,6 +179,9 @@ class DjangoAuthTagger < FrameworkTagger
           return "Protected by Django #{decorator_name} decorator"
         end
       end
+      if description = method_decorator_auth(current, nil)
+        return description
+      end
 
       idx -= 1
     end
@@ -185,9 +195,16 @@ class DjangoAuthTagger < FrameworkTagger
     while idx >= 0
       current = lines[idx].lstrip
       if current.starts_with?("class ") && current.includes?("(")
-        # Found the enclosing class — check for mixins
+        # Found the enclosing class: `@method_decorator(..., name=...)` above
+        # it decorates the handler it names (or all of them, via `dispatch`).
+        handler = lines[endpoint_line - 1].match(/\bdef\s+(\w+)/).try(&.[1])
+        if description = method_decorator_auth(decorator_text(lines, idx + 1), handler)
+          return description
+        end
+        # Its bases, wherever the header wraps.
+        header = class_header(lines, idx)
         MIXIN_PATTERNS.each do |pattern|
-          if current.matches?(pattern)
+          if header.matches?(pattern)
             mixin_name = pattern.source.gsub("\\", "")
             return "Protected by Django #{mixin_name}"
           end
@@ -203,6 +220,30 @@ class DjangoAuthTagger < FrameworkTagger
     end
 
     nil
+  end
+
+  # The auth decorator a `@method_decorator(...)` in `decorators` wraps, if
+  # it reaches `handler`: a class-level one names the method it decorates.
+  private def method_decorator_auth(decorators : String, handler : String?) : String?
+    decorators.scan(METHOD_DECORATOR) do |m|
+      next unless auth = m[1].match(METHOD_DECORATOR_AUTH)
+      target = m[1].match(METHOD_DECORATOR_NAME).try(&.[1])
+      return "Protected by Django #{auth[1]} decorator" if target.nil? || target == "dispatch" || target == handler
+    end
+    nil
+  end
+
+  # The `class` statement at `idx` through the line that closes its bases:
+  # `class WrappedView(\n    LoginRequiredMixin,\n    View,\n):`.
+  private def class_header(lines : Array(String), idx : Int32) : String
+    String.build do |io|
+      depth = 0
+      lines[idx, 30].each do |line|
+        io << line << ' '
+        depth += line.count('(') - line.count(')')
+        break if depth <= 0
+      end
+    end
   end
 
   # The decorator lines stacked directly above the `def` at `endpoint_line`.
@@ -261,7 +302,7 @@ class DjangoAuthTagger < FrameworkTagger
     drf = decorators.includes?("@api_view")
     if !own && (klass = enclosing_class(lines, endpoint_line))
       class_idx, class_indent = klass
-      drf ||= lines[class_idx].matches?(DRF_VIEW_BASE)
+      drf ||= class_header(lines, class_idx).matches?(DRF_VIEW_BASE)
       own = class_permission_classes(lines, class_idx, class_indent)
     end
 
@@ -288,7 +329,7 @@ class DjangoAuthTagger < FrameworkTagger
     return true if decorator_text(lines, endpoint_line).matches?(LOGIN_NOT_REQUIRED)
     if klass = enclosing_class(lines, endpoint_line)
       class_idx = klass[0]
-      return true if lines[class_idx].matches?(LOGIN_NOT_REQUIRED_BASE)
+      return true if class_header(lines, class_idx).matches?(LOGIN_NOT_REQUIRED_BASE)
       return true if decorator_text(lines, class_idx + 1).matches?(LOGIN_NOT_REQUIRED)
     end
     false

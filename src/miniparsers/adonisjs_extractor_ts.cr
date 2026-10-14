@@ -35,11 +35,12 @@ module Noir
   #   * `.group(callback)` — walks the callback with the current
   #     accumulated prefix; subsequent `.prefix(...)` modifiers on
   #     the group result are folded in.
-  #   * `.resource(name, controller)` — emits the five REST API
-  #     routes (index / store / show / update / destroy). The
-  #     `.apiOnly()` modifier is the default behaviour here;
-  #     `.only([...])` restricts to the listed actions; `.except`
-  #     drops the listed ones.
+  #   * `.resource(name, controller)` — emits the seven resourceful
+  #     routes (index / create / store / show / edit / update as PUT and
+  #     PATCH / destroy); `.apiOnly()` drops the `create` and `edit`
+  #     form routes, `.only([...])` restricts to the listed actions and
+  #     `.except` drops the listed ones. A dotted name nests:
+  #     `posts.comments` is `/posts/:post_id/comments`.
   #
   # Out of scope for this first cut:
   #
@@ -67,18 +68,27 @@ module Noir
 
     GROUP_METHOD = "group"
 
-    RESOURCE_ACTIONS = {
-      "index"   => {"GET", ""},
-      "store"   => {"POST", ""},
-      "show"    => {"GET", "/:id"},
-      "update"  => {"PUT", "/:id"},
-      "destroy" => {"DELETE", "/:id"},
-    }
+    # {action, verb, suffix} in AdonisJS's own registration order.
+    RESOURCE_ACTIONS = [
+      {"index", "GET", ""},
+      {"create", "GET", "/create"},
+      {"store", "POST", ""},
+      {"show", "GET", "/:id"},
+      {"edit", "GET", "/:id/edit"},
+      {"update", "PUT", "/:id"},
+      {"update", "PATCH", "/:id"},
+      {"destroy", "DELETE", "/:id"},
+    ]
+    RESOURCE_ACTION_NAMES = RESOURCE_ACTIONS.map(&.[0]).uniq!
+    # The HTML form routes `.apiOnly()` removes.
+    FORM_ACTIONS = ["create", "edit"]
+    # Chain links that narrow a resource's action set.
+    RESOURCE_FILTERS = Set{"only", "except", "apiOnly"}
 
     # Modifiers that don't change the path or verb — we just walk
     # the receiver with the same prefix.
     TRANSPARENT_MODIFIERS = Set{
-      "middleware", "as", "domain", "where", "namespace", "apiOnly",
+      "middleware", "as", "domain", "where", "namespace",
     }
 
     # The only identifiers AdonisJS registers routes on: `Route` (v5,
@@ -143,17 +153,12 @@ module Noir
           when method == GROUP_METHOD
             walk_group(node, source, prefix, routes, depth, include_callees)
             return
-          when method == "resource"
-            emit_resource(node, source, prefix, ANY_VERBS_ALL, routes, include_callees)
+          when method == "resource" || RESOURCE_FILTERS.includes?(method)
+            emit_resource_chain(node, source, prefix, routes, include_callees) ||
+              handle_transparent(node, source, prefix, routes, depth, include_callees)
             return
           when method == "prefix"
             handle_prefix(node, source, prefix, routes, depth, include_callees)
-            return
-          when method == "only"
-            handle_resource_filter(node, source, prefix, :only, routes, include_callees)
-            return
-          when method == "except"
-            handle_resource_filter(node, source, prefix, :except, routes, include_callees)
             return
           when TRANSPARENT_MODIFIERS.includes?(method)
             handle_transparent(node, source, prefix, routes, depth, include_callees)
@@ -166,11 +171,6 @@ module Noir
         walk(child, source, prefix, routes, depth + 1, include_callees)
       end
     end
-
-    # Sentinel meaning "all five REST actions are active" — used so
-    # `emit_resource` and `handle_resource_filter` can share the
-    # same emission helper without an awkward Boolean argument.
-    private ANY_VERBS_ALL = ["index", "store", "show", "update", "destroy"]
 
     # `Route.group(cb).prefix('/x')` — capture '/x' and walk the
     # inner call's group with the joined prefix.
@@ -189,25 +189,25 @@ module Noir
       walk(receiver, source, prefix, routes, depth + 1, include_callees)
     end
 
-    # `.only([...])` / `.except([...])` modifiers on `.resource(...)`.
-    # Walk back to the resource call with the action filter applied.
-    private def handle_resource_filter(call : LibTreeSitter::TSNode, source : String, prefix : String, mode : Symbol, routes : Array(Route), include_callees : Bool)
-      receiver = chain_receiver(call)
-      return unless receiver
-      return unless Noir::TreeSitter.node_type(receiver) == "call_expression"
-      return unless chain_method_name(receiver, source) == "resource"
-
-      action_names = string_array_arg(call, source)
-      effective =
-        case mode
-        when :only
-          ANY_VERBS_ALL.select { |a| action_names.includes?(a) }
-        when :except
-          ANY_VERBS_ALL.reject { |a| action_names.includes?(a) }
-        else
-          ANY_VERBS_ALL
+    # `.resource(...)` and every link chained on it (`.apiOnly()`,
+    # `.only([...])`, `.except([...])`, `.as(...)`, `.use(...)`, in any
+    # order): walk down to the resource call, narrowing the action set at
+    # each filter. False when the chain is not rooted on a resource.
+    private def emit_resource_chain(call : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route), include_callees : Bool) : Bool
+      actions = RESOURCE_ACTION_NAMES.dup
+      node = call
+      until (method = chain_method_name(node, source)) == "resource"
+        case method
+        when "only"   then actions &= string_array_arg(node, source)
+        when "except" then actions -= string_array_arg(node, source)
+        when "apiOnly"
+          actions -= FORM_ACTIONS
         end
-      emit_resource(receiver, source, prefix, effective, routes, include_callees)
+        node = chain_receiver(node) || return false
+        return false unless Noir::TreeSitter.node_type(node) == "call_expression"
+      end
+      emit_resource(node, source, prefix, actions, routes, include_callees)
+      true
     end
 
     private def walk_group(call : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route), depth : Int32, include_callees : Bool)
@@ -235,17 +235,30 @@ module Noir
     private def emit_resource(call : LibTreeSitter::TSNode, source : String, prefix : String, actions : Array(String), routes : Array(Route), include_callees : Bool)
       name = first_string_argument(call, source)
       return unless name
-      base = Noir::URLPath.join_trimmed(prefix, name.starts_with?("/") ? name : "/#{name}")
+      base = Noir::URLPath.join_trimmed(prefix, "/#{resource_path(name.lchop('/'))}")
       line = Noir::TreeSitter.call_name_row(call)
 
-      actions.each do |action|
-        verb_path = RESOURCE_ACTIONS[action]?
-        next unless verb_path
-        verb, suffix = verb_path
+      RESOURCE_ACTIONS.each do |action, verb, suffix|
+        next unless actions.includes?(action)
         url = suffix.empty? ? base : "#{base.rstrip('/')}#{suffix}"
         callees = include_callees ? [{controller_action(call, source, action), "", line + 1}] : [] of JSCalleeExtractor::Entry
         routes << Route.new(verb, url, line, callees)
       end
+    end
+
+    # `posts.comments` → `posts/:post_id/comments`: each parent segment is
+    # followed by its singular, snake_cased `_id` param, as AdonisJS names it.
+    private def resource_path(name : String) : String
+      *parents, main = name.split('.')
+      parents.map { |parent| "#{parent}/:#{singular(parent).underscore.tr("-", "_")}_id" }.push(main).join('/')
+    end
+
+    # ponytail: English plural rules for the common cases; an irregular
+    # plural only misnames the placeholder, never the route structure.
+    private def singular(word : String) : String
+      return "#{word[0...-3]}y" if word.ends_with?("ies") && word.size > 3
+      return word[0...-1] if word.ends_with?('s') && !word.ends_with?("ss")
+      word
     end
 
     private def route_callees(call : LibTreeSitter::TSNode, source : String, line : Int32) : Array(JSCalleeExtractor::Entry)
@@ -296,7 +309,7 @@ module Noir
       return true if HTTP_VERB_METHODS.has_key?(method)
       return true if TRANSPARENT_MODIFIERS.includes?(method)
       case method
-      when "any", "on", GROUP_METHOD, "resource", "prefix", "only", "except"
+      when "any", "on", GROUP_METHOD, "resource", "prefix", "only", "except", "apiOnly"
         true
       else
         false

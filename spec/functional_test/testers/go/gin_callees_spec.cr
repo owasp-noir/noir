@@ -25,13 +25,9 @@ require "../../func_spec.cr"
 helpers_path = "./spec/functional_test/fixtures/go/gin_callees/helpers.go"
 
 expected_endpoints = [
-  # Note: Gin's existing PostForm/Query/GetHeader param extraction is
-  # file-local — it scans the same file as the route declaration. Since
-  # this endpoint's handler lives in handlers.go, the `c.PostForm("name")`
-  # call there is invisible to the param extractor. The callee list IS
-  # still populated because callee resolution follows the cross-file
-  # handler binding; the two features are intentionally orthogonal.
-  Endpoint.new("/users", "POST").tap do |ep|
+  # The handler lives in handlers.go; its `c.PostForm("name")` still
+  # reaches the route through the cross-file named-handler lookup.
+  Endpoint.new("/users", "POST", [Param.new("name", "", "form")]).tap do |ep|
     ep.push_callee(Callee.new("c.PostForm", line: 8))
     ep.push_callee(Callee.new("saveUser", helpers_path, 3))
     ep.push_callee(Callee.new("auditLog", helpers_path, 7))

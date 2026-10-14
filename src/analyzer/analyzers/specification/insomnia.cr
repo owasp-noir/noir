@@ -10,6 +10,9 @@ module Analyzer::Specification
 
     # A `{{ var }}` / `{{ _.var }}` placeholder.
     TEMPLATE_VAR = /\{\{\s*(?:_\.)?([A-Za-z0-9_.-]+)\s*\}\}/
+    # A `{{ var }}` or a `{% response ... %}` template tag, either of which may
+    # stand unquoted as a JSON body value.
+    BODY_PLACEHOLDER = /#{TEMPLATE_VAR}|\{%.*?%\}/
 
     def analyze
       each_spec_file(Noir::LocatorKeys::INSOMNIA_JSON) do |path|
@@ -31,10 +34,16 @@ module Analyzer::Specification
       resources = json_obj["resources"]?
       return unless resources && resources.as_a?
       env = collect_v4_environment(resources.as_a)
+      groups = {} of String => JSON::Any
+      resources.as_a.each do |resource|
+        next unless resource["_type"]?.try(&.as_s?) == "request_group"
+        id = resource["_id"]?.try(&.as_s?)
+        groups[id] = resource if id
+      end
 
       resources.as_a.each do |resource|
         next unless resource["_type"]?.try(&.as_s?) == "request"
-        process_v4_request(resource, env, source_path)
+        process_v4_request(resource, folder_environment(resource, groups, env), source_path)
       rescue e
         @logger.debug "Exception processing insomnia v4 resource"
         @logger.debug_sub e
@@ -50,6 +59,25 @@ module Analyzer::Specification
         end
       end
       env
+    end
+
+    # `env` overlaid with the `environment` of every request_group above
+    # `request`, the nearest folder winning.
+    private def folder_environment(request : JSON::Any, groups : Hash(String, JSON::Any), env : Hash(String, String)) : Hash(String, String)
+      chain = [] of JSON::Any
+      seen = Set(String).new
+      parent = request["parentId"]?.try(&.as_s?)
+      while parent && seen.add?(parent) && (group = groups[parent]?)
+        chain << group
+        parent = group["parentId"]?.try(&.as_s?)
+      end
+      return env if chain.empty?
+
+      merged = env.dup
+      chain.reverse_each do |g|
+        g["environment"]?.try(&.as_h?).try { |data| collect_json_env_values(merged, data) }
+      end
+      merged
     end
 
     private def process_v4_request(request : JSON::Any, env : Hash(String, String), source_path : String)
@@ -370,12 +398,7 @@ module Analyzer::Specification
     end
 
     private def process_json_body_text(text : String, params : Array(Param))
-      parsed = parse_json_lenient(text)
-      if h = parsed.as_h?
-        h.each { |k, _| add_param(params, k, "", "json") }
-      end
-    rescue e
-      logger.debug "Failed to parse Insomnia JSON body: #{e}"
+      json_body_pairs(text, BODY_PLACEHOLDER).each { |k, _| add_param(params, k, "", "json") }
     end
 
     # `key` / `value` / `token` are templated the same way the URL is —

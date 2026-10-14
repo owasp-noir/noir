@@ -1,5 +1,6 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
+require "../../../analyzer/analyzers/python/python_helper"
 
 @[Noir::TaggerFor(key: "fastapi_auth", name: "FastAPI Auth Tagger", desc: "Identifies FastAPI authentication patterns (Depends, Security, OAuth2)", order: 100)]
 class FastAPIAuthTagger < FrameworkTagger
@@ -133,17 +134,27 @@ class FastAPIAuthTagger < FrameworkTagger
 
   # From the route's first decorator line through the end of its `def`
   # signature (the line where the parentheses balance and it ends in `:`).
+  # Comments are dropped first, so `async def x():  # note` still ends the
+  # signature. A one-line `def x(): return ...` never ends in `:`, so the
+  # next decorator or `def` at the handler's level ends it instead: that
+  # line belongs to the next handler, whose `Depends(...)` is not this one's.
   private def handler_header(lines : Array(String), start : Int32) : String
     String.build do |io|
       depth = 0
-      seen_def = false
+      def_indent : Int32? = nil
       idx = start
       while idx < lines.size && idx < start + 60
-        line = lines[idx]
+        line = Analyzer::Python::Helper.strip_python_comment(lines[idx]).rstrip
+        stripped = line.lstrip
+        indent = line.size - stripped.size
+        opens_def = stripped.matches?(/^(?:async\s+)?def\s/)
+        if (level = def_indent) && indent <= level && (opens_def || stripped.starts_with?('@'))
+          break
+        end
         io << line << '\n'
-        seen_def ||= line.lstrip.matches?(/^(?:async\s+)?def\s/)
+        def_indent ||= indent if opens_def
         depth += line.count('(') + line.count('[') - line.count(')') - line.count(']')
-        break if seen_def && depth <= 0 && line.rstrip.ends_with?(':')
+        break if def_indent && depth <= 0 && line.ends_with?(':')
         idx += 1
       end
     end

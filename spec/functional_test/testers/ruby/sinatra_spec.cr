@@ -11,7 +11,7 @@ expected_endpoints = [
     Param.new("page", "", "query"),
   ]),
   Endpoint.new("/api/widgets", "POST", [
-    Param.new("HTTP_X_TRACE_ID", "", "header"),
+    Param.new("X-Trace-Id", "", "header"),
   ]),
   Endpoint.new("/api/route_widgets", "GET", [
     Param.new("token", "", "query"),

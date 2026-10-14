@@ -546,20 +546,25 @@ module Noir
     end
 
     # Finds calls to any of the named builder functions and returns
-    # `[{func_name, first_arg_identifier}]`. The first argument names the
-    # group passed in (`addUserRoutes(v1)` -> `{"addUserRoutes", "v1"}`),
-    # which the caller resolves to a prefix via the package group map.
-    def collect_router_builder_callsites(source : String, builders : Set(String)) : Array(Tuple(String, String))
-      calls = [] of Tuple(String, String)
+    # `[{func_name, first_arg_identifier, qualifier}]`. The first argument
+    # names the group passed in (`addUserRoutes(v1)` ->
+    # `{"addUserRoutes", "v1", ""}`), which the caller resolves to a prefix
+    # via the package group map; `qualifier` is the package alias of a
+    # cross-package call (`routes.AddUsers(v1)` -> `"routes"`).
+    # An inline `addX(api.Group("/posts"))` comes back as the composed
+    # prefix when `groups` knows `api` (`/api/v1/posts`), else as the literal.
+    def collect_router_builder_callsites(source : String, builders : Set(String),
+                                         groups : Hash(String, String) = Hash(String, String).new) : Array(Tuple(String, String, String))
+      calls = [] of Tuple(String, String, String)
       return calls if builders.empty?
       Noir::TreeSitter.parse_go(source) do |root|
         Noir::TreeSitter.walk(root) do |node|
           next unless Noir::TreeSitter.node_type(node) == "call_expression"
           fn = Noir::TreeSitter.field(node, "function")
           next unless fn
-          fn_name = Noir::TreeSitter.node_text(fn, source).split(".").last
-          next unless builders.includes?(fn_name)
-          name = fn_name
+          fn_text = Noir::TreeSitter.node_text(fn, source)
+          qualifier, _, name = fn_text.rpartition('.')
+          next unless builders.includes?(name)
           args = Noir::TreeSitter.field(node, "arguments")
           next unless args
           first_arg = nil
@@ -584,17 +589,19 @@ module Noir
                                end
                              end
                            end
-                           lit
+                           operand = Noir::TreeSitter.field(gfn, "operand")
+                           parent = operand && groups[Noir::TreeSitter.node_text(operand, source)]?
+                           lit && parent ? group_join(parent, lit) : lit
                          end
                        end
                      end
           if arg_text
-            calls << {name, arg_text}
+            calls << {name, arg_text, qualifier}
           else
             # Non-identifier, non-inline-Group arg (e.g. expr, func result,
             # root router, etc.) — record so caller can apply "all sites must
             # resolve" guard and fall back to whole-file pass.
-            calls << {name, "__unresolved__"}
+            calls << {name, "__unresolved__", qualifier}
           end
         end
       end
@@ -1321,6 +1328,22 @@ module Noir
     # i.e. httprouter's `router.Handle("GET", "/x", h)` or Echo's `e.Add("QUERY", "/x", h)`.
     # Distinct from `decode_verb_call` because the first positional argument is the
     # method, not the path. Returns nil when the shape doesn't match.
+    # `[]string{"PUT", http.MethodPatch}` -> `"PUT|PATCH"`, the
+    # pipe-separated form Goyave's `Route` also accepts as a string.
+    private def method_list(literal : LibTreeSitter::TSNode, source : String) : String
+      verbs = [] of String
+      if body = Noir::TreeSitter.field(literal, "body")
+        Noir::TreeSitter.walk(body) do |node|
+          case Noir::TreeSitter.node_type(node)
+          when "interpreted_string_literal", "raw_string_literal", "selector_expression"
+            verb = decode_method_token(node, source)
+            verbs << verb unless verb.empty?
+          end
+        end
+      end
+      verbs.join('|')
+    end
+
     private def decode_handle_call(call : LibTreeSitter::TSNode,
                                    source : String,
                                    groups : Hash(String, String),
@@ -1367,7 +1390,11 @@ module Noir
           collect_handler_arg_texts(arg, source, handler_args) unless path_lit.nil?
         else
           if method_lit.nil?
-            candidate = decode_method_token(arg, source)
+            candidate = if Noir::TreeSitter.node_type(arg) == "composite_literal"
+                          method_list(arg, source)
+                        else
+                          decode_method_token(arg, source)
+                        end
             method_lit = candidate unless candidate.empty?
           end
           unless path_lit.nil?

@@ -433,5 +433,37 @@ describe "OutputBuilderDiff" do
 
       JSON.parse(builder.io.to_s)["runs"][0]["invocations"][0]["executionSuccessful"].as_bool.should be_false
     end
+
+    # Without them a parse failure on the new side reads as a real removal.
+    it "carries analyzer failures under `errors` in json, yaml, toml and markdown" do
+      failures = [AnalyzerFailure.new("oas3", "bad spec")]
+      outputs = {} of String => String
+      {"json", "yaml", "toml", "markdown"}.each do |format|
+        builder = OutputBuilderDiff.new(create_test_options)
+        builder.io = IO::Memory.new
+        builder.analyzer_failures = failures
+        result = builder.diff([] of Endpoint, [Endpoint.new("/z", "GET")])
+        case format
+        when "json" then builder.print_json(result)
+        when "yaml" then builder.print_yaml(result)
+        when "toml" then builder.print_toml(result)
+        else             builder.print_markdown(result)
+        end
+        outputs[format] = builder.io.to_s
+      end
+
+      JSON.parse(outputs["json"])["errors"].should eq(JSON.parse(%([{"tech":"oas3","message":"bad spec"}])))
+      YAML.parse(outputs["yaml"])["errors"][0]["tech"].as_s.should eq("oas3")
+      outputs["toml"].should contain("[[errors]]\ntech = \"oas3\"\nmessage = \"bad spec\"")
+      outputs["markdown"].should contain("| `oas3` | bad spec |")
+    end
+
+    it "keeps an empty `errors` in json when every analyzer ran" do
+      builder = OutputBuilderDiff.new(create_test_options)
+      builder.io = IO::Memory.new
+      builder.print_json(fixture.call)
+
+      JSON.parse(builder.io.to_s)["errors"].as_a.should be_empty
+    end
   end
 end

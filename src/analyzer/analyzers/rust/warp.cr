@@ -71,6 +71,14 @@ module Analyzer::Rust
               function_tail_expression(node)
             end
           next unless value
+          let_prefixes = nil.as(Array(String)?)
+          if !mounts[:prefix_lets].empty? && (let_name = let_binding_name(node, source))
+            key = let_key(node, let_name, mounts[:fn_ranges])
+            # `let api = warp::path("api")…` used as `api.and(list)` is a
+            # prefix, not a route.
+            next if mounts[:prefix_lets].includes?(key)
+            let_prefixes = mounts[:let_prefix][key]?
+          end
           next unless warp_chain?(value, source)
           byte = LibTreeSitter.ts_node_start_byte(value).to_i
           next if seen.includes?(byte)
@@ -105,6 +113,9 @@ module Analyzer::Rust
             end
 
             prefixes = enclosing_mount_prefixes(branch, mounts[:mount_prefix], mounts[:fn_ranges])
+            if lp = let_prefixes
+              prefixes = prefixes.empty? ? lp : prefixes.flat_map { |fp| lp.map { |l| filter_chain_join(fp, l) } }
+            end
             if prefixes.empty?
               endpoints << endpoint
             else
@@ -167,7 +178,87 @@ module Analyzer::Rust
         bucket << prefix unless bucket.includes?(prefix)
       end
 
-      {route_fns: route_fns, mount_prefix: mount_prefix, fn_ranges: fn_ranges}
+      # Let-bound prefix filters: `let api = warp::path("api"); … api.and(
+      # list.or(create))` mounts the route lets `list`/`create` (directly or
+      # through a plain `let todos = list.or(create)`) under `/api`. Let
+      # names are scoped to their enclosing fn.
+      lets = {} of String => LibTreeSitter::TSNode
+      walk(root) do |node|
+        next unless name = let_binding_name(node, source)
+        next unless value = Noir::TreeSitter.field(node, "value")
+        key = let_key(node, name, fn_ranges)
+        lets[key] = value unless lets.has_key?(key)
+      end
+      let_prefix = Hash(String, Array(String)).new
+      prefix_lets = Set(String).new
+      unless lets.empty?
+        walk(root) do |node|
+          next unless Noir::TreeSitter.node_type(node) == "call_expression"
+          next unless warp_field_name(node, source) == "and"
+          recv = warp_receiver(node)
+          next unless recv && Noir::TreeSitter.node_type(recv) == "identifier"
+          recv_key = let_key(node, Noir::TreeSitter.node_text(recv, source), fn_ranges)
+          next unless recv_value = lets[recv_key]?
+          prefix = extract_prefix_path(recv_value, source)
+          next if prefix.empty?
+          args = Noir::TreeSitter.field(node, "arguments")
+          next unless args
+          targets = Set(String).new
+          collect_route_lets(args, source, node, lets, fn_ranges, targets, Set(String).new)
+          next if targets.empty?
+          prefix_lets << recv_key
+          targets.each do |target|
+            bucket = (let_prefix[target] ||= [] of String)
+            bucket << prefix unless bucket.includes?(prefix)
+          end
+        end
+      end
+
+      {route_fns: route_fns, mount_prefix: mount_prefix, fn_ranges: fn_ranges,
+       let_prefix: let_prefix, prefix_lets: prefix_lets}
+    end
+
+    # Route-bearing lets (`warp::path(..)` / `path!`) named in `node`,
+    # following plain composition lets (`let todos = list.or(create)`).
+    private def collect_route_lets(node : LibTreeSitter::TSNode,
+                                   source : String,
+                                   site : LibTreeSitter::TSNode,
+                                   lets : Hash(String, LibTreeSitter::TSNode),
+                                   fn_ranges : Array(Tuple(String, Int32, Int32)),
+                                   targets : Set(String),
+                                   visited : Set(String))
+      walk(node) do |child|
+        next unless Noir::TreeSitter.node_type(child) == "identifier"
+        key = let_key(site, Noir::TreeSitter.node_text(child, source), fn_ranges)
+        next unless (value = lets[key]?) && visited.add?(key)
+        if Noir::TreeSitter.node_text(value, source).matches?(ROUTE_FN_EVIDENCE_RE)
+          targets << key
+        else
+          collect_route_lets(value, source, site, lets, fn_ranges, targets, visited)
+        end
+      end
+    end
+
+    # `let NAME = …` → `NAME` (plain identifier patterns only).
+    private def let_binding_name(node : LibTreeSitter::TSNode, source : String) : String?
+      return unless Noir::TreeSitter.node_type(node) == "let_declaration"
+      pattern = Noir::TreeSitter.field(node, "pattern")
+      return unless pattern && Noir::TreeSitter.node_type(pattern) == "identifier"
+      Noir::TreeSitter.node_text(pattern, source)
+    end
+
+    # A let name qualified by the start byte of the smallest fn enclosing
+    # `node`, so same-named lets in different fns don't collide.
+    private def let_key(node : LibTreeSitter::TSNode, name : String, fn_ranges : Array(Tuple(String, Int32, Int32))) : String
+      b = LibTreeSitter.ts_node_start_byte(node).to_i
+      best = -1
+      best_size = Int32::MAX
+      fn_ranges.each do |_, s, e|
+        next unless b >= s && b < e && e - s < best_size
+        best = s
+        best_size = e - s
+      end
+      "#{best}:#{name}"
     end
 
     # What a run of filter nodes contributes to an endpoint, in chain
@@ -441,6 +532,11 @@ module Analyzer::Rust
               path_parts << text if text
             when "warp::path::end"
               has_path_end = true
+            when "warp::body::json"
+              # Untyped `warp::body::json()`: the type comes from the closure.
+              params << Param.new("body", "", "json") unless params.any? { |p| p.name == "body" && p.param_type == "json" }
+            when "warp::body::form"
+              params << Param.new("body", "", "form") unless params.any? { |p| p.name == "body" && p.param_type == "form" }
             end
           when "generic_function"
             fn_text = call_function_text_from_generic(node, source)

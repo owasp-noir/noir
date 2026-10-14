@@ -1132,7 +1132,7 @@ module Analyzer::Python
     # folded line's continuations become `""`, so indexes (and the line
     # numbers derived from them) still line up. Folded pieces are cut at
     # their `#` comment and stripped; a line that closes on its own comes
-    # back verbatim, and so does one still open after
+    # back cut at its comment only, and so does one still open after
     # `Noir::CallFold::MAX_CONTINUATION_LINES` (a long call, not a wrapped
     # read). Triple-quoted strings are tracked across the block, so a `(`
     # in a docstring opens nothing.
@@ -1142,6 +1142,7 @@ module Analyzer::Python
       i = 0
       while i < lines.size
         delta, triple, comment = python_call_line_scan(lines[i], triple, brackets: true)
+        folded[i] = lines[i].byte_slice(0, comment) if comment < lines[i].bytesize
         start = i
         i += 1
         next unless delta > 0
@@ -1223,29 +1224,8 @@ module Analyzer::Python
       {depth, triple, bytes.size}
     end
 
-    # `line` up to its first `#` outside a single-line quoted string.
-    # Per-line like `python_delimiter_delta`: a line inside a multi-line
-    # triple-quoted string is not recognised as such.
     def strip_python_comment(line : ::String) : ::String
-      return line unless line.includes?('#')
-      in_quote : Char? = nil
-      escaped = false
-      line.each_char_with_index do |ch, index|
-        if in_quote
-          if escaped
-            escaped = false
-          elsif ch == '\\'
-            escaped = true
-          elsif ch == in_quote
-            in_quote = nil
-          end
-        elsif ch == '\'' || ch == '"'
-          in_quote = ch
-        elsif ch == '#'
-          return line[0, index]
-        end
-      end
-      line
+      Helper.strip_python_comment(line)
     end
 
     # Push mount prefixes from every node that already has some along the

@@ -112,8 +112,8 @@ module Analyzer::Javascript
       # Convert [id] to :id for dynamic routes
       relative_path = relative_path.gsub(/\[(\w+)\]/, ":\\1")
 
-      # Convert [...slug] catch-all routes
-      relative_path = relative_path.gsub(/\[\.\.\.(\w+)\]/, "*")
+      # Convert [...slug] and unnamed [...] catch-all routes
+      relative_path = relative_path.gsub(/\[\.\.\.\w*\]/, "*")
 
       # Build the URL
       url = "/#{relative_path}"
@@ -131,6 +131,7 @@ module Analyzer::Javascript
       # Read file content to extract parameters
       begin
         content = Noir::JSRouteExtractor.strip_js_comments(read_file_content(path))
+        h3_params = h3_event_params(content)
         callees = include_callee ? Noir::JSCalleeExtractor.callees_for_default_event_handler(content, path, language: javascript_source_language(path)) : [] of Noir::JSCalleeExtractor::Entry
 
         methods.each do |method|
@@ -146,47 +147,8 @@ module Analyzer::Javascript
             end
           end
 
-          # Extract query parameters from getQuery or useQuery
-          # Pattern 1: Direct access - getQuery(event).param
-          content.scan(/(?:getQuery|useQuery)\s*\(\s*event\s*\)\.(\w+)/) do |m|
-            param_name = m[1]
-            param = Param.new(param_name, "", "query")
-            endpoint.push_param(param)
-          end
-
-          # Pattern 2: Variable assignment - const query = getQuery(event); query.param
-          if content.match(/(?:const|let|var)\s+(\w+)\s*=\s*(?:getQuery|useQuery)\s*\(\s*event\s*\)/)
-            query_var = $1
-            content.scan(cached_regex("nitro:query_dot:#{query_var}") { /#{Regex.escape(query_var)}\.(\w+)/ }) do |m|
-              param_name = m[1]
-              next if ["toString", "valueOf", "constructor"].includes?(param_name)
-              param = Param.new(param_name, "", "query")
-              endpoint.push_param(param)
-            end
-          end
-
-          # Extract body parameters from readBody
-          if content.includes?("readBody(event)") || content.includes?("await readBody")
-            content.scan(/(?:body|data)\.(\w+)/) do |m|
-              param_name = m[1]
-              param = Param.new(param_name, "", "body")
-              endpoint.push_param(param)
-            end
-          end
-
-          # Extract header parameters from getHeader or getHeaders
-          content.scan(/getHeader\s*\(\s*event\s*,\s*['"]([^'"]+)['"]/) do |m|
-            header_name = m[1]
-            param = Param.new(header_name, "", "header")
-            endpoint.push_param(param)
-          end
-
-          # Extract cookie parameters from getCookie
-          content.scan(/getCookie\s*\(\s*event\s*,\s*['"]([^'"]+)['"]/) do |m|
-            cookie_name = m[1]
-            param = Param.new(cookie_name, "", "cookie")
-            endpoint.push_param(param)
-          end
+          # Same h3 request helpers as Nuxt server routes.
+          h3_params.each { |param| endpoint.push_param(param) }
 
           attach_js_callees(endpoint, callees) if include_callee
 

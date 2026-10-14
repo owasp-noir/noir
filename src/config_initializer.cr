@@ -22,6 +22,9 @@ class ConfigInitializer
     only_techs
     exclude_techs
     use_taggers
+    fail_on
+    ai_context_features
+    ai_native_tools_allowlist
   ]
 
   # v0 config-key → v1 config-key map. Applied during `read_config`

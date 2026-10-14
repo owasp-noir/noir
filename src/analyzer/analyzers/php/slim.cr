@@ -14,6 +14,9 @@ module Analyzer::Php
     private BYTE_SQUOTE    = '\''.ord.to_u8
     private BYTE_BACKSLASH = '\\'.ord.to_u8
 
+    # `RouteCollectorProxy::any` maps exactly these verbs.
+    ANY_VERBS = %w[GET POST PUT PATCH DELETE OPTIONS]
+
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       return endpoints unless path.ends_with?(".php")
@@ -51,7 +54,7 @@ module Analyzer::Php
     # calls its variables.
     FOREIGN_ROUTE_COLLECTORS = Set{"routes", "router", "route", "builder"}
 
-    VERB_CALL_RECEIVER_RE = /\$(\w+)->(?:get|post|put|patch|delete|options|head|map|group)\s*\(/i
+    VERB_CALL_RECEIVER_RE = /\$(\w+)->(?:get|post|put|patch|delete|options|head|any|map|group)\s*\(/i
 
     # Mezzio registers its programmatic routes on `$app->get('/x', Handler::class)`
     # — the same expression Slim uses — so Slim read Mezzio's route table as
@@ -84,7 +87,6 @@ module Analyzer::Php
                                        include_callee : Bool,
                                        base_line : Int32 = 1) : Array(Endpoint)
       endpoints = [] of Endpoint
-      details = Details.new(PathInfo.new(file_path))
 
       working_content = content
 
@@ -111,13 +113,17 @@ module Analyzer::Php
       #    a route at the outer level.
       # Keep the path literal on a single line (no quotes, no newlines) so an
       # unrelated `$obj->get('key')` can't pull in following code as a route.
-      verb_regex = /(\$\w+)->(get|post|put|patch|delete|options|head)\s*\(\s*['"]([^'"\r\n]+)['"]\s*,/i
+      # The path may be empty: `$group->get('', …)` routes the group prefix
+      # itself (slim-skeleton's `/users`).
+      verb_regex = /(\$\w+)->(get|post|put|patch|delete|options|head|any)\s*\(\s*['"]([^'"\r\n]*)['"]\s*,/i
       offsets = Noir::CharOffsets.new(working_content)
       pos = 0
       while m = offsets.match(verb_regex, pos)
         after_args = offsets.end(m)
+        details = Details.new(PathInfo.new(file_path, base_line + offsets.line(offsets.begin(m)) - 1))
 
-        method = m[2].upcase
+        verb = m[2].upcase
+        methods = verb == "ANY" ? ANY_VERBS : [verb]
         route_path = m[3]
         full_path = build_full_path(prefix, route_path)
 
@@ -126,17 +132,20 @@ module Analyzer::Php
         params.concat(extract_handler_params(handler_body)) if handler_body
         params = dedup_params(params)
 
-        endpoint = Endpoint.new(full_path, method, params, details.dup)
-        attach_handler_callees(endpoint, handler_body, file_path, body_start_line) if include_callee
-        endpoints << endpoint
+        methods.each do |method|
+          endpoint = Endpoint.new(full_path, method, params, details.dup)
+          attach_handler_callees(endpoint, handler_body, file_path, body_start_line) if include_callee
+          endpoints << endpoint
+        end
         pos = next_pos
       end
 
       # 3. Multi-method map routes: $app->map(["GET","POST"], "/path", handler)
-      map_regex = /(\$\w+)->map\s*\(\s*\[([^\]]+)\]\s*,\s*['"]([^'"\r\n]+)['"]\s*,/i
+      map_regex = /(\$\w+)->map\s*\(\s*\[([^\]]+)\]\s*,\s*['"]([^'"\r\n]*)['"]\s*,/i
       pos = 0
       while m = offsets.match(map_regex, pos)
         after_args = offsets.end(m)
+        details = Details.new(PathInfo.new(file_path, base_line + offsets.line(offsets.begin(m)) - 1))
 
         methods = m[2].scan(/['"]([^'"]+)['"]/).map(&.[1].upcase)
 
@@ -172,7 +181,7 @@ module Analyzer::Php
     # Locate the first `$var->group("/prefix", function(...) { ... })` call
     # in the given content and return its span + extracted prefix.
     private def find_group_call(content : String) : Tuple(Int32, Int32, Int32, Int32, String)?
-      regex = /(\$\w+)->group\s*\(\s*['"]([^'"]+)['"]\s*,\s*(?:static\s+)?function\s*\([^)]*\)\s*(?:use\s*\([^)]*\)\s*)?(?::\s*[^{=]+)?\{/i
+      regex = /(\$\w+)->group\s*\(\s*['"]([^'"]*)['"]\s*,\s*(?:static\s+)?function\s*\([^)]*\)\s*(?:use\s*\([^)]*\)\s*)?(?::\s*[^{=]+)?\{/i
       m = content.match(regex)
       return unless m
 

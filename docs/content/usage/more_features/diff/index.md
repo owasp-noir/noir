@@ -86,15 +86,16 @@ Use `-f json` or `-f yaml` for structured output. It has three endpoint lists (`
       "tags_removed": ["auth"],
       "auth_removed": true
     }
-  ]
+  ],
+  "errors": []
 }
 ```
 
-`changed` holds the endpoints as they are now. `changes` has one record per entry in `changed`, in the same order, saying what differs.
+`changed` holds the endpoints as they are now. `changes` has one record per entry in `changed`, in the same order, saying what differs. `errors` lists analyzers that failed or skipped files on either side, in the same shape as `-f json`. An endpoint in `removed` may only be missing because of one of them.
 
 ### Markdown and SARIF Output
 
-`-f markdown-table` renders the diff as a pull request comment: a count table, then the routes that lost auth, then one table each for added, removed and changed endpoints.
+`-f markdown-table` renders the diff as a pull request comment: any analyzer failures, a count table, then the routes that lost auth, then one table each for added, removed and changed endpoints.
 
 `-f sarif` reports the new attack surface for code scanning: added endpoints and new params as notes, lost auth as a warning. Removed endpoints are left out because they have no line in the reviewed code to point at. The other formats still list them.
 

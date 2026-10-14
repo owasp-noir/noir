@@ -2,6 +2,8 @@ require "../../engines/javascript_engine"
 require "../../../miniparsers/js_route_extractor"
 require "../../../miniparsers/import_graph"
 require "../../../models/code_locator"
+require "../../../utils/js_literal_scanner"
+require "../../../utils/top_level_split"
 require "../../../utils/url_path"
 
 module Analyzer::Javascript
@@ -63,6 +65,13 @@ module Analyzer::Javascript
       result
     end
 
+    KOA_USE_CALL_RE   = /(\w+)\.use\s*\(/
+    KOA_PREFIX_ARG_RE = /\A['"]([^'"]+)['"]\z/
+    KOA_ROUTES_ARG_RE = /\A(\w+)\.routes\s*\(\s*\)\z/
+    KOA_BARE_ARG_RE   = /\A(\w+)\z/
+    # `const api = new Router({ prefix: '/api' })`
+    KOA_CTOR_PREFIX_RE = /(\w+)\s*=\s*new\s+\w*Router\s*\(\s*\{[^}]*?\bprefix\s*:\s*['"]([^'"]+)['"]/
+
     # Resolve koa-router cross-file mount prefixes and seed them into
     # CodeLocator under each imported child router's file key. Each file
     # that does the mounting is resolved independently — the common layout
@@ -105,15 +114,28 @@ module Analyzer::Javascript
         end
 
         # Collect mount edges: parent.use('/prefix', child[.routes()]) and
-        # the no-prefix parent.use(child[.routes()]). A bare `child` or a
-        # `child.routes()` wrapper is a router; a `factory()` call (e.g.
-        # `bodyParser()`) is middleware and never matches these shapes.
+        # the no-prefix parent.use(child[.routes()]). Every `child.routes()`
+        # argument is a router (`use('/u', auth, users.routes(),
+        # users.allowedMethods())`); a bare `child` only as the sole router
+        # argument. A `factory()` call (e.g. `bodyParser()`) is middleware.
+        # The parent's own `new Router({ prefix })` precedes the mount path.
+        ctor_prefixes = Hash(String, String).new
+        content.scan(KOA_CTOR_PREFIX_RE) { |m| ctor_prefixes[m[1]] = m[2] }
         edges = [] of Tuple(String, String, String)
-        content.scan(/(\w+)\.use\s*\(\s*['"]([^'"]+)['"]\s*,\s*(\w+)(?:\.routes\s*\(\s*\))?\s*\)/) do |m|
-          edges << {m[1], m[2], m[3]} if m.size >= 4
-        end
-        content.scan(/(\w+)\.use\s*\(\s*(\w+)(?:\.routes\s*\(\s*\))?\s*\)/) do |m|
-          edges << {m[1], "", m[2]} if m.size >= 3
+        content.scan(KOA_USE_CALL_RE) do |m|
+          args = Noir::JSLiteralScanner.extract_paren_content_at_byte(content, m.byte_end(0)).try(&.content)
+          next unless args
+          parts = Noir::TopLevelSplit.split(args, ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).map(&.strip)
+          mount = ""
+          if literal = parts.first?.try(&.match(KOA_PREFIX_ARG_RE))
+            mount = literal[1]
+            parts.shift
+          end
+          mount = Noir::URLPath.join(ctor_prefixes[m[1]]? || "", mount)
+          parts.each do |part|
+            child = part.match(KOA_ROUTES_ARG_RE) || (parts.size == 1 ? part.match(KOA_BARE_ARG_RE) : nil)
+            edges << {m[1], mount, child[1]} if child
+          end
         end
         next if edges.empty?
 

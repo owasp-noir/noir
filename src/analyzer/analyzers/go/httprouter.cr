@@ -38,6 +38,8 @@ module Analyzer::Go
       end
       package_function_bodies = Noir::GoCalleeExtractor.lazy_package_bodies_if(callees_needed?, file_contents)
 
+      named_scope = Noir::GoNamedHandler.scope(file_contents)
+
       parallel_analyze(get_files_by_extension(".go")) do |path|
         next if GoEngine.go_test_file?(base_relative_path(path))
         next unless File.exists?(path)
@@ -70,7 +72,7 @@ module Analyzer::Go
         routes_by_line.each_key { |row| route_rows << row }
         external_fns = Noir::GoCalleeExtractor.function_bodies_for_directory(package_function_bodies, File.dirname(path))
         callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns)
-        named = Noir::GoNamedHandler.new(content, path, ts_routes)
+        named = Noir::GoNamedHandler.new(content, path, ts_routes, named_scope)
 
         lines.each_with_index do |line, index|
           next if named.claim?(index, line)

@@ -99,7 +99,7 @@ module Analyzer::Rust
             normalized = normalize_path(raw_path)
             endpoint = Endpoint.new(normalized, method, details)
             extract_path_params(raw_path, endpoint)
-            scan_function(function, source, endpoint)
+            scan_function(function, source, endpoint, oai: true)
             attach_handler_callees(function, source, path, endpoint) if include_callee
 
             endpoints << endpoint
@@ -242,16 +242,38 @@ module Analyzer::Rust
       end
     end
 
+    OAI_NAME_RE  = /#\[\s*oai\s*\([^\]]*\bname\s*=\s*"([^"]+)"/
+    OAI_PARAM_RE = /(?:^|\])\s*(?:mut\s+)?([A-Za-z_]\w*)\s*:\s*(?:[\w:]*::)?(Query|Header|Cookie|CookiePrivate|CookieSigned)\s*</
+
     # Walk parameters and body for extractor types + header / cookie
     # calls. Bounded to the function so unrelated calls elsewhere in
     # the file don't leak through.
     private def scan_function(function : LibTreeSitter::TSNode,
                               source : String,
-                              endpoint : Endpoint)
+                              endpoint : Endpoint,
+                              oai : Bool = false)
       params_node = Noir::TreeSitter.field(function, "parameters")
       if params_node
+        oai_name = nil.as(String?)
         Noir::TreeSitter.each_named_child(params_node) do |param|
           text = Noir::TreeSitter.node_text(param, source)
+          if oai
+            # poem-openapi `param::{Query, Header, Cookie}` name one
+            # parameter each: `status: Query<Option<String>>` is the `status`
+            # query param, renamed by `#[oai(name = "X-API-Key")]`.
+            if text.starts_with?("#[")
+              oai_name = text.match(OAI_NAME_RE).try(&.[1])
+              next if Noir::TreeSitter.node_type(param) == "attribute_item"
+            end
+            if m = text.match(OAI_PARAM_RE)
+              name = oai_name || m[1]
+              type = m[2] == "Query" ? "query" : m[2] == "Header" ? "header" : "cookie"
+              endpoint.push_param(Param.new(name, "", type)) unless endpoint.params.any? { |p| p.name == name && p.param_type == type }
+              oai_name = nil
+              next
+            end
+            oai_name = nil
+          end
           if !endpoint.params.any? { |p| p.name == "query" && p.param_type == "query" } &&
              (text.includes?(": Query<") || text.match(/Query\s*\(\s*[^)]+\s*\)/))
             endpoint.push_param(Param.new("query", "", "query"))

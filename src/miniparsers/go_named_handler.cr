@@ -1,8 +1,9 @@
 require "../models/endpoint"
+require "../utils/c_comments"
 require "./go_callee_extractor"
 require "./go_route_extractor_ts"
 
-# Same-file named-handler attribution for the Go adapters' line loops.
+# Named-handler attribution for the Go adapters' line loops.
 #
 # Those loops credit every accessor line (`c.Query("x")`) to the most recent
 # route above it. That is right for inline closures, but a named handler's
@@ -26,6 +27,10 @@ require "./go_route_extractor_ts"
 #     `h`'s type is not visible in this file, whose receiver is named `h`.
 #     A receiver that is an imported package (`handlers.List`) never
 #     resolves to a local method;
+#   * given a `Scope`, a name not declared in this file is looked up in the
+#     other files of its package (same rules), and `pkg.Fn` in the scanned
+#     package `pkg` imports. Those bodies are attributed from their own
+#     source, since the line loop never walks them;
 #   * a function that registers routes itself is never claimed.
 class Noir::GoNamedHandler
   RECEIVER_RE  = /\Afunc\s*\(\s*(?:([A-Za-z_]\w*)\s+)?\*?\s*([A-Za-z_]\w*)/
@@ -39,10 +44,33 @@ class Noir::GoNamedHandler
   # `name *T` as a parameter, receiver, struct field or `var`.
   DECLARED_TYPE_RE = /(?:\A|[\n(,]|\bvar)[ \t]*([A-Za-z_]\w*)[ \t]+\*?(?:[A-Za-z_]\w*\.)?([A-Za-z_]\w*)/
 
-  @rows = Hash(Int32, Int32).new
-  @refs = Hash(String, Int32).new
-  @lines = Hash(Int32, Array(String)).new
-  @targets = Hash(Int32, Array(Endpoint)).new
+  # A route registration with a path literal: the stand-in for the
+  # same-file route-row check on a body declared in another file.
+  ROUTE_CALL_RE = /\.(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|Get|Post|Put|Delete|Patch|Head|Options|Any|All|Handle|HandleFunc|Group|Route|Mount)\s*\(\s*"\//
+
+  # Where a handler not declared in the route's own file is looked up.
+  # `bodies` covers every scanned package (built per directory on first
+  # lookup and memoized, so a package is parsed once per analyzer);
+  # `import_dirs` maps a local import path to its directory.
+  record Scope,
+    bodies : Noir::GoCalleeExtractor::LazyPackageBodies,
+    import_dirs : Hash(String, String)
+
+  # Test files are left out: an external `foo_test` package in the same
+  # directory may reuse a handler's name.
+  def self.scope(file_contents : Hash(String, String), import_dirs : Hash(String, String) = Hash(String, String).new) : Scope
+    sources = file_contents.reject { |path, _| path.ends_with?("_test.go") }
+    Scope.new(Noir::GoCalleeExtractor::LazyPackageBodies.new(sources), import_dirs)
+  end
+
+  # A body is keyed by its file and first row, so bodies from several files
+  # never collide.
+  alias Key = Tuple(String, Int32)
+
+  @rows = Hash(Int32, Key).new
+  @refs = Hash(String, Key).new
+  @lines = Hash(Key, Array(String)).new
+  @targets = Hash(Key, Array(Endpoint)).new
   @declared : Hash(String, Set(String))? = nil
   @receivers = Hash(String, Array(Tuple(Noir::GoCalleeExtractor::FunctionBody, String?, String))).new
 
@@ -55,7 +83,7 @@ class Noir::GoNamedHandler
     end
   end
 
-  def initialize(content : String, path : String, routes : Array(Noir::TreeSitterGoRouteExtractor::Route))
+  def initialize(content : String, path : String, routes : Array(Noir::TreeSitterGoRouteExtractor::Route), scope : Scope? = nil)
     references = Hash(String, Tuple(String, String)).new
     routes.each do |r|
       r.handler_args.each do |h|
@@ -71,32 +99,52 @@ class Noir::GoNamedHandler
     route_rows = routes.map(&.line).sort!
     imports = nil
     spans = Hash(Int32, Range(Int32, Int32)).new
+    dir = File.dirname(path)
 
     references.each do |handler, (qualifier, name)|
       body = if qualifier.empty?
-               functions[name]?
-             elsif (candidates = methods[name]?) && !qualifier.includes?('.')
+               functions[name]? || scope.try(&.bodies.functions_for(dir)[name]?)
+             elsif !qualifier.includes?('.')
                imports ||= Noir::GoCalleeExtractor.extract_import_aliases(content)
-               method_for(qualifier, name, candidates, content) unless imports.has_key?(qualifier)
+               if import_path = imports[qualifier]?
+                 if scope && (import_dir = scope.import_dirs[import_path]?)
+                   scope.bodies.functions_for(import_dir)[name]?
+                 end
+               else
+                 methods[name]?.try { |candidates| method_for(qualifier, name, candidates, content, "file") } ||
+                   scope.try(&.bodies.methods_for(dir)[name]?).try { |candidates| method_for(qualifier, name, candidates, content, "package") }
+               end
              end
       next unless body
 
-      span = spans[body.start_row] ||= body.start_row..(body.start_row + body.source.count('\n'))
-      # A function that registers routes itself is never claimed.
-      first = route_rows.bsearch { |row| row >= span.begin }
-      next if first && first <= span.end
-      @refs[handler] = body.start_row
+      key = {body.file_path, body.start_row}
+      if body.file_path == path
+        span = spans[body.start_row] ||= body.start_row..(body.start_row + body.source.count('\n'))
+        # A function that registers routes itself is never claimed.
+        first = route_rows.bsearch { |row| row >= span.begin }
+        next if first && first <= span.end
+      else
+        lines = @lines[key] ||= Noir::CComments.strip(body.source, raw_quotes: "`", leak_unterminated_tail: true).lines
+        next if lines.any?(&.matches?(ROUTE_CALL_RE))
+      end
+      @refs[handler] = key
     end
 
-    @refs.each_value { |start| spans[start].each { |row| @rows[row] = start } }
+    @refs.each_value do |key|
+      next unless key[0] == path
+      spans[key[1]].each { |row| @rows[row] = key }
+    end
   end
 
   # The one method in `candidates` the selector `qualifier.Name` can mean.
+  # `table` names the candidate list (this file's or the package's) for
+  # the receiver memo.
   private def method_for(qualifier : String,
                          name : String,
                          candidates : Array(Noir::GoCalleeExtractor::FunctionBody),
-                         content : String) : Noir::GoCalleeExtractor::FunctionBody?
-    receivers = @receivers[name] ||= candidates.compact_map do |fb|
+                         content : String,
+                         table : String) : Noir::GoCalleeExtractor::FunctionBody?
+    receivers = @receivers["#{table}:#{name}"] ||= candidates.compact_map do |fb|
       if m = fb.source.match(RECEIVER_RE)
         {fb, m[1]?, m[2]}
       end
@@ -129,22 +177,22 @@ class Noir::GoNamedHandler
   # True when `line` (0-based `index`) is inside the body of a function a
   # route names; the line is held for `each_attribution`.
   def claim?(index : Int32, line : String) : Bool
-    return false unless start = @rows[index]?
-    (@lines[start] ||= [] of String) << line
+    return false unless key = @rows[index]?
+    (@lines[key] ||= [] of String) << line
     true
   end
 
   def bind(route : Noir::TreeSitterGoRouteExtractor::Route, endpoint : Endpoint)
     return if @refs.empty?
-    route.handler_args.compact_map { |handler| @refs[handler.strip]? }.uniq!.each do |start|
-      (@targets[start] ||= [] of Endpoint) << endpoint
+    route.handler_args.compact_map { |handler| @refs[handler.strip]? }.uniq!.each do |key|
+      (@targets[key] ||= [] of Endpoint) << endpoint
     end
   end
 
   # Yields every claimed line with each endpoint routed to its handler.
   def each_attribution(& : String, Endpoint ->)
-    @lines.each do |start, lines|
-      next unless eps = @targets[start]?
+    @lines.each do |key, lines|
+      next unless eps = @targets[key]?
       lines.each { |line| eps.each { |ep| yield line, ep } }
     end
   end

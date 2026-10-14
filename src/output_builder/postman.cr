@@ -280,7 +280,7 @@ class OutputBuilderPostman < OutputBuilder
   private def with_query(raw : String, query_pairs : Array(Tuple(String, String))) : String
     return raw if query_pairs.empty?
 
-    "#{raw}?#{query_pairs.map { |name, value| "#{name}=#{value}" }.join("&")}"
+    "#{raw}?#{query_pairs.join("&") { |name, value| www_form_pair(name, value) }}"
   end
 
   private def add_query_list(url_obj : UrlObject, query_pairs : Array(Tuple(String, String)))

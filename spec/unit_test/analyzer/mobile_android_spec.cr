@@ -1,6 +1,7 @@
 require "file_utils"
 require "../../spec_helper"
 require "../../../src/models/code_locator"
+require "../../../src/models/locator_keys"
 require "../../../src/analyzer/analyzers/mobile/android.cr"
 
 # FunctionalTester only checks url / method / protocol / params, so the
@@ -372,5 +373,53 @@ describe "Analyzer::Mobile::Android (huge intent-filter)" do
   ensure
     CodeLocator.instance.clear(Noir::LocatorKeys::ANDROID_MANIFEST)
     FileUtils.rm_rf(dir) if dir
+  end
+end
+
+# A pre-31 manifest may omit `android:exported` on a filter-bearing
+# component, and Android then exports it. The <data> branch already read it
+# that way; the action-only branch demanded an explicit "true" and dropped
+# the receiver.
+describe "Analyzer::Mobile::Android (legacy manifest)" do
+  dir = File.tempname("noir-android-legacy")
+  Dir.mkdir_p(dir)
+  manifest = File.join(dir, "AndroidManifest.xml")
+  File.write(manifest, <<-XML)
+    <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.ex.legacy">
+      <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="28"/>
+      <application>
+        <receiver android:name=".CmdReceiver">
+          <intent-filter><action android:name="com.ex.legacy.RUN_COMMAND"/></intent-filter>
+        </receiver>
+        <activity android:name=".PortActivity" android:exported="true">
+          <intent-filter android:autoVerify="true">
+            <action android:name="android.intent.action.VIEW"/>
+            <category android:name="android.intent.category.BROWSABLE"/>
+            <data android:scheme="https" android:host="ex.com" android:port="8443" android:path="/x"/>
+          </intent-filter>
+        </activity>
+        <receiver android:name=".Hidden" android:exported="false">
+          <intent-filter><action android:name="com.ex.legacy.HIDDEN"/></intent-filter>
+        </receiver>
+      </application>
+    </manifest>
+    XML
+
+  CodeLocator.instance.clear(Noir::LocatorKeys::ANDROID_MANIFEST)
+  CodeLocator.instance.push(Noir::LocatorKeys::ANDROID_MANIFEST, manifest)
+  urls = Analyzer::Mobile::Android.new(create_test_options).analyze.map(&.url)
+  CodeLocator.instance.clear(Noir::LocatorKeys::ANDROID_MANIFEST)
+  FileUtils.rm_rf(dir)
+
+  it "reports an action-only component with no exported attribute" do
+    urls.should contain("intent://com.ex.legacy/.CmdReceiver")
+  end
+
+  it "keeps android:port in the deep-link authority" do
+    urls.should contain("https://ex.com:8443/x")
+  end
+
+  it "still drops one that is explicitly not exported" do
+    urls.should_not contain("intent://com.ex.legacy/.Hidden")
   end
 end

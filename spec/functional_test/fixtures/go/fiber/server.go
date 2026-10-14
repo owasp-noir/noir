@@ -19,7 +19,8 @@ func main() {
 		msg := "Hello, World!"
 		c.Cookies(/* session */ "auth")
 		c.FormValue("name")
-		c.GetRespHeader("X-API-Key")
+		c.Get("X-API-Key")
+		c.GetRespHeader("X-Resp-Only")
 		c.Vary("Origin")
 		return c.SendString(msg) // => ✋ register
 	})

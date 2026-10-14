@@ -31,6 +31,8 @@ class SpringAuthTagger < FrameworkTagger
   # drops its `anyRequest()` fallback. The `\s*\(` boundary rejects the plural.
   SCOPE_MATCHER_CALL = /\b(?:securityMatcher|antMatcher)\s*\(/
 
+  KOTLIN_FUN_DECLARATION = /(?:^|\s)fun\s/
+
   def initialize(options : Hash(String, YAML::Any))
     super
     @security_rules = [] of NamedTuple(pattern: String, method: String?, description: String, protected_rule: Bool)
@@ -73,8 +75,11 @@ class SpringAuthTagger < FrameworkTagger
     lines = block.split("\n")
     unscoped_chain = !block.matches?(SCOPE_MATCHER_CALL)
 
+    # A lambda DSL often chains every rule on one line
+    # (`auth.requestMatchers("/p/**").permitAll().anyRequest().authenticated()`),
+    # so read every rule on the line, not just the first.
     lines.each do |line|
-      if match = line.match(MATCHERS_RULE)
+      line.scan(MATCHERS_RULE) do |match|
         matcher_method = request_matcher_method(match[2])
         auth_type = match[3]
         protected_rule = auth_type != "permitAll"
@@ -87,7 +92,8 @@ class SpringAuthTagger < FrameworkTagger
             end
           @security_rules << {pattern: url_pattern, method: matcher_method, description: description, protected_rule: protected_rule}
         end
-      elsif match = line.match(KOTLIN_AUTHORIZE_RULE)
+      end
+      line.scan(KOTLIN_AUTHORIZE_RULE) do |match|
         auth_type = match[4]
         protected_rule = auth_type != "permitAll"
         if url_pattern = match[2]?
@@ -96,7 +102,8 @@ class SpringAuthTagger < FrameworkTagger
         elsif unscoped_chain && protected_rule
           @security_rules << {pattern: "/**", method: nil, description: "Protected by Spring Security #{auth_type} via authorize(anyRequest)", protected_rule: true}
         end
-      elsif unscoped_chain && (match = line.match(ANY_REQUEST_AUTH))
+      end
+      if unscoped_chain && (match = line.match(ANY_REQUEST_AUTH))
         auth_type = match[1]
         @security_rules << {
           pattern:        "/**",
@@ -218,6 +225,9 @@ class SpringAuthTagger < FrameworkTagger
       break if current_line.starts_with?("public ") || current_line.starts_with?("private ") || current_line.starts_with?("protected ")
       break if current_line.starts_with?("class ") || current_line.starts_with?("}")
       break if current_line.ends_with?("}")
+      # The previous handler's declaration: a Kotlin `fun admin() = "admin"`
+      # or a bodiless interface method `String admin();`.
+      break if current_line.ends_with?(";") || current_line.matches?(KOTLIN_FUN_DECLARATION)
 
       ANNOTATION_PATTERNS.each do |pattern|
         if current_line.matches?(pattern)

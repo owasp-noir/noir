@@ -10,18 +10,21 @@ class CrystalAuthTagger < FrameworkTagger
     {/plug\s+\w*[Aa]uth\w*/, "Amber auth plug"},
   ]
 
-  # Kemal auth patterns
-  KEMAL_AUTH_PATTERNS = [
+  # Kemal file-level filters: they guard every route below them.
+  KEMAL_FILTER_PATTERNS = [
     {/before_all.*do.*auth/i, "Kemal before_all auth filter"},
+    {/basic_auth/, "Kemal basic_auth"},
+  ]
+
+  # Kemal checks that guard only the handler making them.
+  KEMAL_HANDLER_PATTERNS = [
     {/env\.session\.string\s*\(\s*"user/, "Kemal session user check"},
     {/env\.get\s*\(\s*"auth/, "Kemal auth context"},
-    {/basic_auth/, "Kemal basic_auth"},
   ]
 
   # Lucky auth patterns
   LUCKY_AUTH_PATTERNS = [
     {/include Auth::RequireSignIn/, "Lucky Auth::RequireSignIn"},
-    {/include Auth::AllowGuests/, "Lucky Auth::AllowGuests"},
     {/before require_sign_in/, "Lucky require_sign_in before action"},
     # A bare `current_user` reference (e.g. `UserSerializer.new(current_user)`
     # in a handler body) is not sign-in enforcement; it false-positived on
@@ -29,11 +32,27 @@ class CrystalAuthTagger < FrameworkTagger
     # (RequireSignIn / require_sign_in) cover Lucky auth.
   ]
 
+  # Lucky's opt-out of the sign-in `BrowserAction` requires: the action is
+  # public, so nothing above it in the class may tag it.
+  LUCKY_ALLOW_GUESTS = /include\s+Auth::AllowGuests\b/
+
   # Grip/Marten auth patterns
-  GENERIC_CRYSTAL_AUTH = [
+  GENERIC_FILTER_PATTERNS = [
     {/before_action.*auth/i, "Crystal before_action auth"},
+  ]
+  GENERIC_HANDLER_PATTERNS = [
     {/context\.session/, "Crystal session check"},
   ]
+
+  # Read walking back from the route to its class/module: statements that
+  # cover every route declared after them in that scope. A session read is
+  # not one — it guards only the handler it sits in, and walking back to it
+  # spread one route's check to every later route of the file.
+  ENCLOSING_AUTH_PATTERNS = AMBER_AUTH_PATTERNS + KEMAL_FILTER_PATTERNS + LUCKY_AUTH_PATTERNS + GENERIC_FILTER_PATTERNS
+
+  # Read inside the route's own block.
+  HANDLER_AUTH_PATTERNS = KEMAL_FILTER_PATTERNS + KEMAL_HANDLER_PATTERNS + LUCKY_AUTH_PATTERNS +
+                          GENERIC_FILTER_PATTERNS + GENERIC_HANDLER_PATTERNS
 
   def self.target_techs : Array(String)
     ["crystal_kemal", "crystal_amber", "crystal_lucky", "crystal_grip", "crystal_marten"]
@@ -70,9 +89,9 @@ class CrystalAuthTagger < FrameworkTagger
     idx = route_line
     while idx >= 0
       current = lines[idx].strip
+      return if current.matches?(LUCKY_ALLOW_GUESTS)
 
-      all_patterns = AMBER_AUTH_PATTERNS + KEMAL_AUTH_PATTERNS + LUCKY_AUTH_PATTERNS + GENERIC_CRYSTAL_AUTH
-      all_patterns.each do |pattern, desc|
+      ENCLOSING_AUTH_PATTERNS.each do |pattern, desc|
         return desc if current.matches?(pattern)
       end
 
@@ -84,19 +103,18 @@ class CrystalAuthTagger < FrameworkTagger
     nil
   end
 
+  # The route's own `do ... end`: the route line and the lines indented
+  # under it.
   private def check_handler_auth(lines : Array(String), route_line : Int32) : String?
-    idx = route_line + 1
-    end_idx = [route_line + 10, lines.size - 1].min
-
-    while idx <= end_idx
+    indent = lines[route_line].size - lines[route_line].lstrip.size
+    (route_line...lines.size).each do |idx|
       current = lines[idx].strip
+      next if current.empty?
+      break if idx > route_line && lines[idx].size - lines[idx].lstrip.size <= indent
 
-      all_patterns = KEMAL_AUTH_PATTERNS + LUCKY_AUTH_PATTERNS + GENERIC_CRYSTAL_AUTH
-      all_patterns.each do |pattern, desc|
+      HANDLER_AUTH_PATTERNS.each do |pattern, desc|
         return desc if current.matches?(pattern)
       end
-
-      idx += 1
     end
 
     nil

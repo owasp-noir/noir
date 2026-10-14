@@ -46,6 +46,13 @@ class GoAuthTagger < FrameworkTagger
     /\bGF[Aa]uth\b/,
   ]
 
+  # The route call's last argument when it is a bare handler reference
+  # (`r.POST("/login", AuthHandler)`), plus any chained calls after it
+  # (mux's `.Methods("GET")`). Only the arguments between path and handler
+  # are middleware; a wrapped handler (`authMiddleware(h)`) is a call, so it
+  # stays.
+  HANDLER_ARG = /,\s*[\w.]+\s*\)((?:\s*\.\s*\w+\s*\([^()]*\))*)\s*;?\s*$/
+
   # A scope is only ever recorded for a line `resolve_use_scope` resolves,
   # and every form it resolves is a `.Use(` / `.Pre(` call — so a file with
   # no such call anywhere registers nothing, and the pre-scan can skip its
@@ -132,7 +139,9 @@ class GoAuthTagger < FrameworkTagger
       line_idx = line_num - 1 # 0-indexed
       next if line_idx < 0 || line_idx >= lines.size
 
-      route_line = lines[line_idx]
+      # Strings blanked so a path (`"/oauth/authorize"`) is not read as
+      # middleware, and the handler dropped so `AuthHandler` is not either.
+      route_line = code_only(lines[line_idx]).sub(HANDLER_ARG, ")\\1")
 
       # Check for inline auth middleware in route definition
       INLINE_AUTH_MIDDLEWARE.each do |pattern|

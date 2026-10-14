@@ -25,7 +25,7 @@ expected_endpoints = [
     Param.new("year", "", "path"),
   ]),
   Endpoint.new("/posts/create", "POST", [
-    Param.new("HTTP_X_REQUEST_ID", "", "header"),
+    Param.new("X-Request-Id", "", "header"),
   ]),
   Endpoint.new("/posts/latest", "GET", [
     Param.new("limit", "", "query"),

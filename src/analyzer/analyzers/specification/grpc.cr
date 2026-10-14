@@ -131,10 +131,7 @@ module Analyzer::Specification
 
     private def parse_services(content : String, file_path : String, package : String, registry : Hash(String, MessageFields))
       # As in `parse_messages`: one shared character array for the file.
-      # `content_lines` is likewise shared — `find_line_number` used to
-      # re-walk every line of the document once per rpc method.
       chars = nil.as(Array(Char)?)
-      content_lines = nil.as(Array(String)?)
 
       # Find service blocks using brace matching
       content.scan(/\bservice\s+(\w+)\s*\{/m) do |service_match|
@@ -146,8 +143,9 @@ module Analyzer::Specification
         service_body = extract_brace_block(content, brace_pos, file_chars)
         next if service_body.nil?
 
-        file_lines = (content_lines ||= content.lines)
-        parse_rpc_methods(service_body, file_path, package, service_name, registry, file_lines)
+        # The match ends at the service's `{`, where its body starts.
+        body_line = content.to_slice[0, service_match.byte_end(0)].count('\n'.ord.to_u8) + 1
+        parse_rpc_methods(service_body, file_path, package, service_name, registry, body_line)
       end
     end
 
@@ -222,8 +220,10 @@ module Analyzer::Specification
       nil
     end
 
-    private def parse_rpc_methods(service_body : String, file_path : String, package : String, service_name : String, registry : Hash(String, MessageFields), full_content_lines : Array(String))
+    private def parse_rpc_methods(service_body : String, file_path : String, package : String, service_name : String, registry : Hash(String, MessageFields), body_line : Int32)
       body_chars = nil.as(Array(Char)?)
+      body_bytes = service_body.to_slice
+      line_byte = 0
       # Find each rpc definition and its associated options block
       service_body.scan(/\brpc\s+(\w+)\s*\(\s*(stream\s+)?(\.?\w+(?:\.\w+)*)\s*\)\s*returns\s*\(\s*(stream\s+)?(\.?\w+(?:\.\w+)*)\s*\)/m) do |rpc_match|
         method_name = rpc_match[1]
@@ -243,8 +243,12 @@ module Analyzer::Specification
           end
         end
 
-        # Find line number using word boundary match
-        line_number = find_line_number(full_content_lines, method_name)
+        # Line of this rpc inside *this* service: a name search over the whole
+        # file gave a second service's `Get` the first service's line.
+        rpc_byte = rpc_match.byte_begin(0)
+        body_line += body_bytes[line_byte, rpc_byte - line_byte].count('\n'.ord.to_u8)
+        line_byte = rpc_byte
+        line_number = body_line
         details = Details.new(PathInfo.new(file_path, line_number))
 
         # Extract params from request message (resolved across imported files)
@@ -653,19 +657,6 @@ module Analyzer::Specification
         cur += 1
       end
       cur
-    end
-
-    private def find_line_number(lines : Array(String), method_name : String) : Int32?
-      # Hoisted out of the loop: an interpolated regex literal recompiles
-      # (PCRE2 JIT) on every evaluation, i.e. once per line.
-      rpc_regex = /\brpc\s+#{Regex.escape(method_name)}\s*\(/
-      lines.each_with_index do |line, index|
-        next unless line.includes?(method_name)
-        if line =~ rpc_regex
-          return index + 1
-        end
-      end
-      nil
     end
   end
 end

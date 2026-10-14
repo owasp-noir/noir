@@ -336,7 +336,9 @@ class Deliver
       next unless param.value.empty?
       next if param.name.empty?
 
-      fillers[param.name] = NUMERIC_PATH_PARAM_RE.matches?(param.name) ? "1" : "noir"
+      # `underscore` splits camelCase (`userId` -> `user_id`) so the
+      # suffix rule sees ASP.NET / JAX-RS spellings too.
+      fillers[param.name] = NUMERIC_PATH_PARAM_RE.matches?(param.name.underscore) ? "1" : "noir"
     end
     return url if fillers.empty?
 
@@ -443,6 +445,12 @@ class Deliver
     name.empty? ? nil : name
   end
 
+  # Framing headers the HTTP client derives itself. A discovered one carries
+  # no real value (`req.headers['content-length']` reads it, it does not set
+  # it), and copying it empty broke the request: `Content-Length: ""` raised
+  # before anything was sent, and an empty `Host` is invalid.
+  PROBE_FRAMING_HEADERS = Set{"content-length", "transfer-encoding", "host", "connection"}
+
   # Headers for one probe: the analyzer-discovered `header` and `cookie`
   # params for this endpoint, with the user's `--probe-header` values layered
   # on top so an explicit flag always wins over a discovered default.
@@ -461,10 +469,19 @@ class Deliver
     cookies = params["cookie"]
     return user_headers if discovered.empty? && cookies.empty?
 
+    # Header names are case-insensitive but Hash keys are not, so a plain
+    # merge sent a discovered empty `authorization` next to the user's
+    # `Authorization: Bearer ...`, and servers read the first one.
+    user_names = user_headers.keys.map(&.downcase).to_set
     result = {} of String => String
-    discovered.each { |name, value| result[name] = value }
-    # One `Cookie` header carries the whole jar, per RFC 6265.
-    unless cookies.empty?
+    discovered.each do |name, value|
+      down = name.downcase
+      next if user_names.includes?(down) || PROBE_FRAMING_HEADERS.includes?(down)
+      result[name] = value
+    end
+    # One `Cookie` header carries the whole jar, per RFC 6265. A user
+    # `Cookie` header replaces the discovered jar outright.
+    unless cookies.empty? || user_names.includes?("cookie")
       result["Cookie"] = cookies.map { |name, value| "#{name}=#{value}" }.join("; ")
     end
     result.merge(user_headers)

@@ -58,6 +58,8 @@ expected_endpoints = [
   Endpoint.new("/css/*.css", "GET"),
   Endpoint.new("/images/**", "GET"),
   Endpoint.new("/mn/status", "GET"),
+  # SharedOrderController.java — @Controller from another file's constant.
+  Endpoint.new("/shared-orders/{id}", "GET", [Param.new("id", "", "path")]),
   books_ws_endpoint,
   Endpoint.new("/books", "POST", [
     Param.new("title", "", "json"),

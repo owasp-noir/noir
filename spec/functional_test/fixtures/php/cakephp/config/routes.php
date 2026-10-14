@@ -45,6 +45,22 @@ return static function (RouteBuilder $routes) {
         $builder->get('/status', ['controller' => 'Api', 'action' => 'status']);
     });
 
+    // A typed closure (`: void` return type) still opens a prefixed scope.
+    $routes->scope('/typed', function (RouteBuilder $builder): void {
+        $builder->get('/ping', ['controller' => 'Pages', 'action' => 'ping']);
+    });
+
+    // prefix() names and resources() names are dasherized into the URL, and
+    // a resources() callback nests under /<resource>/{<singular>_id}.
+    $routes->prefix('SuperAdmin', function (RouteBuilder $routes) {
+        $routes->connect('/reports', ['controller' => 'Reports', 'action' => 'index']);
+    });
+    $routes->scope('/api', function (RouteBuilder $builder) {
+        $builder->resources('BlogPosts', function (RouteBuilder $routes) {
+            $routes->resources('Replies', ['only' => ['index']]);
+        });
+    });
+
     // Static Router facade form used by older apps and plugin route files.
     Router::scope('/legacy', function (RouteBuilder $routes) {
         $routes->get('/ping', ['controller' => 'Legacy', 'action' => 'ping']);

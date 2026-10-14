@@ -177,7 +177,24 @@ describe Analyzer::Python::PythonEngine do
       "    b = request.form[\"f\"]", "", "",
       lines[6],
       "    c = f(x and y)", "",
-      lines[9], lines[10],
+      "    ", "    ",
+    ])
+  end
+
+  it "cuts lines that close on their own at their comment" do
+    harness = PythonEngineSpecHarness.new(create_test_options)
+    lines = [
+      "    # request.args.get(\"commented\")",
+      "    x = request.args.get(\"real\")  # request.args.get(\"trailing\")",
+      "    y = \"#not-a-comment\"",
+      "    \"\"\"doc",
+      "    # inside a docstring",
+      "    \"\"\"",
+    ]
+    harness.fold_python_continuations(lines).should eq([
+      "    ",
+      "    x = request.args.get(\"real\")  ",
+      lines[2], lines[3], lines[4], lines[5],
     ])
   end
 

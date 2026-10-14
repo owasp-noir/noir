@@ -72,7 +72,6 @@ UNTESTED_DETECTORS = [
   "java/dropwizard",
   "java/javalin",
   "java/micronaut",
-  "java/quarkus",
   "javascript/cli",
   "javascript/hapi",
   "javascript/sveltekit",

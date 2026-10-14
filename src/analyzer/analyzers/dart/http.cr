@@ -22,9 +22,6 @@ module Analyzer::Dart
     METHOD_CASE_RE      = /(?:^|[^\w.])case\s+r?["'](#{HTTP_METHODS})["']\s*:/
     SWITCH_PATH_RE      = /\bswitch\s*\([^\)]*\.\s*uri\s*\.\s*path\s*\)/
     SWITCH_METHOD_RE    = /\bswitch\s*\([^\)]*\.\s*method\s*\)/
-    QUERY_PARAM_RE      = /\.uri\s*\.\s*queryParameters(?:All)?\s*\[\s*r?["']([^"']+?)["']\s*\]/
-    HEADER_VALUE_RE     = /\.headers\s*\.\s*value\s*\(\s*r?["']([^"']+?)["']/
-    HEADER_INDEX_RE     = /\.headers\s*\[\s*r?["']([^"']+?)["']\s*\]/
     COOKIE_NAME_RE      = /\.cookies\b.*?\.name\s*==\s*r?["']([^"']+?)["']/
     BODY_READ_RE        = /utf8\s*\.\s*decoder\s*\.\s*bind\s*\([^\)]*\)|\.transform\s*\(\s*utf8\s*\.\s*decoder\s*\)|jsonDecode\s*\(/
 
@@ -241,13 +238,13 @@ module Analyzer::Dart
 
     private def params_from_line(line : String) : Array(Param)
       params = [] of Param
-      line.scan(QUERY_PARAM_RE) do |match|
+      line.scan(Helper::QUERY_PARAM_REGEX) do |match|
         append_param(params, Param.new(match[1], "", "query"))
       end
-      line.scan(HEADER_VALUE_RE) do |match|
+      line.scan(Helper::HEADER_VALUE_REGEX) do |match|
         append_param(params, Param.new(match[1], "", "header"))
       end
-      line.scan(HEADER_INDEX_RE) do |match|
+      line.scan(Helper::HEADER_INDEX_REGEX) do |match|
         append_param(params, Param.new(match[1], "", "header"))
       end
       line.scan(COOKIE_NAME_RE) do |match|

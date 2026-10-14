@@ -42,6 +42,8 @@ module Analyzer::Go
         # so callees aren't empty when handlers hang off a struct.
         package_method_bodies = Noir::GoCalleeExtractor.lazy_package_bodies_if(callees_needed?, file_contents)
 
+        named_scope = Noir::GoNamedHandler.scope(file_contents)
+
         base_paths.each do |current_base_path|
           go_files.each do |path|
             next unless path_under_root?(path, current_base_path)
@@ -72,7 +74,7 @@ module Analyzer::Go
               external_fns = Noir::GoCalleeExtractor.function_bodies_for_directory(package_function_bodies, File.dirname(path))
               external_methods = Noir::GoCalleeExtractor.method_bodies_for_directory(package_method_bodies, File.dirname(path))
               callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns, external_methods)
-              named = Noir::GoNamedHandler.new(content, path, ts_routes)
+              named = Noir::GoNamedHandler.new(content, path, ts_routes, named_scope)
 
               GoEngine.strip_comments(content).each_line.with_index do |line, index|
                 next if named.claim?(index, line)

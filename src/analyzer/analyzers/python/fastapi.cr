@@ -195,12 +195,6 @@ module Analyzer::Python
 
                 http_method_name = http_method_name.upcase
 
-                params = [] of Param
-
-                # Get path params from route path
-                query_params = [] of ::String
-                query_params.concat(fastapi_path_param_names(http_route_path))
-
                 # Resolve the actual `def` line, skipping stacked
                 # decorators / comments / blank lines between the
                 # route decorator and the handler. Both param
@@ -210,74 +204,7 @@ module Analyzer::Python
                 # style stacks.
                 def_line = find_def_line(codelines, index) || (index + 1)
 
-                # Parsing extra params
-                function_definition = parse_function_def(codelines, def_line)
-                unless function_definition.nil?
-                  function_params = function_definition.params
-                  if function_params.size > 0
-                    function_params.each do |param|
-                      # https://fastapi.tiangolo.com/tutorial/path-params-numeric-validations/#order-the-parameters-as-you-need-tricks
-                      next if param.name == "*"
-                      next if param.name.in?(%w[self cls])
-                      next if param.type == "WebSocket"
-                      next if fastapi_dependency_param?(param)
-
-                      unless query_params.includes?(param.name)
-                        # Default value is numeric or string only
-                        default_value = return_literal_value(param.default)
-
-                        # Get param type by default value first
-                        param_type = infer_parameter_type(param.default) unless param.default.empty?
-
-                        # Get param type by type if not found
-                        if param_type.nil? && !param.type.empty?
-                          param_type = param.type
-                          # https://peps.python.org/pep-0593/
-                          param_type = param_type.split("Annotated[", 2)[-1].split(",", 2)[-1] if param_type.includes?("Annotated[")
-
-                          # https://peps.python.org/pep-0484/#union-types
-                          param_type = param_type.split("Union[", 2)[-1] if param_type.includes?("Union[")
-
-                          param_type = infer_parameter_type(param_type, true)
-                          param_type = "query" if param_type.nil? && param.type.empty?
-                        else
-                          param_type = "query" if param_type.nil?
-                        end
-
-                        if param_type.nil?
-                          if VAR_NAME_FULL_RE.match(param.type)
-                            if param.type.in?(%w[Request dict])
-                              function_codeblock = parse_code_block(codelines[def_line..])
-                              next if function_codeblock.nil?
-                              new_params = find_dictionary_params(function_codeblock, param)
-                            elsif import_modules.has_key?(param.type)
-                              # Parse model class from module path
-                              import_module_path = import_modules[param.type].first
-
-                              # Skip if import module path is not identified
-                              next if import_module_path.empty?
-
-                              import_module_source = read_file_content(import_module_path)
-                              new_params = find_base_model_params(import_module_source, param.type, param.name)
-                            else
-                              # Parse model class from current source
-                              new_params = find_base_model_params(source, param.type, param.name)
-                            end
-
-                            next if new_params.nil?
-
-                            new_params.each do |model_param|
-                              params << model_param
-                            end
-                          end
-                        else
-                          # Add endpoint param
-                          params << Param.new(fastapi_wire_name(param, param_type), default_value, param_type)
-                        end
-                      end
-                    end
-                  end
-                end
+                params = extract_fastapi_handler_params(codelines, def_line, http_route_path, source, import_modules)
 
                 # Honor `methods=[...]` on `@router.route(...)` /
                 # `@router.api_route(...)` decorators by emitting
@@ -1136,6 +1063,7 @@ module Analyzer::Python
       function_definition.params.each do |param|
         next if param.name == "*" || path_param_names.includes?(param.name)
         next if param.name.in?(%w[self cls])
+        next if param.type == "WebSocket"
         next if fastapi_dependency_param?(param)
 
         default_value = return_literal_value(param.default)
@@ -1145,29 +1073,30 @@ module Analyzer::Python
           param_type = param_type.split("Annotated[", 2)[-1].split(",", 2)[-1] if param_type.includes?("Annotated[")
           param_type = param_type.split("Union[", 2)[-1] if param_type.includes?("Union[")
           param_type = infer_parameter_type(param_type, true)
-          param_type = "query" if param_type.nil? && param.type.empty?
         else
           param_type = "query" if param_type.nil?
         end
 
+        model = fastapi_model_name(param.type)
+
+        # A lone `Body()` model is the request body itself; `embed=True`
+        # nests it under the parameter name instead.
+        if param_type == "json" && model && !fastapi_param_declaration(param).matches?(BODY_EMBED_RE)
+          fields = model_params_for(model, param.name, source, import_modules)
+          unless fields.empty?
+            params.concat(fields)
+            next
+          end
+        end
+
         if param_type.nil?
-          if /^#{PYTHON_VAR_NAME_REGEX}$/.match(param.type)
-            if param.type.in?(%w[Request dict])
-              function_codeblock = parse_code_block(codelines[def_line..])
-              next if function_codeblock.nil?
-              new_params = find_dictionary_params(function_codeblock, param)
-            elsif import_modules.has_key?(param.type)
-              import_module_path = import_modules[param.type].first
-              next if import_module_path.empty?
-
-              import_module_source = read_file_content(import_module_path)
-              new_params = find_base_model_params(import_module_source, param.type, param.name)
-            else
-              new_params = find_base_model_params(source, param.type, param.name)
-            end
-
-            next if new_params.nil?
-            new_params.each { |model_param| params << model_param }
+          next unless model
+          if model.in?(%w[Request dict])
+            function_codeblock = parse_code_block(codelines[def_line..])
+            next if function_codeblock.nil?
+            params.concat(find_dictionary_params(function_codeblock, FunctionParameter.new(param.name, model, param.default)))
+          else
+            params.concat(model_params_for(model, param.name, source, import_modules))
           end
         else
           params << Param.new(fastapi_wire_name(param, param_type), default_value, param_type)
@@ -1306,8 +1235,9 @@ module Analyzer::Python
         "cookie"
       elsif data.matches?(/Header/)
         "header"
-      elsif data.matches?(/Body/) || data.matches?(/Form/) ||
-            data.matches?(/File/) || data.matches?(/UploadFile/)
+      elsif data.matches?(/Body/)
+        "json"
+      elsif data.matches?(/Form/) || data.matches?(/File/)
         "form"
       elsif data.matches?(/Query/)
         "query"
@@ -1321,37 +1251,79 @@ module Analyzer::Python
       end
     end
 
-    # Finds the parameters for a base model class
-    def find_base_model_params(source : ::String, class_name : ::String, param_name : ::String) : Array(Param)
+    BODY_EMBED_RE         = /\bembed\s*=\s*True\b/
+    MODEL_TYPE_WRAPPER_RE = /^(?:typing\.)?(Optional|Annotated|Union)\[(.*)\]$/m
+    MODEL_FIELD_LINE_RE   = /^[A-Za-z]\w*\s*:/
+
+    # The class a parameter annotation names once `Optional[...]`,
+    # `Union[X, None]`, `X | None` and `Annotated[X, ...]` are peeled off;
+    # nil when what is left is not a bare identifier.
+    private def fastapi_model_name(type : ::String) : ::String?
+      type = type.strip
+      loop do
+        if match = type.match(MODEL_TYPE_WRAPPER_RE)
+          args = split_python_top_level(match[2], ',').map(&.strip).reject(&.empty?)
+          args = args.first(1) if match[1] == "Annotated"
+          args = args.reject { |arg| arg == "None" }
+          return unless args.size == 1
+          type = args.first
+        elsif type.includes?('|')
+          args = split_python_top_level(type, '|').map(&.strip).reject { |arg| arg == "None" }
+          return unless args.size == 1
+          type = args.first
+        else
+          break
+        end
+      end
+      type if VAR_NAME_FULL_RE.matches?(type)
+    end
+
+    private def model_params_for(model : ::String, param_name : ::String, source : ::String,
+                                 import_modules : Hash(::String, Tuple(::String, Int32))) : Array(Param)
+      if import_modules.has_key?(model)
+        import_module_path = import_modules[model].first
+        return [] of Param if import_module_path.empty?
+        source = read_file_content(import_module_path)
+      end
+      find_base_model_params(source, model, param_name)
+    end
+
+    # Finds the parameters for a base model class, base classes declared in
+    # the same source first (Pydantic orders inherited fields that way).
+    def find_base_model_params(source : ::String, class_name : ::String, param_name : ::String,
+                               visited : Set(::String) = Set(::String).new) : Array(Param)
       params = [] of Param
+      return params unless visited.add?(class_name)
       class_codeblock = parse_code_block(source, /\s*class\s*#{class_name}\s*\(/)
       return params if class_codeblock.nil?
 
-      # Parse the class code block to extract parameters
-      class_codeblock.split("\n").each_with_index do |line, index|
-        if index == 0
-          param_code = line.split("(", 2)[-1].split(")")[0]
-          if param_code.match(/(\b)*str,\s*(enum\.){0,1}Enum(\b)*/)
-            return [Param.new(param_name.strip, "", "query")]
-          end
-          return params unless /^#{PYTHON_VAR_NAME_REGEX}$/.match(param_code)
-        else
-          break unless line.split(":").size == 2
+      lines = class_codeblock.split("\n")
+      bases = lines[0].split("(", 2)[-1].split(")")[0]
+      if bases.match(/(\b)*str,\s*(enum\.){0,1}Enum(\b)*/)
+        return [Param.new(param_name.strip, "", "query")]
+      end
+      split_python_top_level(bases, ',').each do |base|
+        base = base.strip
+        next if base == "BaseModel" || !VAR_NAME_FULL_RE.matches?(base)
+        params.concat(find_base_model_params(source, base, param_name, visited))
+      end
 
-          param_name, extra = line.split(":", 2)
-          param_default = ""
-          param_type_and_default = extra.split("=", 2)
-          if param_type_and_default.size == 2
-            param_type, param_default = param_type_and_default
-          else
-            param_type = param_type_and_default[0]
-          end
+      in_docstring = Helper.docstring_line_flags(lines)
+      folded = fold_python_continuations(lines)
+      body_indent = nil
+      folded.each_with_index do |line, index|
+        next if index == 0 || in_docstring[index]
+        stripped = line.lstrip
+        next if stripped.empty? || stripped.starts_with?('#')
+        body_indent ||= line.size - stripped.size
+        next unless line.size - stripped.size == body_indent && stripped.matches?(MODEL_FIELD_LINE_RE)
 
-          if !param_name.empty? && !param_type.empty?
-            default_value = return_literal_value(param_default.strip)
-            params << Param.new(model_field_wire_name(param_name.strip, param_default), default_value, "form")
-          end
-        end
+        field = parse_function_def(["def _(#{strip_python_comment(stripped)}):"], 0).try(&.params.first?)
+        next if field.nil? || field.type.empty? || field.type.starts_with?("ClassVar")
+
+        name = model_field_wire_name(field.name, field.default)
+        params.reject! { |existing| existing.name == name }
+        params << Param.new(name, return_literal_value(field.default), "json")
       end
 
       params
@@ -1361,7 +1333,9 @@ module Analyzer::Python
     def find_dictionary_params(source : ::String, param : FunctionParameter) : Array(Param)
       new_params = [] of Param
       json_variable_names = [] of ::String
-      codelines = source.split("\n")
+      # Comments out: `# request.query_params.get("old")` is not a read.
+      codelines = source.split("\n").map { |line| strip_python_comment(line) }
+      source = codelines.join('\n')
       if param.type == "Request"
         # Parse JSON variable names
         codelines.each do |codeline|

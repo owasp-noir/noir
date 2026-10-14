@@ -8,7 +8,7 @@ describe Noir::TextFile do
   # `read`'s output with `NO_UTF_CHECK`, so anything it returns must be
   # valid UTF-8 or PCRE2's behaviour is undefined. Both shapes turned up
   # as loose git objects in gitea's test fixtures.
-  it "returns valid UTF-8 even where iconv's skip keeps invalid sequences" do
+  it "returns valid UTF-8 even for sequences iconv's skip used to keep" do
     dir = File.tempname("noir-text-file")
     Dir.mkdir_p(dir)
     begin
@@ -17,20 +17,22 @@ describe Noir::TextFile do
 
       content = Noir::TextFile.read(path)
       content.valid_encoding?.should be_true
-      content.should eq("abcd")
+      content.should eq("\u00F8\u0088\u0080\u0080\u0080ab\u00F4\u0090\u0080\u0080c\u00FFd")
       /zz/.matches?(content).should be_false
     ensure
       FileUtils.rm_rf(dir)
     end
   end
 
-  it "keeps dropping ordinary invalid bytes the way it always has" do
+  # Invalid UTF-8 is nearly always a legacy single-byte encoding, so each
+  # bad byte reads as Latin-1: `/men\xFC` stays `/menü` rather than `/men`.
+  it "reads invalid bytes as Latin-1 and keeps valid UTF-8 around them" do
     dir = File.tempname("noir-text-file")
     Dir.mkdir_p(dir)
     begin
       path = File.join(dir, "latin1.py")
-      File.write(path, Bytes[0x23, 0x20, 0xE9, 0x0A, 0x78, 0x20, 0x3D, 0x20, 0x31, 0x0A])
-      Noir::TextFile.read(path).should eq("# \nx = 1\n")
+      File.write(path, Bytes[0x23, 0x20, 0xE9, 0x0A, 0x78, 0x20, 0x3D, 0x20, 0xC3, 0xA9, 0x0A])
+      Noir::TextFile.read(path).should eq("# \u00E9\nx = \u00E9\n")
     ensure
       FileUtils.rm_rf(dir)
     end
@@ -60,7 +62,7 @@ describe Noir::TextFile do
     begin
       path = File.join(dir, "openapi.json")
       File.write(path, Bytes[0xEF, 0xBB, 0xBF, 0x7B, 0xFF, 0x7D])
-      Noir::TextFile.read(path).should eq("{}")
+      Noir::TextFile.read(path).should eq("{\u00FF}")
     ensure
       FileUtils.rm_rf(dir)
     end

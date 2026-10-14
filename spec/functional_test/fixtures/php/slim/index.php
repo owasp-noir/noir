@@ -65,6 +65,13 @@ $app->group('/api', function (\Slim\Routing\RouteCollectorProxy $group) {
     });
 });
 
+// An empty path routes the group prefix itself; any() answers every verb.
+$app->group('/accounts', function (\Slim\Routing\RouteCollectorProxy $group) {
+    $group->get('', ListAccountsAction::class);
+});
+
+$app->any('/hook', HookAction::class);
+
 $app->run();
 // $app->get('/dead-line', fn() => 1);
 /*

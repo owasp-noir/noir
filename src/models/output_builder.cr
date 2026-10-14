@@ -318,7 +318,10 @@ class OutputBuilder
     # wrapper could never be false (same class of dead check markdown-table fixed).
     params.each do |param|
       if param.request_type == "query"
-        pair = "#{param.name}=#{param.value}"
+        # Form-encoded, as HTTP::Params encodes what the probe sends: a raw
+        # `q=red shoes & socks` is a URL curl rejects, a `#` truncates it into
+        # a fragment, and the `&` splits one value into two params.
+        pair = www_form_pair(param.name, param.value)
         # A pair the route already spells out verbatim adds nothing, and
         # neither does a value-less declaration of a name the route already
         # pins — the analyzer records `action` precisely *because* the route
@@ -347,12 +350,9 @@ class OutputBuilder
       end
 
       if param.request_type == "form"
-        if first_form
-          final_body += "#{param.name}=#{param.value}"
-          first_form = false
-        else
-          final_body += "&#{param.name}=#{param.value}"
-        end
+        final_body += "&" unless first_form
+        final_body += www_form_pair(param.name, param.value)
+        first_form = false
       end
 
       if param.request_type == "path"
@@ -417,6 +417,10 @@ class OutputBuilder
       tags:       final_tags.uniq,
       body_type:  is_json ? "json" : "form",
     }
+  end
+
+  protected def www_form_pair(name : String, value : String) : String
+    "#{URI.encode_www_form(name)}=#{URI.encode_www_form(value)}"
   end
 
   # Splits a Noir endpoint URL into the route itself and the two parts a

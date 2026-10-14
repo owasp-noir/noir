@@ -858,7 +858,7 @@ describe Noir::TreeSitterGoRouteExtractor do
     builders["addUserRoutes"].param.should eq("rg")
 
     calls = Noir::TreeSitterGoRouteExtractor.collect_router_builder_callsites(source, builders.keys.to_set)
-    calls.sort.should eq([{"addPingRoutes", "v1"}, {"addPingRoutes", "v2"}, {"addUserRoutes", "v1"}])
+    calls.sort.should eq([{"addPingRoutes", "v1", ""}, {"addPingRoutes", "v2", ""}, {"addUserRoutes", "v1", ""}])
 
     routes = Noir::TreeSitterGoRouteExtractor.extract_routes_from_function(source, "addUserRoutes", {"rg" => "/v1"})
     routes.map { |r| {r.verb, r.path} }.should eq([{"GET", "/v1/users/"}])
@@ -880,7 +880,19 @@ describe Noir::TreeSitterGoRouteExtractor do
 
     builders = Noir::TreeSitterGoRouteExtractor.collect_router_group_builders(source)
     calls = Noir::TreeSitterGoRouteExtractor.collect_router_builder_callsites(source, builders.keys.to_set)
-    calls.should eq([{"addUserRoutes", "/v1"}])
+    calls.should eq([{"addUserRoutes", "/v1", ""}])
+  end
+
+  it "composes an inline sub-group call-site with its receiver's prefix" do
+    source = <<-GO
+      package main
+      func main() {
+          routes.AddPosts(api.Group("/posts"))
+      }
+      GO
+
+    calls = Noir::TreeSitterGoRouteExtractor.collect_router_builder_callsites(source, Set{"AddPosts"}, {"api" => "/api/v1"})
+    calls.should eq([{"AddPosts", "/api/v1/posts", "routes"}])
   end
 
   it "composes path-scoped Group closures that reuse the outer router (gitea web wrapper)" do
@@ -1016,6 +1028,25 @@ describe Noir::TreeSitterGoRouteExtractor do
       {"ANY", "/legacy"},
       {"GET", "/items/{id}"},
       {"POST", "/items"},
+    ].sort)
+  end
+
+  it "keeps the path of Go 1.22 ServeMux host patterns" do
+    source = <<-GO
+      package main
+      import "net/http"
+      func main() {
+          m := http.NewServeMux()
+          m.HandleFunc("api.example.com/v1/status", status)
+          m.HandleFunc("DELETE api.example.com:8443/v1/items/{id}", deleteItem)
+          m.HandleFunc("not a host/x", nope)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_net_http_routes(source)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"ANY", "/v1/status"},
+      {"DELETE", "/v1/items/{id}"},
     ].sort)
   end
 

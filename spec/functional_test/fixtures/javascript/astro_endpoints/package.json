@@ -1,0 +1,1 @@
+{"name":"blog","type":"module","dependencies":{"astro":"^4.15.0","@astrojs/rss":"^4.0.7"}}

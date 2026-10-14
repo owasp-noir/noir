@@ -8,6 +8,8 @@ module Analyzer::Javascript
   class Fastify < JavascriptEngine
     analyzer_for "js_fastify"
 
+    PACKAGE_MARKERS = ["\"fastify\"", "\"@fastify/", "\"fastify-plugin\"", "\"@platformatic/"]
+
     def analyze
       result = [] of Endpoint
       static_dirs = [] of Hash(String, String)
@@ -25,8 +27,13 @@ module Analyzer::Javascript
       # Cross-file `register(require('./x'), { prefix })` prefixes, read back
       # by the shared route extractor through `CodeLocator`.
       RouterMountScanner.new(all_files, @base_paths, base_path, logger, :fastify).scan
+      # A sibling Hapi service's plugin module (`server.route({ method,
+      # path })`, no import) reads as a Fastify route config; only the
+      # closest package.json tells them apart. No package.json: keep it.
+      owners = js_package_owners(PACKAGE_MARKERS)
 
       parallel_file_scan do |path|
+        next if (package_dir = js_package_dir(path, owners)) && !owners[package_dir]
         # The plugin-prefix, route-config and QUERY passes below read the
         # text with their own regexes; blanking comments keeps lines.
         content = Noir::JSRouteExtractor.strip_js_comments(read_file_content(path))
@@ -260,8 +267,15 @@ module Analyzer::Javascript
       ranges
     end
 
+    # Every prefixed plugin body around `offset`, joined outermost first:
+    # `register(async (i) => { i.register(async (v2) => { … }, { prefix: '/v2' }) }, { prefix: '/internal' })`
+    # serves the inner routes under `/internal/v2`. A body seen twice (a named
+    # plugin registered under several prefixes) keeps its first prefix.
     private def plugin_prefix_at(ranges : Array(Tuple(Int32, Int32, String)), offset : Int32) : String
-      ranges.find { |open_brace, close_brace, _| offset >= open_brace && offset <= close_brace }.try(&.[2]) || ""
+      ranges.select { |open_brace, close_brace, _| offset >= open_brace && offset <= close_brace }
+        .uniq! { |open_brace, close_brace, _| {open_brace, close_brace} }
+        .sort_by! { |open_brace, close_brace, _| open_brace - close_brace }
+        .reduce("") { |joined, range| Noir::URLPath.join(joined, range[2]) }
     end
 
     # `<instance>.route({` / `<instance>.query('/…'` on any receiver: a

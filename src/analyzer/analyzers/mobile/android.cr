@@ -137,10 +137,12 @@ module Analyzer::Mobile
           next if attr(component, "exported") == "false"
           emit_filter_endpoints(data_nodes, actions, categories, package, strings,
             placeholders, path, auto_verify, handler_name, seen_urls)
-        elsif exported
+        elsif attr(component, "exported") != "false"
           # Exported component with an action but no <data>: an IPC surface
           # reachable by explicit/implicit intent. The launcher (MAIN) is
-          # an app start, not a remote surface, so it's excluded.
+          # an app start, not a remote surface, so it's excluded. Same
+          # exported rule as the <data> branch: absent means a pre-31
+          # manifest, where a filter-bearing component is exported.
           ipc_actions = actions.reject { |a| a == LAUNCHER_ACTION }
           unless ipc_actions.empty?
             emit_intent_endpoint(component_name, ipc_actions, categories,
@@ -220,6 +222,10 @@ module Analyzer::Mobile
           # A bare `*` host matches any authority — it carries no specific
           # target, so treat it as host-less (`scheme://*` == `scheme://`).
           # A wildcard *subdomain* (`*.example.com`) is kept as-is.
+          # Android pairs `port` with the host of the same <data> element (a
+          # port with no host is ignored), so it is part of the authority.
+          port = resolve(attr(data, "port"), strings, placeholders)
+          host = "#{host}:#{port}" if port && !port.empty? && !host.empty? && host != "*"
           hosts << host unless host.empty? || host == "*"
         end
         norm = normalize_path(data, strings, placeholders)

@@ -79,6 +79,7 @@ module Noir
     # first keeps the tree-sitter parse for the files that can actually
     # match.
     NET_HTTP_HANDLE_MARKER_RE = Regex.union("Handle")
+    NET_HTTP_HOST_RE          = /\A[A-Za-z0-9](?:[A-Za-z0-9.\-]*[A-Za-z0-9])?(?::\d+)?\z/
 
     # Necessary condition for `extract_net_http_routes` to return
     # anything. Exposed so callers can skip the per-directory pre-passes
@@ -118,8 +119,10 @@ module Noir
           end
         end
 
+        mounts = Hash(String, Tuple(String, String, Int32)).new
         Noir::TreeSitter.walk(root) do |node|
           next unless Noir::TreeSitter.node_type(node) == "call_expression"
+          collect_serve_mux_mount(node, source, http_aliases, serve_mux_vars, string_values, mounts)
           decode_net_http_registration(
             node, source, http_aliases, serve_mux_vars, string_values,
             local_functions, local_methods, external_functions, external_methods
@@ -127,8 +130,75 @@ module Noir
             routes << route
           end
         end
+        routes = apply_serve_mux_mounts(routes, mounts) unless mounts.empty?
       end
       routes
+    end
+
+    # `mux.Handle("/v1/", http.StripPrefix("/v1", v1))` mounts the tracked
+    # ServeMux `v1` under `mux`: records `{v1 => {mux, "/v1", row}}`. The
+    # prefix is what `StripPrefix` removes (without it the sub-mux sees the
+    # full path, so it adds nothing); other wrappers are peeled through
+    # their last argument.
+    private def collect_serve_mux_mount(call : LibTreeSitter::TSNode,
+                                        source : String,
+                                        http_aliases : Set(String),
+                                        serve_mux_vars : Set(String),
+                                        string_values : Hash(String, String),
+                                        mounts : Hash(String, Tuple(String, String, Int32)))
+      function = Noir::TreeSitter.field(call, "function")
+      return unless function && Noir::TreeSitter.node_type(function) == "selector_expression"
+      operand = Noir::TreeSitter.field(function, "operand")
+      field = Noir::TreeSitter.field(function, "field")
+      return unless operand && field && Noir::TreeSitter.node_text(field, source) == "Handle"
+      parent = Noir::TreeSitter.node_text(operand, source)
+      return unless serve_mux_vars.includes?(parent) || http_aliases.includes?(parent)
+      args = Noir::TreeSitter.field(call, "arguments")
+      return unless args
+      handler = nil
+      Noir::TreeSitter.each_named_arg(args) { |arg| handler = arg }
+      return unless handler
+
+      strip = ""
+      while Noir::TreeSitter.node_type(handler) == "call_expression"
+        inner_args = Noir::TreeSitter.field(handler, "arguments")
+        return unless inner_args
+        wrapper = Noir::TreeSitter.field(handler, "function")
+        inner = [] of LibTreeSitter::TSNode
+        Noir::TreeSitter.each_named_arg(inner_args) { |arg| inner << arg }
+        return if inner.empty?
+        if wrapper && Noir::TreeSitter.node_text(wrapper, source).ends_with?(".StripPrefix") && inner.size == 2
+          strip = string_expr_text(inner[0], source, string_values) || return
+        end
+        handler = inner.last
+      end
+      return unless Noir::TreeSitter.node_type(handler) == "identifier"
+      child = Noir::TreeSitter.node_text(handler, source)
+      return unless serve_mux_vars.includes?(child) && child != parent
+      mounts[child] = {parent, strip, Noir::TreeSitter.node_start_row(call)}
+    end
+
+    # Prefixes each mounted sub-mux's routes with its mount path and drops
+    # the mount registration itself. A mount whose sub-mux registers nothing
+    # in this file keeps its registration as the only visible route.
+    private def apply_serve_mux_mounts(routes : Array(Route), mounts : Hash(String, Tuple(String, String, Int32))) : Array(Route)
+      routed = routes.map(&.router_name).to_set
+      mounts.select! { |child, _| routed.includes?(child) }
+      mount_rows = mounts.values.map(&.[2]).to_set
+      routes.compact_map do |r|
+        next if mount_rows.includes?(r.line)
+        prefix = serve_mux_prefix(r.router_name, mounts, 0)
+        next r if prefix.empty?
+        Route.new(r.router_name, r.verb, group_join(prefix, r.path), r.raw_path, r.handler, r.line, r.query_params, r.handler_args)
+      end
+    end
+
+    private def serve_mux_prefix(name : String, mounts : Hash(String, Tuple(String, String, Int32)), depth : Int32) : String
+      mount = mounts[name]?
+      return "" unless mount && depth < 16
+      parent_prefix = serve_mux_prefix(mount[0], mounts, depth + 1)
+      return parent_prefix if mount[1].empty?
+      parent_prefix.empty? ? mount[1] : group_join(parent_prefix, mount[1])
     end
 
     # Collects names of local variables that are assigned a *http.ServeMux
@@ -307,6 +377,11 @@ module Noir
         end
       end
 
+      # Go 1.22 host pattern (`api.example.com/v1/status`): the route is
+      # the path after the host.
+      if !path.starts_with?('/') && (slash = path.index('/')) && path[0, slash].matches?(NET_HTTP_HOST_RE)
+        path = path[slash..]
+      end
       return unless path.starts_with?("/") || path.starts_with?("{$}")
       path = "/#{path}" unless path.starts_with?("/")
       path = normalize_net_http_pattern_path(path)

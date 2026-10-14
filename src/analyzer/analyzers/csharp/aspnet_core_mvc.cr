@@ -245,6 +245,7 @@ module Analyzer::CSharp
       end
       extracted = Set(String).new
       all_types = [] of Noir::CSharpType
+      class_routes = Hash(Noir::CSharpType, ClassRoutes).new
 
       until queue.empty?
         queue.each do |file|
@@ -256,6 +257,7 @@ module Analyzer::CSharp
           Noir::CSharpTypeExtractor.extract(lexer).each do |type|
             types_by_scope[scope] << {file, type}
             all_types << type
+            class_routes[type] = class_header_routes(lexer, type)
           end
         end
 
@@ -268,8 +270,8 @@ module Analyzer::CSharp
 
       # Selected controllers grouped by file so a file holding several of them
       # is lexed once, not once per class.
-      selected = Hash(String, Array(Tuple(Noir::CSharpType, Array(ConventionalRoute)))).new do |hash, key|
-        hash[key] = [] of Tuple(Noir::CSharpType, Array(ConventionalRoute))
+      selected = Hash(String, Array(Tuple(Noir::CSharpType, Array(ConventionalRoute), ClassRoutes))).new do |hash, key|
+        hash[key] = [] of Tuple(Noir::CSharpType, Array(ConventionalRoute), ClassRoutes)
       end
       types_by_scope.each do |scope, entries|
         index = Hash(String, Array(Noir::CSharpType)).new
@@ -288,15 +290,15 @@ module Analyzer::CSharp
           next if attributes.includes?("NonController")
           next unless CONTROLLER_SUFFIX_RE.matches?(type.name) ||
                       attributes.includes?("Controller") || attributes.includes?("ApiController")
-          selected[file] << {type, route_patterns}
+          selected[file] << {type, route_patterns, inherited_class_routes(parts, index, class_routes)}
         end
       end
 
       selected.each do |file, controllers|
         lexer = file_lexer(file)
         next unless lexer
-        controllers.each do |type, route_patterns|
-          analyze_controller(file, lexer, type, route_patterns, include_callee)
+        controllers.each do |type, route_patterns, routes|
+          analyze_controller(file, lexer, type, route_patterns, routes, include_callee)
         end
       end
     end
@@ -391,15 +393,57 @@ module Analyzer::CSharp
       attributes
     end
 
+    # The `[Route]` templates and `[Area]` name a controller class declares.
+    alias ClassRoutes = Tuple(Array(String), String?)
+
+    CLASS_ROUTE_RE = /(?:\[|,)\s*(?:global::)?(?:\w+\.)*Route(?:Attribute)?\s*\(\s*(?:template\s*:\s*)?@?"([^"]+)"/
+    CLASS_AREA_RE  = /(?:\[|,)\s*(?:global::)?(?:\w+\.)*Area(?:Attribute)?\s*\(\s*(?:areaName\s*:\s*)?@?"([^"]+)"/
+
+    # Reads the class's own attribute list (every line of it, however many
+    # other attributes sit between `[Route]` and `class`).
+    private def class_header_routes(lexer : Noir::CSharpLexer, type : Noir::CSharpType) : ClassRoutes
+      header_end = Math.min(type.start_line + type.header.count('\n'), lexer.code_lines.size - 1)
+      header = lexer.code_lines[type.start_line..header_end].join('\n')
+      routes = header.scan(CLASS_ROUTE_RE).map(&.[1])
+      {routes, CLASS_AREA_RE.match(header).try(&.[1])}
+    end
+
+    # `[Route]` and `[Area]` are `Inherited = true`: a controller without its
+    # own takes them from the nearest base class that declares them.
+    private def inherited_class_routes(parts : Array(Noir::CSharpType),
+                                       index : Hash(String, Array(Noir::CSharpType)),
+                                       class_routes : Hash(Noir::CSharpType, ClassRoutes),
+                                       visited = Set(String).new) : ClassRoutes
+      routes = parts.flat_map { |part| class_routes[part]?.try(&.[0]) || [] of String }.uniq!
+      area = parts.compact_map { |part| class_routes[part]?.try(&.[1]) }.first?
+      return {routes, area} if !routes.empty? && area
+      return {routes, area} unless visited.add?(parts.first.name)
+
+      parts.each do |part|
+        next unless base = part.base_name
+        candidates = index[base]?
+        next if candidates.nil? || candidates.empty?
+        next unless candidates.size == 1 || candidates.all?(&.modifiers.includes?("partial"))
+        base_routes, base_area = inherited_class_routes(candidates, index, class_routes, visited)
+        routes = base_routes if routes.empty?
+        area ||= base_area
+        break
+      end
+      {routes, area}
+    end
+
     private def analyze_controller(file : String, lexer : Noir::CSharpLexer, type : Noir::CSharpType,
-                                   route_patterns : Array(ConventionalRoute), include_callee : Bool)
+                                   route_patterns : Array(ConventionalRoute), class_routes : ClassRoutes,
+                                   include_callee : Bool)
       controller_name = type.name.sub(CONTROLLER_SUFFIX_RE, "")
       # Slice the file's already-lexed views down to this class. `line_offset`
       # puts the reported line back in file coordinates.
       line_offset = type.start_line
       lines = lexer.code_lines[type.start_line..type.end_line]
       masked_lines = lexer.masked_lines[type.start_line..type.end_line]
-      controller_route = extract_controller_route(lines)
+      # One route per controller `[Route]`; none falls back to conventional routing.
+      controller_routes, area = class_routes
+      controller_routes = [""] if controller_routes.empty?
 
       # Accumulate every `[Http<Verb>(...)]` on the pending action so a method
       # carrying more than one (`[HttpGet(...)]` + `[HttpHead(...)]` for image/
@@ -461,11 +505,13 @@ module Analyzer::CSharp
                 emit_route = route_attr if emit_route.empty? && !route_attr.empty?
                 parameters = extract_parameters(signature, emit_verb)
                 parameters = merge_params(parameters, body_params, emit_verb)
-                effective_action_route = emit_route
-                if !controller_route.empty? && controller_route == effective_action_route
-                  effective_action_route = ""
-                end
-                routes = resolve_routes(controller_route, effective_action_route, controller_name, action_name, parameters, route_patterns)
+                routes = controller_routes.flat_map do |controller_route|
+                  effective_action_route = emit_route
+                  if !controller_route.empty? && controller_route == effective_action_route
+                    effective_action_route = ""
+                  end
+                  resolve_routes(controller_route, effective_action_route, controller_name, action_name, parameters, route_patterns, area)
+                end.uniq!
 
                 routes.each do |route|
                   details = Details.new(PathInfo.new(file, line_offset + i + 1))
@@ -720,24 +766,6 @@ module Analyzer::CSharp
       merged
     end
 
-    private def extract_controller_route(lines : Array(String)) : String
-      lines.each_with_index do |line, index|
-        if line =~ /\bclass\s+\w+/
-          search_index = index - 1
-          while search_index >= 0 && search_index >= index - 5
-            candidate_line = lines[search_index]
-            if candidate_line.includes?("[Route")
-              route = extract_attribute_route(candidate_line, "Route", "")
-              return route unless route.empty?
-            end
-            search_index -= 1
-          end
-          break
-        end
-      end
-      ""
-    end
-
     private ATTRIBUTE_REGEXES = {
       "HttpPost"    => /\[HttpPost[^(]*+\(\s*"([^"]+)"/,
       "HttpGet"     => /\[HttpGet[^(]*+\(\s*"([^"]+)"/,
@@ -766,8 +794,8 @@ module Analyzer::CSharp
       current_route
     end
 
-    private def resolve_routes(controller_route : String, action_route : String, controller_name : String, action_name : String, parameters : Array(Param), route_patterns : Array(ConventionalRoute)) : Array(String)
-      routes = build_attribute_routes(controller_route, action_route, controller_name, action_name, parameters)
+    private def resolve_routes(controller_route : String, action_route : String, controller_name : String, action_name : String, parameters : Array(Param), route_patterns : Array(ConventionalRoute), area : String? = nil) : Array(String)
+      routes = build_attribute_routes(controller_route, action_route, controller_name, action_name, parameters, area)
 
       if routes.empty?
         route_patterns.each do |pattern|
@@ -781,15 +809,15 @@ module Analyzer::CSharp
       routes.uniq
     end
 
-    private def build_attribute_routes(controller_route : String, action_route : String, controller_name : String, action_name : String, parameters : Array(Param)) : Array(String)
+    private def build_attribute_routes(controller_route : String, action_route : String, controller_name : String, action_name : String, parameters : Array(Param), area : String? = nil) : Array(String)
       routes = [] of String
       has_controller_route = !controller_route.empty?
       has_action_route = !action_route.empty?
 
       return routes unless has_controller_route || has_action_route
 
-      base_route = replace_tokens(controller_route, controller_name, action_name)
-      action_part = replace_tokens(action_route, controller_name, action_name)
+      base_route = replace_tokens(controller_route, controller_name, action_name, area)
+      action_part = replace_tokens(action_route, controller_name, action_name, area)
 
       if !has_action_route
         raw_route = prune_optional_placeholders(base_route, parameters)
@@ -807,10 +835,11 @@ module Analyzer::CSharp
       routes
     end
 
-    private def replace_tokens(route : String, controller_name : String, action_name : String) : String
+    private def replace_tokens(route : String, controller_name : String, action_name : String, area : String? = nil) : String
       return "" if route.empty?
 
       normalized = route.strip
+      normalized = normalized.gsub("[area]", area) if area
       normalized = normalized.gsub("[controller]", controller_name)
       normalized = normalized.gsub("{controller}", controller_name)
       normalized = normalized.gsub(/{controller=[^}]+}/, controller_name)

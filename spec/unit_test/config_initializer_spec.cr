@@ -224,6 +224,9 @@ describe ConfigInitializer do
         only_techs: [ruby_rails]
         exclude_techs: [php_pure]
         use_taggers: [cors, oauth]
+        fail_on: [removed, auth-removed]
+        ai_context_features: [guards, sinks]
+        ai_native_tools_allowlist: [read_file]
         YAML
       with_noir_home(body) do |options|
         options["exclude_codes"].to_s.should eq("404,500")
@@ -231,6 +234,9 @@ describe ConfigInitializer do
         options["only_techs"].to_s.should eq("ruby_rails")
         options["exclude_techs"].to_s.should eq("php_pure")
         options["use_taggers"].to_s.should eq("cors,oauth")
+        options["fail_on"].to_s.should eq("removed,auth-removed")
+        options["ai_context_features"].to_s.should eq("guards,sinks")
+        options["ai_native_tools_allowlist"].to_s.should eq("read_file")
       end
     end
 

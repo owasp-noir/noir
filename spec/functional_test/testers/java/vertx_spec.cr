@@ -33,6 +33,9 @@ expected_endpoints = [
   Endpoint.new("/api/v1/search", "QUERY", [Param.new("keyword", "", "query")]),
   # CommentedRoutes.java: only the live route, despite `// don't` in its body.
   Endpoint.new("/apostrophe", "ANY"),
+  # SubRouterVerticle.java: `route("/backoffice/*").subRouter(child)`.
+  Endpoint.new("/backoffice/status", "GET"),
+  Endpoint.new("/backoffice/sessions/:sessionId", "DELETE", [Param.new("sessionId", "", "path")]),
 ]
 
 FunctionalTester.new("fixtures/java/vertx/", {

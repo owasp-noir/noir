@@ -1,3 +1,4 @@
+require "file_utils"
 require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
@@ -101,6 +102,37 @@ describe "JavaMiscAuthTagger" do
     tagger.perform([endpoint])
 
     endpoint.tags.empty?.should be_true
+  end
+
+  it "scopes a Vert.x route-level auth handler to the routes under its path" do
+    tmpdir = File.tempname("vertx_route_scope")
+    Dir.mkdir_p(tmpdir)
+    verticle = File.join(tmpdir, "MainVerticle.java")
+    File.write(verticle, [
+      "import io.vertx.ext.web.handler.RedirectAuthHandler;",                                    # 1
+      "public class MainVerticle extends AbstractVerticle {",                                    # 2
+      "  public void start() {",                                                                 # 3
+      "    router.get(\"/health\").handler(ctx -> ctx.response().end(\"ok\"));",                 # 4
+      "    router.route(\"/private/*\").handler(RedirectAuthHandler.create(provider, \"/l\"));", # 5
+      "    router.get(\"/private/page\").handler(ctx -> ctx.response().end(\"secret\"));",       # 6
+      "    router.get(\"/about\").handler(ctx -> ctx.response().end(\"about\"));",               # 7
+      "  }",                                                                                     # 8
+      "}",                                                                                       # 9
+    ].join("\n"))
+    CodeLocator.instance.register_path(verticle)
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+
+    endpoints = {4 => "/health", 6 => "/private/page", 7 => "/about"}.map do |line, url|
+      details = Details.new(PathInfo.new(verticle, line))
+      details.technology = "java_vertx"
+      Endpoint.new(url, "GET", [] of Param, details)
+    end
+    JavaMiscAuthTagger.new(noir_options).perform(endpoints)
+    FileUtils.rm_rf(tmpdir)
+
+    endpoints.map(&.tags.size).should eq([0, 1, 0])
+    endpoints[1].tags[0].description.should contain("AuthHandler")
   end
 
   it "handles empty code_paths gracefully" do

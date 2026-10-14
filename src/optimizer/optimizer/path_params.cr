@@ -86,8 +86,10 @@ class EndpointOptimizer
         # Armeria and ASP.NET all spell the rest-of-path capture as
         # `{*name}`, e.g. `/files/{*path}`) and any inline regex/type
         # constraint after `:`. The parameter is named `name`, not
-        # `*name` or `name:regex`.
-        param = raw.split(":")[0].lstrip('*')
+        # `*name` or `name:regex`. The optional marker (`{id?}`, hapi and
+        # ASP.NET) and hapi's multi-segment `{path*}` / `{parts*2}` are
+        # spelling too.
+        param = raw.split(":")[0].lstrip('*').rstrip('?').sub(/\*\d*\z/, "")
         next unless valid_path_param_name?(param)
         placeholders << PathPlaceholder.new(start, stop, param)
       end

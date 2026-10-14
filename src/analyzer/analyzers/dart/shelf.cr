@@ -50,7 +50,8 @@ module Analyzer::Dart
       path: String,
       line: Int32,
       file: String,
-      callees: Array(Noir::DartCalleeExtractor::Entry))
+      callees: Array(Noir::DartCalleeExtractor::Entry),
+      params: Array(Param))
 
     alias Mount = NamedTuple(prefix: String, child: String)
 
@@ -120,26 +121,32 @@ module Analyzer::Dart
     # Locate every `Router()` instantiation bound to a variable and
     # collect routes and mounts attached to that router via cascade
     # chains (`..get(...)`) or direct method calls (`router.get(...)`).
-    # Operates on a comment-stripped copy of the source so offsets in
-    # the original file line up byte-for-byte.
+    # Operates on a comment-stripped copy of the source whose CHAR offsets
+    # (not byte offsets: a blanked multi-byte char becomes one space) line
+    # up with the original file. Every per-route char<->byte conversion goes
+    # through a `Noir::CharOffsets` table: `String#[]`, `MatchData#begin/end`
+    # and `char_index_to_byte_index` are O(offset) on non-ASCII source, so a
+    # many-route file was quadratic. `fco` indexes the original source and is
+    # nil when callees aren't wanted.
     private def scan_file(content : String,
                           path : String,
                           include_callee : Bool) : Hash(String, RouterInfo)
       result = {} of String => RouterInfo
-      cleaned = strip_dart_comments(content)
-      classes = class_ranges(cleaned)
-      lines = Helper::LineIndex.new(content)
+      cleaned = Noir::CComments.strip(content, leak_unterminated_tail: true)
+      co = Noir::CharOffsets.new(cleaned)
+      fco = include_callee ? (cleaned.same?(content) ? co : Noir::CharOffsets.new(content)) : nil
+      classes = class_ranges(cleaned, co)
+      defs = function_defs(cleaned)
 
       decls = [] of RouterDecl
       cleaned.scan(/(?:^|[;{}=(,\s])(?:final|var|const|late)\s+(?:[A-Za-z_][\w<>,\s\?]*\s+)?([A-Za-z_]\w*)\s*=\s*Router\s*\(\s*\)/) do |match|
         var_name = match[1]
         next if var_name.empty?
-        end_idx = match.end(0)
-        next unless end_idx
+        end_idx = co.end(match)
         owner = enclosing_class(classes, end_idx)
         # A field sits directly in its class body, not inside a member's braces.
         range = owner ? classes.find { |r| r[:name] == owner && r[:start] <= end_idx && end_idx <= r[:finish] } : nil
-        body = range ? cleaned[(range[:start] + 1)...end_idx] : nil
+        body = range ? co.slice(range[:start] + 1, end_idx) : nil
         field = body ? body.count('{') == body.count('}') : false
         decls << {name: var_name, pos: end_idx, owner: owner, field: field}
       end
@@ -147,18 +154,18 @@ module Analyzer::Dart
       decls.each do |decl|
         var_name = decl[:name]
         end_idx = decl[:pos]
-        cascade_end = find_statement_end(cleaned, end_idx)
+        cascade_end = find_statement_end(co.chars, end_idx)
 
         routes = [] of Route
         mounts = [] of Mount
 
         # Cascades attached directly to the `Router()` expression.
-        scan_cascades(cleaned, end_idx, cascade_end, content, lines, path, include_callee, routes, mounts)
+        scan_cascades(cleaned, co, end_idx, cascade_end, fco, defs, path, routes, mounts)
 
         # Direct method calls referencing the router variable elsewhere
         # in the file. We scan the cleaned source so refs inside
         # strings or comments are ignored.
-        scan_direct_calls(cleaned, decl, decls, classes, content, lines, path, include_callee, routes, mounts)
+        scan_direct_calls(cleaned, co, decl, decls, classes, fco, defs, path, routes, mounts)
 
         # A router built inside a class (e.g. a `Router get router =>`
         # getter) is reached from the outside as `ClassName().router`,
@@ -183,7 +190,7 @@ module Analyzer::Dart
       # `shelf_router` also supports a code-gen style where handlers are
       # annotated with `@Route.<verb>('/path')` inside a controller class
       # and wired up by a generated `_$ClassRouter`. Surface those too.
-      scan_route_annotations(cleaned, content, lines, path, include_callee, classes, result)
+      scan_route_annotations(cleaned, co, fco, path, classes, result)
 
       result
     end
@@ -197,22 +204,20 @@ module Analyzer::Dart
     # Collect `@Route...`-annotated handlers, keyed by their enclosing
     # controller class so a parent `mount('/p', Ctrl().router)` lines up.
     private def scan_route_annotations(cleaned : String,
-                                       content : String,
-                                       lines : Helper::LineIndex,
+                                       co : Noir::CharOffsets,
+                                       fco : Noir::CharOffsets?,
                                        path : String,
-                                       include_callee : Bool,
                                        classes : Array(ClassRange),
                                        result : Hash(String, RouterInfo))
-      prefixes = route_prefixes(cleaned, classes)
+      prefixes = route_prefixes(cleaned, co, classes)
 
       cleaned.scan(ROUTE_ANNOTATION_REGEX) do |m|
-        match_begin = m.begin(0)
-        open_paren = m.end(0).try &.- 1
-        next unless match_begin && open_paren
-        close_paren = Helper.find_matching_paren(cleaned, open_paren)
+        match_begin = co.begin(m)
+        open_paren = co.end(m) - 1
+        close_paren = Helper.find_matching_paren(cleaned, open_paren, co)
         next unless close_paren
 
-        args = Helper.split_top_level_args(cleaned[(open_paren + 1)...close_paren])
+        args = Helper.split_top_level_args(co.slice(open_paren + 1, close_paren))
         next if args.empty?
 
         verbs, path_arg = annotation_verbs_and_path(m[1]?, args)
@@ -225,14 +230,15 @@ module Analyzer::Dart
         prefix = owner ? prefixes[owner]? : nil
         route_path = normalize_path(prefix ? mount_join(prefix, normalize_path(literal)) : literal)
 
-        line = lines.line_for(match_begin)
-        callees = include_callee ? annotation_callees(content, close_paren, path) : [] of Noir::DartCalleeExtractor::Entry
+        line = co.line(match_begin)
+        callees = fco ? annotation_callees(fco, close_paren, path) : [] of Noir::DartCalleeExtractor::Entry
+        params = body_params(cleaned, co.byte(close_paren + 1), cleaned.bytesize)
 
         key = owner || "@route:#{path}"
         info = result[key]? || {routes: [] of Route, mounts: [] of Mount}
         routes = info[:routes].dup
         verbs.each do |verb|
-          routes << {verb: verb, path: route_path, line: line, file: path, callees: callees}
+          routes << {verb: verb, path: route_path, line: line, file: path, callees: callees, params: params}
         end
         result[key] = {routes: routes, mounts: info[:mounts]}
       end
@@ -240,15 +246,14 @@ module Analyzer::Dart
 
     # `@RoutePrefix('/prefix')` (shelf_router_classes) applies a common
     # prefix to every annotated route in its class.
-    private def route_prefixes(cleaned : String, classes : Array(ClassRange)) : Hash(String, String)
+    private def route_prefixes(cleaned : String, co : Noir::CharOffsets, classes : Array(ClassRange)) : Hash(String, String)
       prefixes = {} of String => String
       cleaned.scan(ROUTE_PREFIX_REGEX) do |m|
-        match_begin = m.begin(0)
-        open_paren = m.end(0).try &.- 1
-        next unless match_begin && open_paren
-        close_paren = Helper.find_matching_paren(cleaned, open_paren)
+        match_begin = co.begin(m)
+        open_paren = co.end(m) - 1
+        close_paren = Helper.find_matching_paren(cleaned, open_paren, co)
         next unless close_paren
-        args = Helper.split_top_level_args(cleaned[(open_paren + 1)...close_paren])
+        args = Helper.split_top_level_args(co.slice(open_paren + 1, close_paren))
         next if args.empty?
         literal = Helper.extract_string_literal(args[0])
         next unless literal
@@ -296,18 +301,24 @@ module Analyzer::Dart
       {[] of String, nil}
     end
 
-    private def annotation_callees(content : String,
+    private def annotation_callees(fco : Noir::CharOffsets,
                                    annotation_close : Int32,
                                    path : String) : Array(Noir::DartCalleeExtractor::Entry)
       # annotation_close is a CHAR index; extract_body_after scans by BYTE offset.
-      close_b = content.char_index_to_byte_index(annotation_close + 1)
-      return [] of Noir::DartCalleeExtractor::Entry unless close_b
-      body_info = Noir::DartCalleeExtractor.extract_body_after(content, close_b)
+      callees_after(fco, fco.byte(annotation_close + 1), path)
+    end
+
+    # Callees of the `=>`/`{` body starting at or after BYTE offset `start_b`
+    # of the original source, and ending by BYTE offset `limit`.
+    private def callees_after(fco : Noir::CharOffsets,
+                              start_b : Int32,
+                              path : String,
+                              limit : Int32 = fco.content.bytesize) : Array(Noir::DartCalleeExtractor::Entry)
+      body_info = Noir::DartCalleeExtractor.extract_body_after(fco.content, start_b, limit)
       return [] of Noir::DartCalleeExtractor::Entry unless body_info
 
       body, body_start, _ = body_info
-      start_line = Noir::DartCalleeExtractor.line_number_for(content, body_start)
-      Noir::DartCalleeExtractor.callees_for_body(body, path, start_line)
+      Noir::DartCalleeExtractor.callees_for_body(body, path, fco.line(fco.char(body_start)))
     end
 
     alias ClassRange = NamedTuple(name: String, start: Int32, finish: Int32)
@@ -318,25 +329,19 @@ module Analyzer::Dart
 
     # Locate every `class Name { ... }` block (and mixin/extension body) and
     # its byte range so a `Router()` instantiation can be attributed to it.
-    private def class_ranges(cleaned : String) : Array(ClassRange)
+    private def class_ranges(cleaned : String, co : Noir::CharOffsets) : Array(ClassRange)
       ranges = [] of ClassRange
       cleaned.scan(CLASS_HEADER_REGEX) do |m|
         name = m[1]
-        header_end = m.end(0) # char offset
-        next unless header_end
-        # DartCalleeExtractor scans/returns BYTE offsets; convert char->byte going
-        # in and byte->char coming out so the stored ranges stay in CHAR space and
-        # line up with the char-based match offsets compared in enclosing_class.
-        header_end_b = cleaned.char_index_to_byte_index(header_end)
-        next unless header_end_b
+        # DartCalleeExtractor scans/returns BYTE offsets; convert byte->char
+        # coming out so the stored ranges stay in CHAR space and line up with
+        # the char-based match offsets compared in enclosing_class.
+        header_end_b = m.byte_end(0)
         open_b = Noir::DartCalleeExtractor.find_next_code_char(cleaned, '{', header_end_b)
         next unless open_b
         close_b = Noir::DartCalleeExtractor.find_matching_delimiter(cleaned, open_b, '{', '}')
         next unless close_b
-        open = cleaned.byte_index_to_char_index(open_b)
-        close = cleaned.byte_index_to_char_index(close_b)
-        next unless open && close
-        ranges << {name: name, start: open, finish: close}
+        ranges << {name: name, start: co.char(open_b), finish: co.char(close_b)}
       end
       ranges
     end
@@ -357,18 +362,18 @@ module Analyzer::Dart
     end
 
     private def scan_cascades(cleaned : String,
+                              co : Noir::CharOffsets,
                               start_idx : Int32,
                               end_idx : Int32,
-                              file_content : String,
-                              lines : Helper::LineIndex,
+                              fco : Noir::CharOffsets?,
+                              defs : Hash(String, Int32),
                               path : String,
-                              include_callee : Bool,
                               routes : Array(Route),
                               mounts : Array(Mount))
       # `String#[]` re-walks from byte 0 on every call once the source
       # contains any multi-byte char, turning this scan O(n^2); index a
       # materialized Array(Char) instead (O(1) per access).
-      chars = cleaned.chars
+      chars = co.chars
       i = start_idx
       while i < end_idx - 1
         # Match `..name(` while ignoring `...` (spread).
@@ -385,9 +390,9 @@ module Analyzer::Dart
             j += 1
           end
           if j < chars.size && chars[j] == '(' && relevant_method?(name)
-            close_paren = Helper.find_matching_paren(cleaned, j)
+            close_paren = Helper.find_matching_paren(cleaned, j, co)
             if close_paren && close_paren < end_idx
-              handle_call(name, cleaned, j, close_paren, file_content, lines, path, include_callee, routes, mounts)
+              handle_call(name, co, j, close_paren, fco, defs, path, routes, mounts)
               i = close_paren + 1
               next
             end
@@ -403,13 +408,13 @@ module Analyzer::Dart
     alias RouterDecl = NamedTuple(name: String, pos: Int32, owner: String?, field: Bool)
 
     private def scan_direct_calls(cleaned : String,
+                                  co : Noir::CharOffsets,
                                   decl : RouterDecl,
                                   decls : Array(RouterDecl),
                                   classes : Array(ClassRange),
-                                  file_content : String,
-                                  lines : Helper::LineIndex,
+                                  fco : Noir::CharOffsets?,
+                                  defs : Hash(String, Int32),
                                   path : String,
-                                  include_callee : Bool,
                                   routes : Array(Route),
                                   mounts : Array(Mount))
       var_name = decl[:name]
@@ -418,8 +423,7 @@ module Analyzer::Dart
       cleaned.scan(pattern) do |m|
         method = m[3]
         next unless relevant_method?(method)
-        match_end = m.end(0)
-        next unless match_end
+        match_end = co.end(m)
         if m[2]?
           # `api.router.get(...)` reaches some object's router field, never a
           # local or top-level variable of that name.
@@ -430,9 +434,9 @@ module Analyzer::Dart
           next unless owning_decl(decls, var_name, match_end, classes) == decl
         end
         open_paren = match_end - 1
-        close_paren = Helper.find_matching_paren(cleaned, open_paren)
+        close_paren = Helper.find_matching_paren(cleaned, open_paren, co)
         next unless close_paren
-        handle_call(method, cleaned, open_paren, close_paren, file_content, lines, path, include_callee, routes, mounts)
+        handle_call(method, co, open_paren, close_paren, fco, defs, path, routes, mounts)
       end
     end
 
@@ -453,24 +457,23 @@ module Analyzer::Dart
     end
 
     private def handle_call(method : String,
-                            source : String,
+                            co : Noir::CharOffsets,
                             open_paren : Int32,
                             close_paren : Int32,
-                            file_content : String,
-                            lines : Helper::LineIndex,
+                            fco : Noir::CharOffsets?,
+                            defs : Hash(String, Int32),
                             path : String,
-                            include_callee : Bool,
                             routes : Array(Route),
                             mounts : Array(Mount))
       return if open_paren >= close_paren
-      args_text = source[(open_paren + 1)...close_paren]
+      args_text = co.slice(open_paren + 1, close_paren)
       args = Helper.split_top_level_args(args_text)
       return if args.empty?
 
       literal = Helper.extract_string_literal(args[0])
       return unless literal
 
-      line = lines.line_for(open_paren)
+      line = co.line(open_paren)
 
       case method
       when "mount"
@@ -478,17 +481,49 @@ module Analyzer::Dart
         child = extract_mount_child(args[1])
         return unless child
         mounts << {prefix: normalize_path(literal), child: child}
-      when "all"
-        callees = include_callee && args.size >= 2 ? handler_callees(args[1], file_content, close_paren, path, line) : [] of Noir::DartCalleeExtractor::Entry
-        ANY_ROUTE_HTTP_METHODS.each do |verb|
-          routes << {verb: verb, path: normalize_path(literal), line: line, file: path, callees: callees}
-        end
       else
-        verb = HTTP_METHOD_MAP[method]?
-        return unless verb
-        callees = include_callee && args.size >= 2 ? handler_callees(args[1], file_content, close_paren, path, line) : [] of Noir::DartCalleeExtractor::Entry
-        routes << {verb: verb, path: normalize_path(literal), line: line, file: path, callees: callees}
+        verbs = method == "all" ? ANY_ROUTE_HTTP_METHODS : [HTTP_METHOD_MAP[method]?].compact
+        return if verbs.empty?
+        callees = fco && args.size >= 2 ? handler_callees(args[1], fco, close_paren, path, line) : [] of Noir::DartCalleeExtractor::Entry
+        params = args.size >= 2 ? handler_params(args[1], co, close_paren, defs) : [] of Param
+        verbs.each do |verb|
+          routes << {verb: verb, path: normalize_path(literal), line: line, file: path, callees: callees, params: params}
+        end
       end
+    end
+
+    # A named function or method declaration (`Response _echo(Request r) {`,
+    # `Future<Response> _list(Request r) async =>`): name to the BYTE offset
+    # of its name in the cleaned source. Built once per file so a handler
+    # reference is a lookup, not a rescan.
+    FUNCTION_DEF_REGEX = /(?<![\w$.])([A-Za-z_$][\w$]*)\s*\([^(){};]*\)\s*(?:async\*?|sync\*)?\s*(?:\{|=>)/
+
+    private def function_defs(cleaned : String) : Hash(String, Int32)
+      defs = {} of String => Int32
+      cleaned.scan(FUNCTION_DEF_REGEX) { |m| defs[m[1]] = m.byte_begin(0) unless defs.has_key?(m[1]) }
+      defs
+    end
+
+    # Request inputs the route's handler reads: an inline lambda's body
+    # (bounded by the route call), or the body of the same-file function a
+    # bare reference (`_echo`, `this._echo`) names.
+    private def handler_params(handler_arg : String,
+                               co : Noir::CharOffsets,
+                               close_paren : Int32,
+                               defs : Hash(String, Int32)) : Array(Param)
+      stripped = handler_arg.strip
+      if stripped.starts_with?('(')
+        body_params(co.content, co.byte(close_paren - handler_arg.size), co.byte(close_paren))
+      elsif stripped.matches?(Helper::HANDLER_REFERENCE_REGEX) && (start_b = defs[stripped.split('.').last]?)
+        body_params(co.content, start_b, co.content.bytesize)
+      else
+        [] of Param
+      end
+    end
+
+    private def body_params(cleaned : String, start_b : Int32, limit : Int32) : Array(Param)
+      body_info = Noir::DartCalleeExtractor.extract_body_after(cleaned, start_b, limit)
+      body_info ? Helper.request_params(body_info[0]) : [] of Param
     end
 
     # Best-effort callee extraction for the route handler. Inline lambdas
@@ -496,7 +531,7 @@ module Analyzer::Dart
     # (Dart can't resolve these cross-file yet) is itself recorded as the
     # single callee so the handler still surfaces in AI context.
     private def handler_callees(handler_arg : String,
-                                file_content : String,
+                                fco : Noir::CharOffsets,
                                 close_paren : Int32,
                                 path : String,
                                 line : Int32) : Array(Noir::DartCalleeExtractor::Entry)
@@ -508,14 +543,10 @@ module Analyzer::Dart
       end
 
       # close_paren is a CHAR index; extract_body_after scans by BYTE offset.
-      start_b = file_content.char_index_to_byte_index(close_paren - handler_arg.size)
-      return [] of Noir::DartCalleeExtractor::Entry unless start_b
-      body_info = Noir::DartCalleeExtractor.extract_body_after(file_content, start_b)
-      return [] of Noir::DartCalleeExtractor::Entry unless body_info
-
-      body, body_start, _ = body_info
-      start_line = Noir::DartCalleeExtractor.line_number_for(file_content, body_start)
-      Noir::DartCalleeExtractor.callees_for_body(body, path, start_line)
+      # The lambda ends with the route call: unbounded, an arrow body ran to
+      # the next `;`, which for a `..get(...)..get(...)` cascade is the end
+      # of the whole chain, so every route took every later route's callees.
+      callees_after(fco, fco.byte(close_paren - handler_arg.size), path, fco.byte(close_paren))
     end
 
     private def extract_mount_child(arg : String) : String?
@@ -568,7 +599,9 @@ module Analyzer::Dart
       if info
         info[:routes].each do |route|
           full_path = mount_join(prefix, route[:path])
-          endpoints << Helper.build_endpoint(full_path, route[:verb], route[:file], route[:line], route[:callees])
+          endpoint = Helper.build_endpoint(full_path, route[:verb], route[:file], route[:line], route[:callees])
+          route[:params].each { |param| endpoint.push_param(param) }
+          endpoints << endpoint
         end
         info[:mounts].each do |mnt|
           child_prefix = mount_join(prefix, mnt[:prefix])
@@ -587,10 +620,9 @@ module Analyzer::Dart
 
     # ---------- Source-string utilities ----------
 
-    private def find_statement_end(text : String, start : Int32) : Int32
-      # See scan_cascades: index a materialized Array(Char) so this stays
-      # O(n) instead of O(n^2) on any source containing multi-byte chars.
-      chars = text.chars
+    # Takes the source as a materialized Array(Char) (see scan_cascades) so
+    # this stays O(n) instead of O(n^2) on any source with multi-byte chars.
+    private def find_statement_end(chars : Array(Char), start : Int32) : Int32
       depth_paren = 0
       depth_brace = 0
       depth_bracket = 0
@@ -634,76 +666,6 @@ module Analyzer::Dart
         i += 1
       end
       chars.size
-    end
-
-    private def strip_dart_comments(text : String) : String
-      result = String::Builder.new
-      i = 0
-      chars = text.chars
-      in_string = false
-      string_quote = '\0'
-
-      while i < chars.size
-        c = chars[i]
-
-        if in_string
-          if c == '\\' && i + 1 < chars.size
-            result << c
-            result << chars[i + 1]
-            i += 2
-            next
-          elsif c == string_quote
-            in_string = false
-          end
-          result << c
-          i += 1
-          next
-        end
-
-        if c == '"' || c == '\''
-          in_string = true
-          string_quote = c
-          result << c
-          i += 1
-          next
-        end
-
-        if i + 1 < chars.size && c == '/' && chars[i + 1] == '/'
-          result << ' '
-          result << ' '
-          i += 2
-          while i < chars.size && chars[i] != '\n'
-            result << ' '
-            i += 1
-          end
-          if i < chars.size
-            result << chars[i]
-            i += 1
-          end
-          next
-        end
-
-        if i + 1 < chars.size && c == '/' && chars[i + 1] == '*'
-          result << ' '
-          result << ' '
-          i += 2
-          while i + 1 < chars.size && !(chars[i] == '*' && chars[i + 1] == '/')
-            result << (chars[i] == '\n' ? '\n' : ' ')
-            i += 1
-          end
-          if i + 1 < chars.size
-            result << ' '
-            result << ' '
-            i += 2
-          end
-          next
-        end
-
-        result << c
-        i += 1
-      end
-
-      result.to_s
     end
   end
 end

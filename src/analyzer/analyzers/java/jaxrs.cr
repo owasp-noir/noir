@@ -71,7 +71,8 @@ module Analyzer::Java
           application_base_path = application_base_path_for(path, package_name, application_base_paths)
 
           Noir::TreeSitterJaxRsExtractor.extract_routes_from(root, content, dto_index, bean_index, subresource_sources,
-            custom_verb_annotations: custom_verb_annotations, include_callees: include_callee).each do |route|
+            custom_verb_annotations: custom_verb_annotations, include_callees: include_callee,
+            project_constants: java_project_constants(path)).each do |route|
             endpoint_path = route.protocol == "ws" ? route.path : Noir::URLPath.join_trimmed(application_base_path, route.path)
             @result << jvm_route_endpoint(route, endpoint_path, route.file_path || path)
           end
@@ -130,7 +131,7 @@ module Analyzer::Java
           key = {project_root, package_name}
           next if base_paths.has_key?(key)
 
-          if base_path = Noir::TreeSitterJaxRsExtractor.extract_application_path_from(root, content)
+          if base_path = Noir::TreeSitterJaxRsExtractor.extract_application_path_from(root, content, java_project_constants(path))
             base_paths[key] = base_path
             Noir::TreeSitterJaxRsExtractor.extract_class_names_from(root, content).each do |class_name|
               add_application_package(application_packages, class_name, key)

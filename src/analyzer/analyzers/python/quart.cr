@@ -61,12 +61,11 @@ module Analyzer::Python
           @logger.debug "Analyzing #{path}"
 
           file_content = fetch_file_content(path)
-          next unless file_content.includes?("quart")
+          next unless file_content.includes?("quart") || quart_blueprint_module?(path, file_content)
           lines = fetch_file_lines(path)
 
           api_instances = Hash(::String, ::String).new
           path_api_instances[path] = api_instances
-          import_map_cache : Hash(::String, Tuple(::String, Int32))? = nil
           view_assignments = Hash(::String, ::String).new
 
           # Tree-sitter pre-pass: one parse yields decorations + blueprints
@@ -146,26 +145,8 @@ module Analyzer::Python
               blueprint_mounts[path] ||= [] of Tuple(::String, ::String, ::String?)
               blueprint_mounts[path] << {parent_name, blueprint_name, blueprint_mount_prefix}
 
-              if url_prefix_match
-                resolved = false
-                parser = get_parser(path)
-                if parser.@global_variables.has_key?(blueprint_name)
-                  gv = parser.@global_variables[blueprint_name]
-                  if gv.type == "Blueprint"
-                    add_registered_prefix(register_blueprint, gv.path, blueprint_name, url_prefix_match[1])
-                    resolved = true
-                  end
-                end
-
-                unless resolved
-                  import_map_cache ||= find_imported_modules(current_base_path, path)
-                  if import_map_cache.has_key?(blueprint_name)
-                    source_file, _package_type = import_map_cache[blueprint_name]
-                    if !source_file.empty? && File.exists?(source_file)
-                      add_registered_prefix(register_blueprint, source_file, blueprint_name, url_prefix_match[1])
-                    end
-                  end
-                end
+              if url_prefix_match && (declaration = blueprint_declaration(path, blueprint_name))
+                add_registered_prefix(register_blueprint, declaration[0], declaration[1], url_prefix_match[1])
               end
             end
           end
@@ -195,9 +176,7 @@ module Analyzer::Python
           line_index, path, route_path, extra_params, is_ws = router_info
           source = fetch_file_content(path)
           lines = fetch_file_lines(path)
-          api_instances = path_api_instances[path]?
-          prefix = (api_instances && api_instances.has_key?(router_name)) ? api_instances[router_name] : ""
-          prefixes = route_prefixes(register_blueprint, path, router_name, prefix)
+          prefixes = router_prefixes(path_api_instances, register_blueprint, path, router_name)
 
           class_def_index = Noir::PythonRouteExtractor.find_def_line(lines, line_index, :down)
           next if class_def_index >= lines.size
@@ -251,9 +230,7 @@ module Analyzer::Python
           line_index, path, route_path, function_name, methods = route_info
           source = fetch_file_content(path)
           lines = fetch_file_lines(path)
-          api_instances = path_api_instances[path]?
-          prefix = (api_instances && api_instances.has_key?(router_name)) ? api_instances[router_name] : ""
-          prefixes = route_prefixes(register_blueprint, path, router_name, prefix)
+          prefixes = router_prefixes(path_api_instances, register_blueprint, path, router_name)
 
           function_path = path
           function_source = source
@@ -300,9 +277,7 @@ module Analyzer::Python
           line_index, path, route_path, class_name, methods = route_info
           source = fetch_file_content(path)
           lines = fetch_file_lines(path)
-          api_instances = path_api_instances[path]?
-          prefix = (api_instances && api_instances.has_key?(router_name)) ? api_instances[router_name] : ""
-          prefixes = route_prefixes(register_blueprint, path, router_name, prefix)
+          prefixes = router_prefixes(path_api_instances, register_blueprint, path, router_name)
 
           class_def_index = find_python_class_def(lines, class_name)
           next if class_def_index < 0
@@ -340,6 +315,15 @@ module Analyzer::Python
 
       Fiber.yield
       result
+    end
+
+    # A route module that never names quart itself: the large-app layout's
+    # `main/views.py` does `from . import main` and decorates `@main.route`,
+    # the Blueprint living in `main/__init__.py`. Claim it when it routes
+    # and imports from a module that does mention quart.
+    private def quart_blueprint_module?(path : ::String, source : ::String) : Bool
+      return false unless source.matches?(Flask::ROUTE_DECORATOR_RE)
+      imported_symbols(path).each_value.any? { |(file, _)| fetch_file_content(file).includes?("quart") }
     end
 
     private def extract_add_url_rule_path(args : ::String) : ::String

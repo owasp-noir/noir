@@ -25,6 +25,7 @@ module Analyzer::Go
       # the prefix lives at the call site (see `resolve_router_builder_prefixes`).
       builder_prefixes_by_dir = resolve_router_builder_prefixes(file_contents, package_groups, BUILDER_TYPE)
       framework_dirs = framework_package_dirs(file_contents, IMPORT_MARKER)
+      named_scope = named_handler_scope(file_contents)
       # Per-file results merged below in input order, not appended to
       # `result` from the workers: worker completion order varies run to
       # run (see `Analyzer#ordered_scan_files`).
@@ -52,7 +53,7 @@ module Analyzer::Go
           routes_by_line[r.line] << r
         end
 
-        named = Noir::GoNamedHandler.new(content, path, ts_routes)
+        named = Noir::GoNamedHandler.new(content, path, ts_routes, named_scope)
         expand_builders = router_builder_expansions(content, BUILDER_TYPE, builder_prefixes_by_dir[dir]?, cross_file_groups)
         suppress_ranges = expand_builders.map { |_, rb, _| rb.start_row..rb.end_row }
 

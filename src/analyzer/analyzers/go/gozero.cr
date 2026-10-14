@@ -33,6 +33,7 @@ module Analyzer::Go
       # function-body map naturally skips `.api`.
       file_contents = read_package_file_contents
       package_function_bodies = lazy_package_bodies(file_contents)
+      named_scope = named_handler_scope(file_contents)
       # Both `.go` files and gozero's `.api` DSL files. The per-path
       # `File.extname` re-check the inlined walk carried is redundant:
       # `get_files_by_extensions` resolves the same `File.extname` index,
@@ -95,7 +96,7 @@ module Analyzer::Go
         # dedupe instead of producing half-paths.
         api_prefix = ""
         in_server_block = false
-        named = Noir::GoNamedHandler.new(content, path, routes_by_line.values.flatten)
+        named = Noir::GoNamedHandler.new(content, path, routes_by_line.values.flatten, named_scope)
 
         lines.each_with_index do |line, index|
           next if named.claim?(index, line)

@@ -91,6 +91,11 @@ module Analyzer::Javascript
         content = read_file_content(path)
         # Cheap gate: the mount chain always pairs `.use(` with `.routes(`.
         next unless content.includes?(".use(") && content.includes?(".routes(")
+        # Koa's `api.use('/users', users.routes())` is the same shape, and
+        # the prefix key is shared with Koa/Express: a Koa mount resolved
+        # here lands on the Koa child as a second, unprefixed-by-parent
+        # mount (and only when this analyzer happens to run first).
+        next if Noir::JSRouteExtractor.other_shared_extractor_framework?(content, :oak)
         next if Noir::JSRouteExtractor.minified_content?(content)
         content = Noir::JSRouteExtractor.strip_js_comments(content)
 
@@ -134,6 +139,7 @@ module Analyzer::Javascript
         prefixes.each do |router_var, router_prefixes|
           file = imports[router_var]?
           next unless file
+          next if Noir::JSRouteExtractor.other_shared_extractor_framework?(read_file_content(file), :oak)
           key = Analyzer::Javascript::ExpressConstants.file_key(Noir::PathScope.expand(file))
           router_prefixes.each do |prefix|
             next if prefix.empty?

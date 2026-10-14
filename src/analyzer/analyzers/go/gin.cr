@@ -25,6 +25,7 @@ module Analyzer::Go
       # must be grafted onto the helper's routes.
       builder_prefixes_by_dir = resolve_router_builder_prefixes(file_contents, package_groups, BUILDER_TYPE)
       framework_dirs = framework_package_dirs(file_contents, IMPORT_MARKER)
+      named_scope = named_handler_scope(file_contents)
       parallel_analyze(get_files_by_extension(".go")) do |path|
         next if GoEngine.go_test_file?(base_relative_path(path))
         next unless File.exists?(path)
@@ -66,7 +67,7 @@ module Analyzer::Go
           routes_by_line[r.line] << r
         end
 
-        named = Noir::GoNamedHandler.new(content, path, ts_routes)
+        named = Noir::GoNamedHandler.new(content, path, ts_routes, named_scope)
 
         # Resolve 1-hop callees for every route in this file.
         # Inline-closure handlers walk in place; bare

@@ -11,7 +11,7 @@ expected_endpoints = [
   Endpoint.new("/search", "GET", [
     Param.new("Keyword", "", "query"),
     Param.new("Page", "", "query"),
-    Param.new("TraceId", "", "header"),
+    Param.new("X-Trace-Id", "", "header"),
   ]),
   Endpoint.new("/ping", "GET"),
   Endpoint.new("/legacy/status", "GET"),

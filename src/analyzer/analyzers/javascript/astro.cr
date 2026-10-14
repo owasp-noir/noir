@@ -10,10 +10,13 @@ module Analyzer::Javascript
   #   src/pages/users/[id].astro           → GET /users/{id}
   #   src/pages/[...slug].astro            → GET /{slug}     (catch-all)
   #   src/pages/api/users.ts               → exports drive verbs
+  #   src/pages/rss.xml.js                 → GET /rss.xml (endpoint)
+  #   src/pages/posts/[id].json.ts         → /posts/{id}.json
   #
   # Page files (`.astro`, `.md`, `.mdx`, `.html`) are HTML pages —
-  # always GET. API route files in `src/pages/api/**` (`.ts`, `.js`,
-  # `.mjs`, `.tsx`, `.jsx`) export named verb handlers
+  # always GET. Every script file under `src/pages/` (`.ts`, `.js`,
+  # `.mjs`, `.tsx`, `.jsx`) is an endpoint, `api/` or not, exporting
+  # named verb handlers
   # (`export async function GET(...)`, `export const POST = ...`).
   # When no explicit verb export is found we fall back to the
   # standard handler set (GET / POST / PUT / DELETE / PATCH) — same
@@ -37,8 +40,16 @@ module Analyzer::Javascript
     def analyze
       result = [] of Endpoint
       mutex = Mutex.new
+      # `src/pages/` is also Next.js's pages router, so in a monorepo only
+      # files under an Astro project root count. No root found waves
+      # everything through, as for SvelteKit and Nitro.
+      project_roots = discover_js_project_roots(
+        ["\"astro\""],
+        ["astro.config.mjs", "astro.config.js", "astro.config.ts", "astro.config.mts", "astro.config.cjs"]
+      )
 
       parallel_file_scan(EXTENSIONS) do |path|
+        next unless path_under_project_roots?(path, project_roots)
         # Scan-base-relative, never absolute: `String#index` takes the
         # FIRST occurrence, so a same-named directory above the scan base
         # won outright and the derived URL changed with the checkout path.
@@ -66,7 +77,7 @@ module Analyzer::Javascript
     end
 
     private def api_route_file?(relative : String) : Bool
-      relative.starts_with?("api/") && API_EXTENSIONS.any? { |ext| relative.ends_with?(ext) }
+      API_EXTENSIONS.any? { |ext| relative.ends_with?(ext) }
     end
 
     private def analyze_page(path : String, relative : String, result : Array(Endpoint), mutex : Mutex)
@@ -78,8 +89,10 @@ module Analyzer::Javascript
     private def analyze_api_route(path : String, relative : String, result : Array(Endpoint), mutex : Mutex)
       url = url_for(relative)
 
+      # Comments blanked in place (line numbers kept), so a commented-out
+      # export is not a route.
       content = begin
-        read_file_content(path)
+        Noir::JSRouteExtractor.strip_js_comments(read_file_content(path))
       rescue e
         logger.debug "Error reading #{path}: #{e.message}"
         return
@@ -103,10 +116,11 @@ module Analyzer::Javascript
 
     # Filesystem path → URL pattern. Strips the file extension,
     # collapses `/index` into the parent, and converts `[id]` /
-    # `[...slug]` into `{id}` / `{slug}`.
+    # `[...slug]` into `{id}` / `{slug}` in place, so `[id].json`
+    # keeps its suffix.
     private def url_for(relative : String) : String
       stripped = strip_extension(relative)
-      segments = stripped.split("/").reject(&.empty?).map { |seg| convert_segment(seg) }
+      segments = stripped.split("/").reject(&.empty?).map { |seg| seg.gsub(FILE_ROUTE_PARAM_RE) { "{#{$1}}" } }
       url = "/" + segments.join("/")
       url = url.sub(/\/index$/, "")
       url = "/" if url.empty?
@@ -118,18 +132,6 @@ module Analyzer::Javascript
         return path[0..(path.size - ext.size - 1)] if path.ends_with?(ext)
       end
       path
-    end
-
-    private def convert_segment(seg : String) : String
-      # Catch-all: `[...slug]` or optional `[[...slug]]`
-      if m = seg.match(/^\[+\.{3}(\w+)\]+$/)
-        return "{#{m[1]}}"
-      end
-      # Dynamic: `[id]`
-      if m = seg.match(/^\[(\w+)\]$/)
-        return "{#{m[1]}}"
-      end
-      seg
     end
   end
 end

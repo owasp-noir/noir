@@ -1,3 +1,4 @@
+require "file_utils"
 require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
@@ -71,5 +72,60 @@ describe "SwiftAuthTagger" do
     tagger.perform([endpoint])
 
     endpoint.tags.empty?.should be_true
+  end
+
+  it "does not read the next route's body after a one-line closure" do
+    tmpdir = File.tempname("swift_oneline")
+    Dir.mkdir_p(tmpdir)
+    routes = File.join(tmpdir, "routes.swift")
+    File.write(routes, [
+      "func routes(_ app: Application) throws {",
+      "    app.get(\"hello\") { req in \"Hello\" }",
+      "    app.get(\"me\") { req -> String in",
+      "        let user = try req.auth.require(User.self)",
+      "        return user.name",
+      "    }",
+      "}",
+    ].join("\n"))
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+
+    hello = Endpoint.new("/hello", "GET", [] of Param, Details.new(PathInfo.new(routes, 2)))
+    me = Endpoint.new("/me", "GET", [] of Param, Details.new(PathInfo.new(routes, 3)))
+    SwiftAuthTagger.new(noir_options).perform([hello, me])
+
+    hello.tags.should be_empty
+    me.tags.map(&.description).should eq(["Protected by Vapor req.auth.require"])
+
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  it "matches auth middleware in any .grouped() argument" do
+    tmpdir = File.tempname("swift_grouped")
+    Dir.mkdir_p(tmpdir)
+    routes = File.join(tmpdir, "routes.swift")
+    File.write(routes, [
+      "func routes(_ app: Application) throws {",
+      "    let tokenProtected = app.grouped(UserToken.authenticator(), User.guardMiddleware())",
+      "    tokenProtected.get(\"profile\") { req -> String in",
+      "        return \"profile\"",
+      "    }",
+      "    let logged = app.grouped(RequestLogger(), CORSMiddleware())",
+      "    logged.get(\"open\") { req in \"open\" }",
+      "}",
+    ].join("\n"))
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+
+    profile = Endpoint.new("/profile", "GET", [] of Param, Details.new(PathInfo.new(routes, 3)))
+    open = Endpoint.new("/open", "GET", [] of Param, Details.new(PathInfo.new(routes, 7)))
+    SwiftAuthTagger.new(noir_options).perform([profile, open])
+
+    profile.tags.map(&.description).should eq(["Protected by Vapor User.guardMiddleware()"])
+    open.tags.should be_empty
+
+    FileUtils.rm_rf(tmpdir)
   end
 end

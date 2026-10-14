@@ -43,19 +43,22 @@ module Noir::DartCalleeExtractor
   end
 
   def extract_body_after(source : String, start_index : Int32, limit : Int32 = source.bytesize) : BodyInfo?
-    arrow_index = find_next_arrow(source, start_index, limit)
+    # Only the first of `{`, `;` and `=>` decides the body shape, so each
+    # search stops at the nearest candidate found so far: an unbounded scan
+    # for an absent `=>` ran to `limit` per route, quadratic over a file.
     open_brace = find_next_code_char(source, '{', start_index, limit)
-    semicolon = find_next_code_char(source, ';', start_index, limit)
+    semicolon = find_next_code_char(source, ';', start_index, open_brace || limit)
+    arrow_index = find_next_arrow(source, start_index, semicolon || open_brace || limit)
 
-    if arrow_index && (!semicolon || arrow_index < semicolon) && (!open_brace || arrow_index < open_brace)
+    if arrow_index
       body_start = arrow_index + 2
-      body_end = semicolon || limit
+      body_end = semicolon || find_next_code_char(source, ';', body_start, limit) || limit
       # body_start/body_end are BYTE offsets (the scanners use byte_at), so slice
       # by bytes — char-indexing here corrupts/crashes on multi-byte UTF-8 source.
       return {source.byte_slice(body_start, body_end - body_start), body_start, body_end}
     end
 
-    if open_brace && (!semicolon || open_brace < semicolon)
+    if open_brace && !semicolon
       close_brace = find_matching_delimiter(source, open_brace, '{', '}', limit)
       return unless close_brace
 

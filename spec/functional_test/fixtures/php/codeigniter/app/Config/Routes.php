@@ -42,5 +42,9 @@ $routes->group('tenant/(:num)', function ($routes) {
 $routes->environment('development', function ($routes) {
     $routes->get('debug', 'Debug::index');
 });
+// Typed closure (`: void` return type) still opens a prefixed group.
+$routes->group('typed', static function (RouteCollection $routes): void {
+    $routes->get('ping', 'Home::index');
+});
 // $routes->get('dead-line', 'Home::index');
 /* $routes->post('dead-block', 'Home::index'); */

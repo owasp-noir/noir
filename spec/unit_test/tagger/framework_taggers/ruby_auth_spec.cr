@@ -323,3 +323,95 @@ describe "RubyAuthTagger (Grape/Roda)" do
     endpoint.tags[0].description.should match(/Rodauth|rodauth/i)
   end
 end
+
+describe "RubyAuthTagger (Sinatra route scope)" do
+  it "reads the route's own body, not a guard helper's definition or earlier routes" do
+    dir = File.tempname("noir_sinatra_auth")
+    Dir.mkdir_p(dir)
+    app = File.join(dir, "app.rb")
+    File.write(app, <<-RB)
+      require 'sinatra'
+
+      helpers do
+        def protected!
+          return if authorized?
+          halt 401, "Not authorized"
+        end
+      end
+
+      get '/' do
+        "public"
+      end
+
+      get '/protected' do
+        protected!
+        "secret"
+      end
+
+      get '/about' do
+        "about"
+      end
+      RB
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(dir)
+      at = ->(url : String, line : Int32) do
+        details = Details.new(PathInfo.new(app, line))
+        details.technology = "ruby_sinatra"
+        Endpoint.new(url, "GET", [] of Param, details)
+      end
+      root = at.call("/", 10)
+      protected_route = at.call("/protected", 14)
+      about = at.call("/about", 19)
+
+      RubyAuthTagger.new(noir_options).perform([root, protected_route, about])
+
+      root.tags.should be_empty
+      about.tags.should be_empty
+      protected_route.tags.map(&.description).should eq(["Protected by protected! helper"])
+    ensure
+      FileUtils.rm_rf(dir)
+    end
+  end
+
+  it "applies a path-scoped before filter only to the routes it matches" do
+    dir = File.tempname("noir_sinatra_before")
+    Dir.mkdir_p(dir)
+    app = File.join(dir, "app.rb")
+    File.write(app, <<-RB)
+      require 'sinatra'
+
+      before '/admin/*' do
+        protected!
+      end
+
+      get '/admin/panel' do
+        "admin"
+      end
+
+      get '/public/health' do
+        "ok"
+      end
+      RB
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(dir)
+      at = ->(url : String, line : Int32) do
+        details = Details.new(PathInfo.new(app, line))
+        details.technology = "ruby_sinatra"
+        Endpoint.new(url, "GET", [] of Param, details)
+      end
+      admin = at.call("/admin/panel", 7)
+      health = at.call("/public/health", 11)
+
+      RubyAuthTagger.new(noir_options).perform([admin, health])
+
+      admin.tags.should_not be_empty
+      health.tags.should be_empty
+    ensure
+      FileUtils.rm_rf(dir)
+    end
+  end
+end

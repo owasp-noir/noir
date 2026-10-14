@@ -13,11 +13,10 @@ expected_endpoints = [
   Endpoint.new("/_/*path", "OPTIONS", [Param.new("path", "", "path")]),
   Endpoint.new("/webhook", "POST"),
   Endpoint.new("/webhook", "PUT"),
-  Endpoint.new("/api", "GET"), # forward statement
-  # ApiRouter endpoints
-  Endpoint.new("/status", "GET"),
-  Endpoint.new("/items", "POST", [Param.new("title", "", "form")]),
-  Endpoint.new("/items/:id", "GET", [Param.new("id", "", "path")]),
+  # ApiRouter endpoints, mounted by `forward "/api", to: ElixirBandit.ApiRouter`
+  Endpoint.new("/api/status", "GET"),
+  Endpoint.new("/api/items", "POST", [Param.new("title", "", "form")]),
+  Endpoint.new("/api/items/:id", "GET", [Param.new("id", "", "path")]),
 ]
 
 # Bandit always hosts a `Plug.Router`, so the project genuinely uses

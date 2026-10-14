@@ -436,4 +436,23 @@ describe "GoAuthTagger (sibling route groups)" do
     endpoint = run_go_auth(nested, "/api/admin/stats", "GET", 30)
     endpoint.tags.any? { |t| t.name == "auth" && t.description.includes?("AuthMiddleware") }.should be_true
   end
+
+  it "reads neither the path literal nor the handler as inline middleware" do
+    source = [
+      "package main",
+      "func main() {",
+      "  r := gin.Default()",
+      "  r.POST(\"/login\", AuthHandler)",
+      "  r.GET(\"/oauth/authorize\", showConsent)",
+      "  r.POST(\"/api/jwt/refresh\", refresh)",
+      "  r.HandleFunc(\"/session\", AuthHandler).Methods(\"GET\")",
+      "  r.GET(\"/me\", AuthRequired, me)",
+      "}",
+    ]
+    {"/login" => 4, "/oauth/authorize" => 5, "/api/jwt/refresh" => 6, "/session" => 7}.each do |url, line|
+      run_go_auth(source, url, "GET", line).tags.should be_empty
+    end
+    me = run_go_auth(source, "/me", "GET", 8)
+    me.tags.map(&.description).should eq(["Protected by Go AuthRequired middleware"])
+  end
 end

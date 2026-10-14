@@ -177,6 +177,32 @@ describe "SpringAuthTagger" do
     endpoint.tags.any? { |tag| tag.name == "auth" && tag.description.includes?("anyRequest") }.should be_true
   end
 
+  it "reads every rule of a one-line lambda DSL chain" do
+    tmpdir = File.tempname("spring_one_line_dsl")
+    Dir.mkdir_p(tmpdir)
+    config = File.join(tmpdir, "SecurityConfig.java")
+    File.write(config, <<-JAVA)
+      public class SecurityConfig {
+          @Bean
+          public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+              http.authorizeHttpRequests(auth -> auth.requestMatchers("/public/**").permitAll().anyRequest().authenticated());
+              return http.build();
+          }
+      }
+      JAVA
+    CodeLocator.instance.register_path(config)
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+
+    items = Endpoint.new("/items", "GET")
+    info = Endpoint.new("/public/info", "GET")
+    SpringAuthTagger.new(noir_options).perform([items, info])
+    FileUtils.rm_rf(tmpdir)
+
+    items.tags.map(&.description).should eq(["Protected by Spring Security authenticated via anyRequest()"])
+    info.tags.empty?.should be_true
+  end
+
   it "keeps anyRequest fallback for an unscoped chain when another chain is scoped" do
     temp_dir = File.join(Dir.tempdir, "noir-spring-auth-mixed-chain-#{Process.pid}-#{Time.utc.to_unix_ms}")
     config_path = File.join(temp_dir, "src/main/java/com/example/SecurityConfiguration.java")
@@ -552,5 +578,33 @@ describe "SpringAuthTagger (class-level annotations)" do
       JAVA
     endpoint = run_spring_class_level(mixed, 7)
     endpoint.tags.any? { |t| t.name == "auth" }.should be_false
+  end
+
+  it "stops the annotation walk at the previous handler's bodiless declaration" do
+    kotlin = <<-KT
+      @RestController
+      class AdminController {
+          @PreAuthorize("hasRole('ADMIN')")
+          @GetMapping("/admin")
+          fun admin() = "admin"
+
+          @GetMapping("/health")
+          fun health() = "ok"
+      }
+      KT
+    run_spring_class_level(kotlin, 7, "kt").tags.any? { |t| t.name == "auth" }.should be_false
+    run_spring_class_level(kotlin, 4, "kt").tags.any? { |t| t.name == "auth" }.should be_true
+
+    java_interface = <<-JAVA
+      public interface AdminApi {
+          @PreAuthorize("hasRole('ADMIN')")
+          @GetMapping("/admin")
+          String admin();
+          @GetMapping("/health")
+          String health();
+      }
+      JAVA
+    run_spring_class_level(java_interface, 5).tags.any? { |t| t.name == "auth" }.should be_false
+    run_spring_class_level(java_interface, 3).tags.any? { |t| t.name == "auth" }.should be_true
   end
 end

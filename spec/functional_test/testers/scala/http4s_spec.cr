@@ -20,6 +20,11 @@ expected_endpoints = [
   # AuthedRoutes mounted at /auth; the trailing `as user` must not become a path.
   Endpoint.new("/auth/profile", "GET"),
   Endpoint.new("/auth/account", "POST", [Param.new("body", "UpdateItem", "json")]),
+  # FindRoutes.scala: keys come from QueryMatchers.scala, not the bindings.
+  Endpoint.new("/find", "GET", [
+    Param.new("q", "", "query"),
+    Param.new("limit", "", "query"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/scala/http4s/", {

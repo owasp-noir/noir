@@ -133,7 +133,11 @@ module Analyzer::Specification
           return
         end
       end
-      if msg.as_h? && (payload = msg["payload"]?)
+      # AsyncAPI 2.x lets one operation carry several messages:
+      # `message: {oneOf: [...]}`.
+      if one_of = msg.as_h?.try(&.["oneOf"]?).try(&.as_a?)
+        one_of.each { |m| collect_message_payload_json(root, m, params, seen) }
+      elsif msg.as_h? && (payload = msg["payload"]?)
         collect_schema_props_json(root, payload, "json", params)
       end
     end
@@ -153,7 +157,7 @@ module Analyzer::Specification
 
       if props = schema["properties"]?.try(&.as_h?)
         props.each do |name, _|
-          params << Param.new(name.to_s, "", param_type)
+          add_param(params, name.to_s, param_type)
         end
       end
 
@@ -276,7 +280,11 @@ module Analyzer::Specification
           return
         end
       end
-      if msg.as_h? && (payload_node = msg[YAML::Any.new("payload")]?)
+      # AsyncAPI 2.x lets one operation carry several messages:
+      # `message: {oneOf: [...]}`.
+      if one_of = msg.as_h?.try(&.[YAML::Any.new("oneOf")]?).try(&.as_a?)
+        one_of.each { |m| collect_message_payload_yaml(root, m, params, seen) }
+      elsif msg.as_h? && (payload_node = msg[YAML::Any.new("payload")]?)
         collect_schema_props_yaml(root, payload_node, "json", params)
       end
     end
@@ -299,7 +307,7 @@ module Analyzer::Specification
       if props_node = schema[YAML::Any.new("properties")]?
         if props = props_node.as_h?
           props.each do |name, _|
-            params << Param.new(name.to_s, "", param_type)
+            add_param(params, name.to_s, param_type)
           end
         end
       end

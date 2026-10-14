@@ -160,6 +160,8 @@ module Analyzer::Go
         end
       end
 
+      named_scope = Noir::GoNamedHandler.scope(file_contents_cache)
+
       parallel_analyze(get_files_by_extension(".go")) do |path|
         next if GoEngine.go_test_file?(base_relative_path(path))
         next unless File.exists?(path)
@@ -209,7 +211,7 @@ module Analyzer::Go
         mounted_func_brace_count = 0
         # Named handlers (`r.Get("/a", listA)`): their bodies sit outside any
         # inline closure, so they are attributed to the route that names them.
-        named = Noir::GoNamedHandler.new(content, path, ts_routes)
+        named = Noir::GoNamedHandler.new(content, path, ts_routes, named_scope)
 
         lines.each_with_index do |line, index|
           next if named.claim?(index, line)

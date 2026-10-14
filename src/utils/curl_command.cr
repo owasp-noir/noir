@@ -30,7 +30,11 @@ module CurlCommand
 
   # The curl command for one verb of a baked endpoint: multipart when it has
   # a file field, `--data-raw` otherwise.
+  #
+  # HEAD goes out bodiless: `-I` refuses to combine with `--data-raw`/`-F`.
   def self.for_endpoint(method : String, baked, params) : String
+    return build(method, baked[:url], "", "", baked[:header], baked[:cookie]) if method == "HEAD"
+
     text_fields, file_fields = form_fields(params)
     if file_fields.empty?
       build(method, baked[:url], baked[:body], baked[:body_type], baked[:header], baked[:cookie])
@@ -41,14 +45,20 @@ module CurlCommand
 
   def self.build(method : String, url : String, body : String, body_type : String,
                  headers : Array(String), cookies : Array(String)) : String
-    parts = ["curl", "-i", "-g", "-X", shell_quote(method), shell_quote(url)]
+    parts = ["curl"] + method_flags(method) << shell_quote(url)
 
     unless body.empty?
       content_type = body_type == "json" ? "application/json" : "application/x-www-form-urlencoded"
       parts << "--data-raw"
       parts << shell_quote(body)
-      parts << "-H"
-      parts << shell_quote("Content-Type: #{content_type}")
+      # A header param naming the type (a HAR capture always carries one) is
+      # the real value, and adding ours sent two. An empty one names nothing,
+      # so ours replaces it instead of riding along as `Content-Type;`.
+      unless content_type_given?(headers)
+        headers = headers.reject { |header| content_type?(header) }
+        parts << "-H"
+        parts << shell_quote("Content-Type: #{content_type}")
+      end
     end
 
     append_headers_and_cookies(parts, headers, cookies)
@@ -73,7 +83,7 @@ module CurlCommand
                            text_fields : Array(Tuple(String, String)),
                            file_fields : Array(Tuple(String, String)),
                            headers : Array(String), cookies : Array(String)) : String
-    parts = ["curl", "-i", "-g", "-X", shell_quote(method), shell_quote(url)]
+    parts = ["curl"] + method_flags(method) << shell_quote(url)
 
     text_fields.each do |name, value|
       parts << "--form-string"
@@ -92,10 +102,28 @@ module CurlCommand
     parts.join(" ")
   end
 
+  # Whether baked `Name: value` headers carry a non-empty Content-Type.
+  private def self.content_type_given?(headers : Array(String)) : Bool
+    headers.any? { |header| content_type?(header) && !header.partition(": ")[2].empty? }
+  end
+
+  private def self.content_type?(header : String) : Bool
+    header.partition(": ")[0].compare("content-type", case_insensitive: true) == 0
+  end
+
+  # `-X HEAD` makes curl wait for a body the server never sends, hanging
+  # on a keep-alive connection; `-I` is curl's HEAD request.
+  private def self.method_flags(method : String) : Array(String)
+    method == "HEAD" ? ["-I", "-g"] : ["-i", "-g", "-X", shell_quote(method)]
+  end
+
   private def self.append_headers_and_cookies(parts : Array(String), headers : Array(String), cookies : Array(String))
     headers.each do |header|
+      # curl drops `-H 'Name: '` (and `Accept: ` removes its default
+      # Accept); `Name;` is its syntax for sending the header empty.
+      name, _, value = header.partition(": ")
       parts << "-H"
-      parts << shell_quote(header)
+      parts << shell_quote(value.empty? ? "#{name};" : header)
     end
 
     cookies.each do |cookie|

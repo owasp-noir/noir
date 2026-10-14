@@ -1,4 +1,6 @@
+require "file_utils"
 require "../../spec_helper"
+require "../../../src/models/code_locator"
 require "../../../src/analyzer/analyzers/crystal/kemal.cr"
 
 describe "mapping_to_path" do
@@ -209,5 +211,41 @@ describe "kemal namespace routing" do
     # Cleanup
     File.delete(temp_file)
     Dir.delete(temp_dir)
+  end
+end
+
+describe "kemal cross-file mounts" do
+  it "prefixes a router mounted from another file" do
+    temp_dir = File.tempname("kemal_mount")
+    files = {
+      "src/app.cr" => <<-CRYSTAL,
+        require "kemal"
+        require "./routes/users"
+        mount "/api", USERS_ROUTER
+        Kemal.run
+        CRYSTAL
+      "src/routes/users.cr" => <<-CRYSTAL,
+        USERS_ROUTER = Kemal::Router.new
+        USERS_ROUTER.namespace "/users" do
+          get "/:id" do |env|
+            env.params.url["id"]
+          end
+        end
+        CRYSTAL
+    }
+    CodeLocator.instance.clear_all
+    files.each do |relative, content|
+      path = File.join(temp_dir, relative)
+      Dir.mkdir_p(File.dirname(path))
+      File.write(path, content)
+      CodeLocator.instance.register_file(path, content)
+    end
+    options = create_test_options
+    options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+
+    Analyzer::Crystal::Kemal.new(options).analyze.map(&.url).should eq(["/api/users/:id"])
+  ensure
+    CodeLocator.instance.clear_all
+    FileUtils.rm_rf(temp_dir) if temp_dir
   end
 end

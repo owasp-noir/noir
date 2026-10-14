@@ -1,0 +1,14 @@
+{
+  "nodeModulesDir": "auto",
+  "tasks": {
+    "dev": "vite",
+    "build": "vite build",
+    "start": "deno serve -A _fresh/server.js"
+  },
+  "imports": {
+    "fresh": "jsr:@fresh/core@^2.1.1",
+    "preact": "npm:preact@^10.27.2",
+    "@preact/signals": "npm:@preact/signals@^2.2.1",
+    "vite": "npm:vite@^7.1.3"
+  }
+}

@@ -149,6 +149,36 @@ module Analyzer::Elixir
       ElixirEngine.test_path?(path)
     end
 
+    PLUG_ROUTER_USE_RE = /^\s*use\s+Plug\.Router\b/m
+    DEFMODULE_RE       = /\bdefmodule\s+([A-Z]\w*(?:\.[A-Z]\w*)*)\s+do\b/
+
+    # Every scanned Plug.Router module (`use Plug.Router`), keyed by the
+    # file's first `defmodule` name, mapped to its path. A `forward` to one
+    # of these mounts its routes under the forward path (Plug and Phoenix).
+    protected def plug_router_modules : Hash(String, String)
+      modules = {} of String => String
+      (get_files_by_extension(".ex") + get_files_by_extension(".exs")).each do |path|
+        next if elixir_test_path?(path)
+        content = read_file_content(path)
+        next unless content.includes?("Plug.Router") && content.matches?(PLUG_ROUTER_USE_RE)
+        if match = content.match(DEFMODULE_RE)
+          modules[match[1]] = path
+        end
+      end
+      modules
+    end
+
+    # The Plug.Router module a `forward` target names: as aliased by the
+    # enclosing Phoenix scope (`scope "/", AppWeb do`), as written, or via
+    # an `alias`ed last segment when exactly one module ends with it.
+    protected def resolve_plug_router(target : String, scope_module : String, modules : Hash(String, String)) : String?
+      scoped = scope_module.empty? ? target : "#{scope_module}.#{target}"
+      return scoped if modules.has_key?(scoped)
+      return target if modules.has_key?(target)
+      suffixed = modules.keys.select(&.ends_with?(".#{target}"))
+      suffixed.first if suffixed.size == 1
+    end
+
     # Phoenix uses `.ex` only; Plug also accepts `.exs`. Pull both from
     # the extension index instead of walking the whole `file_map` (which
     # includes every language in a monorepo) and re-filtering inside

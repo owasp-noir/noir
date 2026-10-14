@@ -1,0 +1,1 @@
+{"name":"api","main":"src/app.js","dependencies":{"express":"^4.19.2"}}

@@ -15,7 +15,6 @@ module Analyzer::Crystal
 
     NAMESPACE_PATTERN = /^(\s*)(?:(\w+)\.)?namespace\s+["'](.+?)["']/
     MOUNT_PATTERN     = /^\s*mount\s+["'](.+?)["']\s*,\s*(\w+)/
-    ROUTER_PATTERN    = /^\s*(\w+)\s*=\s*Kemal::Router\.new/
     # Compile-time macro var assignment, e.g. `{{namespace = Routes::API::V1}}`.
     # invidious sets it once, then registers 50+ routes as
     # `get "/…", {{namespace}}::Videos, :videos` — substituting it back lets
@@ -30,6 +29,8 @@ module Analyzer::Crystal
     @static_disabled_bases : Set(String) = Set(String).new
     @public_folders : Array(Tuple(String, String)) = [] of Tuple(String, String)
     @action_index : ActionIndex = ActionIndex.new
+    # {scan base, router variable} => mount path, over every Kemal file.
+    @project_mounts = {} of Tuple(String, String) => String
 
     def analyze
       # Apps like invidious register routes as `get "/", Routes::Misc, :home`
@@ -38,9 +39,27 @@ module Analyzer::Crystal
       if callees_needed?
         @action_index = build_crystal_action_index(get_files_by_extension(".cr"))
       end
+      collect_project_mounts
       super
       collect_public_dir_endpoints(@public_folders, @static_disabled_bases)
       @result
+    end
+
+    # `mount "/api", USERS_ROUTER` usually sits in the app file while the
+    # `Kemal::Router` it mounts lives in its own, so a per-file mount map
+    # left those routes unprefixed. Collected before the parallel walk.
+    private def collect_project_mounts
+      scan_target_files.each do |path|
+        next unless scan_accepts?(path)
+        content = read_file_content(path) rescue next
+        next unless content.includes?("mount")
+        base = configured_base_for(path)
+        mask_crystal_heredocs(content.lines).each do |line|
+          if line.includes?("mount") && (match = line.match(MOUNT_PATTERN))
+            @project_mounts[{base, match[2]}] = match[1]
+          end
+        end
+      end
     end
 
     def analyze_file(path : String) : Array(Endpoint)
@@ -56,15 +75,13 @@ module Analyzer::Crystal
       # Pre-scan: build mount_map (variable_name => mount_path) and resolve
       # compile-time macro variables used in controller references.
       # Cheap substring gates skip the PCRE2 scan on the vast majority of
-      # lines that can't be mounts/routers/macro-vars.
+      # lines that can't be mounts/macro-vars. The file's own mounts win
+      # over `@project_mounts`, so two files that each name a local router
+      # `api` keep their own prefixes.
       mount_map = {} of String => String
-      router_vars = Set(String).new
       macro_vars = {} of String => String
 
       lines.each do |line|
-        if line.includes?("Kemal::Router") && (match = line.match(ROUTER_PATTERN))
-          router_vars << match[1]
-        end
         if line.includes?("mount") && (match = line.match(MOUNT_PATTERN))
           mount_map[match[2]] = match[1]
         end
@@ -142,8 +159,8 @@ module Analyzer::Crystal
 
             # Determine router variable for mount lookup
             router_var = namespace_stack.first[:router_var]
-            if !router_var.empty? && mount_map.has_key?(router_var)
-              full_path = Noir::URLPath.join(mount_map[router_var], full_path)
+            if !router_var.empty? && (mount = mount_map[router_var]? || @project_mounts[{file_base, router_var}]?)
+              full_path = Noir::URLPath.join(mount, full_path)
             end
           end
 

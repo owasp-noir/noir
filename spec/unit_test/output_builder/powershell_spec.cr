@@ -57,7 +57,7 @@ describe "OutputBuilderPowershell" do
     put_line = lines[2]
     put_line.should start_with("Invoke-WebRequest -Method \"PUT\"")
     put_line.should contain("/api/products")
-    put_line.should contain("name=Updated Product")
+    put_line.should contain("name=Updated+Product")
     put_line.should contain("application/x-www-form-urlencoded")
   end
 

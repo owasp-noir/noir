@@ -96,11 +96,22 @@ module Analyzer::Dart
           # not serve the other verbs, so narrow it to GET (rather than the
           # fall-back verb set) and mark the protocol as WebSocket.
           websocket = websocket_route?(content)
-          methods = websocket ? ["GET"] : detect_methods(content)
+          cleaned = Noir::CComments.strip(content)
+          methods = websocket ? ["GET"] : detect_methods(cleaned)
+          # The whole file is the `onRequest` handler and its helpers; the
+          # verb dispatch is not followed, so every verb gets every input —
+          # except a body read, kept off GET/HEAD when another verb can own it.
+          params = Helper.request_params(cleaned)
+          body_verbs = methods.any? { |verb| verb != "GET" && verb != "HEAD" }
           callees = include_callee ? callees_for_on_request(content, path) : [] of Noir::DartCalleeExtractor::Entry
           mutex.synchronize do
             methods.each do |verb|
-              result << build_endpoint(url, verb, path, callees, websocket)
+              endpoint = build_endpoint(url, verb, path, callees, websocket)
+              params.each do |param|
+                next if body_verbs && (verb == "GET" || verb == "HEAD") && (param.param_type == "json" || param.param_type == "form")
+                endpoint.push_param(param)
+              end
+              result << endpoint
             end
           end
         end
@@ -203,9 +214,7 @@ module Analyzer::Dart
     # real handler body can't be mistaken for a rejection.
     METHOD_NOT_ALLOWED_REGEX = /methodNotAllowed|MethodNotAllowed|statusCode\s*:\s*405|\(\s*405\b/
 
-    private def detect_methods(content : String) : Array(String)
-      cleaned = Noir::CComments.strip(content)
-
+    private def detect_methods(cleaned : String) : Array(String)
       verbs = [] of String
       HTTP_METHOD_PATTERNS.each do |verb, method_pattern|
         # Dart Frog exposes verbs as `HttpMethod.<lowercase>` constants.

@@ -339,6 +339,74 @@ describe "detect_techs file walker" do
     end
   end
 
+  # `-t oas3 --only-techs js_express`: the forced spec tech still needs its
+  # detector, which is what registers the spec file for the analyzer.
+  it "keeps the detector of a -t tech under --only-techs" do
+    temp_dir = File.tempname("noir_detector_forced_tech")
+
+    begin
+      Dir.mkdir_p(temp_dir)
+      spec_path = File.join(temp_dir, "openapi.yaml")
+      File.write(spec_path, "openapi: 3.0.0\npaths:\n  /items:\n    get: {}\n")
+      File.write(File.join(temp_dir, "app.js"), "const express = require('express');\n")
+
+      options = create_test_options
+      options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+      options["techs"] = YAML::Any.new("oas3")
+      options["only_techs"] = YAML::Any.new("js_express")
+      logger = NoirLogger.new(false, false, false, true)
+      locator = CodeLocator.instance
+      locator.clear_all
+
+      techs, _ = detect_techs([temp_dir], options, [] of PassiveScan, logger)
+
+      techs.should contain("oas3")
+      techs.should contain("js_express")
+      locator.all(Noir::LocatorKeys::OAS3_YAML).should contain(spec_path)
+    ensure
+      FileUtils.rm_rf(temp_dir) if temp_dir
+      CodeLocator.instance.clear_all
+    end
+  end
+
+  it "prunes Mix deps and _build only next to mix.exs" do
+    temp_dir = File.tempname("noir_detector_mix_scoped")
+
+    begin
+      kept = [
+        File.join(temp_dir, "web", "deps", "routes.js"),
+        File.join(temp_dir, "app", "lib", "app_web", "router.ex"),
+      ]
+      pruned = [
+        File.join(temp_dir, "app", "deps", "plug", "lib", "plug", "router.ex"),
+        File.join(temp_dir, "app", "_build", "dev", "lib", "x.ex"),
+      ]
+      Dir.mkdir_p(File.join(temp_dir, "web"))
+      Dir.mkdir_p(File.join(temp_dir, "app"))
+      File.write(File.join(temp_dir, "web", "package.json"), %({"name": "x"}))
+      File.write(File.join(temp_dir, "app", "mix.exs"), "defmodule App.MixProject do\nend\n")
+      (kept + pruned).each do |path|
+        Dir.mkdir_p(File.dirname(path))
+        File.write(path, "# x\n")
+      end
+
+      options = create_test_options
+      options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+      logger = NoirLogger.new(false, false, false, true)
+      locator = CodeLocator.instance
+      locator.clear_all
+
+      detect_techs([temp_dir], options, [] of PassiveScan, logger)
+      files = locator.all_files
+
+      kept.each { |path| files.should contain(path) }
+      pruned.each { |path| files.should_not contain(path) }
+    ensure
+      FileUtils.rm_rf(temp_dir) if temp_dir
+      CodeLocator.instance.clear_all
+    end
+  end
+
   it "prunes deploy staging, stale dist and dependency vendor trees without a sibling manifest" do
     temp_dir = File.tempname("noir_detector_build_evidence")
 

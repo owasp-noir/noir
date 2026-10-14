@@ -176,4 +176,36 @@ describe "FastAPIAuthTagger" do
       FileUtils.rm_rf(tmpdir)
     end
   end
+
+  it "ends a handler's signature at a trailing comment or a one-line def" do
+    tmpdir = File.tempname("fastapi_header_end")
+    Dir.mkdir_p(tmpdir)
+    main = File.join(tmpdir, "main.py")
+    File.write(main, <<-PY)
+      @app.get("/public")
+      async def public_items():  # no auth needed (yet)
+          return {"items": []}
+
+      @app.get("/ping")
+      def ping(): return "pong"
+
+      @app.get("/me")
+      async def me(user: User = Depends(get_current_user)):
+          return user
+      PY
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      public_items, ping, me = [1, 5, 8].map { |line| Endpoint.new("/#{line}", "GET", [] of Param, Details.new(PathInfo.new(main, line))) }
+
+      FastAPIAuthTagger.new(noir_options).perform([public_items, ping, me])
+
+      public_items.tags.should be_empty
+      ping.tags.should be_empty
+      me.tags.map(&.description).should eq(["Protected by FastAPI Depends(get_current_user)"])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+    end
+  end
 end
