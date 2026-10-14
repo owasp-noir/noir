@@ -62,6 +62,12 @@ describe MobileLaunch do
     it "quotes twice if metacharacters are present" do
       helper.device_shell_quote("hello&world").should eq("''\\''hello&world'\\'''")
     end
+
+    # One layer leaves the device shell with nothing at all, so the argument
+    # vanishes and every following extra shifts by one.
+    it "quotes an empty string twice so the device shell still sees an argument" do
+      helper.device_shell_quote("").should eq("''\\'''\\'''")
+    end
   end
 
   describe "#plural" do

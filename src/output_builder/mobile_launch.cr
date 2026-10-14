@@ -56,7 +56,7 @@ module MobileLaunch
   def device_shell_quote(str : String) : String
     # Escaped first: the `\` that escaping adds is itself a device metachar.
     str = ControlChars.escape(str)
-    return shell_quote(str) unless str.matches?(DEVICE_SHELL_METACHARS)
+    return shell_quote(str) unless str.empty? || str.matches?(DEVICE_SHELL_METACHARS)
     shell_quote(shell_quote(str))
   end
 
