@@ -222,6 +222,10 @@ module Analyzer::Mobile
           # A bare `*` host matches any authority — it carries no specific
           # target, so treat it as host-less (`scheme://*` == `scheme://`).
           # A wildcard *subdomain* (`*.example.com`) is kept as-is.
+          # Android pairs `port` with the host of the same <data> element (a
+          # port with no host is ignored), so it is part of the authority.
+          port = resolve(attr(data, "port"), strings, placeholders)
+          host = "#{host}:#{port}" if port && !port.empty? && !host.empty? && host != "*"
           hosts << host unless host.empty? || host == "*"
         end
         norm = normalize_path(data, strings, placeholders)

@@ -391,6 +391,13 @@ describe "Analyzer::Mobile::Android (legacy manifest)" do
         <receiver android:name=".CmdReceiver">
           <intent-filter><action android:name="com.ex.legacy.RUN_COMMAND"/></intent-filter>
         </receiver>
+        <activity android:name=".PortActivity" android:exported="true">
+          <intent-filter android:autoVerify="true">
+            <action android:name="android.intent.action.VIEW"/>
+            <category android:name="android.intent.category.BROWSABLE"/>
+            <data android:scheme="https" android:host="ex.com" android:port="8443" android:path="/x"/>
+          </intent-filter>
+        </activity>
         <receiver android:name=".Hidden" android:exported="false">
           <intent-filter><action android:name="com.ex.legacy.HIDDEN"/></intent-filter>
         </receiver>
@@ -406,6 +413,10 @@ describe "Analyzer::Mobile::Android (legacy manifest)" do
 
   it "reports an action-only component with no exported attribute" do
     urls.should contain("intent://com.ex.legacy/.CmdReceiver")
+  end
+
+  it "keeps android:port in the deep-link authority" do
+    urls.should contain("https://ex.com:8443/x")
   end
 
   it "still drops one that is explicitly not exported" do
