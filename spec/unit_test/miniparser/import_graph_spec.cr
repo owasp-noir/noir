@@ -418,6 +418,19 @@ describe Noir::ImportGraph::Python do
       end
     end
 
+    it "resolves imports indented inside a function" do
+      with_tmpdir do |root|
+        Dir.mkdir_p(File.join(root, "views"))
+        target = File.join(root, "views", "posts.py")
+        File.write(target, "")
+        from_file = File.join(root, "app.py")
+        content = "def create_app():\n    from views import posts\n"
+
+        result = Noir::ImportGraph::Python.find_imported_modules(root, from_file, content)
+        result["posts"]?.try(&.[0]).should eq(target)
+      end
+    end
+
     it "returns an empty map when no imports resolve to files" do
       with_tmpdir do |root|
         from_file = File.join(root, "app.py")
@@ -438,6 +451,39 @@ describe Noir::ImportGraph::Python do
 
         result = Noir::ImportGraph::Python.find_imported_modules(root, from_file)
         result.has_key?("x").should be_true
+      end
+    end
+  end
+
+  describe "#find_imported_symbols" do
+    it "maps local names to the declaring file and declared name, including indented imports" do
+      with_tmpdir do |root|
+        app = File.join(root, "app")
+        Dir.mkdir_p(File.join(app, "auth"))
+        Dir.mkdir_p(File.join(app, "api"))
+        [File.join(app, "__init__.py"), File.join(app, "auth", "__init__.py"),
+         File.join(app, "api", "__init__.py"), File.join(app, "api", "users.py")].each { |f| File.write(f, "") }
+        from_file = File.join(app, "__init__.py")
+        content = "from .api.users import bp as users_bp\n" \
+                  "def create_app():\n" \
+                  "    from .auth import auth as auth_blueprint\n" \
+                  "    from app import api\n"
+
+        result = Noir::ImportGraph::Python.find_imported_symbols(root, from_file, content)
+        result["users_bp"].should eq({File.join(app, "api", "users.py"), "bp"})
+        result["auth_blueprint"].should eq({File.join(app, "auth", "__init__.py"), "auth"})
+        result["api"].should eq({File.join(app, "api", "__init__.py"), ""})
+      end
+    end
+
+    it "resolves `from . import name` to the package __init__.py" do
+      with_tmpdir do |root|
+        Dir.mkdir_p(File.join(root, "auth"))
+        File.write(File.join(root, "auth", "__init__.py"), "")
+        from_file = File.join(root, "auth", "views.py")
+
+        result = Noir::ImportGraph::Python.find_imported_symbols(root, from_file, "from . import auth\n")
+        result["auth"].should eq({File.join(root, "auth", "__init__.py"), "auth"})
       end
     end
   end

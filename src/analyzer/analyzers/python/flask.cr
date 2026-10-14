@@ -409,27 +409,8 @@ module Analyzer::Python
         state.blueprint_mounts[fs.path] ||= [] of Tuple(::String, ::String, ::String?)
         state.blueprint_mounts[fs.path] << {parent_name, blueprint_name, blueprint_mount_prefix}
 
-        if url_prefix_match
-          resolved = false
-          parser = get_parser(fs.path)
-          if parser.@global_variables.has_key?(blueprint_name)
-            gv = parser.@global_variables[blueprint_name]
-            if gv.type == "Blueprint"
-              add_registered_prefix(state.register_blueprint, gv.path, blueprint_name, url_prefix_match[1])
-              resolved = true
-            end
-          end
-
-          # Cross-file resolution: resolve imported blueprint via import map
-          unless resolved
-            import_map = (fs.import_map_cache ||= find_imported_modules(fs.base_path, fs.path))
-            if import_map.has_key?(blueprint_name)
-              source_file, _package_type = import_map[blueprint_name]
-              if !source_file.empty? && File.exists?(source_file)
-                add_registered_prefix(state.register_blueprint, source_file, blueprint_name, url_prefix_match[1])
-              end
-            end
-          end
+        if url_prefix_match && (declaration = blueprint_declaration(fs.path, blueprint_name))
+          add_registered_prefix(state.register_blueprint, declaration[0], declaration[1], url_prefix_match[1])
         end
       end
     end
@@ -783,6 +764,8 @@ module Analyzer::Python
             # flask-restx namespace whose `add_namespace(...)` (with the
             # blueprint url_prefix) was resolved in a different file.
             prefix = namespace_prefix
+          elsif prefixes = imported_router_prefixes(state.path_api_instances, state.register_blueprint, path, router_name)
+            prefix = prefixes.first
           else
             parser = get_parser(path)
             prefix = extract_namespace_prefix(parser, router_name, "")
@@ -897,9 +880,7 @@ module Analyzer::Python
         class_view_list.each do |class_view_info|
           _, path, route_path, class_name, _, methods = class_view_info
 
-          api_instances = state.path_api_instances[path]
-          prefix = api_instances.has_key?(router_name) ? api_instances[router_name] : ""
-          prefixes = route_prefixes(state.register_blueprint, path, router_name, prefix)
+          prefixes = router_prefixes(state.path_api_instances, state.register_blueprint, path, router_name)
 
           # Try to use parser to find class definition, otherwise assume same file
           class_file = path
