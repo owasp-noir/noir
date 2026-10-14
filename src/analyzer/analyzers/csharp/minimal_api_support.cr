@@ -22,6 +22,7 @@ module Analyzer::CSharp::MinimalApiSupport
   MAP_ANY_PREFIX_RE = /\.?\s*Map(?:Get|Post|Put|Delete|Patch|Head|Options|Methods)?\s*(?:<[^<>()]*>\s*)?\(/
 
   private def analyze_minimal_api_files(include_callee : Bool)
+    sources = [] of Tuple(String, String)
     get_files_by_extension(".cs").each do |file|
       next unless File.exists?(file)
       next if Common.csharp_test_path?(base_relative_path(file))
@@ -30,10 +31,98 @@ module Analyzer::CSharp::MinimalApiSupport
       # Carter modules register minimal-API routes too, but under a module
       # base path this analyzer can't see — `cs_carter` owns them.
       next if Common.carter_module_source?(content)
-      next unless minimal_api_source?(content)
-
-      analyze_minimal_api_content(file, content, include_callee)
+      sources << {file, content}
     end
+
+    extension_scopes = route_group_extension_scopes(sources)
+    sources.each do |file, content|
+      next unless minimal_api_source?(content)
+      analyze_minimal_api_content(file, content, include_callee, extension_scopes[file]? || [] of ExtensionScope)
+    end
+  end
+
+  # A `static … MapTodosApi(this RouteGroupBuilder group)` extension method:
+  # the routes it registers on `group` take the prefix of whichever
+  # `MapGroup(...)` it is called on, possibly from another file —
+  #
+  #   app.MapGroup("/public/todos").MapTodosApi();
+  #   app.MapGroup("/private/todos").MapTodosApi();
+  ROUTE_BUILDER_EXTENSION_RE = /\bstatic\s[^;{}()=]*?\b([A-Za-z_][A-Za-z0-9_]*)\s*(?:<[^<>()]*>\s*)?\(\s*this\s+(?:RouteGroupBuilder|IEndpointRouteBuilder|WebApplication)\b/
+
+  # `{body_line_range, caller_prefixes}` of one extension method in a file.
+  alias ExtensionScope = Tuple(Range(Int32, Int32), Array(String))
+
+  # Maps each file to its route-builder extension method bodies and the group
+  # prefix of every call site of each, so a route inside one is emitted once
+  # per caller prefix. Call sites inside another such extension compose with
+  # that extension's own caller prefixes.
+  private def route_group_extension_scopes(sources : Array(Tuple(String, String))) : Hash(String, Array(ExtensionScope))
+    decls = [] of Tuple(String, String, Range(Int32, Int32))
+    sources.each do |file, content|
+      next unless content.matches?(ROUTE_BUILDER_EXTENSION_RE)
+      lexer = Noir::CSharpLexer.new(content)
+      code = lexer.code_source
+      lines = lexer.code_lines
+      masked_lines = lexer.masked_lines
+      code.scan(ROUTE_BUILDER_EXTENSION_RE) do |m|
+        decl_index = code[0...m.begin].count('\n')
+        _, sig_end = build_signature(lines, masked_lines, decl_index)
+        body, body_index, _ = extract_callable_body(lines, masked_lines, sig_end)
+        next if body.empty?
+        decls << {m[1], file, decl_index..(body_index + Math.max(body.count('\n') - 1, 0))}
+      end
+    end
+    scopes = Hash(String, Array(ExtensionScope)).new
+    return scopes if decls.empty?
+
+    names = decls.map(&.[0]).uniq!
+    call_re = /\.\s*(#{names.map { |n| Regex.escape(n) }.join('|')})\s*(?:<[^<>()]*>\s*)?\(/
+    calls = [] of Tuple(String, String, Int32, String)
+    sources.each do |file, content|
+      next unless content.matches?(call_re)
+      lexer = Noir::CSharpLexer.new(content)
+      masked = lexer.masked_source
+      code = lexer.code_source
+      group_prefixes = extract_map_group_prefixes(code)
+      masked.scan(call_re) do |m|
+        stmt_start = (masked.rindex(/[;{}]/, m.begin) || -1) + 1
+        head = code[stmt_start...m.begin]
+        local = group_chain_prefix(head, group_prefixes)
+        if local.empty? && (receiver = head.match(/([A-Za-z_][A-Za-z0-9_]*)\s*\z/))
+          local = group_prefixes[receiver[1]]? || ""
+        end
+        calls << {m[1], file, masked[0...m.begin].count('\n'), local}
+      end
+    end
+
+    memo = Hash(String, Array(String)).new
+    decls.each do |name, file, range|
+      prefixes = extension_caller_prefixes(name, decls, calls, memo, Set(String).new)
+      (scopes[file] ||= [] of ExtensionScope) << {range, prefixes}
+    end
+    scopes
+  end
+
+  # ponytail: extensions are keyed by method name, so two same-named
+  # extensions share their callers' prefixes; key by declaring type if that
+  # ever surfaces.
+  private def extension_caller_prefixes(name : String, decls : Array(Tuple(String, String, Range(Int32, Int32))),
+                                        calls : Array(Tuple(String, String, Int32, String)),
+                                        memo : Hash(String, Array(String)), seen : Set(String)) : Array(String)
+    if cached = memo[name]?
+      return cached
+    end
+    return [""] unless seen.add?(name)
+
+    sites = calls.select { |call| call[0] == name }
+    return memo[name] = [""] if sites.empty?
+
+    prefixes = sites.flat_map do |_, file, line, local|
+      outer = decls.find { |decl| decl[1] == file && decl[2].includes?(line) }
+      outer_prefixes = outer ? extension_caller_prefixes(outer[0], decls, calls, memo, seen) : [""]
+      outer_prefixes.map { |outer_prefix| join_route_parts(outer_prefix, local) }
+    end
+    memo[name] = prefixes.uniq.map { |prefix| prefix == "/" ? "" : prefix }
   end
 
   MINIMAL_API_MARKER_RE = /\.\s*Map(?:Get|Post|Put|Delete|Patch|Head|Options|Methods)\s*(?:<[^<>()]*>\s*)?\(/
@@ -49,7 +138,8 @@ module Analyzer::CSharp::MinimalApiSupport
       content.includes?("RouteGroupBuilder")
   end
 
-  private def analyze_minimal_api_content(file : String, content : String, include_callee : Bool)
+  private def analyze_minimal_api_content(file : String, content : String, include_callee : Bool,
+                                          extension_scopes : Array(ExtensionScope) = [] of ExtensionScope)
     lexer = Noir::CSharpLexer.new(content)
     # Scan comment-blanked source: ASP.NET Core's own libraries carry
     # `/// app.MapGet("/from-route/{id}", …)` inside `<example>` XML docs and
@@ -61,9 +151,12 @@ module Analyzer::CSharp::MinimalApiSupport
     group_prefixes = extract_map_group_prefixes(lexer.code_source)
 
     each_map_block(lines, masked_lines, 0...lines.size, group_prefixes) do |block, index, chain_prefix|
-      extract_endpoints_from_map_block(block, group_prefixes, file, index + 1, lines, masked_lines,
-        include_callee, chain_prefix: chain_prefix).each do |endpoint|
-        @result << endpoint
+      caller_prefixes = extension_scopes.find(&.[0].includes?(index)).try(&.[1]) || [""]
+      caller_prefixes.each do |route_prefix|
+        extract_endpoints_from_map_block(block, group_prefixes, file, index + 1, lines, masked_lines,
+          include_callee, route_prefix: route_prefix, chain_prefix: chain_prefix).each do |endpoint|
+          @result << endpoint
+        end
       end
     end
   end

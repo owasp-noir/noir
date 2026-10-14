@@ -18,6 +18,7 @@ describe Analyzer::CSharp::Common do
       Analyzer::CSharp::Common.csharp_service_type?("HooksRepository").should be_true
       Analyzer::CSharp::Common.csharp_service_type?("OrderService").should be_true
       Analyzer::CSharp::Common.csharp_service_type?("AppDbContext").should be_true
+      Analyzer::CSharp::Common.csharp_service_type?("TodoDb").should be_true
     end
 
     it "treats known framework types as services" do

@@ -155,10 +155,11 @@ module Analyzer::CSharp::Common
   # Bitwarden injects `AccessRequestEndpointsHandler handler` straight into its
   # handler delegates and Carter's sample injects `EndpointDataSource`, both of
   # which surfaced as query parameters. Neither suffix names a request DTO in
-  # practice.
+  # practice. `Db` is the DbContext naming of Microsoft's own minimal-API
+  # samples (`TodoDb : DbContext`, injected as `TodoDb db`).
   SERVICE_TYPE_SUFFIXES = %w[
     Repository Service Services Manager Mediator Mapper Accessor
-    Dispatcher Publisher DbContext Context Logger Handler DataSource
+    Dispatcher Publisher DbContext Context Logger Handler DataSource Db
   ]
 
   # Heuristic for whether a parameter's *type* names a dependency-injected
