@@ -207,4 +207,46 @@ describe "Ruby route gaps" do
       param_names(find_ep(endpoints, "GET", "/whoami"), "header").should eq(%w[User-Agent])
     end
   end
+
+  it "types Hanami params once and keeps slice routes to their own actions" do
+    endpoints = scan_ruby_tree({
+      "Gemfile"          => %(gem "hanami", "~> 2.1"\n),
+      "config/routes.rb" => <<-RUBY,
+      module Bookshelf
+        class Routes < Hanami::Routes
+          get "/books", to: "books.index"
+          post "/books", to: "books.create"
+          slice :admin, at: "/admin" do
+            get "/books", to: "books.index"
+          end
+        end
+      end
+      RUBY
+      "app/actions/books/index.rb" => <<-RUBY,
+      class Index < Bookshelf::Action
+        params do
+          optional(:page).value(:integer)
+        end
+        def handle(request, response)
+          request.params[:page]
+        end
+      end
+      RUBY
+      "app/actions/books/create.rb" => <<-RUBY,
+      class Create < Bookshelf::Action
+        params do
+          required(:title).filled(:string)
+        end
+        def handle(request, response)
+          request.params[:title]
+        end
+      end
+      RUBY
+      "slices/admin/actions/books/index.rb" => "class Index < Admin::Action\n  def handle(request, response)\n    request.params[:q]\n  end\nend\n",
+    })
+
+    find_ep(endpoints, "GET", "/books").params.map { |p| "#{p.name}:#{p.param_type}" }.should eq(%w[page:query])
+    find_ep(endpoints, "POST", "/books").params.map { |p| "#{p.name}:#{p.param_type}" }.should eq(%w[title:json])
+    find_ep(endpoints, "GET", "/admin/books").params.map { |p| "#{p.name}:#{p.param_type}" }.should eq(%w[q:query])
+  end
 end

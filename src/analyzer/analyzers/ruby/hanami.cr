@@ -406,18 +406,20 @@ module Analyzer::Ruby
       action = normalize_action_target(target)
       candidates = [] of String
 
+      # A slice's routes resolve inside that slice only; falling back to the
+      # app's same-named action handed the slice route the app's params.
       if slice
         candidates << "#{framework_root}/slices/#{slice}/actions/#{action}.rb"
         candidates << "#{framework_root}/slices/#{slice}/lib/actions/#{action}.rb"
         candidates << "#{framework_root}/slices/#{slice}/controllers/#{action}.rb"
         candidates << "#{framework_root}/apps/#{slice}/controllers/#{action}.rb"
+      else
+        candidates << "#{framework_root}/app/actions/#{action}.rb"
+        candidates << "#{framework_root}/app/controllers/#{action}.rb"
+        candidates << "#{framework_root}/actions/#{action}.rb"
+        candidates << "#{framework_root}/controllers/#{action}.rb"
+        candidates << "#{framework_root}/lib/actions/#{action}.rb"
       end
-
-      candidates << "#{framework_root}/app/actions/#{action}.rb"
-      candidates << "#{framework_root}/app/controllers/#{action}.rb"
-      candidates << "#{framework_root}/actions/#{action}.rb"
-      candidates << "#{framework_root}/controllers/#{action}.rb"
-      candidates << "#{framework_root}/lib/actions/#{action}.rb"
 
       candidates.find { |path| File.exists?(path) } || ""
     end
@@ -458,51 +460,30 @@ module Analyzer::Ruby
           # Match required(:name) or optional(:name) with any validation method
           line.scan(/(?:required|optional)\(:([\w]+)\)/) do |match|
             if match.size > 1
-              param_name = match[1]
-              # Determine if it's JSON or form based on content type
-              param_type = "json"
-              endpoint.push_param(Param.new(param_name, "", param_type))
+              # Declared params arrive in the query string on a bodyless verb.
+              param_type = endpoint.method.in?("GET", "HEAD", "DELETE") ? "query" : "json"
+              endpoint.push_param(Param.new(match[1], "", param_type))
             end
           end
         end
 
-        # Extract query parameters from request.params[:name]
-        line.scan(/request\.params\[:([\w]+)\]/) do |match|
-          if match.size > 1
-            param_name = match[1]
-            endpoint.push_param(Param.new(param_name, "", "query"))
-          end
+        # Extract query parameters from request.params[:name] / ["name"]; a
+        # read of a param the `params do` block already declared is that
+        # same param, not a second one.
+        line.scan(/request\.params\[(?::(\w+)|['"](\w+)['"])\]/) do |match|
+          param_name = match[1]? || match[2]
+          next if endpoint.params.any?(&.name.==(param_name))
+          endpoint.push_param(Param.new(param_name, "", "query"))
         end
 
-        # Extract query parameters from request.params["name"]
-        line.scan(/request\.params\[['"](\w+)['"]\]/) do |match|
-          if match.size > 1
-            param_name = match[1]
-            endpoint.push_param(Param.new(param_name, "", "query"))
-          end
-        end
-
-        # Extract query parameters from params[:name] (without request prefix)
-        # Use word boundary to avoid matching params inside method names or identifiers
-        # Avoid matching inside params do blocks
+        # Extract query parameters from params[:name] / ["name"] (without
+        # request prefix). Word boundary avoids matching inside identifiers;
+        # skipped inside `params do` blocks.
         unless in_params_block
-          line.scan(/(?<!\.)\bparams\[:([\w]+)\]/) do |match|
-            if match.size > 1
-              param_name = match[1]
-              endpoint.push_param(Param.new(param_name, "", "query"))
-            end
-          end
-        end
-
-        # Extract query parameters from params["name"] (without request prefix)
-        # Use word boundary to avoid matching params inside method names or identifiers
-        # Avoid matching inside params do blocks
-        unless in_params_block
-          line.scan(/(?<!\.)\bparams\[['"](\w+)['"]\]/) do |match|
-            if match.size > 1
-              param_name = match[1]
-              endpoint.push_param(Param.new(param_name, "", "query"))
-            end
+          line.scan(/(?<!\.)\bparams\[(?::(\w+)|['"](\w+)['"])\]/) do |match|
+            param_name = match[1]? || match[2]
+            next if endpoint.params.any?(&.name.==(param_name))
+            endpoint.push_param(Param.new(param_name, "", "query"))
           end
         end
 
