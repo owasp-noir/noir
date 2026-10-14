@@ -120,4 +120,49 @@ describe "Ruby route gaps" do
     find_ep(endpoints, "GET", "/terms")
     param_names(find_ep(endpoints, "GET", "/about"), "query").should eq(%w[lang])
   end
+
+  it "keeps Grape mount paths and types declared GET params as query" do
+    endpoints = scan_ruby_tree({
+      "Gemfile"         => %(source "https://rubygems.org"\ngem "grape"\n),
+      "app/api/root.rb" => <<-RUBY,
+       module API
+         class Root < Grape::API
+           prefix :api
+           mount API::Users
+           mount API::Social => "/social"
+         end
+       end
+       RUBY
+      "app/api/users.rb" => <<-RUBY,
+        module API
+          class Users < Grape::API
+            resource :users do
+              params do
+                optional :page, type: Integer
+              end
+              get do
+              end
+              params do
+                requires :name, type: String
+              end
+              post do
+              end
+            end
+          end
+        end
+        RUBY
+      "app/api/social.rb" => <<-RUBY,
+        module API
+          class Social < Grape::API
+            get :feed do
+            end
+          end
+        end
+        RUBY
+    })
+
+    find_ep(endpoints, "GET", "/social/api/feed")
+    param_names(find_ep(endpoints, "GET", "/api/users"), "query").should eq(%w[page])
+    param_names(find_ep(endpoints, "POST", "/api/users"), "json").should eq(%w[name])
+  end
 end

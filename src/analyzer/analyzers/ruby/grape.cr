@@ -65,17 +65,18 @@ module Analyzer::Ruby
     GRAPE_CLASS_EDGE   = /^\s*class\s+([A-Z][\w:]*)\s*<\s*([:\w][\w:]*)/
     GRAPE_PREFIX_DECL  = /^\s*prefix\s+['":]([\w\/]+)['"]?/
     GRAPE_VERSION_DECL = /^\s*version\s+(.+)\busing:\s*:path\b/
-    GRAPE_MOUNT_DECL   = /^\s*mount\s+([:\w][\w:]*)/
+    # `mount Child` / `mount Child => "/path"` (capture 2: the mount path).
+    GRAPE_MOUNT_DECL = /^\s*mount\s+([:\w][\w:]*)(?:\s*=>\s*['"]([^'"]*)['"])?/
 
     # Build the transitive closure of Grape classes and the mount-inherited
     # prefix per class. Names are reduced to their final `::` segment so
     # `::API::Base`, `API::Base` and `Base` all match `class Base < Grape::API`.
     private def build_grape_index : GrapeIndex
-      edges = {} of String => String         # child class -> super class
-      grape = Set(String).new                # classes that ARE a Grape::API
-      own_base = {} of String => String      # class -> its own prefix+version
-      mounts = {} of String => Array(String) # mounter class -> mounted classes
-      mounted = Set(String).new              # classes mounted by someone
+      edges = {} of String => String                   # child class -> super class
+      grape = Set(String).new                          # classes that ARE a Grape::API
+      own_base = {} of String => String                # class -> its own prefix+version
+      mounts = {} of String => Array({String, String}) # mounter class -> {mounted class, mount path}
+      mounted = Set(String).new                        # classes mounted by someone
 
       all_files.each do |path|
         next unless path.ends_with?(".rb")
@@ -124,7 +125,7 @@ module Analyzer::Ruby
               own_base[cls] = grape_join_segments(prefix, version)
             elsif raw_line.includes?("mount") && (m = raw_line.match(GRAPE_MOUNT_DECL))
               mounted_child = grape_simple_class_name(m[1])
-              (mounts[cls] ||= [] of String) << mounted_child
+              (mounts[cls] ||= [] of {String, String}) << {mounted_child, m[2]? || ""}
               mounted << mounted_child
               # A class reached only through `mount` (its own definition file
               # may not be in the pre-pass set) is still a Grape API — record
@@ -150,18 +151,21 @@ module Analyzer::Ruby
 
       # Propagate prefixes down the mount graph from each root aggregator
       # (a Grape class nobody mounts). A child mounted by P inherits P's
-      # full path = P's inherited prefix + P's own prefix/version.
+      # prefix/version on top of P's own, and the `=> "/path"` mount paths
+      # along the way. Grape puts every mount path ahead of the inherited
+      # prefix (`Grape::Path#parts`: mount_path, root_prefix, version), so
+      # the two are carried apart and joined in that order.
       inherited = Hash(String, String).new("")
       roots = grape.select { |c| !mounted.includes?(c) }
       visited = Set(String).new
-      queue = roots.map { |r| {r, ""} }
+      queue = roots.map { |r| {r, "", ""} }
       until queue.empty?
-        cls, prefix = queue.shift
+        cls, mount_path, prefix = queue.shift
         next unless visited.add?(cls)
-        inherited[cls] = prefix
+        inherited[cls] = grape_join_segments(mount_path, prefix)
         child_prefix = grape_join_segments(prefix, own_base[cls]? || "")
-        (mounts[cls]? || [] of String).each do |child|
-          queue << {child, child_prefix}
+        (mounts[cls]? || [] of {String, String}).each do |child, at|
+          queue << {child, grape_join_segments(mount_path, at), child_prefix}
         end
       end
 
@@ -301,7 +305,7 @@ module Analyzer::Ruby
 
             pending_params.each do |param_name|
               next if raw_path.includes?(":#{param_name}")
-              endpoint.push_param(Param.new(param_name, "", "json"))
+              endpoint.push_param(Param.new(param_name, "", declared_param_type(verb)))
             end
             pending_params.clear
 
@@ -323,7 +327,7 @@ module Analyzer::Ruby
             end
 
             pending_params.each do |param_name|
-              endpoint.push_param(Param.new(param_name, "", "json"))
+              endpoint.push_param(Param.new(param_name, "", declared_param_type(verb)))
             end
             pending_params.clear
 
@@ -382,6 +386,12 @@ module Analyzer::Ruby
       literal_symbol = raw_match.starts_with?(':')
       path = raw_match.gsub(/['"]/, "")
       literal_symbol ? path.lchop(':') : path
+    end
+
+    # `params do; requires :x; end` declares the request's params; Grape reads
+    # them from the query string on a bodyless verb and the body otherwise.
+    private def declared_param_type(verb : String) : String
+      verb.in?("get", "head", "delete") ? "query" : "json"
     end
 
     private def push_grape_param(endpoint : Endpoint, param : Param)
