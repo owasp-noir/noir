@@ -374,4 +374,44 @@ describe "RubyAuthTagger (Sinatra route scope)" do
       FileUtils.rm_rf(dir)
     end
   end
+
+  it "applies a path-scoped before filter only to the routes it matches" do
+    dir = File.tempname("noir_sinatra_before")
+    Dir.mkdir_p(dir)
+    app = File.join(dir, "app.rb")
+    File.write(app, <<-RB)
+      require 'sinatra'
+
+      before '/admin/*' do
+        protected!
+      end
+
+      get '/admin/panel' do
+        "admin"
+      end
+
+      get '/public/health' do
+        "ok"
+      end
+      RB
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(dir)
+      at = ->(url : String, line : Int32) do
+        details = Details.new(PathInfo.new(app, line))
+        details.technology = "ruby_sinatra"
+        Endpoint.new(url, "GET", [] of Param, details)
+      end
+      admin = at.call("/admin/panel", 7)
+      health = at.call("/public/health", 11)
+
+      RubyAuthTagger.new(noir_options).perform([admin, health])
+
+      admin.tags.should_not be_empty
+      health.tags.should be_empty
+    ensure
+      FileUtils.rm_rf(dir)
+    end
+  end
 end

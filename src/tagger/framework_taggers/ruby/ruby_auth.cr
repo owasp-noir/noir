@@ -188,14 +188,14 @@ class RubyAuthTagger < FrameworkTagger
       return if authn_desc || authz_desc || controller[:skipped] || controller[:opted_out]
 
       # Check Sinatra/Rack patterns in context
-      description = check_sinatra_auth(lines, line_idx)
+      description = check_sinatra_auth(lines, line_idx, endpoint.url)
       if description
         endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "ruby_auth"))
         return
       end
 
       # Check Grape patterns (before blocks, http_basic, etc.)
-      description = check_grape_auth(lines, line_idx)
+      description = check_grape_auth(lines, line_idx, endpoint.url)
       if description
         endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "ruby_auth"))
         return
@@ -447,8 +447,8 @@ class RubyAuthTagger < FrameworkTagger
     nil
   end
 
-  private def check_sinatra_auth(lines : Array(String), route_line : Int32) : String?
-    match_route_scope(lines, route_line, SINATRA_AUTH_PATTERNS)
+  private def check_sinatra_auth(lines : Array(String), route_line : Int32, url : String) : String?
+    match_route_scope(lines, route_line, SINATRA_AUTH_PATTERNS, url)
   end
 
   private def extract_action_name(lines : Array(String), line_idx : Int32) : String?
@@ -458,8 +458,8 @@ class RubyAuthTagger < FrameworkTagger
     match ? match[1] : nil
   end
 
-  private def check_grape_auth(lines : Array(String), route_line : Int32) : String?
-    match_route_scope(lines, route_line, GRAPE_AUTH_PATTERNS)
+  private def check_grape_auth(lines : Array(String), route_line : Int32, url : String) : String?
+    match_route_scope(lines, route_line, GRAPE_AUTH_PATTERNS, url)
   end
 
   # Sinatra/Grape guards that cover the route at `route_line`: its own block
@@ -472,7 +472,7 @@ class RubyAuthTagger < FrameworkTagger
   # own `protected!` call.
   # ponytail: filters declared below the route are not seen; Sinatra applies
   # them anyway — scan forward too if that shape turns up.
-  private def match_route_scope(lines : Array(String), route_line : Int32, patterns) : String?
+  private def match_route_scope(lines : Array(String), route_line : Int32, patterns, url : String) : String?
     scope = ruby_block_lines(lines, route_line)
     indent = line_indent(lines[route_line])
     (route_line - 1).downto(0) do |idx|
@@ -481,7 +481,9 @@ class RubyAuthTagger < FrameworkTagger
       current = line_indent(lines[idx])
       next if current > indent
       indent = current
-      scope.concat(ruby_block_lines(lines, idx)) if stripped.matches?(/^(?:before|use|http_basic)\b/)
+      next unless stripped.matches?(/^(?:before|use|http_basic)\b/)
+      next unless filter_covers?(stripped, url)
+      scope.concat(ruby_block_lines(lines, idx))
     end
 
     scope.each do |line|
@@ -490,6 +492,15 @@ class RubyAuthTagger < FrameworkTagger
       end
     end
     nil
+  end
+
+  # `before '/admin/*' do` only runs for matching paths; a bare `before do`
+  # runs for all. The pattern is matched against the URL's tail, since a
+  # filter inside a `namespace` is relative to it.
+  private def filter_covers?(statement : String, url : String) : Bool
+    return true unless m = statement.match(/^before\s*\(?\s*['"]([^'"]+)['"]/)
+    pattern = Regex.escape(m[1]).gsub("\\*", ".*").gsub(/:\w+/, "[^/]+")
+    url.matches?(Regex.new("#{pattern}\\z"))
   end
 
   # The line at `idx` and the lines indented under it — its block body.
