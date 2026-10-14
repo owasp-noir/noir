@@ -27,6 +27,10 @@ class HonoAuthTagger < FrameworkTagger
     /c\.get\s*\(\s*['"](user|payload|auth|session)/,
   ]
 
+  # The start of a route registration: a window around one route stops here
+  # so it never reads the neighbouring route's middleware or handler.
+  ROUTE_DECLARATION = /\.\s*(?:get|post|put|patch|delete|options|head|all|on|use|route)\s*\(/
+
   def initialize(options : Hash(String, YAML::Any))
     super
     @use_auth_scopes = [] of {prefix: String, description: String}
@@ -107,26 +111,30 @@ class HonoAuthTagger < FrameworkTagger
         endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "hono_auth"))
         return
       end
-
-      # Check for context user extraction in handler body (secondary)
-      description = check_context_user(lines, line_idx)
-      if description
-        endpoint.add_tag(Tag.new("auth", "Protected by Hono auth (#{description})", "hono_auth"))
-        return
-      end
     end
 
     # Check prefix-based use() scopes
     description = check_use_scopes(endpoint)
     if description
       endpoint.add_tag(Tag.new("auth", description, "hono_auth"))
+      return
+    end
+
+    # Check for context user extraction in handler body (secondary)
+    endpoint.details.code_paths.each do |path_info|
+      lines = read_file_lines(path_info.path)
+      line_num = path_info.line
+      next if lines.nil? || line_num.nil? || line_num < 1 || line_num > lines.size
+      description = check_context_user(lines, line_num - 1)
+      if description
+        endpoint.add_tag(Tag.new("auth", "Protected by Hono auth (#{description})", "hono_auth"))
+        return
+      end
     end
   end
 
   private def check_route_and_nearby(lines : Array(String), line_idx : Int32) : String?
-    # Look at the route line and up to 2 lines above (for chained or options object)
-    start_idx = [line_idx - 2, 0].max
-    (start_idx..line_idx).each do |i|
+    (statement_start(lines, line_idx)..line_idx).each do |i|
       current = lines[i]
 
       HONO_AUTH_MIDDLEWARE.each do |pattern, desc|
@@ -149,8 +157,7 @@ class HonoAuthTagger < FrameworkTagger
   end
 
   private def check_context_user(lines : Array(String), line_idx : Int32) : String?
-    end_idx = [line_idx + 8, lines.size - 1].min
-    (line_idx..end_idx).each do |i|
+    (line_idx..statement_end(lines, line_idx)).each do |i|
       current = lines[i]
       CONTEXT_USER_PATTERNS.each do |pattern|
         if current.matches?(pattern)
@@ -159,6 +166,37 @@ class HonoAuthTagger < FrameworkTagger
       end
     end
     nil
+  end
+
+  # The route line plus up to 2 lines above it that are still open into it
+  # (`app.get(` with the path on the next line, an options object) — never a
+  # line above a route registration, and never a complete statement above.
+  private def statement_start(lines : Array(String), line_idx : Int32) : Int32
+    start = line_idx
+    return start if lines[line_idx].matches?(ROUTE_DECLARATION)
+    {line_idx - 1, line_idx - 2}.each do |i|
+      break if i < 0 || open_brackets(lines[i]) <= 0
+      start = i
+      break if lines[i].matches?(ROUTE_DECLARATION)
+    end
+    start
+  end
+
+  # The last line of the statement opened on `line_idx` (its brackets
+  # closed), at most 8 lines on: a one-line route ends on its own line.
+  private def statement_end(lines : Array(String), line_idx : Int32) : Int32
+    last = {line_idx + 8, lines.size - 1}.min
+    depth = 0
+    (line_idx..last).each do |i|
+      depth += open_brackets(lines[i])
+      return i if depth <= 0
+    end
+    last
+  end
+
+  private def open_brackets(line : String) : Int32
+    code = code_only(line)
+    code.count("({[") - code.count(")}]")
   end
 
   private def check_use_scopes(endpoint : Endpoint) : String?

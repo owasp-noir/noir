@@ -1,3 +1,4 @@
+require "file_utils"
 require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
@@ -61,7 +62,7 @@ describe "HonoAuthTagger" do
 
     endpoint.tags.empty?.should be_false
     endpoint.tags[0].name.should eq("auth")
-    endpoint.tags[0].description.should contain("jwt")
+    endpoint.tags[0].description.should contain("app.use() auth on /admin/")
   end
 
   it "detects custom authMiddleware chained on route" do
@@ -104,5 +105,38 @@ describe "HonoAuthTagger" do
     tagger.perform([endpoint])
 
     endpoint.tags.empty?.should be_true
+  end
+
+  it "bounds the middleware and context-user windows by statement" do
+    tmpdir = File.tempname("hono_statement")
+    Dir.mkdir_p(tmpdir)
+    index_ts = File.join(tmpdir, "index.ts")
+    File.write(index_ts, [
+      "const app = new Hono()",
+      "app.get('/me', requireAuth, (c) => c.json({ ok: true }))",
+      "app.get('/public', (c) => c.text('hi'))",
+      "app.get('/health', (c) => c.text('ok'))",
+      "app.get('/whoami', (c) => {",
+      "  return c.json(c.var.user)",
+      "})",
+    ].join("\n"))
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    CodeLocator.instance.register_path(index_ts)
+
+    me = Endpoint.new("/me", "GET", [] of Param, Details.new(PathInfo.new(index_ts, 2)))
+    pub = Endpoint.new("/public", "GET", [] of Param, Details.new(PathInfo.new(index_ts, 3)))
+    health = Endpoint.new("/health", "GET", [] of Param, Details.new(PathInfo.new(index_ts, 4)))
+    whoami = Endpoint.new("/whoami", "GET", [] of Param, Details.new(PathInfo.new(index_ts, 5)))
+
+    HonoAuthTagger.new(noir_options).perform([me, pub, health, whoami])
+
+    me.tags.map(&.description).should eq(["Protected by Hono requireAuth middleware"])
+    pub.tags.should be_empty
+    health.tags.should be_empty
+    whoami.tags.map(&.description).should eq(["Protected by Hono auth (context user extraction)"])
+
+    FileUtils.rm_rf(tmpdir)
   end
 end
