@@ -408,23 +408,6 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
   detector_list = build_detector_list(options)
   mutex = Mutex.new
 
-  # Handle --only-techs: filter detector_list to only specified techs
-  only_techs_value = options["only_techs"]?.to_s
-  if !only_techs_value.empty?
-    only_techs_list = NoirTechs.resolve_tech_list(only_techs_value)
-
-    if only_techs_list.empty?
-      logger.error "No valid technologies specified in --only-techs. No detectors will be run."
-      detector_list.clear
-    else
-      logger.info "Filtering detectors to: #{only_techs_list.join(", ")}"
-      detector_list.select! do |detector|
-        only_techs_list.includes?(detector.name)
-      end
-      logger.debug "Using #{detector_list.size} detector(s)"
-    end
-  end
-
   # Handle -t/--techs: add techs directly (without detection validation)
   if !options["techs"].to_s.empty?
     # Stripped, like `--only-techs` and like the CLI validator: without it
@@ -441,6 +424,25 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
         logger.success "Added #{tech} to techs."
         techs << similar_tech
       end
+    end
+  end
+
+  # Handle --only-techs: filter detector_list to only specified techs.
+  # A `-t` tech keeps its detector too: spec detectors register the spec
+  # files their analyzer reads, so dropping one empties that analyzer.
+  only_techs_value = options["only_techs"]?.to_s
+  if !only_techs_value.empty?
+    only_techs_list = NoirTechs.resolve_tech_list(only_techs_value)
+
+    if only_techs_list.empty?
+      logger.error "No valid technologies specified in --only-techs. No detectors will be run."
+      detector_list.clear
+    else
+      logger.info "Filtering detectors to: #{only_techs_list.join(", ")}"
+      detector_list.select! do |detector|
+        only_techs_list.includes?(detector.name) || techs.includes?(detector.name)
+      end
+      logger.debug "Using #{detector_list.size} detector(s)"
     end
   end
 

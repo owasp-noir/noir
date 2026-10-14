@@ -339,6 +339,36 @@ describe "detect_techs file walker" do
     end
   end
 
+  # `-t oas3 --only-techs js_express`: the forced spec tech still needs its
+  # detector, which is what registers the spec file for the analyzer.
+  it "keeps the detector of a -t tech under --only-techs" do
+    temp_dir = File.tempname("noir_detector_forced_tech")
+
+    begin
+      Dir.mkdir_p(temp_dir)
+      spec_path = File.join(temp_dir, "openapi.yaml")
+      File.write(spec_path, "openapi: 3.0.0\npaths:\n  /items:\n    get: {}\n")
+      File.write(File.join(temp_dir, "app.js"), "const express = require('express');\n")
+
+      options = create_test_options
+      options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+      options["techs"] = YAML::Any.new("oas3")
+      options["only_techs"] = YAML::Any.new("js_express")
+      logger = NoirLogger.new(false, false, false, true)
+      locator = CodeLocator.instance
+      locator.clear_all
+
+      techs, _ = detect_techs([temp_dir], options, [] of PassiveScan, logger)
+
+      techs.should contain("oas3")
+      techs.should contain("js_express")
+      locator.all(Noir::LocatorKeys::OAS3_YAML).should contain(spec_path)
+    ensure
+      FileUtils.rm_rf(temp_dir) if temp_dir
+      CodeLocator.instance.clear_all
+    end
+  end
+
   it "prunes Mix deps and _build only next to mix.exs" do
     temp_dir = File.tempname("noir_detector_mix_scoped")
 
