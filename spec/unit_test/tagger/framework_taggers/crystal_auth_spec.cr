@@ -117,6 +117,46 @@ describe "CrystalAuthTagger" do
     FileUtils.rm_rf(tmpdir)
   end
 
+  it "keeps a Kemal session check to the route that makes it" do
+    tmpdir = File.tempname("kemal_session_scope")
+    Dir.mkdir_p(tmpdir)
+    file = File.join(tmpdir, "app.cr")
+    File.write(file, <<-'CR')
+      require "kemal"
+
+      get "/dashboard" do |env|
+        user = env.session.string("user_id")
+        "Hi #{user}"
+      end
+
+      get "/" do
+        "home"
+      end
+
+      get "/about" do
+        "about"
+      end
+      CR
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    at = ->(url : String, line : Int32) do
+      details = Details.new(PathInfo.new(file, line))
+      details.technology = "crystal_kemal"
+      Endpoint.new(url, "GET", [] of Param, details)
+    end
+    dashboard = at.call("/dashboard", 3)
+    root = at.call("/", 8)
+    about = at.call("/about", 12)
+
+    CrystalAuthTagger.new(noir_options).perform([dashboard, root, about])
+    dashboard.tags.map(&.description).should eq(["Protected by Kemal session user check"])
+    root.tags.should be_empty
+    about.tags.should be_empty
+  ensure
+    FileUtils.rm_rf(tmpdir) if tmpdir
+  end
+
   it "returns correct target_techs" do
     CrystalAuthTagger.target_techs.should contain("crystal_kemal")
     CrystalAuthTagger.target_techs.should contain("crystal_amber")
