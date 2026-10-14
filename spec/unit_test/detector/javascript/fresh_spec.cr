@@ -17,6 +17,16 @@ describe "Detect JS Fresh" do
     instance.detect("deno.jsonc", content).should be_true
   end
 
+  # Fresh 2 (`jsr:@fresh/init`) maps the bare `fresh` specifier to JSR.
+  it "detects a Fresh 2 deno.json mapping jsr:@fresh/core" do
+    content = %({"imports": {"fresh": "jsr:@fresh/core@^2.1.1", "preact": "npm:preact@^10.27.2"}})
+    instance.detect("deno.json", content).should be_true
+  end
+
+  it "ignores a plain Deno manifest" do
+    instance.detect("deno.json", %({"imports": {"@std/http": "jsr:@std/http@^1.0.0"}})).should be_false
+  end
+
   it "detects fresh.config files" do
     instance.applicable?("fresh.config.ts").should be_true
     instance.detect("fresh.config.ts", "import { defineConfig } from '$fresh/server.ts';").should be_true
