@@ -42,6 +42,9 @@ describe Noir::JvmLiteral do
       Noir::JvmLiteral.value_of(%q(Some("x"))).should eq ""
       Noir::JvmLiteral.value_of("new ArrayList<>()").should eq ""
       Noir::JvmLiteral.value_of("SOME_CONSTANT").should eq ""
+      Noir::JvmLiteral.value_of(%q("Hello, " + "world")).should eq ""
+      Noir::JvmLiteral.value_of(%q('a' + 'b')).should eq ""
+      Noir::JvmLiteral.value_of(%q("say \"hi\"")).should eq %q(say \"hi\")
     end
   end
 end

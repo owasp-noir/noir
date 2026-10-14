@@ -36,7 +36,11 @@ module Noir
       return value if value == "true" || value == "false"
 
       if value.size >= 2 && value[0] == value[-1] && value[0].in?('"', '\'')
-        return value[1..-2]
+        inner = value[1..-2]
+        # `"Hello, " + "world"` also starts and ends with a quote; an
+        # unescaped quote inside means it is an expression, not one literal.
+        return "" if inner.matches?(value[0] == '"' ? /(?<!\\)"/ : /(?<!\\)'/)
+        return inner
       end
 
       numeric = value.delete('_')
