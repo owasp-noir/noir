@@ -24,7 +24,9 @@ module Analyzer::Php
     @form_request_params = {} of String => Array(Param)
     @source_cache_mutex = Mutex.new
 
-    private record RouteGroup, prefix : String, body : String, body_start : Int32, body_end : Int32
+    # `controller` is the class a `Route::controller(X::class)->group(...)`
+    # names: routes in the body give only the action, `Route::get('/x', 'show')`.
+    private record RouteGroup, prefix : String, body : String, body_start : Int32, body_end : Int32, controller : String?
 
     private record ResourceRouteCall, resource : String, statement : String, start_pos : Int32
 
@@ -43,7 +45,8 @@ module Analyzer::Php
       imports : Hash(String, String),
       route_groups : Array(RouteGroup),
       skip_ranges : Array(Range(Int32, Int32)),
-      handler_bodies : Array(Range(Int32, Int32))
+      handler_bodies : Array(Range(Int32, Int32)),
+      controller : String?
 
     # {body, controller file, body start line, request params}
     alias ControllerActionBody = Tuple(String, String, Int32, Array(Param))
@@ -288,7 +291,8 @@ module Analyzer::Php
                                        include_callee : Bool,
                                        base_line : Int32 = 1,
                                        imports : Hash(String, String) = EMPTY_IMPORTS,
-                                       php_mode : Bool = false) : Array(Endpoint)
+                                       php_mode : Bool = false,
+                                       controller : String? = nil) : Array(Endpoint)
       endpoints = [] of Endpoint
       # One structural pass over this file/body. `PhpLexer` masks strings,
       # comments and heredoc/nowdoc bodies a single time; every
@@ -307,7 +311,7 @@ module Analyzer::Php
       # `"Try Route::get(...)"` string, or a `<<<SQL … SQL` heredoc doesn't
       # surface as a real endpoint.
       skip_ranges = lexer.skip_ranges
-      ctx = RouteScanContext.new(offsets, file_path, include_callee, base_line, lexer, imports, route_groups, skip_ranges, collect_handler_bodies(offsets, base_line, lexer))
+      ctx = RouteScanContext.new(offsets, file_path, include_callee, base_line, lexer, imports, route_groups, skip_ranges, collect_handler_bodies(offsets, base_line, lexer), controller)
 
       # 1. Verb routes. Every scan below walks the body the same way, with the
       # same guards — `each_laravel_route` holds that walk once. What differs
@@ -385,7 +389,7 @@ module Analyzer::Php
       route_groups.each do |group|
         new_prefix = group.prefix.empty? ? prefix : build_full_path(prefix, group.prefix)
         group_base_line = base_line + offsets.line(group.body_start) - 1
-        endpoints.concat(analyze_routes_content(group.body, new_prefix, file_path, include_callee, group_base_line, imports, php_mode: true))
+        endpoints.concat(analyze_routes_content(group.body, new_prefix, file_path, include_callee, group_base_line, imports, php_mode: true, controller: group.controller || controller))
       end
 
       endpoints
@@ -477,7 +481,7 @@ module Analyzer::Php
       action_pos = offsets.end(route_match)
       route_line = ctx.base_line + offsets.line(offsets.begin(route_match)) - 1
       handler_body, next_pos, body_start_line = extract_inline_closure_body(offsets, action_pos, ctx.base_line, ctx.lexer)
-      action = handler_body ? nil : resolve_route_action(offsets, action_pos, ctx.file_path, ctx.imports)
+      action = handler_body ? nil : resolve_route_action(offsets, action_pos, ctx.file_path, ctx.imports, ctx.controller)
       input_params = if handler_body
                        illuminate_request_params(handler_body)
                      else
@@ -546,8 +550,9 @@ module Analyzer::Php
     private def resolve_route_action(offsets : Noir::CharOffsets,
                                      action_pos : Int32,
                                      routes_file_path : String,
-                                     imports : Hash(String, String)) : ControllerActionBody?
-      action = extract_route_action(offsets, action_pos)
+                                     imports : Hash(String, String),
+                                     controller : String?) : ControllerActionBody?
+      action = extract_route_action(offsets, action_pos, controller)
       return unless action
       resolve_controller_action_body(action[0], action[1], routes_file_path, imports)
     end
@@ -632,7 +637,7 @@ module Analyzer::Php
     # Parse the controller reference that follows a route's path argument.
     # Returns {class, method} where `class` may be a short name (resolved
     # later via `use` imports) or a fully-qualified `\App\...` name.
-    private def extract_route_action(offsets : Noir::CharOffsets, pos : Int32) : Tuple(String, String)?
+    private def extract_route_action(offsets : Noir::CharOffsets, pos : Int32, controller : String?) : Tuple(String, String)?
       scan_pos = pos
       while offsets.ascii_whitespace?(scan_pos)
         scan_pos += 1
@@ -652,6 +657,11 @@ module Analyzer::Php
       # Single-action (`__invoke`) controller: Controller::class
       if m = offsets.match(/\G([A-Za-z_\\][\w\\]*)::class\s*\)/, scan_pos)
         return {m[1], "__invoke"}
+      end
+
+      # A bare 'method' inside a `Route::controller(X::class)->group(...)`
+      if controller && (m = offsets.match(/\G['"]([A-Za-z_]\w*)['"]/, scan_pos))
+        return {controller, m[1]}
       end
 
       nil
@@ -782,6 +792,10 @@ module Analyzer::Php
       !range.nil? && range.covers?(pos)
     end
 
+    # `Route::controller(X::class)` in a group's chain, or the
+    # `'controller' => X::class` group attribute.
+    GROUP_CONTROLLER_RE = /(?:(?:->|::)controller\s*\(\s*|['"]controller['"]\s*=>\s*)([A-Za-z_\\][\w\\]*)::class/i
+
     private def extract_route_groups(content : String, lexer : Noir::PhpLexer) : Array(RouteGroup)
       groups = [] of RouteGroup
       # `[^;()]*` (not `[^;]*?`) keeps each chained-call repetition unambiguous,
@@ -799,7 +813,8 @@ module Analyzer::Php
         if body_info
           body, body_start, body_end = body_info
           prelude = content[group_start...body_start]
-          groups << RouteGroup.new(extract_group_prefix(prelude), body, body_start, body_end)
+          controller = prelude.match(GROUP_CONTROLLER_RE).try(&.[1])
+          groups << RouteGroup.new(extract_group_prefix(prelude), body, body_start, body_end, controller)
           pos = body_end + 1
         else
           pos = group_match.end(0)
