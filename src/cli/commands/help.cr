@@ -14,14 +14,14 @@ module Noir::CLI::HelpCommand
   # instead of becoming a verb that quietly has no help page.
   def self.run(argv : Array(String))
     case argv.first?
-    when nil, "help"  then print_top_level
-    when "scan"       then ScanCommand.run(["--help"])
-    when "list"       then ListCommand.print_help
-    when "cache"      then CacheCommand.print_help
-    when "config"     then ConfigCommand.print_help
-    when "rules"      then RulesCommand.print_help
-    when "completion" then CompletionCommand.print_help
-    when "version"    then VersionCommand.print_help
+    when nil, "help", "-h", "--help" then print_top_level
+    when "scan"                      then ScanCommand.run(["--help"])
+    when "list"                      then ListCommand.print_help
+    when "cache"                     then CacheCommand.print_help
+    when "config"                    then ConfigCommand.print_help
+    when "rules"                     then RulesCommand.print_help
+    when "completion"                then CompletionCommand.print_help
+    when "version"                   then VersionCommand.print_help
     else
       Noir::CLI.die("Unknown command: #{argv.first}\nRun `noir help` to see available commands.")
     end

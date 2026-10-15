@@ -74,7 +74,7 @@ noir scan . -f curl -u https://your-target.com
 
 ## 결과를 파일로 저장
 
-터미널에 출력하는 대신 `-o`로 파일에 씁니다.
+`-o`로 결과를 파일에 저장합니다. 터미널에도 그대로 출력됩니다.
 
 ```bash
 noir scan . -f json -o results.json

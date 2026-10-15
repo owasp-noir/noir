@@ -126,8 +126,8 @@ class OutputBuilderAdb < OutputBuilder
 
   # Intent extras (Bundle inputs, `param_type == "extra"`) a handler reads.
   # Emit them as string extras (`--es name value`) so the launch carries the
-  # same keys the code expects; values stay empty templates unless seeded with
-  # `--pvalue`.
+  # same keys the code expects. Values stay empty: `--pvalue` has no `extra`
+  # type, so nothing seeds them.
   private def append_extras(parts : Array(String), endpoint : Endpoint)
     endpoint.params.each do |param|
       next unless param.param_type == "extra"
