@@ -58,7 +58,7 @@ Get your file set from the engine or from the detector-built indexes (`get_files
   - JavaScript: `js_route_extractor.cr`. Express, Fastify, Hono, Koa and Restify get their routes from `JSRouteExtractor.extract_routes`. NestJS, Next.js, Nuxt and others use only its helpers.
   - Tree-sitter extractors for Go, Java, Kotlin and Python. Go and Kotlin ship as directories of part files behind an umbrella `require` (`go_route_extractor_ts/`, `kotlin_route_extractor_ts/`).
   - Framework-specific Tree-sitter extractors: AdonisJS, Elysia, Hapi, http4k, JAX-RS, Micronaut, Ktor, and others.
-- **Outside the engine stack**: C#, VB.NET, F#, Java, Kotlin, Dart, Zig, C++, Clojure, Haskell, Lua, Groovy, Erlang, Gleam, R, Apex, Classic ASP and WebForms, plus Scala Play, Go's Chi, Httprouter, Fasthttp and Kratos, and JavaScript's AdonisJS and Elysia. Their analyzers orchestrate multiple phases or carry self-contained extraction, so they inherit from `Analyzer` directly.
+- **Outside the engine stack**: C#, VB.NET, F#, Java, Kotlin, Dart, Zig, C++, Clojure, Haskell, Lua, Groovy, Erlang, Gleam, R, Apex, Classic ASP and WebForms, plus Scala Play, Go's Chi, Httprouter, Fasthttp and Kratos, JavaScript's AdonisJS and Elysia, Elixir's Phoenix channels, and the Android/iOS mobile analyzers. Their analyzers orchestrate multiple phases or carry self-contained extraction, so they inherit from `Analyzer` directly.
 
 ## Engine walk helpers
 
@@ -71,7 +71,7 @@ There is no single walk API shared by every engine. Check what your language's e
 | `PythonEngine` | Language-specific iterators: `python_source_files` / `each_python_source` / `parallel_python_sources` |
 | `SpecificationEngine` | Language-specific iterators: `each_spec_file` / `each_spec_file_with_details` |
 | `CfmlEngine` | Language-specific iterators: `cfml_components` / `cfml_pages` |
-| `GoEngine` | Whole-package content through `read_package_file_contents` and the `collect_*` helpers. Its adapters walk with `ordered_parallel_analyze` (older ones still use `parallel_analyze`) |
+| `GoEngine` | Whole-package content through `read_package_file_contents` and the `collect_*` helpers. Most adapters walk with `parallel_analyze`; `hertz.cr` and `encore.cr` use `ordered_parallel_analyze`, which returns results in input order and is the one to use in new code |
 | No engine | The adapter extends `Analyzer` and uses `scan_files(files, &block)`, the shared skeleton every engine above funnels into |
 
 **Shape A: `analyze_file`** (simpler, pure per-file):

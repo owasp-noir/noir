@@ -162,7 +162,7 @@ By default Noir leaves parameter values empty (`x-api-key=`, `query=`, ...) so t
 | Form | Behavior |
 |---|---|
 | `<value>` | Used for every parameter of the targeted type |
-| `<name>=<value>` or `<name>:<value>` | Used only for parameters named `<name>`. Needs an explicit `TYPE=` (`any=` works) |
+| `<name>=<value>` or `<name>:<value>` | Used only for parameters named `<name>`. The `=` form needs an explicit `TYPE=` (`any=` works); the `:` form works without one |
 
 `--pvalue` is repeatable. A rule that names the parameter wins over a type-wide value, and a per-type rule wins over an `any` rule of the same kind.
 

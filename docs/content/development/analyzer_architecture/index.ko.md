@@ -58,7 +58,7 @@ Detector는 매니페스트 파일(`go.mod`, `package.json`, `Gemfile` 등)을 �
   - JavaScript: `js_route_extractor.cr`. Express, Fastify, Hono, Koa, Restify는 `JSRouteExtractor.extract_routes`에서 라우트를 받습니다. NestJS, Next.js, Nuxt 등은 헬퍼만 씁니다.
   - Go, Java, Kotlin, Python용 Tree-sitter 추출기. Go와 Kotlin은 umbrella `require` 뒤에 파트 파일을 둔 디렉터리 형태입니다(`go_route_extractor_ts/`, `kotlin_route_extractor_ts/`).
   - 프레임워크 전용 Tree-sitter 추출기: AdonisJS, Elysia, Hapi, http4k, JAX-RS, Micronaut, Ktor 등.
-- **엔진 밖에 있는 분석기**: C#, VB.NET, F#, Java, Kotlin, Dart, Zig, C++, Clojure, Haskell, Lua, Groovy, Erlang, Gleam, R, Apex, Classic ASP, WebForms, 그리고 Scala Play, Go의 Chi, Httprouter, Fasthttp, Kratos, JavaScript의 AdonisJS, Elysia. 여러 단계를 조율하거나 추출 로직이 자체로 완결되어 있어서 `Analyzer`를 직접 상속합니다.
+- **엔진 밖에 있는 분석기**: C#, VB.NET, F#, Java, Kotlin, Dart, Zig, C++, Clojure, Haskell, Lua, Groovy, Erlang, Gleam, R, Apex, Classic ASP, WebForms, 그리고 Scala Play, Go의 Chi, Httprouter, Fasthttp, Kratos, JavaScript의 AdonisJS, Elysia, Elixir의 Phoenix 채널, Android/iOS 모바일 분석기. 여러 단계를 조율하거나 추출 로직이 자체로 완결되어 있어서 `Analyzer`를 직접 상속합니다.
 
 ## 엔진별 순회 헬퍼
 
@@ -71,7 +71,7 @@ Detector는 매니페스트 파일(`go.mod`, `package.json`, `Gemfile` 등)을 �
 | `PythonEngine` | 언어 전용 이터레이터: `python_source_files` / `each_python_source` / `parallel_python_sources` |
 | `SpecificationEngine` | 언어 전용 이터레이터: `each_spec_file` / `each_spec_file_with_details` |
 | `CfmlEngine` | 언어 전용 이터레이터: `cfml_components` / `cfml_pages` |
-| `GoEngine` | `read_package_file_contents`와 `collect_*` 헬퍼로 넘겨받는 패키지 전체 내용. 어댑터는 `ordered_parallel_analyze`로 순회합니다(오래된 어댑터는 아직 `parallel_analyze`를 씁니다) |
+| `GoEngine` | `read_package_file_contents`와 `collect_*` 헬퍼로 넘겨받는 패키지 전체 내용. 대부분의 어댑터는 `parallel_analyze`로 순회합니다. `hertz.cr`와 `encore.cr`는 결과를 입력 순서대로 돌려주는 `ordered_parallel_analyze`를 쓰며, 새 코드에서는 이쪽을 쓰세요 |
 | 엔진 없음 | 어댑터가 `Analyzer`를 상속하고 `scan_files(files, &block)`를 씁니다. 위의 모든 엔진도 결국 이 공용 골격을 거칩니다 |
 
 **Shape A. `analyze_file`** (단순한 파일별 처리):
