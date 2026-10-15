@@ -8,6 +8,8 @@ sort_by = "weight"
 
 Noir scans a project in two phases. A **detector** decides which frameworks are present, then an **analyzer** extracts endpoints for each detected framework. This page shows how the analyzer side is laid out and how to add a new framework.
 
+If you only want to add a framework, start at [Adding a new framework](#adding-a-new-framework). The sections before it describe the structure your code plugs into.
+
 ## Pipeline overview
 
 ```
@@ -35,18 +37,23 @@ Every analyzer has three layers. Keep them separate: a framework adapter should 
 | **L1 Route Extractor** | `src/miniparsers/{lang}_route_extractor*.cr` | Parses source content. Takes a string (file contents), yields route declarations (method, path, location). No file I/O, no framework-specific rules. |
 | **L2 Framework Adapter** | `src/analyzer/analyzers/{lang}/{framework}.cr` | Thin per-framework class. Consumes routes from the extractor and applies framework-specific param mappings, filters, and special cases. |
 
-`spec/unit_test/analyzer/layering_boundary_spec.cr` enforces the file-walking half of this rule. `Dir.glob`, `Dir.children` or `Dir.each_child` anywhere under `src/analyzer/analyzers/` fails the suite. Get your file set from the engine or from the detector-built indexes (`get_files_by_extension`, `CodeLocator#files_by_basename`). Walking a directory yourself skips subtree pruning, `--exclude-path`, the media filter and the content cache.
+`spec/unit_test/analyzer/layering_boundary_spec.cr` enforces the file-walking half of this rule: `Dir.glob`, `Dir.children` or `Dir.each_child` anywhere under `src/analyzer/analyzers/` fails the suite.
 
-**Reference implementations.** Take the walk and the body from these files:
+Get your file set from the engine or from the detector-built indexes (`get_files_by_extension`, `CodeLocator#files_by_basename`). Walking a directory yourself skips subtree pruning, `--exclude-path`, the media filter and the content cache.
+
+**Reference implementations.** No single file is the whole model yet. Take the walk from one and the body from the other:
 
 - **The walk (L0)**: [`javascript/hono.cr`](https://github.com/owasp-noir/noir/blob/main/src/analyzer/analyzers/javascript/hono.cr) inherits `JavascriptEngine` and drives the walk with `ordered_scan_files(get_files_by_extensions(DEFAULT_EXTENSIONS))`. It gets the worker pool, content cache and per-file error isolation for free, and per-file results come back in input order. Don't copy its body: it still carries its own regex passes next to the extractor call.
-- **The body (L1 → L2)**: [`javascript/hapi.cr`](https://github.com/owasp-noir/noir/blob/main/src/analyzer/analyzers/javascript/hapi.cr) is about 65 lines. It rides `JavascriptEngine` with the same `ordered_scan_files` walk, calls `Noir::TreeSitterHapiExtractor.extract_routes`, and only maps the result onto `Param`s. `javascript/elysia.cr`, `javascript/adonisjs.cr`, `kotlin/http4k.cr` and `java/spark.cr` have the same body. Don't copy their walk: they extend `Analyzer` directly and loop over `all_files` themselves.
+- **The body (L1 → L2)**: [`javascript/hapi.cr`](https://github.com/owasp-noir/noir/blob/main/src/analyzer/analyzers/javascript/hapi.cr) is about 65 lines. It rides `JavascriptEngine` with the same `ordered_scan_files` walk, calls `Noir::TreeSitterHapiExtractor.extract_routes`, and only maps the result onto `Param`s. `javascript/elysia.cr`, `javascript/adonisjs.cr`, `kotlin/http4k.cr` and `java/spark.cr` have the same body, but don't copy their walk: those four extend `Analyzer` directly and loop over `all_files` themselves.
 
 ## Current coverage
 
 - **Language engines** (in `engines/`): Specification, JavaScript/TypeScript, Go, Python, PHP, Rust, Ruby, Crystal, CFML, Scala, Swift, Perl, C, Elixir.
 - **`FileScanEngine`** sits under eight of those (C, Crystal, Elixir, Perl, PHP, Rust, Scala, Swift) and owns the `analyze` + `parallel_file_scan` skeleton they used to each carry a copy of.
-- `java_engine.cr` and `kotlin_engine.cr` are **not** engines despite the filenames. No analyzer inherits from them. `KotlinEngine` only exposes a shared `self.test_path?`. `JavaEngine` is also a mixin that JVM adapters `include` for shared helpers (JAX-RS indexes, Spring/Micronaut/Quarkus config readers). `PlayRouteSupport` and `CliEndpointSupport` are mixins of the same kind.
+- `java_engine.cr` and `kotlin_engine.cr` are **not** engines despite the filenames. No analyzer inherits from them.
+  - `KotlinEngine` only exposes a shared `self.test_path?`.
+  - `JavaEngine` is also a mixin (a module a class `include`s) that JVM adapters use for shared helpers (JAX-RS indexes, Spring/Micronaut/Quarkus config readers).
+  - `PlayRouteSupport` and `CliEndpointSupport` are mixins of the same kind.
 - **Route extractors** (in `miniparsers/`):
   - JavaScript: `js_route_extractor.cr`. Express, Fastify, Hono, Koa and Restify get their routes from `JSRouteExtractor.extract_routes`. NestJS, Next.js, Nuxt and others use only its helpers.
   - Tree-sitter extractors for Go, Java, Kotlin and Python. Go and Kotlin ship as directories of part files behind an umbrella `require` (`go_route_extractor_ts/`, `kotlin_route_extractor_ts/`).
@@ -57,10 +64,15 @@ Every analyzer has three layers. Keep them separate: a framework adapter should 
 
 There is no single walk API shared by every engine. Check what your language's engine offers before you write an adapter:
 
-- **`FileScanEngine` engines** (C, Crystal, Elixir, Perl, PHP, Rust, Scala, Swift): the engine supplies the candidate list through `scan_target_files` and an optional per-path veto through `scan_accepts?`. The adapter implements `analyze_file` (shape A below).
-- **JavaScript and Ruby engines**: define their own `parallel_file_scan` and have no `scan_target_files`. Adapters override `analyze` and call `parallel_file_scan`, or `ordered_scan_files` over `get_files_by_extensions(...)` to get per-file results back in input order (shape B below).
-- **Language-specific iterators**: `PythonEngine` has `python_source_files` / `each_python_source` / `parallel_python_sources`. `SpecificationEngine` has `each_spec_file` / `each_spec_file_with_details`. `CfmlEngine` has `cfml_components` / `cfml_pages`. `GoEngine` hands over whole-package content through `read_package_file_contents` and the `collect_*` helpers. Its adapters walk with `ordered_parallel_analyze` (older ones still use `parallel_analyze`).
-- **No engine**: the adapter extends `Analyzer` and uses `scan_files(files, &block)`, the shared skeleton every engine above funnels into.
+| Engine | What the adapter uses |
+|---|---|
+| `FileScanEngine` engines (C, Crystal, Elixir, Perl, PHP, Rust, Scala, Swift) | The engine supplies the candidate list through `scan_target_files` and an optional per-path veto through `scan_accepts?`. The adapter implements `analyze_file` (shape A below) |
+| JavaScript and Ruby engines | They define their own `parallel_file_scan` and have no `scan_target_files`. The adapter overrides `analyze` and calls `parallel_file_scan`, or `ordered_scan_files` over `get_files_by_extensions(...)` to get per-file results back in input order (shape B below) |
+| `PythonEngine` | Language-specific iterators: `python_source_files` / `each_python_source` / `parallel_python_sources` |
+| `SpecificationEngine` | Language-specific iterators: `each_spec_file` / `each_spec_file_with_details` |
+| `CfmlEngine` | Language-specific iterators: `cfml_components` / `cfml_pages` |
+| `GoEngine` | Whole-package content through `read_package_file_contents` and the `collect_*` helpers. Its adapters walk with `ordered_parallel_analyze` (older ones still use `parallel_analyze`) |
+| No engine | The adapter extends `Analyzer` and uses `scan_files(files, &block)`, the shared skeleton every engine above funnels into |
 
 **Shape A: `analyze_file`** (simpler, pure per-file):
 
@@ -96,34 +108,13 @@ end
 
 Use this when the analyzer needs state across files or a post-processing pass. Express, Hono, Rails and Amber are examples. Read the execution model note at the end of this page before sharing state between workers.
 
-## Detector shape
-
-Detectors are almost always a one-line match:
-
-```crystal
-# src/detector/detectors/go/hertz.cr
-module Detector::Go
-  class Hertz < Detector
-    detector_for "go_hertz", extensions: %w[.go], path_segments: %w[go.mod]
-
-    def detect(filename : String, file_contents : String) : Bool
-      filename.includes?("go.mod") && file_contents.includes?("github.com/cloudwego/hertz")
-    end
-  end
-end
-```
-
-`detector_for` declares the tech name once and generates the cheap file gate (`applicable?`) that decides which files `detect` is even offered. The gate keys are `extensions:`, `basenames:` and `path_segments:`. If `detect` has side effects (registering spec paths in `CodeLocator`, say), also pass `idempotent: false` so the pass keeps calling it after its first match.
-
-The detector runs once per candidate file. Returning `true` marks the framework as present and tells the pipeline to run the matching analyzer.
-
 ## Adding a new framework
 
 This walkthrough uses **Hertz (Go)** as the example. Real PR: [#1244](https://github.com/owasp-noir/noir/pull/1244).
 
 ### 1. Detector
 
-Create `src/detector/detectors/{language}/{framework}.cr`:
+Create `src/detector/detectors/{language}/{framework}.cr`. Detectors are almost always a one-line match:
 
 ```crystal
 require "../../../models/detector"
@@ -138,6 +129,10 @@ module Detector::Go
   end
 end
 ```
+
+- `detector_for` declares the tech name once. It also generates `applicable?`, a cheap file gate that decides which files `detect` is even offered. The gate keys are `extensions:`, `basenames:` and `path_segments:`.
+- If `detect` has side effects (registering spec paths in `CodeLocator`, say), also pass `idempotent: false` so the pass keeps calling it after its first match.
+- The detector runs once per candidate file. Returning `true` marks the framework as present and tells the pipeline to run the matching analyzer.
 
 Add a unit spec at `spec/unit_test/detector/{language}/{framework}_spec.cr`. It is required: `spec/unit_test/techs/detector_coverage_spec.cr` fails for a detector without one.
 
@@ -342,7 +337,11 @@ Once an extractor outgrows one file, split it into a directory of part files beh
 
 ## Execution model note
 
-`parallel_analyze` workers (and everything built on it: `scan_files`, `parallel_file_scan`) are fibers on Crystal's default execution context. That context runs one scheduler, but when a worker sits in a slow syscall the runtime can hand the scheduler to another thread. Workers still run one at a time, but a fiber can resume on a different thread and the order they finish in changes from run to run. (Fibers on `Noir::WorkerThreads` are different: that pool really runs in parallel, so keep it to pure work that touches no shared state.)
+In short: workers can finish in any order, so an analyzer's result must not depend on that order.
+
+`parallel_analyze` workers (and everything built on it: `scan_files`, `parallel_file_scan`) are fibers on Crystal's default execution context. That context runs one scheduler, but when a worker sits in a slow syscall the runtime can hand the scheduler to another thread. Workers still run one at a time. However, a fiber can resume on a different thread, and the order they finish in changes from run to run.
+
+Fibers on `Noir::WorkerThreads` are different: that pool really runs in parallel, so keep it to pure work that touches no shared state.
 
 What that means for an analyzer:
 
