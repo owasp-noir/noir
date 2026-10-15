@@ -10,8 +10,8 @@ toc = true
 
 +++
 
-OWASP Noir is a community-driven project, and we welcome contributions and feedback from everyone.
+OWASP Noir is built by its community. Contributions and feedback are welcome.
 
-*   **[Articles & Talks](media/)**: Read articles, blog posts, and watch talks about Noir from community members.
+*   **[Articles & Talks](media/)**: Articles, blog posts, and talks about Noir by community members.
 
 To contribute, start with the [Development](../development/) section.

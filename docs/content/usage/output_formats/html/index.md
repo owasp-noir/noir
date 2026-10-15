@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-Generate a self-contained, interactive HTML file that visualizes scan results. The report ships a dark-tech "noir" theme with semantic color: neutral chrome and mono type, with restrained hues reserved for meaning, so HTTP methods and finding severities stand out at a glance. It is a single file with no external dependencies, so it renders offline and is easy to share with stakeholders or use when reviewing an application's attack surface.
+Write the scan results as one interactive HTML file. It has no external dependencies, so it opens offline and is easy to share. Color is used only where it means something: each HTTP method and each finding severity has its own.
 
 ## Basic Usage
 
@@ -16,7 +16,7 @@ noir scan . -f html -o report.html
 
 ## Preview
 
-The screenshots below are a **real report**, generated from Noir's bundled Kemal test fixture so you can reproduce it from a checkout of the repository:
+The screenshots below are a real report, generated from Noir's Kemal test fixture. You can reproduce it from a checkout of the repository:
 
 ```bash
 noir scan -b spec/functional_test/fixtures/crystal/kemal -f html -o report.html
@@ -24,46 +24,46 @@ noir scan -b spec/functional_test/fixtures/crystal/kemal -f html -o report.html
 
 <img src="./report-light.png" alt="Noir HTML report, light theme" width="1280" height="2752" loading="lazy" decoding="async">
 
-The report includes a built-in **dark theme**. Toggle it from the control in the top-right corner; your choice is remembered across visits (via `localStorage`) and the report also honors your operating system's `prefers-color-scheme` on first open.
+The report also has a dark theme. Switch it with the control in the top-right corner. Your choice is saved in `localStorage`, and on first open the report follows the OS `prefers-color-scheme` setting.
 
 <img src="./report-dark.png" alt="Noir HTML report, dark theme" width="1280" height="1100" loading="lazy" decoding="async">
 
-For large scans, switch to the **compact table view** from the Cards / Table control: the same endpoints re-flow into dense aligned rows so you can sweep hundreds of paths quickly.
+For large scans, switch to the table view with the Cards / Table control. The same endpoints are shown as compact rows, which is quicker to read through when there are hundreds of paths.
 
 <img src="./report-table.png" alt="Noir HTML report, compact table view" width="1280" height="1622" loading="lazy" decoding="async">
 
 ### What's in the report
 
-- **Dashboard Summary**: A high-level overview of total endpoints, HTTP methods, parameters, and passive scan findings.
-- **Endpoint Details**: Every discovered endpoint as a collapsible card with a semantically colored method badge (GET emerald, POST amber, PUT blue, PATCH violet, DELETE red) and a protocol badge for non-HTTP endpoints such as WebSockets.
-- **Path Groups**: Endpoints are grouped by their first path segment (or host for absolute URLs), with collapsible group headers and per-group counts.
-- **Parameter Breakdown**: Per-endpoint tables listing each parameter, its type (query, form, json, header, cookie, path, file, xml, and related), and value.
-- **Passive Scan Results**: When passive scanning is enabled (`-P`), findings are displayed with descriptions, color-coded severity badges, and the matched code snippet.
-- **Source Code Links**: The file path and line number where each endpoint was defined.
+- Summary: counts of endpoints, HTTP methods, parameters, and passive scan findings.
+- Endpoints: one collapsible card per endpoint, with a colored method badge (GET emerald, POST amber, PUT blue, PATCH violet, DELETE red) and a protocol badge for non-HTTP endpoints such as WebSockets.
+- Path groups: endpoints are grouped by their first path segment (or host for absolute URLs), with collapsible group headers and per-group counts.
+- Parameters: a table per endpoint listing each parameter, its type (query, form, json, header, cookie, path, file, xml, and related), and value.
+- Passive scan results: with `-P`, findings are shown with descriptions, colored severity badges, and the matched code snippet.
+- Source locations: the file path and line number where each endpoint was defined.
 
 ### Interactive features
 
-The report is interactive out of the box: everything below works from the single HTML file, with no server or network access.
+All of this works from the HTML file alone, with no server or network access.
 
-- **Light / dark theme toggle** that persists across visits and respects `prefers-color-scheme`. Both themes use the same semantic hues, tuned for contrast.
-- **Cards / table view toggle**: collapsible cards for detail, or a compact aligned table for scanning large surfaces. Your choice persists across visits.
-- **Path grouping controls**: collapse groups you have already reviewed, or flatten the whole list with the Grouped toggle. Group counts update live as you filter.
-- **Live search** to filter endpoints by path, method, parameter, or tag, with a live "shown / total" count.
-- **Method and severity filter chips** to narrow the endpoint and passive-finding lists; pressed chips take on their method or severity color.
-- **Copy buttons** on every endpoint: copy the URL, or copy a ready-to-run curl command built from the endpoint's method, parameters, headers, and cookies.
-- **Print-friendly**: printing forces every card and group open and hides the controls, and the report honors `prefers-reduced-motion`.
+- Light / dark theme toggle, saved across visits.
+- Cards / table view toggle, also saved across visits.
+- Path grouping: collapse groups you have already reviewed, or flatten the list with the Grouped toggle. Group counts update as you filter.
+- Search: filter endpoints by path, method, parameter, or tag, with a "shown / total" count.
+- Method and severity filter chips for the endpoint and passive-finding lists.
+- Copy buttons on every endpoint: copy the URL, or a curl command built from the endpoint's method, parameters, headers, and cookies.
+- Printing opens every card and group and hides the controls. The report also honors `prefers-reduced-motion`.
 
 ## Customizing the Template
 
-Provide your own template for branding or internal reporting standards.
+You can supply your own template, for example to add company branding.
 
 ### Template Location
 
 Noir looks for `report-template.html` in your configuration directory:
 
-- **Linux/macOS**: `~/.config/noir/report-template.html`
-- **Windows**: `%APPDATA%\noir\report-template.html`
-- **Custom Home**: If `NOIR_HOME` is set, it looks in `$NOIR_HOME/report-template.html`.
+- Linux/macOS: `~/.config/noir/report-template.html`
+- Windows: `%APPDATA%\noir\report-template.html`
+- If `NOIR_HOME` is set: `$NOIR_HOME/report-template.html`
 
 If found, Noir uses it instead of the built-in default.
 
@@ -87,7 +87,7 @@ Don't forget the noir_scripts placeholder: add it to your template, usually righ
 
 ### Example Template
 
-A minimal custom template that adds a company header while reusing Noir's built-in styles, content sections, and interactivity via `<%= %>` placeholders.
+A minimal template that adds a company header and reuses Noir's styles, sections, and scripts through the placeholders.
 
 ```html
 <!DOCTYPE html>
@@ -130,4 +130,4 @@ A minimal custom template that adds a company header while reusing Noir's built-
 </html>
 ```
 
-Place this file at `~/.config/noir/report-template.html` to use it for all future reports.
+Save it as `~/.config/noir/report-template.html` and every later `-f html` run uses it.

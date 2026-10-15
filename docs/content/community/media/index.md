@@ -12,13 +12,13 @@ A talk introducing OWASP Noir and its development story at the OWASP Seoul meetu
 
 <img src="owasp-seoul.jpg" alt="OWASP Seoul 2025 - Open Source Gardening" width="2622" height="1206" loading="lazy" decoding="async">
 
-## Articles & Blogs & Links
-Community-written articles about OWASP Noir. Want yours listed here? Let us know!
+## Articles and Links
+Articles about OWASP Noir written by the community. Want yours listed? Open an issue or a pull request.
 
 * [Hello Noir 👋🏼](https://www.hahwul.com/2023/08/03/hello-noir/) by Hahwul
 * [API Attack Surface Detection using Noir](https://danaepp.com/api-attack-surface-detection-using-noir) by Dana Epp
 * [Exploring OWASP Noir's PassiveScan](https://www.hahwul.com/2024/11/03/passivescan-in-owasp-noir/) by Hahwul
-* [Powering Up DAST with ZAP and Noir](https://www.zaproxy.org/blog/2024-11-11-powering-up-dast-with-zap-and-noir/) by the ZAP Blog
+* [Powering Up DAST with ZAP and Noir](https://www.zaproxy.org/blog/2024-11-11-powering-up-dast-with-zap-and-noir/) on the ZAP Blog
 * [Enhancing OWASP Noir with AI](https://www.hahwul.com/blog/2025/owasp-noir-x-llm/) by Hahwul
 * [Awesome Crystal](https://github.com/veelenga/awesome-crystal#security)
 * [Analysis Tools - Static Analysis](https://github.com/analysis-tools-dev/static-analysis#securitysast)

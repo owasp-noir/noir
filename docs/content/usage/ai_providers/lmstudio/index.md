@@ -11,13 +11,11 @@ Run local language models using [LM Studio](https://lmstudio.ai) for private cod
 ## Setup
 
 1.  **Install**: Download from [lmstudio.ai](https://lmstudio.ai)
-2.  **Start Server**: Open LM Studio, select a model, navigate to "Local Server" tab, and click "Start Server"
+2.  **Start the server**: Open LM Studio, go to the Developer tab, load a model, and switch the server status to Running.
 
-    ![The LM Studio server tab with status Running and the phi-4 model loaded and ready to serve requests.](./lmstudio.png)
+    ![The LM Studio Developer tab with status Running and the phi-4 model loaded and ready to serve requests.](./lmstudio.png)
 
 ## Usage
-
-Run Noir with LM Studio:
 
 ```bash
 noir scan ./spec/functional_test/fixtures/hahwul \
@@ -25,5 +23,5 @@ noir scan ./spec/functional_test/fixtures/hahwul \
      --ai-model <MODEL_NAME>
 ```
 
-Replace `<MODEL_NAME>` with your LM Studio model name.
+Replace `<MODEL_NAME>` with the model name LM Studio is serving. The `lmstudio` preset points at `http://localhost:1234/v1`; if you changed the port, pass the URL instead.
 

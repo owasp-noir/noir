@@ -10,28 +10,28 @@ Developer-only flags that do not appear in `--help` output. Names, behavior, and
 
 They replace the prompts Noir sends to an LLM, so they only do something when AI analysis is on (`--ai-provider`, plus `--ai-model` for most providers).
 
-Available flags
+## Available flags
 
 - `--override-analyze-prompt`: Overrides the internal ANALYZE_PROMPT for individual file analysis.
 - `--override-llm-optimize-prompt`: Overrides the internal LLM_OPTIMIZE_PROMPT for endpoint optimization.
 - `--override-bundle-analyze-prompt`: Overrides the internal BUNDLE_ANALYZE_PROMPT for bundled (multi-file) analysis.
 - `--override-filter-prompt`: Overrides the internal FILTER_PROMPT for file filtering.
 
-When to use these flags
+## When to use them
 
 - Testing new prompt strategies for analysis, filtering, or optimization
-- Rapidly iterating without rebuilding
-- Comparing prompt variations' impact on output quality
+- Iterating on a prompt without rebuilding
+- Comparing how prompt changes affect the output
 
-Usage tips
+## Usage tips
 
 - Pass the prompt as a separate argument. The `--flag=value` form is rejected, and so is a value that starts with `-`.
 - Quote prompt strings to preserve spaces and special characters.
 - For multi-line prompts, read from a file with command substitution.
 - Validate with a small fixture directory before scaling up.
-- Combine with `--verbose` to inspect intermediate steps.
+- Add `-d` / `--debug` to see the AI analyzer's intermediate steps (file filtering, bundles, errors).
 
-Examples
+## Examples
 
 Short literal prompt (single file analysis override)
 
@@ -68,13 +68,13 @@ Override the file filtering prompt
   --override-filter-prompt 'Select only application source files that may declare HTTP routes or middleware.'
 ```
 
-Notes and caveats
+## Notes and caveats
 
 - Output may vary across runs depending on prompt content and LLM behavior.
 - Use single quotes for literal strings if your shell expands characters unexpectedly, or read prompts from files.
 - Set up the AI provider first (API key, model). `--override-llm-optimize-prompt` has no effect with `--ai-no-optimize`.
 
-Screenshot examples
+## Screenshot examples
 
 Without override flag
 

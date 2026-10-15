@@ -27,17 +27,17 @@ sort_by = "weight"
   (`--techs`는 다릅니다. 탐지 범위를 좁히지 않고 분석 대상에 기술을 추가합니다)
 - `--exclude-techs`로 감지됐지만 필요 없는 프레임워크의 분석기를 건너뛰세요(로그에 `(skip)`으로 표시됩니다)
 - `--exclude-path`로 vendor·생성 코드 트리를 건너뛰세요: `--exclude-path "vendor/*,**/node_modules/**"`
-- AI 기반 분석은 응답을 캐시하므로 같은 코드베이스를 다시 스캔하면 더 빠릅니다
+- AI 응답은 캐시되므로 같은 코드를 다시 스캔하면 더 빠릅니다
 
 ## AI 제공업체 연결 오류
 
 **증상:** `--ai-provider`를 쓰면 오류가 납니다.
 
-- API 키가 올바른지 확인하세요: `--ai-key <KEY>`를 쓰거나 `NOIR_AI_KEY` 환경 변수를 설정하세요
+- `NOIR_AI_KEY`, `--ai-key-file`, `--ai-key` 중 하나로 넘긴 API 키가 맞는지 확인하세요
 - 로컬 제공업체(Ollama, vLLM, LM Studio)라면 서버가 실행 중인지 확인하세요
 - [AI 제공업체](@/usage/ai_providers/_index.ko.md) 비교표에서 기본 호스트를 확인하세요
 - 직접 띄운 엔드포인트라면 전체 URL을 쓰세요: `--ai-provider=http://your-server:port`
-- ACP 제공업체라면 `NOIR_ACP_RAW_LOG=1`로 디버그 로그를 켜세요
+- ACP 제공업체라면 `NOIR_ACP_RAW_LOG=1`을 설정해 에이전트의 원본 로그를 보세요
 
 **증상:** AI 분석이 멈춰 있거나, 모델이 아직 생성 중인데 중단됩니다.
 
@@ -61,7 +61,7 @@ sort_by = "weight"
 - 수동 설정은 [셸 자동완성](@/usage/configurations/shell-completion/index.ko.md)을 참조하세요
 - 설정 후 셸을 다시 시작하거나 `source ~/.zshrc`(또는 쓰는 셸에 맞는 명령)를 실행하세요
 
-## 추가 도움이 필요하신가요?
+## 더 도움이 필요하다면
 
 - [GitHub 이슈](https://github.com/owasp-noir/noir/issues)를 열어주세요
 - [연락처](@/resources/contact/index.ko.md) 페이지에서 팀에 연락하는 다른 방법을 확인하세요

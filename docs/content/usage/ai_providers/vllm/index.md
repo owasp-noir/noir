@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-Use [vLLM](https://docs.vllm.ai), a high-throughput inference engine for LLMs, to run fast local code analysis with Noir.
+Serve a model locally with [vLLM](https://docs.vllm.ai) and point Noir at it.
 
 ## Setup
 
@@ -17,7 +17,7 @@ Use [vLLM](https://docs.vllm.ai), a high-throughput inference engine for LLMs, t
     vllm serve google/gemma-4-31B-it
     ```
 
-    This starts a local server with an OpenAI-compatible API endpoint.
+    This starts an OpenAI-compatible server on port 8000.
 
 ## Usage
 
@@ -26,3 +26,5 @@ noir scan ./spec/functional_test/fixtures/hahwul \
      --ai-provider=vllm \
      --ai-model=google/gemma-4-31B-it
 ```
+
+The `vllm` preset points at `http://localhost:8000/v1`. For another host or port, pass the URL instead, for example `--ai-provider=http://gpu-box:8000/v1`.

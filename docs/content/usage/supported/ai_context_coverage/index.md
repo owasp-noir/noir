@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-Noir can attach a structured **AI review context** to each endpoint. It collects the static signals that LLM-based SAST tools, code reviewers, and security agents need to triage a route, so they don't have to walk the repository themselves.
+Noir can attach a structured AI review context to each endpoint. It collects the static signals that LLM-based SAST tools, code reviewers, and security agents need to triage a route, so they don't have to walk the repository themselves.
 
 Use `--ai-context` to enable it:
 
@@ -41,7 +41,7 @@ In plain output, every endpoint with non-empty context grows an `ai_context:` bl
 | OpenAPI 2.0 / 3.0 | Operation-level `x-noir-ai-context` extension |
 | SARIF | `result.properties.noir.ai_context` |
 | Postman | Appended to the item description |
-| cURL / HTTPie / only-url / only-param | Omitted on purpose (primary output stays stable) |
+| cURL / HTTPie / PowerShell / only-url / only-param | Left out on purpose, so their main output stays the same |
 
 ## What goes inside
 
@@ -83,7 +83,7 @@ noir scan . --ai-context -f oas3 -o spec.json
 
 ## Completeness notes
 
-- AI context is **additive**: endpoints unaffected by any heuristic come out exactly as they would without the flag (no `ai_context` key in serialized models).
+- AI context only adds data: endpoints unaffected by any heuristic come out exactly as they would without the flag (no `ai_context` key in serialized models).
 - Heuristics are tuned conservatively. Both false positives and false negatives exist; treat entries as priors, not findings.
-- Guard / sink / validator patterns improve over time. The set is intentionally cross-language so a single context schema works across the framework matrix Noir already covers.
+- Guard / sink / validator patterns improve over time. They are cross-language on purpose, so one context schema works for every framework Noir covers.
 - Callee coverage drives much of the AI context. See [Callee Coverage](@/usage/supported/callee_coverage/index.md) for which frameworks expose handler callees today.

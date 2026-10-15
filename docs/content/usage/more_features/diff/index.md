@@ -1,12 +1,12 @@
 +++
 title = "Comparing Code with Diff Mode"
-description = "Compare two codebase versions to identify endpoint changes."
+description = "Compare two versions of a codebase and see which endpoints were added, removed or changed."
 weight = 2
 sort_by = "weight"
 
 +++
 
-Compare two versions of a codebase to identify endpoint changes. Useful for code reviews, security assessments, and understanding feature impacts.
+Diff mode scans two versions of a codebase and reports which endpoints were added, removed or changed. Use it in code review or in CI.
 
 ```bash
 noir scan <NEW_VERSION_PATH> --diff-path <OLD_VERSION_PATH>
@@ -127,4 +127,4 @@ exec noir scan . --diff-ref origin/main --fail-on auth-removed --no-log
 
 For a complete pull request workflow, see [GitHub Action](../../github_action/).
 
-Especially useful in CI/CD: feed only the `added` and `changed` endpoints into a DAST scanner to focus on modified attack surface.
+In CI you can also feed only the `added` and `changed` endpoints to a DAST scanner, so it tests just the part of the attack surface that changed.

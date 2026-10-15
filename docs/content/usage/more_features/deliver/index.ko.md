@@ -6,10 +6,10 @@ sort_by = "weight"
 
 +++
 
-Noir의 결과 전송은 성격이 다른 두 갈래로 나뉩니다.
+Noir는 결과를 두 가지 방식으로 보냅니다.
 
 - **PROBE**: 방금 찾은 엔드포인트에 실제 HTTP 요청을 보냅니다(능동 재전송). 필요하면 Burp Suite나 ZAP 같은 프록시를 거칩니다.
-- **EXPORT**: 엔드포인트 목록을 외부 저장소(Elasticsearch, OpenSearch, 임의의 웹훅 수신기)에 데이터로 보냅니다. 엔드포인트 자체에는 HTTP 트래픽이 가지 않습니다.
+- **EXPORT**: 엔드포인트 목록을 데이터로 Elasticsearch, OpenSearch, 웹훅 수신기에 보냅니다. 엔드포인트 자체에는 트래픽이 가지 않습니다.
 
 {% mascot(mood="run") %}
 Probe는 재전송, Export는 적재. 결과가 어디로 가야 하는지에 맞춰 고르면 돼.
@@ -151,7 +151,7 @@ noir scan ./source --export-webhook https://hooks.example.com/noir
 | `endpoint_count` | `endpoints`의 항목 수 |
 | `noir_version` | 이 문서를 만든 noir 버전 |
 
-Slack incoming webhook, Discord 웹훅, Zapier/n8n 트리거, 사내 수신기는 모두 임의의 JSON 본문을 받으므로, 형식 하나로 흔한 목적지를 다 쓸 수 있습니다. 특정 플랫폼 형식(예: Slack의 `{"text": ...}` 블록)이 필요하면 noir에 플랫폼별 포매터를 기대하지 말고 변환기를 중간에 두세요.
+Slack incoming webhook, Discord 웹훅, Zapier/n8n 트리거, 사내 수신기는 모두 아무 JSON 본문이나 받으므로, 이 형태 하나로 흔한 목적지를 다 쓸 수 있습니다. 수신기가 자기만의 형태(예: Slack의 `{"text": ...}` 블록)를 요구하면 중간에 변환기를 두세요. Noir에는 플랫폼별 포매터가 없습니다.
 
 ### TLS
 
@@ -161,7 +161,7 @@ probe와 export 모두 TLS 인증서를 검증합니다. 자체 서명 인증서
 
 ## v0 별칭
 
-v0.x 플래그 이름도 그대로 동작합니다. Noir가 내부에서 조용히 바꿔 줍니다.
+v0.x 플래그 이름도 그대로 동작합니다. Noir가 경고 없이 v1 이름으로 바꿔 줍니다.
 
 | v0 플래그 | v1 플래그 |
 | --- | --- |
@@ -172,4 +172,4 @@ v0.x 플래그 이름도 그대로 동작합니다. Noir가 내부에서 조용�
 | `--use-matchers VAL` | `--probe-match VAL` |
 | `--use-filters VAL` | `--probe-skip VAL` |
 
-v0 이름을 쓰는 기존 CI 스크립트와 Dockerfile은 고치지 않아도 됩니다. 새 문서, 예제, 셸 자동 완성에는 v1 이름이 나옵니다.
+v0 이름을 쓰는 CI 스크립트와 Dockerfile은 고치지 않아도 됩니다. 도움말, 문서, 셸 자동 완성에는 v1 이름만 나옵니다.

@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-Noir에는 흔한 보안 취약점을 잡는 기본 규칙이 있습니다. 패시브 스캔(`-P`)을 켜면 첫 실행에서 규칙을 자동으로 내려받고, 업데이트를 확인하며, 원하면 자동으로 업데이트합니다.
+Noir의 기본 규칙은 코드에 하드코딩된 시크릿(API 키, 토큰, 개인 키, 연결 문자열)을 찾습니다. `-P`를 켜면 첫 실행에서 규칙을 내려받고, 업데이트를 확인하며, 원하면 자동으로 업데이트합니다.
 
 {% mascot(mood="hacker") %}
 패시브 스캔은 엔드포인트 스캔과 같은 패스에서 돌아. 코드 속 시크릿이나 위험한 호출을 파일과 줄 번호로 알려줘.
@@ -64,15 +64,15 @@ noir scan /app -P --passive-scan-no-update-check
 ⚬ Initializing passive rules directory...
 ✔ Passive rules initialized successfully.
   ├── Using default passive rules (/home/user/.config/noir/passive_rules).
-  └── Loaded 27 valid passive scan rules.
+  └── Loaded 40 valid passive scan rules.
 ```
 
 업데이트가 가능한 경우:
 ```
 ⚬ Passive scanner enabled.
 ▲ Passive rules are 3 commits behind the latest version.
-  ├── Run 'git pull' in ~/.config/noir/passive_rules/ to update
-  ├── Or use 'git clone https://github.com/owasp-noir/noir-passive-rules.git ~/.config/noir/passive_rules/' to get the latest rules
+  ├── Run 'git pull' in /home/user/.config/noir/passive_rules to update
+  ├── Or use 'git clone https://github.com/owasp-noir/noir-passive-rules.git /home/user/.config/noir/passive_rules' to get the latest rules
   ├── Or run 'noir scan . -P --passive-scan-auto-update' to auto-update on startup
 ```
 
@@ -85,4 +85,4 @@ noir scan /app -P --passive-scan-no-update-check
 
 ## 규칙 사용자 정의
 
-같은 디렉터리에 `.yml`이나 `.yaml` 규칙 파일을 넣으면 다음 패시브 스캔에서 자동으로 로드됩니다. 기본 규칙 세트는 고치지 않아도 됩니다.
+같은 디렉터리에 `.yml`이나 `.yaml` 규칙 파일을 넣으면 다음 패시브 스캔에서 기본 규칙과 함께 로드됩니다.

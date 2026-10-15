@@ -57,12 +57,13 @@ SCHEME myapp://complex/:id
 
 ## 출력 동작
 
-모바일 엔드포인트는 구조화된 인벤토리(JSON, JSONL, YAML, TOML, SARIF, Markdown, mermaid, HTML)와 Elasticsearch / webhook export에는 그대로 포함됩니다. 앱 표면의 일부이기 때문입니다. 반면 HTTP 모양을 가정하는 출력·전송(cURL, HTTPie, PowerShell, OpenAPI 2.0 / 3.0, Postman, 능동 프로빙 / 프록시 전송)에서는 **제외**됩니다. 앱 URL은 보내는 HTTP 요청이 아니라 여는 대상이기 때문입니다. 대신 `-f adb`(Android)와 `-f simctl`(iOS)로 바로 실행 가능한 기기 명령을 뽑을 수 있습니다.
+모바일 엔드포인트는 구조화된 인벤토리(JSON, JSONL, YAML, TOML, SARIF, Markdown table, mermaid, HTML)와 Elasticsearch / webhook export에는 그대로 포함됩니다. 앱 표면의 일부이기 때문입니다. 반면 HTTP 모양을 가정하는 출력·전송(cURL, HTTPie, PowerShell, OpenAPI 2.0 / 3.0, Postman, 능동 프로빙 / 프록시 전송)에서는 빠집니다. 앱 URL은 보내는 HTTP 요청이 아니라 여는 대상이기 때문입니다. 대신 `-f adb`(Android)와 `-f simctl`(iOS)로 바로 실행 가능한 기기 명령을 뽑을 수 있습니다.
 
 ## 참고 및 한계
 
 * 핸들러 연결에는 소스 코드가 필요합니다. 매니페스트·plist만 있는 스캔도 엔드포인트는 추출하지만 callee·파라미터·AI 컨텍스트는 붙지 않습니다.
 * 바이너리(컴파일된) `Info.plist`는 건너뜁니다. 소스 저장소의 XML plist는 파싱합니다.
+* iOS에서는 앱 자체 스킴에 대해 Swift 코드에 적힌 라우트도 찾습니다. `url.host == SomeEnum.case.rawValue`처럼 비교하는 라우터 enum(각 case가 라우트가 됨)과 하드코딩된 `scheme://host/path` 문자열 리터럴입니다.
 * gradle 플레이스홀더는 매니페스트 위쪽에서 가장 가까운 `build.gradle(.kts)`를 읽어 해석합니다. 같은 플레이스홀더가 여러 번 선언되면(예: `buildTypes` 오버라이드) 먼저 선언된 쪽(관례상 `defaultConfig`)이 우선하며, 빌드 variant별 값은 모델링하지 않습니다. gradle에 값이 없는 플레이스홀더는 URL에 그대로 남고 엔드포인트에 `unresolved` 태그가 붙습니다.
 * 스킴 없는 Jetpack Navigation URI(런타임에는 http·https 모두 매칭)는 `https` 하나로 추출합니다. `{arg}` 세그먼트는 `:arg` path 파라미터로, `?key={arg}` 쿼리 플레이스홀더는 `query` 파라미터로 바뀌고, 끝의 `.*` 와일드카드는 리터럴 프리픽스만 남깁니다.
 * intent-filter가 없는 `android:exported="true"` 컴포넌트는 명시적 인텐트 표면(`android-intent`, metadata에 `explicit`/`exported`/`component_type` 포함)으로 보고됩니다. action·category·data URI가 없어도, 컴포넌트 이름을 지정한 명시적 인텐트는 여전히 그 컴포넌트에 도달합니다. exported가 아니거나 `android:enabled="false"`인 필터 없는 컴포넌트는 보고하지 않습니다. 보호용 `android:permission`은 metadata에 기록되지만 표면을 숨기지는 않습니다. `normal`/`dangerous` 권한은 다른 앱이 여전히 획득할 수 있기 때문입니다.

@@ -26,7 +26,7 @@ POST /query
     └── query
 ```
 
-Add `--include` to show more per endpoint: `path` (source file and line), `techs` (the analyzer), and `callee` (functions the handler calls). `--verbose` turns on `--include path` for you.
+Add `--include` to show more per endpoint: `path` (source file and line), `techs` (the analyzer), and `callee` (functions the handler calls). `--verbose` turns on `--include path` (and all taggers) for you.
 
 ```bash
 noir scan . --no-log --include path,techs
@@ -168,7 +168,7 @@ JSONL (`-f jsonl`) is covered together with JSON on the [JSON and JSONL](../json
 noir scan . -f postman -u https://api.example.com
 ```
 
-Generates a Postman Collection v2.1 JSON file. Save the output and import it into Postman for interactive API testing. The collection defines a `baseUrl` variable set from `-u` (`http://localhost` without it). Without `-u`, request URLs are written as `{{baseUrl}}/path`, so you can switch targets inside Postman.
+Generates a Postman Collection v2.1 JSON file. Save the output and import it into Postman. The collection defines a `baseUrl` variable set from `-u` (`http://localhost` without it). Without `-u`, request URLs are written as `{{baseUrl}}/path`, so you can switch targets inside Postman.
 
 Request bodies follow the parameter types Noir recorded: `json` becomes a raw JSON body, `form` becomes `urlencoded`, `file` (with any sibling form fields) becomes `formdata` with `type: file`, and `xml` becomes a raw body with `Content-Type: application/xml` (and the Postman raw language set to `xml`). An empty `xml` param becomes a self-closing tag named after the param (`<body/>` when the name is `body`), so the Postman raw editor stays non-empty and the field remains visible. Without those body types, requests stay header/URL-only as in the sample below.
 

@@ -37,10 +37,10 @@ Every analyzer has three layers. Keep them separate: a framework adapter should 
 
 `spec/unit_test/analyzer/layering_boundary_spec.cr` enforces the file-walking half of this rule. `Dir.glob`, `Dir.children` or `Dir.each_child` anywhere under `src/analyzer/analyzers/` fails the suite. Get your file set from the engine or from the detector-built indexes (`get_files_by_extension`, `CodeLocator#files_by_basename`). Walking a directory yourself skips subtree pruning, `--exclude-path`, the media filter and the content cache.
 
-**Reference implementations.** No single analyzer shows the whole model yet, so take each layer from a different file:
+**Reference implementations.** Take the walk and the body from these files:
 
-- **The walk (L0)**: [`javascript/hono.cr`](https://github.com/owasp-noir/noir/blob/main/src/analyzer/analyzers/javascript/hono.cr) inherits `JavascriptEngine` and drives the walk with `parallel_file_scan`, so it gets the worker pool, content cache and test/vendor filters for free. Don't copy its body: it still carries its own regex passes next to the extractor call.
-- **The body (L1 → L2)**: [`javascript/hapi.cr`](https://github.com/owasp-noir/noir/blob/main/src/analyzer/analyzers/javascript/hapi.cr) is about 50 lines. It calls `Noir::TreeSitterHapiExtractor.extract_routes` and only maps the result onto `Param`s. `javascript/elysia.cr`, `javascript/adonisjs.cr`, `kotlin/http4k.cr` and `java/spark.cr` have the same shape. Don't copy their walk: they extend `Analyzer` directly and loop over `all_files` themselves.
+- **The walk (L0)**: [`javascript/hono.cr`](https://github.com/owasp-noir/noir/blob/main/src/analyzer/analyzers/javascript/hono.cr) inherits `JavascriptEngine` and drives the walk with `ordered_scan_files(get_files_by_extensions(DEFAULT_EXTENSIONS))`. It gets the worker pool, content cache and per-file error isolation for free, and per-file results come back in input order. Don't copy its body: it still carries its own regex passes next to the extractor call.
+- **The body (L1 → L2)**: [`javascript/hapi.cr`](https://github.com/owasp-noir/noir/blob/main/src/analyzer/analyzers/javascript/hapi.cr) is about 65 lines. It rides `JavascriptEngine` with the same `ordered_scan_files` walk, calls `Noir::TreeSitterHapiExtractor.extract_routes`, and only maps the result onto `Param`s. `javascript/elysia.cr`, `javascript/adonisjs.cr`, `kotlin/http4k.cr` and `java/spark.cr` have the same body. Don't copy their walk: they extend `Analyzer` directly and loop over `all_files` themselves.
 
 ## Current coverage
 
@@ -51,15 +51,15 @@ Every analyzer has three layers. Keep them separate: a framework adapter should 
   - JavaScript: `js_route_extractor.cr`. Express, Fastify, Hono, Koa and Restify get their routes from `JSRouteExtractor.extract_routes`. NestJS, Next.js, Nuxt and others use only its helpers.
   - Tree-sitter extractors for Go, Java, Kotlin and Python. Go and Kotlin ship as directories of part files behind an umbrella `require` (`go_route_extractor_ts/`, `kotlin_route_extractor_ts/`).
   - Framework-specific Tree-sitter extractors: AdonisJS, Elysia, Hapi, http4k, JAX-RS, Micronaut, Ktor, and others.
-- **Outside the engine stack**: CSharp, Java, Kotlin, Dart, Zig, C++, Clojure, Haskell, Lua, Groovy, Scala Play, and Go's Chi, Httprouter, Fasthttp and Kratos. Their analyzers orchestrate multiple phases or carry self-contained extraction, so they inherit from `Analyzer` directly.
+- **Outside the engine stack**: C#, VB.NET, F#, Java, Kotlin, Dart, Zig, C++, Clojure, Haskell, Lua, Groovy, Erlang, Gleam, R, Apex, Classic ASP and WebForms, plus Scala Play, Go's Chi, Httprouter, Fasthttp and Kratos, and JavaScript's AdonisJS and Elysia. Their analyzers orchestrate multiple phases or carry self-contained extraction, so they inherit from `Analyzer` directly.
 
 ## Engine walk helpers
 
 There is no single walk API shared by every engine. Check what your language's engine offers before you write an adapter:
 
 - **`FileScanEngine` engines** (C, Crystal, Elixir, Perl, PHP, Rust, Scala, Swift): the engine supplies the candidate list through `scan_target_files` and an optional per-path veto through `scan_accepts?`. The adapter implements `analyze_file` (shape A below).
-- **JavaScript and Ruby engines**: define their own `parallel_file_scan` and have no `scan_target_files`. Adapters override `analyze` and call `parallel_file_scan` (shape B below).
-- **Language-specific iterators**: `PythonEngine` has `python_source_files` / `each_python_source` / `parallel_python_sources`. `SpecificationEngine` has `each_spec_file` / `each_spec_file_with_details`. `CfmlEngine` has `cfml_components` / `cfml_pages`. `GoEngine` hands over whole-package content through `read_package_file_contents` and the `collect_*` helpers, and its adapters walk with `parallel_analyze`.
+- **JavaScript and Ruby engines**: define their own `parallel_file_scan` and have no `scan_target_files`. Adapters override `analyze` and call `parallel_file_scan`, or `ordered_scan_files` over `get_files_by_extensions(...)` to get per-file results back in input order (shape B below).
+- **Language-specific iterators**: `PythonEngine` has `python_source_files` / `each_python_source` / `parallel_python_sources`. `SpecificationEngine` has `each_spec_file` / `each_spec_file_with_details`. `CfmlEngine` has `cfml_components` / `cfml_pages`. `GoEngine` hands over whole-package content through `read_package_file_contents` and the `collect_*` helpers. Its adapters walk with `ordered_parallel_analyze` (older ones still use `parallel_analyze`).
 - **No engine**: the adapter extends `Analyzer` and uses `scan_files(files, &block)`, the shared skeleton every engine above funnels into.
 
 **Shape A: `analyze_file`** (simpler, pure per-file):
@@ -80,14 +80,15 @@ end
 ```crystal
 class MyFramework < JavascriptEngine
   def analyze
-    result = [] of Endpoint
-    static_dirs = [] of Hash(String, String)
-
-    parallel_file_scan do |path|
-      # ... build endpoints into result, collect static_dirs
+    per_file = ordered_scan_files(get_files_by_extensions(DEFAULT_EXTENSIONS)) do |path|
+      endpoints = [] of Endpoint
+      static_dirs = [] of Hash(String, String)
+      # ... parse this one file into endpoints and static_dirs
+      {endpoints, static_dirs}
     end
 
-    process_js_static_dirs(static_dirs, result)  # post-pass
+    per_file.each { |endpoints, _| result.concat(endpoints) }
+    process_js_static_dirs(per_file.flat_map(&.[1]), result)  # post-pass
     result
   end
 end
@@ -155,17 +156,18 @@ module Analyzer::Go
     IMPORT_MARKER         = "github.com/cloudwego/hertz"
 
     def analyze
-      public_dirs = [] of Hash(String, String)
       package_groups, file_contents = collect_package_groups_ts(import_marker: IMPORT_MARKER)
 
-      parallel_analyze(get_files_by_extension(".go")) do |path|
+      per_file = ordered_parallel_analyze(get_files_by_extension(".go")) do |path|
         content = file_contents[path]? || read_file_content(path)
         cross_file_groups = ts_groups_for_directory(package_groups, File.dirname(path))
         routes = Noir::TreeSitterGoRouteExtractor.extract_routes(content, cross_file_groups, handle_method: "Handle")
         # ... turn routes into endpoints, then per-line param extraction
+        {file_endpoints, file_public_dirs}
       end
 
-      resolve_public_dirs(public_dirs)
+      per_file.each { |file_endpoints, _| result.concat(file_endpoints) }
+      resolve_public_dirs(per_file.flat_map(&.[1]))
       result
     end
   end
@@ -177,7 +179,7 @@ Key points:
 - **Inherit from the language engine** (`GoEngine` here). You get `collect_package_groups_ts`, `ts_groups_for_directory`, `add_param_to_endpoint` and `resolve_public_dirs` for free.
 - **Declare the tech with `analyzer_for`**. That single line *is* the registration (see step 3). Leaving it out is a compile error.
 - **Delegate route parsing to the shared extractor** (`Noir::TreeSitterGoRouteExtractor`). If your framework routes differently, steer the extractor with its arguments (e.g. `handle_method:`) or its specialized entry points instead of re-parsing (see Mux or GoZero).
-- **Use the engine's walk helper** (`parallel_analyze(get_files_by_extension(".go"))` for Go, `parallel_file_scan` or `analyze_file` elsewhere). Don't re-implement the channel and worker pool.
+- **Use the engine's walk helper** (`ordered_parallel_analyze(get_files_by_extension(".go"))` for Go, `ordered_scan_files`, `parallel_file_scan` or `analyze_file` elsewhere). Don't re-implement the channel and worker pool.
 - **Only list verbs the framework actually routes** in your method table. In particular, add `QUERY` (RFC 10008) only when upstream ships explicit support for it. A speculative entry reports endpoints the framework itself answers with 405. The same policy covers wildcard (`ANY`/`ALL`/`*`) routes: neither the shared `WILDCARD_HTTP_METHODS` (`src/utils/http_symbols.cr`) nor any analyzer-local wildcard fan-out list (several analyzers expand `ANY` at analysis time with their own table) should grow `QUERY`.
 
 ### 3. Declare the tech metadata

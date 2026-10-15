@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-Noir includes curated default rules for detecting common security vulnerabilities. When passive scanning is enabled (`-P`), Noir automatically initializes rules on first run, checks for updates, and optionally auto-updates them.
+Noir's default rules look for hard-coded secrets: API keys, tokens, private keys and connection strings. With `-P`, Noir downloads the rules on the first run, checks them for updates, and can update them for you.
 
 {% mascot(mood="hacker") %}
 Passive scan runs in the same pass as the endpoint scan. Secrets and dangerous calls in the code come back with a file and line.
@@ -30,7 +30,7 @@ With `-P` enabled, Noir:
 1. Initializes rules on first run by cloning [noir-passive-rules](https://github.com/owasp-noir/noir-passive-rules) to `~/.config/noir/passive_rules/`
 2. Checks for updates by comparing local and remote repositories
 3. Notifies you when rules are outdated
-4. Optionally auto-updates when enabled
+4. Updates them, if auto-update is on
 
 Repository: https://github.com/owasp-noir/noir-passive-rules
 
@@ -64,15 +64,15 @@ First run (auto-initialization):
 ⚬ Initializing passive rules directory...
 ✔ Passive rules initialized successfully.
   ├── Using default passive rules (/home/user/.config/noir/passive_rules).
-  └── Loaded 27 valid passive scan rules.
+  └── Loaded 40 valid passive scan rules.
 ```
 
 When updates are available:
 ```
 ⚬ Passive scanner enabled.
 ▲ Passive rules are 3 commits behind the latest version.
-  ├── Run 'git pull' in ~/.config/noir/passive_rules/ to update
-  ├── Or use 'git clone https://github.com/owasp-noir/noir-passive-rules.git ~/.config/noir/passive_rules/' to get the latest rules
+  ├── Run 'git pull' in /home/user/.config/noir/passive_rules to update
+  ├── Or use 'git clone https://github.com/owasp-noir/noir-passive-rules.git /home/user/.config/noir/passive_rules' to get the latest rules
   ├── Or run 'noir scan . -P --passive-scan-auto-update' to auto-update on startup
 ```
 
@@ -85,4 +85,4 @@ With auto-update enabled:
 
 ## Customizing Rules
 
-Add custom `.yml` or `.yaml` rule files to the same directory. They are automatically loaded on the next passive scan without modifying the default rule set.
+Add your own `.yml` or `.yaml` rule files to the same directory. The next passive scan loads them along with the default rules.

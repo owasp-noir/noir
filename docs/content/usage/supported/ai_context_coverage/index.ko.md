@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-Noir는 각 엔드포인트에 구조화된 **AI 리뷰 컨텍스트**를 붙일 수 있습니다. LLM 기반 SAST 도구, 코드 리뷰어, 보안 에이전트가 라우트를 검토할 때 필요한 정적 신호를 한곳에 모아 주므로, 저장소를 직접 훑지 않아도 됩니다.
+Noir는 각 엔드포인트에 구조화된 AI 리뷰 컨텍스트를 붙일 수 있습니다. LLM 기반 SAST 도구, 코드 리뷰어, 보안 에이전트가 라우트를 검토할 때 필요한 정적 신호를 한곳에 모아 주므로, 저장소를 직접 훑지 않아도 됩니다.
 
 `--ai-context`로 켭니다.
 
@@ -32,15 +32,15 @@ noir scan . --ai-context                    # bare 형태, 동일하게 "전부"
 선택에 `signals`가 있을 때만 나옵니다(인자 없는 `--ai-context`와 `all`에는
 포함됩니다).
 
-plain 출력에서는 컨텍스트가 있는 엔드포인트마다 `ai_context:` 블록이 붙습니다. 구조화된 포맷에서는 같은 구조가 다음 위치에 들어갑니다.
+plain 출력에서는 컨텍스트가 있는 엔드포인트마다 `ai_context:` 블록이 붙습니다. 구조화된 출력 형식에서는 같은 구조가 다음 위치에 들어갑니다.
 
-| 포맷 | AI 컨텍스트 위치 |
+| 출력 형식 | AI 컨텍스트 위치 |
 |---|---|
 | JSON / JSONL / YAML / TOML | `endpoints[].ai_context` |
 | OpenAPI 2.0 / 3.0 | 오퍼레이션 단위 `x-noir-ai-context` 확장 |
 | SARIF | `result.properties.noir.ai_context` |
 | Postman | 아이템 설명에 부착 |
-| cURL / HTTPie / only-url / only-param | 의도적으로 생략 (기본 출력 안정성 유지) |
+| cURL / HTTPie / PowerShell / only-url / only-param | 본래 출력이 바뀌지 않도록 일부러 넣지 않음 |
 
 ## 무엇이 들어가나
 
@@ -64,8 +64,8 @@ plain 출력에서는 컨텍스트가 있는 엔드포인트마다 `ai_context:`
 ## 대표 사용 사례
 
 - **AI SAST**: 엔드포인트 인벤토리와 AI 컨텍스트를 LLM에 함께 넘기면, 라우트 구조를 다시 발견하지 않아도 공격 표면에서 도달 가능한 취약점에 집중할 수 있습니다.
-- **수동 트리아지**: 대규모 JSON/SARIF 리포트를 sink 종류나 `signals`(예: `state_changing_without_guard`)로 정렬·필터링하기 좋습니다.
-- **CI 게이팅**: `sinks` 중 `validators`가 없는 것만 골라 PR에서 위험 엔드포인트를 표시하는 데 활용할 수 있습니다.
+- **수동 트리아지**: 큰 JSON/SARIF 리포트를 sink 종류나 `signals`(예: `state_changing_without_guard`)로 정렬하고 거를 수 있습니다.
+- **CI 게이팅**: `sinks`는 있고 `validators`는 없는 엔드포인트를 골라 PR에서 위험 엔드포인트로 표시합니다.
 
 ## 다른 플래그와 조합
 
@@ -80,9 +80,9 @@ noir scan . --ai-context -f json -o noir-context.json
 noir scan . --ai-context -f oas3 -o spec.json
 ```
 
-## 보완 메모
+## 완성도 참고사항
 
-- AI 컨텍스트는 **덧붙이기만** 합니다. 휴리스틱에 걸리지 않는 엔드포인트는 플래그 없이 돌렸을 때와 동일하게 나옵니다 (직렬화된 모델에 `ai_context` 키가 추가되지 않음).
+- AI 컨텍스트는 데이터를 덧붙이기만 합니다. 휴리스틱에 걸리지 않는 엔드포인트는 플래그 없이 돌렸을 때와 동일하게 나옵니다 (직렬화된 모델에 `ai_context` 키가 추가되지 않음).
 - 휴리스틱은 보수적으로 튜닝되어 있지만 거짓 양성/음성 모두 존재합니다. 항목은 확정된 결론이 아니라 검토를 시작할 단서로 다루세요.
-- guard/sink/validator 패턴은 계속 개선됩니다. 하나의 컨텍스트 스키마가 Noir가 지원하는 모든 프레임워크에 통하도록, 패턴은 일부러 언어에 묶이지 않게 설계했습니다.
+- guard/sink/validator 패턴은 계속 개선됩니다. 패턴을 일부러 언어에 묶지 않았기 때문에, 컨텍스트 스키마 하나가 Noir가 지원하는 모든 프레임워크에 통합니다.
 - AI 컨텍스트의 많은 부분이 callee 커버리지에서 비롯됩니다. 현재 어떤 프레임워크가 핸들러 callee를 내보내는지는 [Callee 커버리지](@/usage/supported/callee_coverage/index.ko.md)를 참고하세요.

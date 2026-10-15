@@ -9,10 +9,10 @@ prev_page_label = "Install Noir"
 +++
 
 {% mascot(mood="run") %}
-Noir is installed. Let's take it for a spin! Point it at a project, see what it finds, and learn how to shape the output.
+Noir is installed. Point it at a project and see what it finds.
 {% end %}
 
-Here you run a first scan end to end: point Noir at a project, read what it reports, and shape the output for your workflow. Each step builds on the one before, so follow them in order the first time.
+Each step builds on the one before, so follow them in order the first time.
 
 ## Run a Scan
 
@@ -38,7 +38,7 @@ Noir reads the source files, detects which frameworks are in use, and prints eve
 
 ## Check What Was Detected
 
-Curious which technologies Noir picked up? Add `--include techs` to see them alongside the results:
+To see which technologies Noir detected, add `--include techs`:
 
 ```bash
 noir scan . --include techs
@@ -60,13 +60,13 @@ The default output is plain text meant for reading in a terminal. Depending on y
 # Machine-readable JSON for scripting and pipelines
 noir scan . -f json
 
-# YAML for easy reading and config-friendly workflows
+# YAML
 noir scan . -f yaml
 
-# OpenAPI spec, useful for generating API docs or feeding into tools
+# OpenAPI 3.0 spec for API tools and scanners
 noir scan . -f oas3
 
-# cURL commands you can run immediately against a live target
+# cURL commands against a live target
 noir scan . -f curl -u https://your-target.com
 ```
 
@@ -80,11 +80,9 @@ Instead of printing to the terminal, write the output to a file with `-o`:
 noir scan . -f json -o results.json
 ```
 
-This is useful for diffing results between scans, feeding into CI pipelines, or sharing with your team.
-
 ## Trace Endpoints Back to Source
 
-Want to know exactly where an endpoint was defined? Add `--include path` to show source file locations:
+To show the source file and line behind each endpoint, add `--include path`:
 
 ```bash
 noir scan . --include path
@@ -98,7 +96,7 @@ noir scan . --include path,techs
 
 ## Focus Your Scan
 
-Large monorepos may contain many frameworks. You can narrow the scan to what matters:
+In a monorepo with many frameworks, narrow the scan:
 
 ```bash
 # Run only the Rails and Django detectors (skip everything else)
@@ -190,7 +188,7 @@ For build details (Crystal / LLVM / target), run `noir version --verbose`. Run `
 
 ---
 
-You've completed the Getting Started guide! Here's what to explore next:
+That's the end of Getting Started. Where to go next:
 
 - **[CLI Commands](@/usage/cli_commands/_index.md)**: The full v1 subcommand reference (scan, list, cache, config, rules, and so on)
 - **[Configurations](@/usage/configurations/configuration_file/index.md)**: Set default options so you don't repeat flags every time

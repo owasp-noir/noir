@@ -16,6 +16,8 @@ Use a `config.yaml` file to set default options for consistent scans.
 | Linux | `~/.config/noir/` |
 | Windows | `%APPDATA%\noir\` |
 
+Set `NOIR_HOME` to use a different directory.
+
 Settings in the config file are defaults; command-line flags override them. Use `--config-file <path>` to load a config from a non-default location:
 
 ```bash
@@ -125,7 +127,7 @@ noir scan /path/to/my/project -f json -u https://api.example.com --exclude-codes
 | `no_spinner` | bool | `--no-spinner` | Disable spinner animations |
 | `strict` | bool | `--strict` | Exit `2` when an analyzer fails or skips a file |
 | `status_codes` | bool | `--status-codes` | Probe and attach HTTP status codes (needs `url`) |
-| `exclude_codes` | CSV | `--exclude-codes` | Drop probed statuses (pairs with `status_codes`) |
+| `exclude_codes` | CSV | `--exclude-codes` | Drop these statuses; probes on its own (needs `url`) |
 | `include_path` | bool | `--include path` | Legacy boolean form of `--include` |
 | `include_techs` | bool | `--include techs` | Legacy boolean form of `--include` |
 | `include_callee` | bool | `--include callee` | Attach 1-hop handler callees |
@@ -175,7 +177,7 @@ noir scan /path/to/my/project -f json -u https://api.example.com --exclude-codes
 |---|---|---|---|
 | `ai_provider` | string | `--ai-provider` | Provider prefix or full URL |
 | `ai_model` | string | `--ai-model` | Model name |
-| `ai_key` | string | `--ai-key` / `NOIR_AI_KEY` | Prefer the env var in shared configs |
+| `ai_key` | string | `--ai-key` / `NOIR_AI_KEY` | In shared configs, use `NOIR_AI_KEY` or `--ai-key-file` instead |
 | `ai_agent` | bool | `--ai-agent` | Enable the agentic tool-calling loop |
 | `ai_agent_max_steps` | int | `--ai-agent-max-steps` | Agent loop cap |
 | `ai_no_optimize` | bool | `--ai-no-optimize` | Skip the LLM optimizer pass |

@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-ACP(Agent Client Protocol) 제공업체를 사용하면 Noir가 직접 HTTP LLM API 대신 AI 에이전트 프로세스와 통신합니다.
+ACP(Agent Client Protocol) 제공업체를 쓰면 Noir는 LLM HTTP API를 호출하는 대신 AI 에이전트 프로세스를 띄워 통신합니다.
 
 ## 지원되는 ACP 제공업체
 
@@ -23,7 +23,7 @@ NOIR_ACP_ALLOW_CUSTOM_COMMAND=1 noir scan ./myapp --ai-provider="acp:my-agent --
 
 ## 사용 방법
 
-### Codex (권장 테스트 대상)
+### Codex
 
 ```bash
 noir scan ./myapp --ai-provider=acp:codex
@@ -41,19 +41,15 @@ noir scan ./myapp --ai-provider=acp:gemini
 noir scan ./myapp --ai-provider=acp:claude
 ```
 
-### 모델 지정 (선택 사항)
+### 모델
 
-`acp:*`에서는 `--ai-model`이 필수가 아닙니다.
-
-```bash
-noir scan ./myapp --ai-provider=acp:codex --ai-model=codex
-```
+`acp:*`에서는 `--ai-model`이 필수가 아닙니다. Noir는 이 값을 에이전트에 넘기지 않으며, 에이전트는 자체 설정된 모델을 씁니다.
 
 ## 로그 동작
 
 기본적으로 Noir는 ACP 라이프사이클 이벤트를 Noir 스타일 로그로 출력하고, ACP/에이전트의 원본 stderr 로그는 숨깁니다.
 
-원본 ACP/에이전트 로그가 필요하면:
+원본 ACP/에이전트 로그가 필요하면 다음을 설정하세요.
 
 ```bash
 NOIR_ACP_RAW_LOG=1 noir scan ./myapp --ai-provider=acp:codex
@@ -61,9 +57,9 @@ NOIR_ACP_RAW_LOG=1 noir scan ./myapp --ai-provider=acp:codex
 
 ## 도구 실행 권한
 
-ACP 에이전트는 자신의 도구(셸 명령, 파일 쓰기, 네트워크 요청)를 실행하기 위해 Noir에 권한을 요청할 수 있습니다. Noir는 이 요청을 **모두 거부**합니다.
+ACP 에이전트는 자신의 도구(셸 명령, 파일 쓰기, 네트워크 요청)를 실행하기 위해 Noir에 권한을 요청할 수 있습니다. Noir는 이 요청을 모두 거부합니다.
 
-Noir가 에이전트에게 보내는 프롬프트는 스캔 대상 트리의 소스 코드이고, 내가 작성하지 않은 코드를 스캔하는 것이 일반적인 사용 방식입니다. "위 내용은 무시하고 이것을 실행하라" 같은 문장이 들어 있는 파일 하나면 에이전트를 유도할 수 있으므로, 권한 확인은 남아 있는 유일한 관문입니다. 여기서 자동으로 승인하면 엔드포인트 스캔이 로컬 임의 코드 실행으로 바뀝니다.
+Noir가 보내는 프롬프트는 스캔 대상 트리의 소스 코드이고, 내가 작성하지 않은 코드인 경우가 많습니다. "위 내용은 무시하고 이것을 실행하라"라고 적힌 파일 하나로 에이전트를 조종할 수 있습니다. 여기서 자동으로 승인하면 엔드포인트 스캔이 내 컴퓨터에서의 임의 코드 실행으로 바뀝니다.
 
 거부해도 잃는 것은 없습니다. 분석할 코드는 이미 프롬프트에 담겨 있어 에이전트가 도구를 쓰지 않아도 답할 수 있습니다. 신뢰하는 트리를 스캔하면서 에이전트가 직접 탐색하기를 원한다면 명시적으로 허용하세요.
 
@@ -77,4 +73,4 @@ NOIR_ACP_ALLOW_TOOL_PERMISSIONS=1 noir scan ./myapp --ai-provider=acp:codex
 - `NOIR_AI_TIMEOUT`은 프롬프트 턴 하나의 제한 시간입니다(기본값 `300`초). `NOIR_AI_CONNECT_TIMEOUT`은 에이전트 시작과 세션 생성의 제한 시간입니다(기본값 `120`초. 첫 `npx` 다운로드에 충분한 시간입니다).
 - ACP 요청은 재시도하지 않으며 `--ai-max-requests`에도 포함되지 않습니다.
 - 캐시 플래그(`--cache-disable`, `--cache-clear`)는 다른 AI 제공업체와 동일하게 동작합니다.
-- `acp:claude-code`는 `acp:claude`와 동일하게 동작하는 alias입니다.
+- `acp:claude-code`는 `acp:claude`의 별칭입니다.

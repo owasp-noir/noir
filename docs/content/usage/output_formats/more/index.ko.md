@@ -26,7 +26,7 @@ POST /query
     └── query
 ```
 
-`--include`로 엔드포인트별 정보를 더 볼 수 있습니다. `path`(소스 파일과 줄 번호), `techs`(분석기), `callee`(핸들러가 호출하는 함수) 중에서 고르세요. `--verbose`를 쓰면 `--include path`가 자동으로 켜집니다.
+`--include`로 엔드포인트별 정보를 더 볼 수 있습니다. `path`(소스 파일과 줄 번호), `techs`(분석기), `callee`(핸들러가 호출하는 함수) 중에서 고르세요. `--verbose`를 쓰면 `--include path`(그리고 모든 태거)가 자동으로 켜집니다.
 
 ```bash
 noir scan . --no-log --include path,techs
@@ -168,9 +168,9 @@ JSONL(`-f jsonl`)은 [JSON 및 JSONL](../json/) 페이지에서 JSON과 함께 �
 noir scan . -f postman -u https://api.example.com
 ```
 
-Postman Collection v2.1 형식의 JSON 파일을 만듭니다. 출력을 저장해서 Postman으로 가져오면 바로 API를 테스트할 수 있습니다. 컬렉션에는 `-u` 값으로 채운 `baseUrl` 변수가 들어갑니다(`-u`가 없으면 `http://localhost`). `-u` 없이 만들면 요청 URL이 `{{baseUrl}}/path` 형태라서 Postman 안에서 대상을 바꿀 수 있습니다.
+Postman Collection v2.1 형식의 JSON 파일을 만듭니다. 출력을 저장해서 Postman으로 가져오면 됩니다. 컬렉션에는 `-u` 값으로 채운 `baseUrl` 변수가 들어갑니다(`-u`가 없으면 `http://localhost`). `-u` 없이 만들면 요청 URL이 `{{baseUrl}}/path` 형태라서 Postman 안에서 대상을 바꿀 수 있습니다.
 
-요청 본문은 Noir가 기록한 파라미터 타입을 따릅니다. `json`은 raw JSON 본문, `form`은 `urlencoded`, `file`(형제 form 필드 포함)은 `type: file`인 `formdata`, `xml`은 `Content-Type: application/xml`인 raw 본문(Postman raw language는 `xml`)가 됩니다. 값이 비어 있는 `xml` 파라미터는 파라미터 이름을 딴 self-closing 태그가 됩니다(이름이 `body`이면 `<body/>`). 그래서 Postman raw 편집기가 비지 않고 필드가 보입니다. 이런 본문 타입이 없으면 아래 예시처럼 헤더와 URL만 있는 요청이 됩니다.
+요청 본문은 Noir가 기록한 파라미터 타입을 따릅니다. `json`은 raw JSON 본문, `form`은 `urlencoded`, `file`(형제 form 필드 포함)은 `type: file`인 `formdata`, `xml`은 `Content-Type: application/xml`인 raw 본문(Postman raw language는 `xml`)이 됩니다. 값이 비어 있는 `xml` 파라미터는 파라미터 이름을 딴 self-closing 태그가 됩니다(이름이 `body`이면 `<body/>`). 그래서 Postman raw 편집기가 비지 않고 필드가 보입니다. 이런 본문 타입이 없으면 아래 예시처럼 헤더와 URL만 있는 요청이 됩니다.
 
 ```json
 {

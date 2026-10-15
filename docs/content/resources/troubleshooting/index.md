@@ -27,17 +27,17 @@ Something on fire? Start with the symptom below that matches. Most of these have
   (`--techs` is different: it adds techs to the analyzer set without narrowing detection)
 - Use `--exclude-techs` to skip the analyzers of detected frameworks you don't need (the log marks them `(skip)`)
 - Use `--exclude-path` to skip vendored or generated trees: `--exclude-path "vendor/*,**/node_modules/**"`
-- AI-powered analysis caches responses; subsequent runs on the same codebase will be faster
+- AI responses are cached, so repeat runs on the same code are faster
 
 ## AI Provider Connection Errors
 
 **Symptom:** Errors when using `--ai-provider`.
 
-- Verify your API key is correct: `--ai-key <KEY>` or set `NOIR_AI_KEY` environment variable
+- Check the API key you passed in `NOIR_AI_KEY`, `--ai-key-file`, or `--ai-key`
 - For local providers (Ollama, vLLM, LM Studio), ensure the server is running
 - Check the provider's default host in the [AI Providers](@/usage/ai_providers/_index.md) table
 - For custom endpoints, use the full URL: `--ai-provider=http://your-server:port`
-- Enable debug logs with `NOIR_ACP_RAW_LOG=1` for ACP providers
+- For ACP providers, set `NOIR_ACP_RAW_LOG=1` to see the agent's raw logs
 
 **Symptom:** The AI analysis stalls, or gives up while the model is still working.
 

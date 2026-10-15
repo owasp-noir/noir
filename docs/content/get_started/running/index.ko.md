@@ -9,10 +9,10 @@ prev_page_label = "Noir 설치"
 +++
 
 {% mascot(mood="run") %}
-Noir가 설치됐으니 바로 써보자! 프로젝트를 분석하고, 무엇을 찾았는지 확인하고, 출력을 다루는 방법을 배워보자.
+Noir를 설치했으니 프로젝트에 돌려 보고 뭘 찾는지 보자.
 {% end %}
 
-여기서는 첫 스캔을 처음부터 끝까지 해 봅니다. 프로젝트를 지정하고, 결과를 읽고, 워크플로에 맞게 출력을 다듬습니다. 각 단계는 앞 단계에 이어지니 처음에는 순서대로 따라가세요.
+각 단계는 앞 단계에 이어지니 처음에는 순서대로 따라가세요.
 
 ## 스캔 실행
 
@@ -38,7 +38,7 @@ Noir는 소스 파일을 읽고 어떤 프레임워크를 쓰는지 탐지한 �
 
 ## 탐지된 기술 확인
 
-Noir가 어떤 기술을 탐지했는지 궁금하면 `--include techs`를 붙여 결과와 함께 보세요.
+Noir가 탐지한 기술을 보려면 `--include techs`를 붙입니다.
 
 ```bash
 noir scan . --include techs
@@ -60,13 +60,13 @@ noir list techs
 # 스크립트와 파이프라인에 적합한 JSON
 noir scan . -f json
 
-# 읽기 쉽고 설정 파일과 잘 맞는 YAML
+# YAML
 noir scan . -f yaml
 
-# API 문서 생성이나 도구 연동에 쓰는 OpenAPI 명세
+# API 도구와 스캐너용 OpenAPI 3.0 명세
 noir scan . -f oas3
 
-# 실제 대상에 바로 실행할 수 있는 cURL 명령
+# 실제 대상에 보낼 cURL 명령
 noir scan . -f curl -u https://your-target.com
 ```
 
@@ -80,11 +80,9 @@ noir scan . -f curl -u https://your-target.com
 noir scan . -f json -o results.json
 ```
 
-스캔 결과를 서로 비교하거나, CI 파이프라인에 넘기거나, 팀과 공유할 때 쓸모 있습니다.
-
 ## 엔드포인트를 소스까지 추적
 
-엔드포인트가 정확히 어디에 정의됐는지 알고 싶으면 `--include path`를 붙여 소스 파일 위치를 보세요.
+각 엔드포인트가 정의된 소스 파일과 줄 번호를 보려면 `--include path`를 붙입니다.
 
 ```bash
 noir scan . --include path
@@ -98,7 +96,7 @@ noir scan . --include path,techs
 
 ## 스캔 범위 좁히기
 
-큰 모노레포에는 여러 프레임워크가 섞여 있을 수 있습니다. 필요한 부분만 스캔하세요.
+여러 프레임워크가 섞인 모노레포라면 스캔 범위를 좁히세요.
 
 ```bash
 # Rails와 Django 디텍터만 실행 (나머지는 건너뜀)
@@ -189,11 +187,11 @@ noir scan . --ai-context guards,sinks
 | `--no-color`          | plain 출력의 ANSI 색상 비활성화 |
 | `--no-spinner`        | 로딩 스피너 애니메이션 비활성화 |
 
-빌드 정보(Crystal / LLVM / 타깃)는 `noir version --verbose`로 확인합니다. `noir help` 는 최상위 개요를, `noir help <command>` 는 해당 명령어의 전체 플래그 목록을 보여줍니다.
+빌드 정보(Crystal / LLVM / 타깃)는 `noir version --verbose`로 확인합니다. `noir help`는 최상위 개요를, `noir help <command>`는 해당 명령어의 전체 플래그 목록을 보여줍니다.
 
 ---
 
-시작하기 가이드를 마쳤습니다! 다음으로 볼 만한 내용:
+시작하기는 여기까지입니다. 다음으로 볼 만한 문서:
 
 - **[CLI 명령어](@/usage/cli_commands/_index.ko.md)**: v1 서브커맨드(scan, list, cache, config, rules 등) 전체 레퍼런스
 - **[설정](@/usage/configurations/configuration_file/index.ko.md)**: 매번 플래그를 반복하지 않도록 기본 옵션 설정

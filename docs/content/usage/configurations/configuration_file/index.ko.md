@@ -16,6 +16,8 @@ sort_by = "weight"
 | Linux | `~/.config/noir/` |
 | Windows | `%APPDATA%\noir\` |
 
+다른 디렉터리를 쓰려면 `NOIR_HOME`을 지정하세요.
+
 설정 파일의 값은 기본값이고, 명령줄 플래그가 있으면 플래그가 이깁니다. 기본 위치가 아닌 곳의 설정을 불러오려면 `--config-file <경로>`를 쓰세요.
 
 ```bash
@@ -25,9 +27,9 @@ noir scan . --config-file ./ci/noir.yaml
 `noir config`로 설정 파일을 직접 다룰 수도 있습니다.
 
 ```bash
-noir config init   # 기본 설정 생성 (멱등)
+noir config init   # 기본 설정 생성 (여러 번 실행해도 안전)
 noir config show   # 활성 파일 출력
-noir config edit   # $VISUAL / $EDITOR 로 파일 열기
+noir config edit   # $VISUAL / $EDITOR로 파일 열기
 noir config path   # 해석된 경로 출력
 ```
 
@@ -54,7 +56,7 @@ color: true
 # 기본 출력 형식
 format: "json"
 
-# 프로브 대상 기본 URL. exclude_codes / status_codes / probe 에도 필요합니다
+# 프로브 대상 기본 URL. exclude_codes / status_codes / probe에도 필요합니다
 url: "https://api.example.com"
 
 # 특정 상태 코드 제외 (대상 URL이 있어야 하므로 위 `url`과 함께 씁니다)
@@ -73,7 +75,7 @@ ai_context: true
 ai_provider: "openai"
 ai_model: "gpt-5.5"
 
-# 패시브 보안 스캔 (-P / --passive-scan 과 동일)
+# 패시브 보안 스캔 (-P / --passive-scan과 같음)
 passive_scan: false
 passive_scan_severity: "high"
 
@@ -120,14 +122,14 @@ noir scan /path/to/my/project -f json -u https://api.example.com --exclude-codes
 |---|---|---|---|
 | `format` | string | `-f` / `--format` | `plain`, `json`, `yaml`, `oas3`, `curl`, … |
 | `output` | string | `-o` / `--output` | 결과 파일 경로 |
-| `color` | bool | `--no-color` 의 반대 | plain 출력 ANSI 색상 |
+| `color` | bool | `--no-color`의 반대 | plain 출력 ANSI 색상 |
 | `nolog` | bool | `--no-log` | 결과만 표시 |
 | `no_spinner` | bool | `--no-spinner` | 스피너 애니메이션 비활성화 |
 | `strict` | bool | `--strict` | 분석기 실패/파일 스킵 시 종료 코드 `2` |
 | `status_codes` | bool | `--status-codes` | 프로브 후 HTTP 상태 코드 첨부 (`url` 필요) |
-| `exclude_codes` | CSV | `--exclude-codes` | 프로브로 얻은 상태 코드 중 제외할 값 (`status_codes`와 함께) |
-| `include_path` | bool | `--include path` | `--include` 의 레거시 bool 형태 |
-| `include_techs` | bool | `--include techs` | `--include` 의 레거시 bool 형태 |
+| `exclude_codes` | CSV | `--exclude-codes` | 제외할 상태 코드. 이 키만 있어도 프로브함 (`url` 필요) |
+| `include_path` | bool | `--include path` | `--include`의 레거시 bool 형태 |
+| `include_techs` | bool | `--include techs` | `--include`의 레거시 bool 형태 |
 | `include_callee` | bool | `--include callee` | 1-hop 핸들러 callee 첨부 |
 | `ai_context` | bool | `--ai-context` | AI 리뷰 컨텍스트 첨부 |
 | `ai_context_features` | CSV | `--ai-context LIST` | 부분 집합: `guards`, `callee`, `sources`, `sinks`, `validators`, `signals` |
@@ -175,7 +177,7 @@ noir scan /path/to/my/project -f json -u https://api.example.com --exclude-codes
 |---|---|---|---|
 | `ai_provider` | string | `--ai-provider` | 제공업체 접두사 또는 전체 URL |
 | `ai_model` | string | `--ai-model` | 모델 이름 |
-| `ai_key` | string | `--ai-key` / `NOIR_AI_KEY` | 공유하는 설정이라면 환경 변수를 쓰세요 |
+| `ai_key` | string | `--ai-key` / `NOIR_AI_KEY` | 공유하는 설정이라면 `NOIR_AI_KEY`나 `--ai-key-file`을 쓰세요 |
 | `ai_agent` | bool | `--ai-agent` | 에이전트형 tool-calling 루프 활성화 |
 | `ai_agent_max_steps` | int | `--ai-agent-max-steps` | 에이전트 루프 상한 |
 | `ai_no_optimize` | bool | `--ai-no-optimize` | LLM 옵티마이저 단계를 건너뜀 |
