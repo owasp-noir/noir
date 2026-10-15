@@ -126,11 +126,11 @@ end
 
 private def ai_context_feature_list?(token : String) : Bool
   return false if token.starts_with?("-")
-  return false unless token.matches?(/\A[a-z,]+\z/)
+  return false unless token.matches?(/\A[a-z,]+\z/i)
   tokens = token.split(',').reject(&.empty?)
   return false if tokens.empty?
   return true if tokens.size > 1
-  NoirAIContext::ACCEPTED_FEATURES.includes?(tokens.first)
+  NoirAIContext::ACCEPTED_FEATURES.includes?(tokens.first.downcase)
 end
 
 private def base_help : String

@@ -475,6 +475,10 @@ describe "run_options_parser" do
     # base path ("Base path does not exist: bogus,guards").
     Noir::OptionsParsing.normalize_ai_context_flag(["--ai-context", "bogus,guards"]).should eq(["--ai-context=bogus,guards"])
     Noir::OptionsParsing.normalize_ai_context_flag(["--ai-context", "guards,sink"]).should eq(["--ai-context=guards,sink"])
+    # Feature names are case-insensitive in the `=` form, so the
+    # space-separated form must not mistake `Guards` for a scan path.
+    Noir::OptionsParsing.normalize_ai_context_flag(["--ai-context", "Guards"]).should eq(["--ai-context=Guards"])
+    Noir::OptionsParsing.normalize_ai_context_flag(["--ai-context", "Guards,Sinks"]).should eq(["--ai-context=Guards,Sinks"])
   end
 
   it "normalize_ai_context_flag still treats a single unrecognized word as a positional path" do
