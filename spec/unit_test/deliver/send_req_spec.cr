@@ -23,16 +23,10 @@ private class CapturingServer
       # connection's header object.
       hdrs = HTTP::Headers.new
       context.request.headers.each { |k, v| v.each { |vv| hdrs.add(k, vv) } }
-      # Crest emits the absolute form in the request line (`GET
-      # http://host:port/path HTTP/1.1`) so normalize to just the path
-      # component for assertions — that's what callers actually care
-      # about.
-      resource = context.request.resource
-      path = if resource.starts_with?("http://") || resource.starts_with?("https://")
-               URI.parse(resource).request_target
-             else
-               resource
-             end
+      # A direct (unproxied) request must use the origin form; the
+      # absolute form (`GET http://host/path`) breaks servers that only
+      # accept `GET /path`.
+      path = context.request.resource
       @requests << {
         method:  context.request.method,
         path:    path,

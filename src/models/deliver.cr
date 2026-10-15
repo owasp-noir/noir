@@ -1,5 +1,6 @@
 require "colorize"
 require "crest"
+require "../ext/crest_origin_form"
 require "openssl"
 require "wait_group"
 require "./logger"
