@@ -15,8 +15,6 @@ Connect Noir to [OpenAI](https://openai.com) and use models like GPT-5.5 for LLM
 
 ## Usage
 
-Run Noir with OpenAI:
-
 ```bash
 noir scan ./spec/functional_test/fixtures/hahwul \
      --ai-provider=openai \

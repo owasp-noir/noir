@@ -57,12 +57,13 @@ With `--ai-context`, the handler body feeds Noir's source / sink / guard inferen
 
 ## Output behavior
 
-Mobile endpoints stay in the structured inventory (JSON, JSONL, YAML, TOML, SARIF, Markdown, mermaid, HTML) and in the Elasticsearch / webhook exports, because they are part of the app's surface. They are **excluded** from HTTP-shaped output and delivery (cURL, HTTPie, PowerShell, OpenAPI 2.0 / 3.0, Postman, and active probe / proxy delivery) because an app URL is something you open, not an HTTP request you send. To launch them instead, `-f adb` (Android) and `-f simctl` (iOS) emit ready-to-run device commands.
+Mobile endpoints stay in the structured inventory (JSON, JSONL, YAML, TOML, SARIF, Markdown table, mermaid, HTML) and in the Elasticsearch / webhook exports, because they are part of the app's surface. They are left out of HTTP-shaped output and delivery (cURL, HTTPie, PowerShell, OpenAPI 2.0 / 3.0, Postman, and active probe / proxy delivery) because an app URL is something you open, not an HTTP request you send. To launch them instead, `-f adb` (Android) and `-f simctl` (iOS) emit ready-to-run device commands.
 
 ## Notes and limitations
 
 * Source code must be present for handler linkage. A manifest- or plist-only scan still yields the endpoints, just without callees, params, or AI context.
 * Binary (compiled) `Info.plist` files are skipped; source-repo XML plists are parsed.
+* On iOS, Noir also picks up routes written in Swift code for the app's own scheme: router enums compared with `url.host == SomeEnum.case.rawValue` (each case becomes a route) and hardcoded `scheme://host/path` string literals.
 * gradle placeholder resolution reads the nearest `build.gradle(.kts)` above the manifest; when the same placeholder is declared more than once (e.g. a `buildTypes` override), the first declaration (by convention `defaultConfig`) wins. Variant-specific values are not modeled. A placeholder with no gradle value stays verbatim in the URL and the endpoint is tagged `unresolved`.
 * Scheme-less Jetpack Navigation URIs (which match both http and https at runtime) are emitted once under `https`. `{arg}` segments become `:arg` path params, `?key={arg}` query placeholders become `query` params, and a trailing `.*` wildcard keeps the literal prefix.
 * An `android:exported="true"` component with no intent-filter is reported as an explicit-intent surface (`android-intent`, with `explicit`/`exported`/`component_type` in metadata): an explicit intent naming the component still reaches it even with no action, category, or data URI. A filter-less component that is not exported, or is `android:enabled="false"`, is not reported. A guarding `android:permission` is recorded in metadata but does not suppress the surface: `normal`/`dangerous` permissions remain obtainable by another app.

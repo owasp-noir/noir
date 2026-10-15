@@ -33,7 +33,7 @@ See [CONTRIBUTING.md](https://github.com/owasp-noir/noir/blob/main/.github/CONTR
 
 ### Installing Crystal
 
-Noir is built with Crystal (`~> 1.19` in `shard.yml`; CI uses 1.21). Install it for your platform. The first build also compiles the vendored Tree-sitter grammars, so you need a C compiler too.
+Noir is built with Crystal (`~> 1.19` in `shard.yml`; CI tests on 1.21 and 1.22). Install it for your platform. The first build also compiles the vendored Tree-sitter grammars, so you need a C compiler too.
 
 #### Ubuntu/Debian
 ```sh

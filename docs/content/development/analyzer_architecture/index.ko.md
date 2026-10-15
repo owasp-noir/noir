@@ -37,10 +37,10 @@ Detector는 매니페스트 파일(`go.mod`, `package.json`, `Gemfile` 등)을 �
 
 이 규칙 중 파일 순회 부분은 `spec/unit_test/analyzer/layering_boundary_spec.cr`가 강제합니다. `src/analyzer/analyzers/` 아래에서 `Dir.glob`, `Dir.children`, `Dir.each_child`를 쓰면 테스트가 실패합니다. 파일 목록은 엔진이나 detector가 만든 인덱스(`get_files_by_extension`, `CodeLocator#files_by_basename`)에서 받으세요. 디렉터리를 직접 돌면 서브트리 가지치기, `--exclude-path`, 미디어 필터, 콘텐츠 캐시를 모두 건너뜁니다.
 
-**참고 구현.** 아직 전체 모델을 혼자 보여주는 분석기는 없습니다. 레이어마다 다른 파일을 참고하세요.
+**참고 구현.** 순회와 본문은 아래 파일을 참고하세요.
 
-- **순회 (L0)**: [`javascript/hono.cr`](https://github.com/owasp-noir/noir/blob/main/src/analyzer/analyzers/javascript/hono.cr)는 `JavascriptEngine`을 상속하고 `parallel_file_scan`으로 순회합니다. 그래서 worker pool, 콘텐츠 캐시, test/vendor 필터를 따로 구현하지 않습니다. 본문은 따라 하지 마세요. extractor 호출 옆에 자체 정규식 패스가 아직 남아 있습니다.
-- **본문 (L1 → L2)**: [`javascript/hapi.cr`](https://github.com/owasp-noir/noir/blob/main/src/analyzer/analyzers/javascript/hapi.cr)는 50줄 정도입니다. `Noir::TreeSitterHapiExtractor.extract_routes`를 호출하고 결과를 `Param`으로 옮기는 일만 합니다. `javascript/elysia.cr`, `javascript/adonisjs.cr`, `kotlin/http4k.cr`, `java/spark.cr`도 같은 모양입니다. 순회 방식은 따라 하지 마세요. 이 파일들은 `Analyzer`를 직접 상속하고 `all_files`를 스스로 돕니다.
+- **순회 (L0)**: [`javascript/hono.cr`](https://github.com/owasp-noir/noir/blob/main/src/analyzer/analyzers/javascript/hono.cr)는 `JavascriptEngine`을 상속하고 `ordered_scan_files(get_files_by_extensions(DEFAULT_EXTENSIONS))`로 순회합니다. 그래서 worker pool, 콘텐츠 캐시, 파일별 오류 격리를 따로 구현하지 않고, 파일별 결과도 입력 순서대로 돌려받습니다. 본문은 따라 하지 마세요. extractor 호출 옆에 자체 정규식 패스가 아직 남아 있습니다.
+- **본문 (L1 → L2)**: [`javascript/hapi.cr`](https://github.com/owasp-noir/noir/blob/main/src/analyzer/analyzers/javascript/hapi.cr)는 65줄 정도입니다. 같은 `ordered_scan_files` 순회로 `JavascriptEngine`을 타고, `Noir::TreeSitterHapiExtractor.extract_routes`를 호출해 결과를 `Param`으로 옮기는 일만 합니다. `javascript/elysia.cr`, `javascript/adonisjs.cr`, `kotlin/http4k.cr`, `java/spark.cr`도 본문은 같은 모양입니다. 순회 방식은 따라 하지 마세요. 이 파일들은 `Analyzer`를 직접 상속하고 `all_files`를 스스로 돕니다.
 
 ## 현재 커버리지
 
@@ -51,15 +51,15 @@ Detector는 매니페스트 파일(`go.mod`, `package.json`, `Gemfile` 등)을 �
   - JavaScript: `js_route_extractor.cr`. Express, Fastify, Hono, Koa, Restify는 `JSRouteExtractor.extract_routes`에서 라우트를 받습니다. NestJS, Next.js, Nuxt 등은 헬퍼만 씁니다.
   - Go, Java, Kotlin, Python용 Tree-sitter 추출기. Go와 Kotlin은 umbrella `require` 뒤에 파트 파일을 둔 디렉터리 형태입니다(`go_route_extractor_ts/`, `kotlin_route_extractor_ts/`).
   - 프레임워크 전용 Tree-sitter 추출기: AdonisJS, Elysia, Hapi, http4k, JAX-RS, Micronaut, Ktor 등.
-- **엔진 밖에 있는 분석기**: CSharp, Java, Kotlin, Dart, Zig, C++, Clojure, Haskell, Lua, Groovy, Scala Play, 그리고 Go의 Chi, Httprouter, Fasthttp, Kratos. 여러 단계를 조율하거나 추출 로직이 자체로 완결되어 있어서 `Analyzer`를 직접 상속합니다.
+- **엔진 밖에 있는 분석기**: C#, VB.NET, F#, Java, Kotlin, Dart, Zig, C++, Clojure, Haskell, Lua, Groovy, Erlang, Gleam, R, Apex, Classic ASP, WebForms, 그리고 Scala Play, Go의 Chi, Httprouter, Fasthttp, Kratos, JavaScript의 AdonisJS, Elysia. 여러 단계를 조율하거나 추출 로직이 자체로 완결되어 있어서 `Analyzer`를 직접 상속합니다.
 
 ## 엔진별 순회 헬퍼
 
 모든 엔진이 공유하는 순회 API는 하나가 아닙니다. 어댑터를 쓰기 전에 해당 언어 엔진이 무엇을 제공하는지 확인하세요.
 
 - **`FileScanEngine` 기반 엔진** (C, Crystal, Elixir, Perl, PHP, Rust, Scala, Swift): 엔진이 `scan_target_files`로 후보 목록을, `scan_accepts?`로 경로별 거부(선택)를 제공합니다. 어댑터는 `analyze_file`을 구현합니다(아래 Shape A).
-- **JavaScript, Ruby 엔진**: `parallel_file_scan`을 직접 정의하고 `scan_target_files`는 없습니다. 어댑터는 `analyze`를 오버라이드하고 `parallel_file_scan`을 호출합니다(아래 Shape B).
-- **언어 전용 이터레이터**: `PythonEngine`은 `python_source_files` / `each_python_source` / `parallel_python_sources`, `SpecificationEngine`은 `each_spec_file` / `each_spec_file_with_details`, `CfmlEngine`은 `cfml_components` / `cfml_pages`를 제공합니다. `GoEngine`은 `read_package_file_contents`와 `collect_*` 헬퍼로 패키지 전체 내용을 넘겨주고, 어댑터는 `parallel_analyze`로 순회합니다.
+- **JavaScript, Ruby 엔진**: `parallel_file_scan`을 직접 정의하고 `scan_target_files`는 없습니다. 어댑터는 `analyze`를 오버라이드하고 `parallel_file_scan`을 호출하거나, 파일별 결과를 입력 순서대로 받으려면 `get_files_by_extensions(...)`에 `ordered_scan_files`를 씁니다(아래 Shape B).
+- **언어 전용 이터레이터**: `PythonEngine`은 `python_source_files` / `each_python_source` / `parallel_python_sources`, `SpecificationEngine`은 `each_spec_file` / `each_spec_file_with_details`, `CfmlEngine`은 `cfml_components` / `cfml_pages`를 제공합니다. `GoEngine`은 `read_package_file_contents`와 `collect_*` 헬퍼로 패키지 전체 내용을 넘겨줍니다. 어댑터는 `ordered_parallel_analyze`로 순회합니다(오래된 어댑터는 아직 `parallel_analyze`를 씁니다).
 - **엔진 없음**: 어댑터가 `Analyzer`를 상속하고 `scan_files(files, &block)`를 씁니다. 위의 모든 엔진도 결국 이 공용 골격을 거칩니다.
 
 **Shape A. `analyze_file`** (단순한 파일별 처리):
@@ -80,14 +80,15 @@ end
 ```crystal
 class MyFramework < JavascriptEngine
   def analyze
-    result = [] of Endpoint
-    static_dirs = [] of Hash(String, String)
-
-    parallel_file_scan do |path|
-      # ... result 에 엔드포인트 추가, static_dirs 수집
+    per_file = ordered_scan_files(get_files_by_extensions(DEFAULT_EXTENSIONS)) do |path|
+      endpoints = [] of Endpoint
+      static_dirs = [] of Hash(String, String)
+      # ... 이 파일 하나를 endpoints와 static_dirs로 파싱
+      {endpoints, static_dirs}
     end
 
-    process_js_static_dirs(static_dirs, result)  # post-pass
+    per_file.each { |endpoints, _| result.concat(endpoints) }
+    process_js_static_dirs(per_file.flat_map(&.[1]), result)  # post-pass
     result
   end
 end
@@ -155,17 +156,18 @@ module Analyzer::Go
     IMPORT_MARKER         = "github.com/cloudwego/hertz"
 
     def analyze
-      public_dirs = [] of Hash(String, String)
       package_groups, file_contents = collect_package_groups_ts(import_marker: IMPORT_MARKER)
 
-      parallel_analyze(get_files_by_extension(".go")) do |path|
+      per_file = ordered_parallel_analyze(get_files_by_extension(".go")) do |path|
         content = file_contents[path]? || read_file_content(path)
         cross_file_groups = ts_groups_for_directory(package_groups, File.dirname(path))
         routes = Noir::TreeSitterGoRouteExtractor.extract_routes(content, cross_file_groups, handle_method: "Handle")
         # ... 라우트를 엔드포인트로 변환한 뒤 라인별 파라미터 추출
+        {file_endpoints, file_public_dirs}
       end
 
-      resolve_public_dirs(public_dirs)
+      per_file.each { |file_endpoints, _| result.concat(file_endpoints) }
+      resolve_public_dirs(per_file.flat_map(&.[1]))
       result
     end
   end
@@ -177,7 +179,7 @@ end
 - **언어 엔진을 상속하세요** (여기서는 `GoEngine`). `collect_package_groups_ts`, `ts_groups_for_directory`, `add_param_to_endpoint`, `resolve_public_dirs`를 그대로 쓸 수 있습니다.
 - **`analyzer_for`로 tech를 선언하세요**. 이 한 줄이 등록의 전부입니다(3단계 참고). 빠뜨리면 컴파일 에러가 납니다.
 - **라우트 파싱은 공용 extractor에 맡기세요** (`Noir::TreeSitterGoRouteExtractor`). 프레임워크 라우팅이 다르면 직접 다시 파싱하지 말고 extractor 인자(예: `handle_method:`)나 전용 진입점으로 조정하세요(Mux, GoZero 참고).
-- **엔진의 순회 헬퍼를 쓰세요** (Go는 `parallel_analyze(get_files_by_extension(".go"))`, 다른 언어는 `parallel_file_scan`이나 `analyze_file`). 채널과 worker pool을 다시 만들지 마세요.
+- **엔진의 순회 헬퍼를 쓰세요** (Go는 `ordered_parallel_analyze(get_files_by_extension(".go"))`, 다른 언어는 `ordered_scan_files`, `parallel_file_scan`, `analyze_file`). 채널과 worker pool을 다시 만들지 마세요.
 - **프레임워크가 실제로 라우팅하는 verb만** 메서드 테이블에 넣으세요. 특히 `QUERY`(RFC 10008)는 업스트림이 명시적으로 지원할 때만 추가합니다. 추측으로 넣으면 프레임워크가 405로 응답할 엔드포인트를 보고하게 됩니다. 와일드카드(`ANY`/`ALL`/`*`) 라우트도 같습니다. 공용 `WILDCARD_HTTP_METHODS`(`src/utils/http_symbols.cr`)에도, 분석 시점에 `ANY`를 자체 테이블로 펼치는 분석기 로컬 목록에도 `QUERY`를 추가하지 마세요.
 
 ### 3. tech 메타데이터 선언

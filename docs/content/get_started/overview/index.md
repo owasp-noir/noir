@@ -9,7 +9,7 @@ next_page_label = "Install Noir"
 +++
 
 {% mascot(mood="wave") %}
-Hi! I'm Hak, the Noir mascot. Let me show you what Noir can do for you.
+Hi! I'm Hak, the Noir mascot. Here's what Noir does.
 {% end %}
 
 Noir is an open-source SAST tool. It reads source code and extracts the endpoints an application exposes: paths, methods, parameters, headers, cookies, and the source files behind them. Shadow APIs and undocumented routes come out as part of the same inventory; they aren't a separate mode.
@@ -32,9 +32,9 @@ That inventory feeds three audiences:
 
 **Feed DAST scanners.** Pipe endpoints straight into ZAP, Burp Suite, or Caido as a proxy target, or export OpenAPI for them to import. The scanner stops missing routes that were never linked from a page.
 
-**Give AI SAST useful context.** The inventory of entrypoints, source files, parameters, and tags (plus, with `--include callee`, the 1-hop functions each handler invokes) is the focused context an LLM-based SAST tool, code auditor, or security agent needs to find attacker-reachable bugs. `--ai-context` goes further and attaches review context per endpoint (guards, callees, sources, sinks, validators, and signals) so the model doesn't have to rediscover them. Hand it the surface Noir mapped instead of asking the model to scan the whole repository.
+**Give AI reviewers context.** The inventory of entrypoints, source files, parameters, and tags (plus, with `--include callee`, the 1-hop functions each handler calls) is what an LLM-based SAST tool or security agent needs to find attacker-reachable bugs. `--ai-context` adds guards, callees, sources, sinks, validators, and signals to each endpoint, so the model doesn't have to find them again. Give the model the mapped surface instead of the whole repository.
 
-**Export to whatever reads next.** JSON, YAML, OpenAPI specs, SARIF for CI/CD, cURL, HTTPie, HTML reports, Postman collections, and similar formats that the next tool in the pipeline expects.
+**Export to whatever reads next.** JSON, YAML, OpenAPI, SARIF for CI/CD, cURL, HTTPie, HTML reports, Postman collections, and more.
 
 ## How it works
 
@@ -88,7 +88,7 @@ flowchart LR
 
 ## Contributing
 
-Noir is open-source and welcomes contributions. See the [Contributing Guide](https://github.com/owasp-noir/noir/blob/main/.github/CONTRIBUTING.md) for details.
+Noir is open source and takes contributions. See the [Contributing Guide](https://github.com/owasp-noir/noir/blob/main/.github/CONTRIBUTING.md) for details.
 
 ### Core team
 

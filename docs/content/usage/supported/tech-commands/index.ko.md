@@ -25,7 +25,7 @@ Noir는 코드에 쓰인 기술을 스스로 탐지합니다. 일부를 추가�
 noir scan . --techs rails
 ```
 
-### 자동 감지를 특정 기술로 제한
+### 자동 탐지를 특정 기술로 제한
 
 ```bash
 noir scan . --only-techs rails

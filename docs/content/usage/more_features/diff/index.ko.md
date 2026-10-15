@@ -1,12 +1,12 @@
 +++
 title = "Diff 모드로 코드 비교하기"
-description = "코드베이스의 두 버전을 비교하여 엔드포인트 변경사항을 식별합니다."
+description = "코드베이스의 두 버전을 비교해 추가, 삭제, 변경된 엔드포인트를 확인합니다."
 weight = 2
 sort_by = "weight"
 
 +++
 
-코드베이스의 두 버전을 비교하여 엔드포인트 변경사항을 식별합니다. 코드 리뷰, 보안 평가, 기능 영향 분석에 유용합니다.
+Diff 모드는 코드베이스의 두 버전을 스캔해 추가, 삭제, 변경된 엔드포인트를 보여 줍니다. 코드 리뷰나 CI에서 쓰면 좋습니다.
 
 ```bash
 noir scan <NEW_VERSION_PATH> --diff-path <OLD_VERSION_PATH>
@@ -69,7 +69,7 @@ GET /profile
 
 ### JSON 및 YAML 출력
 
-`-f json` 또는 `-f yaml`을 쓰면 구조화된 출력을 얻을 수 있습니다. 엔드포인트 목록 세 개(`added`, `removed`, `changed`)와 `changes` 목록이 들어 있습니다.
+구조화된 출력이 필요하면 `-f json`이나 `-f yaml`을 쓰세요. 엔드포인트 목록 세 개(`added`, `removed`, `changed`)와 `changes` 목록이 들어 있습니다.
 
 ```json
 {
@@ -97,7 +97,7 @@ GET /profile
 
 `-f markdown-table`은 diff를 pull request 코멘트 형태로 보여줍니다. 분석기 실패가 있으면 그 목록, 개수 요약 표, 인증이 빠진 라우트, 그리고 추가/삭제/변경된 엔드포인트 표가 차례로 나옵니다.
 
-`-f sarif`는 코드 스캐닝용으로 새로 생긴 공격 표면을 보고합니다. 추가된 엔드포인트와 새 파라미터는 note, 인증이 빠진 라우트는 warning입니다. 삭제된 엔드포인트는 리뷰 대상 코드에 가리킬 줄이 없어서 제외합니다. 다른 포맷에는 그대로 나옵니다.
+`-f sarif`는 코드 스캐닝용으로 새로 생긴 공격 표면을 보고합니다. 추가된 엔드포인트와 새 파라미터는 note, 인증이 빠진 라우트는 warning입니다. 삭제된 엔드포인트는 리뷰 대상 코드에 가리킬 줄이 없어서 제외합니다. 다른 출력 형식에는 그대로 나옵니다.
 
 TOML 출력도 지원합니다. 그 밖의 `-f`는 경고와 함께 텍스트 diff로 출력됩니다.
 
@@ -127,4 +127,4 @@ exec noir scan . --diff-ref origin/main --fail-on auth-removed --no-log
 
 pull request 워크플로 전체 예시는 [GitHub Action](../../github_action/)을 참고하세요.
 
-CI/CD에서 활용하면 `added`와 `changed` 엔드포인트만 DAST 스캐너에 넘겨서, 변경된 공격 표면에 집중할 수 있습니다.
+CI에서는 `added`와 `changed` 엔드포인트만 DAST 스캐너에 넘겨, 바뀐 공격 표면만 테스트하게 할 수도 있습니다.

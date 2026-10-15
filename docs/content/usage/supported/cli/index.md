@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-Beyond web frameworks and API specifications, Noir extracts the **command-line interface** of CLI applications as endpoints. A CLI program's argument parser is an attack surface too: externally supplied flags, positional arguments, and environment variables flow into the program and can reach a shell, an SQL query, a file path, or a network call.
+Noir also extracts the command-line interface of CLI applications as endpoints. A CLI's argument parser is attack surface too: flags, positional arguments, and environment variables come from outside and can reach a shell, an SQL query, a file path, or a network call.
 
 Noir models each (sub)command as an endpoint and records the inputs that command accepts.
 
@@ -40,7 +40,7 @@ CLI cli://mytool/serve
 
 ## Supported languages and libraries
 
-Noir detects the built-in argv / flag / environment mechanisms of each language plus its major CLI libraries. Raw environment reads are **gated**: they only show up for real CLI entry points, so a web server that reads config from the environment does not leak spurious `cli://` endpoints.
+Noir detects the built-in argv / flag / environment mechanisms of each language plus its major CLI libraries. Raw environment reads are gated: they only show up for real CLI entry points, so a web server that reads config from the environment does not leak spurious `cli://` endpoints.
 
 | Language | Built-in | Libraries |
 |---|---|---|
@@ -68,7 +68,7 @@ Noir detects the built-in argv / flag / environment mechanisms of each language 
 
 ## Output behavior
 
-CLI endpoints stay in the structured inventory (JSON, JSONL, YAML, TOML, SARIF, Markdown, mermaid, HTML) because they are part of the application's surface. They are **excluded** from HTTP-shaped output and delivery (cURL, HTTPie, PowerShell, OpenAPI 2.0 / 3.0, Postman, and active probe / proxy delivery) because a command invocation is not an HTTP request you send. The HUNT tagger, which classifies HTTP parameter vulnerabilities, also skips CLI inputs.
+CLI endpoints stay in the structured inventory (JSON, JSONL, YAML, TOML, SARIF, Markdown table, mermaid, HTML) because they are part of the application's surface. They are left out of HTTP-shaped output and delivery (cURL, HTTPie, PowerShell, OpenAPI 2.0 / 3.0, Postman, and active probe / proxy delivery) because a command invocation is not an HTTP request you send. The HUNT tagger, which classifies HTTP parameter vulnerabilities, also skips CLI inputs.
 
 ## Notes and limitations
 

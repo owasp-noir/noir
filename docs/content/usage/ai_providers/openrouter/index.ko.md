@@ -15,8 +15,6 @@ sort_by = "weight"
 
 ## 사용 방법
 
-OpenRouter로 Noir를 실행합니다:
-
 ```bash
 noir scan ./myapp \
      --ai-provider=openrouter \

@@ -76,7 +76,7 @@ noir scan . --ai-provider acp:codex
 
 ### Supported AI Providers
 
-Noir has built-in presets for several popular AI providers:
+Built-in presets:
 
 | Prefix | Base URL or command |
 |---|---|
@@ -87,7 +87,7 @@ Noir has built-in presets for several popular AI providers:
 | `openrouter` | `https://openrouter.ai/api/v1` |
 | `anthropic` | `https://api.anthropic.com/v1` (native Messages API) |
 | `gemini` | `https://generativelanguage.googleapis.com/v1beta/openai` |
-| `ollama` | `http://localhost:11434/v1` |
+| `ollama` | `http://localhost:11434` (native `/api/generate`) |
 | `lmstudio` | `http://localhost:1234/v1` |
 | `vllm` | `http://localhost:8000/v1` |
 | `acp:codex` | `npx @zed-industries/codex-acp` |
@@ -289,7 +289,7 @@ Provider-agnostic adapters: **General** (OpenAI-compatible APIs, plus Anthropic'
 For projects with more than 10 files, the LLM filters the file list to identify likely endpoint files before analysis.
 
 #### Bundle Analysis
-Groups files into token-limited bundles and processes them concurrently to maximize throughput on large codebases.
+Groups files into token-limited bundles and sends them concurrently.
 
 #### Response Caching
 LLM responses are cached on disk (SHA256-keyed) at `~/.config/noir/cache/ai/` (or `$NOIR_HOME/cache/ai/`; `%APPDATA%\noir\cache\ai\` on Windows). `noir cache info` prints the resolved path. Use `--cache-disable` or `--cache-clear` to control caching.

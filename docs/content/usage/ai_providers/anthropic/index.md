@@ -33,7 +33,7 @@ noir scan ./myapp --ai-provider=anthropic --ai-model=claude-sonnet-5-5
 
 - A gateway in front of the Messages API works too: `--ai-provider=https://gw.example/anthropic/v1/messages`. Any `api.anthropic.com` URL uses the native API unless it ends in `/chat/completions`.
 - If a model or gateway rejects the structured-output request, Noir drops it for the rest of the run and relies on the prompt's JSON instructions.
-- Models with fixed sampling (Claude Opus 4.7 and later) are sent no `temperature`.
-- Each reply is capped at 16,000 output tokens. A reply cut at that cap is reported as truncated, and the complete endpoints before the cut are kept.
+- Models with fixed sampling (Claude Opus 4.7 and later, and Claude 5 models) are sent no `temperature`. If another model rejects it, Noir drops it for the rest of the run.
+- Each reply is capped at 16,000 output tokens (4,096 for Claude 3, 8,192 for Claude 3.5). A reply cut at that cap is reported as truncated, and the complete endpoints before the cut are kept.
 - `--ai-agent` uses Claude's native tool calling (`anthropic` is in the default `--ai-native-tools-allowlist`).
 - `--ai-stream` does not apply to this provider.

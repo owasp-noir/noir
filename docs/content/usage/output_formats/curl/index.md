@@ -10,7 +10,7 @@ Turn discovered endpoints into ready-to-run commands for common HTTP clients. Us
 
 ## cURL
 
-[cURL](https://curl.se/) is the most widely used command-line HTTP client. The generated commands include `-i` (show response headers), `-g` (disable URL globbing so `{id}` and `[..]` are sent literally), `-X` (HTTP method; HEAD gets `-I` instead), `--data-raw` (urlencoded or JSON bodies, with the matching `Content-Type` header), `-F` (multipart uploads), `-H` (headers), and `--cookie` as appropriate.
+[cURL](https://curl.se/) is the most widely used command-line HTTP client. The generated commands include `-i` (show response headers), `-g` (disable URL globbing so `{id}` and `[..]` are sent literally), `-X` (HTTP method; HEAD gets `-I` instead), `--data-raw` (urlencoded or JSON bodies, with the matching `Content-Type` header), `--form-string` and `-F` (multipart uploads), `-H` (headers; an empty header prints as `'Name;'`), and `--cookie` as needed.
 
 ```bash
 noir scan . -f curl -u https://www.example.com
@@ -25,7 +25,7 @@ curl -i -g -X 'GET' 'https://www.example.com/token' --data-raw 'client_id=&redir
 
 ## HTTPie
 
-[HTTPie](https://httpie.io/) has a more intuitive syntax than cURL, with colorized output and built-in JSON support.
+[HTTPie](https://httpie.io/) is a command-line HTTP client with a shorter syntax than cURL.
 
 ```bash
 noir scan . -f httpie -u https://www.example.com
@@ -40,7 +40,7 @@ http --form 'GET' 'https://www.example.com/token' 'client_id=' 'redirect_url=' '
 
 ## PowerShell
 
-For Windows environments. Generates [Invoke-WebRequest](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.utility/invoke-webrequest) commands that work natively without extra tools.
+For Windows. Generates [Invoke-WebRequest](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.utility/invoke-webrequest) commands that need no extra tools.
 
 ```bash
 noir scan . -f powershell -u https://www.example.com
@@ -56,11 +56,11 @@ Invoke-WebRequest -Method "GET" -Uri "https://www.example.com/token" -Body "clie
 
 ## File uploads (multipart)
 
-When an endpoint has a `param_type: file` field (a multipart upload discovered in the code), the HTTP-client formats switch from a urlencoded/`--data-raw`/`-Body` shape to multipart so the file part is not dropped:
+When an endpoint has a `param_type: file` field (a multipart upload found in the code), the HTTP client formats switch from urlencoded (`--data-raw` / `-Body`) to multipart so the file part is kept:
 
 | Format | Shape |
 |--------|-------|
-| cURL (`-f curl`) | `-F 'field=value'` for sibling form fields, `-F 'avatar=@avatar'` for each file (empty path hint uses the field name as the `@filename`) |
+| cURL (`-f curl`) | `--form-string 'field=value'` for other form fields (sent verbatim, so a value starting with `@` or `<` is not read as a file), `-F 'avatar=@avatar'` for each file |
 | HTTPie (`-f httpie`) | `--form` with `field=value` and `avatar@avatar` |
 | PowerShell (`-f powershell`) | `-Form @{ "field"="…"; "avatar"=Get-Item -Path "avatar" }` (PowerShell sets the multipart `Content-Type` itself) |
 
@@ -68,7 +68,7 @@ Example (`POST /upload` with form field `title` and file field `avatar`):
 
 ```bash
 # cURL
-curl -i -g -X 'POST' 'https://www.example.com/upload' -F 'title=' -F 'avatar=@avatar'
+curl -i -g -X 'POST' 'https://www.example.com/upload' --form-string 'title=' -F 'avatar=@avatar'
 
 # HTTPie
 http --form 'POST' 'https://www.example.com/upload' 'title=' 'avatar@avatar'
@@ -77,11 +77,11 @@ http --form 'POST' 'https://www.example.com/upload' 'title=' 'avatar@avatar'
 Invoke-WebRequest -Method "POST" -Uri "https://www.example.com/upload" -Form @{"title"=""; "avatar"=Get-Item -Path "avatar"}
 ```
 
-Seed the `@filename` / `Get-Item` path with `--pvalue` when you want a real path instead of the field-name placeholder (for example `--pvalue "any=avatar=./fixture.png"`). Without a file field, output stays on the urlencoded examples above.
+The file path is a placeholder named after the field. `--pvalue` does not fill file fields, so replace the path by hand. Without a file field, output stays on the urlencoded examples above.
 
 ## XML request bodies
 
-`param_type: xml` (Play `asXml`, Tapir `xmlBody`, and similar whole-body XML params) is **not** turned into a request body in the HTTP-client formats (`curl`, `httpie`, `powershell`). Those builders only bake `form` / `json` bodies (and multipart `file` uploads above). An endpoint that only has XML body params therefore prints as a header/URL-only command in these formats.
+`param_type: xml` (Play `asXml`, Tapir `xmlBody`, and similar whole-body XML params) is not turned into a request body in the HTTP client formats (`curl`, `httpie`, `powershell`). Those builders only bake `form` / `json` bodies (and multipart `file` uploads above). An endpoint that only has XML body params therefore prints as a header/URL-only command in these formats.
 
 For XML bodies, use one of:
 
@@ -93,9 +93,9 @@ The HTML report's "copy as curl" button uses the same curl builder, so it has th
 
 ## ADB (Android)
 
-Mobile entry points are app URLs, not HTTP requests, so the HTTP clients above skip them. `-f adb` does the inverse: it turns the Android deep links, intent components, and content providers Noir discovers into [Android Debug Bridge](https://developer.android.com/tools/adb) commands you can run against a connected device or emulator.
+Mobile entry points are app URLs, not HTTP requests, so the HTTP clients above skip them. `-f adb` covers only those: it turns the Android deep links, intent components, and content providers Noir discovers into [Android Debug Bridge](https://developer.android.com/tools/adb) commands you can run against a connected device or emulator.
 
-`adb` is Android-only, so the format emits commands for Android-originated entry points and skips everything it can't launch: HTTP endpoints, iOS schemes (use [`-f simctl`](#simctl-ios)), and bare App Links domain associations, each reported as a one-line warning to stderr (the command list on stdout stays pipe-clean).
+`adb` is Android-only. It emits commands for Android entry points and skips everything it can't launch: HTTP endpoints, iOS schemes (use [`-f simctl`](#simctl-ios)), and bare App Links domain associations. Each skipped kind gets a one-line warning on stderr, so stdout stays clean for piping.
 
 ```bash
 noir scan ./my-android-app -f adb
@@ -113,7 +113,7 @@ adb shell am broadcast -n 'com.example.app/.BootReceiver'
 adb shell content query --uri 'content://com.example.app.provider'
 ```
 
-The action, category, and package come from the manifest's intent-filter, so each launch matches the declared filter. Intent extras discovered in the handler are emitted as `--es` string extras (empty templates you can fill, or seed with `--pvalue`). See [Mobile Apps](../../supported/mobile/) for how these entry points are extracted.
+The action, category, and package come from the manifest's intent-filter, so each launch matches the declared filter. Intent extras found in the handler are emitted as `--es` string extras with empty values for you to fill in (`--pvalue` does not reach them). See [Mobile Apps](../../supported/mobile/) for how these entry points are extracted.
 
 ## simctl (iOS)
 
@@ -129,11 +129,11 @@ xcrun simctl openurl booted 'myapp://host/path?token='
 xcrun simctl openurl booted 'https://app.example.com/buy'
 ```
 
-Like `-f adb`, `simctl` is platform-specific: it emits commands for iOS-originated entry points and skips what it can't open (HTTP endpoints, Android entry points via `-f adb`, and bare App Links domain associations), each reported as a one-line warning to stderr.
+Like `-f adb`, `simctl` is platform-specific: it emits commands for iOS entry points and skips what it can't open (HTTP endpoints, Android entry points via `-f adb`, and bare App Links domain associations), each reported as a one-line warning to stderr.
 
 ## Filling Parameter Values
 
-By default Noir leaves parameter values empty (`x-api-key=`, `query=`, …) so the commands work as templates. Pre-populate values with `--pvalue`, handy when you want a script you can run as-is, or when you want to seed fuzzing input.
+By default Noir leaves parameter values empty (`x-api-key=`, `query=`, ...) so the commands work as templates. Use `--pvalue` to fill them in, for a script you can run as-is or for fuzzing seeds.
 
 ```
 --pvalue TYPE=VALUE     # repeatable
@@ -141,7 +141,7 @@ By default Noir leaves parameter values empty (`x-api-key=`, `query=`, …) so t
 
 | `TYPE`            | Scope                                                |
 |-------------------|------------------------------------------------------|
-| `any` (or omit)   | Every parameter type                                 |
+| `any` (or no `TYPE=` prefix, when the value has no `=`) | Every parameter type except `file` and `xml` |
 | `query`           | Query string                                         |
 | `form`            | Form body (`application/x-www-form-urlencoded`)      |
 | `json`            | JSON body                                            |
@@ -154,9 +154,9 @@ By default Noir leaves parameter values empty (`x-api-key=`, `query=`, …) so t
 | Form | Behavior |
 |---|---|
 | `<value>` | Used for every parameter of the targeted type |
-| `<name>=<value>` or `<name>:<value>` | Used only for parameters named `<name>` |
+| `<name>=<value>` or `<name>:<value>` | Used only for parameters named `<name>`. Needs an explicit `TYPE=` (`any=` works) |
 
-`--pvalue` is repeatable, and per-type rules win over the generic `any` scope when both match.
+`--pvalue` is repeatable. A rule that names the parameter wins over a type-wide value, and a per-type rule wins over an `any` rule of the same kind.
 
 ```bash
 # Fill every parameter with `test`
@@ -173,8 +173,8 @@ noir scan . -f curl -u https://example.com \
   --pvalue "query=limit=10"
 ```
 
-The same flag applies to HTTPie and PowerShell output, and feeds downstream into the OpenAPI, Postman, and JSON formats wherever values are rendered.
+The same values show up in HTTPie and PowerShell output, and in every other format that prints parameter values (OpenAPI, Postman, JSON, ...).
 
-> **Legacy:** v0's `--set-pvalue`, `--set-pvalue-query`, `--set-pvalue-header`,
-> etc. still work as silent aliases in v1.x. New scripts should prefer
-> the unified `--pvalue TYPE=VALUE` form above.
+> Legacy: v0's `--set-pvalue`, `--set-pvalue-query`, `--set-pvalue-header`,
+> etc. still work as silent aliases in v1.x. New scripts should use
+> `--pvalue TYPE=VALUE`.

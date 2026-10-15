@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-Visualize API endpoints as a [Mermaid mindmap](https://mermaid.js.org/syntax/mindmap.html) to get a bird's-eye view of your API structure.
+Draw the discovered endpoints as a [Mermaid mindmap](https://mermaid.js.org/syntax/mindmap.html) to see the shape of the API at a glance.
 
 ## Usage
 
@@ -57,7 +57,7 @@ mindmap
 
 </details>
 
-Paste the raw output into the [Mermaid live editor](https://mermaid.live/) to render it interactively, or embed it directly in Markdown files (GitHub, GitLab, and Notion all render Mermaid natively).
+Paste the output into the [Mermaid live editor](https://mermaid.live/) to render it, or put it in a Markdown file (GitHub, GitLab, and Notion render Mermaid blocks).
 
 {% mermaid() %}
 mindmap
@@ -92,7 +92,3 @@ mindmap
       feed
         GET websocket
 {% end %}
-
-## Tips
-
-- For large APIs, collapse or expand branches in Mermaid-compatible viewers.

@@ -49,7 +49,7 @@ jobs:
 | `passive_scan_severity` | 패시브 점검 최소 심각도 (`critical`, `high`, `medium`, `low`) | 아니오 | `high` |
 | `use_all_taggers` | 모든 태거 활성화 (`-T/--use-all-taggers`) | 아니오 | `false` |
 | `use_taggers` | 특정 태거만 활성화 (`--use-taggers`) | 아니오 | `` |
-| `include_path` | 결과에 소스 파일 경로 포함 (`--include-path`) | 아니오 | `false` |
+| `include_path` | `plain` 출력에 소스 파일 경로 추가. JSON에는 항상 들어 있음 (`--include-path`) | 아니오 | `false` |
 | `verbose` | 상세 출력 (`--verbose`) | 아니오 | `false` |
 | `debug` | 디버그 출력 (`-d/--debug`) | 아니오 | `false` |
 | `concurrency` | 동시성 수준 (`--concurrency`) | 아니오 | `` |
@@ -71,15 +71,15 @@ jobs:
 **참고:**
 - 불리언 옵션은 문자열(`'true'`/`'false'`)로 넘기세요.
 - `output_file`은 워크스페이스 기준 경로입니다. 뒤 스텝에서 리포트 파일이 필요하면 지정하세요. 스텝 출력값은 지정 여부와 관계없이 채워집니다.
-- `status_codes`, `exclude_codes`, `probe`는 `url`이 있어야 합니다. 없으면 스캔이 에러로 멈춥니다.
-- `endpoints` / `passive_results` 출력값은 `json`과 `jsonl`에서 채워집니다. `jsonl`이면 각 줄을 모아 `json`과 같은 문서 하나로 만듭니다.
+- `status_codes`, `exclude_codes`, `probe`, `probe_via`는 `url`이 있어야 합니다. 없으면 스캔이 에러로 멈춥니다.
+- `jsonl`이면 아래 출력값은 각 줄을 모아 `json`과 같은 문서 하나로 만듭니다.
 
 ## 출력값(Outputs)
 
 | 이름 | 설명 |
 |---|---|
-| `endpoints` | `format`이 `json`일 때 Noir 결과 문서 전체(`{"endpoints":[...],"passive_results":[...],"errors":[...]}`). 다른 포맷이면 빈 값 |
-| `passive_results` | `format`이 `json`일 때 패시브 스캔 결과 JSON 배열. 패시브 스캔을 껐거나, 결과가 없거나, JSON 포맷이 아니면 `[]` |
+| `endpoints` | `format`이 `json`이나 `jsonl`일 때 Noir 결과 문서 전체(`{"endpoints":[...],"passive_results":[...],"errors":[...]}`). 다른 출력 형식이면 빈 값 |
+| `passive_results` | `format`이 `json`이나 `jsonl`일 때 패시브 스캔 결과 JSON 배열. 패시브 스캔을 껐거나, 결과가 없거나, 다른 출력 형식이면 `[]` |
 
 출력값 활용:
 
@@ -96,7 +96,7 @@ jobs:
 ### 고급 스캔
 
 ~~~yaml
-name: Comprehensive Security Analysis
+name: Noir Passive Scan
 on: [push, pull_request]
 
 jobs:
@@ -114,16 +114,15 @@ jobs:
           passive_scan: 'true'
           passive_scan_severity: 'medium'
           use_all_taggers: 'true'
-          include_path: 'true'
           verbose: 'true'
           output_file: 'noir-results.json'
 
       - name: Process Results
         run: |
-          echo "🔍 Endpoints discovered:"
+          echo "Endpoints discovered:"
           echo '${{ steps.noir.outputs.endpoints }}' | jq '.endpoints | length'
 
-          echo "🚨 Security issues found:"
+          echo "Passive scan findings:"
           echo '${{ steps.noir.outputs.passive_results }}' | jq '. | length'
 
       - name: Save detailed results
@@ -154,7 +153,6 @@ jobs:
         with:
           base_path: '${{ matrix.service }}'
           format: 'json'
-          include_path: 'true'
 ~~~
 
 ### Pull Request 공격 표면 리뷰
@@ -229,11 +227,11 @@ jobs:
   with:
     base_path: '.'
     url: 'http://localhost:3000'
-    status_codes: 'true'       # HTTP 상태코드 포함
-    exclude_codes: '404,429'   # 소음이 많은 코드 제외
+    status_codes: 'true'       # HTTP 상태 코드 포함
+    exclude_codes: '404,429'   # 노이즈가 많은 코드 제외
 ~~~
 
-### 대체 포맷
+### 다른 출력 형식
 
 ~~~yaml
 - uses: owasp-noir/noir@main
@@ -247,7 +245,7 @@ jobs:
 
 1. `passive_scan: 'true'`로 보안 문제를 일찍 잡으세요.
 2. `passive_scan_severity`와 `exclude_codes`로 노이즈를 줄이세요.
-3. `include_path: 'true'`를 켜면 엔드포인트마다 소스 파일 위치가 붙습니다.
+3. JSON 출력에는 엔드포인트마다 소스 파일 위치가 이미 들어 있습니다. `plain` 출력에서 보려면 `include_path: 'true'`를 켜세요.
 4. 자동 탐지가 놓친 프레임워크는 `techs`로 추가하고, 필요 없는 분석기는 `exclude_techs`로 빼세요.
 5. `actions/upload-artifact`로 결과를 보관하세요.
 
@@ -263,8 +261,7 @@ jobs:
 - `base_path` 범위를 줄이거나 `techs`/`exclude_techs`로 거르기
 
 **진단이 어려운 경우:**
-- `debug: 'true'`와 `verbose: 'true'` 켜기
-- `include_path: 'true'`로 소스 위치 확인
+- `debug: 'true'`나 `verbose: 'true'`를 켜고 `no_log: 'false'`도 함께 지정. `no_log`는 기본값이 `true`라 로그를 숨깁니다
 
 **HTTP 상태 코드 노이즈:**
 - `status_codes: 'false'`로 비활성화 또는 `exclude_codes`로 제외

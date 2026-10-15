@@ -93,7 +93,7 @@ template = "landing"
     <article class="cell cell-c" data-reveal>
       <div class="cell-body">
         <h3>주요 스택 전부</h3>
-        <p>플러그인도, 언어별 설정도 없는 단일 바이너리입니다. 정적 규칙이 놓친 프레임워크는 LLM이 대신 처리합니다.</p>
+        <p>플러그인도, 언어별 설정도 없는 단일 바이너리입니다. 정적 규칙이 놓친 프레임워크는 LLM에 맡길 수 있습니다.</p>
         <div class="stat-row">
           <span><span class="stat-val">32</span><span class="stat-key">언어</span></span>
           <span><span class="stat-val">261</span><span class="stat-key">프레임워크</span></span>

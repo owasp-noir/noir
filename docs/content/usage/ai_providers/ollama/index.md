@@ -25,8 +25,6 @@ Run large language models locally using [Ollama](https://ollama.com) for code an
 
 ## Usage
 
-Run Noir with Ollama:
-
 ```bash
 noir scan ./spec/functional_test/fixtures/hahwul \
      --ai-provider=ollama \

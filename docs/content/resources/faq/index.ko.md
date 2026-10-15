@@ -1,6 +1,6 @@
 +++
 title = "FAQ"
-description = "OWASP Noir에 대한 자주 묻는 질문."
+description = "OWASP Noir에 관해 자주 묻는 질문."
 weight = 3
 sort_by = "weight"
 schema_type = "FAQ"

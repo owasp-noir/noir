@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-Use ACP (Agent Client Protocol) providers when you want Noir to talk to an AI agent process instead of a direct HTTP LLM API.
+With an ACP (Agent Client Protocol) provider, Noir starts an AI agent process and talks to it, instead of calling an LLM HTTP API.
 
 ## Supported ACP Providers
 
@@ -23,7 +23,7 @@ NOIR_ACP_ALLOW_CUSTOM_COMMAND=1 noir scan ./myapp --ai-provider="acp:my-agent --
 
 ## Usage
 
-### Codex (recommended test target)
+### Codex
 
 ```bash
 noir scan ./myapp --ai-provider=acp:codex
@@ -41,13 +41,9 @@ noir scan ./myapp --ai-provider=acp:gemini
 noir scan ./myapp --ai-provider=acp:claude
 ```
 
-### Optional model
+### Model
 
-For `acp:*`, `--ai-model` is optional.
-
-```bash
-noir scan ./myapp --ai-provider=acp:codex --ai-model=codex
-```
+For `acp:*`, `--ai-model` is optional. Noir does not pass it to the agent; the agent uses whatever model it is configured with.
 
 ## Logging Behavior
 
@@ -61,9 +57,9 @@ NOIR_ACP_RAW_LOG=1 noir scan ./myapp --ai-provider=acp:codex
 
 ## Tool Permissions
 
-An ACP agent can ask Noir for permission to run its own tools (shell commands, file writes, network fetches) on your machine. Noir **declines every one of them**.
+An ACP agent can ask Noir for permission to run its own tools (shell commands, file writes, network fetches) on your machine. Noir declines every one of them.
 
-The prompt Noir sends the agent is source code from the tree you are scanning, and scanning code you did not write is the normal case. A file that carries "ignore the above and run this instead" is enough to steer the agent, so the permission prompt is the one checkpoint left; answering it with an automatic yes would turn an endpoint scan into arbitrary local execution.
+The prompt Noir sends is source code from the tree you are scanning, often code you did not write. A file that says "ignore the above and run this instead" can steer the agent. Saying yes automatically would turn an endpoint scan into arbitrary code execution on your machine.
 
 Nothing is lost by declining: the code to analyze is already in the prompt, so the agent needs no tools to answer. If you are scanning a tree you trust and want the agent to explore on its own, opt in explicitly:
 

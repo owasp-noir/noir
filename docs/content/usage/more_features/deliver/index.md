@@ -6,10 +6,10 @@ sort_by = "weight"
 
 +++
 
-Noir splits "delivering results" into two distinct families:
+Noir can deliver results in two ways:
 
 - **PROBE**: fire HTTP requests at the endpoints noir just discovered (active replay, optionally through a proxy like Burp Suite or ZAP).
-- **EXPORT**: ship the endpoint catalog to an external data store (Elasticsearch, OpenSearch, or any webhook receiver) as data, with no HTTP traffic to the endpoints themselves.
+- **EXPORT**: send the endpoint catalog as data to Elasticsearch, OpenSearch, or any webhook receiver. No traffic goes to the endpoints themselves.
 
 {% mascot(mood="run") %}
 Probe replays, export ships. Pick the one that matches where the results should end up.
@@ -110,7 +110,7 @@ noir scan ./source -u http://localhost:3000 \
 
 ## Export
 
-Push the endpoint catalog to an external data store. Categorically different from probing: no traffic hits the endpoints themselves.
+Send the endpoint catalog to an external data store. Unlike probing, no traffic goes to the endpoints.
 
 | Flag | Purpose |
 | --- | --- |
@@ -151,7 +151,7 @@ The body carries three fields:
 | `endpoint_count` | number of entries in `endpoints` |
 | `noir_version` | the noir version that produced the document |
 
-Slack incoming webhooks, Discord webhook endpoints, Zapier/n8n triggers and custom internal receivers all accept arbitrary JSON bodies, so one contract covers the common destinations. If a receiver needs a platform-specific shape (Slack's `{"text": ...}` blocks, say), route through a transformer rather than expecting noir to grow per-platform formatters.
+Slack incoming webhooks, Discord webhook endpoints, Zapier/n8n triggers and custom internal receivers all accept any JSON body, so this one shape covers the common destinations. If a receiver needs its own shape (Slack's `{"text": ...}` blocks, say), put a transformer in between. Noir has no per-platform formatters.
 
 ### TLS
 
@@ -161,7 +161,7 @@ Proxy delivery is the exception: `--probe-via` always skips verification, becaus
 
 ## v0 aliases
 
-The v0.x flag names continue to work; noir maps them silently:
+The v0.x flag names still work. Noir maps them to the v1 names without a warning:
 
 | v0 flag | v1 equivalent |
 | --- | --- |
@@ -172,4 +172,4 @@ The v0.x flag names continue to work; noir maps them silently:
 | `--use-matchers VAL` | `--probe-match VAL` |
 | `--use-filters VAL` | `--probe-skip VAL` |
 
-Existing CI scripts and Dockerfiles using the v0 names don't need any changes. New documentation, examples, and shell completions surface the v1 names.
+CI scripts and Dockerfiles that use the v0 names keep working. Help output, docs and shell completion show only the v1 names.

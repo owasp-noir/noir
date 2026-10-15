@@ -204,7 +204,9 @@ via `NOIR_HOME`, or with `--passive-scan-path PATH` at scan time.
 noir completion zsh    > "${fpath[1]}/_noir"
 mkdir -p ~/.local/share/bash-completion/completions
 noir completion bash   > ~/.local/share/bash-completion/completions/noir
+mkdir -p ~/.config/fish/completions
 noir completion fish   > ~/.config/fish/completions/noir.fish
+mkdir -p ~/.config/elvish/lib
 noir completion elvish > ~/.config/elvish/lib/noir.elv  # then `use noir` from rc.elv
 ```
 
@@ -236,8 +238,10 @@ A small set of flags work on every subcommand, not just `scan`:
 | `-v`, `-V`, `--version` | Print the noir version and exit                              |
 | `-h, --help`   | Show help for the current command                                     |
 
-These may sit on either side of the verb: `noir --no-color list techs`
-and `noir list techs --no-color` are the same command.
+`--no-color` and `--no-spinner` may sit on either side of the verb:
+`noir --no-color list techs` and `noir list techs --no-color` are the
+same command. `-v`/`--version` works only before a verb; after one, use
+`noir version` (`noir rules update -v` means verbose).
 
 Per-command flags (output format, concurrency, passive scan, AI
 provider, and so on) live under `noir scan`. See `noir help scan` for

@@ -32,9 +32,9 @@ Noir는 오픈 소스 SAST 도구입니다. 소스 코드를 읽어 애플리케
 
 **DAST 스캐너에 공급.** 엔드포인트를 ZAP, Burp Suite, Caido에 프록시로 바로 흘려보내거나, OpenAPI로 내보내 가져가게 하세요. 페이지에 링크되지 않아 스캐너가 놓치던 경로도 스캔 범위에 들어옵니다.
 
-**AI SAST에 쓸 만한 컨텍스트 제공.** Noir가 추출한 엔드포인트 인벤토리는 진입점, 소스 파일, 파라미터, 태그로 구성되며, `--include callee`를 쓰면 각 핸들러가 호출하는 1-hop 함수까지 담깁니다. LLM 기반 SAST, 코드 감사자, 보안 에이전트가 공격자가 닿을 수 있는 버그를 찾는 데 필요한 바로 그 컨텍스트입니다. `--ai-context`를 켜면 엔드포인트마다 리뷰 컨텍스트(guards, callees, sources, sinks, validators, signals)까지 붙으므로 모델이 이를 다시 찾을 필요가 없습니다. 모델에게 저장소 전체를 훑게 하는 대신, Noir가 매핑해 둔 표면을 그대로 넘기세요.
+**AI 리뷰어에게 컨텍스트 제공.** 진입점, 소스 파일, 파라미터, 태그로 이루어진 인벤토리(`--include callee`를 쓰면 각 핸들러가 호출하는 1-hop 함수까지)는 LLM 기반 SAST 도구나 보안 에이전트가 공격자가 닿을 수 있는 버그를 찾을 때 필요한 정보입니다. `--ai-context`는 엔드포인트마다 guards, callees, sources, sinks, validators, signals를 붙여 주므로 모델이 이를 다시 찾을 필요가 없습니다. 저장소 전체 대신 Noir가 정리한 표면을 모델에게 넘기세요.
 
-**다음 도구가 읽을 형식으로 출력.** JSON, YAML, OpenAPI 명세, CI/CD용 SARIF, cURL, HTTPie, HTML 리포트, Postman 컬렉션 등 파이프라인의 다음 도구가 기대하는 형식으로 결과가 나옵니다.
+**다음 도구가 읽을 형식으로 출력.** JSON, YAML, OpenAPI, CI/CD용 SARIF, cURL, HTTPie, HTML 리포트, Postman 컬렉션 등을 지원합니다.
 
 ## 어떻게 작동하나요?
 
@@ -88,7 +88,7 @@ flowchart LR
 
 ## 기여하기
 
-Noir는 오픈 소스이며 모든 기여를 환영합니다. [기여 가이드](https://github.com/owasp-noir/noir/blob/main/.github/CONTRIBUTING.md)를 참고하세요.
+Noir는 오픈 소스이며 기여를 받습니다. [기여 가이드](https://github.com/owasp-noir/noir/blob/main/.github/CONTRIBUTING.md)를 참고하세요.
 
 ### 코어 팀
 
@@ -96,7 +96,7 @@ Noir는 오픈 소스이며 모든 기여를 환영합니다. [기여 가이드]
 
 ### 기여자
 
-![OWASP Noir 에 기여한 사람들의 프로필 이미지.](https://raw.githubusercontent.com/owasp-noir/noir/refs/heads/main/docs/static/CONTRIBUTORS.svg)
+![OWASP Noir에 기여한 사람들의 프로필 이미지.](https://raw.githubusercontent.com/owasp-noir/noir/refs/heads/main/docs/static/CONTRIBUTORS.svg)
 
 ---
 

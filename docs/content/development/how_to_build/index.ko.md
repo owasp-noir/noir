@@ -33,7 +33,7 @@ sort_by = "weight"
 
 ### Crystal 설치
 
-Noir는 Crystal로 작성되었습니다(`shard.yml` 기준 `~> 1.19`, CI는 1.21 사용). 플랫폼에 맞게 설치하세요. 첫 빌드 때 내장된 Tree-sitter 문법도 함께 컴파일하므로 C 컴파일러도 필요합니다.
+Noir는 Crystal로 작성되었습니다(`shard.yml` 기준 `~> 1.19`, CI는 1.21과 1.22에서 테스트). 플랫폼에 맞게 설치하세요. 첫 빌드 때 내장된 Tree-sitter 문법도 함께 컴파일하므로 C 컴파일러도 필요합니다.
 
 #### Ubuntu/Debian
 ```sh

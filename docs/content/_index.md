@@ -91,7 +91,7 @@ template = "landing"
     <article class="cell cell-c" data-reveal>
       <div class="cell-body">
         <h3>Every mainstream stack</h3>
-        <p>One binary, no plugins and no per-language setup. Frameworks the static rules miss fall back to an LLM.</p>
+        <p>One binary, no plugins and no per-language setup. Frameworks the static rules miss can be handed to an LLM.</p>
         <div class="stat-row">
           <span><span class="stat-val">32</span><span class="stat-key">Languages</span></span>
           <span><span class="stat-val">261</span><span class="stat-key">Frameworks</span></span>

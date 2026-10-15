@@ -57,7 +57,7 @@ mindmap
 
 </details>
 
-출력 결과를 [Mermaid 라이브 에디터](https://mermaid.live/)에 붙여넣으면 바로 렌더링됩니다. Markdown 파일에 그대로 넣어도 GitHub, GitLab, Notion에서 바로 렌더링됩니다.
+출력을 [Mermaid 라이브 에디터](https://mermaid.live/)에 붙여넣으면 바로 렌더링됩니다. Markdown 파일에 넣어도 GitHub, GitLab, Notion에서 렌더링됩니다.
 
 {% mermaid() %}
 mindmap
@@ -92,7 +92,3 @@ mindmap
       feed
         GET websocket
 {% end %}
-
-## 팁
-
-- API 규모가 크다면 Mermaid 호환 뷰어에서 가지를 접거나 펼칠 수 있습니다.

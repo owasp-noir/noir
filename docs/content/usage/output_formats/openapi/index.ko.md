@@ -106,7 +106,7 @@ noir scan . -f oas2
 
 * `json` → `application/json`
 * `form` → `application/x-www-form-urlencoded` (형제 `file` 필드가 있으면 `multipart/form-data`)
-* `file` → `multipart/form-data` 와 `format: binary` (형제 form 필드는 함께 실리고, 파일만 있어도 query가 아니라 multipart로 나감)
+* `file` → `multipart/form-data`와 `format: binary` (형제 form 필드는 함께 실리고, 파일만 있어도 query가 아니라 multipart로 나감)
 * `xml` → `application/xml` (Play `asXml` / Tapir `xmlBody`처럼 바디 전체를 담는 XML 파라미터)
 
 `-f oas2`는 Swagger 2.0 형태로 출력하며, 바디 파라미터는 `in: formData` / `in: body` 항목이 되고(업로드는 multipart 아래 `type: file`), 쿠키는 `Cookie` 헤더로 실립니다.

@@ -15,7 +15,7 @@ sort_by = "weight"
 
 ## 사용 방법
 
-`--ai-provider` 에 사용 중인 Foundry 리소스의 엔드포인트를 직접 지정합니다.
+`--ai-provider`에 사용 중인 Foundry 리소스의 엔드포인트를 직접 지정합니다.
 
 ```bash
 noir scan ./myapp \
@@ -24,7 +24,7 @@ noir scan ./myapp \
      --ai-key=YOUR_API_KEY
 ```
 
-`--ai-provider` 는 OpenAI 호환 URL을 그대로 받으므로 별도의 프리픽스가 필요 없습니다.
+`--ai-provider`는 OpenAI 호환 URL을 그대로 받으므로 별도의 프리픽스가 필요 없습니다.
 
 키를 환경 변수로 전달하는 경우:
 
@@ -37,8 +37,8 @@ noir scan ./myapp \
 
 ## `azure` 프리픽스
 
-Noir에는 `https://models.inference.ai.azure.com` 으로 확장되는 `azure` 제공업체 프리픽스가 있습니다.
+Noir에는 `https://models.inference.ai.azure.com`으로 확장되는 `azure` 제공업체 프리픽스가 있습니다.
 
 {% alert_warning() %}
-이 공용 엔드포인트는 종료되었습니다. `models.inference.ai.azure.com` 은 더 이상 DNS에서 해석되지 않으므로 `--ai-provider=azure` 형태로는 접속할 수 없습니다. 현재 Foundry는 리소스마다 별도의 엔드포인트를 제공하므로, 위의 전체 URL 형태를 사용하세요.
+이 공용 엔드포인트는 종료되었습니다. `models.inference.ai.azure.com`은 더 이상 DNS에서 해석되지 않으므로 `--ai-provider=azure` 형태로는 접속할 수 없습니다. 현재 Foundry는 리소스마다 별도의 엔드포인트를 제공하므로, 위의 전체 URL 형태를 사용하세요.
 {% end %}

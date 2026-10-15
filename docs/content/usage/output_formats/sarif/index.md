@@ -6,14 +6,7 @@ sort_by = "weight"
 
 +++
 
-Output results as SARIF v2.1.0 (Static Analysis Results Interchange Format). This is the standard format that GitHub Code Scanning, GitLab, and Azure DevOps can ingest natively.
-
-## Why SARIF?
-
-*   OASIS standard supported across the security tooling ecosystem
-*   Native support in GitHub Code Scanning, GitLab, Azure DevOps
-*   Rich metadata with severity levels and file locations
-*   Enables automated security gates in pipelines
+Output results as SARIF v2.1.0 (Static Analysis Results Interchange Format), the OASIS standard that GitHub Code Scanning, GitLab, and Azure DevOps can read. Each result carries a severity level and a file location, so a pipeline can gate on it.
 
 ## Usage
 
@@ -31,7 +24,7 @@ noir scan . -f sarif -o results.sarif --no-log
 
 ## Example Output
 
-A SARIF file has a `runs` array. Each run describes the tool (`driver` with name and version), the analysis rules, the `results` (one entry per discovered endpoint with its source file location and line number), and an `invocations` entry whose `executionSuccessful` mirrors the `errors` key of the [JSON output](../json/): `false` when any analyzer failed or skipped a file.
+A SARIF file has a `runs` array. Each run describes the tool (`driver` with name and version), the analysis rules, the `results` (one entry per discovered endpoint with its source file location and line number), and an `invocations` entry whose `executionSuccessful` mirrors the `errors` key of the [JSON output](../json/): `false` when any analyzer failed or skipped a file. File paths are relative to `%SRCROOT%`, which `originalUriBaseIds` maps to the directory Noir ran from.
 
 ```json
 {
@@ -74,7 +67,8 @@ A SARIF file has a `runs` array. Each run describes the tool (`driver` with name
             {
               "physicalLocation": {
                 "artifactLocation": {
-                  "uri": "src/routes.cr"
+                  "uri": "src/routes.cr",
+                  "uriBaseId": "%SRCROOT%"
                 },
                 "region": {
                   "startLine": 42
@@ -94,7 +88,8 @@ A SARIF file has a `runs` array. Each run describes the tool (`driver` with name
             {
               "physicalLocation": {
                 "artifactLocation": {
-                  "uri": "src/routes.cr"
+                  "uri": "src/routes.cr",
+                  "uriBaseId": "%SRCROOT%"
                 },
                 "region": {
                   "startLine": 56
@@ -108,7 +103,12 @@ A SARIF file has a `runs` array. Each run describes the tool (`driver` with name
         {
           "executionSuccessful": true
         }
-      ]
+      ],
+      "originalUriBaseIds": {
+        "%SRCROOT%": {
+          "uri": "file:///path/to/project/"
+        }
+      }
     }
   ]
 }
@@ -120,23 +120,23 @@ A SARIF file has a `runs` array. Each run describes the tool (`driver` with name
 
 Each discovered endpoint is reported as a SARIF result with:
 
-*   **Rule ID**: `endpoint-discovery` for API endpoint findings
-*   **Level**: `note` (informational finding)
-*   **Message**: HTTP method, URL path, and discovered parameters
-*   **Location**: File path and line number where the endpoint was found
+*   Rule ID: `endpoint-discovery`
+*   Level: `note` (informational)
+*   Message: HTTP method, URL path, and discovered parameters
+*   Location: file path and line number where the endpoint was found
 
 ### Passive Scan Integration
 
-When using passive scan (`-P` or `--passive-scan`), security findings are included in the SARIF output with severity mapping:
+With passive scan (`-P` or `--passive-scan`), security findings are added to the SARIF output. Severity maps to level like this:
 
-*   **Critical/High severity** → `error` level
-*   **Medium severity** → `warning` level
-*   **Low severity** → `note` level
-*   Any other severity → `none`
+*   critical, high → `error`
+*   medium → `warning`
+*   low → `note`
+*   anything else → `none`
 
 By default `-P` keeps only high and critical findings. Lower the bar with `--passive-scan-severity medium` (or `low`) to see the rest.
 
-Each passive scan rule is added to the `rules` array with its name and description, and its first reference as `helpUri`.
+Each passive scan rule is added to the `rules` array with its name and description, and its first reference as `helpUri`. A finding's message is the rule name, never the matched text, so a detected secret does not end up in your code scanning alerts.
 
 ### Callees and AI Context
 
@@ -157,7 +157,7 @@ Upload SARIF results to [GitHub Code Scanning](https://docs.github.com/en/code-s
 noir scan . -f sarif -o noir-results.sarif --no-log
 
 # Upload to GitHub with the GitHub CLI (the API takes the file gzipped and base64-encoded)
-gh api /repos/:owner/:repo/code-scanning/sarifs \
+gh api /repos/{owner}/{repo}/code-scanning/sarifs \
   -f sarif="$(gzip -c noir-results.sarif | base64 | tr -d '\n')" \
   -f ref=refs/heads/main \
   -f commit_sha="$(git rev-parse HEAD)"

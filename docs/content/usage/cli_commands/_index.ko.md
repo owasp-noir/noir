@@ -29,9 +29,9 @@ noir <command> [arguments] [flags]
 | `noir config edit`     | `$VISUAL` / `$EDITOR`로 설정 파일 열기                  |
 | `noir config init`     | 기본 설정 파일 생성 (여러 번 실행해도 안전)             |
 | `noir config path`     | 설정 파일 경로 출력                                     |
-| `noir rules list`      | 룰 경로에 설치된 룰 파일 목록                           |
-| `noir rules update`    | 최신 패시브 스캔 룰을 clone 또는 pull                   |
-| `noir rules path`      | 설정된 룰 디렉터리 출력                                 |
+| `noir rules list`      | 규칙 경로에 설치된 규칙 파일 목록                           |
+| `noir rules update`    | 최신 패시브 스캔 규칙을 clone 또는 pull                   |
+| `noir rules path`      | 설정된 규칙 디렉터리 출력                                 |
 | `noir completion zsh`  | Zsh / Bash / Fish / Elvish 자동완성 스크립트 생성       |
 | `noir version`         | 버전 출력 (`--verbose`를 붙이면 빌드 정보 추가)         |
 | `noir help [command]`  | 전체 도움말 또는 명령어별 도움말                        |
@@ -49,7 +49,7 @@ noir scan ./app
 # 한 번에 여러 코드베이스 스캔
 noir scan ./api ./worker ./jobs
 
-# JSON 으로 파일 저장 + passive scan
+# JSON으로 파일 저장 + 패시브 스캔
 noir scan ./app -P -f json -o endpoints.json
 
 # 전체 AI 컨텍스트 + path/techs/callee enrichment
@@ -137,7 +137,7 @@ noir scan ./app --ai-provider ollama --ai-model llama3
 noir list techs       # 지원하는 언어, 프레임워크, 스펙
 noir list taggers     # 빌트인 및 프레임워크별 태거
 noir list formats     # 지원하는 모든 출력 형식
-noir list techs -f json   # 기계가 읽는 형식. -f 는 text(기본), json, yaml 을 받습니다
+noir list techs -f json   # 기계가 읽는 형식. -f는 text(기본), json, yaml
 ```
 
 ## Cache
@@ -161,7 +161,7 @@ noir cache purge 30   # 30일보다 오래된 항목 삭제
 ```bash
 noir config show      # 활성 파일 출력
 noir config edit      # $VISUAL / $EDITOR 로 열기
-noir config init      # 기본 설정 생성 (멱등)
+noir config init      # 기본 설정 생성 (여러 번 실행해도 안전)
 noir config path      # 해석된 경로 출력
 ```
 
@@ -184,15 +184,15 @@ noir config path --config-file ./ci/noir.yaml   # 절대 경로 해석
 
 ## Rules
 
-`noir rules`는 패시브 스캔 룰 저장소를 관리합니다.
+`noir rules`는 패시브 스캔 규칙 저장소를 관리합니다.
 
 ```bash
-noir rules list       # 설치된 룰 파일 목록
-noir rules update     # 최신 룰을 클론하거나 풀
-noir rules path       # 룰 디렉터리 출력
+noir rules list       # 설치된 규칙 파일 목록
+noir rules update     # 최신 규칙을 clone 또는 pull
+noir rules path       # 규칙 디렉터리 출력
 ```
 
-기본 룰 경로는 `~/.config/noir/passive_rules`입니다. `NOIR_HOME`으로
+기본 규칙 경로는 `~/.config/noir/passive_rules`입니다. `NOIR_HOME`으로
 바꾸거나, 스캔할 때 `--passive-scan-path PATH`로 다른 경로를 지정할 수
 있습니다.
 
@@ -204,8 +204,10 @@ noir rules path       # 룰 디렉터리 출력
 noir completion zsh    > "${fpath[1]}/_noir"
 mkdir -p ~/.local/share/bash-completion/completions
 noir completion bash   > ~/.local/share/bash-completion/completions/noir
+mkdir -p ~/.config/fish/completions
 noir completion fish   > ~/.config/fish/completions/noir.fish
-noir completion elvish > ~/.config/elvish/lib/noir.elv  # 그 다음 rc.elv 에서 `use noir`
+mkdir -p ~/.config/elvish/lib
+noir completion elvish > ~/.config/elvish/lib/noir.elv  # 그 다음 rc.elv에서 `use noir`
 ```
 
 스크립트는 모든 서브커맨드를 알고 있습니다. `noir <TAB>`은 동사 목록을,
@@ -236,8 +238,10 @@ Crystal, LLVM, 타깃 트리플 같은 빌드 정보를 함께 보여줍니다(v
 | `-v`, `-V`, `--version` | Noir 버전을 출력하고 종료                                    |
 | `-h`, `--help` | 현재 명령의 도움말 표시                                              |
 
-동사 앞뒤 어디에 두어도 됩니다. `noir --no-color list techs`와
-`noir list techs --no-color`는 같은 명령입니다.
+`--no-color`와 `--no-spinner`는 동사 앞뒤 어디에 두어도 됩니다.
+`noir --no-color list techs`와 `noir list techs --no-color`는 같은 명령입니다.
+`-v`/`--version`은 동사 앞에서만 동작합니다. 동사 뒤에서는 `noir version`을
+쓰세요(`noir rules update -v`의 `-v`는 verbose입니다).
 
 명령어별 플래그(출력 형식, 동시성, 패시브 스캔, AI 제공업체 등)는
 `noir scan`에 있습니다. 전체 목록은 `noir help scan`으로 볼 수 있습니다.
@@ -247,7 +251,7 @@ Crystal, LLVM, 타깃 트리플 같은 빌드 정보를 함께 보여줍니다(v
 v0의 호출 방식은 v1.x에서 수정 없이 그대로 동작합니다.
 
 ```bash
-# 세 형태 모두 동일한 스캔 결과를 만듭니다
+# 세 형태 모두 같은 스캔 결과를 냅니다
 noir -b ./app                # v0 형식 (scan 으로 라우팅)
 noir scan ./app              # v1 형식
 noir scan -b ./app           # v1 동사 + v0 스타일 플래그

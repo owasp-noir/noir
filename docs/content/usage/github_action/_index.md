@@ -49,7 +49,7 @@ jobs:
 | `passive_scan_severity` | Minimum severity for passive scan (`critical`, `high`, `medium`, `low`) | No | `high` |
 | `use_all_taggers` | Enable all taggers (`-T/--use-all-taggers`) | No | `false` |
 | `use_taggers` | Enable specific taggers (`--use-taggers`) | No | `` |
-| `include_path` | Include source file paths in results (`--include-path`) | No | `false` |
+| `include_path` | Add source file paths to `plain` output; JSON always has them (`--include-path`) | No | `false` |
 | `verbose` | Verbose output (`--verbose`) | No | `false` |
 | `debug` | Debug output (`-d/--debug`) | No | `false` |
 | `concurrency` | Concurrency level (`--concurrency`) | No | `` |
@@ -71,15 +71,15 @@ jobs:
 **Notes:**
 - Pass boolean options as strings (`'true'`/`'false'`).
 - `output_file` is relative to the workspace. Set it when a later step needs the report file. The step outputs are filled either way.
-- `status_codes`, `exclude_codes` and `probe` need `url`. Without it the scan stops with an error.
-- The `endpoints` / `passive_results` outputs are filled for `json` and `jsonl`. With `jsonl`, the lines are folded into the same single document `json` produces.
+- `status_codes`, `exclude_codes`, `probe` and `probe_via` need `url`. Without it the scan stops with an error.
+- With `jsonl`, the outputs below fold the lines into the same single document `json` produces.
 
 ## Outputs
 
 | Name | Description |
 |---|---|
-| `endpoints` | The full Noir result document (`{"endpoints":[...],"passive_results":[...],"errors":[...]}`) when `format` is `json`. Empty for other formats |
-| `passive_results` | A JSON array of passive-scan findings when `format` is `json`. `[]` when passive scan is off, found nothing, or the format isn't JSON |
+| `endpoints` | The full Noir result document (`{"endpoints":[...],"passive_results":[...],"errors":[...]}`) when `format` is `json` or `jsonl`. Empty for other formats |
+| `passive_results` | A JSON array of passive-scan findings when `format` is `json` or `jsonl`. `[]` when passive scan is off, found nothing, or the format is anything else |
 
 Consuming outputs:
 
@@ -96,7 +96,7 @@ Consuming outputs:
 ### Advanced Scan
 
 ~~~yaml
-name: Comprehensive Security Analysis
+name: Noir Passive Scan
 on: [push, pull_request]
 
 jobs:
@@ -114,16 +114,15 @@ jobs:
           passive_scan: 'true'
           passive_scan_severity: 'medium'
           use_all_taggers: 'true'
-          include_path: 'true'
           verbose: 'true'
           output_file: 'noir-results.json'
 
       - name: Process Results
         run: |
-          echo "🔍 Endpoints discovered:"
+          echo "Endpoints discovered:"
           echo '${{ steps.noir.outputs.endpoints }}' | jq '.endpoints | length'
 
-          echo "🚨 Security issues found:"
+          echo "Passive scan findings:"
           echo '${{ steps.noir.outputs.passive_results }}' | jq '. | length'
 
       - name: Save detailed results
@@ -154,7 +153,6 @@ jobs:
         with:
           base_path: '${{ matrix.service }}'
           format: 'json'
-          include_path: 'true'
 ~~~
 
 ### Attack Surface Review on Pull Requests
@@ -247,7 +245,7 @@ Status codes come from live requests, so `url` must point at a running instance 
 
 1. Turn on passive scanning (`passive_scan: 'true'`) to catch security issues early.
 2. Cut noise with `passive_scan_severity` and `exclude_codes`.
-3. Turn on `include_path: 'true'` so each endpoint points to its source file.
+3. JSON output already records each endpoint's source file. For `plain` output, set `include_path: 'true'`.
 4. Add frameworks with `techs` when auto-detection misses them. Use `exclude_techs` to drop analyzers you don't need.
 5. Keep results with `actions/upload-artifact`.
 
@@ -263,8 +261,7 @@ Status codes come from live requests, so `url` must point at a running instance 
 - Narrow `base_path` or use `techs`/`exclude_techs`
 
 **Hard to diagnose:**
-- Enable `debug: 'true'` and `verbose: 'true'`
-- Use `include_path: 'true'` for traceability
+- Set `debug: 'true'` or `verbose: 'true'` together with `no_log: 'false'`. `no_log` defaults to `true` and hides the logs
 
 **HTTP status noise:**
 - Disable with `status_codes: 'false'` or use `exclude_codes`
