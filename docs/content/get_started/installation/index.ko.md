@@ -11,10 +11,10 @@ next_page_label = "첫 번째 스캔"
 +++
 
 {% mascot(mood="think") %}
-Noir는 런타임 의존성 없이 단일 바이너리로 배포돼. 대부분의 사용자에게 Homebrew가 가장 빠르지만, 시스템에 맞는 걸 선택해.
+Noir는 런타임 의존성 없이 단일 바이너리로 배포돼. 대부분은 Homebrew가 제일 빠르지만, 시스템에 맞는 걸 골라.
 {% end %}
 
-아래 방법은 모두 같은 `noir` 바이너리를 설치하므로 하나만 고르면 됩니다. 대략 쉬운 순서로 정리했습니다. 쓰는 플랫폼과 패키지 매니저에 맞는 항목만 보고 나머지는 건너뛰세요.
+아래 방법은 모두 같은 `noir` 바이너리를 설치하므로, 플랫폼에 맞는 하나만 고르고 나머지는 건너뛰세요. 대략 쉬운 순서로 정리했습니다.
 
 ## Homebrew (macOS 및 Linux)
 
@@ -33,7 +33,7 @@ brew upgrade noir
 ```
 
 {% alert_info() %}
-Zsh, Bash, Fish용 셸 자동완성이 함께 설치됩니다.
+Homebrew는 Zsh, Bash, Fish용 셸 자동완성도 함께 설치합니다.
 {% end %}
 
 ## Snapcraft (Linux)
@@ -68,7 +68,7 @@ docker pull ghcr.io/owasp-noir/noir:latest
 docker run --rm -v $(pwd):/tmp ghcr.io/owasp-noir/noir:latest noir scan /tmp
 ```
 
-릴리즈 이미지 태그에는 `v` 프리픽스가 붙지 않습니다: `:1.4.0`, `:1.4`, `:1`, `:latest`. `:main` 태그는 main 브랜치를 따라갑니다. v0.29.1까지는 `:vX.Y.Z` 형태를 썼으니, 버전을 고정해 둔 참조가 있다면 바꾸세요. 전체 태그 목록은 [GitHub Packages 페이지](https://github.com/owasp-noir/noir/pkgs/container/noir)에 있습니다.
+릴리즈 이미지 태그에는 `v` 접두사가 붙지 않습니다: `:1.4.0`, `:1.4`, `:1`, `:latest`. `:main` 태그는 main 브랜치를 따라갑니다. v0.29.1까지는 `:vX.Y.Z` 형태를 썼으니, 버전을 고정해 둔 참조가 있다면 바꾸세요. 전체 태그 목록은 [GitHub Packages 페이지](https://github.com/owasp-noir/noir/pkgs/container/noir)에 있습니다.
 
 ## Nix
 
@@ -102,19 +102,19 @@ nix run github:owasp-noir/noir -- -h
 
 ## 바이너리 직접 다운로드
 
-패키지 매니저가 없다면 [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest)에서 미리 빌드된 바이너리를 받으세요. Linux와 macOS용이 제공되며, Windows(x86_64)용은 v1.4.0 다음 릴리즈부터 제공됩니다.
+패키지 매니저가 없다면 [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest)에서 미리 빌드된 바이너리를 받으세요. Linux와 macOS용이 있고, Windows(x86_64)용은 v1.4.0 다음 릴리즈부터 나옵니다.
 
 설치 및 업데이트:
 
 1. 플랫폼에 맞는 바이너리를 다운로드합니다(예: Linux는 `noir-v1.4.0-linux-x86_64`, macOS는 `noir-v1.4.0-osx-arm64.tar.gz`, Windows는 `noir-vX.Y.Z-windows-x86_64.exe`).
-2. **Linux**: 실행 권한을 부여한 뒤 `PATH`로 옮깁니다.
+2. **Linux**: 실행 권한을 주고 `PATH`로 옮깁니다.
 
     ```bash
     chmod +x noir-v*-linux-*
     sudo mv noir-v*-linux-* /usr/local/bin/noir
     ```
 
-3. **macOS**: tarball을 풀고 `lib/` 디렉터리를 바이너리와 함께 유지합니다.
+3. **macOS**: tarball을 풀고, 함께 들어 있는 `lib/` 디렉터리는 바이너리 옆에 그대로 둡니다.
 
     ```bash
     # 시스템 전역 설치

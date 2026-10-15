@@ -1,6 +1,6 @@
 +++
 title = "DAST 파이프라인에 Noir 통합하기"
-description = "ZAP, Burp Suite, Caido, Gori와 함께 Noir를 DAST 파이프라인에 통합합니다."
+description = "ZAP, Burp Suite, Caido, Gori와 함께 Noir를 DAST 파이프라인에 연동합니다."
 weight = 12
 sort_by = "weight"
 

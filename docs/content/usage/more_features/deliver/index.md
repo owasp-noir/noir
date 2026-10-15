@@ -8,8 +8,8 @@ sort_by = "weight"
 
 Noir can deliver results in two ways:
 
-- **PROBE**: fire HTTP requests at the endpoints noir just discovered (active replay, optionally through a proxy like Burp Suite or ZAP).
-- **EXPORT**: send the endpoint catalog as data to Elasticsearch, OpenSearch, or any webhook receiver. No traffic goes to the endpoints themselves.
+- **Probe**: fire HTTP requests at the endpoints Noir just discovered (active replay, optionally through a proxy like Burp Suite or ZAP).
+- **Export**: send the endpoint catalog as data to Elasticsearch, OpenSearch, or any webhook receiver. No traffic goes to the endpoints themselves.
 
 {% mascot(mood="run") %}
 Probe replays, export ships. Pick the one that matches where the results should end up.
@@ -31,9 +31,9 @@ Relevant flags:
 
 ### Path templates
 
-A discovered route like `/users/{id}` cannot be requested literally, so noir fills the placeholder before probing **read-only verbs only** (GET, HEAD, OPTIONS, QUERY). Numeric-looking names (`id`, `page`, `*_id`, …) get `1`; everything else gets `noir`.
+A discovered route like `/users/{id}` cannot be requested literally, so Noir fills the placeholder before probing **read-only verbs only** (GET, HEAD, OPTIONS, QUERY). Numeric-looking names (`id`, `page`, `*_id`, …) get `1`; everything else gets `noir`.
 
-POST, PUT, PATCH and DELETE keep the literal template. Filling them would turn a harmless 404 into a real write (`DELETE /users/1` against a live record), so noir does not do it for you. Through a proxy the template still arrives, and you can edit and replay it deliberately.
+POST, PUT, PATCH and DELETE keep the literal template. Filling them would turn a harmless 404 into a real write (`DELETE /users/1` against a live record), so Noir does not do it for you. Through a proxy the template still arrives, and you can edit and replay it deliberately.
 
 Override the value with `--pvalue path=...`, which applies to every verb:
 
@@ -67,7 +67,7 @@ noir scan ./source -u http://localhost:3000 \
 
 <img src="./deliver-header.png" alt="A proxied request in the intercepting proxy, carrying the custom Abcd and X-API-Key headers Noir was told to add." width="1136" height="460" loading="lazy" decoding="async">
 
-These headers go to the `-u` target and nowhere else. Most endpoints are paths that noir joined onto `-u`, but an endpoint that already carried its own scheme and host in the source (an OAS `servers:` entry, a HAR capture, a hosted-backend URL) keeps that host, and the host came from the code you are scanning. Those endpoints are still probed; your headers are not attached, and noir names the host once so you can see what was withheld:
+These headers go to the `-u` target and nowhere else. Most endpoints are paths that Noir joined onto `-u`. An endpoint that already carried its own scheme and host in the source (an OAS `servers:` entry, a HAR capture, a hosted-backend URL) keeps that host. That host came from the code you are scanning, so Noir probes the endpoint without your headers and names the host once so you can see what was withheld:
 
 ```
 ▲ Probe: --probe-header values withheld from https://collector.example.com — it is not the --url target. Endpoints on that host are still probed, without your headers.
@@ -105,6 +105,8 @@ noir scan ./source -u http://localhost:3000 \
   --probe-via http://localhost:8080 \
   --probe-match "GET" --probe-match "POST:/api"
 ```
+
+The screenshot below comes from an older release and uses two URL patterns instead, `/update` and `/socket` (through the v0 alias `--use-matchers`), so only those two endpoints reach the proxy.
 
 <img src="./deliver-mf.png" alt="Noir finds eleven endpoints but, with two matchers set, forwards only POST /update and GET /socket to the proxy." width="1242" height="493" loading="lazy" decoding="async">
 
@@ -149,7 +151,7 @@ The body carries three fields:
 | --- | --- |
 | `endpoints` | the same array `-f json` would have written |
 | `endpoint_count` | number of entries in `endpoints` |
-| `noir_version` | the noir version that produced the document |
+| `noir_version` | the Noir version that produced the document |
 
 Slack incoming webhooks, Discord webhook endpoints, Zapier/n8n triggers and custom internal receivers all accept any JSON body, so this one shape covers the common destinations. If a receiver needs its own shape (Slack's `{"text": ...}` blocks, say), put a transformer in between. Noir has no per-platform formatters.
 

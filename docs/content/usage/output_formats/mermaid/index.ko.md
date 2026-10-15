@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-API 엔드포인트를 [Mermaid 마인드맵](https://mermaid.js.org/syntax/mindmap.html)으로 그려서 전체 API 구조를 한눈에 볼 수 있습니다.
+찾은 엔드포인트를 [Mermaid 마인드맵](https://mermaid.js.org/syntax/mindmap.html)으로 그려 API 구조를 한눈에 봅니다.
 
 ## 사용법
 
@@ -16,7 +16,7 @@ noir scan . -f mermaid
 
 ## 출력 예제
 
-마인드맵은 트리 구조입니다. 루트 노드는 API 전체, 가지는 URL 경로 세그먼트이며, 각 HTTP 메서드는 자신이 담당하는 경로 아래에 놓입니다. 메서드 아래 파라미터는 요청에서 실리는 위치별로 `headers`, `cookies`, `query`, `body`(JSON과 form 필드), `path` 그룹으로 나뉩니다. 경로 파라미터는 `param_*` 가지로도 표시되며(`/users/{user_id}` → `param_user_id` 세그먼트), WebSocket 경로에는 `websocket` 태그가 붙습니다. 이름은 Mermaid에서 안전하게 바뀝니다. 문자, 숫자, `_`가 아닌 글자는 `_`가 되고, 숫자로 시작하는 이름에는 `path_`가 앞에 붙습니다(`x-api-key` → `x_api_key`, `/1.html` → `path_1_html`).
+마인드맵은 트리 구조입니다. 루트 노드는 API 전체, 가지는 URL 경로 세그먼트이며, 각 HTTP 메서드는 자신이 담당하는 경로 아래에 놓입니다. 메서드 아래 파라미터는 요청에서 실리는 위치별로 `headers`, `cookies`, `query`, `body`(JSON과 form 필드), `path` 그룹으로 나뉩니다. 경로 파라미터는 `param_*` 가지로도 표시되며(`/users/{user_id}` → `param_user_id` 세그먼트), WebSocket 경로에는 `websocket` 태그가 붙습니다. 이름은 Mermaid가 처리할 수 있게 바꿉니다. 문자, 숫자, `_`가 아닌 글자는 `_`가 되고, 숫자로 시작하는 이름에는 `path_`가 앞에 붙습니다(`x-api-key` → `x_api_key`, `/1.html` → `path_1_html`).
 
 <details>
     <summary>Mermaid 출력</summary>

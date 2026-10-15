@@ -174,13 +174,13 @@ module Analyzer::Go
 end
 ```
 
-Key points:
+What to take from this example:
 
 - **Inherit from the language engine** (`GoEngine` here). You get `collect_package_groups_ts`, `ts_groups_for_directory`, `add_param_to_endpoint` and `resolve_public_dirs` for free.
 - **Declare the tech with `analyzer_for`**. That single line *is* the registration (see step 3). Leaving it out is a compile error.
 - **Delegate route parsing to the shared extractor** (`Noir::TreeSitterGoRouteExtractor`). If your framework routes differently, steer the extractor with its arguments (e.g. `handle_method:`) or its specialized entry points instead of re-parsing (see Mux or GoZero).
 - **Use the engine's walk helper** (`ordered_parallel_analyze(get_files_by_extension(".go"))` for Go, `ordered_scan_files`, `parallel_file_scan` or `analyze_file` elsewhere). Don't re-implement the channel and worker pool.
-- **Only list verbs the framework actually routes** in your method table. In particular, add `QUERY` (RFC 10008) only when upstream ships explicit support for it. A speculative entry reports endpoints the framework itself answers with 405. The same policy covers wildcard (`ANY`/`ALL`/`*`) routes: neither the shared `WILDCARD_HTTP_METHODS` (`src/utils/http_symbols.cr`) nor any analyzer-local wildcard fan-out list (several analyzers expand `ANY` at analysis time with their own table) should grow `QUERY`.
+- **Only list verbs the framework actually routes** in your method table. In particular, add `QUERY` (RFC 10008) only when upstream ships explicit support for it. A speculative entry reports endpoints the framework itself answers with 405. The same goes for wildcard (`ANY`/`ALL`/`*`) routes. Don't add `QUERY` to the shared `WILDCARD_HTTP_METHODS` (`src/utils/http_symbols.cr`) or to the local tables some analyzers use to expand `ANY` themselves.
 
 ### 3. Declare the tech metadata
 

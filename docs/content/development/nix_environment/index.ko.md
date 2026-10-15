@@ -1,6 +1,6 @@
 +++
 title = "Nix 환경으로 빌드"
-description = "Nix와 Docker를 사용한 OWASP Noir 재현 가능 개발 환경 설정."
+description = "Nix와 Docker로 OWASP Noir의 재현 가능한 개발 환경을 설정합니다."
 weight = 2
 sort_by = "weight"
 
@@ -22,7 +22,7 @@ sh <(curl -L https://nixos.org/nix/install) --no-daemon
 
 자세한 내용은 [공식 Nix 설치 가이드](https://nixos.org/download.html)를 참조하세요.
 
-## Nix Flakes를 사용한 설정
+## Nix Flakes로 설정
 
 ### Flakes 활성화
 

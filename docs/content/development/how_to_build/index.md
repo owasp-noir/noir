@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-All contributions are welcome: bug fixes, features, and documentation improvements.
+How to send a change, set up Crystal, build Noir, and run the tests and linter.
 
 {% mascot(mood="good") %}
 Fixes, features, docs, fixtures: every kind of contribution moves Noir forward. Thanks for being here.

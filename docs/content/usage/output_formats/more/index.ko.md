@@ -42,7 +42,7 @@ GET /
 
 ## `only-*` 형식으로 필터링
 
-한 종류의 값만 한 줄에 하나씩 출력합니다. 다른 도구로 파이프할 때 편합니다.
+한 종류의 값만 한 줄에 하나씩 출력합니다. 다른 도구로 파이프로 넘길 때 편합니다.
 
 ### URL만
 
@@ -170,7 +170,14 @@ noir scan . -f postman -u https://api.example.com
 
 Postman Collection v2.1 형식의 JSON 파일을 만듭니다. 출력을 저장해서 Postman으로 가져오면 됩니다. 컬렉션에는 `-u` 값으로 채운 `baseUrl` 변수가 들어갑니다(`-u`가 없으면 `http://localhost`). `-u` 없이 만들면 요청 URL이 `{{baseUrl}}/path` 형태라서 Postman 안에서 대상을 바꿀 수 있습니다.
 
-요청 본문은 Noir가 기록한 파라미터 타입을 따릅니다. `json`은 raw JSON 본문, `form`은 `urlencoded`, `file`(형제 form 필드 포함)은 `type: file`인 `formdata`, `xml`은 `Content-Type: application/xml`인 raw 본문(Postman raw language는 `xml`)이 됩니다. 값이 비어 있는 `xml` 파라미터는 파라미터 이름을 딴 self-closing 태그가 됩니다(이름이 `body`이면 `<body/>`). 그래서 Postman raw 편집기가 비지 않고 필드가 보입니다. 이런 본문 타입이 없으면 아래 예시처럼 헤더와 URL만 있는 요청이 됩니다.
+요청 본문은 Noir가 기록한 파라미터 타입을 따릅니다.
+
+- `json`은 raw JSON 본문이 됩니다.
+- `form`은 `urlencoded`가 됩니다.
+- `file`(같이 있는 form 필드 포함)은 `type: file`인 `formdata`가 됩니다.
+- `xml`은 `Content-Type: application/xml`인 raw 본문이 되고, Postman raw language는 `xml`로 설정됩니다.
+
+값이 비어 있는 `xml` 파라미터는 파라미터 이름을 딴 self-closing 태그가 됩니다(이름이 `body`이면 `<body/>`). 그래서 Postman raw 편집기가 비지 않고 필드가 보입니다. 이런 본문 타입이 없으면 아래 예시처럼 헤더와 URL만 있는 요청이 됩니다.
 
 ```json
 {

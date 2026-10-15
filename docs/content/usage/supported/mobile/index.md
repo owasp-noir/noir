@@ -50,14 +50,14 @@ SCHEME myapp://complex/:id
 
 When the handler source is present in the scan, Noir connects each deep-link endpoint to the code that processes it:
 
-* **Android**: the manifest component (e.g. `.DeepLinkActivity`) is resolved to its `.kt` / `.java` file. The intent-handling methods (`onCreate`, `onNewIntent`, `onReceive`, …) contribute 1-hop callees, and the inputs they read become parameters: `uri.getQueryParameter("q")` → a `query` param (baked into the URL), and the `get*Extra` family → an `extra` param.
+* **Android**: the manifest component (e.g. `.DeepLinkActivity`) is resolved to its `.kt` / `.java` file. The intent-handling methods (`onCreate`, `onNewIntent`, `onReceive`, …) contribute 1-hop callees, and the inputs they read become parameters: `uri.getQueryParameter("q")` → a `query` param (added to the URL), and the `get*Extra` family → an `extra` param.
 * **iOS**: deep links are dispatched centrally, so Noir discovers the handlers and attaches them by kind: `.onOpenURL` / `application(_:open:)` / `scene(_:openURLContexts:)` to custom schemes, and the `userActivity` handlers to universal links. `URLQueryItem` reads become `query` params.
 
 With `--ai-context`, the handler body feeds Noir's source / sink / guard inference, so a deep link that flows into a WebView load or another sink surfaces with the taint path attached.
 
 ## Output behavior
 
-Mobile endpoints stay in the structured inventory (JSON, JSONL, YAML, TOML, SARIF, Markdown table, mermaid, HTML) and in the Elasticsearch / webhook exports, because they are part of the app's surface. They are left out of HTTP-shaped output and delivery (cURL, HTTPie, PowerShell, OpenAPI 2.0 / 3.0, Postman, and active probe / proxy delivery) because an app URL is something you open, not an HTTP request you send. To launch them instead, `-f adb` (Android) and `-f simctl` (iOS) emit ready-to-run device commands.
+Mobile endpoints stay in the structured inventory (JSON, JSONL, YAML, TOML, SARIF, Markdown table, mermaid, HTML) and in the Elasticsearch / webhook exports, because they are part of the app's surface. They are left out of HTTP-shaped output and delivery (cURL, HTTPie, PowerShell, OpenAPI 2.0 / 3.0, Postman, and active probe / proxy delivery). An app URL is something you open, not an HTTP request you send. To launch them instead, `-f adb` (Android) and `-f simctl` (iOS) emit ready-to-run device commands.
 
 ## Notes and limitations
 

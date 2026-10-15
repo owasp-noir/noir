@@ -12,7 +12,7 @@ toc = true
 
 Reference for running Noir and configuring its individual features.
 
-## Key Areas
+## Sections
 
 *   **[CLI Commands](cli_commands/)**: The v1 subcommand reference (`scan`, `list`, `cache`, `config`, `rules`, `completion`, `version`, `help`) with v0-compatibility notes.
 *   **[Supported Technologies](supported/)**: The programming languages, frameworks, and specifications Noir can analyze.

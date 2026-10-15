@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-스캔 결과는 다음 단계에 맞는 모양으로 내보낼 수 있습니다. 자동화에는 기계가 읽는 형식을, 리뷰에는 사람이 읽기 쉬운 형식을 쓰면 됩니다. 형식은 `-f`로 고릅니다.
+`-f`로 출력 형식을 고릅니다. 스크립트나 다른 도구가 읽는 형식도 있고, 사람이 읽는 형식도 있습니다.
 
 ## 형식 선택 가이드
 
@@ -17,8 +17,8 @@ sort_by = "weight"
 | API 문서 생성 | [OpenAPI](openapi/) | `-f oas3` |
 | 빠른 엔드포인트 테스트 | [cURL](curl/) / HTTPie / PowerShell | `-f curl` |
 | 모바일 진입점 실행 | [ADB](curl/#adb-android) (Android) / [simctl](curl/#simctl-ios) (iOS) | `-f adb` / `-f simctl` |
-| 사람이 읽기 쉬운 검토 | [YAML](yaml/) | `-f yaml` |
-| 설정 스타일 출력 | [기타](more/) (TOML) | `-f toml` |
+| 사람이 직접 검토 | [YAML](yaml/) | `-f yaml` |
+| 설정 파일 형태 출력 | [기타](more/) (TOML) | `-f toml` |
 | Postman으로 가져오기 | [기타](more/) (Postman Collection) | `-f postman` |
 | 시각적 리포트 공유 | [HTML](html/) | `-f html` |
 | API 구조 시각화 | [Mermaid](mermaid/) | `-f mermaid` |
@@ -35,7 +35,7 @@ sort_by = "weight"
 | `file` | ✅ (타입 필드) | ✅ multipart `format: binary` | ✅ `formdata` file | ✅ multipart 업로드 |
 | `xml` | ✅ (타입 필드) | ✅ `application/xml` | ✅ raw XML (비어 있으면 `<name/>`) | ➖ 명령에 본문으로 넣지 않음. OAS / Postman / JSON 사용 |
 
-자세한 내용: [cURL](curl/), [OpenAPI](openapi/), [Postman](more/).
+자세한 내용: [cURL](curl/#xml-요청-본문), [OpenAPI](openapi/), [Postman](more/#postman-컬렉션).
 
 ## 사용 가능한 형식
 

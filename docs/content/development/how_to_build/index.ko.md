@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-버그 수정, 새 기능, 문서 개선까지 어떤 기여든 환영합니다.
+변경 사항을 보내는 방법, Crystal 설치, Noir 빌드, 테스트와 린터 실행을 다룹니다.
 
 {% mascot(mood="good") %}
 버그 수정, 기능, 문서, 픽스처. 어떤 기여든 Noir를 앞으로 밀어줘. 와줘서 고마워.
@@ -25,7 +25,7 @@ sort_by = "weight"
     ```sh
     git push origin your-feature-name
     ```
-6.  변경 사항 설명을 포함하여 **풀 리퀘스트를 생성**합니다.
+6.  변경 내용을 적어 **풀 리퀘스트를 엽니다**.
 
 자세한 가이드라인은 [CONTRIBUTING.md](https://github.com/owasp-noir/noir/blob/main/.github/CONTRIBUTING.md)를 참조하세요.
 

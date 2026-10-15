@@ -4,12 +4,12 @@ description = "코드 속 모든 엔드포인트를 찾아냅니다. Noir는 32�
 template = "landing"
 +++
 
-<!-- CommonMark 는 빈 줄에서 HTML 블록을 끝냅니다. 그다음 줄이 4칸 이상 들여쓰여
+<!-- CommonMark는 빈 줄에서 HTML 블록을 끝냅니다. 그다음 줄이 4칸 이상 들여쓰여
      있으면 코드 블록이 되어 버립니다. 그래서 <section> 안에는 빈 줄을 두지 않고,
      섹션 사이만 빈 줄로 구분하며 각 섹션은 0열에서 시작합니다.
 
-     이 페이지는 /ko/ 에 있으므로 이미지 경로는 ../ 로 한 단계 올라가야 하고,
-     문서 링크는 ./ 로 두어야 /ko/ 아래에 머무릅니다. -->
+     이 페이지는 /ko/에 있으므로 이미지 경로는 ../로 한 단계 올라가야 하고,
+     문서 링크는 ./로 두어야 /ko/ 아래에 머무릅니다. -->
 
 <section class="hero">
   <div class="hero-sentinel" aria-hidden="true"></div>
@@ -102,7 +102,7 @@ template = "landing"
     </article>
     <article class="cell cell-d cell-plate" data-reveal style="--reveal-delay: 70ms">
       <div class="cell-body">
-        <h3>패시브 스캐닝</h3>
+        <h3>패시브 스캔</h3>
         <p>심각도가 매겨진 규칙이 같은 트리를 훑어 하드코딩된 키와 토큰, 자격 증명을 보고합니다. 직접 만든 규칙이나 커뮤니티 규칙을 쓸 수 있습니다.</p>
       </div>
     </article>
@@ -125,7 +125,7 @@ template = "landing"
   <div class="flow-grid">
     <div class="flow">
       <div class="flow-step" data-reveal>
-        <h3>코드베이스를 가리키세요</h3>
+        <h3>코드베이스를 넘기세요</h3>
         <p>Noir가 언어와 프레임워크, 라우팅 방식을 스스로 알아냅니다. 미리 설정할 것은 없습니다.</p>
         <code class="flow-cmd">noir scan ./your-project</code>
       </div>
@@ -200,7 +200,7 @@ template = "landing"
       <img src="https://owasp-noir.github.io/noir/CONTRIBUTORS.svg" alt="OWASP Noir에 기여한 사람들의 프로필 이미지." width="720" height="240" loading="lazy" decoding="async">
     </div>
     <div class="community-copy" data-reveal style="--reveal-delay: 90ms">
-      <h2 class="section-title">공개적으로 만듭니다</h2>
+      <h2 class="section-title">오픈 소스로 함께 만듭니다</h2>
       <p>Noir는 OWASP 재단 프로젝트이며 MIT 라이선스로 배포되고, 실제로 사용하는 사람들이 관리합니다. 프레임워크 지원과 스캔 규칙, 출력 형식은 모두 기여로 채워집니다.</p>
       <a class="btn btn-outline" href="https://github.com/owasp-noir/noir/blob/main/.github/CONTRIBUTING.md" target="_blank" rel="noopener noreferrer">
         기여 가이드 읽기
@@ -213,7 +213,7 @@ template = "landing"
 <section class="section wrap">
   <div class="cta" data-reveal>
     <h2 class="section-title">지금 시작하세요.</h2>
-    <p class="section-lede">Noir를 설치하고 코드베이스를 가리키면 됩니다. 첫 목록은 몇 초면 나옵니다.</p>
+    <p class="section-lede">Noir를 설치하고 코드베이스에 돌려 보세요. 첫 목록은 몇 초면 나옵니다.</p>
     <div class="cta-actions">
       <a class="btn btn-primary" href="./get_started/overview/">
         시작하기

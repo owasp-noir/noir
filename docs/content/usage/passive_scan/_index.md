@@ -50,13 +50,13 @@ Example output:
 
 ```
 ★ Passive Results:
-[critical][hahwul-test][secret] use x-api-key
-  ├── extract:   env.request.headers["x-api-key"].as(String)
-  └── file: spec/functional_test/fixtures/crystal/kemal/src/testapp.cr:4
+[critical][aws-access-key][secret] Detect AWS_ACCESS_KEY
+  ├── extract: AWS_KEY = "AKIAIOSFODNN7EXAMPLE"
+  └── file: ./config/settings.py:1
 ```
 
 **Output components:**
-*   `[critical][hahwul-test][secret]`: severity, rule `id`, rule `category`
-*   `use x-api-key`: rule name (`info.name`)
+*   `[critical][aws-access-key][secret]`: severity, rule `id`, rule `category`
+*   `Detect AWS_ACCESS_KEY`: rule name (`info.name`)
 *   `extract`: Matched code line
 *   `file`: File path and line number

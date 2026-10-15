@@ -1,17 +1,17 @@
 +++
 title = "Ollama와 함께 Noir 사용하기"
-description = "Noir를 Ollama와 통합하여 로컬 LLM으로 코드 분석을 수행하는 방법입니다."
+description = "Ollama를 Noir에 연결해 로컬 LLM으로 코드를 분석하는 방법입니다."
 weight = 2
 sort_by = "weight"
 
 +++
 
-[Ollama](https://ollama.com)를 사용하면 외부 서비스로 데이터를 전송하지 않고 로컬에서 대규모 언어 모델을 실행하여 코드를 분석할 수 있습니다.
+[Ollama](https://ollama.com)로 대규모 언어 모델을 로컬에서 실행하면 데이터를 외부 서비스로 보내지 않고 코드를 분석할 수 있습니다.
 
 ## 설정
 
 1.  **Ollama 설치**: [공식 웹사이트](https://ollama.com)에서 다운로드하세요.
-2.  **모델 다운로드**: 분석에 사용할 모델을 가져오세요 (예: `gemma4`).
+2.  **모델 다운로드**: 분석에 사용할 모델을 받으세요(예: `gemma4`).
 
     ```bash
     ollama pull gemma4
@@ -38,6 +38,6 @@ noir scan ./spec/functional_test/fixtures/hahwul \
 - `--ai-stream`은 이 제공업체에는 적용되지 않습니다.
 - 직접 URL을 넘길 때는 호스트 이름에 `ollama`가 들어 있어야 네이티브 API를 씁니다(예: `http://ollama.internal:11434`). `http://gpu-box:11434` 같은 다른 호스트는 OpenAI 호환 클라이언트로 처리되므로 `--ai-provider=http://gpu-box:11434/v1`처럼 경로까지 넣으세요.
 
-> **v0 → v1 마이그레이션:** 독립적인 `--ollama` / `--ollama-model` 플래그는
+> **v0 → v1 마이그레이션:** 따로 있던 `--ollama` / `--ollama-model` 플래그는
 > v1.0에서 제거되었습니다. 위 예시처럼 통합된 `--ai-provider ollama
 > --ai-model NAME` 형태를 사용하세요.

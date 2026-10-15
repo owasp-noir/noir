@@ -34,7 +34,7 @@ Something on fire? Start with the symptom below that matches. Most of these have
 **Symptom:** Errors when using `--ai-provider`.
 
 - Check the API key you passed in `NOIR_AI_KEY`, `--ai-key-file`, or `--ai-key`
-- For local providers (Ollama, vLLM, LM Studio), ensure the server is running
+- For local providers (Ollama, vLLM, LM Studio), check that the server is running
 - Check the provider's default host in the [AI Providers](@/usage/ai_providers/_index.md) table
 - For custom endpoints, use the full URL: `--ai-provider=http://your-server:port`
 - For ACP providers, set `NOIR_ACP_RAW_LOG=1` to see the agent's raw logs
@@ -50,7 +50,7 @@ Something on fire? Start with the symptom below that matches. Most of these have
 
 **Symptom:** Permission denied errors when running via Docker.
 
-- Ensure your directory is mounted correctly: `docker run --rm -v $(pwd):/tmp ghcr.io/owasp-noir/noir:latest noir scan /tmp`
+- Check that your directory is mounted correctly: `docker run --rm -v $(pwd):/tmp ghcr.io/owasp-noir/noir:latest noir scan /tmp`
 - On SELinux systems, add `:z` to the volume mount: `-v $(pwd):/tmp:z`
 
 ## Shell Completion Not Working

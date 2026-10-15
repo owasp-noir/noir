@@ -1,6 +1,6 @@
 +++
 title = "커뮤니티"
-description = "기사, 발표, 기여 가이드라인을 포함한 OWASP Noir 커뮤니티 리소스입니다."
+description = "OWASP Noir 커뮤니티 자료: 기사, 발표, 기여 가이드라인."
 weight = 9
 sort_by = "weight"
 

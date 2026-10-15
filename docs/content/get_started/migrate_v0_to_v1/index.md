@@ -10,8 +10,6 @@ sort_by = "weight"
 Almost every v0 invocation still runs on v1 unchanged. This page is a single place to look up the renames, behavior changes, and the few things that explicitly broke.
 {% end %}
 
-Read the short version below, then jump to the CLI, flag, or output sections that your scripts and dashboards actually touch.
-
 ## The short version
 
 v1.0 is **compatibility-first**. v0 call shapes like `noir -b ./app -P -f json` route automatically into the `scan` subcommand, and every renamed flag keeps its old name as a silent alias. The only things that explicitly broke are `--ollama` / `--ollama-model` (deprecated since 2024; use `--ai-provider ollama [--ai-model NAME]` instead).
@@ -101,13 +99,13 @@ v0 config files load unchanged: Noir renames the old keys before it merges the f
 
 If both spellings are present in the same file (mid-migration), the v1 key wins.
 
-## Behavior changes worth noting
+## Behavior changes
 
 These don't change flag names, just what scans emit. The [v1.0.0 CHANGELOG](https://github.com/owasp-noir/noir/blob/main/CHANGELOG.md#v100) has the details. The highlights:
 
 * **Default concurrency** scales with the host's CPU count (clamped to 4–32) instead of v0's fixed `"20"`. Explicit `--concurrency N` / `concurrency:` in config, or the `NOIR_CONCURRENCY` env var, still take precedence.
 * **String interpolation** in route paths (Python `f""`, Ruby/Crystal/Elixir `#{}`, PHP `$var`, Kotlin `${}`) is now preserved as a `{name}` placeholder. v0 silently dropped the interpolation segment or leaked the language syntax into the URL. v1 produces a consistent template and registers the placeholder as a path parameter.
-* **`Any` / `All` verbs** (Gin `r.Any`, axum `routing::any`, Echo `e.Any`, Fiber `app.All`, etc.) fan out into the concrete HTTP methods (GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD, TRACE) instead of emitting a non-HTTP `"ANY"` verb that SARIF and Postman can't ingest. `QUERY` is deliberately left out of the fan-out; it is emitted only where a route declares the verb explicitly.
+* **`Any` / `All` verbs** (Gin `r.Any`, axum `routing::any`, Echo `e.Any`, Fiber `app.All`, etc.) fan out into the concrete HTTP methods (GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD). v0 emitted a non-HTTP `"ANY"` verb that SARIF and Postman can't ingest. `QUERY` is deliberately left out of the fan-out; it is emitted only where a route declares the verb explicitly.
 * **Output to stdout** has color disabled automatically when stdout isn't a terminal, matching `ls` / `git` convention. `--no-color` and `NO_COLOR=1` still force-disable.
 * **`-f json` / `-f sarif`** etc. emit a valid empty document when zero endpoints are found, instead of writing nothing. CI parsers no longer fail on an empty file.
 * **`--diff-path`** disables `--probe` / `--export-*` for the comparison-side scan. Previously, an unchanged URL got probed twice (once per side) and the stale catalog got exported alongside the new one.

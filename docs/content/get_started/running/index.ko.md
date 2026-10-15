@@ -32,6 +32,8 @@ noir scan .
 
 Noir는 소스 파일을 읽고 어떤 프레임워크를 쓰는지 탐지한 뒤, 찾은 엔드포인트를 메서드, 경로, 파라미터, 헤더, 쿠키와 함께 모두 출력합니다.
 
+스크린샷에는 `-P`(시크릿을 찾는 패시브 스캔)와 `-T`(모든 태거)도 붙어 있습니다. 두 플래그는 아래 주요 플래그 정리 표에 있습니다. 둘 없이 실행하면 태그나 탐지 결과 없이 엔드포인트만 나옵니다.
+
 > **v0 호환:** `noir -b ./app` 같은 v0 형식도 고치지 않고 그대로
 > 동작합니다. 플래그로 시작하는 호출은 라우터가 `scan`으로
 > 보냅니다.
@@ -54,7 +56,7 @@ noir list techs
 
 ## 다른 출력 형식 써 보기
 
-기본 출력은 터미널에서 읽기 위한 plain 텍스트입니다. 워크플로에 따라 다른 형식이 필요할 수 있습니다.
+기본 출력은 터미널에서 읽기 위한 plain 텍스트입니다. 스크립트나 다른 도구가 읽을 형식이 필요하면 `-f`를 쓰세요.
 
 ```bash
 # 스크립트와 파이프라인에 적합한 JSON
@@ -99,7 +101,7 @@ noir scan . --include path,techs
 여러 프레임워크가 섞인 모노레포라면 스캔 범위를 좁히세요.
 
 ```bash
-# Rails와 Django 디텍터만 실행 (나머지는 건너뜀)
+# Rails와 Django 탐지기만 실행 (나머지는 건너뜀)
 noir scan . --only-techs rails,django
 
 # 자동 탐지 결과에 더해 Rails·Django 분석기도 함께 실행
@@ -113,8 +115,8 @@ noir scan . --exclude-path "*_test.go,vendor/*,**/node_modules/**"
 ```
 
 `--only-techs`와 `--techs`는 비슷해 보이지만 하는 일이 다릅니다.
-`--only-techs`는 실행할 디텍터를 제한합니다(지정한 디텍터만 돌아서 스캔이 빨라짐).
-`--techs`는 자동 탐지 결과 *위에* 분석기 집합에 기술을 더합니다
+`--only-techs`는 실행할 탐지기를 제한합니다(지정한 탐지기만 돌아서 스캔이 빨라짐).
+`--techs`는 자동 탐지 결과에 더해 분석기 집합에 기술을 *추가*합니다
 (탐지가 놓쳐도 그 분석기는 실행됨).
 "이 기술만, 탐지되지 않아도 실행"하고 싶다면 둘을 함께 쓰세요.
 
@@ -124,7 +126,7 @@ noir scan . --exclude-path "*_test.go,vendor/*,**/node_modules/**"
 `--ai-context`는 AI 감사자를 위한 리뷰 컨텍스트를 붙입니다.
 
 ```bash
-# 라우트 본문 안의 1-hop 핸들러 callee 첨부
+# 1-hop 핸들러 callee 첨부 (라우트 본문 안의 함수/메서드 호출)
 noir scan . --include callee
 
 # AI 리뷰용 컨텍스트 첨부 (guards, callees, sources, sinks, validators, signals)
@@ -136,8 +138,13 @@ noir scan . --ai-context guards,sinks
 
 필터링해도 관련 근거는 함께 남습니다. `signals`를 고르면 각 시그널이
 근거로 삼은 버킷도 함께 남습니다(예: `ssrf` 시그널은 `sinks`와 `sources`를
-유지). 다른 버킷만 고르면 그 버킷에 기대는 시그널만 남습니다.
+유지). 다른 버킷만 고르면 그 버킷에 기대는 시그널과 그 시그널의 근거만
+남습니다. 그래서 `guards,sinks`를 골라도 `sources`가 함께 나올 수 있습니다.
 `priority_review` 요약은 `signals`를 골랐을 때만 나옵니다.
+
+`--ai-context`는 컨텍스트를 만들 때 쓰는 `--include callee`와 모든 태거(또는
+`--use-taggers`로 고른 태거만)도 함께 켭니다. 그래서 출력에 `callees`와
+`tags`도 나옵니다.
 
 데이터 모양과 프레임워크별 지원은 [Callee 커버리지](@/usage/supported/callee_coverage/index.ko.md)와 [AI 컨텍스트](@/usage/supported/ai_context_coverage/index.ko.md)를 참고하세요.
 
@@ -153,18 +160,18 @@ noir scan . --ai-context guards,sinks
 | `--include LIST`      | plain 출력에 `path`, `techs`, `callee` 추가 (쉼표 구분) |
 | `--ai-context [LIST]` | AI 리뷰 컨텍스트 첨부 (`guards`, `callee`, `sources`, `sinks`, `validators`, `signals`, 또는 `all`) |
 | `--pvalue TYPE=VAL`   | 출력에 파라미터 값 채우기 (TYPE: any / header / cookie / query / form / json / path) |
-| `--only-techs`        | 이 디텍터만 실행 (나머지 건너뜀) |
-| `--techs`             | 자동 탐지 결과에 더해 이 기술을 분석기 집합에 추가 |
+| `--only-techs`        | 이 탐지기만 실행 (나머지 건너뜀) |
+| `-t, --techs`         | 자동 탐지 결과에 더해 이 기술을 분석기 집합에 추가 |
 | `--exclude-techs`     | 탐지 후 결과에서 이 기술 제외 |
 | `--exclude-path`      | 쉼표 구분 glob 패턴에 매치되는 파일 제외. `/`가 있는 패턴은 스캔 기준 경로, 없는 패턴은 파일·디렉터리 이름과 비교하며, 디렉터리가 매치되면 그 아래 전체를 제외 |
 | `--status-codes`      | 각 엔드포인트를 호출해 응답 HTTP 상태 코드를 첨부 |
 | `--exclude-codes`     | 응답 상태가 매치되는 엔드포인트 제외 (쉼표 구분, `--status-codes`와 함께) |
 | `-P, --passive-scan`  | 패시브 보안 스캔 활성화 |
 | `-T, --use-all-taggers` | 모든 태거 활성화 |
-| `--probe`             | 발견된 엔드포인트에 HTTP 요청 실행 (`-u` 필요) |
-| `--probe-via <url>`   | 프로브를 이 프록시 URL로 라우팅 |
+| `--probe`             | 발견한 엔드포인트에 HTTP 요청 보내기 (`-u` 필요) |
+| `--probe-via <url>`   | 프로브 요청을 이 프록시 URL로 보냄 |
 | `--probe-header VAL`  | 각 프로브에 헤더 추가 (반복 가능) |
-| `--tls-skip-verify`   | 프로브/내보내기/웹훅의 TLS 인증서 검증 건너뛰기 (비보안) |
+| `--tls-skip-verify`   | 프로브/내보내기/웹훅의 TLS 인증서 검증 건너뛰기 (안전하지 않음) |
 | `--use-taggers LIST`  | 특정 태거만 활성화 (쉼표 구분; `noir list taggers` 참고) |
 | `--export-es <url>`   | 엔드포인트를 Elasticsearch에 인덱싱 |
 | `--export-opensearch <url>` | 엔드포인트를 OpenSearch에 인덱싱 (`--export-es`와 같은 전송 형태) |
@@ -178,7 +185,7 @@ noir scan . --ai-context guards,sinks
 | `--passive-scan-severity LVL` | 패시브 스캔 최소 심각도 (`critical`, `high`, `medium`, `low` 중 하나; 기본 `high`) |
 | `-d, --debug`         | 디버그 메시지 활성화 |
 | `--config-file <경로>`| YAML 설정 파일에서 기본 옵션 로드 |
-| `--concurrency <N>`   | 워커 수 (기본값: CPU 수, 4–32로 clamp; 또는 `NOIR_CONCURRENCY`) |
+| `--concurrency <N>`   | 워커 수 (기본값: CPU 수, 4–32 범위로 제한; 또는 `NOIR_CONCURRENCY`) |
 | `--cache-disable`     | 이번 실행에 한해 LLM 응답 캐시 비활성화 |
 | `--cache-clear`       | 실행 전에 LLM 응답 캐시 초기화 |
 | `--strict`            | 분석기가 실패했거나 건너뛴 파일이 있으면 종료 코드 2 반환 (결과 출력은 그대로) |
@@ -196,6 +203,6 @@ noir scan . --ai-context guards,sinks
 - **[CLI 명령어](@/usage/cli_commands/_index.ko.md)**: v1 서브커맨드(scan, list, cache, config, rules 등) 전체 레퍼런스
 - **[설정](@/usage/configurations/configuration_file/index.ko.md)**: 매번 플래그를 반복하지 않도록 기본 옵션 설정
 - **[출력 형식](@/usage/output_formats/_index.ko.md)**: 모든 출력 형식 자세히 보기
-- **[Diff 모드](@/usage/more_features/diff/index.ko.md)**: 경로나 git 리비전과 공격 표면을 비교하고 `--fail-on`으로 CI를 게이트
+- **[Diff 모드](@/usage/more_features/diff/index.ko.md)**: 경로나 git 리비전과 공격 표면을 비교하고 `--fail-on`으로 CI 실패 조건 지정
 - **[패시브 스캔](@/usage/passive_scan/_index.ko.md)**: 하드코딩된 비밀키, 잘못된 설정 등 보안 이슈 스캔
 - **[AI 기반 분석](@/get_started/ai_power/index.ko.md)**: AI로 지원하지 않는 프레임워크의 엔드포인트 탐지

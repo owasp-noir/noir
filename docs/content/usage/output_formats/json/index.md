@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-Noir supports two JSON-flavored output modes:
+Noir has two JSON output modes:
 
 *   JSON: one JSON object holding all results
 *   JSONL: one JSON object per line, good for streaming and large results
@@ -17,13 +17,13 @@ JSON is the format every next stage reads. Pipe it into jq, a script, or an AI a
 
 ## JSON Output
 
-Use `-f json` to get JSON. Adding `--no-log` suppresses log messages so only the JSON hits stdout, which keeps things clean when piping into other tools.
+Use `-f json` to get JSON. Logs go to stderr, so stdout holds only the JSON and is safe to pipe into another tool. Add `--no-log` to hide the logs as well.
 
 ```bash
 noir scan . -f json --no-log
 ```
 
-The result is an object with an `endpoints` array, a `passive_results` array, and an `errors` array. Each endpoint has the URL, HTTP method, parameters (typed as `query`, `path`, `header`, `cookie`, `form`, `json`, `file`, `xml`, and related), source code location in `details.code_paths`, the analyzer that produced it in `details.technology`, and any security tags from taggers. The sample below was produced with taggers enabled (`-T`), which is what fills the `tags` arrays.
+The result is an object with an `endpoints` array, a `passive_results` array, and an `errors` array. Each endpoint has the URL, HTTP method, and parameters (typed as `query`, `path`, `header`, `cookie`, `form`, `json`, `file`, `xml`, and related). It also has the source code location in `details.code_paths`, the analyzer that produced it in `details.technology`, and any security tags from taggers. The sample below was produced with taggers enabled (`-T`), which is what fills the `tags` arrays.
 
 When more than one analyzer finds the same endpoint, for example a Go router and the project's OpenAPI document, Noir merges them into one entry. `details.technology` names the analyzer that won the merge, and `details.technologies` lists every analyzer that contributed, sorted and deduplicated. The list is only emitted when it holds two or more entries, so an endpoint seen by a single analyzer has only `technology`. A consumer that wants every source should read `technologies` when present and fall back to `[technology]` when it is absent.
 
@@ -131,7 +131,7 @@ When more than one analyzer finds the same endpoint, for example a Go router and
 
 ## Analyzer Failures
 
-A tech analyzer that raises is logged and skipped, and the scan continues with the rest. So is a single file the analyzer cannot read or parse (a file over the parse-time ceiling, for instance), which costs only itself rather than the run. `errors` records both, so an empty result for a framework can be told apart from a framework that was never analyzed, and a complete scan from one that quietly dropped files:
+If an analyzer crashes, Noir logs it, skips it, and continues with the other analyzers. A single file an analyzer cannot read or parse (a file over the parse-time limit, for instance) is skipped the same way, and only that file is lost. `errors` records both. That lets you tell a framework with no endpoints from one that was never analyzed, and a complete scan from one that quietly dropped files:
 
 ```json
 {
@@ -146,7 +146,7 @@ A tech analyzer that raises is logged and skipped, and the scan continues with t
 
 Skipped files are tallied per tech rather than listed one entry each, with up to five example paths, so a broken checkout cannot flood the report.
 
-The key is always present. `"errors": []` is the positive statement that every selected analyzer ran to completion over every file it was given.
+The key is always present. `"errors": []` means every selected analyzer ran to completion over every file it was given.
 
 `-f yaml` carries the same key, and `-f sarif` reports it as `runs[0].invocations[0].executionSuccessful`. Add `--strict` to make a degraded scan exit with code 2, after the report has been written:
 

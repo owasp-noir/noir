@@ -1,6 +1,6 @@
 +++
 title = "숨겨진 플래그로 디버그"
-description = "디버깅과 실험을 위한 개발자 전용 숨겨진 플래그"
+description = "--help에 나오지 않는 디버깅·실험용 개발자 전용 플래그"
 weight = 3
 sort_by = "weight"
 
@@ -20,8 +20,8 @@ Noir가 LLM에 보내는 프롬프트를 바꾸는 플래그라서, AI 분석을
 ## 언제 쓰나요
 
 - 분석/필터링/최적화 프롬프트 전략을 실험할 때
-- 다시 빌드하지 않고 빠르게 반복 테스트할 때
-- 프롬프트 변화가 결과 품질에 미치는 영향을 비교할 때
+- 다시 빌드하지 않고 프롬프트를 고쳐 가며 시험할 때
+- 프롬프트를 바꿨을 때 출력이 어떻게 달라지는지 비교할 때
 
 ## 사용 팁
 
@@ -37,7 +37,7 @@ Noir가 LLM에 보내는 프롬프트를 바꾸는 플래그라서, AI 분석을
 
 ```bash
 ./bin/noir scan spec/functional_test/fixtures/crystal \
-  --override-analyze-prompt 'HTTP 엔드포인트와 파라미터를 식별하고, 간결한 구조화된 결과를 반환하라.'
+  --override-analyze-prompt 'Identify HTTP endpoints and parameters. Return concise structured results.'
 ```
 
 파일에서 여러 줄 프롬프트 읽어오기 (분석 덮어쓰기)
@@ -65,7 +65,7 @@ LLM 최적화 프롬프트 덮어쓰기
 
 ```bash
 ./bin/noir scan spec/functional_test/fixtures/crystal \
-  --override-filter-prompt 'HTTP 라우트나 미들웨어를 선언할 가능성이 있는 애플리케이션 소스만 선택하라.'
+  --override-filter-prompt 'Select only application source files that may declare HTTP routes or middleware.'
 ```
 
 ## 주의사항

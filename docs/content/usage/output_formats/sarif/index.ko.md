@@ -114,7 +114,7 @@ SARIF 파일은 `runs` 배열로 구성됩니다. 각 run에는 도구 정보(`d
 }
 ```
 
-## SARIF 기능
+## Noir의 SARIF 기능
 
 ### 엔드포인트 발견
 
@@ -150,7 +150,7 @@ SARIF 파일은 `runs` 배열로 구성됩니다. 각 run에는 도구 정보(`d
 
 ### GitHub Code Scanning
 
-SARIF 결과를 [GitHub Code Scanning](https://docs.github.com/en/code-security/code-scanning)에 업로드하면 리포지토리 Security 탭에서 바로 확인할 수 있습니다.
+SARIF 결과를 [GitHub Code Scanning](https://docs.github.com/en/code-security/code-scanning)에 업로드하면 저장소 Security 탭에서 바로 확인할 수 있습니다.
 
 ```bash
 # SARIF 출력 생성
@@ -165,7 +165,7 @@ gh api /repos/{owner}/{repo}/code-scanning/sarifs \
 
 ### GitLab Security Dashboard
 
-GitLab은 `sarif` 리포트 타입으로 SARIF를 읽습니다(GitLab Ultimate, 최신 버전). `sast` 리포트 타입은 GitLab 자체 JSON 스키마를 요구하므로 SARIF 파일을 넣으면 안 됩니다. `.gitlab-ci.yml`에 아래 잡을 추가하세요.
+GitLab은 `sarif` 리포트 타입으로 SARIF를 읽습니다(GitLab Ultimate, 최근 버전). `sast` 리포트 타입은 GitLab 자체 JSON 스키마를 요구하므로 SARIF 파일을 넣으면 안 됩니다. `.gitlab-ci.yml`에 아래 잡을 추가하세요.
 
 ```yaml
 noir_scan:
@@ -178,7 +178,7 @@ noir_scan:
 
 ### Azure DevOps
 
-Azure Pipelines에서 SARIF 파일을 빌드 아티팩트로 게시하면 SARIF SAST Scans Tab 확장에서 결과를 볼 수 있습니다.
+Azure Pipelines에서 SARIF 파일을 빌드 아티팩트로 게시하면 SARIF SAST Scans Tab 확장이 자동으로 가져갑니다.
 
 ```yaml
 - script: noir scan . -f sarif -o noir.sarif --no-log

@@ -1,6 +1,6 @@
 +++
 title = "AI 기반 분석"
-description = "Noir를 LLM 제공업체에 연결해 정적 규칙이 놓친 엔드포인트까지 찾아내는 방법입니다."
+description = "Noir를 LLM 제공업체에 연결해 코드를 더 깊이 분석하고 엔드포인트를 찾습니다."
 weight = 4
 sort_by = "weight"
 
@@ -9,7 +9,7 @@ sort_by = "weight"
 Noir를 대규모 언어 모델(클라우드 API, 로컬 런타임, ACP 에이전트)에 연결하면 정적 분석기가 지원하지 않는 언어와 프레임워크에서도 엔드포인트를 찾아낼 수 있습니다.
 
 {% mascot(mood="idea") %}
-정적 규칙이 모르는 프레임워크라도 괜찮아. 코드를 LLM에 넘기면 엔드포인트를 찾아낼 수 있어.
+정적 규칙이 모르는 프레임워크야? 코드를 LLM에 넘기면 그래도 내가 엔드포인트를 찾아 줄게.
 {% end %}
 
 <img src="./ai_integration.jpeg" alt="어떤 정적 분석기도 알아보지 못하는 코드베이스를 Noir가 스캔하는 모습. Ollama를 붙이자 LLM 분석기가 엔드포인트 2개와 쿠키를 추론해 낸다." width="3562" height="1492" loading="lazy" decoding="async">
@@ -59,7 +59,7 @@ noir scan . --ai-provider acp:codex
 | `--ai-model` | 모델 이름 (예: `gpt-5.5`), `acp:*`에서는 선택 사항 |
 | `--ai-key` | API 키 (프로세스 목록에 노출되므로 `NOIR_AI_KEY` 또는 `--ai-key-file` 권장) |
 | `--ai-key-file` | 파일에서 API 키를 읽음 (앞뒤 공백 제거) |
-| `--ai-temperature` | 모든 AI 요청의 샘플링 temperature (기본값: `0.3`, `--ai-agent` 단계는 `0`. 반복 가능한 CI 실행에는 `0`). GPT-5, o 시리즈, 최신 Claude 모델 같은 고정 샘플링 모델은 무시합니다 |
+| `--ai-temperature` | 모든 AI 요청의 샘플링 temperature (기본값: `0.3`, `--ai-agent` 단계는 `0`. CI에서 매번 같은 결과를 원하면 `0`). GPT-5, o 시리즈, 최신 Claude 모델 같은 고정 샘플링 모델은 무시합니다 |
 | `--ai-seed` | 샘플링 seed. 제공업체가 지원할 때 전달됩니다 (OpenAI 호환 `seed`, Ollama `options.seed`) |
 | `--ai-agent` | 에이전트 방식 AI 워크플로 활성화 (도구 호출을 반복하는 루프) |
 | `--ai-agent-max-steps` | AI 에이전트 루프 최대 단계 수 (기본값: `20`) |
@@ -190,7 +190,7 @@ Noir는 내장된 모델 표에서 모델의 컨텍스트 창 크기를 찾아 �
 엔드포인트는 확인이 필요한 단서로 다루세요. `--ai-context` 출력도 마찬가지입니다.
 `snippet`, `name`, `path` 필드는 저장소의 원문 그대로이며, 모든 컨텍스트가 이
 필드들을 `untrusted_fields`에 나열합니다. 리포트를 다른 LLM에 넘길 때는 이
-필드를 자신의 지시문과 분리하세요.
+필드를 직접 쓴 지시문과 분리하세요.
 
 ## 작동 방식
 
@@ -277,7 +277,7 @@ flowchart TB
     style UseCached3 fill:#e1ffe1
 {% end %}
 
-### 주요 구성 요소
+### 구성 요소
 
 #### LLM 어댑터 레이어
 제공업체와 무관하게 쓰는 어댑터: **General** (OpenAI 호환 API와 Anthropic 네이티브 Messages API), **Ollama** (네이티브 `/api/generate`), **ACP** (`acp:codex` 등 에이전트 런타임).
@@ -289,7 +289,7 @@ flowchart TB
 파일을 토큰 제한에 맞는 번들로 묶어 동시에 보냅니다.
 
 #### 응답 캐싱
-LLM 응답은 디스크에 캐시됩니다 (SHA256 키). 위치는 `~/.config/noir/cache/ai/`(또는 `$NOIR_HOME/cache/ai/`, Windows는 `%APPDATA%\noir\cache\ai\`)이며 `noir cache info`로 확인할 수 있습니다. `--cache-disable` 또는 `--cache-clear`로 제어합니다.
+LLM 응답은 디스크에 캐시됩니다 (SHA256 키). 위치는 `~/.config/noir/cache/ai/`(또는 `$NOIR_HOME/cache/ai/`, Windows는 `%APPDATA%\noir\cache\ai\`)이며 `noir cache info`로 확인할 수 있습니다. `--cache-disable`은 이번 실행에서 캐시를 쓰지 않고, `--cache-clear`는 먼저 캐시를 비웁니다.
 
 #### LLM 옵티마이저
 AI 분석기만 찾은 엔드포인트를 다듬는 후처리 단계입니다. AI 제공업체를 지정하면 자동으로 실행됩니다(`--ai-dry-run`일 때는 제외). 경로 파라미터 문법을 정규화하고(`:id`를 `{id}`로) 파라미터 타입을 바로잡습니다. 리터럴 경로나 파라미터 이름을 바꾸는 재작성은 버립니다. 정적 분석기가 찾은 라우트는 보내지 않습니다. 요청은 동시에 최대 4개, 스캔당 최대 100개입니다. `--ai-no-optimize`로 끌 수 있습니다.

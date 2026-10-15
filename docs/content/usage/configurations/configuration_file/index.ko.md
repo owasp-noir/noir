@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-`config.yaml`에 기본 옵션을 적어 두면 매번 같은 조건으로 스캔할 수 있습니다.
+스캔마다 쓰는 옵션을 `config.yaml`에 적어 두면 매번 다시 입력하지 않아도 됩니다.
 
 ## 파일 위치
 
@@ -18,7 +18,7 @@ sort_by = "weight"
 
 다른 디렉터리를 쓰려면 `NOIR_HOME`을 지정하세요.
 
-설정 파일의 값은 기본값이고, 명령줄 플래그가 있으면 플래그가 이깁니다. 기본 위치가 아닌 곳의 설정을 불러오려면 `--config-file <경로>`를 쓰세요.
+설정 파일의 값은 기본값이고, 명령줄 플래그가 있으면 플래그가 우선합니다. 기본 위치가 아닌 곳의 설정을 불러오려면 `--config-file <경로>`를 쓰세요.
 
 ```bash
 noir scan . --config-file ./ci/noir.yaml
@@ -28,9 +28,9 @@ noir scan . --config-file ./ci/noir.yaml
 
 ```bash
 noir config init   # 기본 설정 생성 (여러 번 실행해도 안전)
-noir config show   # 활성 파일 출력
+noir config show   # 현재 설정 파일 출력
 noir config edit   # $VISUAL / $EDITOR로 파일 열기
-noir config path   # 해석된 경로 출력
+noir config path   # 최종 경로 출력
 ```
 
 ## 디렉터리 구조
@@ -47,7 +47,7 @@ noir config path   # 해석된 경로 출력
 
 ```yaml
 ---
-# 스캔의 기본 베이스 경로
+# 기본 스캔 경로
 base: "/path/to/my/project"
 
 # 출력에서 항상 색상 사용
@@ -88,7 +88,7 @@ no_spinner: false
 # 발견된 엔드포인트에 HTTP 프로브 실행 (`url` 필요)
 probe: false
 
-# 프로브/내보내기 시 TLS 인증서 검증 건너뛰기 (비보안)
+# 프로브/내보내기 시 TLS 인증서 검증 건너뛰기 (안전하지 않음)
 tls_skip_verify: false
 ```
 
@@ -110,9 +110,9 @@ noir scan /path/to/my/project -f json -u https://api.example.com --exclude-codes
 |---|---|---|---|
 | `base` | string 또는 list | 경로 인자 / `-b` | 기본 스캔 경로 |
 | `url` | string | `-u` / `--url` | 경로 앞에 붙는 기본 URL. status/probe 옵션에 필요 |
-| `exclude_path` | CSV glob | `--exclude-path` | 매치되는 파일 건너뛰기 |
+| `exclude_path` | CSV glob | `--exclude-path` | 일치하는 파일 건너뛰기 |
 | `techs` | CSV | `-t` / `--techs` | 자동 탐지에 더해 분석기 집합에 기술 추가 |
-| `only_techs` | CSV | `--only-techs` | 실행할 기술 디텍터 제한 |
+| `only_techs` | CSV | `--only-techs` | 실행할 기술 탐지기 제한 |
 | `exclude_techs` | CSV | `--exclude-techs` | 탐지 후 최종 집합에서 기술 제거 |
 | `concurrency` | int | `--concurrency` / `NOIR_CONCURRENCY` | 워커 수 (기본값: CPU 수, 4–32 범위로 제한). 우선순위: 플래그 > `NOIR_CONCURRENCY` > 설정 파일 > 기본값 |
 
@@ -165,8 +165,8 @@ noir scan /path/to/my/project -f json -u https://api.example.com --exclude-codes
 | `probe` | bool | `--probe` | 발견된 엔드포인트에 HTTP 요청 (`url` 필요) |
 | `probe_via` | string | `--probe-via` | 프로브용 프록시 URL |
 | `probe_header` | list | `--probe-header` | 추가 프로브 헤더 |
-| `probe_match` | list | `--probe-match` | 매치되는 엔드포인트만 프로브 |
-| `probe_skip` | list | `--probe-skip` | 매치되는 엔드포인트 건너뛰기 |
+| `probe_match` | list | `--probe-match` | 일치하는 엔드포인트만 프로브 |
+| `probe_skip` | list | `--probe-skip` | 일치하는 엔드포인트 건너뛰기 |
 | `tls_skip_verify` | bool | `--tls-skip-verify` | 프로브/내보내기/웹훅 TLS 검증 건너뛰기 |
 | `export_es` | string | `--export-es` / `--export-opensearch` | Elasticsearch 또는 OpenSearch URL (두 플래그 모두 이 키에 기록) |
 | `export_webhook` | string | `--export-webhook` | 엔드포인트 목록 JSON을 POST할 URL |

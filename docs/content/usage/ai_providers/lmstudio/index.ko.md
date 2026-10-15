@@ -1,6 +1,6 @@
 +++
 title = "LM Studio와 함께 Noir 사용하기"
-description = "Noir를 LM Studio와 통합하여 로컬 언어 모델로 코드 분석을 수행하는 방법입니다."
+description = "LM Studio를 Noir에 연결해 코드를 로컬에서 비공개로 분석하는 방법입니다."
 weight = 3
 sort_by = "weight"
 
@@ -13,7 +13,7 @@ sort_by = "weight"
 1.  **LM Studio 설치**: [공식 웹사이트](https://lmstudio.ai)에서 다운로드하세요.
 2.  **로컬 서버 시작**: LM Studio를 열고 Developer 탭에서 모델을 로드한 뒤 서버 상태를 Running으로 켜세요.
 
-    ![상태가 Running 이고 phi-4 모델이 로드되어 요청을 받을 준비가 된 LM Studio Developer 탭.](./lmstudio.png)
+    ![상태가 Running이고 phi-4 모델이 로드되어 요청을 받을 준비가 된 LM Studio Developer 탭.](./lmstudio.png)
 
 ## 사용 방법
 

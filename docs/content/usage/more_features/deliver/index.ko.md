@@ -31,9 +31,9 @@ Probe는 재전송, Export는 적재. 결과가 어디로 가야 하는지에 �
 
 ### 경로 템플릿
 
-`/users/{id}` 같은 라우트는 그대로 요청할 수 없으므로, noir가 요청 전에 플레이스홀더를 채웁니다. 단 **읽기 전용 메서드에만** 적용합니다(GET, HEAD, OPTIONS, QUERY). 숫자로 보이는 이름(`id`, `page`, `*_id` 등)에는 `1`, 나머지에는 `noir`가 들어갑니다.
+`/users/{id}` 같은 라우트는 그대로 요청할 수 없으므로, Noir가 요청 전에 플레이스홀더를 채웁니다. 단 **읽기 전용 메서드에만** 적용합니다(GET, HEAD, OPTIONS, QUERY). 숫자로 보이는 이름(`id`, `page`, `*_id` 등)에는 `1`, 나머지에는 `noir`가 들어갑니다.
 
-POST, PUT, PATCH, DELETE는 템플릿을 그대로 둡니다. 여기서 값을 채우면 무해한 404가 실제 쓰기 요청으로 바뀝니다(실제 레코드에 `DELETE /users/1`이 나감). 그래서 noir가 대신 채우지 않습니다. 프록시를 거치면 템플릿 그대로 도착하니, 필요하면 직접 고쳐서 다시 보내세요.
+POST, PUT, PATCH, DELETE는 템플릿을 그대로 둡니다. 여기서 값을 채우면 무해한 404가 실제 쓰기 요청으로 바뀝니다(실제 레코드에 `DELETE /users/1`이 나감). 그래서 Noir가 대신 채우지 않습니다. 프록시를 거치면 템플릿 그대로 도착하니, 필요하면 직접 고쳐서 다시 보내세요.
 
 값을 직접 지정하려면 `--pvalue path=...`를 쓰세요. 이 값은 모든 메서드에 적용됩니다.
 
@@ -65,9 +65,9 @@ noir scan ./source -u http://localhost:3000 \
   --probe-header "Authorization: Bearer your-token"
 ```
 
-<img src="./deliver-header.png" alt="인터셉트 프록시에 잡힌 요청. Noir가 추가하도록 지정한 Abcd 와 X-API-Key 헤더가 함께 실려 있다." width="1136" height="460" loading="lazy" decoding="async">
+<img src="./deliver-header.png" alt="인터셉트 프록시에 잡힌 요청. Noir가 추가하도록 지정한 Abcd와 X-API-Key 헤더가 함께 실려 있습니다." width="1136" height="460" loading="lazy" decoding="async">
 
-이 헤더는 `-u` 타깃에만 붙습니다. 엔드포인트는 대부분 noir가 `-u` 뒤에 붙인 경로입니다. 하지만 소스에 scheme과 호스트가 이미 적혀 있던 엔드포인트(OAS `servers:` 항목, HAR 캡처, 호스팅 백엔드 URL)는 그 호스트를 그대로 쓰고, 그 호스트는 지금 스캔하는 코드에서 온 값입니다. 이런 엔드포인트에도 요청은 나가지만 헤더는 붙지 않습니다. noir는 헤더를 뺀 호스트를 한 번 알려줍니다.
+이 헤더는 `-u` 타깃에만 붙습니다. 엔드포인트는 대부분 Noir가 `-u` 뒤에 붙인 경로입니다. 하지만 소스에 scheme과 호스트가 이미 적혀 있던 엔드포인트(OAS `servers:` 항목, HAR 캡처, 호스팅 백엔드 URL)는 그 호스트를 그대로 쓰고, 그 호스트는 지금 스캔하는 코드에서 온 값입니다. 이런 엔드포인트에도 요청은 나가지만 헤더는 붙지 않습니다. Noir는 헤더를 뺀 호스트를 한 번 알려줍니다.
 
 ```
 ▲ Probe: --probe-header values withheld from https://collector.example.com — it is not the --url target. Endpoints on that host are still probed, without your headers.
@@ -106,7 +106,9 @@ noir scan ./source -u http://localhost:3000 \
   --probe-match "GET" --probe-match "POST:/api"
 ```
 
-<img src="./deliver-mf.png" alt="Noir가 엔드포인트 11개를 찾았지만, 매처 2개를 지정해 POST /update 와 GET /socket 만 프록시로 전달한 모습." width="1242" height="493" loading="lazy" decoding="async">
+아래 스크린샷은 이전 릴리스에서 찍은 것으로, 위 예시 대신 URL 패턴 `/update`와 `/socket` 두 개를 v0 별칭 `--use-matchers`로 지정했습니다. 그래서 그 두 엔드포인트만 프록시로 전달됩니다.
+
+<img src="./deliver-mf.png" alt="Noir가 엔드포인트 11개를 찾았지만, 매처 2개를 지정해 POST /update와 GET /socket만 프록시로 전달한 모습." width="1242" height="493" loading="lazy" decoding="async">
 
 ## Export
 
@@ -147,7 +149,7 @@ noir scan ./source --export-webhook https://hooks.example.com/noir
 
 | 필드 | 내용 |
 | --- | --- |
-| `endpoints` | `-f json`이 출력하는 것과 동일한 배열 |
+| `endpoints` | `-f json`이 출력하는 것과 같은 배열 |
 | `endpoint_count` | `endpoints`의 항목 수 |
 | `noir_version` | 이 문서를 만든 noir 버전 |
 
@@ -172,4 +174,4 @@ v0.x 플래그 이름도 그대로 동작합니다. Noir가 경고 없이 v1 이
 | `--use-matchers VAL` | `--probe-match VAL` |
 | `--use-filters VAL` | `--probe-skip VAL` |
 
-v0 이름을 쓰는 CI 스크립트와 Dockerfile은 고치지 않아도 됩니다. 도움말, 문서, 셸 자동 완성에는 v1 이름만 나옵니다.
+v0 이름을 쓰는 CI 스크립트와 Dockerfile은 고치지 않아도 됩니다. 도움말, 문서, 셸 자동완성에는 v1 이름만 나옵니다.

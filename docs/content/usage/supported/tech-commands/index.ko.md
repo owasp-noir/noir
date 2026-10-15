@@ -10,8 +10,8 @@ Noir는 코드에 쓰인 기술을 스스로 탐지합니다. 일부를 추가�
 
 ## 플래그
 
-*   `-t`, `--techs <TECHS>`: 자동 탐지된 기술에 더해 지정한 기술을 분석 대상에 추가합니다 (쉼표로 구분, 예: `rails,django`).
-*   `--only-techs <TECHS>`: 지정한 기술의 탐지기만 실행합니다 (쉼표로 구분, 예: `rails,django`).
+*   `-t`, `--techs <TECHS>`: 자동 탐지된 기술에 더해 지정한 기술을 분석 대상에 추가합니다(쉼표로 구분, 예: `rails,django`).
+*   `--only-techs <TECHS>`: 지정한 기술의 탐지기만 실행합니다(쉼표로 구분, 예: `rails,django`).
 *   `--exclude-techs <TECHS>`: 탐지가 끝난 뒤 지정한 기술을 결과에서 뺍니다.
 *   `noir list techs`: Noir가 지원하는 모든 기술을 보여줍니다.
 

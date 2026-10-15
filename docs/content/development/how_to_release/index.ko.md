@@ -1,12 +1,12 @@
 +++
 title = "릴리스 방법"
-description = "Noir 릴리스 생성 및 게시를 위한 관리자 가이드."
+description = "새 Noir 릴리스를 만들고 게시하는 메인테이너 가이드."
 weight = 4
 sort_by = "weight"
 
 +++
 
-프로젝트 관리자를 위한 릴리스 절차입니다.
+프로젝트 메인테이너용 릴리스 절차입니다.
 
 ## 릴리스 채널
 
@@ -57,7 +57,7 @@ sort_by = "weight"
     # 예: brew bump-formula-pr --strict --version 1.4.0 noir
     ```
 
-3.  **스타일 확인** (선택사항):
+3.  **스타일 확인** (선택):
 
     ```bash
     cd $(brew --repository)/Library/Taps/homebrew/homebrew-core/Formula
