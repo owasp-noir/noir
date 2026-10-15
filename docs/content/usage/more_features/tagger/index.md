@@ -16,7 +16,7 @@ Tags are my magnifying glass. A parameter named redirect_url gets flagged as ssr
 
 ## Usage
 
-Taggers are off by default. `--verbose` turns all of them on, and so do these flags:
+Taggers are off by default. `--verbose`, `--ai-context` and `-f only-tag` also turn them all on. To pick them yourself, use these flags:
 
 **Enable all taggers** (`-T` / `--use-all-taggers`)
 
