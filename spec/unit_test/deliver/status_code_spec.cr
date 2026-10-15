@@ -365,7 +365,7 @@ describe StatusCodeProbe do
         endpoint = Endpoint.new(server.url_for("/graphql#Query.user"), "POST")
         result = probe_for(base_probe_options).apply([endpoint])
 
-        server.resources.should eq([server.url_for("/graphql")])
+        server.resources.should eq(["/graphql"])
         result.first.url.should end_with("/graphql#Query.user")
       ensure
         server.close
