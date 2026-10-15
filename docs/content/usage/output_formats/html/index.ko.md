@@ -47,7 +47,7 @@ noir scan -b spec/functional_test/fixtures/crystal/kemal -f html -o report.html
 
 - 라이트 / 다크 테마 토글. 선택은 다음에 열 때도 유지
 - 카드 / 테이블 뷰 토글. 이 선택도 유지
-- 경로 그룹: 검토를 마친 그룹은 접어 두고, Grouped 토글로 목록을 펼칠 수 있음. 필터를 바꾸면 그룹별 개수도 바로 갱신
+- 경로 그룹: 검토를 마친 그룹은 접어 두고, Grouped 토글로 그룹 없이 한 목록으로 볼 수 있음. 필터를 바꾸면 그룹별 개수도 바로 갱신
 - 검색: 경로, 메서드, 파라미터, 태그로 엔드포인트를 거르고 "표시 / 전체" 개수를 보여줌
 - 엔드포인트와 패시브 결과 목록을 좁히는 메서드·심각도 필터 칩
 - 엔드포인트마다 복사 버튼: URL, 또는 메서드·파라미터·헤더·쿠키로 만든 curl 명령을 복사
@@ -59,7 +59,7 @@ noir scan -b spec/functional_test/fixtures/crystal/kemal -f html -o report.html
 
 ### 템플릿 위치
 
-Noir는 아래 경로에서 `report-template.html` 파일을 찾습니다.
+Noir는 설정 디렉터리에서 `report-template.html` 파일을 찾습니다.
 
 - Linux/macOS: `~/.config/noir/report-template.html`
 - Windows: `%APPDATA%\noir\report-template.html`
@@ -82,7 +82,7 @@ Noir는 아래 경로에서 `report-template.html` 파일을 찾습니다.
 | `<%= noir_scripts %>` | 인터랙티브 스크립트 (테마 토글, 접이식 카드·그룹, 검색, 필터, 뷰 전환, 복사 버튼) |
 
 {% alert_warning() %}
-noir_scripts 플레이스홀더를 잊지 마세요. 템플릿의 닫는 body 태그 바로 앞에 추가하면 됩니다. 없어도 리포트는 렌더링되지만 테마 토글, 접이식 카드, 검색, 필터, 뷰 전환, 복사 버튼이 동작하지 않습니다.
+noir_scripts 플레이스홀더를 잊지 마세요. 보통 템플릿의 닫는 body 태그 바로 앞에 넣습니다. 없어도 리포트는 렌더링되지만 테마 토글, 접이식 카드, 검색, 필터, 뷰 전환, 복사 버튼이 동작하지 않습니다.
 {% end %}
 
 ### 예제 템플릿

@@ -24,10 +24,10 @@ noir scan <BASE_PATH> -P --passive-scan-path /path/to/your/rules/
 
 ### 심각도 필터링
 
-`--passive-scan-severity`로 보고할 최소 심각도를 정합니다:
+`--passive-scan-severity`로 보고할 최소 심각도를 정합니다.
 
 - `critical`: critical만
-- `high`: high와 critical (기본값)
+- `high`: high와 critical(기본값)
 - `medium`: medium 이상
 - `low`: 전체
 
@@ -50,13 +50,13 @@ noir scan <BASE_PATH> -P --passive-scan-severity low
 
 ```
 ★ Passive Results:
-[critical][hahwul-test][secret] use x-api-key
-  ├── extract:   env.request.headers["x-api-key"].as(String)
-  └── file: spec/functional_test/fixtures/crystal/kemal/src/testapp.cr:4
+[critical][aws-access-key][secret] Detect AWS_ACCESS_KEY
+  ├── extract: AWS_KEY = "AKIAIOSFODNN7EXAMPLE"
+  └── file: ./config/settings.py:1
 ```
 
 **출력 구성:**
-*   `[critical][hahwul-test][secret]`: 심각도, 규칙 `id`, 규칙 `category`
-*   `use x-api-key`: 규칙 이름(`info.name`)
+*   `[critical][aws-access-key][secret]`: 심각도, 규칙 `id`, 규칙 `category`
+*   `Detect AWS_ACCESS_KEY`: 규칙 이름(`info.name`)
 *   `extract`: 매칭된 코드 라인
 *   `file`: 파일 경로와 줄 번호

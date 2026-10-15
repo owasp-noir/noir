@@ -1,6 +1,6 @@
 +++
 title = "ACP 에이전트와 함께 Noir 사용하기"
-description = "Codex, Gemini, Claude 같은 ACP 기반 에이전트를 Noir와 연결해 AI 기반 엔드포인트 분석을 수행하는 방법입니다."
+description = "Codex, Gemini, Claude 같은 ACP 기반 에이전트를 Noir와 연결해 AI로 엔드포인트를 분석하는 방법입니다."
 weight = 8
 sort_by = "weight"
 
@@ -70,7 +70,7 @@ NOIR_ACP_ALLOW_TOOL_PERMISSIONS=1 noir scan ./myapp --ai-provider=acp:codex
 ## 참고
 
 - `acp:*` 제공업체에서는 `--ai-key`가 필요하지 않습니다.
-- `NOIR_AI_TIMEOUT`은 프롬프트 턴 하나의 제한 시간입니다(기본값 `300`초). `NOIR_AI_CONNECT_TIMEOUT`은 에이전트 시작과 세션 생성의 제한 시간입니다(기본값 `120`초. 첫 `npx` 다운로드에 충분한 시간입니다).
+- `NOIR_AI_TIMEOUT`은 프롬프트 턴 하나의 제한 시간입니다(기본값 `300`초). `NOIR_AI_CONNECT_TIMEOUT`은 에이전트 시작과 세션 생성의 제한 시간입니다(기본값 `120`초로, 첫 `npx` 다운로드에 충분합니다).
 - ACP 요청은 재시도하지 않으며 `--ai-max-requests`에도 포함되지 않습니다.
-- 캐시 플래그(`--cache-disable`, `--cache-clear`)는 다른 AI 제공업체와 동일하게 동작합니다.
+- 캐시 플래그(`--cache-disable`, `--cache-clear`)는 다른 AI 제공업체와 똑같이 동작합니다.
 - `acp:claude-code`는 `acp:claude`의 별칭입니다.

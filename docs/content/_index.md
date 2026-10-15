@@ -174,7 +174,7 @@ template = "landing"
       <div class="split-list">
         <div class="split-item">
           <h3>Security reviewers</h3>
-          <p>A focused list of attacker-reachable entrypoints instead of a repository to skim.</p>
+          <p>A focused list of attacker-reachable entry points instead of a repository to skim.</p>
         </div>
         <div class="split-item">
           <h3>AI code auditors</h3>

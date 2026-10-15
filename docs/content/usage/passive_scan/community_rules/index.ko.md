@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-패시브 스캔 규칙은 기본 규칙과 커뮤니티 기여 규칙 모두 하나의 저장소에서 관리됩니다:
+패시브 스캔 규칙은 기본 규칙과 커뮤니티 기여 규칙 모두 한 저장소에서 관리합니다.
 
 *   **[owasp-noir/noir-passive-rules](https://github.com/owasp-noir/noir-passive-rules)**
 
@@ -14,11 +14,11 @@ sort_by = "weight"
 
 ## 규칙 기여하기
 
-커뮤니티에 규칙을 공유하려면 [noir-passive-rules](https://github.com/owasp-noir/noir-passive-rules) 저장소에 Pull Request를 보내세요. 머지되면 모든 Noir 사용자가 평소의 규칙 업데이트로 그 규칙을 받습니다. 규칙 형식은 [패시브 스캔 규칙](../rule/) 문서를 참고하세요.
+커뮤니티에 규칙을 공유하려면 [noir-passive-rules](https://github.com/owasp-noir/noir-passive-rules) 저장소에 풀 리퀘스트를 보내세요. 머지되면 모든 Noir 사용자가 평소의 규칙 업데이트로 그 규칙을 받습니다. 규칙 형식은 [패시브 스캔 규칙](../rule/) 문서를 참고하세요.
 
 ## 서드파티/커스텀 규칙 세트 사용하기
 
-다른 곳(사설 저장소, 로컬 디렉터리)의 규칙 세트를 사용하려면 `--passive-scan-path`로 지정하세요:
+다른 곳(사설 저장소, 로컬 디렉터리)의 규칙 세트를 사용하려면 `--passive-scan-path`로 지정하세요.
 
 ```bash
 noir scan /app -P --passive-scan-path ./my-rules/

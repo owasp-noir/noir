@@ -14,7 +14,7 @@ next_page_label = "Your First Scan"
 Noir is a single binary with no runtime dependencies. Homebrew is the quickest way for most users, but pick whatever fits your system.
 {% end %}
 
-Every method below installs the same `noir` binary, so you only need one. They're ordered roughly easiest-first. Find the section that matches your platform and package manager, and skip the rest.
+Every method below installs the same `noir` binary, so pick the one that fits your platform and skip the rest. They're ordered roughly easiest-first.
 
 ## Homebrew (macOS and Linux)
 
@@ -33,7 +33,7 @@ brew upgrade noir
 ```
 
 {% alert_info() %}
-Shell completions for Zsh, Bash, and Fish are automatically installed.
+Homebrew also installs shell completions for Zsh, Bash, and Fish.
 {% end %}
 
 ## Snapcraft (Linux)
@@ -102,7 +102,7 @@ nix run github:owasp-noir/noir -- -h
 
 ## Direct Binary Download
 
-No package manager? Grab a prebuilt binary from [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest). Linux and macOS builds are provided, and Windows (x86_64) builds start with the first release after v1.4.0.
+No package manager? Grab a prebuilt binary from [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest). Builds exist for Linux and macOS; Windows (x86_64) builds start with the first release after v1.4.0.
 
 To install or update:
 
@@ -266,7 +266,7 @@ Building from source requires the Crystal programming language.
 
 Install Crystal from [crystal-lang.org](https://crystal-lang.org/install/) first.
 
-**Windows:** besides [Crystal for Windows](https://crystal-lang.org/install/on_windows/), the build compiles the bundled Tree-sitter grammars with a small shell script, so it also needs [Git for Windows](https://gitforwindows.org/) (for `sh`) and `clang` (the "C++ Clang tools for Windows" component of Visual Studio Build Tools, or [LLVM](https://releases.llvm.org/)). Run the steps below from Git Bash. The binary is written to `bin\noir.exe`.
+**Windows:** the build compiles the bundled Tree-sitter grammars with a small shell script. So besides [Crystal for Windows](https://crystal-lang.org/install/on_windows/), you also need [Git for Windows](https://gitforwindows.org/) (for `sh`) and `clang` (the "C++ Clang tools for Windows" component of Visual Studio Build Tools, or [LLVM](https://releases.llvm.org/)). Run the steps below from Git Bash. The binary is written to `bin\noir.exe`.
 
 To install:
 

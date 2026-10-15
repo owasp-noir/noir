@@ -1,6 +1,6 @@
 +++
 title = "문제 해결"
-description = "OWASP Noir 사용 시 자주 발생하는 문제의 해결 방법입니다."
+description = "OWASP Noir를 쓰다 자주 겪는 문제와 해결 방법."
 weight = 2
 sort_by = "weight"
 
@@ -23,7 +23,7 @@ sort_by = "weight"
 
 **증상:** 대규모 코드베이스에서 Noir가 오래 걸립니다.
 
-- `--only-techs`로 지정한 디텍터만 실행하고 나머지는 건너뛰세요: `noir scan . --only-techs rails`
+- `--only-techs`로 지정한 탐지기만 실행하고 나머지는 건너뛰세요: `noir scan . --only-techs rails`
   (`--techs`는 다릅니다. 탐지 범위를 좁히지 않고 분석 대상에 기술을 추가합니다)
 - `--exclude-techs`로 감지됐지만 필요 없는 프레임워크의 분석기를 건너뛰세요(로그에 `(skip)`으로 표시됩니다)
 - `--exclude-path`로 vendor·생성 코드 트리를 건너뛰세요: `--exclude-path "vendor/*,**/node_modules/**"`

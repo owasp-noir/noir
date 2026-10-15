@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-Use a `config.yaml` file to set default options for consistent scans.
+Put the options you use on every scan in a `config.yaml` file, so you don't have to retype them.
 
 ## File Location
 
@@ -102,7 +102,7 @@ noir scan /path/to/my/project -f json -u https://api.example.com --exclude-codes
 
 ## Key reference
 
-`noir config init` writes a fully commented file with every supported key. The example above is a curated subset; CLI flags always override the file. Keys below match the generated file (legacy v0 names such as `send_es` / `send_proxy` still load, but migrate to the v1 names).
+`noir config init` writes a fully commented file with every supported key. The example above shows only some of them; CLI flags always override the file. Keys below match the generated file (legacy v0 names such as `send_es` / `send_proxy` still load, but migrate to the v1 names).
 
 ### Scan paths and scope
 

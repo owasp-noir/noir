@@ -25,15 +25,16 @@ noir scan . --ai-context                    # bare form: also "everything"
 
 Valid feature names: `guards`, `callee`, `sources`, `sinks`, `validators`, `signals` (plus `all`). Names are case-insensitive.
 
-Derived signals stay linked to their supporting buckets. Selecting `signals`
-keeps the evidence those signals need (for example `ssrf` keeps
-`outbound_http` sinks), and selecting an evidence bucket keeps only the
-signals linked to it (for example `guards,sinks` still surfaces
-`authz_absence`). The cross-bucket `priority_review` roll-up appears only
-when `signals` is in the selection (bare `--ai-context` and `all` include
-it).
+Signals are derived from the other buckets, and the filter keeps them
+together. Selecting `signals` keeps the evidence those signals need (for
+example `ssrf` keeps `outbound_http` sinks). Selecting an evidence bucket
+keeps only the signals linked to it (for example `guards,sinks` still
+shows `authz_absence`), and each of those signals brings its own evidence
+along, so `guards,sinks` can also show `sources`. The `priority_review` roll-up, which draws on
+several buckets, appears only when `signals` is selected (bare
+`--ai-context` and `all` include it).
 
-In plain output, every endpoint with non-empty context grows an `ai_context:` block. Model-based formats expose the same structure under standard locations:
+In plain output, every endpoint with non-empty context gets an `ai_context:` block. Structured formats put the same data here:
 
 | Format | Where AI context appears |
 |---|---|
@@ -56,7 +57,7 @@ Every context bucket is a list of entries with `kind`, `name`, optional `source`
 | `validators` | Input-validation and sanitization signals (schema validators, parameter coercion, allow-listing patterns) that mitigate sink risk |
 | `signals` | Other route-shape hints worth surfacing (state-changing methods without a detected guard, path-id usage suggesting object-level authorization concerns, file-upload behavior, etc.) |
 
-The list is best-effort. Heuristic confidence is exposed on each entry so consumers can filter by threshold. Up to 16 entries per bucket are kept to keep output compact.
+The list is best-effort. Heuristic confidence is exposed on each entry so consumers can filter by threshold. Each bucket keeps at most 16 entries so the output stays compact.
 
 Every non-empty context also carries `"untrusted_fields": ["name", "path", "snippet"]`. Those fields come from the scanned repository as-is, so `snippet` includes comments and string literals written by whoever controls that code. When you pass this output to an LLM, treat those fields as untrusted data and fence them off from your instructions.
 
@@ -65,7 +66,7 @@ The shape is published as a JSON Schema at [`schemas/ai-context.schema.json`](ht
 ## Typical use cases
 
 - **AI SAST**: hand the endpoint inventory plus its AI context to an LLM so it can decide where vulnerabilities are reachable from the attack surface without re-discovering the route structure.
-- **Manual triage**: a reviewer skimming a large JSON or SARIF report can sort or filter by sink kind or by `signals` like `state_changing_without_guard`.
+- **Manual triage**: a reviewer skimming a large JSON or SARIF report can sort or filter by sink kind or by `signals` like `guard_absence`.
 - **CI gating**: surface `sinks` minus `validators` to flag risky endpoints in pull requests.
 
 ## Combine with other flags
@@ -84,6 +85,6 @@ noir scan . --ai-context -f oas3 -o spec.json
 ## Completeness notes
 
 - AI context only adds data: endpoints unaffected by any heuristic come out exactly as they would without the flag (no `ai_context` key in serialized models).
-- Heuristics are tuned conservatively. Both false positives and false negatives exist; treat entries as priors, not findings.
+- Heuristics are tuned conservatively. Both false positives and false negatives exist, so treat entries as leads to review, not findings.
 - Guard / sink / validator patterns improve over time. They are cross-language on purpose, so one context schema works for every framework Noir covers.
 - Callee coverage drives much of the AI context. See [Callee Coverage](@/usage/supported/callee_coverage/index.md) for which frameworks expose handler callees today.

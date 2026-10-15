@@ -10,7 +10,15 @@ Turn discovered endpoints into ready-to-run commands for common HTTP clients. Us
 
 ## cURL
 
-[cURL](https://curl.se/) is the most widely used command-line HTTP client. The generated commands include `-i` (show response headers), `-g` (disable URL globbing so `{id}` and `[..]` are sent literally), `-X` (HTTP method; HEAD gets `-I` instead), `--data-raw` (urlencoded or JSON bodies, with the matching `Content-Type` header), `--form-string` and `-F` (multipart uploads), `-H` (headers; an empty header prints as `'Name;'`), and `--cookie` as needed.
+[cURL](https://curl.se/) is the most widely used command-line HTTP client. The generated commands use these options as needed:
+
+- `-i` shows response headers.
+- `-g` turns off URL globbing, so `{id}` and `[..]` are sent literally.
+- `-X` sets the HTTP method. HEAD gets `-I` instead.
+- `--data-raw` sends urlencoded or JSON bodies, with the matching `Content-Type` header.
+- `--form-string` and `-F` send multipart uploads.
+- `-H` adds headers. An empty header prints as `'Name;'`.
+- `--cookie` sends cookies.
 
 ```bash
 noir scan . -f curl -u https://www.example.com
@@ -81,7 +89,7 @@ The file path is a placeholder named after the field. `--pvalue` does not fill f
 
 ## XML request bodies
 
-`param_type: xml` (Play `asXml`, Tapir `xmlBody`, and similar whole-body XML params) is not turned into a request body in the HTTP client formats (`curl`, `httpie`, `powershell`). Those builders only bake `form` / `json` bodies (and multipart `file` uploads above). An endpoint that only has XML body params therefore prints as a header/URL-only command in these formats.
+`param_type: xml` (Play `asXml`, Tapir `xmlBody`, and similar whole-body XML params) is not turned into a request body in the HTTP client formats (`curl`, `httpie`, `powershell`). Those formats only build `form` / `json` bodies (plus the multipart `file` uploads above), so an endpoint whose only body params are XML prints as a command with just the URL and headers.
 
 For XML bodies, use one of:
 
@@ -129,7 +137,7 @@ xcrun simctl openurl booted 'myapp://host/path?token='
 xcrun simctl openurl booted 'https://app.example.com/buy'
 ```
 
-Like `-f adb`, `simctl` is platform-specific: it emits commands for iOS entry points and skips what it can't open (HTTP endpoints, Android entry points via `-f adb`, and bare App Links domain associations), each reported as a one-line warning to stderr.
+Like `-f adb`, `simctl` is platform-specific: it emits commands for iOS entry points and skips what it can't open: HTTP endpoints, Android entry points (use `-f adb`), and bare App Links domain associations. Each skipped kind gets a one-line warning on stderr.
 
 ## Filling Parameter Values
 

@@ -24,7 +24,7 @@ noir scan . -f sarif -o results.sarif --no-log
 
 ## Example Output
 
-A SARIF file has a `runs` array. Each run describes the tool (`driver` with name and version), the analysis rules, the `results` (one entry per discovered endpoint with its source file location and line number), and an `invocations` entry whose `executionSuccessful` mirrors the `errors` key of the [JSON output](../json/): `false` when any analyzer failed or skipped a file. File paths are relative to `%SRCROOT%`, which `originalUriBaseIds` maps to the directory Noir ran from.
+A SARIF file has a `runs` array. Each run describes the tool (`driver` with name and version), the analysis rules, and the `results` (one entry per discovered endpoint with its source file location and line number). It also has an `invocations` entry whose `executionSuccessful` mirrors the `errors` key of the [JSON output](../json/): `false` when any analyzer failed or skipped a file. File paths are relative to `%SRCROOT%`, which `originalUriBaseIds` maps to the directory Noir ran from.
 
 ```json
 {

@@ -10,7 +10,15 @@ sort_by = "weight"
 
 ## cURL
 
-[cURL](https://curl.se/)은 가장 널리 쓰이는 커맨드라인 HTTP 클라이언트입니다. 생성되는 명령에는 `-i`(응답 헤더 표시), `-g`(URL globbing을 꺼서 `{id}`, `[..]`를 그대로 보냄), `-X`(HTTP 메서드, HEAD는 대신 `-I`), `--data-raw`(urlencoded 또는 JSON 본문, 맞는 `Content-Type` 헤더와 함께), `--form-string`과 `-F`(multipart 업로드), `-H`(헤더, 값이 빈 헤더는 `'Name;'`로 출력), `--cookie`(쿠키)가 필요에 따라 들어갑니다.
+[cURL](https://curl.se/)은 가장 널리 쓰이는 커맨드라인 HTTP 클라이언트입니다. 생성되는 명령에는 필요에 따라 다음 옵션이 들어갑니다.
+
+- `-i`: 응답 헤더를 표시합니다.
+- `-g`: URL globbing을 꺼서 `{id}`, `[..]`를 그대로 보냅니다.
+- `-X`: HTTP 메서드를 지정합니다. HEAD는 대신 `-I`를 씁니다.
+- `--data-raw`: urlencoded 또는 JSON 본문을 맞는 `Content-Type` 헤더와 함께 보냅니다.
+- `--form-string`, `-F`: multipart 업로드를 보냅니다.
+- `-H`: 헤더를 붙입니다. 값이 빈 헤더는 `'Name;'`로 출력됩니다.
+- `--cookie`: 쿠키를 보냅니다.
 
 ```bash
 noir scan . -f curl -u https://www.example.com
@@ -81,19 +89,19 @@ Invoke-WebRequest -Method "POST" -Uri "https://www.example.com/upload" -Form @{"
 
 ## XML 요청 본문
 
-`param_type: xml`(Play `asXml`, Tapir `xmlBody` 등 전체 본문 XML 파라미터)은 HTTP 클라이언트 형식(`curl`, `httpie`, `powershell`)에서 요청 본문으로 들어가지 않습니다. 이 빌더들은 `form` / `json` 본문과 위의 multipart `file` 업로드만 구성합니다. 그래서 XML 본문 파라미터만 있는 엔드포인트는 이 형식들에서 헤더와 URL만 있는 명령으로 나옵니다.
+`param_type: xml`(Play `asXml`, Tapir `xmlBody` 등 전체 본문 XML 파라미터)은 HTTP 클라이언트 형식(`curl`, `httpie`, `powershell`)에서 요청 본문으로 들어가지 않습니다. 이 형식들은 `form` / `json` 본문과 위의 multipart `file` 업로드만 만듭니다. 그래서 XML 본문 파라미터만 있는 엔드포인트는 이 형식에서 헤더와 URL만 있는 명령으로 나옵니다.
 
 XML 본문이 필요하면 다음을 사용하세요.
 
 - `-f oas2` / `-f oas3`: `application/xml` requestBody ([OpenAPI](@/usage/output_formats/openapi/index.ko.md) 참고)
-- `-f postman`: `Content-Type: application/xml` 인 raw 본문 ([추가 형식](@/usage/output_formats/more/index.ko.md) 참고)
+- `-f postman`: `Content-Type: application/xml`인 raw 본문 ([추가 형식](@/usage/output_formats/more/index.ko.md#postman-컬렉션) 참고)
 - `-f json` / `-f yaml` / plain: 엔드포인트 기록에 `xml` 파라미터 타입이 그대로 유지됨
 
-HTML 리포트의 "curl로 복사" 버튼도 같은 curl 빌더를 쓰므로 동일한 제약이 있습니다.
+HTML 리포트의 "curl로 복사" 버튼도 같은 curl 빌더를 쓰므로 같은 제약이 있습니다.
 
 ## ADB (Android)
 
-모바일 진입점은 HTTP 요청이 아니라 앱 URL이므로 위의 HTTP 클라이언트들은 이를 건너뜁니다. `-f adb`는 반대로 이것만 다룹니다. Noir가 찾아낸 Android 딥링크, 인텐트 컴포넌트, 콘텐츠 프로바이더를 연결된 기기나 에뮬레이터에서 바로 실행할 수 있는 [Android Debug Bridge](https://developer.android.com/tools/adb) 명령으로 변환합니다.
+모바일 진입점은 HTTP 요청이 아니라 앱 URL이므로 위의 HTTP 클라이언트 형식은 이를 건너뜁니다. `-f adb`는 반대로 이것만 다룹니다. Noir가 찾아낸 Android 딥링크, 인텐트 컴포넌트, 콘텐츠 프로바이더를 연결된 기기나 에뮬레이터에서 바로 실행할 수 있는 [Android Debug Bridge](https://developer.android.com/tools/adb) 명령으로 변환합니다.
 
 `adb`는 Android 전용입니다. Android 진입점만 명령으로 만들고, 실행할 수 없는 나머지(HTTP 엔드포인트, iOS 스킴은 [`-f simctl`](#simctl-ios) 사용, 도메인만 선언하는 App Links)는 건너뜁니다. 건너뛴 종류마다 stderr에 경고가 한 줄씩 나오므로 stdout은 파이프로 넘기기 깔끔합니다.
 
@@ -113,7 +121,7 @@ adb shell am broadcast -n 'com.example.app/.BootReceiver'
 adb shell content query --uri 'content://com.example.app.provider'
 ```
 
-액션, 카테고리, 패키지는 매니페스트의 intent-filter에서 가져오므로 각 실행 명령이 선언된 필터와 일치합니다. 핸들러에서 찾은 인텐트 extra는 값이 빈 `--es` 문자열 extra로 출력되니 직접 채우세요(`--pvalue`는 여기에 적용되지 않습니다). 진입점을 어떻게 추출하는지는 [Mobile Apps](../../supported/mobile/) 문서를 참고하세요.
+액션, 카테고리, 패키지는 매니페스트의 intent-filter에서 가져오므로 각 실행 명령이 선언된 필터와 일치합니다. 핸들러에서 찾은 인텐트 extra는 값이 빈 `--es` 문자열 extra로 출력되니 직접 채우세요(`--pvalue`는 여기에 적용되지 않습니다). 진입점을 어떻게 추출하는지는 [모바일 앱](../../supported/mobile/) 문서를 참고하세요.
 
 ## simctl (iOS)
 
@@ -129,11 +137,11 @@ xcrun simctl openurl booted 'myapp://host/path?token='
 xcrun simctl openurl booted 'https://app.example.com/buy'
 ```
 
-`-f adb`와 마찬가지로 `simctl`도 플랫폼 전용입니다. iOS 진입점만 명령으로 만들고 열 수 없는 나머지(HTTP 엔드포인트, Android 진입점은 `-f adb` 사용, 도메인만 선언하는 App Links)는 건너뛰며, 종류별로 한 줄씩 stderr 경고로 알려줍니다.
+`-f adb`와 마찬가지로 `simctl`도 플랫폼 전용입니다. iOS 진입점만 명령으로 만들고 열 수 없는 나머지(HTTP 엔드포인트, Android 진입점은 `-f adb` 사용, 도메인만 선언하는 App Links)는 건너뜁니다. 건너뛴 종류마다 stderr에 경고가 한 줄씩 나옵니다.
 
 ## 파라미터 값 채우기
 
-Noir는 기본적으로 파라미터 값을 비워두기 때문에(`x-api-key=`, `query=` …) 생성된 명령은 템플릿처럼 동작합니다. 그대로 실행할 스크립트나 퍼징 시드가 필요하면 `--pvalue`로 값을 채우세요.
+Noir는 기본적으로 파라미터 값을 비워두기 때문에(`x-api-key=`, `query=` …) 생성된 명령을 템플릿처럼 쓸 수 있습니다. 그대로 실행할 스크립트나 퍼징 시드가 필요하면 `--pvalue`로 값을 채우세요.
 
 ```
 --pvalue TYPE=VALUE     # 반복 가능
@@ -143,8 +151,8 @@ Noir는 기본적으로 파라미터 값을 비워두기 때문에(`x-api-key=`,
 |-------------------|-------------------------------------------------------|
 | `any` (값에 `=`가 없으면 `TYPE=` 생략 가능) | `file`, `xml`을 뺀 모든 파라미터 타입 |
 | `query`           | 쿼리 스트링                                            |
-| `form`            | 폼 바디 (`application/x-www-form-urlencoded`)          |
-| `json`            | JSON 바디                                              |
+| `form`            | 폼 본문 (`application/x-www-form-urlencoded`)          |
+| `json`            | JSON 본문                                              |
 | `header`          | 요청 헤더                                              |
 | `cookie`          | 쿠키                                                  |
 | `path`            | 경로 파라미터                                          |

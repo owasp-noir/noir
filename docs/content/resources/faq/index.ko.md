@@ -21,7 +21,7 @@ faq_answers = [
   "기여 가이드를 읽고 시작하세요.",
   "네, MIT 라이선스의 무료 오픈 소스입니다. 상업적 용도로도 자유롭게 사용할 수 있습니다.",
   "ZAP, Burp Suite, Caido 등과 통합할 수 있습니다. DAST 파이프라인 가이드를 참조하세요.",
-  "JSON, YAML, OpenAPI 명세, cURL 등 여러 출력 형식을 지원합니다. 출력 형식 섹션을 참조하세요.",
+  "JSON, YAML, OpenAPI 명세, cURL 등 여러 형식으로 내보낼 수 있습니다. 출력 형식 섹션을 참조하세요.",
   "GitHub 이슈를 열어 보고해 주세요."
 ]
 
@@ -57,7 +57,7 @@ ZAP, Burp Suite, Caido 등과 통합할 수 있습니다. [DAST 파이프라인]
 
 ### 결과를 어떻게 내보내나요?
 
-JSON, YAML, OpenAPI 명세, cURL 등 여러 출력 형식을 지원합니다. [출력 형식](@/usage/output_formats/_index.ko.md) 섹션을 참조하세요.
+JSON, YAML, OpenAPI 명세, cURL 등 여러 형식으로 내보낼 수 있습니다. [출력 형식](@/usage/output_formats/_index.ko.md) 섹션을 참조하세요.
 
 ### 버그 보고나 기능 요청은 어떻게 하나요?
 

@@ -26,18 +26,18 @@ Noir의 기본 규칙은 코드에 하드코딩된 시크릿(API 키, 토큰, �
 
 ## 자동 초기화와 업데이트 확인
 
-`-P`를 켜면 Noir는 다음을 합니다:
+`-P`를 켜면 Noir는 다음을 합니다.
 1. 첫 실행 시 [noir-passive-rules](https://github.com/owasp-noir/noir-passive-rules) 저장소를 `~/.config/noir/passive_rules/`로 클론
 2. 로컬과 원격 저장소를 비교해 업데이트 확인
 3. 규칙이 오래된 경우 알림
-4. 설정했다면 자동 업데이트
+4. 자동 업데이트를 켰다면 규칙 업데이트
 
 저장소: https://github.com/owasp-noir/noir-passive-rules
 
 ## CLI 옵션
 
 - `--passive-scan-auto-update`: 시작 시 규칙 자동 업데이트
-- `--passive-scan-no-update-check`: 업데이트 확인 건너뜀 (에어갭 환경에 유용). 첫 실행 시의 규칙 자동 초기화도 함께 건너뛰므로, 규칙을 한 번도 내려받지 않은 환경에서는 `~/.config/noir/passive_rules/`에 규칙을 직접 넣거나 `--passive-scan-path`를 사용하세요.
+- `--passive-scan-no-update-check`: 업데이트 확인을 건너뜀(에어갭 환경에 유용). 첫 실행 시의 규칙 자동 초기화도 함께 건너뛰므로, 규칙을 한 번도 내려받지 않은 환경에서는 `~/.config/noir/passive_rules/`에 규칙을 직접 넣거나 `--passive-scan-path`를 사용하세요.
 
 두 옵션은 `~/.config/noir/config.yaml`에서도 설정할 수 있습니다(`passive_scan_auto_update`, `passive_scan_no_update_check`).
 
@@ -67,7 +67,7 @@ noir scan /app -P --passive-scan-no-update-check
   └── Loaded 40 valid passive scan rules.
 ```
 
-업데이트가 가능한 경우:
+업데이트가 있는 경우:
 ```
 ⚬ Passive scanner enabled.
 ▲ Passive rules are 3 commits behind the latest version.
@@ -76,7 +76,7 @@ noir scan /app -P --passive-scan-no-update-check
   ├── Or run 'noir scan . -P --passive-scan-auto-update' to auto-update on startup
 ```
 
-자동 업데이트 활성화 시:
+자동 업데이트를 켠 경우:
 ```
 ⚬ Passive scanner enabled.
 ⚬ Updating passive rules (3 commits behind)...

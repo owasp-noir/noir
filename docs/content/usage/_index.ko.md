@@ -12,7 +12,7 @@ toc = true
 
 Noir를 실행하고 개별 기능을 설정하는 데 필요한 레퍼런스입니다.
 
-## 주요 영역
+## 구성
 
 *   **[CLI 명령어](cli_commands/)**: v1 서브커맨드(`scan`, `list`, `cache`, `config`, `rules`, `completion`, `version`, `help`) 레퍼런스. v0 호환 메모 포함.
 *   **[지원 기술](supported/)**: Noir가 분석할 수 있는 프로그래밍 언어, 프레임워크, 명세.

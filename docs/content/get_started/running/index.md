@@ -32,6 +32,8 @@ noir scan .
 
 Noir reads the source files, detects which frameworks are in use, and prints every endpoint it finds: methods, paths, parameters, headers, and cookies.
 
+The screenshot also passes `-P` (passive scan for secrets) and `-T` (all taggers), both listed in the [Quick Reference](#quick-reference) below. Without them you get the endpoints only, with no tags or findings.
+
 > **v0 compatibility:** the v0 form `noir -b ./app` still works
 > without changes. The router falls back to `scan` for any
 > invocation that starts with a flag.
@@ -54,7 +56,7 @@ If your framework isn't listed, you can still use [AI-powered analysis](@/get_st
 
 ## Try Different Output Formats
 
-The default output is plain text meant for reading in a terminal. Depending on your workflow, you might want something else:
+The default output is plain text for reading in a terminal. Use `-f` to get something a script or another tool can read:
 
 ```bash
 # Machine-readable JSON for scripting and pipelines
@@ -112,7 +114,7 @@ noir scan . --exclude-techs express
 noir scan . --exclude-path "*_test.go,vendor/*,**/node_modules/**"
 ```
 
-`--only-techs` and `--techs` look similar but do different things: `--only-techs` restricts which tech detectors run (faster scan, only those detectors fire), while `--techs` *adds* techs to the analyzer set on top of auto-detection (so their analyzers still run even if detection missed them). Combine both when you want "only these techs, and run them even if undetected".
+`--only-techs` and `--techs` look similar but do different things. `--only-techs` limits which detectors run, so the scan is faster and only those techs can be found. `--techs` *adds* techs on top of auto-detection, so their analyzers run even if detection missed them. Use both for "only these techs, and run them even if they weren't detected".
 
 ## Enrich the Output
 
@@ -133,8 +135,12 @@ noir scan . --ai-context guards,sinks
 Filtering keeps related evidence together. When you select `signals`, each
 signal keeps the buckets it was derived from (for example, an `ssrf` signal
 keeps its `sinks` and `sources`). When you select only other buckets, Noir
-keeps just the signals that depend on them. The `priority_review` roll-up
+keeps just the signals that depend on them, plus those signals' own evidence,
+so `guards,sinks` can also print `sources`. The `priority_review` roll-up
 appears only when you select `signals`.
+
+`--ai-context` also turns on `--include callee` and all taggers (or only the
+ones you chose with `--use-taggers`), because the context is built from them. Expect `callees` and `tags` in the output as well.
 
 See [Callee Coverage](@/usage/supported/callee_coverage/index.md) and [AI Context](@/usage/supported/ai_context_coverage/index.md) for the data shape and per-framework support.
 
@@ -151,7 +157,7 @@ See [Callee Coverage](@/usage/supported/callee_coverage/index.md) and [AI Contex
 | `--ai-context [LIST]` | Attach AI review context (`guards`, `callee`, `sources`, `sinks`, `validators`, `signals`; or `all`) |
 | `--pvalue TYPE=VAL`   | Fill parameter values in output (TYPE: any / header / cookie / query / form / json / path) |
 | `--only-techs`        | Run only these tech detectors (skip the rest) |
-| `--techs`             | Add these techs to the analyzer set (in addition to auto-detected ones) |
+| `-t, --techs`         | Add these techs to the analyzer set (in addition to auto-detected ones) |
 | `--exclude-techs`     | Drop these techs from the results after detection |
 | `--exclude-path`      | Skip files matching a comma-separated glob list. A pattern with `/` matches the path from the scan base, one without matches a file or directory name; a matched directory skips everything under it |
 | `--status-codes`      | Probe each endpoint and attach the observed HTTP status code |

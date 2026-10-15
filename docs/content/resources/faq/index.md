@@ -21,7 +21,7 @@ faq_answers = [
   "Read the Contributing Guide to get started.",
   "Yes, Noir is free and open-source under the MIT license. You can use it freely for commercial purposes.",
   "You can integrate with ZAP, Burp Suite, Caido, and more. See the Pipeline for DAST guide.",
-  "Noir supports JSON, YAML, OpenAPI Specification, cURL, and many more formats. See the Output Formats section.",
+  "Noir exports JSON, YAML, OpenAPI Specification, cURL, and many other formats. See the Output Formats section.",
   "Open a GitHub Issue to report bugs or request features."
 ]
 
@@ -57,7 +57,7 @@ You can integrate with ZAP, Burp Suite, Caido, and more. See the [Pipeline for D
 
 ### How do I export results?
 
-Noir supports JSON, YAML, OpenAPI Specification, cURL, and many more formats. See the [Output Formats](@/usage/output_formats/_index.md) section.
+Noir exports JSON, YAML, OpenAPI Specification, cURL, and many other formats. See the [Output Formats](@/usage/output_formats/_index.md) section.
 
 ### How do I report bugs or request features?
 

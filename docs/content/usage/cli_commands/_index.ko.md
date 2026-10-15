@@ -39,7 +39,7 @@ noir <command> [arguments] [flags]
 ## Scan
 
 `noir scan`은 하나 이상의 코드베이스를 훑으면서 탐지된 기술마다
-분석기를 실행합니다. 필요하면 패시브 스캔도 함께 돌리고, 지정한 포맷으로
+분석기를 실행합니다. 필요하면 패시브 스캔도 함께 돌리고, 지정한 출력 형식으로
 엔드포인트를 출력합니다.
 
 ```bash
@@ -52,7 +52,7 @@ noir scan ./api ./worker ./jobs
 # JSON으로 파일 저장 + 패시브 스캔
 noir scan ./app -P -f json -o endpoints.json
 
-# 전체 AI 컨텍스트 + path/techs/callee enrichment
+# AI 컨텍스트 전체 + plain 출력에 path/techs/callee 포함
 noir scan ./app --include path,techs,callee --ai-context
 ```
 
@@ -71,7 +71,7 @@ noir scan ./app --include path,techs,callee --ai-context
 
 | 섹션 | 플래그 | 자세히 |
 |------|--------|--------|
-| BASE | `-b/--base-path`, `-u/--url` | [Noir 실행하기](@/get_started/running/index.ko.md) |
+| BASE | `-b/--base-path`, `-u/--url` | [첫 번째 스캔](@/get_started/running/index.ko.md) |
 | OUTPUT | `-f/--format`, `-o/--output`, `--pvalue`, `--status-codes`, `--exclude-codes`, `--exclude-path`, `--include`, `--ai-context`, `--no-color`, `--no-spinner`, `--no-log`, `--strict` | [출력 형식](@/usage/output_formats/_index.ko.md), [AI 컨텍스트 커버리지](@/usage/supported/ai_context_coverage/index.ko.md) |
 | PASSIVE SCAN | `-P/--passive-scan`, `--passive-scan-path`, `--passive-scan-severity`, `--passive-scan-auto-update`, `--passive-scan-no-update-check` | [패시브 스캔](@/usage/passive_scan/_index.ko.md) |
 | TAGGER | `-T/--use-all-taggers`, `--use-taggers` | [태거](@/usage/more_features/tagger/index.ko.md) |
@@ -79,7 +79,7 @@ noir scan ./app --include path,techs,callee --ai-context
 | EXPORT | `--export-es`, `--export-opensearch`, `--export-webhook` | [Deliver](@/usage/more_features/deliver/index.ko.md) |
 | AI Integration | `--ai-provider`, `--ai-model`, `--ai-key`, `--ai-key-file`, `--ai-temperature`, `--ai-seed`, `--ai-agent`, `--ai-agent-max-steps`, `--ai-dry-run`, `--ai-include-sensitive`, `--ai-no-optimize`, `--ai-native-tools-allowlist`, `--ai-scope`, `--ai-max-token`, `--ai-stream`, `--ai-max-requests` | [AI 제공업체](@/usage/ai_providers/_index.ko.md), [AI 기반 분석](@/get_started/ai_power/index.ko.md) |
 | DIFF | `--diff-path`, `--diff-ref`, `--fail-on` | [Diff](@/usage/more_features/diff/index.ko.md) |
-| TECHNOLOGIES | `-t/--techs`, `--only-techs`, `--exclude-techs` | [기술 명령어](@/usage/supported/tech-commands/index.ko.md) |
+| TECHNOLOGIES | `-t/--techs`, `--only-techs`, `--exclude-techs` | [기술 범위 관리](@/usage/supported/tech-commands/index.ko.md) |
 | CONFIG | `--config-file`, `--concurrency` | [설정 파일](@/usage/configurations/configuration_file/index.ko.md) |
 | CACHE | `--cache-disable`, `--cache-clear` | 아래 [Cache](#cache) |
 | DEBUG | `-d/--debug`, `--verbose`, `-h/--help` | `--verbose`는 `--include path`와 `--use-all-taggers`도 함께 켭니다 |
@@ -121,7 +121,7 @@ v0의 deliver 플래그는 이제 `noir scan -h`에서 두 섹션으로 나뉩�
 
 ### v1.0에서 제거된 항목
 
-`--ollama`와 `--ollama-model`은 여러 릴리스 동안 deprecated 상태였다가
+`--ollama`와 `--ollama-model`은 여러 릴리스 동안 지원 중단 상태였다가
 v1.0에서 제거되었습니다. 대신 `--ai-provider ollama [--ai-model NAME]`을
 쓰세요.
 
@@ -135,7 +135,7 @@ noir scan ./app --ai-provider ollama --ai-model llama3
 
 ```bash
 noir list techs       # 지원하는 언어, 프레임워크, 스펙
-noir list taggers     # 빌트인 및 프레임워크별 태거
+noir list taggers     # 기본 태거와 프레임워크별 태거
 noir list formats     # 지원하는 모든 출력 형식
 noir list techs -f json   # 기계가 읽는 형식. -f는 text(기본), json, yaml
 ```
@@ -159,10 +159,10 @@ noir cache purge 30   # 30일보다 오래된 항목 삭제
 `noir config`는 사용자 수준의 YAML 설정을 관리합니다.
 
 ```bash
-noir config show      # 활성 파일 출력
-noir config edit      # $VISUAL / $EDITOR 로 열기
+noir config show      # 현재 설정 파일 출력
+noir config edit      # $VISUAL / $EDITOR로 열기
 noir config init      # 기본 설정 생성 (여러 번 실행해도 안전)
-noir config path      # 해석된 경로 출력
+noir config path      # 최종 경로 출력
 ```
 
 설정 디렉터리는 `NOIR_HOME`이 있으면 그 값을 씁니다. 없으면 Unix에서는
@@ -252,7 +252,7 @@ v0의 호출 방식은 v1.x에서 수정 없이 그대로 동작합니다.
 
 ```bash
 # 세 형태 모두 같은 스캔 결과를 냅니다
-noir -b ./app                # v0 형식 (scan 으로 라우팅)
+noir -b ./app                # v0 형식 (scan으로 라우팅)
 noir scan ./app              # v1 형식
 noir scan -b ./app           # v1 동사 + v0 스타일 플래그
 ```
@@ -261,5 +261,5 @@ noir scan -b ./app           # v1 동사 + v0 스타일 플래그
 실행합니다. CI 파이프라인, GitHub Actions, Dockerfile entrypoint, 셸
 alias를 고치지 않아도 됩니다.
 
-deprecation 경고는 이후 v1.x 릴리스에서 추가됩니다. 동사 형식이
+지원 중단 경고는 이후 v1.x 릴리스에서 추가됩니다. 동사 형식이
 필수가 되는 것은 v2.x부터입니다.

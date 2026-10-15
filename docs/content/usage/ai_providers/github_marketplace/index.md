@@ -20,5 +20,5 @@ Use one of Noir's supported providers instead:
 *   [ACP agents](../acp/): connect Noir to Codex, Gemini, Claude, or another ACP-compatible agent.
 
 {% alert_warning() %}
-The `github` provider is retained in Noir for compatibility with older configurations, but GitHub Models itself is no longer a working service. Use a supported provider from the list above.
+Noir keeps the github provider only so older configurations still load. The service behind it is gone.
 {% end %}

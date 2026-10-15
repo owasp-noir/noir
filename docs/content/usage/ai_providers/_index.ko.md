@@ -1,6 +1,6 @@
 +++
 title = "AI 제공업체"
-description = "OpenAI, Azure AI, OpenRouter와 Ollama, LM Studio, ACP 같은 지원되는 AI 제공업체에 Noir를 연결하는 방법을 안내합니다."
+description = "OpenAI, Azure AI, OpenRouter와 로컬·ACP 런타임 같은 AI 제공업체에 Noir를 연결하는 방법입니다."
 weight = 3
 sort_by = "weight"
 

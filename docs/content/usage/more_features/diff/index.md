@@ -65,7 +65,7 @@ GET /profile
 
 - **Params** are compared by name and where they are sent (query, header, cookie, path, form, JSON body). A param that only changed its example or default value is not a change, since a client sends nothing different.
 - **Tags** are compared by name. Tags come from taggers, so run the diff with `-T` (or `--use-taggers`) to see them.
-- **`auth` removed**: when an endpoint had the `auth` tag before and doesn't now, the report puts `! auth tag removed` first. This is the change to look at hardest in a review: a route that used to require login and no longer does. The auth taggers only run with `-T` or `--use-taggers`, so enable one of them to get this line.
+- **`auth` removed**: when an endpoint had the `auth` tag before and doesn't now, the report puts `! auth tag removed` first. Check this one first in a review: it means a route that used to require login and no longer does. The auth taggers only run with `-T` or `--use-taggers`, so enable one of them to get this line.
 
 ### JSON and YAML Output
 
@@ -99,7 +99,7 @@ Use `-f json` or `-f yaml` for structured output. It has three endpoint lists (`
 
 `-f sarif` reports the new attack surface for code scanning: added endpoints and new params as notes, lost auth as a warning. Removed endpoints are left out because they have no line in the reviewed code to point at. The other formats still list them.
 
-TOML output is also supported. Any other `-f` falls back to the text diff with a warning.
+`-f toml` works too. Any other `-f` falls back to the text diff with a warning.
 
 ## Failing CI on a Diff
 

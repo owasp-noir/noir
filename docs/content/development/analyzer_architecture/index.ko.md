@@ -1,6 +1,6 @@
 +++
 title = "분석기 아키텍처"
-description = "Noir의 detector, language engine, route extractor, framework adapter가 어떻게 맞물리는지, 그리고 새 분석기를 어떻게 추가하는지."
+description = "Noir의 detector, language engine, route extractor, framework adapter가 맞물리는 방식과 새 분석기를 추가하는 방법."
 weight = 5
 sort_by = "weight"
 
@@ -25,9 +25,9 @@ Noir는 프로젝트를 두 단계로 스캔합니다. 먼저 **detector**가 �
 
 Detector는 매니페스트 파일(`go.mod`, `package.json`, `Gemfile` 등)을 가볍게 매칭해 boolean을 반환합니다. 무거운 작업은 analyzer가 맡습니다. 소스 트리를 돌고, 라우트 선언을 파싱하고, 파라미터를 추출합니다.
 
-## 3-layer 분석기
+## 3계층 분석기
 
-모든 분석기는 세 레이어로 이뤄집니다. 레이어는 분리해서 유지하세요. framework adapter는 파일을 직접 열거나 파싱을 다시 구현하면 안 됩니다.
+모든 분석기는 세 계층으로 이뤄집니다. 계층은 분리해서 유지하세요. framework adapter는 파일을 직접 열거나 파싱을 다시 구현하면 안 됩니다.
 
 | Layer | 위치 | 책임 |
 |---|---|---|
@@ -44,10 +44,10 @@ Detector는 매니페스트 파일(`go.mod`, `package.json`, `Gemfile` 등)을 �
 
 ## 현재 커버리지
 
-- **Language engines** (`engines/`): Specification, JavaScript/TypeScript, Go, Python, PHP, Rust, Ruby, Crystal, CFML, Scala, Swift, Perl, C, Elixir.
+- **언어 엔진** (`engines/`): Specification, JavaScript/TypeScript, Go, Python, PHP, Rust, Ruby, Crystal, CFML, Scala, Swift, Perl, C, Elixir.
 - **`FileScanEngine`**은 그중 8개(C, Crystal, Elixir, Perl, PHP, Rust, Scala, Swift) 아래에 있는 공용 베이스입니다. 예전에 엔진마다 복사본을 들고 있던 `analyze` + `parallel_file_scan` 골격을 여기서 관리합니다.
 - `java_engine.cr`과 `kotlin_engine.cr`은 파일 이름과 달리 엔진이 **아닙니다**. 상속하는 분석기가 없습니다. `KotlinEngine`은 공용 `self.test_path?`만 제공합니다. `JavaEngine`은 JVM 어댑터가 공용 헬퍼(JAX-RS 인덱스, Spring/Micronaut/Quarkus 설정 리더)를 쓰려고 `include`하는 mixin이기도 합니다. `PlayRouteSupport`와 `CliEndpointSupport`도 같은 종류의 mixin입니다.
-- **Route extractors** (`miniparsers/`):
+- **라우트 추출기** (`miniparsers/`):
   - JavaScript: `js_route_extractor.cr`. Express, Fastify, Hono, Koa, Restify는 `JSRouteExtractor.extract_routes`에서 라우트를 받습니다. NestJS, Next.js, Nuxt 등은 헬퍼만 씁니다.
   - Go, Java, Kotlin, Python용 Tree-sitter 추출기. Go와 Kotlin은 umbrella `require` 뒤에 파트 파일을 둔 디렉터리 형태입니다(`go_route_extractor_ts/`, `kotlin_route_extractor_ts/`).
   - 프레임워크 전용 Tree-sitter 추출기: AdonisJS, Elysia, Hapi, http4k, JAX-RS, Micronaut, Ktor 등.
@@ -55,7 +55,7 @@ Detector는 매니페스트 파일(`go.mod`, `package.json`, `Gemfile` 등)을 �
 
 ## 엔진별 순회 헬퍼
 
-모든 엔진이 공유하는 순회 API는 하나가 아닙니다. 어댑터를 쓰기 전에 해당 언어 엔진이 무엇을 제공하는지 확인하세요.
+모든 엔진에 공통인 순회 API는 없습니다. 어댑터를 쓰기 전에 해당 언어 엔진이 무엇을 제공하는지 확인하세요.
 
 - **`FileScanEngine` 기반 엔진** (C, Crystal, Elixir, Perl, PHP, Rust, Scala, Swift): 엔진이 `scan_target_files`로 후보 목록을, `scan_accepts?`로 경로별 거부(선택)를 제공합니다. 어댑터는 `analyze_file`을 구현합니다(아래 Shape A).
 - **JavaScript, Ruby 엔진**: `parallel_file_scan`을 직접 정의하고 `scan_target_files`는 없습니다. 어댑터는 `analyze`를 오버라이드하고 `parallel_file_scan`을 호출하거나, 파일별 결과를 입력 순서대로 받으려면 `get_files_by_extensions(...)`에 `ordered_scan_files`를 씁니다(아래 Shape B).
@@ -174,13 +174,13 @@ module Analyzer::Go
 end
 ```
 
-핵심:
+이 예제에서 가져갈 점:
 
 - **언어 엔진을 상속하세요** (여기서는 `GoEngine`). `collect_package_groups_ts`, `ts_groups_for_directory`, `add_param_to_endpoint`, `resolve_public_dirs`를 그대로 쓸 수 있습니다.
 - **`analyzer_for`로 tech를 선언하세요**. 이 한 줄이 등록의 전부입니다(3단계 참고). 빠뜨리면 컴파일 에러가 납니다.
 - **라우트 파싱은 공용 extractor에 맡기세요** (`Noir::TreeSitterGoRouteExtractor`). 프레임워크 라우팅이 다르면 직접 다시 파싱하지 말고 extractor 인자(예: `handle_method:`)나 전용 진입점으로 조정하세요(Mux, GoZero 참고).
 - **엔진의 순회 헬퍼를 쓰세요** (Go는 `ordered_parallel_analyze(get_files_by_extension(".go"))`, 다른 언어는 `ordered_scan_files`, `parallel_file_scan`, `analyze_file`). 채널과 worker pool을 다시 만들지 마세요.
-- **프레임워크가 실제로 라우팅하는 verb만** 메서드 테이블에 넣으세요. 특히 `QUERY`(RFC 10008)는 업스트림이 명시적으로 지원할 때만 추가합니다. 추측으로 넣으면 프레임워크가 405로 응답할 엔드포인트를 보고하게 됩니다. 와일드카드(`ANY`/`ALL`/`*`) 라우트도 같습니다. 공용 `WILDCARD_HTTP_METHODS`(`src/utils/http_symbols.cr`)에도, 분석 시점에 `ANY`를 자체 테이블로 펼치는 분석기 로컬 목록에도 `QUERY`를 추가하지 마세요.
+- **프레임워크가 실제로 라우팅하는 verb만** 메서드 테이블에 넣으세요. 특히 `QUERY`(RFC 10008)는 업스트림이 명시적으로 지원할 때만 추가합니다. 추측으로 넣으면 프레임워크가 405로 응답할 엔드포인트를 보고합니다. 와일드카드(`ANY`/`ALL`/`*`) 라우트도 같습니다. 공용 `WILDCARD_HTTP_METHODS`(`src/utils/http_symbols.cr`)에도, 분석 시점에 `ANY`를 자체 테이블로 펼치는 분석기 로컬 목록에도 `QUERY`를 추가하지 마세요.
 
 ### 3. tech 메타데이터 선언
 
@@ -191,9 +191,9 @@ end
 ```crystal
 # src/techs/catalog/go/hertz.cr
 #
-# 디렉터리는 언어, 파일명은 분석기 파일명과 동일하고, 상수는 그 파일명을
-# 대문자화한 것입니다. `NoirTechs::TECHS` 는 `NoirTechs::Catalog` 아래 모든
-# 상수에서 매크로로 파생되므로 append 할 목록이 없고, 두 사람이 프레임워크를
+# 디렉터리는 언어, 파일명은 분석기 파일명과 같고, 상수는 그 파일명을
+# 대문자화한 것입니다. `NoirTechs::TECHS`는 `NoirTechs::Catalog` 아래 모든
+# 상수에서 매크로로 파생되므로 덧붙일 목록이 없고, 두 사람이 프레임워크를
 # 추가해도 같은 파일을 건드리지 않습니다.
 module NoirTechs::Catalog::Go
   HERTZ = {
@@ -208,8 +208,8 @@ module NoirTechs::Catalog::Go
         :static_path => false,
         :websocket   => false,
       },
-      # 선택 사항. 이 tech 가 지원하는 AI 컨텍스트 기능을 선언합니다.
-      # CALLEE_SUPPORTED_TECHS 와 AI_CONTEXT_GUARD_SUPPORTED_TECHS 는
+      # 선택 사항. 이 tech가 지원하는 AI 컨텍스트 기능을 선언합니다.
+      # CALLEE_SUPPORTED_TECHS와 AI_CONTEXT_GUARD_SUPPORTED_TECHS는
       # 손으로 나열하는 대신 이 플래그에서 파생됩니다.
       :context => { :callee => true, :guards => true },
     },
@@ -225,8 +225,8 @@ end
 
 ```
 spec/functional_test/fixtures/go/hertz/
-├── go.mod            # detector 가 매칭할 import 라인
-├── main.go           # 중요한 라우트/파라미터 패턴 커버
+├── go.mod            # detector가 매칭할 import 라인
+├── main.go           # 확인하려는 라우트/파라미터 패턴을 모두 넣음
 └── public/           # (옵션) static 파일 감지 테스트용
     └── index.html
 ```
@@ -295,9 +295,9 @@ require "./file_scan_engine"
 
 module Analyzer::Swift
   abstract class SwiftEngine < FileScanEngine
-    # 후보 파일. 모노레포 전체 `file_map` 을 걷는 대신 detector 가 만든
+    # 후보 파일. `file_map` 전체를 도는 대신 detector가 만든
     # 확장자 인덱스를 쓰세요. 등록된 일반 파일이므로 경로마다
-    # `File.exists?` / `File.directory?` 를 다시 볼 필요가 없습니다.
+    # `File.exists?` / `File.directory?`를 다시 볼 필요가 없습니다.
     protected def scan_target_files : Array(String)
       get_files_by_extension(".swift")
     end

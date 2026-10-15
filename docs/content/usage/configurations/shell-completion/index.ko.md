@@ -62,7 +62,7 @@ noir completion fish > ~/.config/fish/completions/noir.fish
 
 ## Elvish
 
-[Elvish](https://elv.sh)는 모듈 경로에서 완성 스크립트를 불러옵니다. 스크립트를 `noir.elv`로 저장하고 `rc.elv`에서 `use noir` 하세요.
+[Elvish](https://elv.sh)는 모듈 경로에서 완성 스크립트를 불러옵니다. 스크립트를 `noir.elv`로 저장하고 `rc.elv`에 `use noir`를 추가하세요.
 
 ```bash
 mkdir -p ~/.config/elvish/lib

@@ -1,12 +1,12 @@
 +++
 title = "GitHub Action"
-description = "GitHub Actions에서 OWASP Noir로 엔드포인트 탐지와 패시브 보안 점검을 수행합니다."
+description = "GitHub Actions에서 OWASP Noir로 엔드포인트를 찾고 패시브 보안 스캔을 돌립니다."
 weight = 6
 sort_by = "weight"
 
 +++
 
-CI에서 GitHub Actions로 OWASP Noir를 돌려 엔드포인트를 찾고, 원하면 패시브 보안 점검도 함께 할 수 있습니다.
+CI에서 GitHub Actions로 OWASP Noir를 돌려 엔드포인트를 찾고, 원하면 패시브 보안 스캔도 함께 돌릴 수 있습니다.
 
 ## 빠른 시작
 
@@ -45,8 +45,8 @@ jobs:
 | `output_file` | 결과를 파일로 저장 (`-o/--output`) | 아니오 | `` |
 | `techs` | 추가할 기술 지정 (`-t/--techs`) | 아니오 | `` |
 | `exclude_techs` | 제외할 기술 지정 (`--exclude-techs`) | 아니오 | `` |
-| `passive_scan` | 패시브 보안 점검 활성화 (`-P/--passive-scan`) | 아니오 | `false` |
-| `passive_scan_severity` | 패시브 점검 최소 심각도 (`critical`, `high`, `medium`, `low`) | 아니오 | `high` |
+| `passive_scan` | 패시브 보안 스캔 켜기 (`-P/--passive-scan`) | 아니오 | `false` |
+| `passive_scan_severity` | 패시브 스캔 최소 심각도 (`critical`, `high`, `medium`, `low`) | 아니오 | `high` |
 | `use_all_taggers` | 모든 태거 활성화 (`-T/--use-all-taggers`) | 아니오 | `false` |
 | `use_taggers` | 특정 태거만 활성화 (`--use-taggers`) | 아니오 | `` |
 | `include_path` | `plain` 출력에 소스 파일 경로 추가. JSON에는 항상 들어 있음 (`--include-path`) | 아니오 | `false` |
@@ -157,7 +157,7 @@ jobs:
 
 ### Pull Request 공격 표면 리뷰
 
-Pull request를 base 브랜치와 비교해 결과를 코멘트로 남기고, 인증이 빠진 라우트가 생기면 체크를 실패시킵니다.
+풀 리퀘스트를 기준 브랜치와 비교해 결과를 코멘트로 남기고, 인증이 빠진 라우트가 생기면 체크를 실패시킵니다.
 
 ~~~yaml
 name: Attack Surface Review
@@ -189,7 +189,7 @@ jobs:
         run: gh pr comment "${{ github.event.pull_request.number }}" --body-file noir-diff.md
 ~~~
 
-`actions/checkout`은 기본으로 커밋 하나만 가져옵니다. `diff_ref`가 체크아웃에 없으면 Action이 스캔 전에 그 리비전을 가져옵니다. diff가 `fail_on`에 걸리면 스텝은 종료 코드 `3`으로 실패하지만 리포트 파일은 그대로 쓰이므로, 위 코멘트 스텝은 `if: always()`로 실행됩니다. 코멘트 대신 코드 라인에 주석을 달고 싶다면 `format: 'sarif'`로 출력하고 `github/codeql-action/upload-sarif`로 업로드하세요.
+`actions/checkout`은 기본으로 커밋 하나만 가져옵니다. `diff_ref`가 체크아웃에 없으면 Action이 스캔 전에 그 리비전을 가져옵니다. diff가 `fail_on`에 걸리면 스텝은 종료 코드 `3`으로 실패하지만 리포트 파일은 그대로 쓰이므로, 위 코멘트 스텝은 `if: always()`로 실행됩니다. 코멘트 대신 코드 줄에 바로 표시하려면 `format: 'sarif'`로 출력하고 `github/codeql-action/upload-sarif`로 업로드하세요.
 
 ### 프레임워크별 스캔
 

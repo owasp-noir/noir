@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-Scan results can come out in whatever shape the next step needs: machine-readable for automation, human-readable for review. Pick a format with `-f`.
+Pick an output format with `-f`. Some formats are for scripts and other tools, others are for people to read.
 
 ## Choosing the Right Format
 

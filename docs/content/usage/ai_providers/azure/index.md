@@ -40,5 +40,5 @@ noir scan ./myapp \
 Noir ships an `azure` provider prefix that expands to `https://models.inference.ai.azure.com`.
 
 {% alert_warning() %}
-That shared endpoint has been retired: `models.inference.ai.azure.com` no longer resolves in DNS, so the bare `--ai-provider=azure` form cannot reach it. Foundry now gives each resource its own endpoint. Use the full URL shown above instead.
+That shared endpoint has been retired: models.inference.ai.azure.com no longer resolves in DNS, so the bare --ai-provider=azure form cannot reach it. Foundry now gives each resource its own endpoint. Use the full URL shown above instead.
 {% end %}

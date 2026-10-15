@@ -1,17 +1,17 @@
 +++
 title = "xAI와 함께 Noir 사용하기"
-description = "xAI Grok 모델을 Noir와 연결하여 코드 분석을 수행하는 방법입니다."
+description = "xAI Grok 모델을 Noir에 연결해 코드를 분석하는 방법입니다."
 weight = 5
 sort_by = "weight"
 
 +++
 
-[xAI](https://x.ai)의 Grok 모델을 사용하여 코드 분석 및 엔드포인트 탐지를 수행할 수 있습니다.
+[xAI](https://x.ai)의 Grok 모델로 코드를 분석하고 엔드포인트를 찾을 수 있습니다.
 
 ## 설정
 
-1.  **API 키 획득**: [xAI 웹사이트](https://x.ai/api)에서 API 키를 받으세요.
-2.  **모델 선택**: 사용할 모델을 선택하세요 (예: `grok-4.5`).
+1.  **API 키 발급**: [xAI 웹사이트](https://x.ai/api)에서 API 키를 받으세요.
+2.  **모델 선택**: 사용할 모델을 고르세요(예: `grok-4.5`).
 
 ## 사용 방법
 

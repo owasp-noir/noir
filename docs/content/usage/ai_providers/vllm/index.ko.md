@@ -1,6 +1,6 @@
 +++
 title = "vLLM과 함께 Noir 사용하기"
-description = "Noir를 vLLM과 통합하여 고성능 로컬 LLM 추론을 수행하는 방법입니다."
+description = "vLLM의 고성능 로컬 LLM 추론을 Noir에 연결하는 방법입니다."
 weight = 3
 sort_by = "weight"
 
