@@ -74,7 +74,7 @@ See all available formats with `noir list formats`, or in the [Output Formats](@
 
 ## Save Results to a File
 
-Instead of printing to the terminal, write the output to a file with `-o`:
+Save the output to a file with `-o`. The report still prints to the terminal as well:
 
 ```bash
 noir scan . -f json -o results.json
