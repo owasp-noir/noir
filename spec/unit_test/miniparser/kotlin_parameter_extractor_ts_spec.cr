@@ -410,15 +410,18 @@ describe Noir::TreeSitterKotlinParameterExtractor do
       ])
     end
 
-    it "treats nullable id fields with null defaults as server-managed" do
+    it "treats nullable id fields with null defaults on persisted types as server-managed" do
       dto = <<-KT
         package com.example
 
+        @Table("posts")
         data class Post(
             val id: String? = null,
             val title: String? = null,
             val content: String? = null
         )
+
+        data class SearchFilter(val id: Long? = null, val species: String? = null)
 
         data class ExplicitClientId(
             val id: Int?,
@@ -440,6 +443,8 @@ describe Noir::TreeSitterKotlinParameterExtractor do
       fields = Noir::TreeSitterKotlinParameterExtractor.extract_class_fields(dto)
       fields["Post"].select(&.server_managed?).map(&.name).should eq(["id"])
       fields["ExplicitClientId"].select(&.server_managed?).map(&.name).should eq([] of String)
+      # A plain request DTO / query filter keeps its client-supplied `id`.
+      fields["SearchFilter"].select(&.server_managed?).map(&.name).should eq([] of String)
 
       post_params = extract(handler, "C", "createPost", "POST", fields: fields)
       post_params.map { |p| {p.name, p.param_type} }.should eq([
@@ -616,14 +621,28 @@ describe Noir::TreeSitterKotlinParameterExtractor do
     it "appends params= constraints with verb-aware dispatch" do
       query_source = <<-KT
         class C {
-            @GetMapping("/x", params = ["api=v1", "!debug"])
+            @GetMapping("/x", params = ["api=v1", "!debug", "mode!=raw"])
             fun get(): String = ""
         }
         KT
+      # `!debug` demands absence, so it is no input; `mode!=raw` still names `mode`.
       query_params = extract(query_source, "C", "get", "GET")
       query_params.map { |p| {p.name, p.value, p.param_type} }.should eq([
         {"api", "v1", "query"},
-        {"debug", "", "query"},
+        {"mode", "", "query"},
+      ])
+
+      bound_source = <<-KT
+        class C {
+            @DeleteMapping("/x", params = ["ownerKey", "label"])
+            fun remove(@RequestParam("ownerKey") ownerKey: String, @RequestParam("label") label: String): String = ""
+        }
+        KT
+      # Already bound by @RequestParam: not re-emitted as form.
+      bound_params = extract(bound_source, "C", "remove", "DELETE")
+      bound_params.map { |p| {p.name, p.param_type} }.should eq([
+        {"ownerKey", "query"},
+        {"label", "query"},
       ])
 
       form_source = <<-KT

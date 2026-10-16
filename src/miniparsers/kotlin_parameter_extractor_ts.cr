@@ -381,7 +381,10 @@ module Noir
           next unless Noir::TreeSitter.node_type(member) == "function_declaration"
           method_name = function_name(member, source)
           next if method_name.empty?
-          result["#{class_name}##{method_name}"] ||= member
+          key = "#{class_name}##{method_name}"
+          # Overloads after the first keep their own `Class#name@row` entry.
+          key = "#{key}@#{Noir::TreeSitter.node_start_row(member)}" if result.has_key?(key)
+          result[key] = member
         end
       end
       index_orphan_functions_from(root, source, result)
@@ -597,22 +600,25 @@ module Noir
     # Returns `{kind, key_or_empty, value_node_or_nil}`.
     private def classify_value_argument(arg : LibTreeSitter::TSNode, source : String) : Tuple(Symbol, String, LibTreeSitter::TSNode?)
       key = ""
+      key_node : LibTreeSitter::TSNode? = nil
       value : LibTreeSitter::TSNode? = nil
-      named = false
       Noir::TreeSitter.each_named_child(arg) do |child|
         case Noir::TreeSitter.node_type(child)
         when "simple_identifier"
-          if named
+          if key_node
             value = child
           else
             key = Noir::TreeSitter.node_text(child, source)
-            named = true
+            key_node = child
           end
         else
           value = child if value.nil?
         end
       end
-      {named ? :keyword : :positional, key, value}
+      # A lone identifier is a positional constant (`@RequestHeader(TOKEN_HDR)`),
+      # not a key with its value missing.
+      return {:positional, "", key_node} if key_node && value.nil?
+      {key_node ? :keyword : :positional, key, value}
     end
 
     # Collect every literal string value reachable from `node`,
@@ -792,13 +798,13 @@ module Noir
       nil
     end
 
-    # True when a `property_declaration` carries a custom getter/setter —
-    # i.e. a computed property with no backing field, which must not be
-    # treated as a bindable request field.
+    # True when a `property_declaration` carries a custom getter/setter or
+    # a delegate (`by lazy { ... }`) — i.e. a computed property with no
+    # backing field, which must not be treated as a bindable request field.
     private def property_has_accessor?(member : LibTreeSitter::TSNode) : Bool
       Noir::TreeSitter.each_named_child(member) do |child|
         ty = Noir::TreeSitter.node_type(child)
-        return true if ty == "getter" || ty == "setter" || ty == "property_accessor"
+        return true if ty == "getter" || ty == "setter" || ty == "property_accessor" || ty == "property_delegate"
       end
       false
     end
@@ -839,11 +845,16 @@ module Noir
                                       class_text : String) : Bool
       text = Noir::TreeSitter.node_text(node, source)
       return true if text.match(/@(?:field:|get:|set:)?(?:[A-Za-z_][A-Za-z0-9_]*\.)*(?:Id|GeneratedValue|CreatedDate|LastModifiedDate|ReadOnlyProperty|JsonIgnore)\b/)
-      return true if nullable_default_id_field?(name, text, init)
+      return true if nullable_default_id_field?(name, text, init) && class_text.matches?(PERSISTED_TYPE_RE)
       return true if nullable_validated_dto_id_field?(name, text, class_name, class_text)
 
       audit_field?(name) && (init == "null" || !!text.match(/=\s*null\b/))
     end
+
+    # Spring Data JDBC/R2DBC/Mongo take a property named `id` as the
+    # identifier without `@Id`, but only on a persisted type. On a plain
+    # request DTO or query filter, `val id: Long? = null` is client input.
+    PERSISTED_TYPE_RE = /@(?:[A-Za-z_][A-Za-z0-9_]*\.)*(?:Table|Entity|Document|Node)\b/
 
     private def nullable_default_id_field?(name : String, text : String, init : String) : Bool
       name == "id" && (init == "null" || !!text.match(/=\s*null\b/)) &&
@@ -1038,12 +1049,16 @@ module Noir
           next unless Noir::TreeSitter.node_type(arg) == "value_argument"
           kind, key, value = classify_value_argument(arg, source)
           next unless value
-          if kind == :positional
+          if kind == :positional || key == "value" || key == "name"
+            # An unresolved bare constant names nothing on the wire; keep
+            # the argument name rather than emitting the identifier text.
+            if Noir::TreeSitter.node_type(value) == "simple_identifier"
+              ident = Noir::TreeSitter.node_text(value, source)
+              next unless local_string_constants.has_key?(ident) || string_constants.has_key?(ident)
+            end
             parameter_name = resolve_string_or_const(value, source, string_constants, local_string_constants)
           else
             case key
-            when "value", "name"
-              parameter_name = resolve_string_or_const(value, source, string_constants, local_string_constants)
             when "defaultValue"
               if Noir::TreeSitter.node_type(value) == "string_literal"
                 default_value = decode_string_literal(value, source)
@@ -1082,6 +1097,10 @@ module Noir
             expanded_default = default_value || field.literal_default
             sink << param_from_field(field, expanded_default, effective_format)
           end
+        elsif ann_kind == :body
+          # A body that is no known DTO (`List<Long>`, `ByteArray`, a
+          # library type) is still one request input.
+          sink << Param.new(parameter_name, default_value || "", effective_format)
         end
       end
 
@@ -1297,13 +1316,16 @@ module Noir
           # one format (mirrors the legacy `||=` quirk).
           format = QUERY_VERB_PARAMS.includes?(verb.upcase) ? "query" : "form"
           string_values_in(value, source, string_constants, local_string_constants).each do |raw|
-            name, default = split_constraint(raw)
-            next if name.empty?
+            next unless pair = split_constraint(raw)
+            name, default = pair
+            # Already bound by a `@RequestParam` of the same name.
+            next if name.empty? || sink.any? { |param| param.name == name }
             sink << Param.new(name, default, format)
           end
         when "headers"
           string_values_in(value, source, string_constants, local_string_constants).each do |raw|
-            name, default = split_constraint(raw)
+            next unless pair = split_constraint(raw)
+            name, default = pair
             next if name.empty?
             sink << Param.new(name, default, "header")
           end
@@ -1311,13 +1333,15 @@ module Noir
       end
     end
 
-    # `"name=value"` → `{"name", "value"}`. `"name"` (no `=`) →
-    # `{"name", ""}`. Trims leading `!` (Spring negation marker).
-    private def split_constraint(raw : String) : Tuple(String, String)
-      str = raw.starts_with?("!") ? raw[1..] : raw
-      idx = str.index('=')
-      return {str, ""} if idx.nil?
-      {str[0, idx], str[(idx + 1)..]}
+    # `"name=value"` → `{"name", "value"}`. `"name"` and `"name!=value"`
+    # → `{"name", ""}`. A negated `"!name"` demands the input's absence,
+    # so it names nothing to send: nil (matches the Java extractor).
+    private def split_constraint(raw : String) : Tuple(String, String)?
+      return if raw.starts_with?('!')
+      idx = raw.index('=')
+      return {raw, ""} if idx.nil?
+      return {raw[0, idx - 1], ""} if idx > 0 && raw[idx - 1] == '!'
+      {raw[0, idx], raw[(idx + 1)..]}
     end
   end
 

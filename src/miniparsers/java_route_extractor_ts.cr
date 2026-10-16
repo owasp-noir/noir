@@ -215,6 +215,7 @@ module Noir
           end
         end
         imported = seed_static_imports(source, project_constants, constants)
+        seed_inherited_constants(root, source, project_constants, constants)
       end
       collect_string_constants(root, source, package_name(root, source), [] of String, constants, imported)
       constants
@@ -278,6 +279,69 @@ module Noir
         end
       end
       imported
+    end
+
+    SINGLE_IMPORT_RE = /^\s*import\s+([\w$.]+)\.([\w$]+)\s*;/m
+
+    # A class reads the constants of the interfaces it implements (and the
+    # class it extends) unqualified: `class C implements Spec` spells
+    # `Spec.HDR` as `HDR`. Seed them as `C.HDR`, which
+    # `resolve_constant_reference` tries before the bare name. One level of
+    # supertypes only; the file's own `C.HDR` declarations still overwrite.
+    private def seed_inherited_constants(root : LibTreeSitter::TSNode,
+                                         source : String,
+                                         project_constants : Hash(String, String),
+                                         constants : Hash(String, String)) : Nil
+      return unless source.includes?("implements") || source.includes?("extends")
+      table = project_constants.as?(ProjectConstants) || ProjectConstants.new.merge!(project_constants)
+      pkg = package_name(root, source)
+      imports = Hash(String, String).new
+      source.scan(SINGLE_IMPORT_RE) { |match| imports[match[2]] = "#{match[1]}.#{match[2]}" }
+      seed_inherited_constants_in(root, source, table, pkg, imports, constants)
+    end
+
+    private def seed_inherited_constants_in(node : LibTreeSitter::TSNode,
+                                            source : String,
+                                            table : ProjectConstants,
+                                            pkg : String,
+                                            imports : Hash(String, String),
+                                            constants : Hash(String, String),
+                                            depth : Int32 = 0) : Nil
+      return if depth > Noir::TreeSitter::MAX_AST_DEPTH
+      Noir::TreeSitter.each_named_child(node) do |child|
+        case Noir::TreeSitter.node_type(child)
+        when "class_declaration", "interface_declaration"
+          class_name = class_simple_name(child, source)
+          Noir::TreeSitter.each_named_child(child) do |clause|
+            case Noir::TreeSitter.node_type(clause)
+            when "superclass", "super_interfaces", "extends_interfaces"
+              next if class_name.empty?
+              each_supertype_name(clause, source) do |super_name|
+                owner = imports[super_name]? || (super_name.includes?('.') || pkg.empty? ? super_name : "#{pkg}.#{super_name}")
+                table.constants_of(owner).try &.each do |bare, value|
+                  constants["#{class_name}.#{bare}"] ||= value
+                end
+              end
+            when "class_body", "interface_body"
+              seed_inherited_constants_in(clause, source, table, pkg, imports, constants, depth + 1)
+            end
+          end
+        end
+      end
+    end
+
+    # Type names in an `extends`/`implements` clause, without descending
+    # into generic arguments (`implements Spec<Dto>` yields `Spec` only).
+    private def each_supertype_name(node : LibTreeSitter::TSNode, source : String, &block : String ->) : Nil
+      Noir::TreeSitter.each_named_child(node) do |child|
+        case Noir::TreeSitter.node_type(child)
+        when "type_identifier", "scoped_type_identifier"
+          block.call(Noir::TreeSitter.node_text(child, source))
+        when "type_arguments"
+        else
+          each_supertype_name(child, source, &block)
+        end
+      end
     end
 
     # ---- private helpers ----------------------------------------------

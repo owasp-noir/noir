@@ -290,7 +290,7 @@ module Analyzer::Kotlin
             next unless parts.size == 2
             class_name = parts[0]
             method_name = parts[1]
-            next if class_name.empty? || method_name.empty?
+            next if class_name.empty? || method_name.empty? || method_name.includes?('@')
 
             supertype_fqcns = supertypes_by_class[class_name]? || [] of String
             supertype_names = supertype_fqcns.map(&.split('.').last)
@@ -729,8 +729,7 @@ module Analyzer::Kotlin
         stomp_routes.each do |route|
           route_path = route.verb == "GET" ? Noir::URLPath.join_rooted(webflux_base_path, route.path) : route.path
           line = route.line + 1
-          key = "#{route.class_name}##{route.method_name}"
-          method = method_nodes[key]?
+          method = route_method_node(method_nodes, route.class_name, route.method_name, route.line)
           parameters =
             if method
               Noir::TreeSitterKotlinParameterExtractor.extract_method_parameters_from_method(
@@ -771,7 +770,7 @@ module Analyzer::Kotlin
           endpoint.protocol = "ws" if route.root_kind == "Subscription"
           endpoint.add_tag(Tag.new("graphql", "#{route.root_kind}.#{route.field_name}", "kotlin_spring_graphql_analyzer"))
           endpoint.add_tag(Tag.new("graphql-root", route.root_kind, "kotlin_spring_graphql_analyzer"))
-          method = method_nodes["#{route.class_name}##{route.method_name}"]?
+          method = route_method_node(method_nodes, route.class_name, route.method_name, route.line)
           attach_method_security_tags(endpoint, method, content)
 
           if include_callee && !(route.class_name.empty? || route.method_name.empty?)
@@ -795,20 +794,19 @@ module Analyzer::Kotlin
         # `params=` constraint expansion matches across both routes
         # (mirrors the legacy `||=` quirk: first verb wins).
         first_verb = Hash(String, String).new
-        routes.each do |route|
-          key = "#{route.class_name}##{route.method_name}"
-          first_verb[key] ||= route.verb
+        route_methods = routes.map { |route| route_method_node(method_nodes, route.class_name, route.method_name, route.line) }
+        routes.each_with_index do |route, idx|
+          first_verb[route_verb_key(route, route_methods[idx])] ||= route.verb
         end
 
-        routes.each do |route|
-          key = "#{route.class_name}##{route.method_name}"
-          format_verb = first_verb[key]? || route.verb
+        routes.each_with_index do |route, idx|
+          method = route_methods[idx]
+          format_verb = first_verb[route_verb_key(route, method)]? || route.verb
 
           # Pass only the `consumes`-derived format (nil when absent). The
           # verb default (POST → form, others → query) is applied
           # per-parameter inside the extractor so an explicit @RequestBody
           # on a POST resolves to json instead of being dragged to form.
-          method = method_nodes[key]?
           parameter_format =
             if method
               Noir::TreeSitterKotlinParameterExtractor.extract_consumes_from_method(method, content)
@@ -938,6 +936,31 @@ module Analyzer::Kotlin
           end
         end
       end
+    end
+
+    # The function a route's annotation sits on. Overloads share
+    # `Class#name`, so when the first one's span does not hold the
+    # annotation line, take the `Class#name@row` overload that does.
+    private def route_method_node(method_nodes : Hash(String, LibTreeSitter::TSNode),
+                                  class_name : String, method_name : String, line : Int32) : LibTreeSitter::TSNode?
+      key = "#{class_name}##{method_name}"
+      method = method_nodes[key]?
+      return method if method.nil? || node_spans_line?(method, line)
+      prefix = "#{key}@"
+      method_nodes.each do |name, node|
+        return node if name.starts_with?(prefix) && node_spans_line?(node, line)
+      end
+      method
+    end
+
+    private def node_spans_line?(node : LibTreeSitter::TSNode, line : Int32) : Bool
+      Noir::TreeSitter.node_start_row(node) <= line <= Noir::TreeSitter.node_end_row(node)
+    end
+
+    # Pins the `params=` format per handler function, not per name.
+    private def route_verb_key(route, method : LibTreeSitter::TSNode?) : String
+      row = method ? Noir::TreeSitter.node_start_row(method) : -1
+      "#{route.class_name}##{route.method_name}@#{row}"
     end
 
     private def attach_method_security_tags(endpoint : Endpoint, method : LibTreeSitter::TSNode?, source : String)
