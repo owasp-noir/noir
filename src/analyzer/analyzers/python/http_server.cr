@@ -227,7 +227,7 @@ module Analyzer::Python
         if m = line.match(/(?:self|urlparse\(self\.path\)|\w+)\.path\.startswith\s*\(\s*[rf]?['"]([^'"]+?)['"]/)
           p = m[1]
           if has_path_ref && looks_like_http_path(p)
-            path_var = find_path_param_in_body(body_lines)
+            path_var = find_path_param_in_branch(body_lines, bidx)
             if path_var
               p = "#{p.rstrip('/')}/{#{path_var}}"
             elsif p.ends_with?('/')
@@ -282,9 +282,27 @@ module Analyzer::Python
       hits.uniq
     end
 
-    private def find_path_param_in_body(body_lines : Array(::String)) : ::String?
-      body_lines.each do |raw|
+    private def find_path_param_in_branch(body_lines : Array(::String), branch_line_idx : Int32) : ::String?
+      return if branch_line_idx >= body_lines.size
+      branch_indent = indent_level(body_lines[branch_line_idx])
+
+      # Check if path param assignment is on the branch line itself
+      line = strip_comment(body_lines[branch_line_idx])
+      if m = line.match(/\b([A-Za-z_]\w*)\s*=\s*(?:self|\w+)\.path\.(?:rsplit|split)\s*\(\s*[rf]?['"]\/['"]/)
+        return m[1]
+      elsif m = line.match(/\b([A-Za-z_]\w*)\s*=\s*(?:self|\w+)\.path\.removeprefix\s*\(/)
+        return m[1]
+      end
+
+      # Scan following lines that belong to this branch (more indented than the branch line)
+      (branch_line_idx + 1...body_lines.size).each do |k|
+        raw = body_lines[k]
         line = strip_comment(raw)
+        stripped = line.strip
+        next if stripped.empty?
+
+        break if indent_level(raw) <= branch_indent
+
         if m = line.match(/\b([A-Za-z_]\w*)\s*=\s*(?:self|\w+)\.path\.(?:rsplit|split)\s*\(\s*[rf]?['"]\/['"]/)
           return m[1]
         elsif m = line.match(/\b([A-Za-z_]\w*)\s*=\s*(?:self|\w+)\.path\.removeprefix\s*\(/)

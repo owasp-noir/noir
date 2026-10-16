@@ -64,14 +64,19 @@ class MyHandler(BaseHTTPRequestHandler):
 
 class WidgetHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if not self.path.startswith("/widgets/"):
-            self.send_response(404)
+        if self.path.startswith("/health"):
+            self.send_response(200)
             self.end_headers()
+            self.wfile.write(b"ok")
             return
-        widget_id = self.path.rsplit("/", 1)[-1]
-        self.send_response(200)
+        if self.path.startswith("/widgets/"):
+            widget_id = self.path.rsplit("/", 1)[-1]
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(widget_id.encode())
+            return
+        self.send_response(404)
         self.end_headers()
-        self.wfile.write(widget_id.encode())
 
 
 if __name__ == "__main__":
