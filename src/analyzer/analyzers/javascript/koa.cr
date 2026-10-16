@@ -25,6 +25,12 @@ module Analyzer::Javascript
       # instead of a bare `/users`.
       resolve_koa_mount_prefixes
 
+      # A package that names `@strapi/*` is Strapi's own: the strapi tech owns
+      # its route objects and serves them under `/api`, `/admin` or
+      # `/<plugin>`, so the raw path read below would be a second, unprefixed
+      # copy that nothing serves.
+      strapi_owners = js_package_owners(["@strapi/"])
+
       parallel_file_scan([".js", ".ts", ".mts", ".cts", ".mjs", ".cjs"]) do |path|
         content = read_file_content(path)
         next if Noir::JSRouteExtractor.other_shared_extractor_framework?(content, :koa)
@@ -53,7 +59,7 @@ module Analyzer::Javascript
         # `router.post`) doesn't fire on these — strapi/strapi
         # parks ~38 such routes per plugin that the shared
         # JSRouteExtractor would otherwise miss.
-        extract_strapi_routes(path, content, result)
+        extract_strapi_routes(path, content, result) unless owned_by_js_package?(path, strapi_owners)
       rescue e
         logger.debug "Parser failed for #{path}: #{e.message}, falling back to regex"
         analyze_with_regex(path, result, static_dirs)
@@ -166,6 +172,8 @@ module Analyzer::Javascript
     # `@strapi/plugin-*` route file).
     private def extract_strapi_routes(path : String, content : String, result : Array(Endpoint))
       return unless strapi_route_candidate?(content)
+      # The verb-DSL pass above already refuses test files; this one read them.
+      return if Noir::JSRouteExtractor.test_stub_only?(path, content)
 
       seen = Set(Tuple(String, String, Int32)).new
       # `path: /* x */ '/p'` and commented-out entries; lines are kept.
