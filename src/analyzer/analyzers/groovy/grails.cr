@@ -560,11 +560,10 @@ module Analyzer::Groovy
       remaining.scan(CLOSURE_MAPPING_HEADER) do |match|
         next if status_code_mapping?(match[2])
         url_pattern = prefix + match[2]
-        open_brace = match.end(0) - 1
         chars = (remaining_chars ||= remaining.chars)
-        close_brace = find_matching_brace(remaining, open_brace, chars)
-        next unless close_brace
-        body_block = chars[(open_brace + 1)...close_brace].join
+        braced = extract_braced_block(remaining, match.end(0) - 1, chars)
+        next unless braced
+        body_block = braced[0]
         next unless body_block.match(/\b(controller|action|method|view)\s*=/)
         line = line_number_for_index(content, base_offset + (match.begin(1) || 0))
         verbs = action_map_verbs(body_block) || [extract_method_assignment(body_block) || "GET"]
@@ -606,11 +605,10 @@ module Analyzer::Groovy
       mutable
     end
 
-    # `chars` is `text.chars`; a caller probing many braces in one text passes
-    # it in rather than re-materializing it per call.
-    private def find_matching_brace(text : String, open_idx : Int32, chars : Array(Char) = text.chars) : Int32?
+    private def find_matching_brace(text : String, open_idx : Int32) : Int32?
       # Same non-ASCII O(n) `String#[]` concern as elsewhere in this file:
-      # index the char array instead of re-indexing `text`.
+      # materialize once and index the array instead of re-indexing `text`.
+      chars = text.chars
       return unless open_idx < chars.size && chars[open_idx] == '{'
       depth = 1
       i = open_idx + 1
