@@ -398,7 +398,7 @@ module Analyzer::Java
           next if JavaEngine.test_path?(base_relative_path(file))
           content = read_file_content(file)
           next unless content_matches?(content, JAVA_STRING_CONSTANT_RE)
-          table = by_base[configured_base_for(file)] ||= Hash(String, String).new
+          table = by_base[configured_base_for(file)] ||= Noir::TreeSitterJavaRouteExtractor::ProjectConstants.new
           Noir::TreeSitterJavaRouteExtractor.extract_string_constants(content).each do |name, value|
             table[name] ||= value if name.includes?('.')
           end
