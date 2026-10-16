@@ -41,6 +41,8 @@ it "never credits a same-named method of another receiver type", tags: "function
   param_names(ambiguous, "/users").should eq(["user_q"])
   param_names(ambiguous, "/posts").should eq(["post_q"])
   param_names(ambiguous, "/show").should be_empty
+  # The unrelated `local.Show` below the last route is not part of it.
+  param_names(ambiguous, "/last").should be_empty
 end
 
 # `r.GET("/x", RateLimit(), listX)`: the handler comes after the middleware,

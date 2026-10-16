@@ -713,51 +713,24 @@ module Analyzer::Go
       }
     end
 
-    def resolve_public_dirs_with_glob(public_dirs : Array(Hash(String, String)))
-      public_dirs.each do |p_dir|
-        next if p_dir["file_path"].empty?
-        full_path = resolve_public_dir_path(p_dir)
-
-        next unless File.directory?(full_path)
-        # `Dir.glob`, not a `file_map` lookup: a static directory's
-        # endpoint set is every file in it, including the images and fonts
-        # the media filter keeps out of the index. `--exclude-path` is
-        # therefore re-applied per file — the index-based
-        # `resolve_public_dirs` below gets it for free.
-        Dir.glob("#{escape_glob_path(full_path)}/**/*") do |path|
-          next if File.directory?(path)
-          next if excluded_path?(path)
-          if File.exists?(path)
-            static_url = p_dir["static_path"]
-            if static_url.ends_with?("/")
-              static_url = static_url[0..-2]
-            end
-
-            details = Details.new(PathInfo.new(path))
-            result << Endpoint.new("#{static_url}#{path.gsub(full_path, "")}", "GET", details)
-          end
-        end
-      end
-    end
-
+    # A static mount's endpoint set is every file under its directory,
+    # images, fonts and SVGs included. Those come from the walk's media list
+    # (`CodeLocator#media_files`; the media filter keeps them out of the index);
+    # everything else from the index. Both are bounded by the scan base and
+    # skip the subtrees and `--exclude-path` entries the walk prunes. A
+    # single-file target (`e.File("/robots.txt", "static/robots.txt")`) is
+    # matched as is.
     def resolve_public_dirs(public_dirs : Array(Hash(String, String)))
+      media_files = CodeLocator.instance.media_files
       public_dirs.each do |p_dir|
         full_path = resolve_public_dir_path(p_dir)
-
-        get_files_by_prefix(full_path).each do |path|
-          # Ensure strict prefix match (directory boundary or exact match)
-          # get_files_by_prefix matches any file starting with prefix, so "public" matches "public2"
-          # We prevent this by ensuring the next character is a separator or it's an exact match
-          next unless path == full_path || path.starts_with?(full_path.ends_with?("/") ? full_path : "#{full_path}/")
-
-          if File.exists?(path)
-            if p_dir["static_path"].ends_with?("/")
-              p_dir["static_path"] = p_dir["static_path"][0..-2]
-            end
-
-            details = Details.new(PathInfo.new(path))
-            result << Endpoint.new("#{p_dir["static_path"]}#{path.gsub(full_path, "")}", "GET", details)
-          end
+        dir_prefix = full_path.ends_with?("/") ? full_path : "#{full_path}/"
+        static_url = p_dir["static_path"].chomp('/')
+        get_files_by_prefix(full_path).concat(media_files).each do |path|
+          # `get_files_by_prefix` matches any file starting with the prefix
+          # ("public" matches "public2"), so require a directory boundary.
+          next unless path == full_path || path.starts_with?(dir_prefix)
+          result << Endpoint.new("#{static_url}#{path.lchop(full_path)}", "GET", Details.new(PathInfo.new(path)))
         end
       end
     end

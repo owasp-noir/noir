@@ -79,7 +79,7 @@ module Analyzer::Javascript
     # file key — the key a default import of that module uses.
     private def named_export_key(file : String, name : String, depth : Int32 = 0) : Noir::LocatorKey(Array(String))
       return ExpressConstants.function_key(file, name) if depth >= MAX_REEXPORT_DEPTH
-      content = CodeLocator.instance.content_for(file) || Noir::TextFile.read(file)
+      content = read_source(file)
       return ExpressConstants.function_key(file, name) unless content.includes?("export")
       content = Noir::JSRouteExtractor.strip_js_comments(content)
 
@@ -165,7 +165,7 @@ module Analyzer::Javascript
       # from_file => [{prefix, target key, target module file}]
       edges = Hash(String, Array(Tuple(String, Noir::LocatorKey(Array(String)), String))).new
       main_files.each do |file|
-        content = CodeLocator.instance.content_for(file) || Noir::TextFile.read(file)
+        content = read_source(file)
         next unless @framework.in?(:fastify, :hapi) ? content.includes?(".register") : content.includes?(".applyRoutes") || content.includes?(".add")
         # A test app that mounts the router under a prefix of its own is not
         # a production mount.
@@ -266,7 +266,7 @@ module Analyzer::Javascript
     # imported into it (`const app = require("./app")`).
     private def seed_firebase_function_mounts(main_files : Array(String), locator : CodeLocator)
       main_files.each do |file|
-        content = CodeLocator.instance.content_for(file) || Noir::TextFile.read(file)
+        content = read_source(file)
         apps = Noir::FirebaseFunctionsExtractor.extract(content).compact_map do |trigger|
           next unless trigger.kind == "onRequest"
           trigger.args.match(FIREBASE_APP_HANDLER).try { |m| {trigger.name, m[1]} }
@@ -294,7 +294,7 @@ module Analyzer::Javascript
       file_contexts : Hash(String, FileContext),
       global_deferred_mounts : Array(Tuple(String, String, String, String)),
     )
-      content = CodeLocator.instance.content_for(main_file) || Noir::TextFile.read(main_file)
+      content = read_source(main_file)
 
       # A file that imports a *different* shared-extractor framework is not
       # ours to mount. Its own analyzer resolves its prefixes (koa.cr's
@@ -1468,6 +1468,12 @@ module Analyzer::Javascript
     # directory resolves `require('./x')` exactly the way the mount scanner
     # does — the two passes have to agree on which file a specifier names
     # or a helper's routes land under a prefix meant for a different file.
+    # Every specifier matcher below reads quoted literals; computed
+    # `__dirname` specifiers are rewritten to them first.
+    private def read_source(file : String) : String
+      JsModuleResolver.normalize_computed_specifiers(CodeLocator.instance.content_for(file) || Noir::TextFile.read(file))
+    end
+
     private def resolve_require_path(from_file : String, require_path : String) : String?
       JsModuleResolver.resolve(from_file, require_path, base_path_for_file(from_file))
     end

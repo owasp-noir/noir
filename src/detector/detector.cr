@@ -561,6 +561,9 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
   wg.add(1)
   spawn do
     skipped_files = 0
+    # Media files the filter keeps out of `file_map`; a static-mount
+    # analyzer still serves them (see `CodeLocator#media_files`).
+    media_files = [] of String
     skipped_content_reads = 0
     total_files = 0
     skipped_ignored_dirs = 0
@@ -831,7 +834,9 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
               # An oversize file is different: it is a source file the
               # scan chose not to read, and one 12 MB Flask module is the
               # difference between two routes and one.
-              unless MediaFilter.media_file?(full_path)
+              if MediaFilter.media_file?(full_path)
+                media_files << full_path
+              else
                 Noir::SkippedFiles.record(Noir::SkippedFiles::DETECT_SCOPE, full_path, skip_reason,
                   phase: Noir::SkippedFiles::Phase::Scan)
               end
@@ -904,6 +909,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
     # The counters below are final only once the sequencer has caught up.
     drain_reads.call
     skipped_files += binary_files
+    media_files.each { |path| locator.register_media_path(path) }
 
     if skipped_files > 0
       logger.info "Skipped #{skipped_files} media/large files out of #{total_files} total files"

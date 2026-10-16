@@ -126,7 +126,7 @@ module Analyzer::Go
         named.each_attribution { |line, ep| add_beego_params(line, ep) }
       end
 
-      resolve_public_dirs_with_glob(public_dirs)
+      resolve_public_dirs(public_dirs)
 
       result
     end
