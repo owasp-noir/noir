@@ -29,6 +29,9 @@ module Analyzer::Ruby
     # boilerplate) is a class method, never a command, so the name must be
     # followed by an argument list, whitespace or end-of-line — not `.`.
     DEF_RE = /^\s*def\s+([a-z_]\w*[?!]?)\s*(?:[(\s]|$)/
+    # `Thor::Group` steps and `Thor::Actions::*` helpers are public methods
+    # Thor never registers as commands.
+    THOR_NAMESPACED_SUBCLASS = /<\s*Thor::/
 
     # GLI / commander gem command blocks + flags.
     BLOCK_COMMAND = /^\s*command\s+:?["']?([A-Za-z0-9][\w-]*)/
@@ -171,6 +174,7 @@ module Analyzer::Ruby
       pending_thor_opts = [] of String
       block_cmd_url = root_url
       thor_private = false
+      thor_group = false
       no_commands_indent : Int32? = nil
       clamp_sub_indent : Int32? = nil
       clamp_sub_url = root_url
@@ -194,30 +198,33 @@ module Analyzer::Ruby
         # which framework's *block* a given line sits in, which the
         # line-scan house style doesn't support today.
         if thor
-          # Thor's task rules: `no_commands do ... end` bodies and methods
-          # below a bare `private` are helpers, not commands. Track both so
-          # they don't surface as bogus subcommands (an indentation-matched
-          # `end` is the line-scan approximation of the block boundary).
-          # Only the `do ... end` form arms the tracker: a single-line
-          # `no_commands { ... }` closes on its own line, so treating it as
-          # an open block would suppress every later command in the file.
-          if nc = line.match(/^(\s*)no_commands\s+do\b/)
+          # Thor's task rules: `no_commands do ... end` bodies, `class << self`
+          # bodies (singleton methods) and methods below a bare `private` or
+          # `protected` are helpers, not commands. Track them so they don't
+          # surface as bogus subcommands (an indentation-matched `end` is the
+          # line-scan approximation of the block boundary).
+          # Only the `do ... end` / multi-line forms arm the tracker: a
+          # single-line `no_commands { ... }` or `class << self; ...; end`
+          # closes on its own line, so treating it as an open block would
+          # suppress every later command in the file.
+          if nc = line.match(/^(\s*)(?:no_commands\s+do\b|class\s*<<\s*self\s*$)/)
             no_commands_indent ||= nc[1].size
           elsif (indent = no_commands_indent) && (em = line.match(/^(\s*)end\b/)) && em[1].size <= indent
             no_commands_indent = nil
           end
-          if line.matches?(/^\s*private\s*$/)
+          if line.matches?(/^\s*(?:private|protected)\s*$/)
             thor_private = true
           elsif line.matches?(/^\s*public\s*$/) || line.matches?(THOR_SUBCLASS)
             thor_private = false
           end
+          thor_group = line.matches?(THOR_NAMESPACED_SUBCLASS) if line.matches?(THOR_SUBCLASS)
 
           if m = line.match(THOR_DESC)
             pending_desc = m[1]
           elsif m = line.match(THOR_OPTION)
             pending_thor_opts << m[1]
           elsif (m = line.match(DEF_RE)) && (name = m[1]) != "initialize"
-            if thor_private || no_commands_indent
+            if thor_private || thor_group || no_commands_indent
               pending_desc = nil
               pending_thor_opts.clear
             else
