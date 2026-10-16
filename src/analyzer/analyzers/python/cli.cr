@@ -24,7 +24,7 @@ module Analyzer::Python
     WEB_FRAMEWORK_RE = /(?:^|\n)\s*(?:import|from)\s+(?:flask|django|fastapi|starlette|sanic|aiohttp|bottle|tornado|falcon|pyramid|quart|litestar|robyn)\b/
 
     # argparse
-    ARGPARSE_NEW_RE  = /(\w+)\s*=\s*argparse\.ArgumentParser\s*\(/
+    ARGPARSE_NEW_RE  = /(\w+)\s*=\s*(?:argparse\.)?ArgumentParser\s*\(/
     ARGPARSE_PROG_RE = /ArgumentParser\([^)]*\bprog\s*=\s*[rf]?["']([^"']+)["']/
     ADD_PARSER_RE    = /(\w+)\s*=\s*(\w+)\.add_parser\s*\(\s*[rf]?["']([^"']+)["']/
     ADD_ARGUMENT_RE  = /(\w+)\s*\.\s*add_argument\s*\(([^)]*)/
@@ -120,7 +120,7 @@ module Analyzer::Python
     # per-call UTF-8 revalidation of the buffer. The gate is a pure OR,
     # so collapsing and reordering its terms cannot change the answer.
     CLI_LITERAL_MARKERS_RE = Regex.union(
-      "argparse.ArgumentParser", "click.command", "click.group",
+      "argparse.ArgumentParser", /from\s+argparse\s+import/, "click.command", "click.group",
       "typer.Typer", "fire.Fire", "getopt.getopt", "docopt",
     )
 

@@ -30,6 +30,24 @@ FunctionalTester.new("fixtures/rust/cli_clap/", {
   :endpoints => clap_endpoints.size,
 }, clap_endpoints).perform_tests
 
+# --- clap nested subcommands + multi-line #[arg] + line-above #[command(name)]
+clap_nested_endpoints = [
+  build.call("cli://zoo/pen/open", [] of Param),
+  build.call("cli://zoo/pen/close", [
+    Param.new("amount", "", "flag"),
+    Param.new("endpoint", "", "flag"),
+    Param.new("speed", "", "flag"),
+    Param.new("target", "", "flag"),
+  ]),
+  build.call("cli://zoo/__internal", [] of Param),
+  build.call("cli://zoo/b/leaf", [] of Param),
+]
+
+FunctionalTester.new("fixtures/rust/cli_clap_nested/", {
+  :techs     => 1,
+  :endpoints => clap_nested_endpoints.size,
+}, clap_nested_endpoints).perform_tests
+
 # --- getopts (flat builder API: optopt/optflag/reqopt + env) ---------------
 getopts_endpoints = [
   build.call("cli://getoptsdemo", [

@@ -35,6 +35,19 @@ FunctionalTester.new("fixtures/javascript/cli_test_dirs/", {
   :endpoints => test_dirs_endpoints.size,
 }, test_dirs_endpoints).perform_tests
 
+# --- static assets, vendor directories, minified files and widgets without parseArgs ---
+# A browser widget (e.g. slider.widget.js) under web/static/js, vendor/widget.js,
+# dist/bundle.min.js and a non-vendor widget with options: {} must not have their
+# options bags harvested as CLI flags.
+slider_widget_endpoints = [
+  build.call("cli://demo-admin", [] of Param),
+]
+
+FunctionalTester.new("fixtures/javascript/cli_slider_widget/", {
+  :techs     => 1,
+  :endpoints => slider_widget_endpoints.size,
+}, slider_widget_endpoints).perform_tests
+
 # FunctionalTester only checks that expected params are present, so the
 # absence of the decoys' params is asserted here.
 describe "js_cli false-positive guards", tags: "functional" do
@@ -53,6 +66,15 @@ describe "js_cli false-positive guards", tags: "functional" do
     endpoint.should_not be_nil
     if endpoint
       endpoint.params.count { |p| p.name == "type-test-only" }.should eq(0)
+    end
+  end
+
+  it "does not harvest vendored widgets, static assets, minified bundles, or non-parseArgs options" do
+    tester = FunctionalTester.new("fixtures/javascript/cli_slider_widget/", {:techs => 1}, [] of Endpoint)
+    endpoint = tester.endpoints.find { |ep| ep.url == "cli://demo-admin" }
+    endpoint.should_not be_nil
+    if endpoint
+      endpoint.params.count { |p| {"disabled", "step", "orientation", "vendorOption", "minifiedOption", "minifiedProp", "color", "width"}.includes?(p.name) }.should eq(0)
     end
   end
 end

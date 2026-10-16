@@ -120,3 +120,17 @@ FunctionalTester.new("fixtures/python/cli_cleo_nested_fp/", {
   :techs     => 1,
   :endpoints => 0,
 }, [] of Endpoint).perform_tests
+
+# --- from argparse import ArgumentParser (issue #3099) -----------------------
+argparse_from_endpoints = [
+  build.call("cli://tool_a", [
+    Param.new("out-dir", "", "flag"),
+    Param.new("verbose", "", "flag"),
+    Param.new("HOME", "", "env"),
+  ]),
+]
+
+FunctionalTester.new("fixtures/python/cli_argparse_from/", {
+  :techs     => 1,
+  :endpoints => argparse_from_endpoints.size,
+}, argparse_from_endpoints).perform_tests

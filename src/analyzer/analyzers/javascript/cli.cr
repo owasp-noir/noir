@@ -34,7 +34,9 @@ module Analyzer::Javascript
     ARGV_SLICE = /\bprocess\.argv\.slice\s*\(\s*2\s*\)/
 
     # object-literal schema headers (keys become root flags).
+    PARSEARGS_CALL_RE = /\bparseArgs\s*\(/
     PARSEARGS_HEADER  = /\boptions\s*:\s*\{/
+    MEOW_CALL_RE      = /\bmeow\s*\(/
     MEOW_FLAGS_HEADER = /\bflags\s*:\s*\{/
     OBJECT_KEY_RE     = /^\s*['"]?([A-Za-z_$][\w$-]*)['"]?\s*:/
 
@@ -87,11 +89,11 @@ module Analyzer::Javascript
     CITTY_SUBCOMMAND_REF_RE  = /^\s*['"]?([A-Za-z_$][\w$-]*)['"]?\s*:\s*([A-Za-z_$][\w$]*)\s*,?\s*$/
 
     # `require('arg')` / `from 'arg'`, and likewise for getopts/citty/
-    # command-line-args — these are short/generic tokens too easy to trip as
+    # command-line-args/cac — these are short/generic tokens too easy to trip as
     # a bare substring (e.g. bash's own `getopts` builtin, a stray comment,
     # or an ordinary identifier fragment), so they require an actual import
     # statement rather than `content.includes?`.
-    LIB_IMPORT_ONLY_RE = /(?:require\s*\(\s*|from\s+)['"](?:arg|getopts|citty|command-line-args)['"]/
+    LIB_IMPORT_ONLY_RE = /(?:require\s*\(\s*|from\s+)['"](?:arg|getopts|citty|command-line-args|cac)['"]/
 
     # A fresh statement that chains command/option/argument off an identifier
     # (`program.option(...)`, `cli.command(...)`) starts at the root program,
@@ -110,19 +112,29 @@ module Analyzer::Javascript
 
     # Precompiled once — a single PCRE2-JIT scan replaces up to eleven
     # naive String#includes? substring scans over the whole file content.
-    # Regex.union auto-escapes each literal (including the dots in
-    # "Deno.args"/"Bun.argv"). `cac` is the one word-bounded entry: as a bare
-    # substring it matched cache/cached/cacheName, so any caching code passed
-    # the evidence gate and had its `options: {` bags harvested as flags.
-    CLI_MARKERS_RE = Regex.union("commander", "yargs", /\bcac\b/, "meow", "minimist", "clipanion", "@oclif", "sade", "parseArgs", "Deno.args", "Bun.argv")
+    # Every token is word-bounded so arbitrary identifiers (like "cache" or
+    # "crusade") do not pass the evidence gate.
+    CLI_MARKERS_RE = Regex.union(
+      /\bcommander\b/,
+      /\byargs\b/,
+      /\bmeow\b/,
+      /\bminimist\b/,
+      /\bclipanion\b/,
+      /@oclif\b/,
+      /\bsade\b/,
+      /\bparseArgs\b/,
+      /\bDeno\.args\b/,
+      /\bBun\.argv\b/
+    )
 
     # Test suites, test fixture trees and `.test-d.ts` type tests exercise a
-    # CLI; they are not one. Matched on the scan-base-relative path (see
+    # CLI; they are not one. Static assets, vendored code and minified bundles
+    # are also skipped. Matched on the scan-base-relative path (see
     # `js_test_or_vendor?`), so every directory term is a whole path segment.
     # A bare `test/` or `tests/` segment is deliberately NOT here: it is also
     # the `test` subcommand directory of yargs/oclif/Angular-style CLIs
     # (`src/commands/test/index.ts`). Only its `fixtures/` subtree is a decoy.
-    TEST_OR_VENDOR_PATH_RE = %r{/node_modules/|/__tests__/|/__fixtures__/|/tests?/(?:[^/]+/)*fixtures?/|\.test\.|\.test-d\.|\.spec\.|\.d\.ts}
+    TEST_OR_VENDOR_PATH_RE = %r{(?:^|/)(?:node_modules|__tests__|__fixtures__|static|vendor)/|(?:^|/)tests?/(?:[^/]+/)*fixtures?/|\.test\.|\.test-d\.|\.spec\.|\.d\.ts|\.min\.[cm]?js$}
 
     # Two more OR-ed pairs of whole-file scans, collapsed the same way:
     # the evidence gate every JS/TS file passes through, and the
@@ -150,8 +162,10 @@ module Analyzer::Javascript
               # regexes; blanking keeps every line.
               lines = Noir::JSRouteExtractor.strip_js_comments(content).lines
               emit_env = !content_matches?(content, WEB_EVIDENCE_RE)
+              has_parseargs = content_matches?(content, PARSEARGS_CALL_RE)
+              has_meow = content_matches?(content, MEOW_CALL_RE)
 
-              scan(lines, path, root_url, endpoints, emit_env)
+              scan(lines, path, root_url, endpoints, emit_env, has_parseargs, has_meow)
             rescue e
               logger.debug "Error analyzing #{path}: #{e}"
               next
@@ -176,7 +190,8 @@ module Analyzer::Javascript
     end
 
     private def scan(lines : Array(String), path : String, root_url : String,
-                     endpoints : Hash(String, Endpoint), emit_env : Bool)
+                     endpoints : Hash(String, Endpoint), emit_env : Bool,
+                     has_parseargs : Bool, has_meow : Bool)
       current_url = root_url
 
       # citty subcommand context: a stack of (url, brace-depth-at-which-this
@@ -235,7 +250,7 @@ module Analyzer::Javascript
         end
 
         # Object-schema option blocks (util.parseArgs, meow) -> root flags.
-        if line.matches?(PARSEARGS_HEADER) || line.matches?(MEOW_FLAGS_HEADER)
+        if (has_parseargs && line.matches?(PARSEARGS_HEADER)) || (has_meow && line.matches?(MEOW_FLAGS_HEADER))
           collect_object_keys(lines, index).each do |key|
             fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(key, "", "flag"))
           end

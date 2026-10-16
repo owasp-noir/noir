@@ -62,6 +62,23 @@ class MyHandler(BaseHTTPRequestHandler):
             self.wfile.write(b"deleted")
 
 
+class WidgetHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path.startswith("/health"):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"ok")
+            return
+        if self.path.startswith("/widgets/"):
+            widget_id = self.path.rsplit("/", 1)[-1]
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(widget_id.encode())
+            return
+        self.send_response(404)
+        self.end_headers()
+
+
 if __name__ == "__main__":
     server = HTTPServer(("", 8000), MyHandler)
     server.serve_forever()
