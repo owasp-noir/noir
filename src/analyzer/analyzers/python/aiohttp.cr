@@ -419,13 +419,19 @@ module Analyzer::Python
     # Frameworks whose registration syntax overlaps aiohttp's enough to trip
     # the loose markers below — sanic's `@app.get("/x")` and its
     # `app.add_route(handler, "/x")` in particular. A file that imports one of
-    # them and never mentions aiohttp is theirs. Mirrors the same guard in the
-    # Flask analyzer.
+    # them and has no aiohttp server import is theirs. Mirrors the same guard
+    # in the Flask analyzer.
     COMPETING_FRAMEWORK_IMPORT_RE =
       /^\s*(?:from|import)\s+(?:sanic|fastapi|litestar|starlette|quart|robyn|ninja|bottle|falcon|flask)\b/m
 
+    # The server half of aiohttp (`aiohttp.web`, `from aiohttp import web`),
+    # not the client (`ClientSession`) that FastAPI and Sanic apps pull in for
+    # outbound requests. The parenthesised branch spans a multi-line import.
+    AIOHTTP_SERVER_IMPORT_RE =
+      /\baiohttp\.web|^\s*from\s+aiohttp\s+import\s+(?:\([^)]*|[^\n(]*)\b(?:web|RouteTableDef)\b/m
+
     private def aiohttp_relevant_source?(source : ::String) : Bool
-      return false if !source.includes?("aiohttp") && source.matches?(COMPETING_FRAMEWORK_IMPORT_RE)
+      return false if source.matches?(COMPETING_FRAMEWORK_IMPORT_RE) && !source.matches?(AIOHTTP_SERVER_IMPORT_RE)
 
       source.includes?("aiohttp") ||
         source.includes?("RouteTableDef") ||
