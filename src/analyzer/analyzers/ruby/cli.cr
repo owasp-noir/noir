@@ -30,8 +30,9 @@ module Analyzer::Ruby
     # followed by an argument list, whitespace or end-of-line — not `.`.
     DEF_RE = /^\s*def\s+([a-z_]\w*[?!]?)\s*(?:[(\s]|$)/
     # `Thor::Group` steps and `Thor::Actions::*` helpers are public methods
-    # Thor never registers as commands.
-    THOR_NAMESPACED_SUBCLASS = /<\s*Thor::/
+    # Thor never registers as commands. Other `Thor::` subclasses (`Thor::Error`,
+    # `Thor::Shell::*`) are not matched: they are not command-free by contract.
+    THOR_GROUP_SUBCLASS = /<\s*Thor::(?:Group|Actions)\b/
 
     # GLI / commander gem command blocks + flags.
     BLOCK_COMMAND = /^\s*command\s+:?["']?([A-Za-z0-9][\w-]*)/
@@ -174,7 +175,11 @@ module Analyzer::Ruby
       pending_thor_opts = [] of String
       block_cmd_url = root_url
       thor_private = false
-      thor_group = false
+      # Open Thor subclass bodies, innermost last: {indent of the `class` line,
+      # Thor::Group / Thor::Actions subclass?}. Scoping the group flag to its
+      # body keeps a nested `class Error < Thor::Error` or `class Sub <
+      # Thor::Group` from deciding the fate of the commands around it.
+      thor_classes = [] of Tuple(Int32, Bool)
       no_commands_indent : Int32? = nil
       clamp_sub_indent : Int32? = nil
       clamp_sub_url = root_url
@@ -217,7 +222,14 @@ module Analyzer::Ruby
           elsif line.matches?(/^\s*public\s*$/) || line.matches?(THOR_SUBCLASS)
             thor_private = false
           end
-          thor_group = line.matches?(THOR_NAMESPACED_SUBCLASS) if line.matches?(THOR_SUBCLASS)
+          if em = line.match(/^(\s*)end\b/)
+            while (top = thor_classes.last?) && em[1].size <= top[0]
+              thor_classes.pop
+            end
+          elsif line.matches?(THOR_SUBCLASS) && !line.matches?(/;\s*end\s*$/)
+            thor_classes << {line.size - line.lstrip.size, line.matches?(THOR_GROUP_SUBCLASS)}
+          end
+          thor_group = thor_classes.last?.try(&.[1]) || false
 
           if m = line.match(THOR_DESC)
             pending_desc = m[1]
