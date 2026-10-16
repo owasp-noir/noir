@@ -20,6 +20,11 @@ module Analyzer::Php
     # `public/` / `www/` markers.)
     WEBROOT_DIR_NAMES = ["public", "webroot", "public_html", "htdocs", "www", "web"]
 
+    # Siblings of a document root that a layout with one served directory has
+    # and a site served from its root does not: dependencies, application
+    # code, configuration, runtime data and CLI/CI tooling.
+    MANAGED_SIBLING_DIRS = %w[vendor src app config storage bootstrap var database bin scripts dev build tools tests test]
+
     # A plain PHP tree serves a root-level `docs/` section like any other
     # directory (`docs/index.php?page=…`, `docs/search.php`), so it is not
     # skipped here as it is for framework adapters.
@@ -31,11 +36,6 @@ module Analyzer::Php
     # Lazily built; fibers are cooperative and nothing here yields, so a
     # plain memo is safe under `parallel_file_scan`.
     @php_web_roots : Array(Tuple(String, String))? = nil
-    # Siblings of a document root that a layout with one served directory has
-    # and a site served from its root does not: dependencies, application
-    # code, configuration, runtime data and CLI/CI tooling.
-    MANAGED_SIBLING_DIRS = %w[vendor src app config storage bootstrap var database bin scripts dev build tools tests test]
-
     # Normalized roots of composer-managed projects.
     @php_managed_roots : Array(String)? = nil
     # Normalized directories whose own `.htaccess` keeps PHP from running.
