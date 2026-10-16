@@ -14,6 +14,7 @@ expected_endpoints = [
   # ItemsController — `[Route("api/items")]`.
   Endpoint.new("/api/items/rm", "DELETE"),
   Endpoint.new("/api/items", "GET"),
+  Endpoint.new("/api/items", "POST"),
   Endpoint.new("/api/items", "PUT"),
   Endpoint.new("/api/items/{id}", "GET", [Param.new("id", "", "path")]),
 ]

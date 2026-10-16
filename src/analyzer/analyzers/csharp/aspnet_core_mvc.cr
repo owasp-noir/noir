@@ -10,6 +10,9 @@ module Analyzer::CSharp
 
     DEFAULT_ROUTE = "{controller=Home}/{action=Index}/{id?}"
 
+    TAGGER                       = "aspnet_core_mvc_analyzer"
+    UNRESOLVED_ROUTE_DESCRIPTION = "Route template is a constant the analyzer cannot read; reported at the controller route"
+
     CONTROLLER_PLACEHOLDER_RE = /\{controller[=:?}]/
     ACTION_PLACEHOLDER_RE     = /\{action[=:?}]/
     # `controller = "Home"` or `action = nameof(HomeController.About)`.
@@ -454,9 +457,10 @@ module Analyzer::CSharp
       route_attr = ""
       explicit_endpoint_attribute = false
       non_action_attribute = false
-      # `[HttpGet(ApiRoutes.X)]`: the route is a constant we cannot read, so the
-      # action is skipped rather than guessed at the class or conventional route.
-      unresolved_route = false
+      # `[HttpGet(ApiRoutes.X)]`: the route is a constant we cannot read. The
+      # action is still reported, at the class (or conventional) route, and
+      # tagged so the missing suffix is not mistaken for the full path.
+      unresolved_verbs = Set(String).new
       # `[ActionName("List")]` names the action in the route (`[action]` token
       # and conventional routing), whatever the method is called.
       renamed_action : String? = nil
@@ -484,10 +488,9 @@ module Analyzer::CSharp
           else
             verb, verb_route, route_attr, found_attribute, unresolved = collect_verb_route(line, route_attr)
             explicit_endpoint_attribute ||= found_attribute
-            if verb && unresolved
-              unresolved_route = true
-            elsif verb
+            if verb
               verb_routes << {verb, verb_route}
+              unresolved_verbs << verb if unresolved
             end
           end
           non_action_attribute = true if line.includes?("[NonAction")
@@ -512,7 +515,6 @@ module Analyzer::CSharp
               # No `[Http*]` attribute → convention-based (verb GET, route from
               # any `[Route]` base or the controller convention).
               emit_pairs = verb_routes.empty? ? [{"GET", route_attr}] : verb_routes
-              emit_pairs = [] of Tuple(String, String) if unresolved_route && verb_routes.empty?
               emit_pairs.each do |emit_verb, emit_route|
                 # A bare `[HttpGet]` whose `[Route("x")]` base arrived on a
                 # later line collected an empty route — fall back to the base
@@ -536,6 +538,7 @@ module Analyzer::CSharp
                     endpoint.params << param
                   end
 
+                  endpoint.add_tag(Tag.new("unresolved-route", UNRESOLVED_ROUTE_DESCRIPTION, TAGGER)) if unresolved_verbs.includes?(emit_verb)
                   attach_csharp_callees(endpoint, body_block, file, line_offset + body_line + 1, include_callee, skip_first_line: skip_first)
                   @result << endpoint
                 end
@@ -546,7 +549,7 @@ module Analyzer::CSharp
           route_attr = ""
           explicit_endpoint_attribute = false
           non_action_attribute = false
-          unresolved_route = false
+          unresolved_verbs.clear
           renamed_action = nil
           i = end_index
         end
@@ -808,7 +811,8 @@ module Analyzer::CSharp
 
     # A verb attribute whose first positional argument is not a string literal
     # or a named argument (`[HttpGet(ApiRoutes.Attendees.Get)]`,
-    # `[HttpGet(Const + "/x")]`): the route exists but cannot be read here.
+    # `[HttpGet(Const + "/x")]`): the route exists but cannot be read here, so
+    # the action is reported at the class route with an `unresolved-route` tag.
     private UNRESOLVED_ROUTE_ARG_RE = /\[Http(?:Post|Get|Put|Delete|Patch|Head|Options)(?:Attribute)?\s*\(\s*(?!["@$]|\w+\s*[=:])[A-Za-z_]/
 
     private ACTION_NAME_RE = /\bActionName(?:Attribute)?\s*\(\s*"([^"]+)"/

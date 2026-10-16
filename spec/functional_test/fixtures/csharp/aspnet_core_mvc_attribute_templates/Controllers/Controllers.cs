@@ -32,8 +32,8 @@ public class ItemsController : ControllerBase
     [HttpDelete, EnableRateLimiting("fixed"), Route("rm")]
     public IActionResult Remove() => Ok();
 
-    // A constant route argument cannot be read: the action is skipped rather
-    // than reported at the class route.
+    // A constant route argument cannot be read: the action is reported at the
+    // class route with an `unresolved-route` tag.
     [HttpGet(ApiRoutes.Items.Get)]
     public IActionResult Get() => Ok();
 
