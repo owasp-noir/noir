@@ -111,9 +111,18 @@ module Analyzer::Javascript
     # Precompiled once — a single PCRE2-JIT scan replaces up to eleven
     # naive String#includes? substring scans over the whole file content.
     # Regex.union auto-escapes each literal (including the dots in
-    # "Deno.args"/"Bun.argv"), so it is provably equivalent to the
-    # OR-of-includes? it replaces.
-    CLI_MARKERS_RE = Regex.union("commander", "yargs", "cac", "meow", "minimist", "clipanion", "@oclif", "sade", "parseArgs", "Deno.args", "Bun.argv")
+    # "Deno.args"/"Bun.argv"). `cac` is the one word-bounded entry: as a bare
+    # substring it matched cache/cached/cacheName, so any caching code passed
+    # the evidence gate and had its `options: {` bags harvested as flags.
+    CLI_MARKERS_RE = Regex.union("commander", "yargs", /\bcac\b/, "meow", "minimist", "clipanion", "@oclif", "sade", "parseArgs", "Deno.args", "Bun.argv")
+
+    # Test suites, test fixture trees and `.test-d.ts` type tests exercise a
+    # CLI; they are not one. Matched on the scan-base-relative path (see
+    # `js_test_or_vendor?`), so every directory term is a whole path segment.
+    # A bare `test/` or `tests/` segment is deliberately NOT here: it is also
+    # the `test` subcommand directory of yargs/oclif/Angular-style CLIs
+    # (`src/commands/test/index.ts`). Only its `fixtures/` subtree is a decoy.
+    TEST_OR_VENDOR_PATH_RE = %r{/node_modules/|/__tests__/|/__fixtures__/|/tests?/(?:[^/]+/)*fixtures?/|\.test\.|\.test-d\.|\.spec\.|\.d\.ts}
 
     # Two more OR-ed pairs of whole-file scans, collapsed the same way:
     # the evidence gate every JS/TS file passes through, and the
@@ -161,11 +170,9 @@ module Analyzer::Javascript
     end
 
     private def js_test_or_vendor?(path : String) : Bool
-      # Scan-base-relative, never absolute: a `node_modules/` or
-      # `__tests__/` directory ABOVE the scan base is not this project's.
-      relative = base_relative_path(path)
-      relative.includes?("/node_modules/") || relative.includes?("/__tests__/") ||
-        relative.includes?(".test.") || relative.includes?(".spec.") || relative.includes?(".d.ts")
+      # Scan-base-relative, never absolute: a `node_modules/` or `test/`
+      # directory ABOVE the scan base is not this project's.
+      base_relative_path(path).matches?(TEST_OR_VENDOR_PATH_RE)
     end
 
     private def scan(lines : Array(String), path : String, root_url : String,

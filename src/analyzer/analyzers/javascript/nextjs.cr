@@ -48,6 +48,11 @@ module Analyzer::Javascript
     GUARD_REJECTS     = /\bthrow\b|\b4\d\d\b|\bMETHOD_NOT_ALLOWED\b|(?i:not allowed)/
     GUARD_CONDITIONAL = /\bif\b|\?|&&|\|\|/
 
+    # `export default withMiddlewares({ GET: ..., POST: ... })`: a wrapper
+    # handed a verb-keyed object serves exactly those methods.
+    DEFAULT_EXPORT_CALL_OBJECT = /export\s+default\s+(?!(?:async|function|class)\b)[\w$.]+\s*\(\s*\{/
+    VERB_MAP_KEY               = /\A(?:async\s+)?["']?(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)["']?\s*(?::|\(|\z)/
+
     def analyze
       result = [] of Endpoint
       mutex = Mutex.new
@@ -79,7 +84,15 @@ module Analyzer::Javascript
       relative = base_relative_path(path)
       relative.includes?(".test.") || relative.includes?(".spec.") ||
         relative.includes?("/__tests__/") || relative.includes?("/__mocks__/") ||
-        relative.includes?("/test/fixtures/") || relative.includes?("/tests/fixtures/")
+        relative.includes?("/test/fixtures/") || relative.includes?("/tests/fixtures/") ||
+        e2e_project?(relative)
+    end
+
+    # An e2e harness app, judged on the project location above the router
+    # directory only: `app/api/e2e/...` below it is a real URL (dub).
+    private def e2e_project?(relative : String) : Bool
+      idx = [relative.index("/pages/api/"), relative.index("/app/")].compact.min? || return false
+      relative[0..idx].matches?(Noir::JSRouteExtractor::STRICT_TEST_PATH_MARKER)
     end
 
     # The router-directory markers below name directories *inside* the
@@ -386,6 +399,10 @@ module Analyzer::Javascript
 
       return explicit unless explicit.empty?
 
+      if mapped = default_export_verb_map(content)
+        return mapped
+      end
+
       # Heuristic: look for req.method checks to infer declared methods.
       bare = binds_bare_method?(content)
       inferred = [] of String
@@ -428,6 +445,23 @@ module Analyzer::Javascript
 
       # Default-export handler — applies to ALL methods.
       ["GET", "POST", "PUT", "DELETE", "PATCH"]
+    end
+
+    # Verb keys of the object literal passed to the default-export call, or
+    # nil when there is none or it cannot be read completely (spread or
+    # computed key). Uppercase keys only.
+    private def default_export_verb_map(content : String) : Array(String)?
+      start = content.match(DEFAULT_EXPORT_CALL_OBJECT) || return
+      open = start.end(0) - 1
+      close = Noir::JSRouteExtractor.find_matching_brace(content, open) || return
+      verbs = [] of String
+      Noir::TopLevelSplit.split(content[(open + 1)...close], ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).each do |part|
+        return if part.starts_with?("...") || part.starts_with?('[')
+        if key = part.match(VERB_MAP_KEY)
+          verbs << key[1]
+        end
+      end
+      HTTP_METHODS.select { |m| verbs.includes?(m) } unless verbs.empty?
     end
 
     # A block or `return` statement that rejects the request outright, with

@@ -167,6 +167,9 @@ module Analyzer::Javascript
       main_files.each do |file|
         content = CodeLocator.instance.content_for(file) || Noir::TextFile.read(file)
         next unless @framework.in?(:fastify, :hapi) ? content.includes?(".register") : content.includes?(".applyRoutes") || content.includes?(".add")
+        # A test app that mounts the router under a prefix of its own is not
+        # a production mount.
+        next if Noir::JSRouteExtractor.test_file?(file, content)
         # Hapi does not share the route extractor: its analyzer gates files
         # by project root, and only a `routes: { prefix }` option counts.
         next if @framework != :hapi && Noir::JSRouteExtractor.other_shared_extractor_framework?(content, @framework)
@@ -314,6 +317,9 @@ module Analyzer::Javascript
       # no router mounts at all.
       return unless content.includes?(".use(") || content.includes?(".use (") ||
                     content.includes?(".route(") || content.includes?(".route (")
+      # A test app that mounts the router under a prefix of its own (or none)
+      # adds a phantom prefixed copy of every production route.
+      return if Noir::JSRouteExtractor.test_file?(main_file, content)
       # The mount scans are regexes over call arguments: a comment in
       # `.use(/* x */ '/api', router)` must not hide the prefix, and a
       # commented-out mount must not add one. Lines and columns are kept.

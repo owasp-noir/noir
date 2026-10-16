@@ -112,7 +112,7 @@ module Noir
         # `this.route('GET', '/p')`), so a comment inside a call would hide
         # the literal. Blanking keeps every line and column.
         content = strip_js_comments(content)
-        parser = JSParser.new(content)
+        parser = JSParser.new(content, this_receiver_ok: content_matches?(content, SERVER_EVIDENCE_MARKER))
         route_patterns = parser.parse_routes
 
         if debug && parser.hit_max_iterations?
@@ -341,7 +341,13 @@ module Noir
               receiver_start -= 1
             end
             if receiver = offsets.window(receiver_start, 128).match(ROUTE_RECEIVER_RE)
-              prefixes = prefixes_by_binding[receiver[1]]? || prefixes
+              # A sub-router mounted on the exported router (`router.use(
+              # '/comfy', comfy)`) is served under the exported router's
+              # cross-file prefix too; the parser already folded the in-file
+              # part (`/comfy`) into the route's own path.
+              if root = parser.nearest_ancestor(receiver[1]) { |name| prefixes_by_binding.has_key?(name) }
+                prefixes = prefixes_by_binding[root]
+              end
             end
           end
           if prefixes.empty? && !file_prefixes.empty?
@@ -643,6 +649,12 @@ module Noir
       "require(\"apollo-datasource-rest\")", "require('apollo-datasource-rest')",
       "from \"@apollo/datasource-rest\"", "from '@apollo/datasource-rest'",
       "require(\"@apollo/datasource-rest\")", "require('@apollo/datasource-rest')",
+      # Throwaway test HTTP servers (`createTestHttpServer({ defineRoutes(router)
+      # { router.post('/x', ...) } })`). msw's `vitest.setup.ts` registered 64
+      # routes this way; the library is a devDependency-only test utility.
+      "@epic-web/test-server",
+      "@open-draft/test-server",
+      "create-test-server",
     ]
 
     # Client-side UI framework imports. A file that imports a browser
@@ -683,6 +695,21 @@ module Noir
       # dozens of `.vue` routes and also fires `api.patch(...)`.
       ".vue\"", ".vue'",
       ".svelte\"", ".svelte'",
+      # Browser state, data-fetching and telemetry libraries. Outline's MobX
+      # stores import only `mobx` and `@sentry/react` (no `react`), so none
+      # of the markers above fired on their `client.post('/users.delete',
+      # data)`. k6 is the load-test runtime (`http.post(url, data)`).
+      "from \"mobx", "from 'mobx",
+      "from \"redux\"", "from 'redux'",
+      "from \"react-redux", "from 'react-redux",
+      "from \"@reduxjs/", "from '@reduxjs/",
+      "from \"zustand", "from 'zustand",
+      "from \"swr\"", "from 'swr'",
+      "from \"@tanstack/react-query\"", "from '@tanstack/react-query'",
+      "from \"@sentry/react\"", "from '@sentry/react'",
+      "from \"vuex\"", "from 'vuex'",
+      "from \"jquery\"", "from 'jquery'",
+      "from \"k6", "from 'k6",
     ]
 
     # Real HTTP-server library imports. When any of these is present
@@ -733,6 +760,17 @@ module Noir
       # Cypress's plain `e2e/` layout
       "/mirage/", # Ember mirage stub-server config trees (Ghost,
       # Discourse legacy admin)
+      # Browser-side specs (etherpad's `src/tests/frontend/specs/*.js` run
+      # jQuery `$.get(...)` in the page).
+      "/tests/frontend/",
+      "/test/frontend/",
+      # Fixture apps that only the test run loads (Egg/Midway's
+      # `test/fixtures/apps/*/app/router.js`). Lenient, so a fixture server
+      # that really imports express still scans. Not a bare `/fixtures/`:
+      # that is also an ordinary API resource folder.
+      "/test/fixtures/",
+      "/tests/fixtures/",
+      "/__fixtures__/",
       "/__mocks__/", # Jest manual-mock convention used across the
       # TS ecosystem
       # Bundled output: GitHub Action `dist/` blobs, Next.js
@@ -785,16 +823,30 @@ module Noir
       # but the JSParser pre-filter sees the same `app.get(`/`.post(`
       # shapes.
       ".test-d.",
+      # tstyche type-test suffix (fastify's `test/types/*.tst.ts`).
+      ".tst.",
     ]
 
-    # The hyphen forms are also ordinary English in production router
-    # names (`routes/ab-test.js`, `routes/api-spec.js`), so they count as
-    # a test only without an HTTP server import, or with a test harness
-    # (a supertest suite imports express too). NestJS's `app.e2e-spec.ts`
-    # is always a test.
+    # The hyphen forms are also ordinary English in production router names
+    # (`routes/ab-test.js`, `routes/api-spec.js`), so they count as a test
+    # only without an HTTP server import, or with a test harness (a supertest
+    # suite imports express too). NestJS's `app.e2e-spec.ts` is always a test.
     HYPHEN_TEST_FILENAME_MARKER = Regex.union("-spec.", "-test.")
     E2E_SPEC_FILENAME_MARKER    = "e2e-spec."
-    TEST_HARNESS_MARKER         = /\bdescribe\s*\(|\bsupertest\b|@nestjs\/testing/
+    TEST_HARNESS_MARKER         = /\bdescribe\s*\(|\bDeno\.test\s*\(|\bsupertest\b|@nestjs\/testing/
+
+    # A suite file that registers its own throwaway app is a test whatever
+    # server library it imports. Line-anchored: `.describe(` is also zod's
+    # and Joi's schema annotation in ordinary route files.
+    TEST_DIR_MARKER   = %r{/tests?/}
+    TEST_SUITE_MARKER = /^[ \t]*(?:describe(?:\.(?:only|skip))?|Deno\.test)\s*\(|\bLab\.script\(/m
+
+    # Deno/mocha-style `foo_test.ts` / `foo_spec.js`. snake_case is ordinary
+    # in production names too (`routes/ab_test.js`, `convex/load_test.ts`,
+    # `speed_test.js`), so these are a test only when the file holds a suite
+    # (`TEST_SUITE_MARKER`) — never on the name alone and never because of an
+    # import (a fastify-plugin or router module imports nothing a test would).
+    UNDERSCORE_TEST_FILENAME_MARKER = Regex.union("_spec.", "_test.")
 
     # True when the file's route-shaped calls are almost certainly
     # mock-server stubs (Ember pretender, MSW, nock, ...) rather
@@ -862,8 +914,7 @@ module Noir
                              include_client_frameworks : Bool = true) : Bool
       relative_path = CodeLocator.instance.base_relative(file_path)
       basename = File.basename(file_path)
-      return true if basename.matches?(TEST_STUB_FILENAME_MARKER)
-      return true if relative_path.matches?(STRICT_TEST_PATH_MARKER)
+      return true if test_file?(basename, relative_path, content)
       has_library = content_matches?(content, TEST_STUB_LIBRARY_MARKER) ||
                     (include_client_frameworks && content_matches?(content, CLIENT_SIDE_FRAMEWORK_MARKER))
       if basename.matches?(HYPHEN_TEST_FILENAME_MARKER)
@@ -874,6 +925,29 @@ module Noir
       has_path_marker = relative_path.matches?(TEST_STUB_PATH_MARKER)
       return false unless has_library || has_path_marker
       !content_matches?(content, HTTP_SERVER_LIBRARY_MARKER)
+    end
+
+    # Whether the file is a test by its name, a dedicated test tree, or a
+    # suite under `test/`/`tests/`, ignoring what it imports. Callers whose
+    # frameworks `HTTP_SERVER_LIBRARY_MARKER` does not list (hapi, Elysia)
+    # use this instead of `test_stub_only?`, which would let any server
+    # import keep a test's routes and drop real routes beside axios/react.
+    def self.test_file?(file_path : String, content : String) : Bool
+      test_file?(File.basename(file_path), CodeLocator.instance.base_relative(file_path), content)
+    end
+
+    private def self.test_file?(basename : String, relative_path : String, content : String) : Bool
+      return true if test_named_or_in_test_tree?(basename, relative_path)
+      return false unless relative_path.matches?(TEST_DIR_MARKER) || basename.matches?(UNDERSCORE_TEST_FILENAME_MARKER)
+      content_matches?(content, TEST_SUITE_MARKER)
+    end
+
+    # The content-free half of `test_file?`: a test by its name
+    # (`*.test.*`, `*.spec.*`, ...) or inside a dedicated test tree
+    # (`__tests__/`, `e2e/`, ...). Shared with `JavascriptEngine#js_test_file?`,
+    # which has to decide before it reads the file.
+    def self.test_named_or_in_test_tree?(basename : String, relative_path : String) : Bool
+      basename.matches?(TEST_STUB_FILENAME_MARKER) || relative_path.matches?(STRICT_TEST_PATH_MARKER)
     end
 
     # Match against file content, which always came from a
@@ -997,6 +1071,11 @@ module Noir
     end
 
     SIBLING_FRAMEWORK_MARKER = Regex.union(OTHER_FRAMEWORK_MARKERS.values.flatten)
+
+    # Any import of a server framework the shared extractor serves. A file
+    # without one reads `this.post(...)` as an outbound client call, not a
+    # route (`JSParser#initialize`).
+    SERVER_EVIDENCE_MARKER = Regex.union(HTTP_SERVER_LIBRARY_MARKERS + SHARED_EXTRACTOR_FRAMEWORK_MARKERS.values.flatten)
 
     # Constructors that build an HTTP *client*. `client.get('/todo', cb)` is
     # the same call shape as a route registration, so a client module reads as

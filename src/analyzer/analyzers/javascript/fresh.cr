@@ -90,6 +90,11 @@ module Analyzer::Javascript
     # Files that are framework plumbing rather than routes.
     SKIPPED_LEAVES = ["_app", "_layout", "_404", "_500", "_middleware"]
 
+    # Fresh's own default `ignore` for the routes tree (TEST_FILE_PATTERN in
+    # `constants.ts`): `routes/foo.test.ts` and `routes/index_test.tsx` are
+    # never served.
+    TEST_FILE_PATTERN = /[._]test\.(?:[tj]sx?|[mc][tj]s)$/
+
     # A Fresh project is anchored by `fresh.config.{ts,js}`, or by a Deno
     # manifest that pulls in `$fresh/`. Same shape the detector already
     # treats as authoritative.
@@ -117,11 +122,13 @@ module Analyzer::Javascript
 
       parallel_file_scan(EXTENSIONS) do |path|
         next unless path_under_project_roots?(path, project_roots)
+        next if File.basename(path).matches?(TEST_FILE_PATTERN)
         # Scan-base-relative, never absolute: `String#index` takes the
         # FIRST occurrence, so a same-named directory above the scan base
         # won outright and the derived URL changed with the checkout path.
         scoped = base_relative_path(path)
         idx = scoped.index("/routes/")
+        next if in_test_tree?(idx ? scoped[0...idx] : File.dirname(scoped))
         if idx.nil?
           app_routes = app_route_endpoints(path)
           mutex.synchronize { result.concat(app_routes) } unless app_routes.empty?

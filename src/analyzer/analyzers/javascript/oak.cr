@@ -91,6 +91,7 @@ module Analyzer::Javascript
         content = read_file_content(path)
         # Cheap gate: the mount chain always pairs `.use(` with `.routes(`.
         next unless content.includes?(".use(") && content.includes?(".routes(")
+        next if Noir::JSRouteExtractor.test_file?(path, content)
         # Koa's `api.use('/users', users.routes())` is the same shape, and
         # the prefix key is shared with Koa/Express: a Koa mount resolved
         # here lands on the Koa child as a second, unprefixed-by-parent

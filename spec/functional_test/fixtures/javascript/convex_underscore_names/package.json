@@ -1,0 +1,7 @@
+{
+  "name": "convex-underscore-names",
+  "private": true,
+  "dependencies": {
+    "convex": "^1.17.0"
+  }
+}

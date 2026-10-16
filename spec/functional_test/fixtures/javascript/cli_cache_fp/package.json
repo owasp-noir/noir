@@ -1,0 +1,10 @@
+{
+  "name": "cachefpdemo",
+  "version": "1.0.0",
+  "bin": {
+    "cachefpdemo": "real-cli.js"
+  },
+  "dependencies": {
+    "commander": "^11.0.0"
+  }
+}

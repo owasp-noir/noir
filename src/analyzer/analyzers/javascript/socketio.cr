@@ -50,6 +50,11 @@ module Analyzer::Javascript
       parallel_file_scan do |path|
         content = read_file_content(path)
         next unless socketio_evidence?(content)
+        # `socket.on(...)` in a test drives its own throwaway server.
+        # Import-blind: `test_stub_only?` takes an HTTP-client import
+        # (axios/node-fetch) for "not a server" and would drop a standalone
+        # Socket.IO service that has no http-server import of its own.
+        next if Noir::JSRouteExtractor.test_file?(path, content)
         scan_file(Noir::JSRouteExtractor.strip_js_comments(content), path)
       end
       @result

@@ -1,0 +1,6 @@
+{
+  "name": "tanstack-flat-stories",
+  "dependencies": {
+    "@tanstack/react-router": "^1.0.0"
+  }
+}

@@ -34,6 +34,7 @@ module Analyzer::Typescript
 
       raw = read_file_content(path)
       return unless tanstack_route_candidate?(raw)
+      return if storybook_story?(path, raw)
       # TanStack Router route files are React/Vue components — don't let the
       # client-side-framework markers skip them (they all import `react`).
       return if Noir::JSRouteExtractor.test_stub_only?(path, raw, include_client_frameworks: false)
@@ -68,6 +69,7 @@ module Analyzer::Typescript
     # `String#includes?` calls — this gate runs on every scanned .ts/.tsx
     # file's raw content, twice (once pre- and once post-comment-strip).
     ROUTE_CONSTRUCTOR_RE = Regex.union(ROUTE_CONSTRUCTOR_HINTS)
+    FILE_ROUTE_CALL_RE   = /\bcreate(?:Lazy)?FileRoute\s*\(/
 
     private def tanstack_route_candidate?(content : String) : Bool
       content.matches?(ROUTE_CONSTRUCTOR_RE)
@@ -89,6 +91,14 @@ module Analyzer::Typescript
       TEST_FIXTURE_PATH_MARKERS.any? { |marker| relative.includes?(marker) } ||
         relative.includes?(".test.") ||
         relative.includes?(".spec.")
+    end
+
+    # A Storybook story (`Admin.stories.tsx`) builds a throwaway router with
+    # `createRoute`/`createRootRoute` to render a page. File-route modules
+    # (`createFileRoute`) are never built that way, and a flat route can
+    # legitimately be named `user.$userId.stories.tsx`.
+    private def storybook_story?(path : String, raw : String) : Bool
+      base_relative_path(path).includes?(".stories.") && !raw.matches?(FILE_ROUTE_CALL_RE)
     end
 
     private def analyze_file_routes(content : String, path : String, result : Array(Endpoint), literal_mask : Array(Bool))

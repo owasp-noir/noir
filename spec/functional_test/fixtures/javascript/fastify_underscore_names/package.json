@@ -1,0 +1,7 @@
+{
+  "name": "fastify-underscore-names",
+  "dependencies": {
+    "fastify": "^4.0.0",
+    "fastify-plugin": "^4.0.0"
+  }
+}

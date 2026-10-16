@@ -1,5 +1,6 @@
 require "../../../models/analyzer"
 require "../../../miniparsers/elysia_extractor_ts"
+require "../../../miniparsers/js_route_extractor"
 
 module Analyzer::Javascript
   class Elysia < Analyzer
@@ -21,6 +22,10 @@ module Analyzer::Javascript
 
         content = read_file_content(path)
         next unless content.matches?(ELYSIA_MARKERS_RE)
+        # `new Elysia().get(...).handle(new Request(...))` in a test is
+        # never served. Import-blind: `test_stub_only?` would drop an Elysia
+        # server that also imports react or axios.
+        next if Noir::JSRouteExtractor.test_file?(path, content)
 
         include_callee = callees_needed?
         Noir::TreeSitterElysiaExtractor.extract_routes(content, include_callee).each do |route|

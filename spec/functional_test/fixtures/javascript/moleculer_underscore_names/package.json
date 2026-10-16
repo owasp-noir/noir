@@ -1,0 +1,7 @@
+{
+  "name": "moleculer-underscore-names",
+  "dependencies": {
+    "moleculer": "^0.14.0",
+    "moleculer-web": "^0.10.0"
+  }
+}
