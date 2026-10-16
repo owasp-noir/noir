@@ -73,7 +73,12 @@ module Noir
         (@framework == :restify && token.value == "opts" && routing_receiver?(receiver))
     end
 
-    def initialize(source : String)
+    # `this_receiver_ok` is false for a file with no server-framework import:
+    # there a bare `this.post('/x', data)` is the outbound call of an API
+    # client class (`class ProjectService extends APIService`), not a route,
+    # unless it passes an inline function handler (Unleash's controllers
+    # `this.get('/prometheus', async (req, res) => …)` import no server).
+    def initialize(source : String, @this_receiver_ok : Bool = true)
       lexer = JSLexer.new(source)
       @tokens = lexer.tokenize
       @supports_named_routes = source.includes?("koa-router") || source.includes?("@koa/router")
@@ -625,6 +630,40 @@ module Noir
       true
     end
 
+    # True when an argument after the first of the call whose `(` sits at
+    # `lparen_idx` starts like an inline function: `(req, res) => …`,
+    # `async (…) => …`, `function (…) {…}`.
+    # ponytail: `req => …` without parentheses is not recognised.
+    private def inline_function_arg?(lparen_idx : Int32) : Bool
+      depth = 0
+      arg_index = 0
+      arg_start = true
+      idx = lparen_idx + 1
+      while idx < @tokens.size
+        token = @tokens[idx]
+        if depth == 0 && arg_start && arg_index > 0
+          return true if token.type == :lparen || (token.type == :keyword && (token.value == "async" || token.value == "function"))
+        end
+        arg_start = false
+        case token.type
+        when :lparen, :lbracket, :lbrace
+          depth += 1
+        when :rparen, :rbracket, :rbrace
+          return false if depth == 0
+          depth -= 1
+        when :comma
+          if depth == 0
+            arg_index += 1
+            arg_start = true
+          end
+        else
+          # Not a delimiter.
+        end
+        idx += 1
+      end
+      false
+    end
+
     # Classify one argument (tokens `start_idx...end_idx`) as handler-shaped.
     private def handler_shaped_arg?(start_idx : Int32, end_idx : Int32) : Bool
       return false if start_idx >= end_idx || start_idx >= @tokens.size
@@ -734,10 +773,16 @@ module Noir
     # NodeBB's `test/*.js` alone turns 385 such calls into routes that do
     # not exist. Keep the list to library names that would be perverse to
     # use for a router — a receiver named `api` or `client` may well be
-    # one, so neither is listed.
+    # one (mastodon's streaming server routes on `api`), so neither is
+    # listed. `$`/`jQuery`/`$http`/`AJAX` are browser clients, `http`/`https`
+    # the Node modules (`http.get(url, cb)`, k6's `http.post(url, data)`),
+    # `socket` sails.io's, and `httpClient`/`axiosInstance`/`axiosClient`
+    # the injected clients of generated SDKs (`this.httpClient.post(...)`).
     HTTP_CLIENT_RECEIVERS = Set{
       "request", "axios", "superagent", "supertest", "got",
       "needle", "unirest", "ky", "phin", "chai",
+      "$", "jQuery", "$http", "AJAX", "ajax", "http", "https", "socket",
+      "httpClient", "axiosInstance", "axiosClient",
     }
 
     # A receiver is a client only when the file never builds a router
@@ -1251,6 +1296,7 @@ module Noir
            route_handler_arg?(path_idx)
           router_var = @tokens[idx - 1].type == :identifier ? @tokens[idx - 1].value : ""
           return results if http_client_receiver?(router_var)
+          return results if !@this_receiver_ok && @tokens[idx - 1].value == "this" && !inline_function_arg?(path_idx)
           path_entries = route_path_entries_from_args(path_idx + 1, allow_named_route: named_route_receiver?(router_var), receiver: router_var)
           @position = path_idx + 2 unless path_entries.empty?
 

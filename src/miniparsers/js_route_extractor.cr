@@ -112,7 +112,7 @@ module Noir
         # `this.route('GET', '/p')`), so a comment inside a call would hide
         # the literal. Blanking keeps every line and column.
         content = strip_js_comments(content)
-        parser = JSParser.new(content)
+        parser = JSParser.new(content, this_receiver_ok: content_matches?(content, SERVER_EVIDENCE_MARKER))
         route_patterns = parser.parse_routes
 
         if debug && parser.hit_max_iterations?
@@ -689,6 +689,21 @@ module Noir
       # dozens of `.vue` routes and also fires `api.patch(...)`.
       ".vue\"", ".vue'",
       ".svelte\"", ".svelte'",
+      # Browser state, data-fetching and telemetry libraries. Outline's MobX
+      # stores import only `mobx` and `@sentry/react` (no `react`), so none
+      # of the markers above fired on their `client.post('/users.delete',
+      # data)`. k6 is the load-test runtime (`http.post(url, data)`).
+      "from \"mobx", "from 'mobx",
+      "from \"redux\"", "from 'redux'",
+      "from \"react-redux", "from 'react-redux",
+      "from \"@reduxjs/", "from '@reduxjs/",
+      "from \"zustand", "from 'zustand",
+      "from \"swr\"", "from 'swr'",
+      "from \"@tanstack/react-query\"", "from '@tanstack/react-query'",
+      "from \"@sentry/react\"", "from '@sentry/react'",
+      "from \"vuex\"", "from 'vuex'",
+      "from \"jquery\"", "from 'jquery'",
+      "from \"k6", "from 'k6",
     ]
 
     # Real HTTP-server library imports. When any of these is present
@@ -739,6 +754,10 @@ module Noir
       # Cypress's plain `e2e/` layout
       "/mirage/", # Ember mirage stub-server config trees (Ghost,
       # Discourse legacy admin)
+      # Browser-side specs (etherpad's `src/tests/frontend/specs/*.js` run
+      # jQuery `$.get(...)` in the page).
+      "/tests/frontend/",
+      "/test/frontend/",
       # Fixture apps that only the test run loads (Egg/Midway's
       # `test/fixtures/apps/*/app/router.js`). Lenient, so a fixture server
       # that really imports express still scans. Not a bare `/fixtures/`:
@@ -1032,6 +1051,11 @@ module Noir
     end
 
     SIBLING_FRAMEWORK_MARKER = Regex.union(OTHER_FRAMEWORK_MARKERS.values.flatten)
+
+    # Any import of a server framework the shared extractor serves. A file
+    # without one reads `this.post(...)` as an outbound client call, not a
+    # route (`JSParser#initialize`).
+    SERVER_EVIDENCE_MARKER = Regex.union(HTTP_SERVER_LIBRARY_MARKERS + SHARED_EXTRACTOR_FRAMEWORK_MARKERS.values.flatten)
 
     # Constructors that build an HTTP *client*. `client.get('/todo', cb)` is
     # the same call shape as a route registration, so a client module reads as
