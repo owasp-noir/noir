@@ -43,6 +43,12 @@ module Analyzer::Php
     # the pattern or its alternative.
     HTACCESS_PHP_FILES_RE = /<Files(?:Match)?\b(?![^>]*[\w-]\\?\.php)[^>]*[.(|:]php(?=[$"'>)|])[^>]*>(.*?)<\/Files(?:Match)?>/mi
     HTACCESS_PHP_OFF_RE   = /^[ \t]*(?:SetHandler[ \t]+!|RemoveHandler\b|Deny[ \t]+from[ \t]+all\b|Require[ \t]+all[ \t]+denied\b)/mi
+    # The two block regexes above rescan to EOF from every unclosed opening
+    # tag, so a hostile file of them is quadratic (440KB stalled a scan for
+    # 8s). Real `.htaccess` files are a few KB; past this size the file is read
+    # as not denying anything, as if the check did not exist.
+    # ponytail: oversized = not denying; a line-oriented scan if a real one needs more
+    HTACCESS_MAX_BYTES = 65_536
 
     # `<?php`, `?>` and whitespace: what is left of an `index.php` once
     # these and its comments go, if it is only a placeholder.
@@ -142,6 +148,7 @@ module Analyzer::Php
     end
 
     private def htaccess_denies_php?(text : String) : Bool
+      return false if text.bytesize > HTACCESS_MAX_BYTES
       return false if text.matches?(HTACCESS_GRANT_RE)
       return true if text.gsub(HTACCESS_SCOPED_BLOCK_RE, "").matches?(HTACCESS_DENY_RE)
       text.scan(HTACCESS_PHP_FILES_RE).any?(&.[1].matches?(HTACCESS_PHP_OFF_RE))

@@ -43,4 +43,22 @@ describe "Analyzer::Php::Php .htaccess" do
       denies?("#{opening}\n  Require all denied\n</#{opening.starts_with?("<FilesMatch") ? "FilesMatch" : "Files"}>\n").should be_false
     end
   end
+
+  # An unclosed opening tag makes the block regexes scan to EOF, once per tag:
+  # 440KB of them took 8s. Past the size cap the file is not read at all.
+  it "does not read an oversized .htaccess" do
+    cap = Analyzer::Php::Php::HTACCESS_MAX_BYTES
+    padding = "#" * (cap - 20) + "\n"
+
+    denies?("Deny from all\n" + padding).should be_true
+    denies?("Deny from all\n" + padding + padding).should be_false
+  end
+
+  it "stays fast on a file of unclosed blocks" do
+    hostile = %(<FilesMatch "\\.php$">\n) * 20_000
+
+    started = Time.instant
+    denies?(hostile).should be_false
+    (Time.instant - started).should be < 2.seconds
+  end
 end
