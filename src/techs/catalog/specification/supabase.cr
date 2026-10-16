@@ -4,9 +4,10 @@
 module NoirTechs::Catalog::Specification
   SUPABASE = {
     :supabase => {
-      :format    => ["SQL"],
-      :similar   => ["supabase", "postgrest", "supabase-migrations", "supabase_migrations", "pgrst"],
-      :supported => {
+      :implementation => true,
+      :format         => ["SQL"],
+      :similar        => ["supabase", "postgrest", "supabase-migrations", "supabase_migrations", "pgrst"],
+      :supported      => {
         :endpoint => true,
         :method   => true,
         :params   => {

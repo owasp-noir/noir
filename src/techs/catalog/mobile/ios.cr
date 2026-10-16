@@ -4,9 +4,10 @@
 module NoirTechs::Catalog::Mobile
   IOS = {
     :ios => {
-      :format    => ["PLIST"],
-      :similar   => ["ios", "info-plist", "infoplist", "info_plist", "entitlements"],
-      :supported => {
+      :implementation => true,
+      :format         => ["PLIST"],
+      :similar        => ["ios", "info-plist", "infoplist", "info_plist", "entitlements"],
+      :supported      => {
         :endpoint => true,
         :method   => false,
         :params   => {

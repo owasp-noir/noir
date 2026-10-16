@@ -4,9 +4,10 @@
 module NoirTechs::Catalog::Mobile
   ANDROID = {
     :android => {
-      :format    => ["XML"],
-      :similar   => ["android", "android-manifest", "androidmanifest", "android_manifest"],
-      :supported => {
+      :implementation => true,
+      :format         => ["XML"],
+      :similar        => ["android", "android-manifest", "androidmanifest", "android_manifest"],
+      :supported      => {
         :endpoint => true,
         :method   => false,
         :params   => {

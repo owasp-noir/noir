@@ -4,9 +4,10 @@
 module NoirTechs::Catalog::Specification
   APPWRITE = {
     :appwrite => {
-      :format    => ["JSON"],
-      :similar   => ["appwrite", "appwrite-config", "appwrite_config", "appwrite.json"],
-      :supported => {
+      :implementation => true,
+      :format         => ["JSON"],
+      :similar        => ["appwrite", "appwrite-config", "appwrite_config", "appwrite.json"],
+      :supported      => {
         :endpoint => true,
         :method   => true,
         :params   => {

@@ -887,6 +887,18 @@ describe "EndpointOptimizer" do
       result[0].details.code_paths.first.path.should eq("src/HomeController.java")
     end
 
+    it "does not demote a schema-generated backend whose paths are .json files" do
+      optimizer = EndpointOptimizer.new(logger, options)
+
+      strapi = tech_endpoint("/api/articles", "GET", "strapi", "a/content-types/article/schema.json", 1)
+      express = tech_endpoint("/api/articles", "GET", "js_express", "b/server.js", 9)
+
+      result = optimizer.optimize_endpoints([strapi, express])
+
+      result[0].details.technology.should eq("strapi")
+      result[0].details.code_paths.first.path.should eq("a/content-types/article/schema.json")
+    end
+
     it "keeps every distinct value of a merged tag" do
       optimizer = EndpointOptimizer.new(logger, options)
 
@@ -917,6 +929,24 @@ describe "EndpointOptimizer" do
 
         tagged = result.select(&.tags.any?(&.name.==("spec-only"))).map(&.url)
         tagged.should eq(["/published"])
+      end
+
+      # Strapi serves its content types; the documentation plugin's OAS file
+      # describes those same routes and must not read as unimplemented just
+      # because another code tech is in the scan.
+      it "does not tag spec operations a schema-generated backend serves" do
+        optimizer = EndpointOptimizer.new(logger, options)
+
+        endpoints = [
+          tech_endpoint("/api/articles", "GET", "oas3", "src/extensions/documentation/full_documentation.json", 3),
+          tech_endpoint("/api/articles", "GET", "strapi", "src/api/article/content-types/article/schema.json", 1),
+          tech_endpoint("/health", "GET", "js_express", "server.js", 9),
+        ]
+
+        result = optimizer.optimize_endpoints(endpoints)
+
+        result.flat_map(&.tags).map(&.name).should_not contain("spec-only")
+        result.find!(&.url.==("/api/articles")).details.technology.should eq("strapi")
       end
 
       it "tags nothing when no code analyzer reported a route" do

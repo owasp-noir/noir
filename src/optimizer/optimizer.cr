@@ -16,13 +16,6 @@ class EndpointOptimizer
   # are treated as noise during dedup.
   COLLECTION_NOISE_HEADERS = Set{"user-agent", "accept", "content-type", "host", "origin", "referer", "x-requested-with", "cookie"}
 
-  # Techs whose catalog entry names no language: specification documents,
-  # client collections, traffic captures and infra/routing config (Ingress,
-  # nginx, gateways). They declare a route rather than implement it, so when
-  # one shares an endpoint with a code handler the handler is the primary
-  # source, whichever file sorts first.
-  DECLARATION_TECHNOLOGIES = NoirTechs::TECHS.compact_map { |tech, info| tech.to_s unless info.has_key?(:language) }.to_set
-
   # HTTP API contracts whose operations a code analyzer can report too. An
   # endpoint only these (and other declarations) produced, in a scan where
   # code analyzers did report routes, is tagged `spec-only`. gRPC, Thrift,
@@ -281,7 +274,7 @@ class EndpointOptimizer
   end
 
   private def code_technology_contributed?(endpoint : Endpoint) : Bool
-    endpoint.details.technologies.any? { |technology| !DECLARATION_TECHNOLOGIES.includes?(technology) }
+    endpoint.details.technologies.any? { |technology| !NoirTechs::DECLARATION_TECHS.includes?(technology) }
   end
 
   # An AI endpoint that names a static route under another path-param
@@ -396,7 +389,10 @@ class EndpointOptimizer
   end
 
   private def source_document_endpoint?(endpoint : Endpoint) : Bool
-    return true if DECLARATION_TECHNOLOGIES.includes?(endpoint.details.technology || "")
+    technology = endpoint.details.technology || ""
+    return true if NoirTechs::DECLARATION_TECHS.includes?(technology)
+    # A Strapi content-type schema is a `.json` file, but Strapi serves it.
+    return false if NoirTechs::IMPLEMENTATION_TECHS.includes?(technology)
 
     code_paths = endpoint.details.code_paths
     !code_paths.empty? && code_paths.all? { |path_info| MediaFilter.spec_document?(path_info.path) }

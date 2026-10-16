@@ -4,9 +4,10 @@
 module NoirTechs::Catalog::Mobile
   WELL_KNOWN = {
     :well_known_applinks => {
-      :format    => ["JSON"],
-      :similar   => ["well_known_applinks", "assetlinks", "apple-app-site-association", "aasa", "applinks"],
-      :supported => {
+      :implementation => true,
+      :format         => ["JSON"],
+      :similar        => ["well_known_applinks", "assetlinks", "apple-app-site-association", "aasa", "applinks"],
+      :supported      => {
         :endpoint => true,
         :method   => false,
         :params   => {

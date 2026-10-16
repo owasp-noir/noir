@@ -4,9 +4,10 @@
 module NoirTechs::Catalog::Specification
   PAYLOAD_CMS = {
     :payload_cms => {
-      :format    => ["TS", "JS"],
-      :similar   => ["payload", "payloadcms", "payload-cms", "payload_cms", "payload cms"],
-      :supported => {
+      :implementation => true,
+      :format         => ["TS", "JS"],
+      :similar        => ["payload", "payloadcms", "payload-cms", "payload_cms", "payload cms"],
+      :supported      => {
         :endpoint => true,
         :method   => true,
         :params   => {
