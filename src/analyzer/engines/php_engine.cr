@@ -31,15 +31,20 @@ module Analyzer::Php
       !PhpEngine.test_path?(base_relative_path(path))
     end
 
-    TEST_DIR_RE = %r{/(?:Tests?|tests?|Fixtures|workbench|legacy_tests)/}
+    TEST_DIR_RE = %r{/(?:Tests|tests|Fixtures|workbench|legacy_tests)/|/Test/(?:Unit|Integration|Mftf|Integrity|Legacy|Fixture|_files)/|/test/phpunit/|/config/routes/test/}
 
     # Standard PHP test-source conventions:
     #
     #   * `/Tests/`               — PSR-4 / Symfony convention
     #     (`src/Symfony/Bundle/FrameworkBundle/Tests/...`)
     #   * `/tests/`               — Laravel / CakePHP / PHPUnit default
-    #   * `/Test/`, `/test/`      — Magento `Test/Unit/_files`, Dolibarr
-    #     `test/`, Symfony `config/routes/test/` (test-env routes)
+    #   * `/Test/Unit/`, `/Test/Mftf/`, … — Magento's per-module test trees
+    #     (`Test/Unit/_files/webapi.xml`), `/test/phpunit/` — Dolibarr, and
+    #     `/config/routes/test/` — Symfony's test-env routes. A bare
+    #     `Test/` or `test/` is *not* a test dir: it is the `Test` namespace
+    #     of `app/Http/Controllers/Test/` (Laravel), `src/Controller/Test/`
+    #     (Symfony), a ThinkPHP `application/test/` or Yii `modules/test/`
+    #     module, all real routes.
     #   * `/Fixtures/`, `/legacy_tests/` — test data and Dusk suites
     #   * `/workbench/`           — Orchestra Testbench skeleton app
     #   * `/docs/` at the scan base — runnable doc snippets
