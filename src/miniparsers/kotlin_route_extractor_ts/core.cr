@@ -71,8 +71,11 @@ module Noir
     def extract_string_constants(source : String) : Hash(String, String)
       constants = Hash(String, String).new
       package_name = ""
-      current_type = ""
-      current_depth = 0
+      # Enclosing `class`/`object`/`interface` names with the brace depth
+      # each was declared at, so a constant after a nested `object` keeps
+      # its outer prefix and a nested one also registers `Outer.Inner.NAME`.
+      type_stack = [] of Tuple(String, Int32)
+      depth = 0
       # Scrubbed copy (strings/comments blanked, newlines preserved) for brace
       # counting, so a `}` inside a const string value can't close the type early.
       scrubbed_lines = visible_kotlin_code(source).lines
@@ -92,8 +95,11 @@ module Noir
         end
 
         if match = line.match(/^\s*(?:class|object|interface)\s+([A-Za-z_][A-Za-z0-9_]*)/)
-          current_type = match[1]
-          current_depth = 0
+          # A body-less sibling type declared at this depth is not a parent.
+          while (top = type_stack.last?) && top[1] >= depth
+            type_stack.pop
+          end
+          type_stack << {match[1], depth}
         end
 
         name = value = nil
@@ -105,19 +111,19 @@ module Noir
 
         if name && value
           constants[name] ||= value
-          unless current_type.empty?
-            constants["#{current_type}.#{name}"] ||= value
-            constants["#{package_name}.#{current_type}.#{name}"] ||= value unless package_name.empty?
+          unless type_stack.empty?
+            qualified = type_stack.join('.', &.[0])
+            constants["#{type_stack.last[0]}.#{name}"] ||= value
+            constants["#{qualified}.#{name}"] ||= value
+            constants["#{package_name}.#{qualified}.#{name}"] ||= value unless package_name.empty?
           end
         end
 
-        unless current_type.empty?
-          structural = scrubbed_lines[idx]? || line
-          current_depth += structural.count("{")
-          current_depth -= structural.count("}")
-          if current_depth <= 0 && structural.includes?("}")
-            current_type = ""
-            current_depth = 0
+        structural = scrubbed_lines[idx]? || line
+        depth += structural.count('{') - structural.count('}')
+        if structural.includes?('}')
+          while (top = type_stack.last?) && depth <= top[1]
+            type_stack.pop
           end
         end
       end
@@ -810,7 +816,8 @@ module Noir
             [verb_default]
           else
             methods = annotation_methods(args, source)
-            methods.empty? ? ["GET"] : methods
+            # Spring maps a method-less `@RequestMapping` to every verb.
+            methods.empty? ? ["ANY"] : methods
           end
 
         class_prefixes.each do |class_prefix|

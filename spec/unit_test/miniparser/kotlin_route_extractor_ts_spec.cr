@@ -96,7 +96,7 @@ describe Noir::TreeSitterKotlinRouteExtractor do
     ])
   end
 
-  it "derives the verb from RequestMethod for generic @RequestMapping" do
+  it "derives the verb from RequestMethod for generic @RequestMapping (ANY when omitted)" do
     source = <<-KT
       class M {
           @RequestMapping(value = "/get", method = [RequestMethod.GET])
@@ -114,7 +114,7 @@ describe Noir::TreeSitterKotlinRouteExtractor do
     routes.map { |r| {r.verb, r.path} }.should eq([
       {"GET", "/get"},
       {"POST", "/post"},
-      {"GET", "/default"},
+      {"ANY", "/default"},
     ])
   end
 
@@ -176,6 +176,25 @@ describe Noir::TreeSitterKotlinRouteExtractor do
       {"POST", "/api/users"},
       {"POST", "/api/accounts"},
     ])
+  end
+
+  it "keeps the outer prefix for constants around a nested object" do
+    source = <<-KT
+      package com.acme
+
+      object RoutePaths {
+          object V1 {
+              const val X = "/x"
+          }
+          const val AFTER = "/after-nested"
+      }
+      KT
+
+    constants = Noir::TreeSitterKotlinRouteExtractor.extract_string_constants(source)
+    constants["RoutePaths.V1.X"]?.should eq("/x")
+    constants["V1.X"]?.should eq("/x")
+    constants["RoutePaths.AFTER"]?.should eq("/after-nested")
+    constants["com.acme.RoutePaths.AFTER"]?.should eq("/after-nested")
   end
 
   it "does not resolve simple mapping constants from the global index" do

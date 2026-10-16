@@ -2,6 +2,7 @@ require "../utils/text_file"
 require "../utils/path_scope"
 require "../utils/utils"
 require "./extraction_result_cache"
+require "../models/code_locator"
 
 module Noir
   # Shared file-level import-graph traversal for cross-file route /
@@ -28,6 +29,8 @@ module Noir
   module ImportGraph
     @@sibling_source_roots_cache = Hash(String, Array(String)).new
     @@sibling_source_roots_mutex = Mutex.new
+    @@scanned_source_roots_cache = Hash(String, Array(Tuple(String, String, String?))).new
+    @@scanned_source_roots_mutex = Mutex.new
 
     IMPORT_RESOLUTION_MAX_ENTRIES = 262_144
     PACKAGE_SIBLINGS_MAX_ENTRIES  =  32_768
@@ -47,6 +50,7 @@ module Noir
     # different tree in the same process (`--diff`, library use).
     Noir::ExtractionResultCache.register_clearer do
       @@sibling_source_roots_mutex.synchronize { @@sibling_source_roots_cache.clear }
+      @@scanned_source_roots_mutex.synchronize { @@scanned_source_roots_cache.clear }
       @@import_resolution_mutex.synchronize { @@import_resolution_cache.clear }
       @@package_siblings_mutex.synchronize { @@package_siblings_cache.clear }
       @@directory_mutex.synchronize { @@directory_cache.clear }
@@ -158,6 +162,15 @@ module Noir
             resolved << sibling_file if File.exists?(sibling_file)
           end
         end
+        # Kotlin files may be named anything and hold many top-level
+        # classes (`dto/Requests.kt` declaring `FeedRequest`), so a miss on
+        # `pkg/Name.kt` falls back to the package's files, as `pkg.*` would.
+        if resolved.empty? && extension == "kt" && !relative_dir.empty?
+          ([source_root] + sibling_roots).each do |root|
+            dir = File.join(root, relative_dir)
+            resolved.concat(package_siblings(dir, extension)) if directory?(dir)
+          end
+        end
       end
 
       @@import_resolution_mutex.synchronize do
@@ -243,6 +256,16 @@ module Noir
             candidate_expanded = Noir::PathScope.expand(candidate)
             roots << candidate if candidate_expanded != expanded
           end
+          # Monorepos keep shared modules at other depths (`shared/` next
+          # to `apps/portal`), so also take every other root of this
+          # language the scan registered under the same `-b` base.
+          if base = Noir::PathScope.longest_base(expanded, CodeLocator.instance.scan_base_paths)
+            seen = roots.map { |root| Noir::PathScope.expand(root) }.to_set
+            seen << expanded
+            scanned_source_roots(lang).each do |candidate, candidate_expanded, candidate_base|
+              roots << candidate if candidate_base == base && seen.add?(candidate_expanded)
+            end
+          end
         end
       end
 
@@ -250,6 +273,30 @@ module Noir
         @@sibling_source_roots_cache[expanded] = roots
       end
       roots
+    end
+
+    # Every `.../src/main/{lang}` directory holding a scanned source file,
+    # as `{registered spelling, expanded, owning -b base}`, derived once
+    # per language from the file registry. The registered spelling keeps
+    # resolved files on the content cache's keys.
+    private def self.scanned_source_roots(lang : String) : Array(Tuple(String, String, String?))
+      @@scanned_source_roots_mutex.synchronize do
+        @@scanned_source_roots_cache[lang] ||= begin
+          marker = "/src/main/#{lang}/"
+          roots = Set(String).new
+          {".java", ".kt"}.each do |ext|
+            CodeLocator.instance.files_by_extension(ext).each do |file|
+              next unless idx = file.index(marker)
+              roots << file[0, idx + marker.size - 1]
+            end
+          end
+          bases = CodeLocator.instance.scan_base_paths
+          roots.map do |root|
+            expanded = Noir::PathScope.expand(root)
+            {root, expanded, Noir::PathScope.longest_base(expanded, bases)}
+          end
+        end
+      end
     end
 
     # `glob_under(dir, pattern)`, block form. `Dir.glob` raises on
