@@ -229,8 +229,11 @@ module Analyzer::Specification
 
       begin
         uri = URI.parse(stripped)
-        if path = uri.path
-          return normalize_path(path) unless path.empty?
+        # Only a rooted path is settled here. `URI.parse` hands a scheme-less
+        # `{{baseUrl}}/health` or `host.com/get` back whole as its path, which
+        # would keep the host as a segment and skip the host-aware code below.
+        if (path = uri.path) && path.starts_with?('/')
+          return normalize_path(path)
         end
       rescue e
         logger.debug "Failed to parse Postman URL '#{stripped}': #{e}"
