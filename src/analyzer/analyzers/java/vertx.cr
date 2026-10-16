@@ -87,8 +87,11 @@ module Analyzer::Java
 
         content = read_file_content(path)
 
-        # Skip if no Vert.x related content
-        next unless content.includes?("Router") || content.includes?("vertx")
+        # Every Vert.x route file names an `io.vertx` type. The looser
+        # `Router`/`vertx` substrings also passed Micronaut's
+        # `io.micronaut.web.router.Router`, whose `HttpRequest.GET("/x")`
+        # client calls and `Map.put("/x", ..)` then read as routes.
+        next unless content.includes?("io.vertx")
 
         # Every scan below is textual. On the raw source a commented-out
         # `router.get(...)` became an endpoint, and an apostrophe in a

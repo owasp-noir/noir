@@ -57,7 +57,10 @@ module Analyzer::Java
     LIB_MARKERS_RE   = Regex.union(LIB_MARKERS)
     WEB_FRAMEWORK_RE = /\bimport\s+(?:org\.springframework|jakarta\.ws\.rs|javax\.ws\.rs|io\.quarkus|io\.micronaut|io\.javalin|io\.vertx|com\.linecorp\.armeria|io\.dropwizard|spark\.|org\.apache\.struts)/
 
-    CLI_GATE_RE = /@Command\b|@Parameter\b|new\s+JCommander|new\s+CmdLineParser|new\s+Options\s*\(/
+    # No bare `@Parameter`: swagger/OpenAPI, Maven Mojo and Hibernate all
+    # declare one. A real JCommander file names `com.beust.jcommander`
+    # (LIB_MARKERS), and `scan` only reads `@Parameter` for those.
+    CLI_GATE_RE = /@Command\b|new\s+JCommander|new\s+CmdLineParser|new\s+Options\s*\(/
 
     # Cheap pre-gate applied to the RAW file, before the comment strip.
     #
@@ -73,7 +76,7 @@ module Analyzer::Java
     # relied on, since blanking a comment *can* manufacture whitespace).
     # Files that pass still go through the full, comment-aware gate.
     RAW_CLI_MARKERS_RE = Regex.union(
-      LIB_MARKERS + ["@Command", "@Parameter", "JCommander", "CmdLineParser", "Options"]
+      LIB_MARKERS + ["@Command", "JCommander", "CmdLineParser", "Options"]
     )
 
     def analyze
@@ -92,7 +95,7 @@ module Analyzer::Java
           binary = java_binary_name(content, path)
           root_url = "cli://#{binary}"
           emit_env = !content.matches?(WEB_FRAMEWORK_RE)
-          scan(content.lines, path, binary, root_url, endpoints, emit_env)
+          scan(content.lines, path, binary, root_url, endpoints, emit_env, content.includes?("com.beust.jcommander"))
         rescue e
           logger.debug "Error analyzing #{path}: #{e}"
           next
@@ -119,7 +122,8 @@ module Analyzer::Java
     end
 
     private def scan(lines : Array(String), path : String, binary : String,
-                     root_url : String, endpoints : Hash(String, Endpoint), emit_env : Bool)
+                     root_url : String, endpoints : Hash(String, Endpoint), emit_env : Bool,
+                     jcommander : Bool)
       current_url = root_url
       pending_argument = false
       jopt_vars = Set(String).new
@@ -160,7 +164,7 @@ module Analyzer::Java
         # jcommander @Parameter: `names = {"-p", "--port"}` is a named
         # option; a name-less @Parameter(description = ...) is the command's
         # main parameter — bind the next field declaration as a positional.
-        if m = line.match(PARAMETER_ATTR)
+        if jcommander && (m = line.match(PARAMETER_ATTR))
           if name = annotation_flag_name(m[1])
             pending_argument = false
             fetch_endpoint(endpoints, current_url, path, line_no).push_param(Param.new(name, "", "flag"))

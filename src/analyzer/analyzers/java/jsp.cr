@@ -1,5 +1,6 @@
 require "../../../utils/utils.cr"
 require "../../../models/analyzer"
+require "../../engines/java_engine"
 require "xml"
 require "../../../utils/xml_comments"
 
@@ -38,6 +39,8 @@ module Analyzer::Java
       # non-IO failure in a worker killed the worker and left the producer
       # parked on a full channel for the rest of the process's life.
       scan_files(all_files) do |path|
+        next if JavaEngine.test_path?(base_relative_path(path))
+
         relative_path = get_relative_path(configured_base_for(path), path)
 
         if File.exists?(path) && File.extname(path) == ".jsp"

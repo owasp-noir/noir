@@ -47,6 +47,10 @@ module Noir
   module TreeSitterJvmLambdaDslExtractor
     extend self
 
+    # A slash, `{param}`, `<param>` or leading `:param`: a pattern that reads
+    # as a route even without the leading `/`.
+    ROUTE_PARAM_PATH_RE = /[\/{<]|\A:/
+
     struct Config
       getter verb_methods : Hash(String, String)
       getter websocket_methods : Set(String)
@@ -131,7 +135,8 @@ module Noir
                      method_bodies : Hash(String, LibTreeSitter::TSNode),
                      handler_vars : Hash(String, LibTreeSitter::TSNode),
                      depth : Int32,
-                     include_callees : Bool)
+                     include_callees : Bool,
+                     in_block : Bool = false)
       return if depth > Noir::TreeSitter::MAX_AST_DEPTH
 
       ty = Noir::TreeSitter.node_type(node)
@@ -140,10 +145,10 @@ module Noir
         name = method_invocation_method_name(node, source)
         case
         when verb = config.verb_methods[name]?
-          emit_route(node, source, verb, prefix, config, routes, constants, method_bodies, handler_vars, include_callees)
+          emit_route(node, source, verb, prefix, config, routes, constants, method_bodies, handler_vars, include_callees, route_context: in_block)
           return
         when config.websocket_methods.includes?(name)
-          emit_route(node, source, "GET", prefix, config, routes, constants, method_bodies, handler_vars, include_callees, protocol: "ws")
+          emit_route(node, source, "GET", prefix, config, routes, constants, method_bodies, handler_vars, include_callees, protocol: "ws", route_context: in_block)
           return
         when config.handler_methods.includes?(name)
           emit_handler_route(node, source, prefix, config, routes, constants, method_bodies, handler_vars, include_callees)
@@ -155,19 +160,19 @@ module Noir
           path_arg = first_string_argument(node, source, constants)
           new_prefix = path_arg ? Noir::URLPath.join_trimmed(prefix, path_arg) : prefix
           if body = lambda_body_in_args(node)
-            walk(body, source, new_prefix, config, routes, constants, method_bodies, handler_vars, depth + 1, include_callees)
+            walk(body, source, new_prefix, config, routes, constants, method_bodies, handler_vars, depth + 1, include_callees, true)
           end
           return
         when config.transparent_methods.includes?(name)
           if body = lambda_body_in_args(node)
-            walk(body, source, prefix, config, routes, constants, method_bodies, handler_vars, depth + 1, include_callees)
+            walk(body, source, prefix, config, routes, constants, method_bodies, handler_vars, depth + 1, include_callees, group_lambda?(node))
           end
           return
         end
       end
 
       Noir::TreeSitter.each_named_child(node) do |child|
-        walk(child, source, prefix, config, routes, constants, method_bodies, handler_vars, depth + 1, include_callees)
+        walk(child, source, prefix, config, routes, constants, method_bodies, handler_vars, depth + 1, include_callees, in_block)
       end
     end
 
@@ -181,7 +186,8 @@ module Noir
                            method_bodies : Hash(String, LibTreeSitter::TSNode),
                            handler_vars : Hash(String, LibTreeSitter::TSNode),
                            include_callees : Bool,
-                           protocol : String = "http")
+                           protocol : String = "http",
+                           route_context : Bool = false)
       return unless route_invocation?(call, source, config, handler_vars)
 
       path_arg = first_string_argument(call, source, constants)
@@ -189,6 +195,7 @@ module Noir
         return if prefix.empty? || !first_argument_is_handler?(call, source, handler_vars)
         path_arg = ""
       end
+      return unless route_path?(call, source, path_arg, route_context, handler_vars)
 
       full_path = Noir::URLPath.join_trimmed(prefix, path_arg)
       line = Noir::TreeSitter.call_name_row(call)
@@ -246,7 +253,7 @@ module Noir
       verb = first_http_method_argument(call, source)
       return unless verb
 
-      emit_route(call, source, verb, prefix, config, routes, constants, method_bodies, handler_vars, include_callees)
+      emit_route(call, source, verb, prefix, config, routes, constants, method_bodies, handler_vars, include_callees, route_context: true)
     end
 
     private def emit_crud_routes(call : LibTreeSitter::TSNode,
@@ -355,6 +362,67 @@ module Noir
         end
       end
       result
+    end
+
+    # A route path starts with `/` (or `*`); anything else that survives the
+    # route-invocation test is a `Map#put` / `ResultSet#get` / `Config#get`
+    # key (`templateMap.put("k", new Foo())`, `row.get("C", String.class)`).
+    # A slash-less pattern is believed next to a lambda or method-reference
+    # handler (`get("api/items", ctx -> ..)`, `get("ping", api::ping)`), and
+    # next to a handler object or `Handler` variable (`get("{id}", getOne)`,
+    # `post("new", new CreateHandler())`) when something else says "route":
+    # the pattern has a slash or a `{param}` / `:param` / `<param>`, the call
+    # sits in a `path()` / `routes()` body, or it is `addHandler(HandlerType.X,
+    # ..)`. A class literal never counts as a handler here: it is `Config#get`'s
+    # type argument.
+    private def route_path?(call : LibTreeSitter::TSNode,
+                            source : String,
+                            path : String,
+                            route_context : Bool,
+                            handler_vars : Hash(String, LibTreeSitter::TSNode)) : Bool
+      return true if path.empty? || path.starts_with?('/') || path.starts_with?('*')
+      return true if lambda_or_reference_argument?(call)
+      (route_context || path.matches?(ROUTE_PARAM_PATH_RE)) && handler_object_argument?(call, source, handler_vars)
+    end
+
+    private def handler_object_argument?(call : LibTreeSitter::TSNode,
+                                         source : String,
+                                         handler_vars : Hash(String, LibTreeSitter::TSNode)) : Bool
+      args = argument_list_node(call)
+      return false unless args
+      Noir::TreeSitter.each_named_arg(args) do |arg|
+        case Noir::TreeSitter.node_type(arg)
+        when "object_creation_expression"
+          return true
+        when "identifier"
+          return true if handler_vars.has_key?(Noir::TreeSitter.node_text(arg, source))
+        end
+      end
+      false
+    end
+
+    # `routes(() -> { .. })` hands over a no-argument group of routes;
+    # `before(ctx -> { .. })` hands over a request handler, whose body is
+    # ordinary code.
+    private def group_lambda?(call : LibTreeSitter::TSNode) : Bool
+      args = argument_list_node(call)
+      return false unless args
+      Noir::TreeSitter.each_named_arg(args) do |arg|
+        next unless Noir::TreeSitter.node_type(arg) == "lambda_expression"
+        Noir::TreeSitter.each_named_child(arg) do |child|
+          return Noir::TreeSitter.node_type(child) == "formal_parameters" && Noir::TreeSitter.named_arg_count(child) == 0
+        end
+      end
+      false
+    end
+
+    private def lambda_or_reference_argument?(call : LibTreeSitter::TSNode) : Bool
+      args = argument_list_node(call)
+      return false unless args
+      Noir::TreeSitter.each_named_arg(args) do |arg|
+        return true if {"lambda_expression", "method_reference"}.includes?(Noir::TreeSitter.node_type(arg))
+      end
+      false
     end
 
     private def first_string_argument(call : LibTreeSitter::TSNode,

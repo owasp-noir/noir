@@ -180,6 +180,7 @@ module Noir
 
       path_arg = first_string_argument(call, source, constants)
       return unless path_arg
+      return unless route_path_shape?(path_arg) || lambda_or_reference_argument?(call)
 
       full_path = normalize_path(path_arg)
       line = Noir::TreeSitter.call_name_row(call)
@@ -407,6 +408,24 @@ module Noir
         return child if Noir::TreeSitter.node_type(child) == "argument_list"
       end
       nil
+    end
+
+    # A route path starts with `/` (or `*`); anything else that survives the
+    # two-argument test is a `Map#put` / `ResultSet#get` / `Config#get` key
+    # (`result.put("br", "br")`, `row.get("ID", Integer.class)`). A
+    # slash-less pattern is believed only when a lambda or method-reference
+    # handler comes with it (Helidon prepends the missing `/`).
+    private def route_path_shape?(path : String) : Bool
+      path.empty? || path.starts_with?('/') || path.starts_with?('*')
+    end
+
+    private def lambda_or_reference_argument?(call : LibTreeSitter::TSNode) : Bool
+      args = argument_list_node(call)
+      return false unless args
+      Noir::TreeSitter.each_named_arg(args) do |arg|
+        return true if {"lambda_expression", "method_reference"}.includes?(Noir::TreeSitter.node_type(arg))
+      end
+      false
     end
 
     private def first_string_argument(call : LibTreeSitter::TSNode,

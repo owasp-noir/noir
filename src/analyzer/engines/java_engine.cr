@@ -27,18 +27,38 @@ module Analyzer::Java
     #
     # Also covers Maven's archetype source-roots
     # (`src/it/`, integration-test convention used by some Quarkus
-    # extensions and Apache projects) which sit alongside `src/test/`.
-    #
+    # extensions and Apache projects) which sit alongside `src/test/`,
+    # and Gradle's extra test source sets (`testFixtures`, `jmh`,
+    # `integrationTest`, `functionalTest`).
+    TEST_SOURCE_SET_RE = Regex.union(
+      "/src/test/",
+      "/src/it/",
+      "/src/testFixtures/",
+      "/src/jmh/",
+      "/src/integrationTest/",
+      "/src/functionalTest/",
+    )
+
     # Takes the scan-base-relative path (`Analyzer#base_relative_path`),
     # never the absolute one. The layout is a contract between the build
     # tool and the *project*, so matching the absolute path let a
     # directory above the scan base decide the answer — a CI job that
     # checks out under a `src/test/` step directory silently lost 375 of
     # the fixture tree's 396 endpoints.
+    #
+    # `FooTest.java` / `FooTests.java` (and `.kt`, which Javalin, Micronaut,
+    # Quarkus and JAX-RS read through the same predicate) are JUnit classes
+    # even when they sit in `src/main/java` of a published test kit (the
+    # Micronaut TCK declares its `@Requires(property = "spec.name")`
+    # controllers there). The suffix check is case-sensitive, so
+    # `Latest.java` is not a hit, and it needs a name before the suffix: a
+    # class literally called `Test` or `Tests` is a tutorial's servlet, not
+    # a test.
+    TEST_CLASS_FILE_RE = /.(?:Test|Tests)\.(?:java|kt)\z/
+
     def self.test_path?(relative_path : String) : Bool
-      return true if relative_path.includes?("/src/test/")
-      return true if relative_path.includes?("/src/it/")
-      false
+      return true if relative_path.matches?(TEST_SOURCE_SET_RE)
+      File.basename(relative_path).matches?(TEST_CLASS_FILE_RE)
     end
 
     # Index of the delimiter closing the `open_char` at `open_idx`, or nil when
@@ -378,7 +398,7 @@ module Analyzer::Java
           next if JavaEngine.test_path?(base_relative_path(file))
           content = read_file_content(file)
           next unless content_matches?(content, JAVA_STRING_CONSTANT_RE)
-          table = by_base[configured_base_for(file)] ||= Hash(String, String).new
+          table = by_base[configured_base_for(file)] ||= Noir::TreeSitterJavaRouteExtractor::ProjectConstants.new
           Noir::TreeSitterJavaRouteExtractor.extract_string_constants(content).each do |name, value|
             table[name] ||= value if name.includes?('.')
           end

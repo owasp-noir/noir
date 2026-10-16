@@ -200,6 +200,7 @@ module Noir
                                       source : String,
                                       project_constants : Hash(String, String)? = nil) : Hash(String, String)
       constants = Hash(String, String).new
+      imported : Set(String)? = nil
       if project_constants && !project_constants.empty?
         source.scan(DOTTED_NAME_RE) do |match|
           chain = match[0]
@@ -213,12 +214,71 @@ module Noir
             dot = chain.index('.', dot + 1)
           end
         end
+        imported = seed_static_imports(source, project_constants, constants)
       end
-      collect_string_constants(root, source, package_name(root, source), [] of String, constants)
+      collect_string_constants(root, source, package_name(root, source), [] of String, constants, imported)
       constants
     end
 
-    DOTTED_NAME_RE = /(?<![\w$])[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+/
+    # The project's qualified String constants (`JavaEngine#java_project_constants`).
+    # It also answers "which constants does class X declare", behind an index
+    # built on first use, so `import static pkg.Class.*` in each of thousands
+    # of files costs a lookup instead of a walk over the whole table.
+    class ProjectConstants < Hash(String, String)
+      @by_owner : Hash(String, Array({String, String}))? = nil
+      @index_lock = Mutex.new
+
+      # `{bare name, value}` of every constant declared directly in `owner`
+      # (`com.ex.Paths`), nil when it declares none. The analyzers' worker
+      # threads share one table, so the index is built under a lock.
+      def constants_of(owner : String) : Array({String, String})?
+        index = @index_lock.synchronize do
+          @by_owner ||= begin
+            built = Hash(String, Array({String, String})).new
+            each do |key, value|
+              next unless dot = key.rindex('.')
+              (built[key[...dot]] ||= [] of {String, String}) << {key[(dot + 1)..], value}
+            end
+            built
+          end
+        end
+        index[owner]?
+      end
+    end
+
+    DOTTED_NAME_RE        = /(?<![\w$])[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+/
+    STATIC_IMPORT_NAME_RE = /\bimport\s+static\s+([\w$.]+)\.([\w$]+|\*)\s*;/
+
+    # `import static pkg.Class.NAME` (or `.*`) brings the bare `NAME` into
+    # scope, so `@RequestMapping(NAME + "/ops")` must find the project
+    # constant under that bare name. Seeded before the file's own fields so
+    # `BASE = NAME + "/x"` resolves. Returns the bare names it seeded, so
+    # `collect_string_constants` can let a field of the file's own with the
+    # same name replace the import (it keeps the first bare name otherwise,
+    # which would let the import win over the nearer declaration).
+    private def seed_static_imports(source : String,
+                                    project_constants : Hash(String, String),
+                                    constants : Hash(String, String)) : Set(String)
+      imported = Set(String).new
+      # A plain Hash (specs) is indexed here, once per file; the engine's
+      # table is a `ProjectConstants` and brings its index along.
+      table = project_constants.as?(ProjectConstants)
+      source.scan(STATIC_IMPORT_NAME_RE) do |match|
+        owner = match[1]
+        name = match[2]
+        if name == "*"
+          table ||= ProjectConstants.new.merge!(project_constants)
+          table.constants_of(owner).try &.each do |bare, value|
+            constants[bare] = value
+            imported << bare
+          end
+        elsif value = project_constants["#{owner}.#{name}"]?
+          constants[name] = value
+          imported << name
+        end
+      end
+      imported
+    end
 
     # ---- private helpers ----------------------------------------------
 
@@ -1195,6 +1255,7 @@ module Noir
                                          package_name : String,
                                          class_stack : Array(String),
                                          constants : Hash(String, String),
+                                         imported : Set(String)? = nil,
                                          depth : Int32 = 0)
       return if depth > Noir::TreeSitter::MAX_AST_DEPTH
 
@@ -1203,7 +1264,7 @@ module Noir
         name = class_simple_name(node, source)
         next_stack = name.empty? ? class_stack : class_stack + [name]
         Noir::TreeSitter.each_named_child(node) do |child|
-          collect_string_constants(child, source, package_name, next_stack, constants, depth + 1)
+          collect_string_constants(child, source, package_name, next_stack, constants, imported, depth + 1)
         end
         return
       end
@@ -1219,7 +1280,11 @@ module Noir
           const_name = Noir::TreeSitter.node_text(name, source)
           next unless resolved = resolve_string_value(value, source, constants, class_stack.join("."))
 
-          constants[const_name] ||= resolved
+          if imported && imported.delete(const_name)
+            constants[const_name] = resolved
+          else
+            constants[const_name] ||= resolved
+          end
           unless class_stack.empty?
             class_name = class_stack.join(".")
             # `=`, not `||=`: a qualified key is unique within one file, so
@@ -1231,7 +1296,7 @@ module Noir
       end
 
       Noir::TreeSitter.each_named_child(node) do |child|
-        collect_string_constants(child, source, package_name, class_stack, constants, depth + 1)
+        collect_string_constants(child, source, package_name, class_stack, constants, imported, depth + 1)
       end
     end
 
