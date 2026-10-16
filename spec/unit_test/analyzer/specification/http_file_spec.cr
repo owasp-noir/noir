@@ -22,7 +22,7 @@ describe "HTTP/REST File Analyzer" do
   it "extracts method, path, query, path var and header" do
     endpoints = analyze_http_file <<-HTTP
       ### Get a user
-      GET https://api.example.com/users/{{userId}}?verbose=true
+      GET http://localhost:8080/users/{{userId}}?verbose=true
       Authorization: Bearer secret
       HTTP
 
@@ -38,7 +38,7 @@ describe "HTTP/REST File Analyzer" do
 
   it "extracts JSON body params and drops a trailing HTTP version" do
     endpoints = analyze_http_file <<-HTTP
-      POST https://api.example.com/users HTTP/1.1
+      POST http://localhost:8080/users HTTP/1.1
       Content-Type: application/json
 
       {
@@ -56,7 +56,7 @@ describe "HTTP/REST File Analyzer" do
   it "does not leak response-handler scripts into endpoints" do
     endpoints = analyze_http_file <<-HTTP
       ### Create order
-      POST https://api.example.com/orders
+      POST http://localhost:8080/orders
       Content-Type: application/json
 
       { "item": "widget" }
@@ -68,7 +68,7 @@ describe "HTTP/REST File Analyzer" do
       %}
 
       ### List orders
-      GET https://api.example.com/orders
+      GET http://localhost:8080/orders
       HTTP
 
     endpoints.size.should eq(2)
@@ -99,7 +99,7 @@ describe "HTTP/REST File Analyzer" do
   end
 
   it "parses .rest files the same as .http" do
-    endpoints = analyze_http_file("GET https://api.example.com/ping\n", ".rest")
+    endpoints = analyze_http_file("GET http://localhost:8080/ping\n", ".rest")
     endpoints.size.should eq(1)
     endpoints.first.url.should eq("/ping")
     endpoints.first.method.should eq("GET")
@@ -150,7 +150,7 @@ describe "HTTP/REST File Analyzer" do
 
   it "reads indented ?/& continuation lines as query params, not headers" do
     endpoints = analyze_http_file <<-HTTP
-      GET https://api.example.com/comments
+      GET http://localhost:8080/comments
           ?page=2
           &pageSize=10
       Accept: application/json
@@ -158,9 +158,64 @@ describe "HTTP/REST File Analyzer" do
 
     endpoints[0].url.should eq("/comments")
     endpoints[0].params.map { |p| {p.name, p.value, p.param_type} }.should eq([
-      {"Accept", "application/json", "header"},
+      {"Accept", "", "header"},
       {"page", "2", "query"},
       {"pageSize", "10", "query"},
     ])
+  end
+
+  it "keeps the host of a request to another host, minus its userinfo" do
+    endpoints = analyze_http_file <<-HTTP
+      GET https://idp.example.test/oauth/authorize?client_id=abc
+
+      ###
+      GET https://user:pw@idp.example.test:8443/v1/profile
+
+      ###
+      GET http://127.0.0.1:8080/local
+
+      ###
+      @host = https://api.example.com
+      GET {{host}}/via-variable
+      HTTP
+
+    endpoints.map(&.url).should eq([
+      "https://idp.example.test/oauth/authorize",
+      "https://idp.example.test:8443/v1/profile",
+      "/local",
+      "/via-variable",
+    ])
+  end
+
+  it "emits header names without their values" do
+    endpoints = analyze_http_file <<-HTTP
+      GET http://localhost:8080/me
+      Authorization: Bearer dummy-not-a-secret
+      Cookie: JSESSIONID=FAKE
+      HTTP
+
+    endpoints[0].params.map { |p| {p.name, p.value, p.param_type} }.should eq([
+      {"Authorization", "", "header"},
+      {"Cookie", "", "header"},
+    ])
+  end
+
+  it "extracts multipart form field names" do
+    endpoints = analyze_http_file <<-HTTP
+      POST http://localhost:8080/upload
+      Content-Type: multipart/form-data; boundary=B
+
+      --B
+      Content-Disposition: form-data; name="title"
+
+      hello
+      --B
+      Content-Disposition: form-data; name="file"; filename="a.txt"
+
+      < ./a.txt
+      --B--
+      HTTP
+
+    endpoints[0].params.map { |p| {p.name, p.param_type} }.should eq([{"title", "form"}, {"file", "form"}])
   end
 end

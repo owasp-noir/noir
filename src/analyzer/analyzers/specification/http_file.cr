@@ -18,6 +18,8 @@ module Analyzer::Specification
 
     HTTP_METHODS = ALLOWED_HTTP_METHODS
 
+    LOOPBACK_HOSTS = Set{"localhost", "0.0.0.0", "[::1]", "host.docker.internal"}
+
     # A `{{ var }}` placeholder.
 
     def analyze
@@ -120,10 +122,11 @@ module Analyzer::Specification
         next if comment?(stripped)
         if sep = stripped.index(':')
           name = stripped[0...sep].strip
-          value = stripped[(sep + 1)..].strip
           next if name.empty?
           next if skipped_request_header?(name)
-          add_param(params, name, resolve_vars(value, env), "header")
+          # Names only: these are scratch files, and their `Authorization` /
+          # `Cookie` values are often a developer's live credentials.
+          add_param(params, name, "", "header")
         end
       end
 
@@ -140,6 +143,9 @@ module Analyzer::Specification
 
       url_path = template_url_path(url_raw, MUSTACHE_VAR)
       return if url_path.empty?
+      if origin = external_origin(lines[request_line_offset])
+        url_path = origin + url_path
+      end
 
       request_query_pairs(url_raw).each do |query_name, query_value|
         add_param(params, query_name, query_value, "query")
@@ -151,6 +157,20 @@ module Analyzer::Specification
 
       details = Details.new(PathInfo.new(source_path, block.start_line + request_line_offset))
       @result << Endpoint.new(url_path, method, params, details)
+    end
+
+    # `scheme://host` of a request line that names another host literally
+    # (`GET https://idp.example.test/...`): a call to a third-party API, not a
+    # route of the scanned app, so it keeps its host. A `{{host}}` variable
+    # or a loopback host is the app under development.
+    private def external_origin(line : String) : String?
+      return unless m = line.match(/(?:\A|[ \t])(https?):\/\/(?:[^\/?#\s@]*@)?([^\/?#\s]+)/i)
+      authority = m[2]
+      return if authority.includes?("{{")
+      host = authority.sub(/:\d*\z/, "").downcase
+      return if LOOPBACK_HOSTS.includes?(host) || host.ends_with?(".localhost") || host.starts_with?("127.")
+      # Userinfo is dropped: it is a credential, not part of the route.
+      "#{m[1].downcase}://#{authority}"
     end
 
     private def comment?(stripped : String) : Bool
@@ -200,6 +220,12 @@ module Analyzer::Specification
       params = [] of Param
       stripped = body.strip
       return params if stripped.empty?
+
+      # `multipart/form-data`: one field per part header.
+      stripped.scan(/^Content-Disposition:\s*form-data;[^\n]*?\bname="([^"]+)"/im) do |m|
+        add_param(params, m[1], "", "form")
+      end
+      return params unless params.empty?
 
       # Prefer a JSON object body (an unquoted `{{x}}` value is tolerated);
       # fall back to `application/x-www-form-urlencoded`.

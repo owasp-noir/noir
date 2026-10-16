@@ -1,5 +1,6 @@
 require "../models/endpoint"
 require "../models/logger"
+require "../techs/techs"
 require "../utils/media_filter"
 require "../utils/*"
 require "./optimizer/graphql"
@@ -13,12 +14,21 @@ class EndpointOptimizer
   # Generic request headers a browser/HTTP client always sends; they carry no
   # endpoint-specific signal, so collection imports that surface them as params
   # are treated as noise during dedup.
-  COLLECTION_NOISE_HEADERS = Set{"user-agent", "accept", "content-type", "host", "origin", "referer", "x-requested-with"}
+  COLLECTION_NOISE_HEADERS = Set{"user-agent", "accept", "content-type", "host", "origin", "referer", "x-requested-with", "cookie"}
 
-  # These endpoint types describe a surface from a document rather than an
-  # executable handler. They need the same source-context promotion as an
-  # imported collection when they sort before the implementation endpoint.
-  SPECIFICATION_TECHNOLOGIES = Set{"oas2", "oas3", "grpc", "thrift", "graphql_sdl", "graphql_operation"}
+  # Techs whose catalog entry names no language: specification documents,
+  # client collections, traffic captures and infra/routing config (Ingress,
+  # nginx, gateways). They declare a route rather than implement it, so when
+  # one shares an endpoint with a code handler the handler is the primary
+  # source, whichever file sorts first.
+  DECLARATION_TECHNOLOGIES = NoirTechs::TECHS.compact_map { |tech, info| tech.to_s unless info.has_key?(:language) }.to_set
+
+  # HTTP API contracts whose operations a code analyzer can report too. An
+  # endpoint only these (and other declarations) produced, in a scan where
+  # code analyzers did report routes, is tagged `spec-only`. gRPC, Thrift,
+  # GraphQL, WSDL and AsyncAPI are left out: no code analyzer emits their
+  # operations in a comparable form, so the tag would be on every one of them.
+  SPEC_ONLY_TECHNOLOGIES = Set{"oas2", "oas3", "openrpc", "raml", "smithy", "typespec"}
 
   # `:id`, `:id?`, `:id(\d+)`, `*`, `*path`, `{id}`, `<int:id>`, `[id]`.
   AI_FOLD_PLACEHOLDER_RE = /\A(?::\w.*|\*\w*|\{[^}]*\}|<[^>]*>|\[[^\]]*\])\z/
@@ -211,6 +221,17 @@ class EndpointOptimizer
         dup = final_map[key]
         @logger.debug_sub "  - Found duplicated endpoint: #{tiny_tmp.method} #{tiny_tmp.url}"
         duplicate_count += 1
+        if dup.internal != tiny_tmp.internal
+          # A Feign / `@HttpExchange` client declares a request the app
+          # sends; it says nothing about the served route at that address, so
+          # only its location and technology ride along.
+          served, client = dup.internal ? {tiny_tmp, dup} : {dup, tiny_tmp}
+          client.details.code_paths.each do |path_info|
+            served.details.add_path(path_info) unless served.details.code_paths.includes?(path_info)
+          end
+          final_map[key] = absorb_technologies(served, client)
+          next
+        end
         if graphql_endpoint?(dup) || graphql_endpoint?(tiny_tmp)
           dup = merge_graphql_params(dup, tiny_tmp)
         else
@@ -224,10 +245,12 @@ class EndpointOptimizer
         tiny_tmp.callees.each do |callee|
           dup.push_callee(callee)
         end
+        # Decided before the paths merge: once the handler's path is in
+        # `code_paths`, the "every path is a document" check no longer holds.
+        dup = promote_source_context(dup, tiny_tmp)
         tiny_tmp.details.code_paths.each do |path_info|
           dup.details.add_path(path_info) unless dup.details.code_paths.any? { |existing| existing == path_info }
         end
-        dup = promote_source_context(dup, tiny_tmp)
         dup = promote_scalar_context(dup, tiny_tmp)
         dup = absorb_technologies(dup, tiny_tmp)
         final_map[key] = dup
@@ -238,7 +261,27 @@ class EndpointOptimizer
 
     @logger.verbose_sub "➔ Total duplicated endpoints: #{duplicate_count}"
     merged = merge_concrete_example_endpoints(final_map.values)
-    prune_collection_graphql_transport_endpoints(merged)
+    tag_spec_only_endpoints(prune_collection_graphql_transport_endpoints(merged))
+  end
+
+  # A repository can carry an API document because it implements it or
+  # because it publishes it for others. When code analyzers ran and none of
+  # them reported a spec operation, say so instead of dropping it.
+  private def tag_spec_only_endpoints(endpoints : Array(Endpoint)) : Array(Endpoint)
+    return endpoints unless endpoints.any? { |endpoint| code_technology_contributed?(endpoint) }
+
+    endpoints.each_with_index do |endpoint, idx|
+      technologies = endpoint.details.technologies
+      next unless technologies.any? { |technology| SPEC_ONLY_TECHNOLOGIES.includes?(technology) }
+      next if code_technology_contributed?(endpoint)
+      endpoint.add_tag(Tag.new("spec-only", "Declared by an API specification; no code analyzer reported this route", "optimizer"))
+      endpoints[idx] = endpoint
+    end
+    endpoints
+  end
+
+  private def code_technology_contributed?(endpoint : Endpoint) : Bool
+    endpoint.details.technologies.any? { |technology| !DECLARATION_TECHNOLOGIES.includes?(technology) }
   end
 
   # An AI endpoint that names a static route under another path-param
@@ -349,12 +392,11 @@ class EndpointOptimizer
   end
 
   private def collection_endpoint?(endpoint : Endpoint) : Bool
-    {"insomnia", "postman"}.includes?(endpoint.details.technology || "")
+    {"insomnia", "postman", "http_file"}.includes?(endpoint.details.technology || "")
   end
 
   private def source_document_endpoint?(endpoint : Endpoint) : Bool
-    return true if collection_endpoint?(endpoint)
-    return true if SPECIFICATION_TECHNOLOGIES.includes?(endpoint.details.technology || "")
+    return true if DECLARATION_TECHNOLOGIES.includes?(endpoint.details.technology || "")
 
     code_paths = endpoint.details.code_paths
     !code_paths.empty? && code_paths.all? { |path_info| MediaFilter.spec_document?(path_info.path) }
@@ -423,10 +465,10 @@ class EndpointOptimizer
     source.callees.each do |callee|
       target.push_callee(callee)
     end
+    target = promote_source_context(target, source)
     source.details.code_paths.each do |path_info|
       target.details.add_path(path_info) unless target.details.code_paths.any? { |existing| existing == path_info }
     end
-    target = promote_source_context(target, source)
     target = absorb_technologies(target, source)
 
     target
@@ -462,7 +504,9 @@ class EndpointOptimizer
   private def merge_tag(target : Endpoint, tag : Tag) : Nil
     return if duplicate_graphql_operation_tag?(target, tag)
 
-    target.add_tag(tag)
+    # `add_tag` keeps one tag per (name, tagger); a merge keeps every distinct
+    # value, since two Ingress hosts routing one path are both facts.
+    target.tags << tag unless target.tags.includes?(tag)
   end
 
   private def promote_source_context(target : Endpoint, source : Endpoint) : Endpoint
@@ -520,12 +564,8 @@ class EndpointOptimizer
   # - `details.status_code`: recorded by spec/capture-derived analyzers.
   # - `kind`: Next.js marks server actions here; the plain report prints it.
   #
-  # `internal` moves the other way. It means "the app declares this request,
-  # it does not serve it" (`@FeignClient` / `@HttpExchange`), and `Deliver`
-  # reads it to skip probing. Another analyzer finding a real served route at
-  # the same address contradicts that, so the merge clears the flag instead
-  # of OR-ing it — otherwise a probe of a genuine endpoint would be
-  # suppressed by whichever declaration sorted first.
+  # `internal` is not carried: a client declaration never merges into a
+  # served route here (see `optimize_endpoints`), so both sides agree on it.
   #
   # Returns the endpoint: `Endpoint` is a struct, so these writes land on a
   # copy unless the caller assigns the result back.
@@ -533,7 +573,6 @@ class EndpointOptimizer
     target.protocol = source.protocol if target.protocol == "http" && source.protocol != "http"
     target.metadata = source.metadata if target.metadata.nil?
     target.kind = source.kind if target.kind.empty?
-    target.internal = false if target.internal && !source.internal
 
     if target.details.status_code.nil? && (status_code = source.details.status_code)
       details = target.details
@@ -626,9 +665,9 @@ class EndpointOptimizer
   # cross-technology neutralization). Only scoped framework endpoints get one;
   # collection / graphql / static endpoints stay unscoped.
   private def framework_source_scope(endpoint : Endpoint) : String
-    return "" unless endpoint.details.technology == "kotlin_spring"
+    return "" unless {"kotlin_spring", "java_spring"}.includes?(endpoint.details.technology)
     return "" if graphql_endpoint?(endpoint)
-    return "" if kotlin_spring_static_asset?(endpoint)
+    return "" if spring_static_asset?(endpoint)
 
     first_path = endpoint.details.code_paths.first?.try(&.path)
     return "" unless first_path
@@ -636,7 +675,7 @@ class EndpointOptimizer
     source_project_scope(first_path)
   end
 
-  private def kotlin_spring_static_asset?(endpoint : Endpoint) : Bool
+  private def spring_static_asset?(endpoint : Endpoint) : Bool
     return false unless endpoint.method == "GET"
 
     first_path = endpoint.details.code_paths.first?.try(&.path)

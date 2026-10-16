@@ -269,36 +269,38 @@ describe "EndpointOptimizer" do
       result[0].details.code_paths.map(&.path).should eq(["UserApi.kt", "UserController.kt"])
     end
 
-    it "keeps identical endpoints from separate build modules distinct" do
-      optimizer = EndpointOptimizer.new(logger, options)
-      temp_dir = File.join(Dir.tempdir, "noir-optimizer-modules-#{Process.pid}-#{Time.utc.to_unix_ms}")
-      module_a = File.join(temp_dir, "data-r2dbc")
-      module_b = File.join(temp_dir, "webclient")
-      controller_a = File.join(module_a, "src/main/kotlin/com/example/demo/PostController.kt")
-      controller_b = File.join(module_b, "src/main/kotlin/com/example/demo/PostController.kt")
+    {"kotlin_spring", "java_spring"}.each do |technology|
+      it "keeps identical #{technology} endpoints from separate build modules distinct" do
+        optimizer = EndpointOptimizer.new(logger, options)
+        temp_dir = File.join(Dir.tempdir, "noir-optimizer-modules-#{Process.pid}-#{Time.utc.to_unix_ms}")
+        module_a = File.join(temp_dir, "data-r2dbc")
+        module_b = File.join(temp_dir, "webclient")
+        controller_a = File.join(module_a, "src/main/kotlin/com/example/demo/PostController.kt")
+        controller_b = File.join(module_b, "src/main/kotlin/com/example/demo/PostController.kt")
 
-      begin
-        Dir.mkdir_p(File.dirname(controller_a))
-        Dir.mkdir_p(File.dirname(controller_b))
-        File.write(File.join(module_a, "pom.xml"), "<project></project>")
-        File.write(File.join(module_b, "pom.xml"), "<project></project>")
-        File.write(controller_a, "class PostController")
-        File.write(controller_b, "class PostController")
+        begin
+          Dir.mkdir_p(File.dirname(controller_a))
+          Dir.mkdir_p(File.dirname(controller_b))
+          File.write(File.join(module_a, "pom.xml"), "<project></project>")
+          File.write(File.join(module_b, "pom.xml"), "<project></project>")
+          File.write(controller_a, "class PostController")
+          File.write(controller_b, "class PostController")
 
-        endpoint_a = Endpoint.new("/posts", "GET", Details.new(PathInfo.new(controller_a, 12)))
-        endpoint_b = Endpoint.new("/posts", "GET", Details.new(PathInfo.new(controller_b, 18)))
-        endpoint_a.details.technology = "kotlin_spring"
-        endpoint_b.details.technology = "kotlin_spring"
-        endpoint_a.push_callee(Callee.new("postRepository.findAll", path: controller_a, line: 13))
-        endpoint_b.push_callee(Callee.new("client.get", path: controller_b, line: 19))
+          endpoint_a = Endpoint.new("/posts", "GET", Details.new(PathInfo.new(controller_a, 12)))
+          endpoint_b = Endpoint.new("/posts", "GET", Details.new(PathInfo.new(controller_b, 18)))
+          endpoint_a.details.technology = technology
+          endpoint_b.details.technology = technology
+          endpoint_a.push_callee(Callee.new("postRepository.findAll", path: controller_a, line: 13))
+          endpoint_b.push_callee(Callee.new("client.get", path: controller_b, line: 19))
 
-        result = optimizer.optimize_endpoints([endpoint_a, endpoint_b])
+          result = optimizer.optimize_endpoints([endpoint_a, endpoint_b])
 
-        result.size.should eq(2)
-        result.map(&.details.code_paths.size).should eq([1, 1])
-        result.flat_map(&.callees.map(&.name)).sort!.should eq(["client.get", "postRepository.findAll"])
-      ensure
-        FileUtils.rm_rf(temp_dir) if Dir.exists?(temp_dir)
+          result.size.should eq(2)
+          result.map(&.details.code_paths.size).should eq([1, 1])
+          result.flat_map(&.callees.map(&.name)).sort!.should eq(["client.get", "postRepository.findAll"])
+        ensure
+          FileUtils.rm_rf(temp_dir) if Dir.exists?(temp_dir)
+        end
       end
     end
 
@@ -839,20 +841,23 @@ describe "EndpointOptimizer" do
 
     # `internal` marks a declaration of a request the app *makes*
     # (`@FeignClient`, `@HttpExchange`), which `Deliver#probe_all`
-    # reads to skip probing. Another analyzer finding a real served route at
-    # the same address contradicts that, so it is cleared rather than kept —
-    # otherwise whichever of the two sorted first decided whether a genuine
-    # endpoint got probed.
-    it "clears internal when a served route dedups with an outbound declaration" do
+    # reads to skip probing. A served route at the same address is the
+    # endpoint; the client contributes only where it was declared, so its
+    # params do not leak into the served route whichever file sorts first.
+    it "keeps the served route primary when it dedups with an outbound declaration" do
       optimizer = EndpointOptimizer.new(logger, options)
 
-      client = Endpoint.new("/users", "GET", [] of Param, Details.new(PathInfo.new("a_client.java", 5)), true)
-      served = Endpoint.new("/users", "GET", [] of Param, Details.new(PathInfo.new("b_controller.java", 7)), false)
+      client = Endpoint.new("/users", "GET", [Param.new("ticker", "", "query")], Details.new(PathInfo.new("a_client.java", 5)), true)
+      served = Endpoint.new("/users", "GET", [Param.new("sym", "", "query")], Details.new(PathInfo.new("b_controller.java", 7)), false)
 
-      result = optimizer.optimize_endpoints([client, served])
+      [[client, served], [served, client]].each do |endpoints|
+        result = optimizer.optimize_endpoints(endpoints)
 
-      result.size.should eq(1)
-      result[0].internal.should be_false
+        result.size.should eq(1)
+        result[0].internal.should be_false
+        result[0].params.map(&.name).should eq(["sym"])
+        result[0].details.code_paths.map(&.path).should eq(["b_controller.java", "a_client.java"])
+      end
     end
 
     it "keeps internal when both duplicates are outbound declarations" do
@@ -865,6 +870,62 @@ describe "EndpointOptimizer" do
 
       result.size.should eq(1)
       result[0].internal.should be_true
+    end
+
+    it "makes the code handler primary over infra declarations that sort first" do
+      optimizer = EndpointOptimizer.new(logger, options)
+
+      ingress = Endpoint.new("/", "GET", Details.new(PathInfo.new("deploy/ingress.yaml")))
+      ingress.details.technology = "k8s_ingress"
+      http_file = tech_endpoint("/", "GET", "http_file", "requests/home.http", 1)
+      code = tech_endpoint("/", "GET", "java_spring", "src/HomeController.java", 7)
+
+      result = optimizer.optimize_endpoints([ingress, http_file, code])
+
+      result.size.should eq(1)
+      result[0].details.technology.should eq("java_spring")
+      result[0].details.code_paths.first.path.should eq("src/HomeController.java")
+    end
+
+    it "keeps every distinct value of a merged tag" do
+      optimizer = EndpointOptimizer.new(logger, options)
+
+      staging = tech_endpoint("/", "GET", "k8s_ingress", "deploy/staging.yaml")
+      staging.add_tag(Tag.new("ingress-host", "staging.example.test", "k8s_ingress_analyzer"))
+      live = tech_endpoint("/", "GET", "k8s_ingress", "deploy/live.yaml")
+      live.add_tag(Tag.new("ingress-host", "live.example.test", "k8s_ingress_analyzer"))
+      again = tech_endpoint("/", "GET", "k8s_ingress", "deploy/z.yaml")
+      again.add_tag(Tag.new("ingress-host", "live.example.test", "k8s_ingress_analyzer"))
+
+      result = optimizer.optimize_endpoints([staging, live, again])
+
+      result[0].tags.map(&.description).should eq(["live.example.test", "staging.example.test"])
+    end
+
+    describe "spec-only tag" do
+      it "tags spec operations no code analyzer reported" do
+        optimizer = EndpointOptimizer.new(logger, options)
+
+        endpoints = [
+          tech_endpoint("/served", "GET", "oas3", "openapi.yaml", 3),
+          tech_endpoint("/served", "GET", "go_gin", "main.go", 9),
+          tech_endpoint("/published", "GET", "openrpc", "openrpc.json", 5),
+          tech_endpoint("/routed", "GET", "k8s_ingress", "ingress.yaml", 2),
+        ]
+
+        result = optimizer.optimize_endpoints(endpoints)
+
+        tagged = result.select(&.tags.any?(&.name.==("spec-only"))).map(&.url)
+        tagged.should eq(["/published"])
+      end
+
+      it "tags nothing when no code analyzer reported a route" do
+        optimizer = EndpointOptimizer.new(logger, options)
+
+        result = optimizer.optimize_endpoints([tech_endpoint("/published", "GET", "oas3", "openapi.yaml", 3)])
+
+        result[0].tags.should be_empty
+      end
     end
 
     # The dedup kept the winner's `technology` and discarded the loser's, so
