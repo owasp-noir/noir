@@ -13,7 +13,9 @@ module Analyzer::Swift
 
     # `Tests/...` directory + `*Tests.swift` filename: the rigid Swift
     # Package Manager / XCTest conventions for test sources. The
-    # package-benchmark plugin's `Benchmarks/` directory is skipped alike.
+    # package-benchmark plugin's `Benchmarks/` directory is skipped alike
+    # when it sits at the scan base (see `package_benchmark_path?` for the
+    # nested-package case).
     #
     # Both take the scan-base-relative path (`Analyzer#base_relative_path`),
     # never the absolute one — SwiftPM's layout is relative to the package,
@@ -21,14 +23,27 @@ module Analyzer::Swift
     # the package happened to be checked out.
     def self.swift_test_path?(relative_path : String) : Bool
       return true if relative_path.includes?("/Tests/")
-      # package-benchmark mandates a top-level `Benchmarks/` directory; its
-      # routes are throwaway workloads, like Cargo's `benches/`.
-      return true if relative_path.includes?("/Benchmarks/")
+      # package-benchmark mandates a `Benchmarks/` directory at the package
+      # root; its routes are throwaway workloads, like Cargo's `benches/`.
+      # Anchored: `Sources/App/Controllers/Benchmarks/` is application code.
+      return true if relative_path.starts_with?("/Benchmarks/")
       File.basename(relative_path).ends_with?("Tests.swift")
     end
 
     private def swift_test_path?(path : String) : Bool
-      SwiftEngine.swift_test_path?(base_relative_path(path))
+      relative = base_relative_path(path)
+      SwiftEngine.swift_test_path?(relative) || package_benchmark_path?(path, relative)
+    end
+
+    # A `Benchmarks/` directory directly beside a `Package.swift` below the
+    # scan base: a nested package's own package-benchmark targets. Only paths
+    # holding a `/Benchmarks/` segment pay for the lookup.
+    private def package_benchmark_path?(path : String, relative : String) : Bool
+      index = relative.byte_index("/Benchmarks/")
+      return false unless index
+
+      package_dir = path.byte_slice(0, path.bytesize - relative.bytesize + index)
+      get_files_by_basename("Package.swift").any? { |manifest| File.dirname(manifest) == package_dir }
     end
 
     # SwiftPM parks resolved dependency sources under `.build/` (and Xcode
