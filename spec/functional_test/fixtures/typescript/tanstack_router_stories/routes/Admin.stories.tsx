@@ -1,12 +1,14 @@
-import { createFileRoute } from '@tanstack/react-router'
+import { createRootRoute, createRoute, createRouter } from '@tanstack/react-router'
 
-// A Storybook story that mounts a router to render the page; not an app route.
-export const Route = createFileRoute('/phantom-story')({
-  component: StoryComponent,
+// A Storybook story that builds a throwaway router to render the page; not an
+// app route.
+const rootRoute = createRootRoute()
+const storyRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/phantom-story',
+  component: () => null,
 })
 
-function StoryComponent() {
-  return <div>Story</div>
-}
+export const router = createRouter({ routeTree: rootRoute.addChildren([storyRoute]) })
 
 export default { title: 'Admin' }
