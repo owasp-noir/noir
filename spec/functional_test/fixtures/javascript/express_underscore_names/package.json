@@ -1,0 +1,6 @@
+{
+  "name": "express-underscore-names",
+  "dependencies": {
+    "express": "^4.18.0"
+  }
+}

@@ -827,12 +827,11 @@ module Noir
       ".tst.",
     ]
 
-    # The hyphen and underscore forms are also ordinary English in
-    # production router names (`routes/ab-test.js`, `routes/api_spec.js`),
-    # so they count as a test only without an HTTP server import, or with a
-    # test harness (a supertest suite imports express too). NestJS's
-    # `app.e2e-spec.ts` is always a test.
-    HYPHEN_TEST_FILENAME_MARKER = Regex.union("-spec.", "-test.", "_spec.", "_test.")
+    # The hyphen forms are also ordinary English in production router names
+    # (`routes/ab-test.js`, `routes/api-spec.js`), so they count as a test
+    # only without an HTTP server import, or with a test harness (a supertest
+    # suite imports express too). NestJS's `app.e2e-spec.ts` is always a test.
+    HYPHEN_TEST_FILENAME_MARKER = Regex.union("-spec.", "-test.")
     E2E_SPEC_FILENAME_MARKER    = "e2e-spec."
     TEST_HARNESS_MARKER         = /\bdescribe\s*\(|\bDeno\.test\s*\(|\bsupertest\b|@nestjs\/testing/
 
@@ -841,6 +840,13 @@ module Noir
     # and Joi's schema annotation in ordinary route files.
     TEST_DIR_MARKER   = %r{/tests?/}
     TEST_SUITE_MARKER = /^[ \t]*(?:describe(?:\.(?:only|skip))?|Deno\.test)\s*\(|\bLab\.script\(/m
+
+    # Deno/mocha-style `foo_test.ts` / `foo_spec.js`. snake_case is ordinary
+    # in production names too (`routes/ab_test.js`, `convex/load_test.ts`,
+    # `speed_test.js`), so these are a test only when the file holds a suite
+    # (`TEST_SUITE_MARKER`) — never on the name alone and never because of an
+    # import (a fastify-plugin or router module imports nothing a test would).
+    UNDERSCORE_TEST_FILENAME_MARKER = Regex.union("_spec.", "_test.")
 
     # True when the file's route-shaped calls are almost certainly
     # mock-server stubs (Ember pretender, MSW, nock, ...) rather
@@ -931,9 +937,17 @@ module Noir
     end
 
     private def self.test_file?(basename : String, relative_path : String, content : String) : Bool
-      return true if basename.matches?(TEST_STUB_FILENAME_MARKER)
-      return true if relative_path.matches?(STRICT_TEST_PATH_MARKER)
-      relative_path.matches?(TEST_DIR_MARKER) && content_matches?(content, TEST_SUITE_MARKER)
+      return true if test_named_or_in_test_tree?(basename, relative_path)
+      return false unless relative_path.matches?(TEST_DIR_MARKER) || basename.matches?(UNDERSCORE_TEST_FILENAME_MARKER)
+      content_matches?(content, TEST_SUITE_MARKER)
+    end
+
+    # The content-free half of `test_file?`: a test by its name
+    # (`*.test.*`, `*.spec.*`, ...) or inside a dedicated test tree
+    # (`__tests__/`, `e2e/`, ...). Shared with `JavascriptEngine#js_test_file?`,
+    # which has to decide before it reads the file.
+    def self.test_named_or_in_test_tree?(basename : String, relative_path : String) : Bool
+      basename.matches?(TEST_STUB_FILENAME_MARKER) || relative_path.matches?(STRICT_TEST_PATH_MARKER)
     end
 
     # Match against file content, which always came from a
