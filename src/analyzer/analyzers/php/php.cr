@@ -37,12 +37,17 @@ module Analyzer::Php
     # Blocks that scope a deny to some files/URLs: a deny inside one is not a
     # deny of the directory.
     HTACCESS_SCOPED_BLOCK_RE = /<(Files|FilesMatch|Limit|LimitExcept|Directory|DirectoryMatch|Location|LocationMatch)\b.*?<\/\1>/mi
-    # `<Files *.php>` / `<FilesMatch "\.php$">`: every PHP file, not one named
-    # `config.php` (a letter before `.php`) or `php.ini`, and not another
-    # extension (`.phps`, `.php5`, `.php.bak`, `.php[0-9]`): `php` has to end
-    # the pattern or its alternative.
-    HTACCESS_PHP_FILES_RE = /<Files(?:Match)?\b(?![^>]*[\w-]\\?\.php)[^>]*[.(|:]php(?=[$"'>)|])[^>]*>(.*?)<\/Files(?:Match)?>/mi
-    HTACCESS_PHP_OFF_RE   = /^[ \t]*(?:SetHandler[ \t]+!|RemoveHandler\b|Deny[ \t]+from[ \t]+all\b|Require[ \t]+all[ \t]+denied\b)/mi
+    # A `<Files>` / `<FilesMatch>` block: its pattern and its body.
+    HTACCESS_FILES_BLOCK_RE = /<Files(?:Match)?\b([^>]*)>(.*?)<\/Files(?:Match)?>/mi
+    # The pattern of a block that takes in every PHP file: `*.php`, `\.php$`,
+    # `.*\.php$`, `\.(php|phtml)$`. What precedes `.php` is nothing, an
+    # anchor or a wildcard, and the extension is `php` or a group holding it
+    # as a whole alternative. A literal name (`config.php`,
+    # `^(config|settings)\.php$`, `^(xmlrpc|wp-login)\.php$`) or another
+    # extension (`.phps`, `.php5`, `.php.bak`, `.php[0-9]`) is a few files,
+    # which hardening idioms deny while the rest of the site stays served.
+    HTACCESS_ALL_PHP_PATTERN_RE = /\A\s*(?:~\s*)?["']?(?:\(\?-?i\))?(?:\^?\.[*+]|\^?\[\^\/\]\*|\^|\*)?\\?\.(?:php|\((?:\?:)?(?:\w+\|)*php(?:\|\w+)*\))\$?["']?\s*\z/i
+    HTACCESS_PHP_OFF_RE         = /^[ \t]*(?:SetHandler[ \t]+!|RemoveHandler\b|Deny[ \t]+from[ \t]+all\b|Require[ \t]+all[ \t]+denied\b)/mi
     # The two block regexes above rescan to EOF from every unclosed opening
     # tag, so a hostile file of them is quadratic (440KB stalled a scan for
     # 8s). Real `.htaccess` files are a few KB; past this size the file is read
@@ -151,7 +156,7 @@ module Analyzer::Php
       return false if text.bytesize > HTACCESS_MAX_BYTES
       return false if text.matches?(HTACCESS_GRANT_RE)
       return true if text.gsub(HTACCESS_SCOPED_BLOCK_RE, "").matches?(HTACCESS_DENY_RE)
-      text.scan(HTACCESS_PHP_FILES_RE).any?(&.[1].matches?(HTACCESS_PHP_OFF_RE))
+      text.scan(HTACCESS_FILES_BLOCK_RE).any? { |block| block[1].matches?(HTACCESS_ALL_PHP_PATTERN_RE) && block[2].matches?(HTACCESS_PHP_OFF_RE) }
     end
 
     # URL base for `path`, or nil when the file is not web-servable.
