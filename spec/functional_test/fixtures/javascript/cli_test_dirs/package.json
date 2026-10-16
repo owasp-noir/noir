@@ -1,0 +1,10 @@
+{
+  "name": "testdirsdemo",
+  "version": "1.0.0",
+  "bin": {
+    "testdirsdemo": "cli.js"
+  },
+  "dependencies": {
+    "commander": "^11.0.0"
+  }
+}
