@@ -12,7 +12,8 @@ module Analyzer::Swift
     FUNCTION_SIGNATURE_PATTERN = /\bfunc\s+([A-Za-z_]\w*)\s*\(/
 
     # `Tests/...` directory + `*Tests.swift` filename: the rigid Swift
-    # Package Manager / XCTest conventions for test sources.
+    # Package Manager / XCTest conventions for test sources. The
+    # package-benchmark plugin's `Benchmarks/` directory is skipped alike.
     #
     # Both take the scan-base-relative path (`Analyzer#base_relative_path`),
     # never the absolute one — SwiftPM's layout is relative to the package,
@@ -20,6 +21,9 @@ module Analyzer::Swift
     # the package happened to be checked out.
     def self.swift_test_path?(relative_path : String) : Bool
       return true if relative_path.includes?("/Tests/")
+      # package-benchmark mandates a top-level `Benchmarks/` directory; its
+      # routes are throwaway workloads, like Cargo's `benches/`.
+      return true if relative_path.includes?("/Benchmarks/")
       File.basename(relative_path).ends_with?("Tests.swift")
     end
 

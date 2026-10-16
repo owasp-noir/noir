@@ -263,8 +263,16 @@ module Analyzer::Swift
     # A `.get`/`.post`/... call counts as a route only when its receiver is a
     # known router: a tracked `.grouped(...)` variable, a closure-group var,
     # or a `RoutesBuilder`/`Router`/`Application`-typed parameter/binding.
+    #
+    # Only the receiver's last segment counts, so a service hanging off a
+    # router (`app.client.post(url)`, `app.cache.get(k)`, `app.redis.get(k)`)
+    # is not a route. `app.routes` is the one member that is still a router:
+    # `Application#routes` is a `RoutesBuilder`.
     private def router_like?(receiver : String, prefix_by_receiver : Hash(String, String)) : Bool
-      receiver.split('.').any? { |part| prefix_by_receiver.has_key?(part) }
+      parts = receiver.split('.')
+      return true if prefix_by_receiver.has_key?(parts.last)
+
+      parts.size > 1 && parts.last == "routes" && prefix_by_receiver.has_key?(parts[-2])
     end
 
     # File-wide pre-pass: register every router-typed parameter/binding so the
