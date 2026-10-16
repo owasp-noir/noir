@@ -1,5 +1,6 @@
 require "../../engines/javascript_engine"
 require "../../../miniparsers/hapi_extractor_ts"
+require "../../../miniparsers/js_route_extractor"
 require "../../../utils/url_path"
 require "./express/router_mount_scanner"
 
@@ -27,6 +28,10 @@ module Analyzer::Javascript
 
       per_file = ordered_scan_files(get_files_by_extensions(JS_EXTENSIONS)) do |path|
         content = read_file_content(path)
+        # `server.route(...)` in a lab/mocha suite is driven by `server.inject`,
+        # never served. Import-blind: `test_stub_only?` would drop a hapi
+        # server that also imports axios.
+        next if Noir::JSRouteExtractor.test_file?(path, content)
         in_project = !project_roots.empty? && path_under_project_roots?(path, project_roots)
         next unless in_project || content.matches?(HAPI_MARKERS_RE)
 

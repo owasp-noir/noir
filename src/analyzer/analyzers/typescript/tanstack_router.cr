@@ -88,7 +88,8 @@ module Analyzer::Typescript
       relative = base_relative_path(path)
       TEST_FIXTURE_PATH_MARKERS.any? { |marker| relative.includes?(marker) } ||
         relative.includes?(".test.") ||
-        relative.includes?(".spec.")
+        relative.includes?(".spec.") ||
+        relative.includes?(".stories.")
     end
 
     private def analyze_file_routes(content : String, path : String, result : Array(Endpoint), literal_mask : Array(Bool))

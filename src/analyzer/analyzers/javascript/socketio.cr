@@ -50,6 +50,8 @@ module Analyzer::Javascript
       parallel_file_scan do |path|
         content = read_file_content(path)
         next unless socketio_evidence?(content)
+        # `socket.on(...)` in a test drives its own throwaway server.
+        next if Noir::JSRouteExtractor.test_stub_only?(path, content, include_client_frameworks: false)
         scan_file(Noir::JSRouteExtractor.strip_js_comments(content), path)
       end
       @result

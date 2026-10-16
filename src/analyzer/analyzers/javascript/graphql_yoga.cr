@@ -33,6 +33,9 @@ module Analyzer::Javascript
       parallel_file_scan do |path|
         content = read_file_content(path)
         next unless yoga_in_file?(content)
+        # A `typeDefs` schema in a test file is a fixture, not a deployed
+        # endpoint — the same gate the Apollo analyzer applies.
+        next if Noir::JSRouteExtractor.test_stub_only?(path, content, include_client_frameworks: false)
         process_file(path, content)
       rescue e
         @logger.debug "GraphQL Yoga analyzer: failed to process #{path}: #{e.message}"

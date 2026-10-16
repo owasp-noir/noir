@@ -1,0 +1,8 @@
+{
+  "name": "elysia-test-suite",
+  "version": "1.0.0",
+  "dependencies": {
+    "elysia": "^1.0.0",
+    "react": "^18.0.0"
+  }
+}

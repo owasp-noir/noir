@@ -1,0 +1,11 @@
+{
+  "name": "hapi-test-suite",
+  "version": "1.0.0",
+  "dependencies": {
+    "@hapi/hapi": "^21.0.0",
+    "axios": "^1.6.0"
+  },
+  "devDependencies": {
+    "@hapi/lab": "^25.0.0"
+  }
+}
