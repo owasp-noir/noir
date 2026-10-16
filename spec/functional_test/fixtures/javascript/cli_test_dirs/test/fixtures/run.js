@@ -1,4 +1,4 @@
-// Test file that drives the CLI: not a shipped entry point.
+// Test fixture program (test/fixtures/): not a shipped entry point.
 const { program } = require('commander');
 
 program

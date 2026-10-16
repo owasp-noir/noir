@@ -1,0 +1,10 @@
+{
+  "name": "testsubdemo",
+  "version": "1.0.0",
+  "bin": {
+    "testsubdemo": "bin/cli.js"
+  },
+  "dependencies": {
+    "yargs": "^17.0.0"
+  }
+}
