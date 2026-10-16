@@ -537,7 +537,7 @@ describe Noir::TreeSitterJavaParameterExtractor do
       source = <<-JAVA
         class C {
             @GetMapping("/")
-            public String list(Pageable pageable, Model model, String q) { return ""; }
+            public String list(Principal principal, Model model, String q) { return ""; }
         }
         JAVA
       params = method_params(

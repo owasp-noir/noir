@@ -63,6 +63,9 @@ module Analyzer::Java
     SPRING_WEB_BIND_RE        = Regex.union(SPRING_WEB_BIND_PACKAGE)
     META_ANNOTATION_RE        = Regex.union("@interface")
     SPRING_INDEX_PRESCREEN_RE = Regex.union("setApplicationDestinationPrefixes", SPRING_WEB_BIND_PACKAGE)
+    INJECTED_META_RE          = Regex.union(Noir::TreeSitterJavaParameterExtractor::INJECTED_PARAM_ANNOTATIONS.map { |name| "@#{name}" })
+    # `implements Formatter<PetType>` / `Converter<String, PetType>`: the target type.
+    CONVERTER_TARGET_RE = /\b(?:Formatter|Converter)\s*<\s*(?:[\w.]+\s*,\s*)?(?:[\w]+\.)*(\w+)\s*>/
 
     # `collect_interface_route_index` gates.
     INTERFACE_OR_ABSTRACT_RE  = Regex.union("interface", "abstract")
@@ -142,7 +145,7 @@ module Analyzer::Java
       # servlet context paths come from `path_config_for` (application.yml
       # / .properties under each project root).
       java_files = get_files_by_extension(".java").reject { |path| JavaEngine.test_path?(base_relative_path(path)) }
-      path_configs, spring_property_maps, stomp_prefixes, meta_annotation_index, interface_route_index =
+      path_configs, spring_property_maps, stomp_prefixes, meta_annotation_index, interface_route_index, injected_annotation_index, converted_type_index =
         build_spring_indexes(java_files)
 
       java_files.each do |path|
@@ -151,6 +154,8 @@ module Analyzer::Java
         spring_properties = spring_property_maps[project_root]? || {} of String => String
         stomp_application_prefixes = stomp_prefixes[project_root]? || [""]
         configured_base_path = path_config.web_base_path
+        injected_annotations = injected_annotation_index[project_root]?
+        converted_types = converted_type_index[project_root]?
         content = read_file_content(path)
 
         # Only files that mention Spring MVC / Feign bindings carry
@@ -211,7 +216,8 @@ module Analyzer::Java
 
               parameters = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters_from(
                 root, content, route.class_name, route.method_name, route.verb, parameter_format, dto_index, route.line,
-                constants: file_constants, index: param_index
+                constants: file_constants, index: param_index, injected_annotations: injected_annotations,
+                converted_types: converted_types
               )
               merge_route_condition_params(parameters, route.params)
 
@@ -251,7 +257,7 @@ module Analyzer::Java
                 entries = visible_interface_routes(interface_route_index, path, package_name, imports, interface_name).reject do |entry|
                   implementation.annotated_method_names.includes?(entry.route.method_name)
                 end
-                entry_params = interface_route_params(entries, dto_builder)
+                entry_params = interface_route_params(entries, dto_builder, injected_annotations, converted_types)
                 entries.each_with_index do |entry, entry_index|
                   entry_route = entry.route
                   implementation.paths.each do |implementation_path|
@@ -417,11 +423,20 @@ module Analyzer::Java
       Hash(String, Array(String)),
       SpringMetaAnnotationIndex,
       SpringInterfaceRouteIndex,
+      Hash(String, Set(String)),
+      Hash(String, Set(String)),
     )
       path_configs = Hash(String, SpringPathConfig).new
       spring_property_maps = Hash(String, Hash(String, String)).new
       stomp_prefixes = Hash(String, Array(String)).new
       meta_index = SpringMetaAnnotationIndex.new
+      # Per project root: `@interface` names meta-annotated with an injected
+      # argument annotation (`@CurrentMember` carrying `@AuthenticationPrincipal`).
+      # ponytail: keyed by simple name project-wide, not by import visibility.
+      injected_annotations = Hash(String, Set(String)).new
+      # Per project root: types a registered `Formatter`/`Converter` builds
+      # from one request value, so a nested field of that type stays scalar.
+      converted_types = Hash(String, Set(String)).new
       project_roots = Set(String).new
 
       java_files.each do |path|
@@ -429,12 +444,16 @@ module Analyzer::Java
         project_roots << project_root
 
         content = read_file_content(path)
+        if content.includes?("implements")
+          content.scan(CONVERTER_TARGET_RE) { |match| (converted_types[project_root] ||= Set(String).new) << match[1] }
+        end
         # One union pass rejects the files that can feed neither index
         # before the two individual scans run.
-        next unless content_matches?(content, SPRING_INDEX_PRESCREEN_RE)
+        needs_injected = content_matches?(content, META_ANNOTATION_RE) && content_matches?(content, INJECTED_META_RE)
+        next unless needs_injected || content_matches?(content, SPRING_INDEX_PRESCREEN_RE)
         needs_stomp = content_matches?(content, STOMP_PREFIX_RE)
         needs_meta = content_matches?(content, SPRING_WEB_BIND_RE) && content_matches?(content, META_ANNOTATION_RE)
-        next unless needs_stomp || needs_meta
+        next unless needs_stomp || needs_meta || needs_injected
 
         Noir::TreeSitter.parse_java(content) do |root|
           constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants_from(root, content, java_project_constants(path))
@@ -454,6 +473,11 @@ module Analyzer::Java
               meta_index.add(project_root, package_name, name, mapping)
             end
           end
+
+          if needs_injected
+            names = Noir::TreeSitterJavaParameterExtractor.extract_injected_annotation_types_from(root, content)
+            (injected_annotations[project_root] ||= Set(String).new).concat(names) unless names.empty?
+          end
         end
       end
 
@@ -467,7 +491,7 @@ module Analyzer::Java
       end
 
       interface_index = collect_interface_route_index(java_files, meta_index)
-      {path_configs, spring_property_maps, stomp_prefixes, meta_index, interface_index}
+      {path_configs, spring_property_maps, stomp_prefixes, meta_index, interface_index, injected_annotations, converted_types}
     end
 
     private def collect_interface_route_index(java_files : Array(String),
@@ -548,7 +572,9 @@ module Analyzer::Java
     # once, not once per route: a 500-method `*Api` interface used to be
     # re-parsed 500 times.
     private def interface_route_params(entries : Array(SpringInterfaceRouteEntry),
-                                       dto_builder : Noir::TreeSitterJavaDtoIndex) : Array(Array(Param))
+                                       dto_builder : Noir::TreeSitterJavaDtoIndex,
+                                       injected_annotations : Set(String)?,
+                                       converted_types : Set(String)?) : Array(Array(Param))
       result = Array(Array(Param)).new(entries.size) { [] of Param }
       indexes_by_path = Hash(String, Array(Int32)).new { |hash, key| hash[key] = [] of Int32 }
       entries.each_with_index { |entry, i| indexes_by_path[entry.path] << i }
@@ -568,7 +594,8 @@ module Analyzer::Java
             )
             result[i] = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters_from(
               interface_root, source, route.class_name, route.method_name,
-              route.verb, parameter_format, dto_index, route.line, constants: constants, index: param_index
+              route.verb, parameter_format, dto_index, route.line, constants: constants, index: param_index,
+              injected_annotations: injected_annotations, converted_types: converted_types
             )
           end
         end
