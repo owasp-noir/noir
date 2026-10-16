@@ -189,6 +189,18 @@ module Noir
       CLOJURE_EXTENSIONS.any? { |ext| path.ends_with?(ext) }
     end
 
+    # Leiningen/tools.deps test trees (`test/`, `perf-test/` router
+    # micro-benchmarks) and `foo_test.clj` files: routes there are test
+    # handlers and benchmark fixtures nothing serves.
+    TEST_PATH_RE = /\/(?:perf-)?test\/|_test\./i
+
+    # Pass a scan-base-relative path (`Analyzer#base_relative_path`), never
+    # an absolute one: a `test/` directory ABOVE the scan base is not this
+    # project's test tree.
+    def test_path?(relative_path : String) : Bool
+      relative_path.matches?(TEST_PATH_RE)
+    end
+
     # Read a bare symbol/keyword starting at `index`. Commas are whitespace in
     # Clojure, so by default they terminate a symbol just like spaces (keeps
     # `[x, y]` from reading `x,` as one token); pass `commas: false` to read
