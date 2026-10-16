@@ -34,8 +34,9 @@ module Analyzer::Javascript
         content = read_file_content(path)
         next unless yoga_in_file?(content)
         # A `typeDefs` schema in a test file is a fixture, not a deployed
-        # endpoint — the same gate the Apollo analyzer applies.
-        next if Noir::JSRouteExtractor.test_stub_only?(path, content, include_client_frameworks: false)
+        # endpoint. Import-blind: a BFF that imports node-fetch/axios is not
+        # a test (`test_stub_only?` would skip it as "no server import").
+        next if Noir::JSRouteExtractor.test_file?(path, content)
         process_file(path, content)
       rescue e
         @logger.debug "GraphQL Yoga analyzer: failed to process #{path}: #{e.message}"
