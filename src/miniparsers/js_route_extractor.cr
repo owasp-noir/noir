@@ -341,7 +341,13 @@ module Noir
               receiver_start -= 1
             end
             if receiver = offsets.window(receiver_start, 128).match(ROUTE_RECEIVER_RE)
-              prefixes = prefixes_by_binding[receiver[1]]? || prefixes
+              # A sub-router mounted on the exported router (`router.use(
+              # '/comfy', comfy)`) is served under the exported router's
+              # cross-file prefix too; the parser already folded the in-file
+              # part (`/comfy`) into the route's own path.
+              if root = parser.nearest_ancestor(receiver[1]) { |name| prefixes_by_binding.has_key?(name) }
+                prefixes = prefixes_by_binding[root]
+              end
             end
           end
           if prefixes.empty? && !file_prefixes.empty?

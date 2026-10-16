@@ -42,6 +42,10 @@ module Noir
     # to the ones inferred from a verb call — every `request.get(...)`
     # would otherwise vouch for itself as a router.
     @explicit_router_vars = Set(String).new
+    # child => parents of this file's `parent.use('/p', child)` mounts, kept
+    # after `parse_routes` so a caller can walk a sub-router up to the
+    # router the file exports.
+    @router_parents = {} of String => Array(String)
     @supports_named_routes : Bool = false
 
     private struct PathEntry
@@ -84,6 +88,22 @@ module Noir
       @supports_named_routes = source.includes?("koa-router") || source.includes?("@koa/router")
       # Extract constants from the source
       extract_constants
+    end
+
+    # The router nearest to `router` (itself first, then the routers it is
+    # mounted on, breadth-first) for which the block holds. Only meaningful
+    # after `parse_routes`.
+    def nearest_ancestor(router : String, &) : String?
+      seen = Set{router}
+      queue = [router]
+      until queue.empty?
+        name = queue.shift
+        return name if yield name
+        @router_parents[name]?.try do |parents|
+          parents.each { |parent| queue << parent if seen.add?(parent) }
+        end
+      end
+      nil
     end
 
     def detect_framework : Symbol
@@ -200,6 +220,7 @@ module Noir
       end
 
       @router_prefixes = router_prefixes
+      @router_parents = router_parents
 
       # First, run a fast token scan to quickly capture common patterns
       routes.concat(fast_scan_routes(router_prefixes))
