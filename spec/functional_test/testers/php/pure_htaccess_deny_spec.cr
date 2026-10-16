@@ -6,6 +6,7 @@ require "../../func_spec.cr"
 #   * `include/`  -> `Deny from all`: not reachable
 #   * `uploads/`  -> `<Files *.php>` denied: not reachable
 #   * `partial/`  -> `Deny from all` but `Allow from 127.0.0.1`: conditional, kept
+#   * `hardened/` -> denies `.phps`/`.php5`/`.phtml` only: plain `.php` is still served
 #   * root        -> denies the single file `config.php`, never the tree
 #   * `public/`   -> its `index.php` is a "Silence is golden" stub, so it is
 #                    not a front controller and `public/` is no document root
@@ -17,6 +18,9 @@ expected_endpoints = [
   Endpoint.new("/admin/panel.php", "GET", [] of Param),
   Endpoint.new("/admin/panel.php", "POST", [
     Param.new("user", "", "form"),
+  ]),
+  Endpoint.new("/hardened/page.php", "GET", [
+    Param.new("id", "", "query"),
   ]),
   Endpoint.new("/partial/status.php", "GET", [
     Param.new("probe", "", "query"),

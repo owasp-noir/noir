@@ -38,8 +38,10 @@ module Analyzer::Php
     # deny of the directory.
     HTACCESS_SCOPED_BLOCK_RE = /<(Files|FilesMatch|Limit|LimitExcept|Directory|DirectoryMatch|Location|LocationMatch)\b.*?<\/\1>/mi
     # `<Files *.php>` / `<FilesMatch "\.php$">`: every PHP file, not one named
-    # `config.php` (a letter before `.php`) or `php.ini`.
-    HTACCESS_PHP_FILES_RE = /<Files(?:Match)?\b(?![^>]*[\w-]\\?\.php)[^>]*[.(|:]php[^>]*>(.*?)<\/Files(?:Match)?>/mi
+    # `config.php` (a letter before `.php`) or `php.ini`, and not another
+    # extension (`.phps`, `.php5`, `.php.bak`, `.php[0-9]`): `php` has to end
+    # the pattern or its alternative.
+    HTACCESS_PHP_FILES_RE = /<Files(?:Match)?\b(?![^>]*[\w-]\\?\.php)[^>]*[.(|:]php(?=[$"'>)|])[^>]*>(.*?)<\/Files(?:Match)?>/mi
     HTACCESS_PHP_OFF_RE   = /^[ \t]*(?:SetHandler[ \t]+!|RemoveHandler\b|Deny[ \t]+from[ \t]+all\b|Require[ \t]+all[ \t]+denied\b)/mi
 
     # `<?php`, `?>` and whitespace: what is left of an `index.php` once

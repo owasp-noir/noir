@@ -1,0 +1,4 @@
+# Denies other extensions, not the plain .php pages next to them.
+<FilesMatch "\.(phps|php5|phtml)$">
+    Require all denied
+</FilesMatch>
