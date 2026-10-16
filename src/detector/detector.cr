@@ -53,6 +53,10 @@ module Noir::Detection
     "node_modules", "__pycache__", ".venv", "venv",
     ".pytest_cache", ".tox", ".gradle", ".bundle", ".dart_tool",
     ".cargo", ".terraform",
+    # Vendored third-party source (Google/Chromium and CMake convention). Only
+    # the underscore/digit-prefixed spellings: `third-party/` and `thirdparty`
+    # are ordinary names for first-party integration code and URL segments.
+    "third_party", "3rdparty",
     # Yarn Berry: the committed yarn binary (`releases/yarn-4.x.cjs`, a
     # 3 MB bundle whose embedded libraries read as Feathers/Express
     # routes), plus `cache/`, `unplugged/` and `sdks/`.
