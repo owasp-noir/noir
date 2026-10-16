@@ -45,6 +45,7 @@ module Analyzer::Clojure
       include_callee = callees_needed?
       all_files.each do |path|
         next unless Noir::ClojureScanner.clojure_file?(path)
+        next if Noir::ClojureScanner.test_path?(base_relative_path(path))
 
         content = read_file_content(path)
         next unless pedestal_source?(content)

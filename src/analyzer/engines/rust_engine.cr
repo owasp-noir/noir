@@ -89,6 +89,17 @@ module Analyzer::Rust
       roots.any? { |root| Noir::PathScope.under_normalized_root?(expanded, root) }
     end
 
+    # Workspace test crates are named after the convention without being
+    # the literal `tests/` segment: `rwf-tests`, `tests-fuzz`,
+    # `playwright-tests`, `suspense_tests`. Plural `tests` needs a `-`/`_`
+    # delimiter so `contests/` and `latest/` stay out; singular `test-app`
+    # / `test_only` are deliberately not matched. `e2e` / `playwright` count
+    # only as the whole segment, optionally with a `-test(s)` / `_test(s)`
+    # suffix: `e2e-encryption/` and `api/e2e_keys/` are Matrix-style
+    # end-to-end *encryption* code and serve real routes. Applied to the
+    # rooted scan-base-relative path, like the `/tests/` check.
+    TEST_CRATE_DIR_RE = %r{/(?:[\w.-]+[-_])?tests(?:[-_][\w.-]+)?/|/(?:e2e|playwright)(?:[-_]tests?)?/}
+
     # Cargo convention: every `.rs` immediately under a crate's
     # `tests/` directory is an integration-test binary, never a
     # production endpoint. The `_test.rs` / `_tests.rs` suffix is
@@ -106,6 +117,7 @@ module Analyzer::Rust
     # `~/work/tests/myapp` reported 0 endpoints instead of 220.
     def self.test_path?(relative_path : String) : Bool
       return true if relative_path.includes?("/tests/")
+      return true if relative_path.matches?(TEST_CRATE_DIR_RE)
       # Cargo's `benches/` directory holds `cargo bench` harnesses
       # (`Router::new().route(...)` scaffolding for throughput tests),
       # never production endpoints — axum/tide park route-building

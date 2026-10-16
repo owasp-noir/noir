@@ -89,7 +89,9 @@ module Analyzer::Erlang
     end
 
     private def erlang_sources : Array(String)
-      get_files_by_extension(".erl") + get_files_by_extension(".hrl")
+      (get_files_by_extension(".erl") + get_files_by_extension(".hrl")).reject do |path|
+        Helper.test_path?(base_relative_path(path))
+      end
     end
 
     # Erlang requires the module name to match the file name, so the
@@ -107,7 +109,7 @@ module Analyzer::Erlang
     private def process_file(path : String,
                              content : String,
                              module_index : Hash(Tuple(String, String), String))
-      cleaned = Helper.strip_erlang_comments(content)
+      cleaned = Helper.mask_ifdef_test(Helper.strip_erlang_comments(content))
       lines = cleaned.lines
 
       lines.each_with_index do |line, idx|

@@ -1,0 +1,13 @@
+name: scotty-tests-sample
+dependencies:
+  - base
+  - scotty
+  - text
+
+tests:
+  spec:
+    main: Spec.hs
+    source-dirs: test
+    dependencies:
+      - hspec
+      - hspec-wai

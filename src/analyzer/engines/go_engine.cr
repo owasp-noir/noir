@@ -20,7 +20,9 @@ module Analyzer::Go
     # `_testdata/`) is excluded by `go build`/`go list` outright.
     # `kataras/iris` alone parks 392 phantom endpoints under
     # `_examples/...`; they're documented apps, not production
-    # routes the framework ships.
+    # routes the framework ships. `go help packages` ignores a
+    # directory named `testdata` the same way: swaggo/swag parks
+    # 196 parser-input endpoints under `testdata/...`.
     #
     # Takes the scan-base-relative path (`Analyzer#base_relative_path`),
     # never the absolute one. Go's toolchain rule is relative to the
@@ -30,10 +32,11 @@ module Analyzer::Go
     #
     # `relative_path` from `base_relative_path` is `/`-rooted, so `"/_"`
     # is exactly "a path segment starts with `_`" without the per-call
-    # `split` allocation. The leading-`_` check covers a caller that
-    # passes an unrooted relative path.
+    # `split` allocation. The leading-`_` and `testdata/` checks cover a
+    # caller that passes an unrooted relative path.
     def self.go_test_file?(relative_path : String) : Bool
       return true if relative_path.ends_with?("_test.go")
+      return true if relative_path.starts_with?("testdata/") || relative_path.includes?("/testdata/")
       relative_path.starts_with?('_') || relative_path.includes?("/_")
     end
 

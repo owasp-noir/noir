@@ -137,16 +137,20 @@ module Analyzer::Elixir
       line
     end
 
-    # ExUnit's filename convention is rigid: every test module sits in
-    # a file named `*_test.exs`, and `mix test` ignores anything else.
-    # Production code never adopts that name, so the suffix check is
-    # safe for every Elixir analyzer (Phoenix/Plug/Bandit).
-    def self.test_path?(path : String) : Bool
-      File.basename(path).ends_with?("_test.exs")
+    # ExUnit's conventions are rigid: every test module sits in a file
+    # named `*_test.exs`, and Mix keeps the rest of the test tree under
+    # `test/` — including `test/support/**` and fixture schemas, which
+    # `elixirc_paths(:test)` compiles only for MIX_ENV=test (stub routers,
+    # Plug mocks, Absinthe fixture schemas). Production code never lives
+    # there, so the check is safe for every Elixir analyzer
+    # (Phoenix/Plug/Bandit/Absinthe/Channel). Takes the scan-base-relative
+    # path so a checkout under a `test/` ancestor is not wiped.
+    def self.test_path?(relative_path : String) : Bool
+      relative_path.includes?("/test/") || File.basename(relative_path).ends_with?("_test.exs")
     end
 
     protected def elixir_test_path?(path : String) : Bool
-      ElixirEngine.test_path?(path)
+      ElixirEngine.test_path?(base_relative_path(path))
     end
 
     PLUG_ROUTER_USE_RE = /^\s*use\s+Plug\.Router\b/m
