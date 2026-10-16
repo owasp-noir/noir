@@ -123,8 +123,8 @@ module Noir
     # matches one of `module_names` or a bare `Blueprint`.
     #
     # `module_names` is the list of module prefixes allowed before
-    # `.Blueprint` (e.g. `["flask"]`). A bare `Blueprint` call is always
-    # accepted.
+    # `.Blueprint` (e.g. `["flask"]`). A bare `Blueprint` call, or one
+    # named `<Prefix>Blueprint`, is always accepted.
     #
     # Two assignment shapes count: bare `name = Blueprint(...)` and
     # qualified `name = <module>.Blueprint(...)`. The module is read as
@@ -148,7 +148,9 @@ module Noir
 
         case Noir::TreeSitter.node_type(function)
         when "identifier"
-          next unless Noir::TreeSitter.node_text(function, source) == "Blueprint"
+          # `ends_with?` also takes in-repo subclasses (`class IndicoBlueprint(Blueprint)`)
+          # whose constructor keeps Flask's `url_prefix=`.
+          next unless Noir::TreeSitter.node_text(function, source).ends_with?("Blueprint")
         when "attribute"
           module_node = Noir::TreeSitter.field(function, "object")
           attr_node = Noir::TreeSitter.field(function, "attribute")
