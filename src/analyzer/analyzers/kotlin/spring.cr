@@ -161,9 +161,7 @@ module Analyzer::Kotlin
       include_callee = callees_needed?
       functional_router_seen = false
 
-      all_file_list = all_files()
-      file_list = spring_kotlin_files(all_file_list)
-      src_dirs = spring_src_dirs(all_file_list)
+      file_list = spring_kotlin_files(all_files())
       path_configs = path_configs_for(file_list)
       file_list.each do |path|
         content = read_file_content(path)
@@ -202,13 +200,14 @@ module Analyzer::Kotlin
       stomp_prefixes = stomp_application_prefixes_for(file_list, string_constants, local_string_constants)
       graphql_paths = graphql_paths_for(file_list, path_configs)
 
-      src_dirs.each do |path|
-        process_directory(path, path_configs)
+      path_configs.each do |root, config|
+        @result.concat(spring_provided_endpoints(root, spring_config_values_for(root), config.web_base_path))
       end
 
       file_list.each do |path|
         project_root = project_root_for(path)
         base_constants = string_constants_by_base[configured_base_for(path)]? || Hash(String, String).new
+        @result.concat(spring_security_endpoints(path, (path_configs[project_root]? || SpringPathConfig.new).web_base_path))
         process_kotlin_file(
           path, dto_builder, path_configs, base_constants, local_string_constants[path]?,
           interface_route_index, method_index, stomp_prefixes[project_root]? || [""], graphql_paths[project_root]? || "/graphql"
@@ -237,120 +236,6 @@ module Analyzer::Kotlin
         path.ends_with?(".#{KOTLIN_EXTENSION}") &&
           File.exists?(path) &&
           !KotlinEngine.test_path?(base_relative_path(path))
-      end
-    end
-
-    private def spring_src_dirs(files : Array(String)) : Array(String)
-      dirs = Set(String).new
-      files.each do |path|
-        # Scan-base-relative, never absolute: `String#index` takes the
-        # FIRST occurrence, so a `src/` directory above the scan base
-        # made every module resolve to a source root outside the scan.
-        base = configured_base_for(path)
-        relative = Noir::PathScope.base_relative(path, base)
-        index = relative.index("/src/")
-        next unless index
-        dirs << base.rstrip('/') + relative[0, index + 4]
-      end
-      dirs.to_a
-    end
-
-    # Read Spring Webflux base-path + static-locations from
-    # `application.yml` / `application.properties` so route paths
-    # inherit them and static asset directories show up as GET routes.
-    private def process_directory(path : String, path_configs : Hash(String, SpringPathConfig))
-      return unless path.ends_with?("/src")
-
-      static_locations = [] of String
-      project_root = path[0, path.size - 4]
-      web_base_path = (path_configs[project_root]? || SpringPathConfig.new).web_base_path
-
-      application_yml_path = File.join(path, "main/resources/application.yml")
-      if File.exists?(application_yml_path)
-        begin
-          config = YAML.parse(read_file_content(application_yml_path))
-          spring = config["spring"]
-          if spring
-            resources = spring["resources"] || spring["web"]
-            if resources
-              if resources["resources"]
-                resources = resources["resources"]
-              end
-              static_locations_yaml = resources["static-locations"]
-              if static_locations_yaml
-                if static_locations_yaml.as_a?
-                  static_locations_yaml.as_a.each do |loc|
-                    static_locations << loc.as_s
-                  end
-                elsif static_locations_yaml.as_s?
-                  static_locations_yaml.as_s.split(",").each do |loc|
-                    static_locations << loc.strip
-                  end
-                end
-              end
-            end
-          end
-        rescue
-          # Handle parsing errors if necessary
-        end
-      end
-
-      application_properties_path = File.join(path, "main/resources/application.properties")
-      if File.exists?(application_properties_path)
-        begin
-          properties = read_file_content(application_properties_path)
-          static_locs = properties.match(/spring(\.web)?\.resources\.static-locations\s*=\s*(.*)/)
-          if static_locs
-            static_locs[2].split(",").each do |loc|
-              static_locations << loc.strip
-            end
-          end
-        rescue
-          # Handle parsing errors if necessary
-        end
-      end
-
-      if static_locations.empty?
-        static_locations = ["classpath:/META-INF/resources/", "classpath:/resources/", "classpath:/static/", "classpath:/public/"]
-      end
-
-      process_static_locations(path, static_locations, web_base_path)
-    end
-
-    private def process_static_locations(src_path : String, static_locations : Array(String), webflux_base_path : String)
-      static_locations.each do |location|
-        dir = if location.starts_with?("classpath:")
-                File.join(src_path, "main/resources", location.sub("classpath:", "").strip)
-              elsif location.starts_with?("file:")
-                location.sub("file:", "").strip
-              end
-        next unless dir && Dir.exists?(dir)
-        # The location comes verbatim from the app's own config, so it can
-        # point anywhere: `file:/etc/` is an absolute path, and a
-        # `classpath:/../../../x/` climbs out of `src/main/resources`.
-        # Walking it emitted an endpoint per file outside the scan, with
-        # `code_paths` leaking the scanning machine's layout into a report
-        # that may be shared.
-        unless within_scan_base?(dir)
-          logger.debug "Skipping static-location #{location}: resolves outside the scan base"
-          next
-        end
-        emit_static_files(dir, webflux_base_path)
-      end
-    end
-
-    # Every file under a resolved static-resource directory is a GET
-    # endpoint. The walk is a `Dir.glob` rather than a `file_map` lookup
-    # because the endpoint set is "every file under this directory",
-    # including the images and fonts the media filter keeps out of the
-    # index — so `--exclude-path` has to be re-applied here by hand.
-    private def emit_static_files(root : String, webflux_base_path : String)
-      Dir.glob("#{escape_glob_path(root)}/**/*") do |file|
-        next if File.directory?(file)
-        next if excluded_path?(file)
-        relative_path = file.sub(root, "")
-        full_url = Noir::URLPath.absolute_join(webflux_base_path, relative_path)
-        @result << Endpoint.new(full_url, "GET", Details.new(PathInfo.new(file)))
       end
     end
 

@@ -5,6 +5,7 @@ require "../../miniparsers/import_graph"
 require "../../utils/c_comments"
 require "yaml"
 require "../../utils/path_scope"
+require "../../utils/url_path"
 
 # Shared helpers for the Java analyzers. They each extend `Analyzer`
 # directly rather than a language-specific engine (historically the
@@ -348,6 +349,11 @@ module Analyzer::Java
         end
       elsif scalar = yaml_scalar(node)
         target[prefix] = scalar unless prefix.empty?
+      elsif items = node.as_a?
+        # A YAML list binds like Spring's comma-separated form
+        # (`static-locations`, `exposure.include`).
+        scalars = items.compact_map { |item| yaml_scalar(item) }
+        target[prefix] = scalars.join(',') unless prefix.empty? || scalars.empty?
       end
     end
 
@@ -358,11 +364,237 @@ module Analyzer::Java
     end
 
     private def yaml_scalar(node : YAML::Any) : String?
-      node.as_s
-    rescue
-      if int = node.as_i64?
-        int.to_s
+      case raw = node.raw
+      when String, Int64, Float64, Bool then raw.to_s
       end
+    end
+
+    # Spring Boot's four classpath defaults for `spring.web.resources.static-locations`.
+    SPRING_DEFAULT_STATIC_LOCATIONS = ["classpath:/META-INF/resources/", "classpath:/resources/", "classpath:/static/", "classpath:/public/"]
+
+    # Actuator endpoints every Boot app has once they are exposed; the rest
+    # (prometheus, flyway, ...) need their own dependency, so they are
+    # emitted only when `exposure.include` names them.
+    SPRING_ACTUATOR_CORE = %w[health info beans caches conditions configprops env loggers heapdump threaddump metrics scheduledtasks mappings]
+
+    SPRING_ACTUATOR_DEP_RE   = /spring[-.]boot[-.]starter[-.]actuator\b/
+    SPRING_SPRINGDOC_DEP_RE  = /springdoc[-.]openapi/
+    SPRING_SWAGGER_UI_DEP_RE = /springdoc[-.]openapi[\w.-]*?[-.]ui\b/
+    # Comments and Maven `<dependencyManagement>` (which only pins versions)
+    # are not dependencies; masked to spaces so offsets keep their lines.
+    SPRING_BUILD_NOISE_RE = /<!--.*?-->|<dependencyManagement>.*?<\/dependencyManagement>|\/\*.*?\*\/|\/\/[^\n]*/m
+
+    FRAMEWORK_PROVIDED_TAG = Tag.new("framework-provided", "Served by Spring Boot / Spring Security itself, not by an application controller", "spring_analyzer")
+
+    # Routes the Spring Boot runtime serves for a module with no controller
+    # behind them: every file under the static-resource locations, the
+    # exposed Actuator endpoints and the springdoc documents. `values` is
+    # the module's `spring_config_values_for`; actuator and springdoc also
+    # need their dependency in a build file, so config alone emits nothing.
+    private def spring_provided_endpoints(project_root : String, values : Hash(String, String), base_path : String) : Array(Endpoint)
+      endpoints = spring_static_endpoints(project_root, values, base_path)
+
+      if evidence = spring_build_dependency(project_root, SPRING_ACTUATOR_DEP_RE)
+        # A separate management port drops the servlet context path.
+        prefix = values.has_key?("management.server.port") ? normalize_optional_path(values["management.server.base-path"]? || values["management.server.servlet.context-path"]?) : base_path
+        actuator_base = Noir::URLPath.join_rooted(prefix, values["management.endpoints.web.base-path"]? || "/actuator")
+        listed = (values["management.endpoints.web.exposure.include"]? || "health").split(',').map(&.strip)
+        excluded = (values["management.endpoints.web.exposure.exclude"]? || "").split(',').map(&.strip)
+        ids = listed.includes?("*") ? (SPRING_ACTUATOR_CORE + listed).uniq : listed
+        ids = ids.reject { |id| id.empty? || id == "*" || excluded.includes?(id) || !spring_actuator_enabled?(values, id) }
+        unless ids.empty?
+          endpoints << framework_endpoint(actuator_base, "GET", evidence)
+          ids.each do |id|
+            url = Noir::URLPath.join_rooted(actuator_base, values["management.endpoints.web.path-mapping.#{id}"]? || id)
+            endpoints << framework_endpoint(url, id == "shutdown" ? "POST" : "GET", evidence)
+          end
+        end
+      end
+
+      if evidence = spring_build_dependency(project_root, SPRING_SPRINGDOC_DEP_RE)
+        unless values["springdoc.api-docs.enabled"]? == "false"
+          endpoints << framework_endpoint(Noir::URLPath.join_rooted(base_path, values["springdoc.api-docs.path"]? || "/v3/api-docs"), "GET", evidence)
+        end
+        if (ui = spring_build_dependency(project_root, SPRING_SWAGGER_UI_DEP_RE)) && values["springdoc.swagger-ui.enabled"]? != "false"
+          endpoints << framework_endpoint(Noir::URLPath.join_rooted(base_path, values["springdoc.swagger-ui.path"]? || "/swagger-ui.html"), "GET", ui)
+        end
+      end
+
+      endpoints
+    end
+
+    private def spring_actuator_enabled?(values : Hash(String, String), id : String) : Bool
+      enabled = values["management.endpoint.#{id}.enabled"]? || values["management.endpoints.enabled-by-default"]?
+      access = values["management.endpoint.#{id}.access"]? || values["management.endpoints.access.default"]?
+      # `shutdown` is the one endpoint Boot ships disabled.
+      return false if id == "shutdown" && enabled != "true" && access.nil?
+      enabled != "false" && access != "none"
+    end
+
+    private def framework_endpoint(url : String, verb : String, evidence : PathInfo, params = [] of Param) : Endpoint
+      endpoint = Endpoint.new(url, verb, params, Details.new(evidence))
+      endpoint.add_tag(FRAMEWORK_PROVIDED_TAG)
+      endpoint
+    end
+
+    # Where `pattern` (a dependency coordinate) is declared in the module's
+    # `pom.xml` / `build.gradle(.kts)`, or in a parent module's up to the
+    # scan base (Maven parents and Gradle `subprojects {}` hand theirs down).
+    #
+    # ponytail: Gradle convention plugins (`buildSrc`) are not followed.
+    private def spring_build_dependency(project_root : String, pattern : Regex) : PathInfo?
+      dir = project_root
+      while within_scan_base?(dir)
+        {"pom.xml", "build.gradle", "build.gradle.kts"}.each do |name|
+          file = File.join(dir, name)
+          next unless File.exists?(file)
+          content = read_file_content(file)
+          next unless content_matches?(content, pattern)
+          masked = content.gsub(SPRING_BUILD_NOISE_RE, &.gsub(/[^\n]/, ' '))
+          if match = pattern.match(masked)
+            return PathInfo.new(file, line_number_for_index(masked, match.begin(0)))
+          end
+        end
+        parent = File.dirname(dir)
+        break if parent == dir
+        dir = parent
+      end
+      nil
+    end
+
+    # Files that configure an `HttpSecurity` / `ServerHttpSecurity` chain.
+    SPRING_SECURITY_FILE_RE = Regex.union("HttpSecurity", "SecurityFilterChain", "SecurityWebFilterChain", "WebSecurityConfigurerAdapter")
+    # `.formLogin(` / `.logout(` (Java, Kotlin `http.` calls) or the Kotlin
+    # DSL's `formLogin {` — a bare `logout(` is any app's own method.
+    SPRING_SECURITY_DSL_RE   = /(?:\.\s*(formLogin|logout|oauth2Login)\s*\(|\b(formLogin|logout|oauth2Login)\s*\{)/
+    SPRING_SECURITY_VALUE_RE = /\b(loginPage|loginProcessingUrl|usernameParameter|passwordParameter|logoutUrl|baseUri)\s*(?:\(\s*|=\s*)"([^"\\]*)"/
+
+    # verb, path, form params, offset of the DSL call in `code`.
+    alias SpringSecurityRoute = Tuple(String, String, Array(String), Int32)
+
+    # The login / logout / OAuth2 endpoints Spring Security's filters serve
+    # for each `formLogin` / `logout` / `oauth2Login` in a security chain,
+    # with the configured URLs and parameter names or Spring's defaults.
+    # `code` is comment-stripped source. Only string literals are read.
+    def self.spring_security_routes(code : String) : Array(SpringSecurityRoute)
+      routes = [] of SpringSecurityRoute
+      code.scan(SPRING_SECURITY_DSL_RE) do |match|
+        kind = match[1]? || match[2]
+        open_idx = match.end(0) - 1
+        scope = spring_security_scope(code, open_idx)
+        next if scope.matches?(/\bdisable\b/)
+        values = spring_security_values(scope)
+        offset = match.begin(0)
+
+        case kind
+        when "formLogin"
+          # Without `loginProcessingUrl` the filter listens on the login page URL.
+          url = values["loginProcessingUrl"]? || values["loginPage"]? || "/login"
+          routes << {"POST", url, [values["usernameParameter"]? || "username", values["passwordParameter"]? || "password"], offset}
+        when "logout"
+          routes << {"POST", values["logoutUrl"]? || "/logout", [] of String, offset}
+        when "oauth2Login"
+          authorization = spring_security_sub_scope(scope, "authorizationEndpoint").try { |sub| spring_security_values(sub)["baseUri"]? }
+          redirection = spring_security_sub_scope(scope, "redirectionEndpoint").try { |sub| spring_security_values(sub)["baseUri"]? }
+          routes << {"GET", Noir::URLPath.join_rooted(authorization || "/oauth2/authorization", "{registrationId}"), [] of String, offset}
+          # The redirection `baseUri` is an Ant pattern; its `*` is the registration id.
+          redirection ||= "/login/oauth2/code/*"
+          callback = redirection.ends_with?('*') ? Noir::URLPath.join_rooted(redirection.rchop('*'), "{registrationId}") : redirection
+          routes << {"GET", callback, ["code", "state"], offset}
+        end
+      end
+      routes
+    end
+
+    # The configuration a DSL call at `open_idx` (its `(` or `{`) applies:
+    # the lambda / Kotlin block body, or — for the legacy `formLogin()`
+    # chain — the calls after it up to `.and()` or the statement end.
+    #
+    # ponytail: a legacy chain that hops sub-configurers with `.and()`
+    # (`oauth2Login().authorizationEndpoint()...and().redirectionEndpoint()`)
+    # is cut at the first `.and()`; that style is deprecated.
+    private def self.spring_security_scope(code : String, open_idx : Int32) : String
+      open_char = code[open_idx]
+      close_char = open_char == '(' ? ')' : '}'
+      depth = 0
+      close_idx = nil
+      JavaEngine.each_char_after(code, open_idx - 1) do |c, i|
+        depth += 1 if c == open_char
+        depth -= 1 if c == close_char
+        if depth.zero?
+          close_idx = i
+          break
+        end
+      end
+      return code[(open_idx + 1)..] unless close_idx
+      inner = code[(open_idx + 1)...close_idx]
+      return inner unless inner.blank?
+      rest = code[(close_idx + 1)..]
+      cut = [rest.index(".and()"), rest.index(';')].compact.min?
+      cut ? rest[0, cut] : rest
+    end
+
+    private def self.spring_security_sub_scope(scope : String, name : String) : String?
+      return unless match = scope.match(/\b#{name}\s*([({])/)
+      spring_security_scope(scope, match.begin(1))
+    end
+
+    # First literal value of each configurer setter in `scope`.
+    private def self.spring_security_values(scope : String) : Hash(String, String)
+      values = Hash(String, String).new
+      scope.scan(SPRING_SECURITY_VALUE_RE) { |match| values[match[1]] ||= match[2] }
+      values
+    end
+
+    private def spring_security_endpoints(path : String, base_path : String) : Array(Endpoint)
+      content = read_file_content(path)
+      return [] of Endpoint unless content_matches?(content, SPRING_SECURITY_FILE_RE)
+      code = JavaEngine.strip_comments(content)
+      JavaEngine.spring_security_routes(code).map do |verb, url, params, offset|
+        framework_endpoint(
+          Noir::URLPath.join_rooted(base_path, url), verb, PathInfo.new(path, line_number_for_index(code, offset)),
+          params.map { |name| Param.new(name, "", verb == "POST" ? "form" : "query") }
+        )
+      end
+    end
+
+    # Every file under a resolved static-resource directory is a GET
+    # endpoint. The walk is a `Dir.glob` rather than a `file_map` lookup
+    # because the endpoint set is "every file under this directory",
+    # including the images and fonts the media filter keeps out of the
+    # index (and dotfiles like `.env.prod`) — so `--exclude-path` has to be
+    # re-applied here by hand.
+    private def spring_static_endpoints(project_root : String, values : Hash(String, String), base_path : String) : Array(Endpoint)
+      endpoints = [] of Endpoint
+      configured = values["spring.web.resources.static-locations"]? || values["spring.resources.static-locations"]?
+      locations = configured.try(&.split(',').map(&.strip).reject(&.empty?))
+      locations = SPRING_DEFAULT_STATIC_LOCATIONS if locations.nil? || locations.empty?
+
+      locations.each do |location|
+        dir = if location.starts_with?("classpath:")
+                File.join(project_root, "src/main/resources", location.sub("classpath:", "").strip)
+              elsif location.starts_with?("file:")
+                location.sub("file:", "").strip
+              end
+        next unless dir && Dir.exists?(dir)
+        # The location comes verbatim from the app's own config, so it can
+        # point anywhere: `file:/etc/` is an absolute path, and a
+        # `classpath:/../../../x/` climbs out of `src/main/resources`.
+        # Walking it emitted an endpoint per file outside the scan, with
+        # `code_paths` leaking the scanning machine's layout into a report
+        # that may be shared.
+        unless within_scan_base?(dir)
+          logger.debug "Skipping static-location #{location}: resolves outside the scan base"
+          next
+        end
+        Dir.glob("#{escape_glob_path(dir)}/**/*", match: File::MatchOptions::DotFiles) do |file|
+          next if File.directory?(file) || excluded_path?(file)
+          url = Noir::URLPath.absolute_join(base_path, file.sub(dir, ""))
+          endpoints << Endpoint.new(url, "GET", Details.new(PathInfo.new(file)))
+        end
+      end
+
+      endpoints
     end
 
     # The Maven/Gradle module root: everything above the source root that
