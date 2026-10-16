@@ -55,7 +55,7 @@ module Analyzer::Javascript
         # won outright and the derived URL changed with the checkout path.
         scoped = base_relative_path(path)
         idx = scoped.index("/src/pages/")
-        next if idx.nil?
+        next if idx.nil? || in_test_tree?(scoped[0...idx])
 
         relative = scoped[(idx + "/src/pages/".size)..-1]
         # Skip private files / dirs (`_` prefix) and Astro components

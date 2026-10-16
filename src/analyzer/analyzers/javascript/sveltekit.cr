@@ -46,8 +46,13 @@ module Analyzer::Javascript
         ["svelte.config.js", "svelte.config.ts", "svelte.config.mjs", "svelte.config.cjs"]
       )
 
+      # `src/routes/` must sit directly in a project root: a sample app nested
+      # below a real one (docs tutorial overlays, test fixtures) is not served.
+      route_dirs = project_roots.map { |root| File.join(root, "src/routes/") }
+
       parallel_file_scan(EXTENSIONS) do |path|
-        next unless path_under_project_roots?(path, project_roots)
+        expanded = Noir::PathScope.expand(path)
+        next unless route_dirs.empty? || route_dirs.any? { |dir| expanded.starts_with?(dir) }
         relative = src_routes_relative(path) || next
         leaf = File.basename(relative)
         next if private_segment_in?(relative)

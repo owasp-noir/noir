@@ -135,7 +135,19 @@ module Analyzer::Javascript
     protected def src_routes_relative(path : String) : String?
       scoped = base_relative_path(path)
       idx = scoped.index("/src/routes/") || return
+      return if in_test_tree?(scoped[0...idx])
       scoped[(idx + "/src/routes/".size)..]
+    end
+
+    TEST_PROJECT_PATH_RE = /\/(?:tests?|__tests__|e2e|e2e-tests|fixtures?)(?:\/|\z)/
+
+    # Whether a project location (the scan-base-relative path ABOVE a
+    # framework's route root) sits in a test, e2e or fixture tree. A
+    # framework's own repo keeps hundreds of sample apps there, each with
+    # its own manifest, none of which serves traffic. Never test the route
+    # part itself: `src/routes/test/` and `api/e2e/` are real URLs.
+    protected def in_test_tree?(prefix : String) : Bool
+      prefix.matches?(TEST_PROJECT_PATH_RE)
     end
 
     protected def file_route_url(segments : Array(String)) : String

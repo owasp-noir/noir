@@ -77,6 +77,10 @@ module Analyzer::Javascript
       # FIRST occurrence, so a same-named directory above the scan base
       # won outright and the derived URL changed with the checkout path.
       if api_dir
+        # `api_dir` is absolute, so it is made base-relative against the
+        # expanded base, not through `base_relative_path`.
+        return if in_test_tree?(Noir::PathScope.base_relative(api_dir, Noir::PathScope.expand(configured_base_for(path))))
+
         # The api dir itself is the dedup scope, so an `api/x.get.ts` and a
         # `routes/api/x.get.ts` stay two endpoints for the optimizer to merge.
         routes_root = api_dir
@@ -84,7 +88,7 @@ module Analyzer::Javascript
       else
         scoped = base_relative_path(path)
         base_path_idx = scoped.index("/routes/")
-        return if base_path_idx.nil?
+        return if base_path_idx.nil? || in_test_tree?(scoped[0...base_path_idx])
 
         # Everything above `routes/` identifies the Nitro app this file
         # belongs to — the dedup scope below.

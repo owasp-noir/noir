@@ -122,11 +122,13 @@ module Analyzer::Javascript
 
       parallel_file_scan(EXTENSIONS) do |path|
         next unless path_under_project_roots?(path, project_roots)
+        next if File.basename(path).matches?(TEST_FILE_PATTERN)
         # Scan-base-relative, never absolute: `String#index` takes the
         # FIRST occurrence, so a same-named directory above the scan base
         # won outright and the derived URL changed with the checkout path.
         scoped = base_relative_path(path)
         idx = scoped.index("/routes/")
+        next if in_test_tree?(idx ? scoped[0...idx] : File.dirname(scoped))
         if idx.nil?
           app_routes = app_route_endpoints(path)
           mutex.synchronize { result.concat(app_routes) } unless app_routes.empty?
@@ -137,7 +139,6 @@ module Analyzer::Javascript
         leaf = strip_extension(File.basename(relative))
         next if SKIPPED_LEAVES.includes?(leaf)
         next if leaf.starts_with?("_") # other underscore-prefixed plumbing
-        next if File.basename(path).matches?(TEST_FILE_PATTERN)
 
         url = url_for(relative)
 
