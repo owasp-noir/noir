@@ -100,6 +100,15 @@ module Analyzer::Specification
       Noir::LocatorKeys::TYPESPEC_SPEC.name, Noir::LocatorKeys::ODATA_SPEC.name,
     }
 
+    OAS_KEYS = Set{
+      Noir::LocatorKeys::SWAGGER_JSON.name, Noir::LocatorKeys::SWAGGER_YAML.name,
+      Noir::LocatorKeys::OAS3_JSON.name, Noir::LocatorKeys::OAS3_YAML.name,
+    }
+
+    # A client runtime file in an openapi-generator `FILES` manifest. Server
+    # stubs list `api/openapi.yaml` too but have none of these.
+    GENERATED_CLIENT_FILE = /(?:\A|\/)(?:client\.go|configuration\.(?:go|rs)|api_client\.(?:py|rb)|rest\.py|ApiClient\.(?:java|kt|cs)|runtime\.ts|base\.ts)\z/
+
     # Recorded requests and client collections kept under a test tree usually
     # exercise the real API, so they are never gated.
     CLIENT_COLLECTION_KEYS = Set{
@@ -151,7 +160,7 @@ module Analyzer::Specification
       paths.each do |path|
         next unless File.exists?(path)
         # Silent, like the language engines' test-tree gates: nothing was lost.
-        next if test_tree?(key, path)
+        next if test_tree?(key, path) || generated_client_spec?(key, path)
 
         begin
           block.call(path)
@@ -173,6 +182,34 @@ module Analyzer::Specification
 
       relative = base_relative_path(path)
       relative.matches?(TEST_TREE) || (SCHEMA_KEYS.includes?(key.name) && relative.matches?(SCHEMA_TEST_TREE))
+    end
+
+    # The OpenAPI document an SDK was generated *from* is copied into the SDK
+    # (`api/openapi.yaml`) and describes a remote API the SDK consumes. The
+    # generator records it in `.openapi-generator/FILES` beside the client
+    # runtime; a server stub's manifest lists the document too, so both must
+    # hold. The climb stops at the scan base: `-b sdk/api` was asked for.
+    private def generated_client_spec?(key : Noir::LocatorKey(Array(String)), path : String) : Bool
+      return false unless OAS_KEYS.includes?(key.name)
+
+      base = configured_base_for(path)
+      return false if base.empty?
+
+      dir = File.dirname(path)
+      while Noir::PathScope.under_root?(dir, base)
+        manifest = File.join(dir, ".openapi-generator", "FILES")
+        if File.file?(manifest)
+          lines = File.read_lines(manifest, chomp: true)
+          return lines.includes?(path[(dir.size + 1)..]) && lines.any?(&.matches?(GENERATED_CLIENT_FILE))
+        end
+
+        parent = File.dirname(dir)
+        break if parent == dir
+        dir = parent
+      end
+      false
+    rescue
+      false
     end
 
     # `each_spec_file` plus the `Details` almost every caller builds from
