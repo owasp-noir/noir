@@ -1,5 +1,6 @@
 require "../../../models/analyzer"
 require "../../../miniparsers/cpp_callee_extractor"
+require "../../engines/c_engine"
 require "../../../utils/top_level_split"
 
 module Analyzer::Cpp
@@ -54,6 +55,7 @@ module Analyzer::Cpp
 
         parallel_analyze(files) do |path|
           next unless File.exists?(path)
+          next if CEngine.test_path?(base_relative_path(path))
           # The vendored single-header library defines the Server/Client classes
           # themselves; never scan it for routes (avoids FPs + a big perf hit).
           next if path.ends_with?("httplib.h") || path.ends_with?("httplib.hpp")

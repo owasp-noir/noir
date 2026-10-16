@@ -12,6 +12,19 @@ abstract class CEngine < FileScanEngine
   # `lib/libmicrohttpd-1.0.1/doc/examples/`, its tests).
   VENDORED     = Set{"mongoose.c", "mongoose.h", "civetweb.c", "civetweb.h", "CivetServer.cpp", "CivetServer.h", "microhttpd.h"}
   VENDORED_DIR = %r{(?:\A|/)(?:mongoose|civetweb|libmicrohttpd)[\w.\-]*/(?:src|examples|tutorials|test|unittest|fuzztest|doc)/}
+  # A whole `test`/`tests`/`unittest(s)` directory segment: the mock servers a
+  # unit test starts on localhost (`svr.Get("/accept_ok", ...)`, a `CROW_ROUTE`
+  # on a throwaway `SimpleApp`), never routes the application serves.
+  TEST_DIR = %r{/(?:tests?|unit_?tests?)/}i
+
+  # Takes the scan-base-relative path (`Analyzer#base_relative_path`, rooted
+  # with a leading `/`), never the absolute one: a `tests/` directory above
+  # the scan base is not this project's test tree, and `-b path/to/tests`
+  # still reports its routes. Shared with the cpp_* route analyzers, which
+  # are plain `Analyzer`s and don't go through `scan_accepts?`.
+  def self.test_path?(relative_path : String) : Bool
+    relative_path.matches?(TEST_DIR)
+  end
 
   protected def scan_target_files : Array(String)
     get_files_by_extensions(EXTENSIONS)
@@ -19,6 +32,6 @@ abstract class CEngine < FileScanEngine
 
   protected def scan_accepts?(path : String) : Bool
     relative = base_relative_path(path)
-    !VENDORED.includes?(File.basename(relative)) && !relative.matches?(VENDORED_DIR)
+    !VENDORED.includes?(File.basename(relative)) && !relative.matches?(VENDORED_DIR) && !CEngine.test_path?(relative)
   end
 end
