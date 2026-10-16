@@ -9,6 +9,8 @@ describe "detect_techs file walker" do
   # `third_party/` and `3rdparty/` hold vendored libraries (civetweb ships
   # Duktape's Node debugger UI there); the hyphenated and joined spellings are
   # ordinary first-party names (a WordPress `integrations/third-party/` module).
+  # The pruning is scoped to native source trees (a CMake manifest here); see
+  # third_party_dirs_scoping_spec.cr for the trees that keep their own.
   it "prunes third_party and 3rdparty directories but not third-party or thirdparty" do
     temp_dir = File.tempname("noir_detector_third_party")
 
@@ -23,6 +25,7 @@ describe "detect_techs file walker" do
         File.join(temp_dir, "src", "3rdparty", "lib", "server.js"),
       ]
       Dir.mkdir_p(temp_dir)
+      File.write(File.join(temp_dir, "CMakeLists.txt"), "project(x)\n")
       (kept + pruned).each do |path|
         Dir.mkdir_p(File.dirname(path))
         File.write(path, "// x\n")

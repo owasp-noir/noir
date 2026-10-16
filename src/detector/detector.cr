@@ -53,10 +53,6 @@ module Noir::Detection
     "node_modules", "__pycache__", ".venv", "venv",
     ".pytest_cache", ".tox", ".gradle", ".bundle", ".dart_tool",
     ".cargo", ".terraform",
-    # Vendored third-party source (Google/Chromium and CMake convention). Only
-    # the underscore/digit-prefixed spellings: `third-party/` and `thirdparty`
-    # are ordinary names for first-party integration code and URL segments.
-    "third_party", "3rdparty",
     # Yarn Berry: the committed yarn binary (`releases/yarn-4.x.cjs`, a
     # 3 MB bundle whose embedded libraries read as Feathers/Express
     # routes), plus `cache/`, `unplugged/` and `sdks/`.
@@ -112,6 +108,31 @@ module Noir::Detection
     "meson.build", "Makefile", "project.clj", "deps.edn", "stack.yaml",
     "rebar.config", "gleam.toml", "cpanfile", "Makefile.PL", "dune-project",
   }
+
+  # Vendored-library directories (Google/Chromium and CMake convention): a
+  # bundled Duktape debugger UI under `third_party/` reads as the project's own
+  # Express routes. Only the underscore/digit-prefixed spellings: `third-party/`
+  # and `thirdparty` name first-party integration code and URL segments.
+  #
+  # The name alone is not evidence: a Flask `app/third_party/routes.py`, a
+  # Next.js `pages/api/third_party/callback.ts` or an Express
+  # `routes/third_party/webhooks.js` serves real routes. They are pruned only
+  # when the nearest manifest at or above their parent says the tree is native
+  # source (`native_source_root?`).
+  VENDORED_DIR_NAMES = Set{"third_party", "3rdparty"}
+
+  # Build files that make a tree C/C++-style source with vendored libraries,
+  # and weaker hints (submodules, Chromium's DEPS) that only count when no
+  # language manifest sits beside them.
+  NATIVE_BUILD_MANIFESTS = Set{
+    "CMakeLists.txt", "meson.build", "BUILD.bazel", "WORKSPACE", "WORKSPACE.bazel",
+    "MODULE.bazel", "BUILD.gn", "configure.ac", "SConstruct",
+  }
+  VENDORING_HINTS = Set{".gitmodules", "DEPS"}
+
+  # Language-app manifests: `BUILD_MANIFESTS` less the build files that are
+  # just as common beside C/C++ trees (a bare `Makefile` says nothing).
+  APP_MANIFESTS = BUILD_MANIFESTS - Set{"CMakeLists.txt", "meson.build", "Makefile"}
 
   IGNORED_DIR_SUFFIXES = Set{
     # Xcode asset catalogs. They contain images plus many Contents.json
@@ -208,9 +229,11 @@ module Noir::Detection
   # there instead — and reporting *that* as lost coverage would fire on
   # every pnpm workspace, which is the opposite of the point.
   #
-  # `scoped_names` is what `scoped_dir_names` returned for the parent.
-  def ignored_dir_entry?(entry : String, full_path : String, dir_has_shard : Bool, scoped_names : Set(String)) : Bool
+  # `scoped_names` is what `scoped_dir_names` returned for the parent;
+  # `native_root` is what `native_source_root?` returned for it.
+  def ignored_dir_entry?(entry : String, full_path : String, dir_has_shard : Bool, scoped_names : Set(String), native_root : Bool) : Bool
     return true if IGNORED_DIR_NAMES.includes?(entry)
+    return true if native_root && VENDORED_DIR_NAMES.includes?(entry)
     return true if IGNORED_DIR_SUFFIXES.any? { |suffix| entry.ends_with?(suffix) }
     return true if scoped_names.includes?(entry)
     return true if entry == "vendor" && dependency_vendor_dir?(full_path)
@@ -231,6 +254,24 @@ module Noir::Detection
     source_root ? BUILD_OUTPUT_DIR_NAMES : NO_DIR_NAMES
   end
 
+  # Whether `third_party/` and `3rdparty/` children of a directory are vendored
+  # libraries: its listing names a native build file (true), a language
+  # manifest with no native build file beside it (false), or `inherited` (the
+  # nearest ancestor's answer) when it names neither. `.gitmodules` / `DEPS`
+  # count as native only without a language manifest, so a first-party app
+  # that merely uses submodules keeps its `third_party/` routes.
+  def native_source_root?(entries : Array(Noir::DirListing::Entry), inherited : Bool) : Bool
+    hint = app = false
+    entries.each do |listed|
+      name = listed.name
+      return true if NATIVE_BUILD_MANIFESTS.includes?(name)
+      hint ||= VENDORING_HINTS.includes?(name)
+      app ||= APP_MANIFESTS.includes?(name)
+    end
+    return false if app
+    hint || inherited
+  end
+
   # True when the symlink at `path` resolves inside one of the scan bases
   # (`real_bases` are realpaths), so the walk covers its target anyway.
   # A dangling link, or one that leaves every base, is lost coverage — and
@@ -240,7 +281,7 @@ module Noir::Detection
     target = File.realpath(path)
     real_bases.any? do |base|
       next false unless Noir::PathScope.under_normalized_root?(target, base)
-      target[base.size..].split('/').none? { |part| IGNORED_DIR_NAMES.includes?(part) || MIX_SCOPED_DIR_NAMES.includes?(part) }
+      target[base.size..].split('/').none? { |part| IGNORED_DIR_NAMES.includes?(part) || MIX_SCOPED_DIR_NAMES.includes?(part) || VENDORED_DIR_NAMES.includes?(part) }
     end
   rescue File::Error
     false
@@ -679,10 +720,10 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
       # Each directory is listed (entries, their `lstat`, the `shard.yml`
       # check) on `Noir::DirListing::Pool` from the moment it is pushed, and
       # consumed here when it is popped; see `Noir::DirListing`.
-      stack = [base_path]
+      stack = [{base_path, false}]
       pending_listings = {base_path => dir_pool.submit(base_path)}
       until stack.empty?
-        dir = stack.pop
+        dir, inherited_native_root = stack.pop
         listing = pending_listings.delete(dir).try(&.receive) || Noir::DirListing.list(dir)
         if (listing_error = listing.error) && !listing_error.is_a?(File::Error)
           raise listing_error
@@ -695,6 +736,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
         # only when a sibling `shard.yml` is present.
         dir_has_shard = listing.has_shard
         scoped_names = Noir::Detection.scoped_dir_names(listing.entries)
+        native_root = Noir::Detection.native_source_root?(listing.entries, inherited_native_root)
         if android_source_scope_active
           Noir::Detection.add_android_source_prefixes_from_dir(dir, android_source_prefixes)
         end
@@ -728,11 +770,11 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
             if info.directory?
               # Subtree prune happens here. Entry name (not full path)
               # so the base-as-node_modules case from #912 is safe.
-              if Noir::Detection.ignored_dir_entry?(entry, full_path, dir_has_shard, scoped_names)
+              if Noir::Detection.ignored_dir_entry?(entry, full_path, dir_has_shard, scoped_names, native_root)
                 skipped_ignored_dirs += 1
                 next
               end
-              stack << full_path
+              stack << {full_path, native_root}
               pending_listings[full_path] = dir_pool.submit(full_path)
               next
             end
@@ -757,7 +799,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
             # nor is a link whose target the walk reaches on its own
             # (`CLAUDE.md -> AGENTS.md`).
             unless info.file?
-              unless Noir::Detection.ignored_dir_entry?(entry, full_path, dir_has_shard, scoped_names) || MediaFilter.media_file?(full_path) ||
+              unless Noir::Detection.ignored_dir_entry?(entry, full_path, dir_has_shard, scoped_names, native_root) || MediaFilter.media_file?(full_path) ||
                      (info.type.symlink? && Noir::Detection.symlink_target_scanned?(full_path, real_bases))
                 skipped_entries += 1
                 reason = info.type.symlink? ? "symbolic link (not followed)" : "not a regular file (#{info.type})"
