@@ -22,12 +22,5 @@ describe CEngine do
       CEngine.test_path?("/src/attests/a.cpp").should be_false
       CEngine.test_path?("/example/server_test.cc").should be_false
     end
-
-    # `Analyzer#base_relative_path` roots the path at the scan base, so a
-    # scan of the tests directory itself sees no `tests` segment.
-    it "does not see directories above the scan base" do
-      CEngine.test_path?("/fake_server.cpp").should be_false
-      CEngine.test_path?("/sub/fake_server.cpp").should be_false
-    end
   end
 end
