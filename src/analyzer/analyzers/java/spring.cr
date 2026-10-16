@@ -157,6 +157,7 @@ module Analyzer::Java
         injected_annotations = injected_annotation_index[project_root]?
         converted_types = converted_type_index[project_root]?
         content = read_file_content(path)
+        @result.concat(spring_security_endpoints(path, configured_base_path))
 
         # Only files that mention Spring MVC / Feign bindings carry
         # annotation-based routes. Reactive `router().route()` files
@@ -404,6 +405,10 @@ module Analyzer::Java
             end
           end
         end
+      end
+
+      path_configs.each do |root, config|
+        @result.concat(spring_provided_endpoints(root, spring_property_maps[root], config.web_base_path))
       end
       Fiber.yield
 
@@ -670,13 +675,28 @@ module Analyzer::Java
         args = content[(open_idx + 1)...close_idx]
         line = line_number_for_index(content, marker)
         top_level_arguments(args).each do |arg|
-          if endpoint_path = resolve_router_path(arg, constants)
-            endpoints << {endpoint_path, line}
-          end
+          resource_handler_patterns(arg, content, constants).each { |pattern| endpoints << {pattern, line} }
         end
       end
 
       endpoints.uniq
+    end
+
+    # `addResourceHandler(String...)` arguments: a path, a `new String[]{...}`
+    # / `{...}` array, or a `String[]` constant declared in this file.
+    #
+    # ponytail: array constants from other classes are not resolved.
+    private def resource_handler_patterns(arg : String, content : String, constants : Hash(String, String)) : Array(String)
+      if path = resolve_router_path(arg, constants)
+        return [path]
+      end
+      elements = arg.match(/\{(.*)\}\s*\z/m).try(&.[1])
+      if elements.nil? && arg.matches?(/\A[\w.]+\z/)
+        name = Regex.escape(arg.split('.').last)
+        elements = content.match(/\bString\s*\[\s*\]\s+#{name}\s*=\s*(?:new\s+String\s*\[\s*\]\s*)?\{([^}]*)\}/).try(&.[1])
+      end
+      return [] of String unless elements
+      top_level_arguments(elements).compact_map { |element| resolve_router_path(element, constants) }
     end
 
     private def collect_message_mapping_endpoints(root : LibTreeSitter::TSNode,

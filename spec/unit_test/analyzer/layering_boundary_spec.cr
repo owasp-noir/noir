@@ -68,11 +68,10 @@ CONTENT_FALLBACK_RE = /CodeLocator\.instance\.content_for\([^)]*\)\s*\|\|/
 # resolving its config YAML through `get_files_by_extensions` instead —
 # that is the preferred fix wherever the index can answer the question.
 DIRECTORY_WALK_ALLOWLIST = [
-  # Static-resource directories declared in Spring config: the endpoint set
-  # is "every file under this directory", including the media files the
-  # detector's filter keeps out of `file_map`, so no index answers it.
-  "src/analyzer/analyzers/kotlin/spring.cr",
-  # Same shape for Quarkus' `META-INF/resources`.
+  # Quarkus' `META-INF/resources`: the endpoint set is "every file under
+  # this directory", including the media files the detector's filter keeps
+  # out of `file_map`, so no index answers it. (Spring's static locations
+  # have the same shape and walk in `JavaEngine#spring_static_endpoints`.)
   "src/analyzer/analyzers/java/quarkus.cr",
   # Android navigation graphs / `buildSrc` / `res/values`: XML resource
   # directories addressed by their role in the project layout.

@@ -26,10 +26,14 @@ expected_endpoints = [
   Endpoint.new("/connect/PersonService/saveAll", "POST", [Param.new("values", "", "json")]),
   Endpoint.new("/connect/PersonService/delete", "POST", [Param.new("id", "", "json")]),
   Endpoint.new("/connect/PersonService/deleteAll", "POST", [Param.new("ids", "", "json")]),
+  # `spring-boot-starter-actuator` in pom.xml: Boot exposes `health` over
+  # the web by default.
+  Endpoint.new("/actuator", "GET"),
+  Endpoint.new("/actuator/health", "GET"),
 ]
 
-# java_spring + java_vaadin. The actuator @Endpoint, the static and the
-# private service methods yield nothing.
+# java_spring + java_vaadin. The custom actuator @Endpoint, the static and
+# the private service methods yield nothing.
 FunctionalTester.new("fixtures/java/vaadin/", {
   :techs     => 2,
   :endpoints => expected_endpoints.size,
