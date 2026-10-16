@@ -309,13 +309,13 @@ module Analyzer::Php
     end
 
     # A Yii controller is a console (CLI) controller when it extends
-    # any class under `yii\console\Controller` — directly via
-    # `extends \yii\console\Controller` / `extends yii\console\Controller`,
+    # any class under `yii\console\` — directly via
+    # `extends \yii\console\Controller` / `extends yii\console\controllers\X`,
     # or via a `use yii\console\Controller` import paired with
     # `extends Controller`. Production code uses the same hierarchy
     # for built-in `migrate`, `fixture`, `cache`, etc. commands.
     private def console_controller?(content : String) : Bool
-      return true if content.matches?(/extends\s+\\?yii\\console\\Controller/)
+      return true if content.matches?(/extends\s+\\?yii\\console\\/)
       return true if content.includes?("yii\\console\\Controller") &&
                      content.matches?(/extends\s+(?:Console)?Controller\b/)
       false
@@ -326,6 +326,8 @@ module Analyzer::Php
 
       controller_name = extract_controller_name(path, content)
       return endpoints if controller_name.empty?
+      module_prefix = module_route_prefix(path)
+      controller_name = "#{module_prefix}/#{controller_name}" unless module_prefix.empty?
 
       # Skip console (CLI) controllers — they expose CLI commands
       # like `migrate/up`, `fixture/load`, never HTTP routes. The
@@ -393,6 +395,23 @@ module Analyzer::Php
       end
 
       endpoints
+    end
+
+    # Yii routes a controller in `modules/<id>/controllers` as
+    # `<id>/<controller>/<action>`, and a nested module chains its parents'
+    # ids (`modules/space/modules/manage/controllers` -> `space/manage`).
+    # The id is read off the directory name; the config `id` can differ,
+    # and a layout other than `modules/<id>/controllers` gets no prefix.
+    # Scan-base-relative, so a `modules/` above the base adds nothing.
+    private def module_route_prefix(path : String) : String
+      segments = base_relative_path(path).split('/')
+      index = segments.rindex("controllers") || return ""
+      ids = [] of String
+      while index >= 2 && segments[index - 2] == "modules"
+        ids.unshift(segments[index - 1])
+        index -= 2
+      end
+      ids.join('/')
     end
 
     private def extract_controller_name(path : String, content : String) : String
