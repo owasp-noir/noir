@@ -643,6 +643,12 @@ module Noir
       "require(\"apollo-datasource-rest\")", "require('apollo-datasource-rest')",
       "from \"@apollo/datasource-rest\"", "from '@apollo/datasource-rest'",
       "require(\"@apollo/datasource-rest\")", "require('@apollo/datasource-rest')",
+      # Throwaway test HTTP servers (`createTestHttpServer({ defineRoutes(router)
+      # { router.post('/x', ...) } })`). msw's `vitest.setup.ts` registered 64
+      # routes this way; the library is a devDependency-only test utility.
+      "@epic-web/test-server",
+      "@open-draft/test-server",
+      "create-test-server",
     ]
 
     # Client-side UI framework imports. A file that imports a browser
@@ -733,6 +739,13 @@ module Noir
       # Cypress's plain `e2e/` layout
       "/mirage/", # Ember mirage stub-server config trees (Ghost,
       # Discourse legacy admin)
+      # Fixture apps that only the test run loads (Egg/Midway's
+      # `test/fixtures/apps/*/app/router.js`). Lenient, so a fixture server
+      # that really imports express still scans. Not a bare `/fixtures/`:
+      # that is also an ordinary API resource folder.
+      "/test/fixtures/",
+      "/tests/fixtures/",
+      "/__fixtures__/",
       "/__mocks__/", # Jest manual-mock convention used across the
       # TS ecosystem
       # Bundled output: GitHub Action `dist/` blobs, Next.js
@@ -785,16 +798,24 @@ module Noir
       # but the JSParser pre-filter sees the same `app.get(`/`.post(`
       # shapes.
       ".test-d.",
+      # tstyche type-test suffix (fastify's `test/types/*.tst.ts`).
+      ".tst.",
     ]
 
-    # The hyphen forms are also ordinary English in production router
-    # names (`routes/ab-test.js`, `routes/api-spec.js`), so they count as
-    # a test only without an HTTP server import, or with a test harness
-    # (a supertest suite imports express too). NestJS's `app.e2e-spec.ts`
-    # is always a test.
-    HYPHEN_TEST_FILENAME_MARKER = Regex.union("-spec.", "-test.")
+    # The hyphen and underscore forms are also ordinary English in
+    # production router names (`routes/ab-test.js`, `routes/api_spec.js`),
+    # so they count as a test only without an HTTP server import, or with a
+    # test harness (a supertest suite imports express too). NestJS's
+    # `app.e2e-spec.ts` is always a test.
+    HYPHEN_TEST_FILENAME_MARKER = Regex.union("-spec.", "-test.", "_spec.", "_test.")
     E2E_SPEC_FILENAME_MARKER    = "e2e-spec."
-    TEST_HARNESS_MARKER         = /\bdescribe\s*\(|\bsupertest\b|@nestjs\/testing/
+    TEST_HARNESS_MARKER         = /\bdescribe\s*\(|\bDeno\.test\s*\(|\bsupertest\b|@nestjs\/testing/
+
+    # A suite file that registers its own throwaway app is a test whatever
+    # server library it imports. Line-anchored: `.describe(` is also zod's
+    # and Joi's schema annotation in ordinary route files.
+    TEST_DIR_MARKER   = %r{/tests?/}
+    TEST_SUITE_MARKER = /^[ \t]*(?:describe(?:\.(?:only|skip))?|Deno\.test)\s*\(|\bLab\.script\(/m
 
     # True when the file's route-shaped calls are almost certainly
     # mock-server stubs (Ember pretender, MSW, nock, ...) rather
@@ -862,8 +883,7 @@ module Noir
                              include_client_frameworks : Bool = true) : Bool
       relative_path = CodeLocator.instance.base_relative(file_path)
       basename = File.basename(file_path)
-      return true if basename.matches?(TEST_STUB_FILENAME_MARKER)
-      return true if relative_path.matches?(STRICT_TEST_PATH_MARKER)
+      return true if test_file?(basename, relative_path, content)
       has_library = content_matches?(content, TEST_STUB_LIBRARY_MARKER) ||
                     (include_client_frameworks && content_matches?(content, CLIENT_SIDE_FRAMEWORK_MARKER))
       if basename.matches?(HYPHEN_TEST_FILENAME_MARKER)
@@ -874,6 +894,21 @@ module Noir
       has_path_marker = relative_path.matches?(TEST_STUB_PATH_MARKER)
       return false unless has_library || has_path_marker
       !content_matches?(content, HTTP_SERVER_LIBRARY_MARKER)
+    end
+
+    # Whether the file is a test by its name, a dedicated test tree, or a
+    # suite under `test/`/`tests/`, ignoring what it imports. Callers whose
+    # frameworks `HTTP_SERVER_LIBRARY_MARKER` does not list (hapi, Elysia)
+    # use this instead of `test_stub_only?`, which would let any server
+    # import keep a test's routes and drop real routes beside axios/react.
+    def self.test_file?(file_path : String, content : String) : Bool
+      test_file?(File.basename(file_path), CodeLocator.instance.base_relative(file_path), content)
+    end
+
+    private def self.test_file?(basename : String, relative_path : String, content : String) : Bool
+      return true if basename.matches?(TEST_STUB_FILENAME_MARKER)
+      return true if relative_path.matches?(STRICT_TEST_PATH_MARKER)
+      relative_path.matches?(TEST_DIR_MARKER) && content_matches?(content, TEST_SUITE_MARKER)
     end
 
     # Match against file content, which always came from a

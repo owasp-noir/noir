@@ -90,6 +90,11 @@ module Analyzer::Javascript
     # Files that are framework plumbing rather than routes.
     SKIPPED_LEAVES = ["_app", "_layout", "_404", "_500", "_middleware"]
 
+    # Fresh's own default `ignore` for the routes tree (TEST_FILE_PATTERN in
+    # `constants.ts`): `routes/foo.test.ts` and `routes/index_test.tsx` are
+    # never served.
+    TEST_FILE_PATTERN = /[._]test\.(?:[tj]sx?|[mc][tj]s)$/
+
     # A Fresh project is anchored by `fresh.config.{ts,js}`, or by a Deno
     # manifest that pulls in `$fresh/`. Same shape the detector already
     # treats as authoritative.
@@ -132,6 +137,7 @@ module Analyzer::Javascript
         leaf = strip_extension(File.basename(relative))
         next if SKIPPED_LEAVES.includes?(leaf)
         next if leaf.starts_with?("_") # other underscore-prefixed plumbing
+        next if File.basename(path).matches?(TEST_FILE_PATTERN)
 
         url = url_for(relative)
 
