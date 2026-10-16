@@ -90,6 +90,10 @@ module Analyzer::Groovy
     # OR-chain it replaces.
     BODY_ARGS_KEY_RE = Regex.union("controller:", "action:", "view:", "uri:")
 
+    # Opening of a closure-form mapping, `'/path' {`; the body is brace-matched
+    # from the `{` (see emit_mapping_endpoints).
+    CLOSURE_MAPPING_HEADER = /^[ \t]*(['"])([^'"]+)\1\s*\{/m
+
     def analyze
       include_callee = callees_needed?
       all_files.each do |path|
@@ -549,17 +553,25 @@ module Analyzer::Groovy
       end
 
       # Closure-form mapping: `'/path' { controller = 'foo'; method = 'POST' }`.
-      closure_pattern = /^[ \t]*(['"])([^'"]+)\1\s*\{([^}]*)\}/m
-      remaining.scan(closure_pattern) do |match|
+      # The body is brace-matched, not cut at the first `}`: `controller =
+      # { "x" }` nests a closure, and the `action = [POST: "save"]` verb map
+      # that follows it must still be read.
+      remaining_chars : Array(Char)? = nil
+      remaining.scan(CLOSURE_MAPPING_HEADER) do |match|
         next if status_code_mapping?(match[2])
         url_pattern = prefix + match[2]
-        body_block = match[3]
+        chars = (remaining_chars ||= remaining.chars)
+        braced = extract_braced_block(remaining, match.end(0) - 1, chars)
+        next unless braced
+        body_block = braced[0]
         next unless body_block.match(/\b(controller|action|method|view)\s*=/)
         line = line_number_for_index(content, base_offset + (match.begin(1) || 0))
-        verb = extract_method_assignment(body_block) || "GET"
-        @result << Endpoint.new(translate_pattern(url_pattern), verb,
-          extract_path_params(url_pattern),
-          Details.new(PathInfo.new(path, line)))
+        verbs = action_map_verbs(body_block) || [extract_method_assignment(body_block) || "GET"]
+        verbs.each do |verb|
+          @result << Endpoint.new(translate_pattern(url_pattern), verb,
+            extract_path_params(url_pattern),
+            Details.new(PathInfo.new(path, line)))
+        end
       end
     end
 
@@ -657,7 +669,12 @@ module Analyzer::Groovy
       close = find_matching_brace(text, brace_pos)
       return unless close
 
-      block = text[(brace_pos + 1)...close]
+      action_map_verbs(text[(brace_pos + 1)...close])
+    end
+
+    # The HTTP verbs of an `action = [GET: "show", PUT: "apiUpdate"]` map in a
+    # mapping's closure body, or nil when there is no map (or no verb key).
+    private def action_map_verbs(block : String) : Array(String)?
       map_match = block.match(/\baction\s*=\s*\[([^\]]*)\]/)
       return unless map_match
 

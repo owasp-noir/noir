@@ -7,7 +7,7 @@ module Detector::Lua
   class Cli < Detector
     detector_for "lua_cli", extensions: %w[.lua]
 
-    MARKERS = /\brequire\s*\(?\s*['"]argparse['"]|\bargparse\s*\(|\barg\s*\[\s*\d+\s*\]|\brequire\s*\(?\s*['"]cliargs['"]/
+    MARKERS = /\brequire\s*\(?\s*['"]argparse['"]|\bargparse\s*\(|(?<!\w)(?<!\w\.)arg\s*\[\s*\d+\s*\]|\brequire\s*\(?\s*['"]cliargs['"]/
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".lua")

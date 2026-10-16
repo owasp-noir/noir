@@ -77,7 +77,6 @@ UNTESTED_DETECTORS = [
   "javascript/sveltekit",
   "kotlin/cli",
   "kotlin/http4k",
-  "lua/cli",
   "mobile/android",
   "mobile/well_known",
   "perl/cli",

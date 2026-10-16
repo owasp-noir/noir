@@ -29,6 +29,18 @@ module Analyzer::Ruby
     # boilerplate) is a class method, never a command, so the name must be
     # followed by an argument list, whitespace or end-of-line — not `.`.
     DEF_RE = /^\s*def\s+([a-z_]\w*[?!]?)\s*(?:[(\s]|$)/
+    # `Thor::Group` steps and `Thor::Actions::*` helpers are public methods
+    # Thor never registers as commands. Other `Thor::` subclasses (`Thor::Error`,
+    # `Thor::Shell::*`) are not matched: they are not command-free by contract.
+    THOR_GROUP_SUBCLASS = /<\s*Thor::(?:Group|Actions)\b/
+    # A started `Thor::Group` is a one-command program: `Gen.start(ARGV)` runs
+    # all its steps, with `argument` / `class_option` as its inputs.
+    THOR_GROUP_ONLY = /<\s*Thor::Group\b/
+    THOR_START      = /\b([A-Z]\w*(?:::[A-Z]\w*)*)\.start\b/
+    THOR_CLASS_NAME = /^\s*class\s+([A-Z]\w*(?:::[A-Z]\w*)*)/
+    THOR_CLASS_OPEN = /^\s*class\s+(?:<<|[A-Z])/
+    THOR_ARGUMENT   = /^\s*argument\s+:?["']?([A-Za-z0-9_]+)/
+    THOR_CLASS_OPT  = /^\s*class_option\s+:?["']?([A-Za-z0-9][\w-]*)/
 
     # GLI / commander gem command blocks + flags.
     BLOCK_COMMAND = /^\s*command\s+:?["']?([A-Za-z0-9][\w-]*)/
@@ -105,6 +117,21 @@ module Analyzer::Ruby
       ARGV_INDEX, OPTIMIST_CALL, CLAMP_SUBCLASS, DRY_CLI_MARKER,
     )
 
+    # One open `class` body in a Thor file. `private` / `protected` end at the
+    # class that wrote them, so a helper section inside `class << self` or a
+    # nested class cannot hide the commands that follow it. `group` marks
+    # `Thor::Group` / `Thor::Actions` bodies (steps, never commands), `runnable`
+    # a `Thor::Group` the file starts itself.
+    private class ThorScope
+      getter indent : Int32
+      getter? group : Bool
+      getter? runnable : Bool
+      property? hidden = false
+
+      def initialize(@indent : Int32, @group : Bool, @runnable : Bool = false)
+      end
+    end
+
     def analyze
       endpoints = {} of String => Endpoint
 
@@ -170,7 +197,10 @@ module Analyzer::Ruby
       pending_desc : String? = nil
       pending_thor_opts = [] of String
       block_cmd_url = root_url
-      thor_private = false
+      # Open `class` bodies, innermost last; the sentinel stands for the file.
+      thor_classes = [ThorScope.new(-1, false)]
+      thor_started = Set(String).new
+      lines.each { |line| line.scan(THOR_START) { |m| thor_started << m[1].split("::").last } } if thor
       no_commands_indent : Int32? = nil
       clamp_sub_indent : Int32? = nil
       clamp_sub_url = root_url
@@ -194,30 +224,47 @@ module Analyzer::Ruby
         # which framework's *block* a given line sits in, which the
         # line-scan house style doesn't support today.
         if thor
-          # Thor's task rules: `no_commands do ... end` bodies and methods
-          # below a bare `private` are helpers, not commands. Track both so
-          # they don't surface as bogus subcommands (an indentation-matched
-          # `end` is the line-scan approximation of the block boundary).
-          # Only the `do ... end` form arms the tracker: a single-line
-          # `no_commands { ... }` closes on its own line, so treating it as
-          # an open block would suppress every later command in the file.
-          if nc = line.match(/^(\s*)no_commands\s+do\b/)
+          # Thor's task rules: `no_commands do ... end` bodies, `class << self`
+          # bodies (singleton methods) and methods below a bare `private` or
+          # `protected` are helpers, not commands. Track them so they don't
+          # surface as bogus subcommands (an indentation-matched `end` is the
+          # line-scan approximation of the block boundary).
+          # Only the `do ... end` / multi-line forms arm the tracker: a
+          # single-line `no_commands { ... }` or `class << self; ...; end`
+          # closes on its own line, so treating it as an open block would
+          # suppress every later command in the file.
+          if nc = line.match(/^(\s*)(?:no_commands\s+do\b|class\s*<<\s*self\s*$)/)
             no_commands_indent ||= nc[1].size
           elsif (indent = no_commands_indent) && (em = line.match(/^(\s*)end\b/)) && em[1].size <= indent
             no_commands_indent = nil
           end
-          if line.matches?(/^\s*private\s*$/)
-            thor_private = true
-          elsif line.matches?(/^\s*public\s*$/) || line.matches?(THOR_SUBCLASS)
-            thor_private = false
+          if line.matches?(/^\s*(?:private|protected)\s*$/)
+            thor_classes.last.hidden = true
+          elsif line.matches?(/^\s*public\s*$/)
+            thor_classes.last.hidden = false
           end
+          if em = line.match(/^(\s*)end\b/)
+            while em[1].size <= thor_classes.last.indent
+              thor_classes.pop
+            end
+          elsif line.matches?(THOR_CLASS_OPEN) && !line.matches?(/;\s*end\s*$/)
+            group = line.matches?(THOR_SUBCLASS) ? line.matches?(THOR_GROUP_SUBCLASS) : thor_classes.last.group?
+            runnable = line.matches?(THOR_GROUP_ONLY) && (cn = line.match(THOR_CLASS_NAME)) && thor_started.includes?(cn[1].split("::").last)
+            thor_classes << ThorScope.new(line.size - line.lstrip.size, group, !!runnable)
+            fetch_endpoint(endpoints, root_url, path, line_no) if runnable
+          end
+          scope = thor_classes.last
 
           if m = line.match(THOR_DESC)
             pending_desc = m[1]
           elsif m = line.match(THOR_OPTION)
             pending_thor_opts << m[1]
+          elsif scope.runnable? && (m = line.match(THOR_ARGUMENT))
+            fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(m[1], "", "argument"))
+          elsif scope.runnable? && (m = line.match(THOR_CLASS_OPT))
+            fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(m[1], "", "flag"))
           elsif (m = line.match(DEF_RE)) && (name = m[1]) != "initialize"
-            if thor_private || no_commands_indent
+            if scope.hidden? || scope.group? || no_commands_indent
               pending_desc = nil
               pending_thor_opts.clear
             else

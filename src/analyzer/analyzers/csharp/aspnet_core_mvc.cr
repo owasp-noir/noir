@@ -10,6 +10,9 @@ module Analyzer::CSharp
 
     DEFAULT_ROUTE = "{controller=Home}/{action=Index}/{id?}"
 
+    TAGGER                       = "aspnet_core_mvc_analyzer"
+    UNRESOLVED_ROUTE_DESCRIPTION = "Route template is a constant the analyzer cannot read; reported at the controller route"
+
     CONTROLLER_PLACEHOLDER_RE = /\{controller[=:?}]/
     ACTION_PLACEHOLDER_RE     = /\{action[=:?}]/
     # `controller = "Home"` or `action = nameof(HomeController.About)`.
@@ -454,6 +457,13 @@ module Analyzer::CSharp
       route_attr = ""
       explicit_endpoint_attribute = false
       non_action_attribute = false
+      # `[HttpGet(ApiRoutes.X)]`: the route is a constant we cannot read. The
+      # action is still reported, at the class (or conventional) route, and
+      # tagged so the missing suffix is not mistaken for the full path.
+      unresolved_verbs = Set(String).new
+      # `[ActionName("List")]` names the action in the route (`[action]` token
+      # and conventional routing), whatever the method is called.
+      renamed_action : String? = nil
       depth = 0
 
       i = 0
@@ -476,11 +486,17 @@ module Analyzer::CSharp
             accept_verbs.each { |accept_verb| verb_routes << {accept_verb, accept_route} }
             explicit_endpoint_attribute = true
           else
-            verb, verb_route, route_attr, found_attribute = collect_verb_route(line, route_attr)
+            verb, verb_route, route_attr, found_attribute, unresolved = collect_verb_route(line, route_attr)
             explicit_endpoint_attribute ||= found_attribute
-            verb_routes << {verb, verb_route} if verb
+            if verb
+              verb_routes << {verb, verb_route}
+              unresolved_verbs << verb if unresolved
+            end
           end
           non_action_attribute = true if line.includes?("[NonAction")
+          if rename = ACTION_NAME_RE.match(line)
+            renamed_action = rename[1]
+          end
 
           # Skip the continuation lines we just consumed; they're
           # already folded into `line`.
@@ -492,6 +508,7 @@ module Analyzer::CSharp
           if signature.matches?(/\bpublic\b/) && !non_action_attribute && action_method?(signature, explicit_endpoint_attribute)
             action_name = extract_action_name(signature)
             unless action_name.empty?
+              action_name = renamed_action || action_name
               body_block, body_line, skip_first = extract_callable_body(lines, masked_lines, end_index)
               body_params = extract_params_from_block(body_block)
 
@@ -521,6 +538,7 @@ module Analyzer::CSharp
                     endpoint.params << param
                   end
 
+                  endpoint.add_tag(Tag.new("unresolved-route", UNRESOLVED_ROUTE_DESCRIPTION, TAGGER)) if unresolved_verbs.includes?(emit_verb)
                   attach_csharp_callees(endpoint, body_block, file, line_offset + body_line + 1, include_callee, skip_first_line: skip_first)
                   @result << endpoint
                 end
@@ -531,6 +549,8 @@ module Analyzer::CSharp
           route_attr = ""
           explicit_endpoint_attribute = false
           non_action_attribute = false
+          unresolved_verbs.clear
+          renamed_action = nil
           i = end_index
         end
 
@@ -633,24 +653,27 @@ module Analyzer::CSharp
       "[HttpOptions" => {"OPTIONS", "HttpOptions"},
     }
 
-    # Classify one attribute line. Returns `{verb, verb_route, route_attr, found}`:
-    # for an `[Http<Verb>(...)]` the verb + its route (falling back to the
-    # `[Route]` base for a path-less attribute), with `route_attr` left
-    # unchanged; for a verb-less `[Route("x")]` the new base in `route_attr`
-    # (verb `nil`); for any other line, no change and `found = false`. Keeping
-    # the verb separate lets the caller accumulate several verbs on one method.
-    private def collect_verb_route(line : String, route_attr : String) : Tuple(String?, String, String, Bool)
+    # Classify one attribute line. Returns `{verb, verb_route, route_attr, found,
+    # unresolved}`: for an `[Http<Verb>(...)]` the verb + its route (falling back
+    # to the `[Route]` base for a path-less attribute), with `route_attr` left
+    # unchanged, and `unresolved` when its route argument is a constant this
+    # analyzer cannot read; for a verb-less `[Route("x")]` the new base in
+    # `route_attr` (verb `nil`); for any other line, no change and `found =
+    # false`. Keeping the verb separate lets the caller accumulate several
+    # verbs on one method.
+    private def collect_verb_route(line : String, route_attr : String) : Tuple(String?, String, String, Bool, Bool)
       VERB_ATTRIBUTES.each do |marker, pair|
         next unless line.includes?(marker)
         verb, attr = pair
-        return {verb, extract_attribute_route(line, attr, route_attr), route_attr, true}
+        route = extract_attribute_route(line, attr)
+        return {verb, route || route_attr, route_attr, true, route.nil? && line.matches?(UNRESOLVED_ROUTE_ARG_RE)}
       end
 
       if line.includes?("[Route")
-        return {nil, route_attr, extract_attribute_route(line, "Route", route_attr), true}
+        return {nil, route_attr, extract_attribute_route(line, "Route") || route_attr, true, false}
       end
 
-      {nil, route_attr, route_attr, false}
+      {nil, route_attr, route_attr, false, false}
     end
 
     ACCESS_MODIFIER_RE = /\b(?:public|private|protected|internal)\b/
@@ -766,32 +789,38 @@ module Analyzer::CSharp
       merged
     end
 
+    # The attribute's own parens only: in `[HttpPost, ActionName("List")]` or
+    # `[HttpGet][Authorize("Policy")]` the literal belongs to the sibling
+    # attribute, not to a route.
     private ATTRIBUTE_REGEXES = {
-      "HttpPost"    => /\[HttpPost[^(]*+\(\s*"([^"]+)"/,
-      "HttpGet"     => /\[HttpGet[^(]*+\(\s*"([^"]+)"/,
-      "HttpPut"     => /\[HttpPut[^(]*+\(\s*"([^"]+)"/,
-      "HttpDelete"  => /\[HttpDelete[^(]*+\(\s*"([^"]+)"/,
-      "HttpPatch"   => /\[HttpPatch[^(]*+\(\s*"([^"]+)"/,
-      "HttpHead"    => /\[HttpHead[^(]*+\(\s*"([^"]+)"/,
-      "HttpOptions" => /\[HttpOptions[^(]*+\(\s*"([^"]+)"/,
-      "Route"       => /\[Route[^(]*+\(\s*"([^"]+)"/,
+      "HttpPost"    => /\[HttpPost(?:Attribute)?\s*\(\s*"([^"]+)"/,
+      "HttpGet"     => /\[HttpGet(?:Attribute)?\s*\(\s*"([^"]+)"/,
+      "HttpPut"     => /\[HttpPut(?:Attribute)?\s*\(\s*"([^"]+)"/,
+      "HttpDelete"  => /\[HttpDelete(?:Attribute)?\s*\(\s*"([^"]+)"/,
+      "HttpPatch"   => /\[HttpPatch(?:Attribute)?\s*\(\s*"([^"]+)"/,
+      "HttpHead"    => /\[HttpHead(?:Attribute)?\s*\(\s*"([^"]+)"/,
+      "HttpOptions" => /\[HttpOptions(?:Attribute)?\s*\(\s*"([^"]+)"/,
+      "Route"       => /\[Route(?:Attribute)?\s*\(\s*"([^"]+)"/,
     }
+
+    # A `Route("x")` anywhere on the line (`[HttpDelete, EnableRateLimiting("f"),
+    # Route("rm")]`) routes a verb attribute that has no literal of its own.
+    private ROUTE_OWN_RE = /\bRoute(?:Attribute)?\s*\(\s*"([^"]+)"/
 
     private TEMPLATE_REGEX = /Template\s*=\s*"([^"]+)"/
 
-    private def extract_attribute_route(line : String, attribute : String, current_route : String) : String
-      # Try to extract the first string literal inside the attribute
-      regex_with_value = ATTRIBUTE_REGEXES[attribute]? || Regex.new("\\[#{attribute}[^(]*+\\(\\s*\"([^\"]+)\"")
+    # A verb attribute whose first positional argument is not a string literal
+    # or a named argument (`[HttpGet(ApiRoutes.Attendees.Get)]`,
+    # `[HttpGet(Const + "/x")]`): the route exists but cannot be read here, so
+    # the action is reported at the class route with an `unresolved-route` tag.
+    private UNRESOLVED_ROUTE_ARG_RE = /\[Http(?:Post|Get|Put|Delete|Patch|Head|Options)(?:Attribute)?\s*\(\s*(?!["@$]|\w+\s*[=:])[A-Za-z_]/
 
-      if match = regex_with_value.match(line)
-        return match[1]
-      end
+    private ACTION_NAME_RE = /\bActionName(?:Attribute)?\s*\(\s*"([^"]+)"/
 
-      if match = TEMPLATE_REGEX.match(line)
-        return match[1]
-      end
-
-      current_route
+    # The route template the attribute declares, or nil when the line carries
+    # none (the caller keeps its current route).
+    private def extract_attribute_route(line : String, attribute : String) : String?
+      (ATTRIBUTE_REGEXES[attribute].match(line) || ROUTE_OWN_RE.match(line) || TEMPLATE_REGEX.match(line)).try(&.[1])
     end
 
     private def resolve_routes(controller_route : String, action_route : String, controller_name : String, action_name : String, parameters : Array(Param), route_patterns : Array(ConventionalRoute), area : String? = nil) : Array(String)
