@@ -32,6 +32,12 @@ module Analyzer::Php
       "HttpPatchActionInterface"  => "PATCH",
     }
 
+    # The admin area is served under the backend front name from
+    # `app/etc/env.php` (`backend.frontName`), ahead of the module's own
+    # routes.xml frontName. env.php is install-specific and not in the repo,
+    # so this is Magento's documented default.
+    ADMIN_AREA_FRONT_NAME = "admin"
+
     # module_name + area -> frontName, built from routes.xml before the
     # parallel controller pass and read-only thereafter.
     @front_names = {} of String => String
@@ -170,7 +176,9 @@ module Analyzer::Php
     end
 
     # Resolve `/{frontName}/{controller}/{action}` from the controller's
-    # module (path-derived) and the routes.xml frontName map. Returns nil
+    # module (path-derived) and the routes.xml frontName map; admin-area
+    # controllers sit under the backend front name first
+    # (`/admin/{frontName}/{controller}/{action}`). Returns nil
     # when the module has no registered frontName (unresolvable route).
     private def controller_route_target(path : String) : String?
       parts = path.split("/").reject(&.empty?)
@@ -204,7 +212,9 @@ module Analyzer::Php
       action = File.basename(rest.last, ".php").downcase
       controller_segment = rest[0...-1].map(&.downcase).join("_")
 
-      segments = [front_name.downcase]
+      segments = [] of String
+      segments << ADMIN_AREA_FRONT_NAME if area == "adminhtml"
+      segments << front_name.downcase
       segments << controller_segment unless controller_segment.empty?
       segments << action
       "/" + segments.join("/")
