@@ -714,19 +714,22 @@ module Analyzer::Go
     end
 
     # A static mount's endpoint set is every file under its directory,
-    # images, fonts and SVGs included, so the directory is walked with
-    # `Dir.glob` rather than read from the file index (the media filter
-    # keeps those files out of it). `--exclude-path` is therefore
-    # re-applied per file. A single-file target
-    # (`e.File("/robots.txt", "static/robots.txt")`) is emitted as is.
+    # images, fonts and SVGs included. Those come from the walk's media list
+    # (`CodeLocator#media_files`; the media filter keeps them out of the index);
+    # everything else from the index. Both are bounded by the scan base and
+    # skip the subtrees and `--exclude-path` entries the walk prunes. A
+    # single-file target (`e.File("/robots.txt", "static/robots.txt")`) is
+    # matched as is.
     def resolve_public_dirs(public_dirs : Array(Hash(String, String)))
+      media_files = CodeLocator.instance.media_files
       public_dirs.each do |p_dir|
-        next if p_dir["file_path"].empty?
         full_path = resolve_public_dir_path(p_dir)
+        dir_prefix = full_path.ends_with?("/") ? full_path : "#{full_path}/"
         static_url = p_dir["static_path"].chomp('/')
-        paths = File.file?(full_path) ? [full_path] : Dir.glob("#{escape_glob_path(full_path)}/**/*")
-        paths.each do |path|
-          next if File.directory?(path) || excluded_path?(path)
+        get_files_by_prefix(full_path).concat(media_files).each do |path|
+          # `get_files_by_prefix` matches any file starting with the prefix
+          # ("public" matches "public2"), so require a directory boundary.
+          next unless path == full_path || path.starts_with?(dir_prefix)
           result << Endpoint.new("#{static_url}#{path.lchop(full_path)}", "GET", Details.new(PathInfo.new(path)))
         end
       end

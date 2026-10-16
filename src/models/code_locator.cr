@@ -123,7 +123,8 @@ class CodeLocator
   # `if key == "file_map"` branch. Giving it methods makes the coupling
   # structural instead of a string comparison that behaves differently in two
   # places.
-  private FILE_MAP = "file_map"
+  private FILE_MAP    = "file_map"
+  private MEDIA_FILES = "media_files"
 
   # Register a path with no content — the detector's content-free fast path,
   # for files nothing will read during detection or passive scan.
@@ -145,9 +146,20 @@ class CodeLocator
     @a_map[FILE_MAP]? || Array(String).new
   end
 
+  # A media file the walk reached but kept out of `file_map` (the media
+  # filter). Nothing reads it for routes; a static mount still serves it.
+  def register_media_path(path : String)
+    (@a_map[MEDIA_FILES] ||= Array(String).new) << path
+  end
+
+  def media_files : Array(String)
+    @a_map[MEDIA_FILES]? || Array(String).new
+  end
+
   # Forget every registered file, its cached content, and every derived view.
   def reset_files
     @a_map.delete(FILE_MAP)
+    @a_map.delete(MEDIA_FILES)
     @file_contents.clear
     @content_cache_used = 0_i64
     @content_cache_skipped = 0
