@@ -189,6 +189,7 @@ module Noir
         return if prefix.empty? || !first_argument_is_handler?(call, source, handler_vars)
         path_arg = ""
       end
+      return unless route_path_shape?(path_arg) || lambda_or_reference_argument?(call)
 
       full_path = Noir::URLPath.join_trimmed(prefix, path_arg)
       line = Noir::TreeSitter.call_name_row(call)
@@ -355,6 +356,25 @@ module Noir
         end
       end
       result
+    end
+
+    # A route path starts with `/` (or `*`); anything else that survives the
+    # route-invocation test is a `Map#put` / `ResultSet#get` / `Config#get`
+    # key (`templateMap.put("k", new Foo())`, `row.get("C", String.class)`).
+    # A slash-less pattern is believed only when a lambda or method-reference
+    # handler comes with it (`get("api/items", ctx -> ..)`,
+    # `get("ping", api::ping)`).
+    private def route_path_shape?(path : String) : Bool
+      path.empty? || path.starts_with?('/') || path.starts_with?('*')
+    end
+
+    private def lambda_or_reference_argument?(call : LibTreeSitter::TSNode) : Bool
+      args = argument_list_node(call)
+      return false unless args
+      Noir::TreeSitter.each_named_arg(args) do |arg|
+        return true if {"lambda_expression", "method_reference"}.includes?(Noir::TreeSitter.node_type(arg))
+      end
+      false
     end
 
     private def first_string_argument(call : LibTreeSitter::TSNode,
