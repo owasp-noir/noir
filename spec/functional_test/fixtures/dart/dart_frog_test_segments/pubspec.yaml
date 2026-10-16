@@ -1,0 +1,13 @@
+name: example
+description: A Dart Frog example.
+version: 1.0.0+1
+publish_to: none
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  dart_frog: ^1.0.0
+
+dev_dependencies:
+  test: ^1.19.2

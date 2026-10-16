@@ -14,8 +14,10 @@ module Analyzer::Dart
     # Whole path segments, matched on the scan-base-relative path, so
     # `test_app/` or a checkout that itself lives under `tests/` never
     # trips them.
-    TEST_DIR_RE      = /(?:\A|\/)(?:tests?|testing|test_utils|test_driver|integration_test)\//
+    TEST_DIR_RE      = /(?:\A|\/)test\//
+    TEST_DIRS_RE     = /(?:\A|\/)(?:tests|testing|test_utils|test_driver|integration_test)\//
     TEMPLATE_PATH_RE = /__brick__|\{\{/
+    ROUTES_DIR_RE    = /(?:\A|\/)routes\//
 
     # Standard Dart test-file conventions. The Dart tooling discovers
     # tests under a project-root `test/` directory and via the
@@ -30,13 +32,20 @@ module Analyzer::Dart
     #   * `tests/`, `testing/`, `test_utils/`, `test_driver/`,
     #     `integration_test/` — test servers and Flutter's test roots
     #                         (Serverpod's `tests/serverpod_test_server`,
-    #                         pub_worker's `lib/src/testing/server.dart`)
+    #                         pub_worker's `lib/src/testing/server.dart`);
+    #                         not below a `routes/` directory, where folder
+    #                         names are URL segments
     #   * `*_test.dart`     — the canonical Dart unit-test suffix
     #   * `__brick__`, `{{` — Mason / Serverpod scaffold templates, which
     #                         only become routes once rendered
     def test_path?(path : String, base_path : String? = nil) : Bool
       relative = relative_for_match(path, base_path)
       return true if relative.matches?(TEST_DIR_RE) || relative.matches?(TEMPLATE_PATH_RE)
+      # Below a Dart Frog `routes/` directory every folder name is a URL
+      # segment (`routes/tests/[id].dart` serves `/tests/{id}`), so the
+      # wider test-directory names only count above the first `routes/`.
+      above_routes = (routes = ROUTES_DIR_RE.match(relative)) ? relative[0, routes.end] : relative
+      return true if above_routes.matches?(TEST_DIRS_RE)
       File.basename(path).ends_with?("_test.dart")
     end
 
