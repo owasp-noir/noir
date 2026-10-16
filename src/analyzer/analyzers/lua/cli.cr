@@ -17,7 +17,12 @@ module Analyzer::Lua
     SUBCOMMAND    = /(?:local\s+)?(?:([A-Za-z_]\w*)\s*=\s*)?([A-Za-z_]\w*)\s*:\s*command\s*\(\s*['"]([^'"]+)['"]/
     OPTION        = /([A-Za-z_]\w*)\s*:\s*(?:option|flag)\s*\(\s*['"]([^'"]+)['"]/
     ARGUMENT      = /([A-Za-z_]\w*)\s*:\s*argument\s*\(\s*['"]([^'"]+)['"]/
-    ARG_IDX       = /\barg\s*\[\s*(\d+)\s*\]/
+    # `ngx.arg[1]` / `ctx.arg[1]` are field reads (OpenResty body-filter chunk
+    # and eof), not argv: the bare global is not preceded by `<word>.`. `..`
+    # concatenation (`"x"..arg[1]`) still counts.
+    ARG_IDX = /(?<!\w)(?<!\w\.)arg\s*\[\s*(\d+)\s*\]/
+    # `local arg = ngx.arg` makes the bare `arg[1]` that same chunk/eof pair.
+    NGX_ARG_ALIAS = /\barg\s*=\s*ngx\.arg\b/
     GET_ENV       = /\bos\.getenv\s*\(\s*['"]([^'"]+)['"]/
 
     CLIARGS_CTOR   = /(?:local\s+)?([A-Za-z_]\w*)\s*=\s*require\s*\(?\s*['"]cliargs['"]/
@@ -26,7 +31,7 @@ module Analyzer::Lua
     CLIARGS_OPTION = /([A-Za-z_]\w*)\s*:\s*add_option\s*\(\s*['"]([^'"]+)['"]/
     CLIARGS_FLAG   = /([A-Za-z_]\w*)\s*:\s*add_flag\s*\(\s*['"]([^'"]+)['"]/
 
-    MARKERS = /\brequire\s*\(?\s*['"]argparse['"]|\bargparse\s*\(|\barg\s*\[\s*\d+\s*\]|\brequire\s*\(?\s*['"]cliargs['"]/
+    MARKERS = /\brequire\s*\(?\s*['"]argparse['"]|\bargparse\s*\(|(?<!\w)(?<!\w\.)arg\s*\[\s*\d+\s*\]|\brequire\s*\(?\s*['"]cliargs['"]/
     WEB_RE  = /\brequire\s*\(?\s*['"](?:lapis|lor)['"]/
     # `cli_test_path?`'s two OR-ed String#includes? scans, folded into one
     # precompiled union so the per-file boolean gate costs a single PCRE2
@@ -43,6 +48,7 @@ module Analyzer::Lua
           next unless content.matches?(MARKERS)
           # `--` / `--[[ ]]` comments and long-bracket strings are not code.
           content = Noir::LuaCalleeExtractor.strip_comments(content)
+          content = content.gsub(ARG_IDX, "") if content.matches?(NGX_ARG_ALIAS)
           next unless content.matches?(MARKERS)
 
           # Pre-scan: variables actually bound to `require("cliargs")`.
