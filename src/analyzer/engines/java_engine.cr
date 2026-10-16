@@ -46,15 +46,19 @@ module Analyzer::Java
     # checks out under a `src/test/` step directory silently lost 375 of
     # the fixture tree's 396 endpoints.
     #
-    # Filenames ending in `Test.java` / `Tests.java` are JUnit classes
+    # `FooTest.java` / `FooTests.java` (and `.kt`, which Javalin, Micronaut,
+    # Quarkus and JAX-RS read through the same predicate) are JUnit classes
     # even when they sit in `src/main/java` of a published test kit (the
     # Micronaut TCK declares its `@Requires(property = "spec.name")`
     # controllers there). The suffix check is case-sensitive, so
-    # `Latest.java` is not a hit; it mirrors `KotlinEngine.test_path?`.
+    # `Latest.java` is not a hit, and it needs a name before the suffix: a
+    # class literally called `Test` or `Tests` is a tutorial's servlet, not
+    # a test.
+    TEST_CLASS_FILE_RE = /.(?:Test|Tests)\.(?:java|kt)\z/
+
     def self.test_path?(relative_path : String) : Bool
       return true if relative_path.matches?(TEST_SOURCE_SET_RE)
-      base = File.basename(relative_path)
-      base.ends_with?("Test.java") || base.ends_with?("Tests.java")
+      File.basename(relative_path).matches?(TEST_CLASS_FILE_RE)
     end
 
     # Index of the delimiter closing the `open_char` at `open_idx`, or nil when
