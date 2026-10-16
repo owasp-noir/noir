@@ -32,9 +32,19 @@ require "./go_route_extractor_ts"
 #     package `pkg` imports. Those bodies are attributed from their own
 #     source, since the line loop never walks them;
 #   * a function that registers routes itself is never claimed.
+#
+# A wrapped handler (`guard(func(c) { return listA(c) })`) binds every
+# function its text names (`guard`, `listA`), and a bound body's own calls
+# bind one hop further (`listA` calling `parseFilter(c)`). Any other body in
+# the file that registers no route is claimed and credited to nobody: a
+# helper below the last route is not part of that route.
 class Noir::GoNamedHandler
   RECEIVER_RE  = /\Afunc\s*\(\s*(?:([A-Za-z_]\w*)\s+)?\*?\s*([A-Za-z_]\w*)/
   REFERENCE_RE = /\A\s*((?:[A-Za-z_]\w*\s*\.\s*)*)([A-Za-z_]\w*)\s*(?:\(\s*\))?\s*\z/
+  # An unqualified name in a wrapped handler's text, and an unqualified call
+  # in a bound body.
+  NAME_RE = /(?<![\w.])[A-Za-z_]\w*/
+  CALL_RE = /(?<![\w.])([A-Za-z_]\w*)\s*\(/
 
   # Declarations that pin a name's type, scanned once per file (see
   # `declared_types`). Assignments are anchored at a statement start, so the
@@ -68,7 +78,7 @@ class Noir::GoNamedHandler
   alias Key = Tuple(String, Int32)
 
   @rows = Hash(Int32, Key).new
-  @refs = Hash(String, Key).new
+  @refs = Hash(String, Array(Key)).new
   @lines = Hash(Key, Array(String)).new
   @targets = Hash(Key, Array(Endpoint)).new
   @declared : Hash(String, Set(String))? = nil
@@ -84,15 +94,18 @@ class Noir::GoNamedHandler
   end
 
   def initialize(content : String, path : String, routes : Array(Noir::TreeSitterGoRouteExtractor::Route), scope : Scope? = nil)
+    return if routes.empty?
     references = Hash(String, Tuple(String, String)).new
+    wrapped = Set(String).new
     routes.each do |r|
       r.handler_args.each do |h|
         if ref = self.class.reference(h)
           references[h.strip] = ref
+        else
+          wrapped << h.strip
         end
       end
     end
-    return if references.empty?
 
     functions = Noir::GoCalleeExtractor.collect_function_bodies(content, path)
     methods = Noir::GoCalleeExtractor.collect_method_bodies(content, path)
@@ -100,6 +113,37 @@ class Noir::GoNamedHandler
     imports = nil
     spans = Hash(Int32, Range(Int32, Int32)).new
     dir = File.dirname(path)
+    span_of = ->(fb : Noir::GoCalleeExtractor::FunctionBody) do
+      spans[fb.start_row] ||= fb.start_row..(fb.start_row + fb.source.count('\n'))
+    end
+    registers_routes = ->(fb : Noir::GoCalleeExtractor::FunctionBody) do
+      if fb.file_path == path
+        span = span_of.call(fb)
+        first = route_rows.bsearch { |row| row >= span.begin }
+        !!(first && first <= span.end)
+      else
+        lines = @lines[{fb.file_path, fb.start_row}] ||= Noir::CComments.strip(fb.source, raw_quotes: "`", leak_unterminated_tail: true).lines
+        lines.any?(&.matches?(ROUTE_CALL_RE))
+      end
+    end
+    # A plain function name in this file or, given a scope, its package.
+    function_named = ->(name : String, in_dir : String) do
+      in_dir == dir ? (functions[name]? || scope.try(&.bodies.functions_for(dir)[name]?)) : scope.try(&.bodies.functions_for(in_dir)[name]?)
+    end
+    # The bodies `names` resolve to, minus route registrars and `skip`.
+    keys_for = ->(names : Array(String), in_dir : String, skip : Key?) do
+      names.compact_map do |name|
+        fb = function_named.call(name, in_dir)
+        next unless fb
+        key = {fb.file_path, fb.start_row}
+        key unless key == skip || registers_routes.call(fb)
+      end
+    end
+
+    wrapped.each do |handler|
+      keys = keys_for.call(handler.scan(NAME_RE).map(&.[0]).uniq!, dir, nil)
+      @refs[handler] = keys.uniq unless keys.empty?
+    end
 
     references.each do |handler, (qualifier, name)|
       body = if qualifier.empty?
@@ -115,24 +159,20 @@ class Noir::GoNamedHandler
                    scope.try(&.bodies.methods_for(dir)[name]?).try { |candidates| method_for(qualifier, name, candidates, content, "package") }
                end
              end
-      next unless body
+      # A function that registers routes itself is never claimed.
+      next if body.nil? || registers_routes.call(body)
 
       key = {body.file_path, body.start_row}
-      if body.file_path == path
-        span = spans[body.start_row] ||= body.start_row..(body.start_row + body.source.count('\n'))
-        # A function that registers routes itself is never claimed.
-        first = route_rows.bsearch { |row| row >= span.begin }
-        next if first && first <= span.end
-      else
-        lines = @lines[key] ||= Noir::CComments.strip(body.source, raw_quotes: "`", leak_unterminated_tail: true).lines
-        next if lines.any?(&.matches?(ROUTE_CALL_RE))
-      end
-      @refs[handler] = key
+      # One hop further: the functions the handler body calls.
+      calls = body.source.scan(CALL_RE).map(&.[1]).uniq!
+      @refs[handler] = [key].concat(keys_for.call(calls, File.dirname(body.file_path), key)).uniq
     end
 
-    @refs.each_value do |key|
-      next unless key[0] == path
-      spans[key[1]].each { |row| @rows[row] = key }
+    # Every route-free body in this file is claimed, bound or not.
+    functions.each_value.chain(methods.each_value.flat_map(&.itself)).each do |fb|
+      next if registers_routes.call(fb)
+      key = {path, fb.start_row}
+      span_of.call(fb).each { |row| @rows[row] = key }
     end
   end
 
@@ -184,7 +224,7 @@ class Noir::GoNamedHandler
 
   def bind(route : Noir::TreeSitterGoRouteExtractor::Route, endpoint : Endpoint)
     return if @refs.empty?
-    route.handler_args.compact_map { |handler| @refs[handler.strip]? }.uniq!.each do |key|
+    route.handler_args.flat_map { |handler| @refs[handler.strip]? || [] of Key }.uniq!.each do |key|
       (@targets[key] ||= [] of Endpoint) << endpoint
     end
   end

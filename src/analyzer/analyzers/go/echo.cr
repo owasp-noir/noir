@@ -122,7 +122,11 @@ module Analyzer::Go
 
     private def add_echo_param_patterns(line : String, ep : Endpoint)
       if line.includes?("Param(") || line.includes?("FormValue(")
-        add_param_to_endpoint(get_param(line), ep)
+        param = get_param(line)
+        # A shared helper may read a path variable this route has no slot for.
+        if param.param_type != "path" || ep.url.includes?(param.name == "*" ? "*" : ":#{param.name}")
+          add_param_to_endpoint(param, ep)
+        end
       end
 
       # `c.Bind(&v)` / `c.BindBody(...)` populate the
@@ -153,33 +157,16 @@ module Analyzer::Go
       end
     end
 
+    ACCESSOR_RE    = /\b(QueryParam|FormValue|Param)\s*\(([^()]*)\)/
+    ACCESSOR_TYPES = {"QueryParam" => "query", "FormValue" => "form", "Param" => "path"}
+
+    # The accessor's own argument, so one nested in another call
+    # (`c.String(200, c.QueryParam("color"))`) still resolves.
+    # `c.Param("id")` is Echo's path-variable accessor (`:id` segments).
     def get_param(line : String) : Param
-      param_type = "json"
-      if line.includes?("QueryParam")
-        param_type = "query"
+      if m = line.match(ACCESSOR_RE)
+        return Param.new(m[2].gsub("\"", "").strip, "", ACCESSOR_TYPES[m[1]])
       end
-      if line.includes?("FormValue")
-        param_type = "form"
-      end
-      # `c.Param("id")` is Echo's path-variable accessor — `:id` URL
-      # segments. Without this branch the helper defaulted to `json`,
-      # which surfaced phantom JSON params (FP) alongside the
-      # URL-derived path param for the same name.
-      if line.includes?(".Param(") && !line.includes?("QueryParam")
-        param_type = "path"
-      end
-
-      first = line.strip.split("(")
-      if first.size > 1
-        second = first[1].split(")")
-        if second.size > 1
-          param_name = second[0].gsub("\"", "").strip
-          rtn = Param.new(param_name, "", param_type)
-
-          return rtn
-        end
-      end
-
       Param.new("", "", "")
     end
   end

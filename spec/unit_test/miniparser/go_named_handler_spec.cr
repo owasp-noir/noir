@@ -153,3 +153,32 @@ describe Noir::GoNamedHandler do
       GO
   end
 end
+
+describe "Noir::GoNamedHandler wrapped handlers and callees" do
+  it "binds a wrapper's functions and a handler's 1-hop callees, and credits no orphan" do
+    seen = attributions(<<-GO)
+      package main
+
+      func main() {
+      \tr.GET("/a", guard(func(c *gin.Context) { listA(c) }))
+      \tr.GET("/b", listB)
+      }
+
+      func guard(next gin.HandlerFunc) gin.HandlerFunc {
+      \treturn func(c *gin.Context) { _ = c.GetHeader("X-Guard") }
+      }
+
+      func listA(c *gin.Context) { _ = c.Query("qa") }
+
+      func listB(c *gin.Context) { parseB(c) }
+
+      func parseB(c *gin.Context) { _ = c.Query("qb") }
+
+      func orphan(c *gin.Context) { _ = c.Query("qo") }
+      GO
+    seen["/a"].join.should contain("X-Guard")
+    seen["/a"].join.should contain("qa")
+    seen["/b"].join.should contain("qb")
+    seen.values.flatten.join.should_not contain("qo")
+  end
+end
