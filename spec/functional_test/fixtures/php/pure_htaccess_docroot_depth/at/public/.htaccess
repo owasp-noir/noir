@@ -1,0 +1,2 @@
+# At the document root itself: only what lies below it counts.
+Require all denied

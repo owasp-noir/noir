@@ -44,8 +44,9 @@ describe "Analyzer::Php::Php .htaccess" do
     end
   end
 
-  # An unclosed opening tag makes the block regexes scan to EOF, once per tag:
-  # 440KB of them took 8s. Past the size cap the file is not read at all.
+  # An unclosed opening tag makes the block regexes scan to EOF, once per tag,
+  # so the cost is quadratic in the file size. Past the size cap the file is
+  # not read at all.
   it "does not read an oversized .htaccess" do
     cap = Analyzer::Php::Php::HTACCESS_MAX_BYTES
     padding = "#" * (cap - 20) + "\n"
@@ -54,11 +55,26 @@ describe "Analyzer::Php::Php .htaccess" do
     denies?("Deny from all\n" + padding + padding).should be_false
   end
 
-  it "stays fast on a file of unclosed blocks" do
-    hostile = %(<FilesMatch "\\.php$">\n) * 20_000
+  # The cap is what bounds that quadratic cost, so the hostile file has to sit
+  # just *under* it: anything bigger is skipped unread and proves nothing. The
+  # file is the worst shape measured (a bare `<Files>` per line: 25ms at 16KB,
+  # 0.35s at 64KB). The cap is pinned outright, and the timing is the best of
+  # three runs against a ceiling 40x above the measurement, so a loaded CI
+  # machine does not fail it but a regex that went worse than quadratic would.
+  it "stays fast on a file of unclosed blocks just under the cap" do
+    cap = Analyzer::Php::Php::HTACCESS_MAX_BYTES
+    unit = "<Files>\n"
+    hostile = unit * ((cap - 1) // unit.bytesize)
+    hostile.bytesize.should be < cap
+    cap.should be <= 16_384
 
-    started = Time.instant
     denies?(hostile).should be_false
-    (Time.instant - started).should be < 2.seconds
+    best = 3.times.min_of do
+      started = Time.instant
+      denies?(hostile)
+      Time.instant - started
+    end
+
+    best.should be < 1.second
   end
 end

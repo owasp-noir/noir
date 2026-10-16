@@ -41,14 +41,16 @@ module Analyzer::Php
     # Normalized directories whose own `.htaccess` keeps PHP from running.
     @php_denied_roots : Array(String)? = nil
 
-    # `.htaccess` directives that turn a whole directory away, one per line.
-    HTACCESS_DENY_RE = /^[ \t]*(?:Deny[ \t]+from[ \t]+all|Require[ \t]+all[ \t]+denied)[ \t]*$/mi
+    # `.htaccess` directives that turn a whole directory away, one per line
+    # (a CRLF file ends each one in `\r`).
+    HTACCESS_DENY_RE = /^[ \t]*(?:Deny[ \t]+from[ \t]+all|Require[ \t]+all[ \t]+denied)[ \t\r]*$/mi
     # Any grant at all (`Allow from`, `Require ip/granted/valid-user`) means
     # the deny is conditional, so the directory is left alone.
     HTACCESS_GRANT_RE = /^[ \t]*(?:Allow[ \t]+from|Require[ \t]+(?!all[ \t]+denied\b))/mi
-    # Blocks that scope a deny to some files/URLs: a deny inside one is not a
-    # deny of the directory.
-    HTACCESS_SCOPED_BLOCK_RE = /<(Files|FilesMatch|Limit|LimitExcept|Directory|DirectoryMatch|Location|LocationMatch)\b.*?<\/\1>/mi
+    # Blocks that scope a deny to some files/URLs or to a request condition
+    # (`<If "%{HTTP_USER_AGENT} =~ /bot/">`): a deny inside one is not a deny
+    # of the directory.
+    HTACCESS_SCOPED_BLOCK_RE = /<(Files|FilesMatch|Limit|LimitExcept|Directory|DirectoryMatch|Location|LocationMatch|ElseIf|Else|If)\b.*?<\/\1>/mi
     # A `<Files>` / `<FilesMatch>` block: its pattern and its body.
     HTACCESS_FILES_BLOCK_RE = /<Files(?:Match)?\b([^>]*)>(.*?)<\/Files(?:Match)?>/mi
     # The pattern of a block that takes in every PHP file: `*.php`, `\.php$`,
@@ -60,12 +62,14 @@ module Analyzer::Php
     # which hardening idioms deny while the rest of the site stays served.
     HTACCESS_ALL_PHP_PATTERN_RE = /\A\s*(?:~\s*)?["']?(?:\(\?-?i\))?(?:\^?\.[*+]|\^?\[\^\/\]\*|\^|\*)?\\?\.(?:php|\((?:\?:)?(?:\w+\|)*php(?:\|\w+)*\))\$?["']?\s*\z/i
     HTACCESS_PHP_OFF_RE         = /^[ \t]*(?:SetHandler[ \t]+!|RemoveHandler\b|Deny[ \t]+from[ \t]+all\b|Require[ \t]+all[ \t]+denied\b)/mi
-    # The two block regexes above rescan to EOF from every unclosed opening
-    # tag, so a hostile file of them is quadratic (440KB stalled a scan for
-    # 8s). Real `.htaccess` files are a few KB; past this size the file is read
-    # as not denying anything, as if the check did not exist.
+    # The block regexes above rescan to EOF from every unclosed opening tag,
+    # so a hostile file of them is quadratic: 440KB stalled a scan for 8s and
+    # 64KB of unclosed `<Files>` still costs about 0.35s per file. Real
+    # `.htaccess` files are a few KB; past this size the file is read as not
+    # denying anything, as if the check did not exist, which holds the worst
+    # case to a few tens of milliseconds.
     # ponytail: oversized = not denying; a line-oriented scan if a real one needs more
-    HTACCESS_MAX_BYTES = 65_536
+    HTACCESS_MAX_BYTES = 16_384
 
     # `<?php`, `?>` and whitespace: what is left of an `index.php` once
     # these and its comments go, if it is only a placeholder.
