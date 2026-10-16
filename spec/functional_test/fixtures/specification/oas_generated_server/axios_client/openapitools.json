@@ -1,0 +1,12 @@
+{
+  "generator-cli": {
+    "version": "7.8.0",
+    "generators": {
+      "sdk": {
+        "generatorName": "typescript-axios",
+        "inputSpec": "api/openapi.yaml",
+        "output": "."
+      }
+    }
+  }
+}

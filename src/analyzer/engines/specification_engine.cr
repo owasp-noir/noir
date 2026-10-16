@@ -106,8 +106,22 @@ module Analyzer::Specification
     }
 
     # A client runtime file in an openapi-generator `FILES` manifest. Server
-    # stubs list `api/openapi.yaml` too but have none of these.
+    # stubs list `api/openapi.yaml` too, but their templates do not emit these
+    # (a custom one can: `base.ts`, `rest.py` and `client.go` are common names).
     GENERATED_CLIENT_FILE = /(?:\A|\/)(?:client\.go|configuration\.(?:go|rs)|api_client\.(?:py|rb)|rest\.py|ApiClient\.(?:java|kt|cs)|runtime\.ts|base\.ts)\z/
+
+    # What only a server stub's manifest lists: a controller/handler/router/
+    # server directory, Spring's `*ApiController`/`*ApiDelegate`/`*ApiService`
+    # and the entry points of the go, python and spring server templates. It
+    # outweighs the client runtime above. Deliberately no bare `Controller.*`,
+    # `Application.*`, `server.*` or `app.*`: SDKs generate models by those
+    # names (kubernetes `V1ReplicationController`, hcloud `models/server.rs`).
+    GENERATED_SERVER_FILE = /(?:\A|\/)(?i:controllers?|handlers?|routers?|routes|servers?)\/|ApiController\.(?:java|kt)\z|Api(?:Delegate|Service(?:Impl)?)\.(?:java|kt|scala)\z|(?:\A|\/)(?:main\.go|routers\.go|__main__\.py|OpenApiGeneratorApplication\.java|OpenAPI2SpringBoot\.java)\z/
+
+    # `generatorName` in the generator-cli config next to the manifest, and the
+    # generators among them that build a server.
+    GENERATOR_NAME   = /"generatorName"\s*:\s*"([^"]+)"/
+    SERVER_GENERATOR = /\A(?:spring|aspnetcore|scalatra|jaxrs-.+|nodejs-.+)\z|-(?:server|spring|aspnetcore|flask|fastapi|aiohttp|laravel|lumen|slim4?|symfony|flight|axum|sinatra|rails|vertx-web|play-framework|finch|inflector|camel)\z/
 
     # Recorded requests and client collections kept under a test tree usually
     # exercise the real API, so they are never gated.
@@ -193,8 +207,9 @@ module Analyzer::Specification
     # The OpenAPI document an SDK was generated *from* is copied into the SDK
     # (`api/openapi.yaml`) and describes a remote API the SDK consumes. The
     # generator records it in `.openapi-generator/FILES` beside the client
-    # runtime; a server stub's manifest lists the document too, so both must
-    # hold. The climb stops at the scan base: `-b sdk/api` was asked for.
+    # runtime; a server stub's manifest lists the document too, so the client
+    # runtime must be there and no server-side file or server generator may
+    # be. The climb stops at the scan base: `-b sdk/api` was asked for.
     private def generated_client_spec?(key : Noir::LocatorKey(Array(String)), path : String) : Bool
       return false unless OAS_KEYS.includes?(key.name)
 
@@ -206,7 +221,10 @@ module Analyzer::Specification
         manifest = File.join(dir, ".openapi-generator", "FILES")
         if File.file?(manifest)
           lines = File.read_lines(manifest, chomp: true)
-          return lines.includes?(path[(dir.size + 1)..]) && lines.any?(&.matches?(GENERATED_CLIENT_FILE))
+          return lines.includes?(path[(dir.size + 1)..]) &&
+            lines.any?(&.matches?(GENERATED_CLIENT_FILE)) &&
+            lines.none?(&.matches?(GENERATED_SERVER_FILE)) &&
+            !server_generator_configured?(dir)
         end
 
         parent = File.dirname(dir)
@@ -216,6 +234,13 @@ module Analyzer::Specification
       false
     rescue
       false
+    end
+
+    # A server generator named in the `openapitools.json` beside the manifest.
+    # Any one of several is enough: keeping a document is the safe direction.
+    private def server_generator_configured?(dir : String) : Bool
+      config = File.join(dir, "openapitools.json")
+      File.file?(config) && File.read(config).scan(GENERATOR_NAME).any?(&.[1].matches?(SERVER_GENERATOR))
     end
 
     # `each_spec_file` plus the `Details` almost every caller builds from
