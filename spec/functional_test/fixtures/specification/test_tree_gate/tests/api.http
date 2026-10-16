@@ -1,2 +1,2 @@
 ### Health check against the real API
-GET https://api.example.com/health
+GET http://localhost:8080/health

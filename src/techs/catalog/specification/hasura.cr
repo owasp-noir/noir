@@ -4,9 +4,10 @@
 module NoirTechs::Catalog::Specification
   HASURA = {
     :hasura => {
-      :format    => ["YAML"],
-      :similar   => ["hasura", "hasura-metadata", "hasura_metadata", "hasura graphql engine"],
-      :supported => {
+      :implementation => true,
+      :format         => ["YAML"],
+      :similar        => ["hasura", "hasura-metadata", "hasura_metadata", "hasura graphql engine"],
+      :supported      => {
         :endpoint => true,
         :method   => true,
         :params   => {

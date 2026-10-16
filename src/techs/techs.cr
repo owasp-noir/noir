@@ -90,6 +90,18 @@ module NoirTechs
     key.to_s if context[:guards]?
   end
 
+  # Techs with no `:language` that still *serve* their routes: schema-generated
+  # backends (Strapi, Supabase, …), Azure Functions triggers and mobile entry
+  # points. Each declares `:implementation => true` on its catalog entry.
+  IMPLEMENTATION_TECHS = TECHS.compact_map { |key, value| key.to_s if value[:implementation]? }.to_set
+
+  # Everything else without a `:language` declares a route someone else
+  # serves: specification documents, client collections, traffic captures and
+  # gateway / IaC / hosting routing config. The optimizer makes a code
+  # handler the primary source over these, and tags spec operations no
+  # implementation reported (`spec-only`).
+  DECLARATION_TECHS = TECHS.compact_map { |key, value| key.to_s unless value.has_key?(:language) || value.has_key?(:implementation) }.to_set
+
   # "When both are detected, X owns the routes and Y is noise" — declared on
   # X's catalog entry as `:supersedes => ["y"]`.
   #

@@ -4,9 +4,10 @@
 module NoirTechs::Catalog::Specification
   AZURE_FUNCTIONS = {
     :azure_functions => {
-      :format    => ["JSON", "CS", "PY", "JS", "TS"],
-      :similar   => ["azure functions", "azure-functions", "function.json", "azure"],
-      :supported => {
+      :implementation => true,
+      :format         => ["JSON", "CS", "PY", "JS", "TS"],
+      :similar        => ["azure functions", "azure-functions", "function.json", "azure"],
+      :supported      => {
         :endpoint => true,
         :method   => true,
         :params   => {

@@ -17,7 +17,8 @@ module Analyzer::Specification
       each_spec_file_with_details(Noir::LocatorKeys::K8S_INGRESS_SPEC) do |path, details|
         content = read_file_content(path)
         begin
-          YAML.parse_all(content).each { |doc| process_doc(doc, details) }
+          path_lines = path_lines(content)
+          YAML.parse_all(content).each { |doc| process_doc(doc, details, path_lines) }
         rescue e
           # Kept as an explicit rescue rather than delegating to the engine:
           # a Helm chart's `templates/ingress.yaml` is a Go template, so
@@ -34,14 +35,14 @@ module Analyzer::Specification
       @result
     end
 
-    private def process_doc(doc : YAML::Any, details : Details)
+    private def process_doc(doc : YAML::Any, details : Details, path_lines : Hash(String, Int32))
       root = doc.as_h?
       return unless root
 
       kind = root[YAML::Any.new("kind")]?.try(&.as_s?)
       if kind == "List"
         items = root[YAML::Any.new("items")]?.try(&.as_a?) || [] of YAML::Any
-        items.each { |item| process_doc(item, details) }
+        items.each { |item| process_doc(item, details, path_lines) }
         return
       end
 
@@ -61,7 +62,7 @@ module Analyzer::Specification
       process_default_backend(spec[YAML::Any.new("defaultBackend")]?, tls_hosts, details)
 
       rules = spec[YAML::Any.new("rules")]?.try(&.as_a?) || [] of YAML::Any
-      rules.each { |rule| process_rule(rule, tls_hosts, rewrite_target, details) }
+      rules.each { |rule| process_rule(rule, tls_hosts, rewrite_target, details, path_lines) }
     end
 
     private def supported_api_version?(api_version : String?) : Bool
@@ -88,7 +89,7 @@ module Analyzer::Specification
       hosts_set
     end
 
-    private def process_rule(rule : YAML::Any, tls_hosts : Set(String), rewrite_target : String?, details : Details)
+    private def process_rule(rule : YAML::Any, tls_hosts : Set(String), rewrite_target : String?, details : Details, path_lines : Hash(String, Int32))
       rule_h = rule.as_h?
       return unless rule_h
 
@@ -106,12 +107,13 @@ module Analyzer::Specification
         next if path.empty?
 
         path_type = path_h[YAML::Any.new("pathType")]?.try(&.as_s?) || DEFAULT_PATH_TYPE
-        emit_endpoint(path, path_type, host, tls_hosts, details)
+        rule_details = line_details(details, path_lines[path]?)
+        emit_endpoint(path, path_type, host, tls_hosts, rule_details)
 
         if rewrite_target && !rewrite_target.empty?
           rewritten = strip_capture_groups(rewrite_target)
           if rewritten != path
-            emit_endpoint(rewritten, path_type, host, tls_hosts, details, "rewrite")
+            emit_endpoint(rewritten, path_type, host, tls_hosts, rule_details, "rewrite")
           end
         end
       end
@@ -169,11 +171,12 @@ module Analyzer::Specification
 
         path = clean_template_path(path_match[1]) || "/"
         path_type = find_template_path_type(lines, index) || DEFAULT_PATH_TYPE
-        emit_template_endpoint(path, path_type, host, tls_hosts, details, emitted)
+        rule_details = line_details(details, index + 1)
+        emit_template_endpoint(path, path_type, host, tls_hosts, rule_details, emitted)
 
         if rewrite_target && !rewrite_target.empty?
           rewritten = strip_capture_groups(rewrite_target)
-          emit_template_endpoint(rewritten, path_type, host, tls_hosts, details, emitted, "rewrite") unless rewritten == path
+          emit_template_endpoint(rewritten, path_type, host, tls_hosts, rule_details, emitted, "rewrite") unless rewritten == path
         end
       end
 
@@ -188,6 +191,23 @@ module Analyzer::Specification
 
       emitted << key
       emit_endpoint(path, path_type, host, tls_hosts, details, origin)
+    end
+
+    # Line of each `path:` value. `YAML::Any` keeps no positions, so the
+    # parsed rule is matched back to the text by value.
+    # ponytail: a path repeated across rules gets its first line.
+    private def path_lines(content : String) : Hash(String, Int32)
+      lines = {} of String => Int32
+      content.each_line.with_index(1) do |line, number|
+        next unless (match = line.match(PATH_LINE)) && (path = clean_template_path(match[1]))
+        lines[path] ||= number
+      end
+      lines
+    end
+
+    private def line_details(details : Details, line : Int32?) : Details
+      return details unless line && (path_info = details.code_paths.first?)
+      Details.new(PathInfo.new(path_info.path, line))
     end
 
     private def extract_rewrite_target(content : String) : String?

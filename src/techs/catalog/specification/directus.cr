@@ -4,9 +4,10 @@
 module NoirTechs::Catalog::Specification
   DIRECTUS = {
     :directus => {
-      :format    => ["YAML", "JSON"],
-      :similar   => ["directus", "directus-snapshot", "directus_snapshot", "directus schema"],
-      :supported => {
+      :implementation => true,
+      :format         => ["YAML", "JSON"],
+      :similar        => ["directus", "directus-snapshot", "directus_snapshot", "directus schema"],
+      :supported      => {
         :endpoint => true,
         :method   => true,
         :params   => {

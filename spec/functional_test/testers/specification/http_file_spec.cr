@@ -1,18 +1,20 @@
 require "../../func_spec.cr"
 
 # VS Code REST Client dialect: multiple requests, headers, a JSON body,
-# a form body and `{{var}}` path/placeholder handling.
+# a form body and `{{var}}` path/placeholder handling. Its requests name
+# `api.example.com` literally, so they keep that host, and header values are
+# never copied out of the file.
 vscode_endpoints = [
-  Endpoint.new("/users/:userId", "GET", [
-    Param.new("Authorization", "Bearer {{token}}", "header"),
+  Endpoint.new("https://api.example.com/users/:userId", "GET", [
+    Param.new("Authorization", "", "header"),
     Param.new("verbose", "", "query"),
     Param.new("userId", "", "path"),
   ]),
-  Endpoint.new("/users", "POST", [
+  Endpoint.new("https://api.example.com/users", "POST", [
     Param.new("name", "noir", "json"),
     Param.new("email", "noir@example.com", "json"),
   ]),
-  Endpoint.new("/users/:userId", "PUT", [
+  Endpoint.new("https://api.example.com/users/:userId", "PUT", [
     Param.new("name", "updated", "form"),
     Param.new("active", "true", "form"),
     Param.new("userId", "", "path"),
@@ -33,7 +35,7 @@ jetbrains_endpoints = [
   ]),
   Endpoint.new("/orders", "GET", [
     Param.new("status", "", "query"),
-    Param.new("Accept", "application/json", "header"),
+    Param.new("Accept", "", "header"),
   ]),
 ]
 
@@ -47,7 +49,7 @@ FunctionalTester.new("fixtures/specification/http_file/rest_ext/", {
   :techs     => 1,
   :endpoints => 1,
 }, [
-  Endpoint.new("/ping", "GET"),
+  Endpoint.new("https://api.example.com/ping", "GET"),
 ]).perform_tests
 
 # RFC 10008 `QUERY` round-trips: the detector recognizes a file whose only
@@ -60,7 +62,7 @@ FunctionalTester.new("fixtures/specification/http_file/query_method/", {
   :techs     => 1,
   :endpoints => 1,
 }, [
-  Endpoint.new("/products/search", "QUERY", [
+  Endpoint.new("https://api.example.com/products/search", "QUERY", [
     Param.new("q", "widget", "form"),
     Param.new("limit", "10", "form"),
   ]),

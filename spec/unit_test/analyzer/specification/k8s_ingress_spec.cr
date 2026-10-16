@@ -39,6 +39,7 @@ describe "Kubernetes Ingress Analyzer" do
       YAML
 
     endpoints.map(&.url).sort!.should eq ["/v1/users", "/v1/users/.*"]
+    endpoints.sort_by(&.url).map(&.details.code_paths.first.line).should eq [10, 12]
     endpoints.each do |e|
       e.method.should eq "GET"
       tag_descriptions(e, "ingress-host").should eq ["api.example.com"]

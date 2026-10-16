@@ -4,9 +4,10 @@
 module NoirTechs::Catalog::Specification
   STRAPI = {
     :strapi => {
-      :format    => ["JSON", "TS", "JS"],
-      :similar   => ["strapi", "strapi5", "strapi-cms", "strapi_cms", "strapi v4", "strapi v5"],
-      :supported => {
+      :implementation => true,
+      :format         => ["JSON", "TS", "JS"],
+      :similar        => ["strapi", "strapi5", "strapi-cms", "strapi_cms", "strapi v4", "strapi v5"],
+      :supported      => {
         :endpoint => true,
         :method   => true,
         :params   => {

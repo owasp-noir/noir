@@ -208,3 +208,31 @@ describe "tech supersede integrity" do
     fail ":supersedes drops techs with no analyzer: #{sorted(orphaned)}" unless orphaned.empty?
   end
 end
+
+# A tech with no `:language` is a declaration unless its catalog entry says
+# `:implementation => true`, and the optimizer acts on that split: a code
+# handler outranks a declaration, and spec operations only declarations
+# reported are tagged `spec-only`. Defaulting a new tech to "declaration"
+# silently would mislabel a served API, so the split is pinned: a new
+# language-less tech fails here until someone picks its side.
+describe "declaration / implementation split" do
+  it "classifies every language-less tech explicitly" do
+    declarations = %w[
+      apache_httpd apigee apisix asyncapi aws_cdk aws_cloudformation bruno burp caddy caido
+      cloudflare_wrangler envoy graphql_operation graphql_sdl grpc haproxy har hoppscotch
+      http_file hurl insomnia istio_virtualservice k8s_gateway_api k8s_ingress kamal kong
+      krakend mitmproxy netlify nginx oas2 oas3 ocelot odata openrpc postman raml
+      serverless_framework smithy spring_cloud_gateway terraform thrift thunder_client
+      traefik tyk typespec vercel wsdl yarp zap_sites_tree
+    ]
+    implementations = %w[android appwrite azure_functions directus hasura ios payload_cms strapi supabase well_known_applinks]
+
+    sorted(NoirTechs::DECLARATION_TECHS).should eq(declarations)
+    sorted(NoirTechs::IMPLEMENTATION_TECHS).should eq(implementations)
+  end
+
+  it "never marks a language tech as an implementation" do
+    both = NoirTechs::IMPLEMENTATION_TECHS.select { |tech| NoirTechs.language_tech?(tech) }
+    fail "techs with both :language and :implementation: #{sorted(both)}" unless both.empty?
+  end
+end
