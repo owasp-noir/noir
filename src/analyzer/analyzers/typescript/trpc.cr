@@ -534,25 +534,27 @@ module Analyzer::Typescript
     end
 
     private def extract_prefix(content : String, literal_mask : Array(Bool)) : String?
-      # Explicit endpoint option in fetch/openapi handlers.
-      content.scan(/endpoint\s*:\s*['"`]([^'"`]+)['"`]/) do |m|
-        next if literal_position?(literal_mask, m.byte_begin(0))
-        # Skip TS *type* annotations like `endpoint: `/${string}`` — a
-        # template literal carrying an interpolation is a type/computed
-        # value, not the concrete mount path (documenso's
-        # openapi-fetch-handler types `endpoint` this way; the real prefix
-        # `'/api/trpc'` lives in another file).
-        next if m[1].includes?("${")
-        # Adapters compare `endpoint` to the request pathname, so a mount
-        # path starts with `/`. This drops the S3/OAuth `endpoint:
-        # 'https://…'` options, `'GET /api/…'` labels and bare names that
-        # stories, seeders and non-tRPC modules carry.
-        next unless m[1].starts_with?('/')
-        # `url_prefixes` is last-file-wins per base, so a path-shaped
-        # `endpoint:` in a module that is not a tRPC handler (a SCIM
-        # resource-type table) would still replace every router's prefix.
-        next unless content.matches?(TRPC_MENTION_RE)
-        return m[1]
+      # Explicit endpoint option in fetch/openapi handlers. `url_prefixes` is
+      # last-file-wins per base, so a path-shaped `endpoint:` in a module that
+      # is not a tRPC handler (a SCIM resource-type table) would replace every
+      # router's prefix. The mention gate is per file, not per match: inside
+      # the loop a catalog of `endpoint: '/x'` rows re-scans the file N times.
+      if content_matches?(content, TRPC_MENTION_RE)
+        content.scan(/endpoint\s*:\s*['"`]([^'"`]+)['"`]/) do |m|
+          next if literal_position?(literal_mask, m.byte_begin(0))
+          # Skip TS *type* annotations like `endpoint: `/${string}`` — a
+          # template literal carrying an interpolation is a type/computed
+          # value, not the concrete mount path (documenso's
+          # openapi-fetch-handler types `endpoint` this way; the real prefix
+          # `'/api/trpc'` lives in another file).
+          next if m[1].includes?("${")
+          # Adapters compare `endpoint` to the request pathname, so a mount
+          # path starts with `/`. This drops the S3/OAuth `endpoint:
+          # 'https://…'` options, `'GET /api/…'` labels and bare names that
+          # stories, seeders and non-tRPC modules carry.
+          next unless m[1].starts_with?('/')
+          return m[1]
+        end
       end
 
       # Express/Koa-style mounting: `app.use('/api/trpc', trpcExpress.createExpressMiddleware(...))`.
