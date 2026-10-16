@@ -1,4 +1,5 @@
 require "../../../models/analyzer"
+require "../../engines/elixir_engine"
 
 module Analyzer::Elixir
   # Surfaces Phoenix Channels real-time attack surface as `ws://`
@@ -17,8 +18,9 @@ module Analyzer::Elixir
   class PhoenixChannel < Analyzer
     analyzer_for "elixir_phoenix_channel"
 
-    # `channel "room:*", RoomChannel` / `channel "room:" <> _, MyApp.RoomChannel`.
-    CHANNEL_DECL = /^\s*channel\s+["']([^"']+)["']\s*,\s*([\w.]+)/
+    # `channel "room:*", RoomChannel` / `channel "room:" <> _, MyApp.RoomChannel`
+    # and the `mix format` paren form `channel("room:*", RoomChannel)`.
+    CHANNEL_DECL = /^\s*channel\s*\(?\s*["']([^"']+)["']\s*,\s*([\w.]+)/
 
     # `defmodule MyAppWeb.RoomChannel do`.
     DEFMODULE = /^\s*defmodule\s+([\w.]+)\s+do\b/
@@ -32,11 +34,11 @@ module Analyzer::Elixir
     CHANNEL_USE = /\buse\s+Phoenix\.Channel\b|\buse\s+[A-Z][\w.]*\s*,\s*:channel\b/
 
     def analyze
-      topics = {} of String => String # channel module (short) => topic pattern
+      topics = {} of String => String # channel module (as declared) => topic pattern
       modules = [] of ChannelModule
 
       files = get_files_by_extension(".ex").reject do |path|
-        elixir_test_path?(path) || !File.exists?(path)
+        ElixirEngine.test_path?(base_relative_path(path)) || !File.exists?(path)
       end
 
       # Pass 1 — topic↔module declarations from socket modules.
@@ -45,7 +47,7 @@ module Analyzer::Elixir
         next unless content.includes?("channel")
         content.each_line do |line|
           if m = line.match(CHANNEL_DECL)
-            topics[m[2].split('.').last] = m[1]
+            topics[m[2]] = m[1]
           end
         end
       rescue e
@@ -68,6 +70,7 @@ module Analyzer::Elixir
     end
 
     private record ChannelModule,
+      full_name : String,
       name : String,
       events : Array(Tuple(String, Int32)),
       path : String,
@@ -95,23 +98,28 @@ module Analyzer::Elixir
       end
 
       name = module_name || File.basename(path, ".ex")
-      modules << ChannelModule.new(name.split('.').last, events, path, module_line)
+      modules << ChannelModule.new(name, name.split('.').last, events, path, module_line)
+    end
+
+    # The topic a socket mapped to `mod`: the declared name equal to its
+    # full name, else one that is a dotted suffix of it (an `alias`ed
+    # `Channels.RoomChannel` or bare `RoomChannel`). Keying by the last
+    # segment alone would merge `Client.Channel` and `Gateway.Channel`.
+    private def mapped_topic(mod : ChannelModule, topics : Hash(String, String)) : String?
+      topics[mod.full_name]? || begin
+        topics.each { |declared, topic| return topic if mod.full_name.ends_with?(".#{declared}") }
+        nil
+      end
     end
 
     private def emit(modules : Array(ChannelModule), topics : Hash(String, String))
       modules.each do |mod|
-        mapped = topics[mod.name]?
-        # Skip the `*_web.ex` macro module, whose `def channel do quote do
-        # use Phoenix.Channel …` matches CHANNEL_USE but is the behaviour
-        # *definition*, not a channel: it is never mapped to a topic and has
-        # no handle_in clauses. Same guard drops any orphan channel not
-        # wired to a socket.
-        next if mapped.nil? && mod.events.empty?
-
-        # Prefer the topic the socket module mapped to this channel; fall
-        # back to the module's short name when no `channel` declaration is
-        # in scope but the module does define events.
-        topic = mapped || mod.name
+        # Skip modules no socket maps to a topic: the `*_web.ex` macro module
+        # (`def channel do quote do use Phoenix.Channel …` is the behaviour
+        # *definition*), orphan channels, helper modules a mapped channel
+        # delegates to (`Channel.Shared`) and `use Phoenix.Channel` samples in
+        # docs. A topic invented from the module name can never be joined.
+        next unless topic = mapped_topic(mod, topics)
 
         if mod.events.empty?
           @result << build_endpoint("ws://#{topic}", mod.path, mod.line)
@@ -128,11 +136,6 @@ module Analyzer::Elixir
       ep = Endpoint.new(url, "SEND", Details.new(PathInfo.new(path, line)))
       ep.protocol = "ws"
       ep
-    end
-
-    # ExUnit's `*_test.exs` convention (mirrors ElixirEngine.test_path?).
-    private def elixir_test_path?(path : String) : Bool
-      File.basename(path).ends_with?("_test.exs")
     end
   end
 end
