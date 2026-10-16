@@ -80,8 +80,9 @@ module Noir
     # `this_receiver_ok` is false for a file with no server-framework import:
     # there a bare `this.post('/x', data)` is the outbound call of an API
     # client class (`class ProjectService extends APIService`), not a route,
-    # unless it passes an inline function handler (Unleash's controllers
-    # `this.get('/prometheus', async (req, res) => …)` import no server).
+    # unless it passes an inline function or a method reference
+    # (`this_handler_arg?`: Unleash's controllers `this.get('/', this.getTags)`
+    # import only a local base class).
     def initialize(source : String, @this_receiver_ok : Bool = true)
       lexer = JSLexer.new(source)
       @tokens = lexer.tokenize
@@ -651,38 +652,119 @@ module Noir
       true
     end
 
-    # True when an argument after the first of the call whose `(` sits at
-    # `lparen_idx` starts like an inline function: `(req, res) => …`,
-    # `async (…) => …`, `function (…) {…}`.
-    # ponytail: `req => …` without parentheses is not recognised.
-    private def inline_function_arg?(lparen_idx : Int32) : Bool
+    # Token index of the start of every top-level argument after the first of
+    # the call whose `(` sits at `lparen_idx`.
+    private def trailing_arg_starts(lparen_idx : Int32) : Array(Int32)
+      starts = [] of Int32
       depth = 0
-      arg_index = 0
-      arg_start = true
       idx = lparen_idx + 1
       while idx < @tokens.size
-        token = @tokens[idx]
-        if depth == 0 && arg_start && arg_index > 0
-          return true if token.type == :lparen || (token.type == :keyword && (token.value == "async" || token.value == "function"))
-        end
-        arg_start = false
-        case token.type
+        case @tokens[idx].type
         when :lparen, :lbracket, :lbrace
           depth += 1
         when :rparen, :rbracket, :rbrace
-          return false if depth == 0
+          break if depth == 0
           depth -= 1
         when :comma
-          if depth == 0
-            arg_index += 1
-            arg_start = true
-          end
+          starts << idx + 1 if depth == 0
         else
           # Not a delimiter.
         end
         idx += 1
       end
-      false
+      starts
+    end
+
+    # The first parameter's name when an inline function starts at `idx`
+    # (`(req, res) => …`, `async req => …`, `function (req) {…}`); "" when it
+    # has none or destructures it; nil when no inline function starts there.
+    private def inline_function_first_param(idx : Int32) : String?
+      token = @tokens[idx]? || return
+      if token.type == :keyword && token.value == "async"
+        idx += 1
+        token = @tokens[idx]? || return
+      end
+      if token.type == :identifier && @tokens[idx + 1]?.try(&.type) == :assign && @tokens[idx + 2]?.try(&.value) == ">"
+        return token.value
+      end
+      if token.type == :keyword && token.value == "function"
+        idx += 1
+        idx += 1 if @tokens[idx]?.try(&.type) == :identifier
+        token = @tokens[idx]? || return
+      end
+      return unless token.type == :lparen
+      param = @tokens[idx + 1]?
+      param && param.type == :identifier ? param.value : ""
+    end
+
+    # Index just past the `name` / `a.b.c` / `this.a` chain starting at `idx`,
+    # or `idx` itself when no identifier starts there.
+    private def member_chain_end(idx : Int32) : Int32
+      token = @tokens[idx]? || return idx
+      return idx unless token.type == :identifier || token.value == "this"
+      idx += 1
+      while @tokens[idx]?.try(&.type) == :dot && @tokens[idx + 1]?.try { |t| t.type == :identifier || t.type == :keyword }
+        idx += 2
+      end
+      idx
+    end
+
+    private def arg_end?(idx : Int32) : Bool
+      type = @tokens[idx]?.try(&.type)
+      type == :comma || type == :rparen
+    end
+
+    # Tokens right before a receiver that put the call's value to use:
+    # `return this.get(…)`, `const r = await http.post(…)`, `a || this.get(…)`.
+    # A route registration is a bare statement; a client call is consumed.
+    VALUE_CONTEXT_TOKENS = Set{"return", "await", "yield", "=", ">", "(", ",", ":", "?", "[", "&", "|", "!"}
+
+    private def value_context?(idx : Int32) : Bool
+      prev = idx >= 0 ? @tokens[idx]? : nil
+      !prev.nil? && prev.type != :string && VALUE_CONTEXT_TOKENS.includes?(prev.value)
+    end
+
+    # A `this.<verb>(path, …)` call in a file with no server import is a route
+    # only when it is a statement that hands over a handler: an inline
+    # function or a method reference, `this.get('/', this.getTags)`.
+    # `return this.post('/orders', body)`, `this.post('/files', file, {
+    # onProgress })` and `return this.get('/x', this.defaults)` are the
+    # outbound calls of an API client class. `this_idx` is the receiver.
+    private def this_handler_arg?(this_idx : Int32, lparen_idx : Int32) : Bool
+      trailing_arg_starts(lparen_idx).any? do |idx|
+        next true if inline_function_first_param(idx)
+        chain_end = member_chain_end(idx)
+        @tokens[idx]?.try(&.value) == "this" && chain_end > idx + 1 && arg_end?(chain_end) && !value_context?(this_idx - 1)
+      end
+    end
+
+    # First parameter names of a request handler: `(req, res)`, `(request,
+    # reply)`, `(ctx)`, `(c)`. A client callback names its first parameter
+    # after the response or the error: `(res)`, `(err, res)`, `(data, jwr)`.
+    REQUEST_PARAM_RE = /\A_?(?:req|request|ctx|context|c)\z/
+
+    # Whether the call on receiver `recv_idx` (its `(` at `lparen_idx`) is a
+    # route registration, for the receivers that are an HTTP client in some
+    # files and an app parameter in others (`http.get('/ping', handler)`).
+    # A bare statement on a plain variable (not `this.http.post(…)`, Angular's
+    # injected client; not `await http.get(…)`) with a rooted literal path (a
+    # k6/Node client call takes an absolute URL or a `${base}` template) that
+    # hands over a handler: an inline function with a request-like first
+    # parameter, or a bare reference as the LAST argument
+    # (`socket.post('/x', payload, (res) => …)` ends in a callback, so its
+    # `payload` is not one).
+    private def request_handler_call?(recv_idx : Int32, lparen_idx : Int32) : Bool
+      return false if recv_idx > 0 && (@tokens[recv_idx - 1].type == :dot || value_context?(recv_idx - 1))
+      first = @tokens[lparen_idx + 1]?
+      return false if first.nil? || first.type != :string || !first.value.starts_with?('/') || first.value.starts_with?("//")
+      trailing_arg_starts(lparen_idx).any? do |idx|
+        if param = inline_function_first_param(idx)
+          param.matches?(REQUEST_PARAM_RE)
+        else
+          chain_end = member_chain_end(idx)
+          chain_end > idx && @tokens[chain_end]?.try(&.type) == :rparen
+        end
+      end
     end
 
     # Classify one argument (tokens `start_idx...end_idx`) as handler-shaped.
@@ -806,11 +888,18 @@ module Noir
       "httpClient", "axiosInstance", "axiosClient",
     }
 
+    # `http`, `https` and `socket` are also ordinary parameter names for an
+    # app (`module.exports = function registerRoutes(http) { http.get('/ping',
+    # handler) }`), so for them the call shape decides (`request_handler_call?`).
+    CONTEXTUAL_CLIENT_RECEIVERS = Set{"http", "https", "socket"}
+
     # A receiver is a client only when the file never builds a router
     # from that name, so a project that genuinely names its router
-    # `request` keeps its routes.
-    private def http_client_receiver?(router_var : String) : Bool
-      HTTP_CLIENT_RECEIVERS.includes?(router_var) && !@explicit_router_vars.includes?(router_var)
+    # `request` keeps its routes. `recv_idx` is the receiver token and
+    # `lparen_idx` the call's `(`.
+    private def http_client_receiver?(router_var : String, recv_idx : Int32, lparen_idx : Int32) : Bool
+      return false if !HTTP_CLIENT_RECEIVERS.includes?(router_var) || @explicit_router_vars.includes?(router_var)
+      !(CONTEXTUAL_CLIENT_RECEIVERS.includes?(router_var) && request_handler_call?(recv_idx, lparen_idx))
     end
 
     APP_FACTORIES = Set{"express", "fastify", "Fastify", "Koa", "Hono", "Application", "Router", "Elysia"}
@@ -1014,7 +1103,7 @@ module Noir
            @tokens[idx + 1].type == :dot &&
            route_verb?(@tokens[idx + 2], @tokens[idx].value) &&
            @tokens[idx + 3].type == :lparen
-          if !route_handler_arg?(idx + 3) || http_client_receiver?(@tokens[idx].value)
+          if !route_handler_arg?(idx + 3) || http_client_receiver?(@tokens[idx].value, idx, idx + 3)
             idx += 1
             next
           end
@@ -1039,7 +1128,7 @@ module Noir
            http_method_name?(@tokens[idx + 2].value) &&
            @tokens[idx + 3].type == :rbracket &&
            @tokens[idx + 4].type == :lparen
-          if !route_handler_arg?(idx + 4) || http_client_receiver?(@tokens[idx].value)
+          if !route_handler_arg?(idx + 4) || http_client_receiver?(@tokens[idx].value, idx, idx + 4)
             idx += 1
             next
           end
@@ -1230,7 +1319,7 @@ module Noir
       # fast_scan, on a handler argument and on not being an HTTP client.
       if idx < @tokens.size - 2 &&
          @tokens[idx].type == :identifier &&
-         !http_client_receiver?(@tokens[idx].value) &&
+         !http_client_receiver?(@tokens[idx].value, idx, idx + 3) &&
          idx + 2 < @tokens.size &&
          @tokens[idx + 1].type == :dot &&
          route_verb?(@tokens[idx + 2], @tokens[idx].value)
@@ -1316,8 +1405,8 @@ module Noir
            path_idx + 1 < @tokens.size &&
            route_handler_arg?(path_idx)
           router_var = @tokens[idx - 1].type == :identifier ? @tokens[idx - 1].value : ""
-          return results if http_client_receiver?(router_var)
-          return results if !@this_receiver_ok && @tokens[idx - 1].value == "this" && !inline_function_arg?(path_idx)
+          return results if http_client_receiver?(router_var, idx - 1, path_idx)
+          return results if !@this_receiver_ok && @tokens[idx - 1].value == "this" && !this_handler_arg?(idx - 1, path_idx)
           path_entries = route_path_entries_from_args(path_idx + 1, allow_named_route: named_route_receiver?(router_var), receiver: router_var)
           @position = path_idx + 2 unless path_entries.empty?
 
