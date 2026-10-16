@@ -70,6 +70,48 @@ module Analyzer::Specification
     @external_yaml_docs = {} of String => SpecDoc(YAML::Any)?
     @reported_refs = Set(String).new
 
+    # A spec or config document inside a test tree is test input, a golden
+    # output or a generated client proxy: it describes something the project
+    # is tested against or consumes, not something it serves. Matched against
+    # the scan-base-relative path, so a checkout that merely lives under a
+    # directory with one of these names is unaffected.
+    #
+    # `TEST_TREE` holds the unambiguous markers and gates every key but the
+    # client collections. `spec`/`specs`/`examples`/`samples` are deliberately
+    # absent: real API descriptions live there.
+    TEST_TREE = /\/(?:src\/(?:test|sbt-test|it|androidTest)|testdata|fixtures|__fixtures__|__snapshots__)\/|\.(?:verified|received)\.[^\/]+\z/i
+
+    # Schema and definition documents are additionally gated on the generic
+    # `test`/`tests` segments (and the `.Tests` .NET project directories),
+    # which would be too broad for infra configs: `overlays/test` and
+    # `deploy/test` hold real test-environment deployments. Visual Studio's
+    # `Service References`/`Connected Services` folders hold the proxy of a
+    # service the project consumes.
+    SCHEMA_TEST_TREE = /\/(?:tests?|__tests__|e2e|test_data|service references|connected services)\/|\.(?:unit|integration|functional|e2e)?tests?\//i
+
+    SCHEMA_KEYS = Set{
+      Noir::LocatorKeys::SWAGGER_JSON.name, Noir::LocatorKeys::SWAGGER_YAML.name,
+      Noir::LocatorKeys::OAS3_JSON.name, Noir::LocatorKeys::OAS3_YAML.name,
+      Noir::LocatorKeys::ASYNCAPI_JSON.name, Noir::LocatorKeys::ASYNCAPI_YAML.name,
+      Noir::LocatorKeys::OPENRPC_JSON.name, Noir::LocatorKeys::RAML_SPEC.name,
+      Noir::LocatorKeys::GRAPHQL_SDL.name, Noir::LocatorKeys::GRAPHQL_OPERATION.name,
+      Noir::LocatorKeys::GRPC_PROTO.name, Noir::LocatorKeys::WSDL_SPEC.name,
+      Noir::LocatorKeys::THRIFT_IDL.name, Noir::LocatorKeys::SMITHY_SPEC.name,
+      Noir::LocatorKeys::TYPESPEC_SPEC.name, Noir::LocatorKeys::ODATA_SPEC.name,
+    }
+
+    # Recorded requests and client collections kept under a test tree usually
+    # exercise the real API, so they are never gated.
+    CLIENT_COLLECTION_KEYS = Set{
+      Noir::LocatorKeys::POSTMAN_JSON.name, Noir::LocatorKeys::BRUNO_BRU.name,
+      Noir::LocatorKeys::INSOMNIA_JSON.name, Noir::LocatorKeys::INSOMNIA_YAML.name,
+      Noir::LocatorKeys::HOPPSCOTCH_JSON.name, Noir::LocatorKeys::THUNDER_CLIENT_JSON.name,
+      Noir::LocatorKeys::HTTP_FILE.name, Noir::LocatorKeys::HURL_FILE.name,
+      Noir::LocatorKeys::HAR_PATH.name, Noir::LocatorKeys::BURP_SITEMAP.name,
+      Noir::LocatorKeys::ZAP_SITES_TREE.name, Noir::LocatorKeys::CAIDO_JSON.name,
+      Noir::LocatorKeys::MITMPROXY_PATH.name,
+    }
+
     # Yield every registered path for `key`, skipping paths that no longer
     # resolve and containing per-file failures.
     #
@@ -108,6 +150,8 @@ module Analyzer::Specification
 
       paths.each do |path|
         next unless File.exists?(path)
+        # Silent, like the language engines' test-tree gates: nothing was lost.
+        next if test_tree?(key, path)
 
         begin
           block.call(path)
@@ -122,6 +166,13 @@ module Analyzer::Specification
           Noir::SkippedFiles.record(tech, path, e.message.presence || e.class.name)
         end
       end
+    end
+
+    private def test_tree?(key : Noir::LocatorKey(Array(String)), path : String) : Bool
+      return false if CLIENT_COLLECTION_KEYS.includes?(key.name)
+
+      relative = base_relative_path(path)
+      relative.matches?(TEST_TREE) || (SCHEMA_KEYS.includes?(key.name) && relative.matches?(SCHEMA_TEST_TREE))
     end
 
     # `each_spec_file` plus the `Details` almost every caller builds from
