@@ -29,8 +29,8 @@ module Noir
   module ImportGraph
     @@sibling_source_roots_cache = Hash(String, Array(String)).new
     @@sibling_source_roots_mutex = Mutex.new
-    @@scanned_source_roots_cache = Hash(String, Array(Tuple(String, String, String?))).new
-    @@scanned_source_roots_mutex = Mutex.new
+    @@scanned_package_roots : Hash(String, Array(Tuple(String, String, String?)))? = nil
+    @@scanned_package_roots_mutex = Mutex.new
 
     IMPORT_RESOLUTION_MAX_ENTRIES = 262_144
     PACKAGE_SIBLINGS_MAX_ENTRIES  =  32_768
@@ -50,7 +50,7 @@ module Noir
     # different tree in the same process (`--diff`, library use).
     Noir::ExtractionResultCache.register_clearer do
       @@sibling_source_roots_mutex.synchronize { @@sibling_source_roots_cache.clear }
-      @@scanned_source_roots_mutex.synchronize { @@scanned_source_roots_cache.clear }
+      @@scanned_package_roots_mutex.synchronize { @@scanned_package_roots = nil }
       @@import_resolution_mutex.synchronize { @@import_resolution_cache.clear }
       @@package_siblings_mutex.synchronize { @@package_siblings_cache.clear }
       @@directory_mutex.synchronize { @@directory_cache.clear }
@@ -138,12 +138,12 @@ module Noir
       sibling_roots = sibling_source_roots(source_root)
       last_sep = relative.rindex('/')
       relative_dir = last_sep ? relative[0, last_sep] : ""
+      local_roots = [source_root] + sibling_roots
       resolved = [] of String
       if imp.wildcard?
-        ([source_root] + sibling_roots).each do |root|
-          dir = File.join(root, relative)
-          next unless directory?(dir)
-          safe_glob(dir, "*.#{extension}") { |match| resolved << match }
+        local_roots.each { |root| resolved.concat(files_in(root, relative, extension)) }
+        if resolved.empty?
+          registered_package_roots(source_root, relative).each { |root| resolved.concat(files_in(root, relative, extension)) }
         end
       else
         # `File.exists?(root/pkg/Name.ext)` can only be true when
@@ -152,23 +152,20 @@ module Noir
         # collapses a whole package's worth of misses into one `stat`.
         # A JDK import like `java.util.List` otherwise probed every one of
         # spring-boot's sibling module roots, per importing file.
-        file = File.join(source_root, "#{relative}.#{extension}")
-        if directory?(File.join(source_root, relative_dir)) && File.exists?(file)
-          resolved << file
-        else
-          sibling_roots.each do |root|
-            next unless directory?(File.join(root, relative_dir))
-            sibling_file = File.join(root, "#{relative}.#{extension}")
-            resolved << sibling_file if File.exists?(sibling_file)
-          end
+        resolved = class_files_in([source_root], relative, relative_dir, extension)
+        resolved = class_files_in(sibling_roots, relative, relative_dir, extension) if resolved.empty?
+        wider_roots = [] of String
+        if resolved.empty?
+          wider_roots = registered_package_roots(source_root, relative_dir)
+          resolved = class_files_in(wider_roots, relative, relative_dir, extension)
         end
         # Kotlin files may be named anything and hold many top-level
         # classes (`dto/Requests.kt` declaring `FeedRequest`), so a miss on
         # `pkg/Name.kt` falls back to the package's files, as `pkg.*` would.
         if resolved.empty? && extension == "kt" && !relative_dir.empty?
-          ([source_root] + sibling_roots).each do |root|
-            dir = File.join(root, relative_dir)
-            resolved.concat(package_siblings(dir, extension)) if directory?(dir)
+          local_roots.each { |root| resolved.concat(files_in(root, relative_dir, extension)) }
+          if resolved.empty?
+            wider_roots.each { |root| resolved.concat(files_in(root, relative_dir, extension)) }
           end
         end
       end
@@ -176,6 +173,22 @@ module Noir
       @@import_resolution_mutex.synchronize do
         Noir::ExtractionResultCache.store_capped(@@import_resolution_cache, cache_key, resolved, IMPORT_RESOLUTION_MAX_ENTRIES)
       end
+    end
+
+    private def self.class_files_in(roots : Array(String), relative : String,
+                                    relative_dir : String, extension : String) : Array(String)
+      found = [] of String
+      roots.each do |root|
+        next unless directory?(File.join(root, relative_dir))
+        file = File.join(root, "#{relative}.#{extension}")
+        found << file if File.exists?(file)
+      end
+      found
+    end
+
+    private def self.files_in(root : String, package_dir : String, extension : String) : Array(String)
+      dir = File.join(root, package_dir)
+      directory?(dir) ? package_siblings(dir, extension) : [] of String
     end
 
     # Same-package siblings for one directory. Every file in a package
@@ -256,16 +269,6 @@ module Noir
             candidate_expanded = Noir::PathScope.expand(candidate)
             roots << candidate if candidate_expanded != expanded
           end
-          # Monorepos keep shared modules at other depths (`shared/` next
-          # to `apps/portal`), so also take every other root of this
-          # language the scan registered under the same `-b` base.
-          if base = Noir::PathScope.longest_base(expanded, CodeLocator.instance.scan_base_paths)
-            seen = roots.map { |root| Noir::PathScope.expand(root) }.to_set
-            seen << expanded
-            scanned_source_roots(lang).each do |candidate, candidate_expanded, candidate_base|
-              roots << candidate if candidate_base == base && seen.add?(candidate_expanded)
-            end
-          end
         end
       end
 
@@ -275,26 +278,49 @@ module Noir
       roots
     end
 
-    # Every `.../src/main/{lang}` directory holding a scanned source file,
-    # as `{registered spelling, expanded, owning -b base}`, derived once
-    # per language from the file registry. The registered spelling keeps
-    # resolved files on the content cache's keys.
-    private def self.scanned_source_roots(lang : String) : Array(Tuple(String, String, String?))
-      @@scanned_source_roots_mutex.synchronize do
-        @@scanned_source_roots_cache[lang] ||= begin
-          marker = "/src/main/#{lang}/"
-          roots = Set(String).new
+    # Monorepos keep shared modules at other depths than the direct
+    # siblings (`shared/` next to `apps/portal`). Consulted only after the
+    # local roots miss: the registered `src/main/{lang}` roots under the
+    # same `-b` base that actually hold `package_dir`, an index lookup
+    # rather than a probe of every module root.
+    private def self.registered_package_roots(source_root : String, package_dir : String) : Array(String)
+      lang = File.basename(source_root)
+      entries = scanned_package_roots["#{lang}:#{package_dir}"]?
+      return [] of String unless entries
+      expanded = Noir::PathScope.expand(source_root)
+      base = Noir::PathScope.longest_base(expanded, CodeLocator.instance.scan_base_paths)
+      return [] of String unless base
+      entries.compact_map { |root, root_expanded, root_base| root if root_base == base && root_expanded != expanded }
+    end
+
+    # `"{lang}:{package dir}" => [{root as registered, expanded, owning -b base}]`
+    # for every scanned file under a `src/main/{java,kotlin}` root, built
+    # once from the file registry. The registered spelling keeps resolved
+    # files on the content cache's keys.
+    private def self.scanned_package_roots : Hash(String, Array(Tuple(String, String, String?)))
+      @@scanned_package_roots_mutex.synchronize do
+        @@scanned_package_roots ||= begin
+          bases = CodeLocator.instance.scan_base_paths
+          root_info = Hash(String, Tuple(String, String, String?)).new
+          index = Hash(String, Array(Tuple(String, String, String?))).new
           {".java", ".kt"}.each do |ext|
             CodeLocator.instance.files_by_extension(ext).each do |file|
-              next unless idx = file.index(marker)
-              roots << file[0, idx + marker.size - 1]
+              {"java", "kotlin"}.each do |lang|
+                marker = "/src/main/#{lang}/"
+                next unless idx = file.index(marker)
+                rest = file[(idx + marker.size)..]
+                next unless slash = rest.rindex('/')
+                root = file[0, idx + marker.size - 1]
+                info = root_info[root] ||= begin
+                  expanded = Noir::PathScope.expand(root)
+                  {root, expanded, Noir::PathScope.longest_base(expanded, bases)}
+                end
+                entries = index["#{lang}:#{rest[0, slash]}"] ||= [] of Tuple(String, String, String?)
+                entries << info unless entries.includes?(info)
+              end
             end
           end
-          bases = CodeLocator.instance.scan_base_paths
-          roots.map do |root|
-            expanded = Noir::PathScope.expand(root)
-            {root, expanded, Noir::PathScope.longest_base(expanded, bases)}
-          end
+          index
         end
       end
     end
