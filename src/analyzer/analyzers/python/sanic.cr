@@ -659,7 +659,10 @@ module Analyzer::Python
     end
 
     BLUEPRINT_GROUP_RE = /(?:#{PYTHON_VAR_NAME_REGEX}\s*=\s*)?Blueprint\s*\.\s*group\s*\((.*?)\)/m
-    BLUEPRINT_CTOR_RE  = /(#{PYTHON_VAR_NAME_REGEX})\s*=\s*(?:sanic\.)?Blueprint\s*\((.*?)\)/m
+    # `\w*Blueprint` takes in-repo subclasses (`ApiBlueprint(Blueprint)`) the
+    # same way the shared extractor does for their url_prefix, so a subclass
+    # gets its `version=` as well and not just half of its URL.
+    BLUEPRINT_CTOR_RE = /(#{PYTHON_VAR_NAME_REGEX})\s*=\s*(?:sanic\.)?\w*Blueprint\s*\((.*?)\)/m
 
     # `Blueprint.group(bp1, bp2, url_prefix="/api", version=1)` shares its
     # url_prefix and version with each member blueprint; `Blueprint(name,

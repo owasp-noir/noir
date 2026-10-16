@@ -419,13 +419,38 @@ module Analyzer::Python
     # Frameworks whose registration syntax overlaps aiohttp's enough to trip
     # the loose markers below — sanic's `@app.get("/x")` and its
     # `app.add_route(handler, "/x")` in particular. A file that imports one of
-    # them and never mentions aiohttp is theirs. Mirrors the same guard in the
-    # Flask analyzer.
+    # them and has no aiohttp server import is theirs. Mirrors the same guard
+    # in the Flask analyzer.
     COMPETING_FRAMEWORK_IMPORT_RE =
       /^\s*(?:from|import)\s+(?:sanic|fastapi|litestar|starlette|quart|robyn|ninja|bottle|falcon|flask)\b/m
 
+    # The server half of aiohttp (`aiohttp.web`, `from aiohttp import web`),
+    # not the client (`ClientSession`) that FastAPI and Sanic apps pull in for
+    # outbound requests. `aiohttp.web` anywhere covers `import aiohttp.web`,
+    # `from aiohttp.web import ...` and `aiohttp.web.Application()` after a
+    # plain `import aiohttp`.
+    AIOHTTP_WEB_MODULE_RE = /\baiohttp\.web/
+
+    # `from aiohttp import <names>`: capture 1 is a parenthesised list (it can
+    # span lines and carry `# comments`, `)` included), capture 2 a plain list
+    # (a trailing comment is not part of it, a backslash continues it).
+    AIOHTTP_FROM_IMPORT_RE =
+      /^[ \t]*from[ \t]+aiohttp[ \t]+import[ \t]*(?:\(((?:[^)#]++|#[^\n]*+)*+)\)|((?:[^\n#\\]++|\\\r?\n)*+))/m
+    AIOHTTP_SERVER_NAME_RE = /\b(?:web(?:_\w+)?|RouteTableDef)\b/
+    IMPORT_LIST_COMMENT_RE = /#[^\n]*/
+
+    private def aiohttp_server_import?(source : ::String) : Bool
+      return true if source.matches?(AIOHTTP_WEB_MODULE_RE)
+
+      source.scan(AIOHTTP_FROM_IMPORT_RE) do |import|
+        names = (import[1]? || import[2]? || "").gsub(IMPORT_LIST_COMMENT_RE, "")
+        return true if names.matches?(AIOHTTP_SERVER_NAME_RE)
+      end
+      false
+    end
+
     private def aiohttp_relevant_source?(source : ::String) : Bool
-      return false if !source.includes?("aiohttp") && source.matches?(COMPETING_FRAMEWORK_IMPORT_RE)
+      return false if source.matches?(COMPETING_FRAMEWORK_IMPORT_RE) && !aiohttp_server_import?(source)
 
       source.includes?("aiohttp") ||
         source.includes?("RouteTableDef") ||
