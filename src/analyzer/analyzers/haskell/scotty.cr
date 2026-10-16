@@ -24,10 +24,16 @@ module Analyzer::Haskell
     PATH_PARAM_REGEX  = /(?<![A-Za-z0-9_'])(?:pathParam|pathParamMaybe)\s+"((?:[^"\\]|\\.)*)"/
     HEADER_REGEX      = /(?<![A-Za-z0-9_'])header\s+"((?:[^"\\]|\\.)*)"/
 
-    # `test/`, `tests/` and `spec/` trees, hspec-discover/tasty `FooSpec.hs` /
-    # `FooTest.hs` files and `foo_spec.` / `foo_test.` files. Case-sensitive
-    # on purpose: a production `src/Test/...` module namespace must stay in.
-    TEST_PATH_RE = /\/(?:tests?|spec)\/|(?:Spec|Tests?)\.l?hs$|_(?:spec|test)\./
+    # `test/`, `tests/` and `spec/` trees. Case-sensitive on purpose: a
+    # production `src/Test/...` module namespace must stay in.
+    TEST_DIR_RE = /\/(?:tests?|spec)\//
+
+    # hspec-discover/tasty `FooSpec.hs` / `FooTest.hs` files and `foo_spec.` /
+    # `foo_test.` files. The name alone is not enough: `OpenApiSpec.hs`,
+    # `SpeedTest.hs` and `Handlers/Tests.hs` are production modules, so the
+    # file must also import a Haskell test library.
+    TEST_SUFFIX_RE     = /(?:Spec|Tests?)\.l?hs$|_(?:spec|test)\./
+    TEST_LIB_IMPORT_RE = /^[ \t]*import\s+(?:qualified\s+)?Test\.(?:Hspec|Tasty|HUnit|QuickCheck)\b/m
 
     # hspec-wai test clients call `get "/x" `shouldRespondWith` ...`, which
     # reads exactly like a Scotty route; a file that imports it is a test
@@ -62,7 +68,10 @@ module Analyzer::Haskell
     # routes the application serves. Scan-base-relative, never absolute: a
     # `test/` directory ABOVE the scan base is not this project's test tree.
     private def scotty_test_source?(path : String, content : String) : Bool
-      base_relative_path(path).matches?(TEST_PATH_RE) || content.matches?(HSPEC_WAI_IMPORT_RE)
+      relative = base_relative_path(path)
+      return true if relative.matches?(TEST_DIR_RE) || content.matches?(HSPEC_WAI_IMPORT_RE)
+
+      relative.matches?(TEST_SUFFIX_RE) && content.matches?(TEST_LIB_IMPORT_RE)
     end
 
     private def build_handler_bodies : HandlerBodies
