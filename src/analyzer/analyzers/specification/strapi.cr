@@ -182,6 +182,16 @@ module Analyzer::Specification
       segment
     end
 
+    # `src/api/<name>/routes/<file>`: `/api/` before the last `/routes/`, the
+    # ordering the detector's `routes_module?` accepts. Scan-base-relative so
+    # an `api/` directory above the scan base doesn't count.
+    private def app_api_routes?(source : String) : Bool
+      path = base_relative_path(source)
+      routes_at = path.rindex("/routes/")
+      api_at = path.index("/api/")
+      !routes_at.nil? && !api_at.nil? && api_at < routes_at
+    end
+
     private def parse_routes(content : String, source : String)
       configs = Noir::JSObjectConfigExtractor.extract(content, ["routes"])
       return if configs.empty?
@@ -189,6 +199,12 @@ module Analyzer::Specification
       configs.each do |config|
         entries = config.array("routes")
         next unless entries
+        # A plugin router typed `admin` is served by the admin API at
+        # `/<plugin>/…`, not under the content-API `/api` prefix. The plugin
+        # name isn't derivable here, so these are dropped rather than
+        # re-prefixed. Strapi forces `content-api` onto `src/api/<name>/routes`
+        # routers, so a stray `admin` type there still serves under `/api`.
+        next if config.string("type") == "admin" && !app_api_routes?(source)
 
         entries.each do |entry|
           next unless entry.is_a?(Hash(String, Noir::JSObjectConfigExtractor::ConfigValue))
