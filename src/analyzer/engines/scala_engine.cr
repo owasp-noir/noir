@@ -6,12 +6,13 @@ require "./file_scan_engine"
 
 module Analyzer::Scala
   abstract class ScalaEngine < FileScanEngine
-    # `.scala` sources from the extension index. Subclasses that need a
-    # custom scan shape can override `analyze` and call this helper
-    # directly. Paths are detector-registered regular files — no per-path
-    # `File.exists?` / `File.directory?`.
+    # `.scala` sources from the extension index, minus sbt test source sets
+    # (Specs/Suites build throwaway route tables nothing serves). Subclasses
+    # that need a custom scan shape can override `analyze` and call this
+    # helper directly. Paths are detector-registered regular files — no
+    # per-path `File.exists?` / `File.directory?`.
     protected def scan_target_files : Array(String)
-      get_files_by_extension(".scala")
+      get_files_by_extension(".scala").reject { |path| sbt_test_path?(path) }
     end
 
     # One precompiled `Regex.union` scan (PCRE2 JIT) replaces two separate
