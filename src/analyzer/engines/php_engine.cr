@@ -31,11 +31,20 @@ module Analyzer::Php
       !PhpEngine.test_path?(base_relative_path(path))
     end
 
+    TEST_DIR_RE = %r{/(?:Tests?|tests?|Fixtures|workbench|legacy_tests)/}
+
     # Standard PHP test-source conventions:
     #
     #   * `/Tests/`               — PSR-4 / Symfony convention
     #     (`src/Symfony/Bundle/FrameworkBundle/Tests/...`)
     #   * `/tests/`               — Laravel / CakePHP / PHPUnit default
+    #   * `/Test/`, `/test/`      — Magento `Test/Unit/_files`, Dolibarr
+    #     `test/`, Symfony `config/routes/test/` (test-env routes)
+    #   * `/Fixtures/`, `/legacy_tests/` — test data and Dusk suites
+    #   * `/workbench/`           — Orchestra Testbench skeleton app
+    #   * `/docs/` at the scan base — runnable doc snippets
+    #     (API Platform `docs/guides`); anchored, because Folio mounts
+    #     `resources/views/docs` as a real route
     #   * `*Test.php` filename    — PHPUnit suffix convention
     #   * `*Tests.php` filename   — pluralized variant (rare)
     #
@@ -51,8 +60,8 @@ module Analyzer::Php
     # scanned from `~/work/tests/myapp` reported 0 endpoints instead of
     # 235.
     def self.test_path?(relative_path : String) : Bool
-      return true if relative_path.includes?("/Tests/")
-      return true if relative_path.includes?("/tests/")
+      return true if relative_path.matches?(TEST_DIR_RE)
+      return true if relative_path.starts_with?("/docs/")
       base = File.basename(relative_path)
       return true if base.ends_with?("Test.php")
       base.ends_with?("Tests.php")
