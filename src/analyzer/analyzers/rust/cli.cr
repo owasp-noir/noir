@@ -61,10 +61,10 @@ module Analyzer::Rust
         in_string = false
         escaped = false
         quote_char = '\0'
-        idx = 0
+        reader = Char::Reader.new(line_code)
 
-        while idx < line_code.size
-          char = line_code[idx]
+        while reader.has_next?
+          char = reader.current_char
 
           if in_string
             if escaped
@@ -91,17 +91,20 @@ module Analyzer::Rust
               end
             elsif !@in_attr
               if char == '#'
-                j = idx + 1
-                while j < line_code.size && line_code[j].ascii_whitespace?
-                  j += 1
+                saved_pos = reader.pos
+                reader.next_char
+                while reader.has_next? && reader.current_char.ascii_whitespace?
+                  reader.next_char
                 end
-                if j < line_code.size && line_code[j] == '['
+                if reader.has_next? && reader.current_char == '['
                   @in_attr = true
                   @attr_depth = 1
                   @attr_buf.clear
                   @attr_buf << "#["
-                  idx = j
+                  reader.next_char
+                  next
                 else
+                  reader.pos = saved_pos
                   code_out << char
                 end
               else
@@ -123,7 +126,7 @@ module Analyzer::Rust
             end
           end
 
-          idx += 1
+          reader.next_char
         end
 
         if @in_attr
@@ -474,7 +477,8 @@ module Analyzer::Rust
     private def apply_field(attr : Tuple(Symbol, String), field : String, url : String,
                             path : String, line_no : Int32, endpoints : Hash(String, Endpoint))
       kind, body = attr
-      return if body.includes?("subcommand")
+      unquoted_body = body.gsub(/"(?:\\.|[^"\\])*"/, "")
+      return if unquoted_body.matches?(/\bsubcommand\b/)
       ep = fetch_endpoint(endpoints, url, path, line_no)
 
       if kind == :argh

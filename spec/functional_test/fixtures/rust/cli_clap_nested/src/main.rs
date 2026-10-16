@@ -33,6 +33,11 @@ enum PenCmd {
             long
         )]
         speed: String,
+        #[arg(
+            long,
+            help = "Name of the subcommand to run"
+        )]
+        target: String,
     },
 }
 

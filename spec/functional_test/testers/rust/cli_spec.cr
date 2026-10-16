@@ -37,6 +37,7 @@ clap_nested_endpoints = [
     Param.new("amount", "", "flag"),
     Param.new("endpoint", "", "flag"),
     Param.new("speed", "", "flag"),
+    Param.new("target", "", "flag"),
   ]),
   build.call("cli://zoo/__internal", [] of Param),
   build.call("cli://zoo/b/leaf", [] of Param),
