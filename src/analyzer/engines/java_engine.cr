@@ -27,18 +27,34 @@ module Analyzer::Java
     #
     # Also covers Maven's archetype source-roots
     # (`src/it/`, integration-test convention used by some Quarkus
-    # extensions and Apache projects) which sit alongside `src/test/`.
-    #
+    # extensions and Apache projects) which sit alongside `src/test/`,
+    # and Gradle's extra test source sets (`testFixtures`, `jmh`,
+    # `integrationTest`, `functionalTest`).
+    TEST_SOURCE_SET_RE = Regex.union(
+      "/src/test/",
+      "/src/it/",
+      "/src/testFixtures/",
+      "/src/jmh/",
+      "/src/integrationTest/",
+      "/src/functionalTest/",
+    )
+
     # Takes the scan-base-relative path (`Analyzer#base_relative_path`),
     # never the absolute one. The layout is a contract between the build
     # tool and the *project*, so matching the absolute path let a
     # directory above the scan base decide the answer — a CI job that
     # checks out under a `src/test/` step directory silently lost 375 of
     # the fixture tree's 396 endpoints.
+    #
+    # Filenames ending in `Test.java` / `Tests.java` are JUnit classes
+    # even when they sit in `src/main/java` of a published test kit (the
+    # Micronaut TCK declares its `@Requires(property = "spec.name")`
+    # controllers there). The suffix check is case-sensitive, so
+    # `Latest.java` is not a hit; it mirrors `KotlinEngine.test_path?`.
     def self.test_path?(relative_path : String) : Bool
-      return true if relative_path.includes?("/src/test/")
-      return true if relative_path.includes?("/src/it/")
-      false
+      return true if relative_path.matches?(TEST_SOURCE_SET_RE)
+      base = File.basename(relative_path)
+      base.ends_with?("Test.java") || base.ends_with?("Tests.java")
     end
 
     # Index of the delimiter closing the `open_char` at `open_idx`, or nil when
