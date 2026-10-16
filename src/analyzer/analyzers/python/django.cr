@@ -138,19 +138,6 @@ module Analyzer::Python
 
       endpoints.concat(extract_channels_endpoints)
 
-      # Find static files
-      begin
-        base_paths.each do |base|
-          static_prefix = base.ends_with?("/") ? "#{base}static/" : "#{base}/static/"
-          get_files_by_prefix(static_prefix).each do |file|
-            relative_path = file.sub(static_prefix, "")
-            endpoints << Endpoint.new("/#{relative_path}", "GET")
-          end
-        end
-      rescue e
-        logger.debug e
-      end
-
       endpoints
     end
 
