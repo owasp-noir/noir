@@ -426,12 +426,31 @@ module Analyzer::Python
 
     # The server half of aiohttp (`aiohttp.web`, `from aiohttp import web`),
     # not the client (`ClientSession`) that FastAPI and Sanic apps pull in for
-    # outbound requests. The parenthesised branch spans a multi-line import.
-    AIOHTTP_SERVER_IMPORT_RE =
-      /\baiohttp\.web|^\s*from\s+aiohttp\s+import\s+(?:\([^)]*|[^\n(]*)\b(?:web|RouteTableDef)\b/m
+    # outbound requests. `aiohttp.web` anywhere covers `import aiohttp.web`,
+    # `from aiohttp.web import ...` and `aiohttp.web.Application()` after a
+    # plain `import aiohttp`.
+    AIOHTTP_WEB_MODULE_RE = /\baiohttp\.web/
+
+    # `from aiohttp import <names>`: capture 1 is a parenthesised list (it can
+    # span lines and carry `# comments`, `)` included), capture 2 a plain list
+    # (a trailing comment is not part of it, a backslash continues it).
+    AIOHTTP_FROM_IMPORT_RE =
+      /^[ \t]*from[ \t]+aiohttp[ \t]+import[ \t]*(?:\(((?:[^)#]++|#[^\n]*+)*+)\)|((?:[^\n#\\]++|\\\r?\n)*+))/m
+    AIOHTTP_SERVER_NAME_RE = /\b(?:web(?:_\w+)?|RouteTableDef)\b/
+    IMPORT_LIST_COMMENT_RE = /#[^\n]*/
+
+    private def aiohttp_server_import?(source : ::String) : Bool
+      return true if source.matches?(AIOHTTP_WEB_MODULE_RE)
+
+      source.scan(AIOHTTP_FROM_IMPORT_RE) do |import|
+        names = (import[1]? || import[2]? || "").gsub(IMPORT_LIST_COMMENT_RE, "")
+        return true if names.matches?(AIOHTTP_SERVER_NAME_RE)
+      end
+      false
+    end
 
     private def aiohttp_relevant_source?(source : ::String) : Bool
-      return false if source.matches?(COMPETING_FRAMEWORK_IMPORT_RE) && !source.matches?(AIOHTTP_SERVER_IMPORT_RE)
+      return false if source.matches?(COMPETING_FRAMEWORK_IMPORT_RE) && !aiohttp_server_import?(source)
 
       source.includes?("aiohttp") ||
         source.includes?("RouteTableDef") ||
