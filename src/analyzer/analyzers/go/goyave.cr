@@ -106,7 +106,7 @@ module Analyzer::Go
         end
       end
 
-      resolve_public_dirs_with_glob(public_dirs)
+      resolve_public_dirs(public_dirs)
 
       result
     end

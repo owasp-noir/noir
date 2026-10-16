@@ -1,7 +1,7 @@
 require "../../func_spec.cr"
 
 # `router.Static(...)` makes every file under the directory a GET
-# endpoint, so `GoEngine#resolve_public_dirs_with_glob` walks it directly
+# endpoint, so `GoEngine#resolve_public_dirs` walks it directly
 # (media files included, which the index does not carry). That walk did not
 # apply `--exclude-path`, so an excluded asset was still reported.
 empty_count = Hash(Symbol, Int32).new

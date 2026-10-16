@@ -713,51 +713,21 @@ module Analyzer::Go
       }
     end
 
-    def resolve_public_dirs_with_glob(public_dirs : Array(Hash(String, String)))
+    # A static mount's endpoint set is every file under its directory,
+    # images, fonts and SVGs included, so the directory is walked with
+    # `Dir.glob` rather than read from the file index (the media filter
+    # keeps those files out of it). `--exclude-path` is therefore
+    # re-applied per file. A single-file target
+    # (`e.File("/robots.txt", "static/robots.txt")`) is emitted as is.
+    def resolve_public_dirs(public_dirs : Array(Hash(String, String)))
       public_dirs.each do |p_dir|
         next if p_dir["file_path"].empty?
         full_path = resolve_public_dir_path(p_dir)
-
-        next unless File.directory?(full_path)
-        # `Dir.glob`, not a `file_map` lookup: a static directory's
-        # endpoint set is every file in it, including the images and fonts
-        # the media filter keeps out of the index. `--exclude-path` is
-        # therefore re-applied per file — the index-based
-        # `resolve_public_dirs` below gets it for free.
-        Dir.glob("#{escape_glob_path(full_path)}/**/*") do |path|
-          next if File.directory?(path)
-          next if excluded_path?(path)
-          if File.exists?(path)
-            static_url = p_dir["static_path"]
-            if static_url.ends_with?("/")
-              static_url = static_url[0..-2]
-            end
-
-            details = Details.new(PathInfo.new(path))
-            result << Endpoint.new("#{static_url}#{path.gsub(full_path, "")}", "GET", details)
-          end
-        end
-      end
-    end
-
-    def resolve_public_dirs(public_dirs : Array(Hash(String, String)))
-      public_dirs.each do |p_dir|
-        full_path = resolve_public_dir_path(p_dir)
-
-        get_files_by_prefix(full_path).each do |path|
-          # Ensure strict prefix match (directory boundary or exact match)
-          # get_files_by_prefix matches any file starting with prefix, so "public" matches "public2"
-          # We prevent this by ensuring the next character is a separator or it's an exact match
-          next unless path == full_path || path.starts_with?(full_path.ends_with?("/") ? full_path : "#{full_path}/")
-
-          if File.exists?(path)
-            if p_dir["static_path"].ends_with?("/")
-              p_dir["static_path"] = p_dir["static_path"][0..-2]
-            end
-
-            details = Details.new(PathInfo.new(path))
-            result << Endpoint.new("#{p_dir["static_path"]}#{path.gsub(full_path, "")}", "GET", details)
-          end
+        static_url = p_dir["static_path"].chomp('/')
+        paths = File.file?(full_path) ? [full_path] : Dir.glob("#{escape_glob_path(full_path)}/**/*")
+        paths.each do |path|
+          next if File.directory?(path) || excluded_path?(path)
+          result << Endpoint.new("#{static_url}#{path.lchop(full_path)}", "GET", Details.new(PathInfo.new(path)))
         end
       end
     end
