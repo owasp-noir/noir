@@ -30,10 +30,146 @@ module Analyzer::Rust
     DERIVE_RE = /#\[\s*derive\s*\(([^)]*)\)/
     ITEM_RE   = /\b(?:struct|enum)\s+([A-Za-z_]\w*)/
     # clap/structopt field attribute, e.g. #[arg(short, long, env = "X")].
-    CLAP_ATTR_RE = /#\[\s*(?:arg|structopt|clap)\s*\(([^\]]*)\)/
-    ARGH_ATTR_RE = /#\[\s*argh\s*\(([^\]]*)\)/
+    CLAP_ATTR_RE = /#\[\s*(?:arg|structopt|clap)(?:\s*\((.*)\))?\s*\]\s*$/m
+    ARGH_ATTR_RE = /#\[\s*argh(?:\s*\((.*)\))?\s*\]\s*$/m
     FIELD_RE     = /^\s*(?:pub\s+)?(\w+)\s*:/
     VARIANT_RE   = /^\s*(?:#\[\s*command\s*\([^\]]*\bname\s*=\s*"([^"]+)"[^\]]*\)\s*\]\s*)?([A-Z]\w*)(?:\s*\(\s*([A-Za-z0-9_:]+)\s*\))?/
+
+    # Shared helper that buffers multi-line attributes with bracket depth tracking
+    # outside strings, strips comments quote-aware, and parses derives, command names, and arg attributes.
+    private class AttributeScanner
+      getter pending_derive : String?
+      getter pending_command_name : String?
+      getter pending_attrs : Array(Tuple(Symbol, String))
+
+      @in_block_comment = false
+      @in_attr = false
+      @attr_depth = 0
+      @attr_buf = IO::Memory.new
+      @pending_derive : String? = nil
+      @pending_command_name : String? = nil
+      @pending_attrs = [] of Tuple(Symbol, String)
+
+      def initialize
+      end
+
+      def process_line(line : String) : String
+        line_code, @in_block_comment = Noir::RustCalleeExtractor.strip_comment_with_state(line, @in_block_comment, preserve_strings: true)
+        return "" if line_code.strip.empty? && !@in_attr
+
+        code_out = String::Builder.new
+        in_string = false
+        escaped = false
+        quote_char = '\0'
+        idx = 0
+
+        while idx < line_code.size
+          char = line_code[idx]
+
+          if in_string
+            if escaped
+              escaped = false
+            elsif char == '\\'
+              escaped = true
+            elsif char == quote_char
+              in_string = false
+            end
+
+            if @in_attr
+              @attr_buf << char
+            else
+              code_out << char
+            end
+          else
+            if char == '"'
+              in_string = true
+              quote_char = char
+              if @in_attr
+                @attr_buf << char
+              else
+                code_out << char
+              end
+            elsif !@in_attr
+              if char == '#'
+                j = idx + 1
+                while j < line_code.size && line_code[j].ascii_whitespace?
+                  j += 1
+                end
+                if j < line_code.size && line_code[j] == '['
+                  @in_attr = true
+                  @attr_depth = 1
+                  @attr_buf.clear
+                  @attr_buf << "#["
+                  idx = j
+                else
+                  code_out << char
+                end
+              else
+                code_out << char
+              end
+            else
+              @attr_buf << char
+              if char == '['
+                @attr_depth += 1
+              elsif char == ']'
+                @attr_depth -= 1
+                if @attr_depth <= 0
+                  @in_attr = false
+                  @attr_depth = 0
+                  parse_attribute(@attr_buf.to_s)
+                  @attr_buf.clear
+                end
+              end
+            end
+          end
+
+          idx += 1
+        end
+
+        if @in_attr
+          @attr_buf << " "
+        end
+
+        code_out.to_s.strip
+      end
+
+      private def parse_attribute(attr : String)
+        if dm = attr.match(DERIVE_RE)
+          @pending_derive = dm[1]
+        end
+        if am = attr.match(CLAP_ATTR_RE)
+          body = am[1]? || ""
+          @pending_attrs << {:clap, body}
+        elsif am = attr.match(ARGH_ATTR_RE)
+          body = am[1]? || ""
+          @pending_attrs << {:argh, body}
+        end
+        if cm = attr.match(/#\[\s*command\s*\(.*?\bname\s*=\s*"([^"]+)"/m)
+          @pending_command_name = cm[1]
+        end
+      end
+
+      def consume_derive : String?
+        val = @pending_derive
+        @pending_derive = nil
+        val
+      end
+
+      def consume_command_name : String?
+        val = @pending_command_name
+        @pending_command_name = nil
+        val
+      end
+
+      def clear_attrs
+        @pending_attrs.clear
+      end
+
+      def reset_for_new_item
+        @pending_attrs.clear
+        @pending_command_name = nil
+      end
+    end
 
     # clap builder marker (used only to recognise a builder-style CLI; the
     # builder arg/subcommand tree is a follow-up — see the note in `analyze`).
@@ -115,38 +251,20 @@ module Analyzer::Rust
       # Pass 1: find all enum names deriving Subcommand
       rs_sources.each do |path, _content, lines|
         binary = rust_binary_name(cargo, path)
-        pending_derive = nil
-        in_attr = false
-        attr_buf = ""
+        scanner = AttributeScanner.new
 
         lines.each do |line|
-          stripped = line.strip
-          stripped_code = stripped.sub(/\/\/.*$/, "").strip
-          next if stripped_code.empty?
+          code = scanner.process_line(line)
+          next if code.empty?
 
-          if !in_attr && stripped_code =~ /#\[\s*derive\b/
-            if stripped_code =~ /#\[\s*derive\s*\(([^)]*)\)/
-              pending_derive = $1
-            else
-              in_attr = true
-              attr_buf = stripped_code
-            end
-          elsif in_attr
-            attr_buf += " " + stripped_code
-            if stripped_code.includes?(']')
-              in_attr = false
-              if dm = attr_buf.match(/#\[\s*derive\s*\(([^)]*)\)/)
-                pending_derive = dm[1]
-              end
-            end
-          end
-
-          if (d = pending_derive) && (m = stripped_code.match(/\benum\s+([A-Za-z_]\w*)/))
+          if (d = scanner.pending_derive) && (m = code.match(/\benum\s+([A-Za-z_]\w*)/))
             if d.includes?("Subcommand")
               subcommand_enums << m[1]
               enum_binary[m[1]] = binary
             end
-            pending_derive = nil
+            scanner.consume_derive
+          elsif code.match(ITEM_RE)
+            scanner.consume_derive
           end
         end
       end
@@ -156,85 +274,70 @@ module Analyzer::Rust
         current_enum : String? = nil
         depth = 0
         enum_depth = -1
-        pending_name : String? = nil
-        in_attr = false
-        attr_buf = ""
+        scanner = AttributeScanner.new
 
         lines.each do |line|
           entry_depth = depth
-          stripped = line.strip
-          stripped_code = stripped.sub(/\/\/.*$/, "").strip
+          code = scanner.process_line(line)
 
-          if !stripped_code.empty?
-            if !in_attr && stripped_code =~ /#\[\s*command\b/
-              if stripped_code.includes?(']')
-                if nm = stripped_code.match(/\bname\s*=\s*"([^"]+)"/)
-                  pending_name = nm[1]
-                end
-              else
-                in_attr = true
-                attr_buf = stripped_code
-              end
-            elsif in_attr
-              attr_buf += " " + stripped_code
-              if stripped_code.includes?(']')
-                in_attr = false
-                if nm = attr_buf.match(/\bname\s*=\s*"([^"]+)"/)
-                  pending_name = nm[1]
-                end
-              end
-            end
-
+          if !code.empty?
             if current_enum.nil?
-              if m = stripped_code.match(/\benum\s+([A-Za-z_]\w*)/)
+              if m = code.match(/\benum\s+([A-Za-z_]\w*)/)
                 if subcommand_enums.includes?(m[1])
                   current_enum = m[1]
-                  opened = line.count('{')
+                  opened = code.count('{')
                   enum_depth = opened > 0 ? entry_depth + opened : entry_depth + 1
                 end
               end
             elsif entry_depth == enum_depth
-              if m = stripped_code.match(/(?:#\[\s*command\s*\([^\]]*\bname\s*=\s*"([^"]+)"[^\]]*\)\s*\]\s*)?([A-Z]\w*)(?:\s*\(\s*([A-Za-z0-9_:]+)\s*\))?/)
+              if m = code.match(VARIANT_RE)
                 v_name = m[2]
-                c_name = m[1]? || pending_name || camel_to_kebab(v_name)
+                c_name = m[1]? || scanner.consume_command_name || camel_to_kebab(v_name)
                 payload = m[3]?
                 if payload && (clean_payload = payload.split("::").last) && subcommand_enums.includes?(clean_payload)
                   child_links[clean_payload] = {current_enum, c_name}
                 end
-                pending_name = nil
-              elsif stripped_code.matches?(/^[A-Z]\w*/)
-                pending_name = nil
+              elsif code.matches?(/^[A-Z]\w*/)
+                scanner.consume_command_name
               end
             end
           end
 
-          depth += line.count('{') - line.count('}')
+          depth += code.count('{') - code.count('}')
           if current_enum && depth < enum_depth
             current_enum = nil
-            pending_name = nil
+            scanner.consume_command_name
           end
         end
       end
 
       # Pass 3: resolve base URL for each subcommand enum
       base_for = {} of String => String
+      visiting = Set(String).new
       resolve_base = uninitialized (String) -> String
       resolve_base = ->(enum_name : String) : String {
         if b = base_for[enum_name]?
           return b
         end
-        if link = child_links[enum_name]?
-          parent_enum, cmd_name = link
-          parent_base = resolve_base.call(parent_enum)
-          base = "#{parent_base}/#{cmd_name}"
-          base_for[enum_name] = base
-          base
-        else
+        if visiting.includes?(enum_name)
           bin = enum_binary[enum_name]? || "app"
           base = "cli://#{bin}"
           base_for[enum_name] = base
-          base
+          return base
         end
+
+        visiting << enum_name
+        base = if link = child_links[enum_name]?
+                 parent_enum, cmd_name = link
+                 parent_base = resolve_base.call(parent_enum)
+                 "#{parent_base}/#{cmd_name}"
+               else
+                 bin = enum_binary[enum_name]? || "app"
+                 "cli://#{bin}"
+               end
+        visiting.delete(enum_name)
+        base_for[enum_name] = base
+        base
       }
 
       subcommand_enums.each do |e|
@@ -254,58 +357,22 @@ module Analyzer::Rust
       item_body_depth = -1
       item_entered = false
       current_cmd = root_url
-      pending_derive : String? = nil
-      pending_attrs = [] of Tuple(Symbol, String) # [{:clap|:argh, body}]
-      pending_command_name : String? = nil
-      in_attr = false
-      attr_buf = ""
+      scanner = AttributeScanner.new
+
       # getopts has no subcommand concept: a receiver-variable map (not a
       # sticky cursor) links each `Options::new()` binding to the command
       # URL its `opt*` calls should attach to (always root_url today, but
       # keeps the same variable-scoping shape as the other CLI analyzers).
       getopts_vars = {} of String => String
 
-      process_attr = ->(buf : String) {
-        if dm = buf.match(DERIVE_RE)
-          pending_derive = dm[1]
-        end
-        if am = buf.match(CLAP_ATTR_RE)
-          pending_attrs << {:clap, am[1]}
-        elsif am = buf.match(ARGH_ATTR_RE)
-          pending_attrs << {:argh, am[1]}
-        end
-        if cm = buf.match(/#\[\s*command\s*\([^\]]*\bname\s*=\s*"([^"]+)"/)
-          pending_command_name = cm[1]
-        end
-      }
-
       lines.each_with_index do |line, index|
         entry_depth = depth
         line_no = index + 1
-        stripped = line.strip
-        stripped_code = stripped.sub(/\/\/.*$/, "").strip
-
-        # Multi-line or single-line attribute handling
-        if !stripped_code.empty?
-          if !in_attr && stripped_code =~ /#\[\s*(?:arg|clap|structopt|argh|command|derive)\b/
-            if stripped_code.includes?(']')
-              process_attr.call(stripped_code)
-            else
-              in_attr = true
-              attr_buf = stripped_code
-            end
-          elsif in_attr
-            attr_buf += " " + stripped_code
-            if stripped_code.includes?(']')
-              in_attr = false
-              process_attr.call(attr_buf)
-            end
-          end
-        end
+        code = scanner.process_line(line)
 
         # derive + item entry (only while not already inside a derive item).
         if item_kind.nil?
-          if (derive = pending_derive) && (im = line.match(ITEM_RE))
+          if (derive = scanner.pending_derive) && (im = code.match(ITEM_RE))
             if kind = classify_derive(derive)
               item_kind = kind
               if kind == :subcommand
@@ -315,7 +382,7 @@ module Analyzer::Rust
               else
                 current_cmd = root_url
               end
-              opened = line.count('{')
+              opened = code.count('{')
               # The body may open on this line (`struct X {`) or the next
               # (`struct X\n{`). Only mark the item "entered" once its brace
               # is actually seen, so the teardown guard below can't fire on
@@ -323,20 +390,21 @@ module Analyzer::Rust
               item_body_depth = opened > 0 ? entry_depth + opened : entry_depth + 1
               item_entered = opened > 0
             end
-            pending_derive = nil
+            scanner.consume_derive
+          elsif code.match(ITEM_RE)
+            scanner.consume_derive
           end
         end
 
         if item_kind
           # subcommand enum: a variant at the enum-body level opens a command.
           if item_kind == :subcommand && entry_depth == item_body_depth
-            if vm = stripped_code.match(VARIANT_RE)
+            if vm = code.match(VARIANT_RE)
               # clap renames CamelCase variants to kebab-case by default
               # (`BuildProject` -> `build-project`); an explicit
               # `#[command(name = "...")]` wins.
               v_name = vm[2]
-              name = vm[1]? || pending_command_name || camel_to_kebab(v_name)
-              pending_command_name = nil
+              name = vm[1]? || scanner.consume_command_name || camel_to_kebab(v_name)
               payload = vm[3]?
               if payload && (clean_payload = payload.split("::").last) && subcommand_enums.includes?(clean_payload)
                 # Nested subcommand container variant: record link and skip leaf endpoint
@@ -345,14 +413,16 @@ module Analyzer::Rust
                 current_cmd = "#{current_enum_base}/#{name}"
                 fetch_endpoint(endpoints, current_cmd, path, line_no)
               end
+            elsif code.matches?(/^[A-Z]\w*/)
+              scanner.consume_command_name
             end
           end
 
-          if (fm = stripped.match(FIELD_RE)) && !pending_attrs.empty?
-            pending_attrs.each do |attr|
+          if (fm = code.match(FIELD_RE)) && !scanner.pending_attrs.empty?
+            scanner.pending_attrs.each do |attr|
               apply_field(attr, fm[1], current_cmd, path, line_no, endpoints)
             end
-            pending_attrs.clear
+            scanner.clear_attrs
           end
         end
 
@@ -379,14 +449,13 @@ module Analyzer::Rust
           end
         end
 
-        depth += line.count('{') - line.count('}')
+        depth += code.count('{') - code.count('}')
         item_entered = true if item_kind && !item_entered && depth >= item_body_depth
         if item_kind && item_entered && depth < item_body_depth
           item_kind = nil
           item_entered = false
           current_cmd = root_url
-          pending_attrs.clear
-          pending_command_name = nil
+          scanner.reset_for_new_item
         elsif item_kind == :subcommand && depth == item_body_depth
           current_cmd = current_enum_base
         end
@@ -405,6 +474,7 @@ module Analyzer::Rust
     private def apply_field(attr : Tuple(Symbol, String), field : String, url : String,
                             path : String, line_no : Int32, endpoints : Hash(String, Endpoint))
       kind, body = attr
+      return if body.includes?("subcommand")
       ep = fetch_endpoint(endpoints, url, path, line_no)
 
       if kind == :argh

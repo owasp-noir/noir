@@ -35,8 +35,11 @@ clap_nested_endpoints = [
   build.call("cli://zoo/pen/open", [] of Param),
   build.call("cli://zoo/pen/close", [
     Param.new("amount", "", "flag"),
+    Param.new("endpoint", "", "flag"),
+    Param.new("speed", "", "flag"),
   ]),
   build.call("cli://zoo/__internal", [] of Param),
+  build.call("cli://zoo/b/leaf", [] of Param),
 ]
 
 FunctionalTester.new("fixtures/rust/cli_clap_nested/", {
