@@ -78,5 +78,20 @@ module Analyzer::Javascript
 
       nil
     end
+
+    # `require(__dirname + '/routes/pets')`, ``require(`${__dirname}/routes/pets`)``
+    # and `require(path.join(__dirname, 'routes', 'pets'))` (or `path.resolve`,
+    # or `import(...)`) all name `./routes/pets` relative to the importing
+    # file. Every specifier matcher only reads quoted literals, so the
+    # computed forms are rewritten to that literal before matching.
+    COMPUTED_SPECIFIER_RE = /\b(require|import)\s*\(\s*(?:__dirname\s*\+\s*(?:'([^'\n]*)'|"([^"\n]*)")|`\$\{\s*__dirname\s*\}([^`$\n]*)`|path\.(?:join|resolve)\s*\(\s*__dirname((?:\s*,\s*(?:'[^'\n]*'|"[^"\n]*"))*)\s*\))\s*\)/
+
+    def self.normalize_computed_specifiers(content : String) : String
+      return content unless content.includes?("__dirname")
+      content.gsub(COMPUTED_SPECIFIER_RE) do |_, m|
+        rel = m[2]? || m[3]? || m[4]? || m[5].scan(/'([^']*)'|"([^"]*)"/).join("/") { |s| s[1]? || s[2] }
+        "#{m[1]}('./#{rel.lchop('/')}')"
+      end
+    end
   end
 end
