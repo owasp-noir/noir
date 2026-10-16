@@ -1,0 +1,10 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: golden-ingress
+spec:
+  rules:
+    - http:
+        paths:
+          - path: /testdata-only
+            pathType: Prefix

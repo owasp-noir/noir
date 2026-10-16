@@ -1,0 +1,12 @@
+openapi: 3.0.0
+info:
+  title: Vendor API
+  version: 1.0.0
+servers:
+- url: https://api.vendor.example.com
+paths:
+  /vendor/accounts:
+    get:
+      responses:
+        '200':
+          description: Served by the vendor, consumed by this SDK

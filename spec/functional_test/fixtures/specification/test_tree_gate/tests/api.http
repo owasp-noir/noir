@@ -1,0 +1,2 @@
+### Health check against the real API
+GET https://api.example.com/health

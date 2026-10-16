@@ -1,0 +1,13 @@
+{
+  "$schema": "https://raw.githubusercontent.com/OpenAPITools/openapi-generator-cli/master/apps/generator-cli/src/config.schema.json",
+  "generator-cli": {
+    "version": "7.8.0",
+    "generators": {
+      "server": {
+        "generatorName": "nodejs-express-server",
+        "inputSpec": "api/openapi.yaml",
+        "output": "."
+      }
+    }
+  }
+}

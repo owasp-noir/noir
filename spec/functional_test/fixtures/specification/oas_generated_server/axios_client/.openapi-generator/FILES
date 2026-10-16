@@ -1,0 +1,8 @@
+.gitignore
+api/openapi.yaml
+api.ts
+base.ts
+common.ts
+configuration.ts
+index.ts
+docs/ServerConfiguration.md

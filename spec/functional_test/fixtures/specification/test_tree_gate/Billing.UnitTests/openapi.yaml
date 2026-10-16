@@ -1,0 +1,10 @@
+openapi: 3.0.0
+info:
+  title: Generator test input
+  version: 1.0.0
+paths:
+  /dotnet-test-input-only:
+    get:
+      responses:
+        '200':
+          description: Not served by the project

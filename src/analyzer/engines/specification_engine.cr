@@ -70,6 +70,71 @@ module Analyzer::Specification
     @external_yaml_docs = {} of String => SpecDoc(YAML::Any)?
     @reported_refs = Set(String).new
 
+    # A spec or config document inside a test tree is test input, a golden
+    # output or a generated client proxy: it describes something the project
+    # is tested against or consumes, not something it serves. Matched against
+    # the scan-base-relative path, so a checkout that merely lives under a
+    # directory with one of these names is unaffected.
+    #
+    # `TEST_TREE` holds the unambiguous markers and gates every key but the
+    # client collections. `spec`/`specs`/`examples`/`samples` are deliberately
+    # absent: real API descriptions live there.
+    TEST_TREE = /\/(?:src\/(?:test|sbt-test|it|androidTest)|testdata|fixtures|__fixtures__|__snapshots__)\/|\.(?:verified|received)\.[^\/]+\z/i
+
+    # Schema and definition documents are additionally gated on the generic
+    # `test`/`tests` segments (and the `.Tests` .NET project directories),
+    # which would be too broad for infra configs: `overlays/test` and
+    # `deploy/test` hold real test-environment deployments. Visual Studio's
+    # `Service References`/`Connected Services` folders hold the proxy of a
+    # service the project consumes.
+    SCHEMA_TEST_TREE = /\/(?:tests?|__tests__|e2e|test_data|service references|connected services)\/|\.(?:unit|integration|functional|e2e)?tests?\//i
+
+    SCHEMA_KEYS = Set{
+      Noir::LocatorKeys::SWAGGER_JSON.name, Noir::LocatorKeys::SWAGGER_YAML.name,
+      Noir::LocatorKeys::OAS3_JSON.name, Noir::LocatorKeys::OAS3_YAML.name,
+      Noir::LocatorKeys::ASYNCAPI_JSON.name, Noir::LocatorKeys::ASYNCAPI_YAML.name,
+      Noir::LocatorKeys::OPENRPC_JSON.name, Noir::LocatorKeys::RAML_SPEC.name,
+      Noir::LocatorKeys::GRAPHQL_SDL.name, Noir::LocatorKeys::GRAPHQL_OPERATION.name,
+      Noir::LocatorKeys::GRPC_PROTO.name, Noir::LocatorKeys::WSDL_SPEC.name,
+      Noir::LocatorKeys::THRIFT_IDL.name, Noir::LocatorKeys::SMITHY_SPEC.name,
+      Noir::LocatorKeys::TYPESPEC_SPEC.name, Noir::LocatorKeys::ODATA_SPEC.name,
+    }
+
+    OAS_KEYS = Set{
+      Noir::LocatorKeys::SWAGGER_JSON.name, Noir::LocatorKeys::SWAGGER_YAML.name,
+      Noir::LocatorKeys::OAS3_JSON.name, Noir::LocatorKeys::OAS3_YAML.name,
+    }
+
+    # A client runtime file in an openapi-generator `FILES` manifest. Server
+    # stubs list `api/openapi.yaml` too, but their templates do not emit these
+    # (a custom one can: `base.ts`, `rest.py` and `client.go` are common names).
+    GENERATED_CLIENT_FILE = /(?:\A|\/)(?:client\.go|configuration\.(?:go|rs)|api_client\.(?:py|rb)|rest\.py|ApiClient\.(?:java|kt|cs)|runtime\.ts|base\.ts)\z/
+
+    # What only a server stub's manifest lists: a controller/handler/router/
+    # server directory, Spring's `*ApiController`/`*ApiDelegate`/`*ApiService`
+    # and the entry points of the go, python and spring server templates. It
+    # outweighs the client runtime above. Deliberately no bare `Controller.*`,
+    # `Application.*`, `server.*` or `app.*`: SDKs generate models by those
+    # names (kubernetes `V1ReplicationController`, hcloud `models/server.rs`).
+    GENERATED_SERVER_FILE = /(?:\A|\/)(?i:controllers?|handlers?|routers?|routes|servers?)\/|ApiController\.(?:java|kt)\z|Api(?:Delegate|Service(?:Impl)?)\.(?:java|kt|scala)\z|(?:\A|\/)(?:main\.go|routers\.go|__main__\.py|OpenApiGeneratorApplication\.java|OpenAPI2SpringBoot\.java)\z/
+
+    # `generatorName` in the generator-cli config next to the manifest, and the
+    # generators among them that build a server.
+    GENERATOR_NAME   = /"generatorName"\s*:\s*"([^"]+)"/
+    SERVER_GENERATOR = /\A(?:spring|aspnetcore|scalatra|jaxrs-.+|nodejs-.+)\z|-(?:server|spring|aspnetcore|flask|fastapi|aiohttp|laravel|lumen|slim4?|symfony|flight|axum|sinatra|rails|vertx-web|play-framework|finch|inflector|camel)\z/
+
+    # Recorded requests and client collections kept under a test tree usually
+    # exercise the real API, so they are never gated.
+    CLIENT_COLLECTION_KEYS = Set{
+      Noir::LocatorKeys::POSTMAN_JSON.name, Noir::LocatorKeys::BRUNO_BRU.name,
+      Noir::LocatorKeys::INSOMNIA_JSON.name, Noir::LocatorKeys::INSOMNIA_YAML.name,
+      Noir::LocatorKeys::HOPPSCOTCH_JSON.name, Noir::LocatorKeys::THUNDER_CLIENT_JSON.name,
+      Noir::LocatorKeys::HTTP_FILE.name, Noir::LocatorKeys::HURL_FILE.name,
+      Noir::LocatorKeys::HAR_PATH.name, Noir::LocatorKeys::BURP_SITEMAP.name,
+      Noir::LocatorKeys::ZAP_SITES_TREE.name, Noir::LocatorKeys::CAIDO_JSON.name,
+      Noir::LocatorKeys::MITMPROXY_PATH.name,
+    }
+
     # Yield every registered path for `key`, skipping paths that no longer
     # resolve and containing per-file failures.
     #
@@ -108,6 +173,8 @@ module Analyzer::Specification
 
       paths.each do |path|
         next unless File.exists?(path)
+        # Silent, like the language engines' test-tree gates: nothing was lost.
+        next if test_tree?(key, path) || generated_client_spec?(key, path)
 
         begin
           block.call(path)
@@ -122,6 +189,58 @@ module Analyzer::Specification
           Noir::SkippedFiles.record(tech, path, e.message.presence || e.class.name)
         end
       end
+    end
+
+    private def test_tree?(key : Noir::LocatorKey(Array(String)), path : String) : Bool
+      SpecificationEngine.test_tree?(key, base_relative_path(path))
+    end
+
+    # The gate itself, on a scan-base-relative path. Public so an analyzer that
+    # drains a spec key outside `each_spec_file` (`go_connect_rpc` reads the
+    # gRPC protos) applies the very same rule instead of a copy of it.
+    def self.test_tree?(key : Noir::LocatorKey(Array(String)), relative : String) : Bool
+      return false if CLIENT_COLLECTION_KEYS.includes?(key.name)
+
+      relative.matches?(TEST_TREE) || (SCHEMA_KEYS.includes?(key.name) && relative.matches?(SCHEMA_TEST_TREE))
+    end
+
+    # The OpenAPI document an SDK was generated *from* is copied into the SDK
+    # (`api/openapi.yaml`) and describes a remote API the SDK consumes. The
+    # generator records it in `.openapi-generator/FILES` beside the client
+    # runtime; a server stub's manifest lists the document too, so the client
+    # runtime must be there and no server-side file or server generator may
+    # be. The climb stops at the scan base: `-b sdk/api` was asked for.
+    private def generated_client_spec?(key : Noir::LocatorKey(Array(String)), path : String) : Bool
+      return false unless OAS_KEYS.includes?(key.name)
+
+      base = configured_base_for(path)
+      return false if base.empty?
+
+      dir = File.dirname(path)
+      while Noir::PathScope.under_root?(dir, base)
+        manifest = File.join(dir, ".openapi-generator", "FILES")
+        if File.file?(manifest)
+          lines = File.read_lines(manifest, chomp: true)
+          return lines.includes?(path[(dir.size + 1)..]) &&
+            lines.any?(&.matches?(GENERATED_CLIENT_FILE)) &&
+            lines.none?(&.matches?(GENERATED_SERVER_FILE)) &&
+            !server_generator_configured?(dir)
+        end
+
+        parent = File.dirname(dir)
+        break if parent == dir
+        dir = parent
+      end
+      false
+    rescue
+      false
+    end
+
+    # A server generator named in the `openapitools.json` beside the manifest.
+    # Any one of several is enough: keeping a document is the safe direction.
+    private def server_generator_configured?(dir : String) : Bool
+      config = File.join(dir, "openapitools.json")
+      File.file?(config) && File.read(config).scan(GENERATOR_NAME).any?(&.[1].matches?(SERVER_GENERATOR))
     end
 
     # `each_spec_file` plus the `Details` almost every caller builds from

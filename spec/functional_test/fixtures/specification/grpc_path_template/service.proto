@@ -1,0 +1,84 @@
+syntax = "proto3";
+
+package templates.v1;
+
+import "google/api/annotations.proto";
+
+// google.api.http path templates: `{var=pattern}` is transcoding syntax. A
+// client requests the expanded path, so the URL must be spelled that way.
+service ResourceService {
+  rpc GetAttachment(NameRequest) returns (Resource) {
+    option (google.api.http) = {
+      get: "/api/{name=attachments/*}"
+    };
+  }
+
+  rpc ListComments(ParentRequest) returns (Resource) {
+    option (google.api.http) = {
+      get: "/api/{parent=memos/*}/comments"
+    };
+  }
+
+  rpc GetKey(NameRequest) returns (Resource) {
+    option (google.api.http) = {
+      get: "/v1/{name=projects/*/serviceAccounts/*/keys/*}:inspect"
+    };
+  }
+
+  rpc UpdateBook(BookRequest) returns (Resource) {
+    option (google.api.http) = {
+      patch: "/v1/{book.name=publishers/*/books/*}"
+      body: "book"
+    };
+  }
+
+  rpc TestIam(ResourceRequest) returns (Resource) {
+    option (google.api.http) = {
+      post: "/v1/{resource=**}:testIamPermissions"
+      body: "*"
+    };
+  }
+
+  rpc Repeat(RepeatRequest) returns (Resource) {
+    option (google.api.http) = {
+      get: "/v1/repeat/{first=a/*}/{second=b/**}"
+    };
+  }
+
+  rpc ListOperations(NameRequest) returns (Resource) {
+    option (google.api.http) = {
+      get: "/v1/{name=operations}"
+    };
+  }
+
+  rpc GetPlain(NameRequest) returns (Resource) {
+    option (google.api.http) = {
+      get: "/v1/plain/{name}"
+    };
+  }
+}
+
+message NameRequest {
+  string name = 1;
+}
+
+message ParentRequest {
+  string parent = 1;
+}
+
+message BookRequest {
+  string book = 1;
+}
+
+message RepeatRequest {
+  string first = 1;
+  string second = 2;
+}
+
+message ResourceRequest {
+  string resource = 1;
+}
+
+message Resource {
+  string name = 1;
+}
