@@ -11,7 +11,8 @@ expected_endpoints = [
   Endpoint.new("/blog/index/index", "GET"),
   Endpoint.new("/blog/post/view", "GET"),
   Endpoint.new("/blog/post/save", "POST"),
-  Endpoint.new("/acme_blog/post/edit", "GET"),
+  # Adminhtml controllers sit under the backend front name (default `admin`).
+  Endpoint.new("/admin/acme_blog/post/edit", "GET"),
   # Nested Controller/Order/Creditmemo/ collapses to one underscore segment.
   Endpoint.new("/blog/order_creditmemo/save", "POST"),
   # Implements HttpGetActionInterface only; the imported (but unimplemented)

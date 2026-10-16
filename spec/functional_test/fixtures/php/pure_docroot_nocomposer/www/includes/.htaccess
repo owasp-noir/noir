@@ -1,0 +1,4 @@
+# php file into external libraries can't be executed directly.
+<FilesMatch "\.php$">
+    SetHandler !
+</FilesMatch>

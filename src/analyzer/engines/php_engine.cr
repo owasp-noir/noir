@@ -28,14 +28,37 @@ module Analyzer::Php
     end
 
     protected def scan_accepts?(path : String) : Bool
-      !PhpEngine.test_path?(base_relative_path(path))
+      !PhpEngine.test_path?(base_relative_path(path), root_docs: root_docs_skipped?)
     end
+
+    # Whether a `docs/` tree at the scan base is skipped as runnable doc
+    # snippets. True for framework adapters, where nothing under `docs/` is a
+    # route; the plain PHP analyzer turns it off, because there a `docs/`
+    # section is served like any other directory (`docs/index.php?page=…`).
+    protected def root_docs_skipped? : Bool
+      true
+    end
+
+    TEST_DIR_RE = %r{/(?:Tests|tests|Fixtures|workbench|legacy_tests)/|/Test/(?:Unit|Integration|Mftf|Integrity|Legacy|Fixture|_files)/|/test/phpunit/|/config/routes/test/}
 
     # Standard PHP test-source conventions:
     #
     #   * `/Tests/`               — PSR-4 / Symfony convention
     #     (`src/Symfony/Bundle/FrameworkBundle/Tests/...`)
     #   * `/tests/`               — Laravel / CakePHP / PHPUnit default
+    #   * `/Test/Unit/`, `/Test/Mftf/`, … — Magento's per-module test trees
+    #     (`Test/Unit/_files/webapi.xml`), `/test/phpunit/` — Dolibarr, and
+    #     `/config/routes/test/` — Symfony's test-env routes. A bare
+    #     `Test/` or `test/` is *not* a test dir: it is the `Test` namespace
+    #     of `app/Http/Controllers/Test/` (Laravel), `src/Controller/Test/`
+    #     (Symfony), a ThinkPHP `application/test/` or Yii `modules/test/`
+    #     module, all real routes.
+    #   * `/Fixtures/`, `/legacy_tests/` — test data and Dusk suites
+    #   * `/workbench/`           — Orchestra Testbench skeleton app
+    #   * `/docs/` at the scan base — runnable doc snippets
+    #     (API Platform `docs/guides`); anchored, because Folio mounts
+    #     `resources/views/docs` as a real route. `root_docs: false` drops
+    #     it for the plain PHP analyzer, which serves a `docs/` section.
     #   * `*Test.php` filename    — PHPUnit suffix convention
     #   * `*Tests.php` filename   — pluralized variant (rare)
     #
@@ -50,9 +73,9 @@ module Analyzer::Php
     # whatever directory the checkout happened to live in: the same tree
     # scanned from `~/work/tests/myapp` reported 0 endpoints instead of
     # 235.
-    def self.test_path?(relative_path : String) : Bool
-      return true if relative_path.includes?("/Tests/")
-      return true if relative_path.includes?("/tests/")
+    def self.test_path?(relative_path : String, root_docs : Bool = true) : Bool
+      return true if relative_path.matches?(TEST_DIR_RE)
+      return true if root_docs && relative_path.starts_with?("/docs/")
       base = File.basename(relative_path)
       return true if base.ends_with?("Test.php")
       base.ends_with?("Tests.php")

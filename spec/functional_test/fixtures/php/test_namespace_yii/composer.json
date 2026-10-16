@@ -1,0 +1,8 @@
+{
+    "name": "acme/test-namespace-yii",
+    "type": "project",
+    "require": {
+        "php": ">=7.4",
+        "yiisoft/yii2": "~2.0.45"
+    }
+}
