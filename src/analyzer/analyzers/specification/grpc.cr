@@ -318,7 +318,7 @@ module Analyzer::Specification
               end
             end
 
-            endpoint = Endpoint.new(http_path, http_method, gateway_params, details)
+            endpoint = Endpoint.new(expand_transcoding_template(http_path), http_method, gateway_params, details)
             @result << endpoint
           end
         end
@@ -326,6 +326,34 @@ module Analyzer::Specification
     end
 
     alias HttpMapping = NamedTuple(method: String, path: String, body: String?)
+
+    PATH_TEMPLATE_VARIABLE = /\{([\w.]+)=([^{}]*)\}/
+
+    # `{name=projects/*/keys/*}` is transcoding syntax, not a path: a client
+    # requests the expanded `projects/1/keys/2` and `name` captures all of it.
+    # Spell the URL the way it can be requested: the pattern's literal
+    # segments stay, its last wildcard takes the variable's name and earlier
+    # ones become `{wildcard}`, `{wildcard2}`, ... (the `oas_common`
+    # convention). A pattern without a wildcard (`{name=operations}`) is
+    # requested as the literal itself.
+    private def expand_transcoding_template(path : String) : String
+      wildcards = 0
+      path.gsub(PATH_TEMPLATE_VARIABLE) do |_, match|
+        segments = match[2].split('/')
+        last = segments.rindex { |segment| segment == "*" || segment == "**" }
+
+        segments.map_with_index do |segment, index|
+          if index == last
+            "{#{match[1]}}"
+          elsif segment == "*" || segment == "**"
+            wildcards += 1
+            wildcards == 1 ? "{wildcard}" : "{wildcard#{wildcards}}"
+          else
+            segment
+          end
+        end.join('/')
+      end
+    end
 
     # `google.api.http` has two textual spellings and real code uses both:
     #

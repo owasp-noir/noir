@@ -61,7 +61,7 @@ expected_endpoints = [
     Param.new("name", "", "json"),
   ]),
   # Path parameter with resource pattern {name=projects/*/locations/*}
-  Endpoint.new("/api/v1/{name=projects/*/locations/*}/resource", "GET", [
+  Endpoint.new("/api/v1/projects/{wildcard}/locations/{name}/resource", "GET", [
     Param.new("name", "", "path"),
     Param.new("user_id", "", "query"),
   ]),
