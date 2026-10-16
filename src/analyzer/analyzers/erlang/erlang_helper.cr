@@ -14,37 +14,48 @@ module Analyzer::Erlang
       base.ends_with?("_SUITE.erl") || base.ends_with?("_tests.erl")
     end
 
-    IFDEF_TEST = /^\s*-\s*ifdef\s*\(\s*TEST\s*\)\s*\./
-    IF_OPEN    = /^\s*-\s*(?:ifdef|ifndef|if)\s*\(/
-    ELSE_LINE  = /^\s*-\s*else\s*\./
-    ENDIF_LINE = /^\s*-\s*endif\s*\./
+    # A preprocessor directive that opens a form: at the start of a line or
+    # right after the `.` ending the previous form, so several directives on
+    # one line (`-ifdef(TEST). -include_lib("x"). -endif.`) are all seen.
+    # `else`/`endif` leave their `.` unconsumed, because it is the opening
+    # `.` of the next directive on the line.
+    DIRECTIVE = /(?:\A|\.)\s*-\s*(?:(ifdef\s*\(\s*TEST\s*\))|(ifndef\s*\(\s*TEST\s*\))|(if(?:n?def)?\s*\()|(else)(?=\s*\.)|(endif)(?=\s*\.))/
 
-    # Blank the lines of every `-ifdef(TEST). … -endif.` region (EUnit
-    # `*_test_()` blocks inside a source module) while keeping newlines, so
-    # later line numbers hold. Nested `-if*` conditionals are tracked; an
-    # `-else.` at the outer level ends the region, since that branch is the
-    # one compiled without TEST.
+    # Blank the lines of every region compiled only when TEST is defined
+    # (`-ifdef(TEST). … -endif.`, or the `-else.` branch of
+    # `-ifndef(TEST).`), keeping newlines so later line numbers hold. Every
+    # open `-if*` is tracked so an `-else.`/`-endif.` pairs with its own
+    # conditional; the `-else.` of `-ifdef(TEST).` is the branch compiled
+    # without TEST, i.e. production code.
     def mask_ifdef_test(text : String) : String
       return text unless text.includes?("TEST")
 
-      depth = 0
+      # {is a TEST conditional, current branch is TEST-only}
+      frames = [] of Tuple(Bool, Bool)
       result = String::Builder.new(text.bytesize)
       text.each_line(chomp: false) do |line|
-        if depth == 0
-          if line.matches?(IFDEF_TEST)
-            depth = 1
+        masked = frames.any?(&.[1])
+        line.scan(DIRECTIVE) do |m|
+          if m[1]?
+            frames << {true, true}
+          elsif m[2]?
+            frames << {true, false}
+          elsif m[3]?
+            frames << {false, false}
+          elsif m[4]?
+            if (top = frames.last?) && top[0]
+              frames[-1] = {true, !top[1]}
+            end
           else
-            result << line
-            next
+            frames.pop?
           end
-        elsif line.matches?(IF_OPEN)
-          depth += 1
-        elsif line.matches?(ENDIF_LINE)
-          depth -= 1
-        elsif depth == 1 && line.matches?(ELSE_LINE)
-          depth = 0
+          masked ||= frames.any?(&.[1])
         end
-        result << '\n' if line.ends_with?('\n')
+        if masked
+          result << '\n' if line.ends_with?('\n')
+        else
+          result << line
+        end
       end
       result.to_s
     end
