@@ -19,8 +19,12 @@ module Analyzer::Elixir
     analyzer_for "elixir_phoenix_channel"
 
     # `channel "room:*", RoomChannel` / `channel "room:" <> _, MyApp.RoomChannel`
-    # and the `mix format` paren form `channel("room:*", RoomChannel)`.
-    CHANNEL_DECL = /^\s*channel\s*\(?\s*["']([^"']+)["']\s*,\s*([\w.]+)/
+    # and the `mix format` paren form `channel("room:*", RoomChannel)`, which
+    # `mix format` also spreads over several lines past 98 columns:
+    # `channel(\n  "room:*",\n  MyApp.RoomChannel\n)`. Run over the whole
+    # file (`/m` anchors `^` at each line start); only the keyword has to
+    # start its line.
+    CHANNEL_DECL = /^[ \t]*channel\s*\(?\s*["']([^"']+)["']\s*,\s*([\w.]+)/m
 
     # `defmodule MyAppWeb.RoomChannel do`.
     DEFMODULE = /^\s*defmodule\s+([\w.]+)\s+do\b/
@@ -45,11 +49,7 @@ module Analyzer::Elixir
       files.each do |path|
         content = read_file_content(path)
         next unless content.includes?("channel")
-        content.each_line do |line|
-          if m = line.match(CHANNEL_DECL)
-            topics[m[2]] = m[1]
-          end
-        end
+        content.scan(CHANNEL_DECL) { |m| topics[m[2]] = m[1] }
       rescue e
         logger.debug "Error scanning Phoenix channel decls in #{path}: #{e}"
         next
@@ -71,7 +71,6 @@ module Analyzer::Elixir
 
     private record ChannelModule,
       full_name : String,
-      name : String,
       events : Array(Tuple(String, Int32)),
       path : String,
       line : Int32
@@ -98,7 +97,7 @@ module Analyzer::Elixir
       end
 
       name = module_name || File.basename(path, ".ex")
-      modules << ChannelModule.new(name, name.split('.').last, events, path, module_line)
+      modules << ChannelModule.new(name, events, path, module_line)
     end
 
     # The topic a socket mapped to `mod`: the declared name equal to its
