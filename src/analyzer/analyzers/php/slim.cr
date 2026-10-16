@@ -115,7 +115,13 @@ module Analyzer::Php
       # unrelated `$obj->get('key')` can't pull in following code as a route.
       # The path may be empty: `$group->get('', …)` routes the group prefix
       # itself (slim-skeleton's `/users`).
-      verb_regex = /(\$\w+)->(get|post|put|patch|delete|options|head|any)\s*\(\s*['"]([^'"\r\n]*)['"]\s*,/i
+      #
+      # The pattern must also be empty, start with `/` or be an optional
+      # segment `[…]`: Slim joins it onto the group prefix as a string and
+      # FastRoute only sees URIs that start with `/`. Without that, a config
+      # getter (`$conf->get('general.timezone', 'UTC')`), an HTTP client or a
+      # collection `put()` reads as a route.
+      verb_regex = /(\$\w+)->(get|post|put|patch|delete|options|head|any)\s*\(\s*['"]((?:[\/\[][^'"\r\n]*)?)['"]\s*,/i
       offsets = Noir::CharOffsets.new(working_content)
       pos = 0
       while m = offsets.match(verb_regex, pos)
@@ -141,7 +147,7 @@ module Analyzer::Php
       end
 
       # 3. Multi-method map routes: $app->map(["GET","POST"], "/path", handler)
-      map_regex = /(\$\w+)->map\s*\(\s*\[([^\]]+)\]\s*,\s*['"]([^'"\r\n]*)['"]\s*,/i
+      map_regex = /(\$\w+)->map\s*\(\s*\[([^\]]+)\]\s*,\s*['"]((?:[\/\[][^'"\r\n]*)?)['"]\s*,/i
       pos = 0
       while m = offsets.match(map_regex, pos)
         after_args = offsets.end(m)
