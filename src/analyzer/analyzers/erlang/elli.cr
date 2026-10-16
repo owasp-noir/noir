@@ -37,13 +37,15 @@ module Analyzer::Erlang
 
     def analyze
       get_files_by_extension(".erl").each do |path|
+        next if Helper.test_path?(base_relative_path(path))
+
         content = read_file_content(path)
         # Every Elli route clause is a `handle(` head; skip files without
         # one before paying for the comment strip.
         next unless content.includes?("handle(")
         next unless content.includes?("elli")
 
-        process_file(path, Helper.strip_erlang_comments(content))
+        process_file(path, Helper.mask_ifdef_test(Helper.strip_erlang_comments(content)))
       end
 
       @result
