@@ -5090,7 +5090,7 @@ This is the map: every framework Noir can read, and how much of each one it unde
         <span class="tech-chip on">body</span>
         <span class="tech-chip on">header</span>
         <span class="tech-chip on">cookie</span>
-        <span class="tech-chip on">static</span>
+        <span class="tech-chip off">static</span>
         <span class="tech-chip on">websocket</span>
         <span class="tech-chip on">callee</span>
       </div>
