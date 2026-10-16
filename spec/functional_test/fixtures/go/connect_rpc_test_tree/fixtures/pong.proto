@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package pong.v1;
+
+message PongRequest {
+  string text = 1;
+}
+
+message PongResponse {
+  string text = 1;
+}
+
+service PongService {
+  rpc Pong(PongRequest) returns (PongResponse);
+}

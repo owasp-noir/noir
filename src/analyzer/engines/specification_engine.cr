@@ -178,9 +178,15 @@ module Analyzer::Specification
     end
 
     private def test_tree?(key : Noir::LocatorKey(Array(String)), path : String) : Bool
+      SpecificationEngine.test_tree?(key, base_relative_path(path))
+    end
+
+    # The gate itself, on a scan-base-relative path. Public so an analyzer that
+    # drains a spec key outside `each_spec_file` (`go_connect_rpc` reads the
+    # gRPC protos) applies the very same rule instead of a copy of it.
+    def self.test_tree?(key : Noir::LocatorKey(Array(String)), relative : String) : Bool
       return false if CLIENT_COLLECTION_KEYS.includes?(key.name)
 
-      relative = base_relative_path(path)
       relative.matches?(TEST_TREE) || (SCHEMA_KEYS.includes?(key.name) && relative.matches?(SCHEMA_TEST_TREE))
     end
 

@@ -1,5 +1,6 @@
 require "../../../models/analyzer"
 require "../../engines/go_engine"
+require "../../engines/specification_engine"
 
 module Analyzer::Go
   # Connect (https://connectrpc.com/) is Buf's gRPC-compatible RPC
@@ -44,6 +45,10 @@ module Analyzer::Go
         service_mounts = discover_service_mounts
 
         proto_files.each do |proto_file|
+          # Same gate as the gRPC analyzer: a proto under testdata/ or
+          # src/test/ is test input, not a service this project serves.
+          next if Analyzer::Specification::SpecificationEngine.test_tree?(Noir::LocatorKeys::GRPC_PROTO, base_relative_path(proto_file))
+
           content = read_file_content(proto_file)
           parse_proto(content, proto_file, service_mounts)
         rescue File::NotFoundError
