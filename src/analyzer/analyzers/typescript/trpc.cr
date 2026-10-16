@@ -121,6 +121,9 @@ module Analyzer::Typescript
     # lists above instead of two sequential String#includes? calls.
     TRPC_ROOT_MARKER_RE = Regex.union("initTRPC", "createTRPCRouter")
 
+    # Every tRPC handler imports from a `@trpc/*` or `trpc-*` package.
+    TRPC_MENTION_RE = /trpc/i
+
     # `createRouter`/`trpc.router` gate the v9 chain-router shape.
     V9_ROUTER_MARKER_RE = Regex.union("createRouter", "trpc.router")
 
@@ -540,6 +543,15 @@ module Analyzer::Typescript
         # openapi-fetch-handler types `endpoint` this way; the real prefix
         # `'/api/trpc'` lives in another file).
         next if m[1].includes?("${")
+        # Adapters compare `endpoint` to the request pathname, so a mount
+        # path starts with `/`. This drops the S3/OAuth `endpoint:
+        # 'https://…'` options, `'GET /api/…'` labels and bare names that
+        # stories, seeders and non-tRPC modules carry.
+        next unless m[1].starts_with?('/')
+        # `url_prefixes` is last-file-wins per base, so a path-shaped
+        # `endpoint:` in a module that is not a tRPC handler (a SCIM
+        # resource-type table) would still replace every router's prefix.
+        next unless content.matches?(TRPC_MENTION_RE)
         return m[1]
       end
 
