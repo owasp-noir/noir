@@ -26,6 +26,29 @@ module Analyzer::Php
     @php_web_roots : Array(Tuple(String, String))? = nil
     # Normalized roots of composer-managed projects.
     @php_managed_roots : Array(String)? = nil
+    # Normalized directories whose own `.htaccess` keeps PHP from running.
+    @php_denied_roots : Array(String)? = nil
+
+    # `.htaccess` directives that turn a whole directory away, one per line.
+    HTACCESS_DENY_RE = /^[ \t]*(?:Deny[ \t]+from[ \t]+all|Require[ \t]+all[ \t]+denied)[ \t]*$/mi
+    # Any grant at all (`Allow from`, `Require ip/granted/valid-user`) means
+    # the deny is conditional, so the directory is left alone.
+    HTACCESS_GRANT_RE = /^[ \t]*(?:Allow[ \t]+from|Require[ \t]+(?!all[ \t]+denied\b))/mi
+    # Blocks that scope a deny to some files/URLs: a deny inside one is not a
+    # deny of the directory.
+    HTACCESS_SCOPED_BLOCK_RE = /<(Files|FilesMatch|Limit|LimitExcept|Directory|DirectoryMatch|Location|LocationMatch)\b.*?<\/\1>/mi
+    # `<Files *.php>` / `<FilesMatch "\.php$">`: every PHP file, not one named
+    # `config.php` (a letter before `.php`) or `php.ini`.
+    HTACCESS_PHP_FILES_RE = /<Files(?:Match)?\b(?![^>]*[\w-]\\?\.php)[^>]*[.(|:]php[^>]*>(.*?)<\/Files(?:Match)?>/mi
+    HTACCESS_PHP_OFF_RE   = /^[ \t]*(?:SetHandler[ \t]+!|RemoveHandler\b|Deny[ \t]+from[ \t]+all\b|Require[ \t]+all[ \t]+denied\b)/mi
+
+    # `<?php`, `?>` and whitespace: what is left of an `index.php` once
+    # these and its comments go, if it is only a placeholder.
+    PHP_TAG_OR_SPACE_RE = /<\?(?:php)?|\?>|\s+/i
+
+    # URL with a hidden directory (`.github/`, `.phan/`) in it; `.well-known`
+    # is a real served path.
+    HIDDEN_DIR_URL_RE = %r{(?:^|/)\.(?!well-known/)[^/]+/}
 
     # Document roots discovered in this scan.
     #
@@ -50,6 +73,9 @@ module Analyzer::Php
 
         dir = File.dirname(file)
         next unless WEBROOT_DIR_NAMES.includes?(File.basename(dir).downcase)
+        # A "Silence is golden" `index.php` guards a directory listing; it is
+        # not a front controller, so it does not make its folder a doc root.
+        next if php_code(read_file_content(file)).gsub(PHP_TAG_OR_SPACE_RE, "").empty?
 
         expanded = Noir::PathScope.expand(dir)
         next if roots.any? { |existing, _| existing == expanded }
@@ -84,9 +110,39 @@ module Analyzer::Php
         normalized = Noir::PathScope.normalize_root(File.dirname(appinfo))
         roots << normalized unless roots.includes?(normalized)
       end
+      # A real document root likewise names the one directory that is served:
+      # `scripts/`, `dev/` and `test/` next to Dolibarr's `htdocs/` are CLI and
+      # CI tooling even though the repo has no `composer.json`.
+      php_web_roots.each do |expanded, _|
+        parent = Noir::PathScope.normalize_root(File.dirname(expanded))
+        roots << parent unless roots.includes?(parent)
+      end
 
       @php_managed_roots = roots
       roots
+    end
+
+    # Directories the app's own `.htaccess` makes unreachable: everything is
+    # denied (osTicket `include/`), or PHP files are not handed to PHP
+    # (Dolibarr `htdocs/includes/`, upload dirs).
+    private def php_denied_roots : Array(String)
+      cached = @php_denied_roots
+      return cached if cached
+
+      roots = [] of String
+      get_files_by_basename(".htaccess").each do |file|
+        next unless htaccess_denies_php?(read_file_content(file))
+        roots << Noir::PathScope.normalize_root(File.dirname(file))
+      end
+
+      @php_denied_roots = roots
+      roots
+    end
+
+    private def htaccess_denies_php?(text : String) : Bool
+      return false if text.matches?(HTACCESS_GRANT_RE)
+      return true if text.gsub(HTACCESS_SCOPED_BLOCK_RE, "").matches?(HTACCESS_DENY_RE)
+      text.scan(HTACCESS_PHP_FILES_RE).any?(&.[1].matches?(HTACCESS_PHP_OFF_RE))
     end
 
     # URL base for `path`, or nil when the file is not web-servable.
@@ -104,6 +160,10 @@ module Analyzer::Php
     #   3. Neither — the directory *is* the document root. WordPress and
     #      plain-PHP trees serve every `.php` where it sits, so the
     #      original base-relative behaviour is correct and preserved.
+    #
+    # Whichever layout applies, a directory whose `.htaccess` denies it (or
+    # disables PHP in it) serves nothing. A deny *above* the document root
+    # only protects what lies outside it, so only denies below it count.
     # Returns {base, path} to hand to `get_relative_path`, or nil.
     #
     # Both elements must be in the same shape. Document roots are stored
@@ -115,9 +175,10 @@ module Analyzer::Php
     private def php_url_base_for(path : String) : Tuple(String, String)?
       expanded = Noir::PathScope.expand(path)
 
-      if inside = php_web_roots.find { |_, web_root| Noir::PathScope.under_normalized_root?(expanded, web_root) }
-        return {inside[0], expanded}
-      end
+      inside = php_web_roots.find { |_, web_root| Noir::PathScope.under_normalized_root?(expanded, web_root) }
+      above = inside ? inside[1].size : 0
+      return if php_denied_roots.any? { |root| root.size > above && Noir::PathScope.under_normalized_root?(expanded, root) }
+      return {inside[0], expanded} if inside
 
       return if php_managed_roots.any? { |root| Noir::PathScope.under_normalized_root?(expanded, root) }
 
@@ -131,8 +192,11 @@ module Analyzer::Php
       return [] of Endpoint unless resolved
       url_base, url_path = resolved
 
-      endpoints = [] of Endpoint
       relative_path = get_relative_path(url_base, url_path)
+      # Hidden directories hold tooling and caches, not pages.
+      return [] of Endpoint if relative_path.matches?(HIDDEN_DIR_URL_RE)
+
+      endpoints = [] of Endpoint
       include_callee = callees_needed?
 
       content = read_file_content(path)
