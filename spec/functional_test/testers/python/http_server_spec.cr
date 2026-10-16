@@ -13,9 +13,12 @@ expected_endpoints = [
     Param.new("session", "", "cookie"),
   ]),
   Endpoint.new("/delete-me", "DELETE"),
+  Endpoint.new("/widgets/{widget_id}", "GET", [
+    Param.new("widget_id", "", "path"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/python/http_server/", {
   :techs     => 1,
-  :endpoints => 5,
+  :endpoints => 6,
 }, expected_endpoints).perform_tests

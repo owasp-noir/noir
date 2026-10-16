@@ -224,9 +224,15 @@ module Analyzer::Python
         end
 
         # self.path.startswith("...")
-        if m = line.match(/self\.path\.startswith\s*\(\s*[rf]?['"]([^'"]+?)['"]/)
+        if m = line.match(/(?:self|urlparse\(self\.path\)|\w+)\.path\.startswith\s*\(\s*[rf]?['"]([^'"]+?)['"]/)
           p = m[1]
           if has_path_ref && looks_like_http_path(p)
+            path_var = find_path_param_in_body(body_lines)
+            if path_var
+              p = "#{p.rstrip('/')}/{#{path_var}}"
+            elsif p.ends_with?('/')
+              p = "#{p.rstrip('/')}/*"
+            end
             hits << {p, body_start + bidx}
           end
         end
@@ -262,8 +268,8 @@ module Analyzer::Python
           end
         end
 
-        # list form: if self.path in ["/a", "/b"] (capture literals guarded by self.path mention on line)
-        if has_path_ref && line.includes?("self.path")
+        # list form: if self.path in ["/a", "/b"] (capture literals guarded by self.path membership on line)
+        if has_path_ref && (line =~ /\b(?:self|urlparse\(self\.path\)|\w+)\.path\s+(?:not\s+)?in\s*[\[\(\{]/ || line =~ /[\[\(\{][^\]\)\}]*\bin\s+(?:self|urlparse\(self\.path\)|\w+)\.path\b/)
           line.scan(/[rf]?['"](\/[^'"]*?)['"]/) do |mm|
             p = mm[1]
             if looks_like_http_path(p)
@@ -274,6 +280,18 @@ module Analyzer::Python
       end
 
       hits.uniq
+    end
+
+    private def find_path_param_in_body(body_lines : Array(::String)) : ::String?
+      body_lines.each do |raw|
+        line = strip_comment(raw)
+        if m = line.match(/\b([A-Za-z_]\w*)\s*=\s*(?:self|\w+)\.path\.(?:rsplit|split)\s*\(\s*[rf]?['"]\/['"]/)
+          return m[1]
+        elsif m = line.match(/\b([A-Za-z_]\w*)\s*=\s*(?:self|\w+)\.path\.removeprefix\s*\(/)
+          return m[1]
+        end
+      end
+      nil
     end
 
     private def extract_request_params(body_lines : Array(::String), http_method : ::String) : Array(Param)
