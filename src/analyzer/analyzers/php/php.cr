@@ -20,6 +20,13 @@ module Analyzer::Php
     # `public/` / `www/` markers.)
     WEBROOT_DIR_NAMES = ["public", "webroot", "public_html", "htdocs", "www", "web"]
 
+    # A plain PHP tree serves a root-level `docs/` section like any other
+    # directory (`docs/index.php?page=…`, `docs/search.php`), so it is not
+    # skipped here as it is for framework adapters.
+    protected def root_docs_skipped? : Bool
+      false
+    end
+
     # Per document root: {expanded web root, normalized web root}.
     # Lazily built; fibers are cooperative and nothing here yields, so a
     # plain memo is safe under `parallel_file_scan`.

@@ -28,7 +28,15 @@ module Analyzer::Php
     end
 
     protected def scan_accepts?(path : String) : Bool
-      !PhpEngine.test_path?(base_relative_path(path))
+      !PhpEngine.test_path?(base_relative_path(path), root_docs: root_docs_skipped?)
+    end
+
+    # Whether a `docs/` tree at the scan base is skipped as runnable doc
+    # snippets. True for framework adapters, where nothing under `docs/` is a
+    # route; the plain PHP analyzer turns it off, because there a `docs/`
+    # section is served like any other directory (`docs/index.php?page=…`).
+    protected def root_docs_skipped? : Bool
+      true
     end
 
     TEST_DIR_RE = %r{/(?:Tests|tests|Fixtures|workbench|legacy_tests)/|/Test/(?:Unit|Integration|Mftf|Integrity|Legacy|Fixture|_files)/|/test/phpunit/|/config/routes/test/}
@@ -49,7 +57,8 @@ module Analyzer::Php
     #   * `/workbench/`           — Orchestra Testbench skeleton app
     #   * `/docs/` at the scan base — runnable doc snippets
     #     (API Platform `docs/guides`); anchored, because Folio mounts
-    #     `resources/views/docs` as a real route
+    #     `resources/views/docs` as a real route. `root_docs: false` drops
+    #     it for the plain PHP analyzer, which serves a `docs/` section.
     #   * `*Test.php` filename    — PHPUnit suffix convention
     #   * `*Tests.php` filename   — pluralized variant (rare)
     #
@@ -64,9 +73,9 @@ module Analyzer::Php
     # whatever directory the checkout happened to live in: the same tree
     # scanned from `~/work/tests/myapp` reported 0 endpoints instead of
     # 235.
-    def self.test_path?(relative_path : String) : Bool
+    def self.test_path?(relative_path : String, root_docs : Bool = true) : Bool
       return true if relative_path.matches?(TEST_DIR_RE)
-      return true if relative_path.starts_with?("/docs/")
+      return true if root_docs && relative_path.starts_with?("/docs/")
       base = File.basename(relative_path)
       return true if base.ends_with?("Test.php")
       base.ends_with?("Tests.php")

@@ -1,3 +1,3 @@
 <?php
-// `docs/` only counts as documentation at the scan base.
+// A nested docs/ directory is an ordinary one.
 $p = $_GET['p'];
