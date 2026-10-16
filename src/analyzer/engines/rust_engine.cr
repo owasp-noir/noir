@@ -93,9 +93,12 @@ module Analyzer::Rust
     # the literal `tests/` segment: `rwf-tests`, `tests-fuzz`,
     # `playwright-tests`, `suspense_tests`. Plural `tests` needs a `-`/`_`
     # delimiter so `contests/` and `latest/` stay out; singular `test-app`
-    # / `test_only` are deliberately not matched. Applied to the rooted
-    # scan-base-relative path, like the `/tests/` check.
-    TEST_CRATE_DIR_RE = %r{/(?:[\w.-]+[-_])?tests(?:[-_][\w.-]+)?/|/(?:e2e|playwright)(?:[-_][\w.-]*)?/}
+    # / `test_only` are deliberately not matched. `e2e` / `playwright` count
+    # only as the whole segment, optionally with a `-test(s)` / `_test(s)`
+    # suffix: `e2e-encryption/` and `api/e2e_keys/` are Matrix-style
+    # end-to-end *encryption* code and serve real routes. Applied to the
+    # rooted scan-base-relative path, like the `/tests/` check.
+    TEST_CRATE_DIR_RE = %r{/(?:[\w.-]+[-_])?tests(?:[-_][\w.-]+)?/|/(?:e2e|playwright)(?:[-_]tests?)?/}
 
     # Cargo convention: every `.rs` immediately under a crate's
     # `tests/` directory is an integration-test binary, never a
