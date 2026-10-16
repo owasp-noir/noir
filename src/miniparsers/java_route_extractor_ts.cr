@@ -306,7 +306,10 @@ module Noir
         # inherited-route index). Walk into it for nested types but don't
         # emit its own method routes, otherwise an un-prefixed phantom
         # endpoint (e.g. `GET /list` for `BaseController.list`) leaks.
-        is_abstract = ty == "class_declaration" && abstract_class?(node, source)
+        #
+        # Likewise Spring registers handlers only on controller types: a
+        # `@Service` with a stray `@PostMapping` is not a route.
+        skip_methods = ty == "class_declaration" && (abstract_class?(node, source) || non_controller_bean?(node, source))
 
         class_name = class_simple_name(node, source)
         mapping = class_mapping(node, source, constants, class_name, meta_mappings)
@@ -325,7 +328,7 @@ module Noir
           Noir::TreeSitter.each_named_child(body) do |member|
             case Noir::TreeSitter.node_type(member)
             when "method_declaration"
-              collect_method_routes(member, source, class_name, prefixes, verbs, params, routes, constants, meta_mappings) unless is_abstract
+              collect_method_routes(member, source, class_name, prefixes, verbs, params, routes, constants, meta_mappings) unless skip_methods
             when "class_declaration", "interface_declaration"
               walk_classes(member, source, prefixes, verbs, params, routes, constants, meta_mappings)
             end
@@ -452,6 +455,13 @@ module Noir
 
     private def spring_controller_class?(decl : LibTreeSitter::TSNode, source : String) : Bool
       annotated_with_any?(decl, source, Set{"Controller", "RestController"})
+    end
+
+    # A bean stereotype with no controller stereotype and no type-level
+    # `@RequestMapping` (which Spring 5 still accepted as a handler marker).
+    private def non_controller_bean?(decl : LibTreeSitter::TSNode, source : String) : Bool
+      annotated_with_any?(decl, source, Set{"Service", "Repository", "Component", "Configuration"}) &&
+        !annotated_with_any?(decl, source, Set{"Controller", "RestController", "RequestMapping"})
     end
 
     private def annotated_with_any?(decl : LibTreeSitter::TSNode, source : String, names : Set(String)) : Bool

@@ -40,7 +40,8 @@ module Noir
     # via `simple_param_base`. Framework argument-resolver types (Model,
     # HttpServletRequest, Pageable, Authentication, Principal,
     # BindingResult, …) are deliberately absent — they are resolved by
-    # Spring, not bound from the request, so they must not surface.
+    # Spring, not bound from one request value. (`HttpServletRequest` and
+    # `Pageable` still surface what they read; see `emit_param_for`.)
     SIMPLE_PARAM_TYPES = Set{
       "long", "int", "integer", "short", "byte", "double", "float",
       "boolean", "char", "character", "string", "bigdecimal", "biginteger",
@@ -63,6 +64,17 @@ module Noir
     # Subset of servlet types whose method body is scanned for
     # `request.getParameter("x")` / `request.getHeader("x")` calls.
     SERVLET_REQUEST_TYPES = Set{"HttpServletRequest"}
+
+    # `simple_param_base` of the types Spring fills from a multipart part:
+    # always the request body, whatever the annotation or verb.
+    MULTIPART_TYPES = Set{"multipartfile", "part"}
+
+    # Types a `@RequestParam` / `@RequestHeader` fills with *every* request
+    # value. They name no single input, so they emit nothing.
+    MAP_LIKE_TYPES = Set{"Map", "HashMap", "LinkedHashMap", "MultiValueMap", "LinkedMultiValueMap", "HttpHeaders"}
+
+    # Request parameters `PageableHandlerMethodArgumentResolver` reads.
+    PAGEABLE_PARAMS = {"page", "size", "sort"}
 
     # Lombok class-level annotations that synthesise setters (or an
     # all-args constructor) for every instance field at compile time.
@@ -99,8 +111,10 @@ module Noir
       getter init_value : String # "" when no initializer
       # Wire name in a JSON body: `@JsonProperty("display_name")`, else `name`.
       getter json_name : String
+      # Declared Java type as written (`Pager`, `MultipartFile[]`), "" when unknown.
+      getter type_name : String
 
-      def initialize(@name, @access_modifier, @has_setter, @init_value, json_name : String? = nil)
+      def initialize(@name, @access_modifier, @has_setter, @init_value, json_name : String? = nil, @type_name = "")
         @json_name = json_name || @name
       end
 
@@ -190,7 +204,8 @@ module Noir
         next unless name_node
         name = Noir::TreeSitter.node_text(name_node, source)
         next if name.empty?
-        fields << FieldInfo.new(name, "public", true, "", json_property_name(component, source))
+        type_name = Noir::TreeSitter.field(component, "type").try { |node| Noir::TreeSitter.node_text(node, source) } || ""
+        fields << FieldInfo.new(name, "public", true, "", json_property_name(component, source), type_name)
       end
       fields
     end
@@ -200,6 +215,26 @@ module Noir
     private def json_property_name(decl : LibTreeSitter::TSNode, source : String) : String?
       return unless ann = annotation_node_on(decl, source, "JsonProperty")
       annotation_string_arg(ann, source).presence
+    end
+
+    # Simple names of the `@interface` types declared in `source` that are
+    # meta-annotated with an injected-argument annotation
+    # (`@AuthenticationPrincipal public @interface CurrentMember {}`).
+    # Spring resolves such a parameter annotation like the one it carries,
+    # so callers pass these back as `injected_annotations`.
+    def extract_injected_annotation_types_from(root : LibTreeSitter::TSNode, source : String) : Array(String)
+      names = [] of String
+      Noir::TreeSitter.walk(root) do |node|
+        next unless Noir::TreeSitter.node_type(node) == "annotation_type_declaration"
+        next unless name_node = Noir::TreeSitter.field(node, "name")
+        each_annotation_on(node, source) do |ann|
+          if INJECTED_PARAM_ANNOTATIONS.includes?(ann)
+            names << Noir::TreeSitter.node_text(name_node, source)
+            break
+          end
+        end
+      end
+      names
     end
 
     # Map each `class` to the simple name of its superclass
@@ -253,7 +288,9 @@ module Noir
                                        class_fields : Hash(String, Array(FieldInfo)),
                                        target_line : Int32? = nil,
                                        constants : Hash(String, String)? = nil,
-                                       index : FileIndex? = nil) : Array(Param)
+                                       index : FileIndex? = nil,
+                                       injected_annotations : Set(String)? = nil,
+                                       converted_types : Set(String)? = nil) : Array(Param)
       index ||= build_file_index(root, source)
       method = find_method(index, class_name, method_name, target_line)
       return [] of Param unless method
@@ -263,7 +300,8 @@ module Noir
       # call site working by recomputing it here.
       resolved_constants = constants || TreeSitterJavaRouteExtractor.extract_string_constants_from(root, source)
       model_attributes = index.suppliers[class_name] ||= model_attribute_suppliers(root, source, class_name)
-      collect_method_params(method, source, verb, parameter_format, class_fields, resolved_constants, class_name, model_attributes)
+      collect_method_params(method, source, verb, parameter_format, class_fields, resolved_constants, class_name, model_attributes,
+        injected_annotations || Set(String).new, converted_types || Set(String).new)
     end
 
     # Per-file memo for callers that look up many routes in one parsed
@@ -675,7 +713,7 @@ module Noir
                                      source : String,
                                      lombok_setters : Bool = false) : Array(FieldInfo)
       # First pass: collect field declarations.
-      declared = [] of Tuple(String, String, String, String?) # name, access, init_value, json_name
+      declared = [] of Tuple(String, String, String, String?, String) # name, access, init_value, json_name, type
       setter_targets = Set(String).new
 
       Noir::TreeSitter.each_named_child(body) do |member|
@@ -689,7 +727,7 @@ module Noir
           next if field_static?(member, source)
           access = modifier_access(member, source)
           type_node = Noir::TreeSitter.field(member, "type")
-          _ = type_node
+          type_name = type_node ? Noir::TreeSitter.node_text(type_node, source) : ""
           dec = Noir::TreeSitter.field(member, "declarator")
           next unless dec
           name_node = Noir::TreeSitter.field(dec, "name")
@@ -699,7 +737,7 @@ module Noir
           if value_node = Noir::TreeSitter.field(dec, "value")
             init = Noir::TreeSitter.node_text(value_node, source)
           end
-          declared << {name, access, init, json_property_name(member, source)}
+          declared << {name, access, init, json_property_name(member, source), type_name}
         when "method_declaration"
           mn = Noir::TreeSitter.field(member, "name")
           next unless mn
@@ -711,9 +749,9 @@ module Noir
         end
       end
 
-      declared.map do |name, access, init, json_name|
+      declared.map do |name, access, init, json_name, type_name|
         has_setter = lombok_setters || setter_targets.includes?(name)
-        FieldInfo.new(name, access, has_setter, init, json_name)
+        FieldInfo.new(name, access, has_setter, init, json_name, type_name)
       end
     end
 
@@ -767,7 +805,9 @@ module Noir
                                       class_fields : Hash(String, Array(FieldInfo)),
                                       constants : Hash(String, String),
                                       current_class : String,
-                                      model_attributes = [] of ModelAttributeSupplier) : Array(Param)
+                                      model_attributes = [] of ModelAttributeSupplier,
+                                      injected_annotations = Set(String).new,
+                                      converted_types = Set(String).new) : Array(Param)
       params = [] of Param
       fparams = Noir::TreeSitter.field(method, "parameters")
       return params unless fparams
@@ -780,7 +820,7 @@ module Noir
 
       Noir::TreeSitter.each_named_child(fparams) do |fp|
         next unless Noir::TreeSitter.node_type(fp) == "formal_parameter"
-        current_format = emit_param_for(fp, method, source, verb, current_format, parameter_format, class_fields, constants, current_class, params, model_attributes)
+        current_format = emit_param_for(fp, method, source, verb, current_format, parameter_format, class_fields, constants, current_class, params, model_attributes, injected_annotations, converted_types)
       end
 
       # Collapse duplicate `(name, type)` params. A handler binding two
@@ -803,7 +843,9 @@ module Noir
                                constants : Hash(String, String),
                                current_class : String,
                                sink : Array(Param),
-                               model_attributes = [] of ModelAttributeSupplier) : String?
+                               model_attributes = [] of ModelAttributeSupplier,
+                               injected_annotations = Set(String).new,
+                               converted_types = Set(String).new) : String?
       type_node = Noir::TreeSitter.field(fp, "type")
       name_node = Noir::TreeSitter.field(fp, "name")
       return parameter_format unless type_node && name_node
@@ -819,6 +861,7 @@ module Noir
       injected_param = false
       validated_param = false
       model_attribute_name : String? = nil
+      pageable_default : LibTreeSitter::TSNode? = nil
       if mods = find_modifiers(fp)
         Noir::TreeSitter.each_named_child(mods) do |ann|
           ty = Noir::TreeSitter.node_type(ann)
@@ -826,9 +869,10 @@ module Noir
           n = Noir::TreeSitter.field(ann, "name")
           next unless n
           sn = simple_name(Noir::TreeSitter.node_text(n, source))
-          injected_param = true if INJECTED_PARAM_ANNOTATIONS.includes?(sn)
+          injected_param = true if INJECTED_PARAM_ANNOTATIONS.includes?(sn) || injected_annotations.includes?(sn)
           validated_param = true if sn == "Valid" || sn == "Validated"
           model_attribute_name = annotation_string_arg(ann, source) if sn == "ModelAttribute"
+          pageable_default = ann if sn == "PageableDefault"
           case sn
           when "PathVariable"
             ann_kind = :path
@@ -851,15 +895,12 @@ module Noir
             ann_node = ann
             break
           when "RequestPart"
-            # `@RequestPart` doesn't change binding semantics (a part
-            # still binds like an implicit form/query value, or expands
-            # a DTO's fields) — only capture the annotation node so the
-            # name-resolution walk below can pick up an explicit
-            # `@RequestPart("doc")` / `value = "doc"` part name instead
-            # of falling back to the Java variable name. Deliberately
-            # doesn't set `ann_kind` or `break`: the implicit-binding
-            # format inference further down stays untouched.
+            # One multipart part: a file, or a value (usually JSON) a
+            # message converter reads whole. Either way it is one body
+            # input named after the part, never the DTO's fields.
+            ann_kind = :part
             ann_node = ann
+            break
           end
         end
       end
@@ -887,7 +928,14 @@ module Noir
       # parameter with the previous one's transport. "query" is left
       # sticky on purpose: it already matches the implicit-binding
       # default and existing fixtures rely on the carry-over.
-      if ann_kind.nil? && (effective_format == "json" || effective_format == "header" || effective_format == "cookie")
+      #
+      # A command object, `HttpServletRequest` or `Pageable` takes no part in
+      # that carry-over at all: its location depends on the verb and the
+      # method's `consumes`, not on which argument happens to precede it.
+      simple_param = simple_bindable_param?(type_name)
+      if ann_kind.nil? && !simple_param
+        effective_format = method_format == "form" ? "form" : nil
+      elsif ann_kind.nil? && (effective_format == "json" || effective_format == "header" || effective_format == "cookie")
         effective_format = nil
       end
       case ann_kind
@@ -901,6 +949,8 @@ module Noir
         effective_format = "header"
       when :cookie
         effective_format = "cookie"
+      when :part
+        effective_format = "form"
       end
       if effective_format.nil?
         # No parameter annotation and no `consumes` hint. Spring still
@@ -917,10 +967,15 @@ module Noir
         # request body). Applying this per-parameter — rather than
         # pre-seeding the whole method — lets an explicit `@RequestBody` on
         # the same POST resolve to "json" instead of being dragged along.
-        bindable = simple_bindable_param?(type_name) || class_fields.has_key?(type_name)
+        bindable = simple_param || class_fields.has_key?(type_name) ||
+                   SERVLET_REQUEST_TYPES.includes?(type_name) || pageable_type?(type_name)
         return parameter_format unless bindable
         effective_format = verb == "POST" ? "form" : "query"
       end
+      # Format handed to the next argument; see the carry-over note above.
+      carry_format = ann_kind == :body || ann_kind == :part || (ann_kind.nil? && !simple_param) ? parameter_format : effective_format
+      # A multipart file is a body part even when `@RequestParam` names it.
+      effective_format = "form" if multipart_type?(type_name)
 
       default_value : String? = nil
       parameter_name = arg_name
@@ -952,11 +1007,20 @@ module Noir
         end
       end
 
-      if simple_bindable_param?(type_name)
+      # An explicit single-value annotation binds one request value whatever
+      # the type: Spring converts it (enum, `valueOf`/`from` value class).
+      single_value = (ann_kind == :query || ann_kind == :header || ann_kind == :cookie || ann_kind == :part) &&
+                     !MAP_LIKE_TYPES.includes?(simple_type_name(type_name))
+      if simple_param || single_value
         sink << Param.new(parameter_name, default_value || "", effective_format)
       elsif SERVLET_REQUEST_TYPES.includes?(type_name)
         scan_servlet_body(method, source, arg_name, effective_format, sink)
-      elsif fields = class_fields[type_name]? || class_fields[collection_element_type(type_name)]?
+      elsif ann_kind.nil? && pageable_type?(type_name)
+        PAGEABLE_PARAMS.each do |name|
+          sink << Param.new(name, pageable_default_value(pageable_default, name, source, constants, current_class) || "", "query")
+        end
+      elsif ann_kind.nil? || ann_kind == :body
+        return carry_format unless fields = class_fields[type_name]? || class_fields[collection_element_type(type_name)]?
         # `@RequestBody` is deserialised by Jackson, which populates every
         # non-static instance field by reflection (and via
         # all-args/`@Builder` constructors) regardless of setter
@@ -971,13 +1035,54 @@ module Noir
           # `init_value` is raw Java source and only becomes a value when it
           # is one. See `Noir::JvmLiteral`.
           expanded_default = default_value || Noir::JvmLiteral.value_of(field.init_value)
-          sink << Param.new(field.name_for(effective_format), expanded_default, effective_format)
+          # `WebDataBinder` binds a nested bean's properties by dotted path
+          # (`pager.offset`), unless a registered `Formatter`/`Converter`
+          # turns one value into it (`converted_types`). One level only;
+          # JSON keeps the nested key.
+          unless json_body || simple_bindable_param?(field.type_name) || converted_types.includes?(field.type_name)
+            nested = class_fields[field.type_name]?
+          end
+          if nested
+            nested.each do |sub|
+              next unless sub.access_modifier == "public" || sub.has_setter?
+              sink << Param.new("#{field.name}.#{sub.name}", Noir::JvmLiteral.value_of(sub.init_value), effective_format)
+            end
+          else
+            field_format = !json_body && multipart_type?(field.type_name) ? "form" : effective_format
+            sink << Param.new(field.name_for(effective_format), expanded_default, field_format)
+          end
         end
       end
 
-      # A body's format is its own, not a default for later arguments:
-      # leave the carry-over (e.g. a sticky "query") untouched.
-      ann_kind == :body ? parameter_format : effective_format
+      carry_format
+    end
+
+    private def multipart_type?(type_name : String) : Bool
+      MULTIPART_TYPES.includes?(simple_param_base(type_name))
+    end
+
+    private def pageable_type?(type_name : String) : Bool
+      simple_type_name(type_name) == "Pageable"
+    end
+
+    # `@PageableDefault(size = 20, sort = "id")` default for one Pageable
+    # request parameter (`value` aliases `size`).
+    private def pageable_default_value(ann : LibTreeSitter::TSNode?, name : String, source : String,
+                                       constants : Hash(String, String), current_class : String) : String?
+      return unless ann
+      return unless args = Noir::TreeSitter.field(ann, "arguments")
+      Noir::TreeSitter.each_named_child(args) do |arg|
+        if Noir::TreeSitter.node_type(arg) == "element_value_pair"
+          key = Noir::TreeSitter.field(arg, "key").try { |node| Noir::TreeSitter.node_text(node, source) }
+          next unless key == name || (name == "size" && key == "value")
+          next unless val = Noir::TreeSitter.field(arg, "value")
+          value = resolve_annotation_string_value(val, source, constants, current_class)
+          value ||= Noir::TreeSitter.node_text(val, source) if Noir::TreeSitter.node_type(val).ends_with?("_literal")
+          return value
+        elsif name == "size"
+          return Noir::TreeSitter.node_text(arg, source) # `@PageableDefault(20)`
+        end
+      end
     end
 
     private def supplied_model_attribute_param?(arg_name : String,
