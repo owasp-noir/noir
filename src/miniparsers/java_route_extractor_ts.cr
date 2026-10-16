@@ -213,12 +213,41 @@ module Noir
             dot = chain.index('.', dot + 1)
           end
         end
+        seed_static_imports(source, project_constants, constants)
       end
       collect_string_constants(root, source, package_name(root, source), [] of String, constants)
       constants
     end
 
-    DOTTED_NAME_RE = /(?<![\w$])[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+/
+    DOTTED_NAME_RE        = /(?<![\w$])[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+/
+    STATIC_IMPORT_NAME_RE = /\bimport\s+static\s+([\w$.]+)\.([\w$]+|\*)\s*;/
+
+    # `import static pkg.Class.NAME` (or `.*`) brings the bare `NAME` into
+    # scope, so `@RequestMapping(NAME + "/ops")` must find the project
+    # constant under that bare name. Seeded before the file's own fields so
+    # `BASE = NAME + "/x"` resolves.
+    #
+    # ponytail: a same-file field named like the import should shadow it,
+    # but `collect_string_constants` keeps the first bare name (`||=`), so
+    # the import wins; model scoping if that ever bites.
+    private def seed_static_imports(source : String,
+                                    project_constants : Hash(String, String),
+                                    constants : Hash(String, String))
+      source.scan(STATIC_IMPORT_NAME_RE) do |match|
+        owner = match[1]
+        name = match[2]
+        if name == "*"
+          prefix = "#{owner}."
+          project_constants.each do |key, value|
+            next unless key.starts_with?(prefix)
+            bare = key[prefix.size..]
+            constants[bare] = value unless bare.includes?('.')
+          end
+        elsif value = project_constants["#{owner}.#{name}"]?
+          constants[name] = value
+        end
+      end
+    end
 
     # ---- private helpers ----------------------------------------------
 
