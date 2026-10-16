@@ -24,6 +24,16 @@ module Analyzer::Haskell
     PATH_PARAM_REGEX  = /(?<![A-Za-z0-9_'])(?:pathParam|pathParamMaybe)\s+"((?:[^"\\]|\\.)*)"/
     HEADER_REGEX      = /(?<![A-Za-z0-9_'])header\s+"((?:[^"\\]|\\.)*)"/
 
+    # `test/`, `tests/` and `spec/` trees, hspec-discover/tasty `FooSpec.hs` /
+    # `FooTest.hs` files and `foo_spec.` / `foo_test.` files. Case-sensitive
+    # on purpose: a production `src/Test/...` module namespace must stay in.
+    TEST_PATH_RE = /\/(?:tests?|spec)\/|(?:Spec|Tests?)\.l?hs$|_(?:spec|test)\./
+
+    # hspec-wai test clients call `get "/x" `shouldRespondWith` ...`, which
+    # reads exactly like a Scotty route; a file that imports it is a test
+    # even when it lives outside a test directory.
+    HSPEC_WAI_IMPORT_RE = /^[ \t]*import\s+(?:qualified\s+)?Test\.Hspec\.Wai\b/m
+
     alias HandlerBody = Noir::HaskellCalleeExtractor::FunctionBody
     alias HandlerKey = Tuple(String, String)
     alias HandlerBodies = Hash(HandlerKey, Array(HandlerBody))
@@ -36,6 +46,8 @@ module Analyzer::Haskell
         next unless haskell_source?(path)
 
         content = read_file_content(path)
+        next if scotty_test_source?(path, content)
+
         process_content(path, content, include_callee, handler_bodies)
       end
 
@@ -46,13 +58,23 @@ module Analyzer::Haskell
       path.ends_with?(".hs") || path.ends_with?(".lhs")
     end
 
+    # Test files hold hspec-wai client requests and throwaway test apps, not
+    # routes the application serves. Scan-base-relative, never absolute: a
+    # `test/` directory ABOVE the scan base is not this project's test tree.
+    private def scotty_test_source?(path : String, content : String) : Bool
+      base_relative_path(path).matches?(TEST_PATH_RE) || content.matches?(HSPEC_WAI_IMPORT_RE)
+    end
+
     private def build_handler_bodies : HandlerBodies
       handlers = HandlerBodies.new
 
       all_files.each do |path|
         next unless haskell_source?(path)
 
-        Noir::HaskellCalleeExtractor.function_bodies(read_file_content(path), path).each do |body|
+        content = read_file_content(path)
+        next if scotty_test_source?(path, content)
+
+        Noir::HaskellCalleeExtractor.function_bodies(content, path).each do |body|
           key = handler_key(configured_base_for(path), body[:name])
           handlers[key] ||= [] of HandlerBody
           handlers[key] << body
