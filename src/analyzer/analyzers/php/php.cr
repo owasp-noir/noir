@@ -24,6 +24,11 @@ module Analyzer::Php
     # Lazily built; fibers are cooperative and nothing here yields, so a
     # plain memo is safe under `parallel_file_scan`.
     @php_web_roots : Array(Tuple(String, String))? = nil
+    # Siblings of a document root that a layout with one served directory has
+    # and a site served from its root does not: dependencies, application
+    # code, configuration, runtime data and CLI/CI tooling.
+    MANAGED_SIBLING_DIRS = %w[vendor src app config storage bootstrap var database bin scripts dev build tools tests test]
+
     # Normalized roots of composer-managed projects.
     @php_managed_roots : Array(String)? = nil
     # Normalized directories whose own `.htaccess` keeps PHP from running.
@@ -125,14 +130,28 @@ module Analyzer::Php
       end
       # A real document root likewise names the one directory that is served:
       # `scripts/`, `dev/` and `test/` next to Dolibarr's `htdocs/` are CLI and
-      # CI tooling even though the repo has no `composer.json`.
+      # CI tooling even though the repo has no `composer.json`. Only when the
+      # parent looks like that kind of layout, though: a legacy site served
+      # from its root (`index.php`, `admin/`, `api/`) that happens to have a
+      # `public/` folder serves the rest of the tree too.
       php_web_roots.each do |expanded, _|
-        parent = Noir::PathScope.normalize_root(File.dirname(expanded))
-        roots << parent unless roots.includes?(parent)
+        parent = File.dirname(expanded)
+        next unless managed_layout?(parent)
+        normalized = Noir::PathScope.normalize_root(parent)
+        roots << normalized unless roots.includes?(normalized)
       end
 
       @php_managed_roots = roots
       roots
+    end
+
+    # Whether `parent`, the directory holding a document root, is a managed
+    # layout rather than a site served from its own root: it has no
+    # `index.php` of its own (that would be a front controller there) and
+    # sits beside at least one of `MANAGED_SIBLING_DIRS`.
+    private def managed_layout?(parent : String) : Bool
+      return false if File.exists?(File.join(parent, "index.php"))
+      MANAGED_SIBLING_DIRS.any? { |name| Dir.exists?(File.join(parent, name)) }
     end
 
     # Directories the app's own `.htaccess` makes unreachable: everything is
