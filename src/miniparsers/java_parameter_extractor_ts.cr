@@ -986,7 +986,7 @@ module Noir
           Noir::TreeSitter.each_named_child(args) do |arg|
             arg_type = Noir::TreeSitter.node_type(arg)
             if annotation_string_value_node?(arg_type)
-              parameter_name = resolve_annotation_string_or_const(arg, source, constants, current_class)
+              parameter_name = resolve_annotation_string_value(arg, source, constants, current_class) || parameter_name
               next
             end
 
@@ -998,7 +998,7 @@ module Noir
               k = Noir::TreeSitter.node_text(key, source)
               case k
               when "value", "name"
-                parameter_name = resolve_annotation_string_or_const(val, source, constants, current_class)
+                parameter_name = resolve_annotation_string_value(val, source, constants, current_class) || parameter_name
               when "defaultValue"
                 default_value = resolve_annotation_string_value(val, source, constants, current_class)
               end
@@ -1142,16 +1142,6 @@ module Noir
         base = base[(idx + 1)..]
       end
       base
-    end
-
-    # Resolve either a string literal, a local Java constant, or a
-    # qualified-identifier constant (`HttpHeaders.AUTHORIZATION`) to
-    # the final header/param name. Matches the legacy normalisation.
-    private def resolve_annotation_string_or_const(node : LibTreeSitter::TSNode,
-                                                   source : String,
-                                                   constants : Hash(String, String),
-                                                   current_class : String) : String
-      resolve_annotation_string_value(node, source, constants, current_class) || Noir::TreeSitter.node_text(node, source)
     end
 
     private def resolve_annotation_string_value(node : LibTreeSitter::TSNode,

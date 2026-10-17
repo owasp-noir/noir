@@ -197,6 +197,20 @@ describe Noir::TreeSitterKotlinRouteExtractor do
     constants["com.acme.RoutePaths.AFTER"]?.should eq("/after-nested")
   end
 
+  it "registers every declaration on a one-line object" do
+    source = <<-KT
+      object Hdr { object Inner { const val DEEP = "x-{inner}" }; const val LANG = "x-lang" }
+      object Paths { const val A = "/a"; const val B = "/b" }
+      KT
+
+    constants = Noir::TreeSitterKotlinRouteExtractor.extract_string_constants(source)
+    constants["Hdr.Inner.DEEP"]?.should eq("x-{inner}")
+    constants["Hdr.LANG"]?.should eq("x-lang")
+    constants["Inner.LANG"]?.should be_nil
+    constants["Paths.A"]?.should eq("/a")
+    constants["Paths.B"]?.should eq("/b")
+  end
+
   it "does not resolve simple mapping constants from the global index" do
     source = <<-KT
       package com.example

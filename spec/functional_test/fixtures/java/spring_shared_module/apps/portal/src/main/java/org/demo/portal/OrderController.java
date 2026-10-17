@@ -18,4 +18,7 @@ public class OrderController implements RelayApiSpec {
 
     @GetMapping("/hop")
     public String relay(@RequestHeader(value = RELAY_HEADER, required = false) String origin) { return origin; }
+
+    @GetMapping("/unresolved")
+    public String unresolved(@RequestHeader(Missing.HDR) String m, @RequestParam(value = NOPE) String n) { return m; }
 }

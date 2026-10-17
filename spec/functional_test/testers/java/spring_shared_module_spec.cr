@@ -13,6 +13,11 @@ expected_endpoints = [
   ]),
   Endpoint.new("/api/notes", "POST", [Param.new("memo", "", "json")]),
   Endpoint.new("/api/hop", "GET", [Param.new("X-Relay-Origin", "", "header")]),
+  # An unresolvable constant keeps the argument name, not its identifier text.
+  Endpoint.new("/api/unresolved", "GET", [
+    Param.new("m", "", "header"),
+    Param.new("n", "", "query"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/java/spring_shared_module/", {

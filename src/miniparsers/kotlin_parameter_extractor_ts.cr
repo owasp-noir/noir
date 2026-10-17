@@ -649,8 +649,9 @@ module Noir
         text = decode_string_literal(node, source)
         sink << text unless text.empty?
       when "simple_identifier", "navigation_expression"
-        text = resolve_string_or_const(node, source, string_constants, local_string_constants)
-        sink << text unless text.empty?
+        if text = resolve_string_or_const(node, source, string_constants, local_string_constants)
+          sink << text unless text.empty?
+        end
       when "collection_literal"
         Noir::TreeSitter.each_named_child(node) do |elem|
           collect_string_values(elem, source, sink, string_constants, local_string_constants)
@@ -1050,13 +1051,11 @@ module Noir
           kind, key, value = classify_value_argument(arg, source)
           next unless value
           if kind == :positional || key == "value" || key == "name"
-            # An unresolved bare constant names nothing on the wire; keep
-            # the argument name rather than emitting the identifier text.
-            if Noir::TreeSitter.node_type(value) == "simple_identifier"
-              ident = Noir::TreeSitter.node_text(value, source)
-              next unless local_string_constants.has_key?(ident) || string_constants.has_key?(ident)
+            # An unresolved constant names nothing on the wire; keep the
+            # argument name rather than emitting the identifier text.
+            if resolved = resolve_string_or_const(value, source, string_constants, local_string_constants)
+              parameter_name = resolved
             end
-            parameter_name = resolve_string_or_const(value, source, string_constants, local_string_constants)
           else
             case key
             when "defaultValue"
@@ -1259,20 +1258,22 @@ module Noir
     end
 
     # `value = "x"` literal, local/shared Kotlin constants, or
-    # `value = HttpHeaders.X_FOO` constants.
+    # `value = HttpHeaders.X_FOO` constants. Nil for a constant that
+    # resolves to nothing — its identifier text is not a wire name.
     private def resolve_string_or_const(value : LibTreeSitter::TSNode,
                                         source : String,
                                         string_constants : Hash(String, String),
-                                        local_string_constants : Hash(String, String)) : String
+                                        local_string_constants : Hash(String, String)) : String?
       case Noir::TreeSitter.node_type(value)
       when "string_literal"
         decode_string_literal(value, source)
       when "simple_identifier"
         name = Noir::TreeSitter.node_text(value, source)
-        local_string_constants[name]? || string_constants[name]? || name
+        local_string_constants[name]? || string_constants[name]?
       when "navigation_expression"
         text = Noir::TreeSitter.node_text(value, source)
-        local_string_constants[text]? || string_constants[text]? || normalise_http_header_constant(text)
+        local_string_constants[text]? || string_constants[text]? ||
+          (normalise_http_header_constant(text) if text.starts_with?("HttpHeaders."))
       else
         Noir::TreeSitter.node_text(value, source)
       end

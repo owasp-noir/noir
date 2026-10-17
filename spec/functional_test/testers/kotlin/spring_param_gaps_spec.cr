@@ -12,6 +12,10 @@ expected_endpoints = [
   Endpoint.new("/zoo/lang", "GET", [Param.new("x-widget-lang", "", "header")]),
   Endpoint.new("/zoo/after-nested", "GET", [Param.new("x-inner", "", "header")]),
   Endpoint.new("/zoo/x", "GET"),
+  # Several declarations on one line; an unresolvable constant keeps the argument name.
+  Endpoint.new("/zoo/one-a", "GET", [Param.new("x-top-one", "", "header")]),
+  Endpoint.new("/zoo/one-b", "GET", [Param.new("x-deep-one", "", "header")]),
+  Endpoint.new("/zoo/unresolved", "GET", [Param.new("m", "", "header")]),
   Endpoint.new("/zoo/cb", "POST", [
     Param.new("X-Widget-Token", "", "header"),
     Param.new("q", "", "query"),
