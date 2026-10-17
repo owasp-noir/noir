@@ -117,10 +117,11 @@ module Analyzer::Specification
 
     # Shares the OAS3 analyzer's `servers` handling so `--url` behaves the same
     # across spec families: an absolute server URL contributes only its path,
-    # and with `--url` supplied only the matching host contributes at all.
+    # with `--url` supplied only the matching host contributes at all, and
+    # `variables.*.default` are substituted into the URL first.
     private def base_path_for(root : JSON::Any) : String
       if servers = root["servers"]?.try(&.as_a?)
-        base = server_base_path(servers.map { |server_obj| server_obj.as_h?.try(&.["url"]?).try(&.as_s?) || "" })
+        base = server_base_path(servers.compact_map { |server_obj| server_url_json(server_obj) if server_obj.as_h? })
         return base unless base == @url
       end
 

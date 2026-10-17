@@ -430,6 +430,19 @@ module Analyzer::Specification
       @url
     end
 
+    # A JSON `servers[]` entry's `url` with each `variables.*.default`
+    # substituted. Shared by OAS3 and OpenRPC, which use the same object.
+    protected def server_url_json(server_obj : JSON::Any) : String
+      url = server_obj["url"]?.try(&.as_s?) || ""
+      if variables = server_obj["variables"]?.try(&.as_h?)
+        variables.each do |name, variable_obj|
+          default = variable_obj.as_h?.try(&.["default"]?).try(&.as_s?)
+          url = url.gsub("{#{name}}", default) if default
+        end
+      end
+      url
+    end
+
     # The path a single `servers[].url` contributes, or nil when the entry
     # contributes nothing (unusable, or a host the user did not ask about).
     protected def server_url_path(server_url : String) : String?
@@ -465,9 +478,11 @@ module Analyzer::Specification
     # host or a placeholder. `.` and `:` in the first segment mean a hostname
     # or a `host:port`; anything outside the unreserved URL characters (plus
     # the `{}` of a server variable) means the document left a placeholder in.
+    # A variable left unsubstituted at the very start (`{endpoint}`) stands in
+    # for the host or the whole base URL, not for a path segment.
     private def relative_server_path?(server_url : String) : Bool
       first = server_url.split('/', 2).first
-      return false if first.empty?
+      return false if first.empty? || first.starts_with?('{')
       return false if first.includes?('.') || first.includes?(':')
       first.each_char.all? do |char|
         char.ascii_alphanumeric? || "-_~%{}".includes?(char)
