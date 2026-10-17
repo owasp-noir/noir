@@ -204,4 +204,40 @@ describe "Nginx Analyzer" do
       tag_descriptions(endpoint, "nginx-host").should eq(["a.example.com"])
     end
   end
+
+  it "strips surrounding quotes from regex and prefix locations" do
+    endpoints = analyze_nginx <<-CONF
+      server {
+          listen 80;
+          location ~ "^/v[0-9]{1,2}/.+\\.json$" { proxy_pass http://api; }
+          location ~ '^/v[0-9]{1,2}/items$'     { proxy_pass http://items; }
+          location ~ "^/api/v1/users$"          { proxy_pass http://users; }
+          location "/quoted/prefix"             { proxy_pass http://prefix; }
+          location = '/quoted/exact'            { return 200 "ok"; }
+      }
+      CONF
+
+    endpoints.map { |e| {e.url, e.kind, tag_descriptions(e, "nginx-path-type").first} }.sort!.should eq([
+      {"/api/v1/users", "", "regex"},
+      {"/quoted/exact", "", "exact"},
+      {"/quoted/prefix", "", "prefix"},
+      {"/v[0-9]{1,2}/.+.json", "regex", "regex"},
+      {"/v[0-9]{1,2}/items", "regex", "regex"},
+    ])
+  end
+
+  it "preserves unquoted path with method block inside quoted regex location" do
+    endpoints = analyze_nginx <<-CONF
+      server {
+          location ~ "^/v[0-9]{1,2}/.+\\.json$" {
+              if ($request_method = POST) { return 200; }
+          }
+      }
+      CONF
+
+    endpoints.map { |e| {e.url, e.method, e.kind} }.sort!.should eq([
+      {"/v[0-9]{1,2}/.+.json", "ANY", "regex"},
+      {"/v[0-9]{1,2}/.+.json", "POST", "regex"},
+    ])
+  end
 end

@@ -114,7 +114,12 @@ module Analyzer::Specification
     end
 
     private def normalize_location_path(path : String) : String
-      path.gsub(/[{};]\z/, "")
+      path = path.gsub(/[{};]\z/, "")
+      if path.size >= 2 && ((path.starts_with?('"') && path.ends_with?('"')) ||
+         (path.starts_with?('\'') && path.ends_with?('\'')))
+        path = path[1..-2]
+      end
+      path
     end
 
     private def internal_location?(path : String) : Bool
