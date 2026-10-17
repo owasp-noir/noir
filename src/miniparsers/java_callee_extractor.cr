@@ -44,11 +44,12 @@ module Noir::JavaCalleeExtractor
                         class_name : String,
                         method_name : String,
                         target_line : Int32? = nil,
-                        decl_index : Hash(String, Int32?)? = nil) : Array(Tuple(String, String, Int32))
+                        decl_index : Hash(String, Int32?)? = nil,
+                        method_index : MethodIndex? = nil) : Array(Tuple(String, String, Int32))
     sink = [] of Tuple(String, String, Int32)
     return sink if class_name.empty? || method_name.empty?
 
-    method_node = find_method(root, source, class_name, method_name, target_line)
+    method_node = find_method(method_index || build_method_index(root, source), class_name, method_name, target_line)
     return sink unless method_node
     body = Noir::TreeSitter.field(method_node, "body")
     return sink unless body
@@ -165,40 +166,49 @@ module Noir::JavaCalleeExtractor
     end
   end
 
+  # Every `method_declaration` directly in a class or interface body, by
+  # `{class name, method name}`, in tree order. Spring resolves callees for
+  # every route of a file against one root, and walking the whole tree per
+  # route made a controller with N handlers cost O(N²) — build it once and
+  # pass it as `method_index:`, like `decl_index:`.
+  alias MethodIndex = Hash(Tuple(String, String), Array(LibTreeSitter::TSNode))
+
+  def build_method_index(root : LibTreeSitter::TSNode, source : String) : MethodIndex
+    index = MethodIndex.new
+    walk_class_decls(root) do |decl|
+      name_node = Noir::TreeSitter.field(decl, "name")
+      next unless name_node
+      body = Noir::TreeSitter.field(decl, "body")
+      next unless body
+      class_name = Noir::TreeSitter.node_text(name_node, source)
+      Noir::TreeSitter.each_named_child(body) do |member|
+        next unless Noir::TreeSitter.node_type(member) == "method_declaration"
+        mn = Noir::TreeSitter.field(member, "name")
+        next unless mn
+        (index[{class_name, Noir::TreeSitter.node_text(mn, source)}] ||= [] of LibTreeSitter::TSNode) << member
+      end
+    end
+    index
+  end
+
   # `target_line` (0-based row of the route's mapping annotation, when
   # available) disambiguates overloaded handlers: the annotation lives
   # inside the correct overload's node span, so the method whose
   # `[start_row, end_row]` range contains that line wins. Falls back to
   # the first same-named method otherwise, matching prior behaviour.
-  private def find_method(root : LibTreeSitter::TSNode,
-                          source : String,
+  private def find_method(index : MethodIndex,
                           class_name : String,
                           method_name : String,
                           target_line : Int32? = nil) : LibTreeSitter::TSNode?
-    first : LibTreeSitter::TSNode? = nil
-    matched : LibTreeSitter::TSNode? = nil
-    walk_class_decls(root) do |decl|
-      next if matched
-      name_node = Noir::TreeSitter.field(decl, "name")
-      next unless name_node
-      next unless Noir::TreeSitter.node_text(name_node, source) == class_name
-      body = Noir::TreeSitter.field(decl, "body")
-      next unless body
-      Noir::TreeSitter.each_named_child(body) do |member|
-        next if matched
-        next unless Noir::TreeSitter.node_type(member) == "method_declaration"
-        mn = Noir::TreeSitter.field(member, "name")
-        next unless mn
-        next unless Noir::TreeSitter.node_text(mn, source) == method_name
-        first ||= member
-        if line = target_line
-          start_row = Noir::TreeSitter.node_start_row(member)
-          end_row = Noir::TreeSitter.node_end_row(member)
-          matched = member if line >= start_row && line <= end_row
-        end
+    candidates = index[{class_name, method_name}]?
+    return unless candidates
+    if line = target_line
+      matched = candidates.find do |member|
+        line >= Noir::TreeSitter.node_start_row(member) && line <= Noir::TreeSitter.node_end_row(member)
       end
+      return matched if matched
     end
-    matched || first
+    candidates.first
   end
 
   private def walk_class_decls(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)

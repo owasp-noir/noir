@@ -91,7 +91,7 @@ class AspnetAuthTagger < FrameworkTagger
 
       # Check for [AllowAnonymous] on this action or its controller:
       # anonymous access wins over any [Authorize] in ASP.NET Core.
-      class_attrs = class_attribute_lines(lines, line_idx)
+      class_attrs = class_attribute_lines(path_info.path, lines, line_idx)
       if has_allow_anonymous?(lines, line_idx) || class_attrs.any?(&.matches?(ALLOW_ANONYMOUS_PATTERN))
         return
       end
@@ -221,24 +221,17 @@ class AspnetAuthTagger < FrameworkTagger
   end
 
   # The attribute lines above the class enclosing `method_line`.
-  private def class_attribute_lines(lines : Array(String), method_line : Int32) : Array(String)
+  private def class_attribute_lines(path : String, lines : Array(String), method_line : Int32) : Array(String)
     attrs = [] of String
-    idx = method_line
-    while idx >= 0
-      current = lines[idx].strip
+    idx = nearest_line_above(path, lines) { |current| current.includes?("class ") && (current.includes?(":") || current.includes?("{")) }[method_line]
+    return attrs if idx < 0
 
-      if current.includes?("class ") && (current.includes?(":") || current.includes?("{"))
-        attr_idx = idx - 1
-        while attr_idx >= 0 && attr_idx >= idx - 5
-          attr = lines[attr_idx].strip
-          break if attr.empty? && attr_idx < idx - 1
-          attrs << attr
-          attr_idx -= 1
-        end
-        break
-      end
-
-      idx -= 1
+    attr_idx = idx - 1
+    while attr_idx >= 0 && attr_idx >= idx - 5
+      attr = lines[attr_idx].strip
+      break if attr.empty? && attr_idx < idx - 1
+      attrs << attr
+      attr_idx -= 1
     end
     attrs
   end

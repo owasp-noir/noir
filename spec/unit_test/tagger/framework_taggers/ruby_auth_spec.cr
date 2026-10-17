@@ -415,3 +415,57 @@ describe "RubyAuthTagger (Sinatra route scope)" do
     end
   end
 end
+
+describe "RubyAuthTagger (Grape route scope)" do
+  it "reads an enclosing scope's filter past sibling routes, never a sibling scope's" do
+    dir = File.tempname("noir_grape_scope")
+    Dir.mkdir_p(dir)
+    api = File.join(dir, "api.rb")
+    File.write(api, <<-RB)
+      class API < Grape::API
+        namespace :admin do
+          before { authenticate! }
+
+          get '/first' do
+            'a'
+          end
+
+          get '/users' do
+            'b'
+          end
+        end
+
+        namespace :open do
+          get '/ping' do
+            'p'
+          end
+        end
+
+        get '/health' do
+          'ok'
+        end
+      end
+      RB
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(dir)
+      at = ->(url : String, line : Int32) do
+        details = Details.new(PathInfo.new(api, line))
+        details.technology = "ruby_grape"
+        Endpoint.new(url, "GET", [] of Param, details)
+      end
+      users = at.call("/admin/users", 9)
+      ping = at.call("/open/ping", 15)
+      health = at.call("/health", 20)
+
+      RubyAuthTagger.new(noir_options).perform([users, ping, health])
+
+      users.tags.map(&.description).should eq(["Protected by Grape authenticate!"])
+      ping.tags.should be_empty
+      health.tags.should be_empty
+    ensure
+      FileUtils.rm_rf(dir)
+    end
+  end
+end

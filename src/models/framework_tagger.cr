@@ -31,6 +31,7 @@ class FrameworkTagger < Tagger
   @base_paths : Array(String)
   @file_cache : Hash(String, String)
   @lines_cache : Hash(String, Array(String))
+  @nearest_line_cache = Hash(String, Array(Int32)).new
   @project_roots = Hash({String, String}, String?).new
 
   def initialize(options : Hash(String, YAML::Any))
@@ -174,6 +175,22 @@ class FrameworkTagger < Tagger
     lines = content.split("\n")
     @lines_cache[path] = lines
     lines
+  end
+
+  # For each line of `path`, the index of the closest line at or above it
+  # whose stripped text satisfies the block (-1 if none). Built once per
+  # file, for the "find the enclosing declaration" walks that otherwise
+  # rescan from every endpoint back to the class line — O(N²) for a class
+  # with N handlers. Cached by path alone, so a tagger passes the same block
+  # on every call.
+  def nearest_line_above(path : String, lines : Array(String), & : String -> Bool) : Array(Int32)
+    @nearest_line_cache[path] ||= begin
+      last = -1
+      lines.map_with_index do |line, idx|
+        last = idx if yield line.strip
+        last
+      end
+    end
   end
 
   # The annotation lines stacked *below* the route marker at `route_idx`,

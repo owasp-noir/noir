@@ -199,6 +199,7 @@ module Analyzer::Java
             # callees are requested) and reuse it across every route in
             # the file rather than rebuilding it per route.
             file_decl_index = include_callee ? Noir::JavaCalleeExtractor.build_method_decl_index(root, content) : nil
+            file_method_index = include_callee ? Noir::JavaCalleeExtractor.build_method_index(root, content) : nil
             # Same for the handler-method lookups below (built on the first route).
             param_index = nil.as(Noir::TreeSitterJavaParameterExtractor::FileIndex?)
 
@@ -239,7 +240,7 @@ module Analyzer::Java
               # other analyzer's first-cut honest scope.
               if include_callee && !(route.class_name.empty? || route.method_name.empty?)
                 Noir::JavaCalleeExtractor.callees_in_method(
-                  root, content, path, route.class_name, route.method_name, route.line, decl_index: file_decl_index
+                  root, content, path, route.class_name, route.method_name, route.line, decl_index: file_decl_index, method_index: file_method_index
                 ).each do |entry|
                   name, callee_path, callee_line = entry
                   endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
@@ -283,7 +284,7 @@ module Analyzer::Java
                     # empty interface method.
                     if include_callee && !(implementation.class_name.empty? || entry_route.method_name.empty?)
                       Noir::JavaCalleeExtractor.callees_in_method(
-                        root, content, path, implementation.class_name, entry_route.method_name, decl_index: file_decl_index
+                        root, content, path, implementation.class_name, entry_route.method_name, decl_index: file_decl_index, method_index: file_method_index
                       ).each do |callee_entry|
                         name, callee_path, callee_line = callee_entry
                         endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
