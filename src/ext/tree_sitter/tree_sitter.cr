@@ -13,6 +13,12 @@
 
 require "../../miniparsers/extraction_result_cache"
 
+class Fiber
+  # Descent depth of the tree-sitter walk on this fiber's stack, see
+  # `Noir::TreeSitter.each_named_child`.
+  property noir_ts_walk_depth = 0
+end
+
 @[Link(ldflags: "`sh #{__DIR__}/build.sh`")]
 lib LibTreeSitter
   # ----- Opaque types -----
@@ -400,23 +406,13 @@ module Noir::TreeSitter
   # exact same named children in the same order.
   NAMED_CHILD_CURSOR_THRESHOLD = 8
 
-  # Nesting level of the `each_named_child` calls currently on this
-  # thread's stack — the descent depth of whatever AST walk is running.
-  #
-  # Thread-local rather than a plain class variable so two walks running
-  # on different threads (the MT runtime, or two analyzers under
-  # `parallel_analyze`) cannot corrupt each other's count.
-  #
-  # Every frame saves the value it found and restores it in an `ensure`,
-  # so the counter only ever *over*-estimates: a fiber that suspends
-  # mid-walk (a `logger` write inside a walker block) leaves its depth
-  # standing, and a walk that starts on the same thread meanwhile is
-  # bounded more tightly than it needed to be. That direction is the safe
-  # one — it can truncate a pathological walk early, never overrun the
-  # stack — and it costs one integer per node instead of per-fiber
-  # storage.
-  @[ThreadLocal]
-  @@walk_depth = 0
+  # The nesting level of `each_named_child` / `descend` frames lives on the
+  # fiber (`Fiber#noir_ts_walk_depth`), not the thread: walks on fibers that
+  # share a thread interleave whenever one suspends mid-walk (a `logger`
+  # write inside a walker block), and their save/restore frames then unwind
+  # out of order. A thread-wide counter is left at a stale value for good,
+  # truncating every later walk on that thread. Per fiber, each stack only
+  # ever sees its own frames, so the save/restore always balances.
 
   # Iterates named children without allocating an array.
   #
@@ -444,9 +440,10 @@ module Noir::TreeSitter
     count = LibTreeSitter.ts_node_named_child_count(node)
     return if count == 0
 
-    depth = @@walk_depth
+    fiber = Fiber.current
+    depth = fiber.noir_ts_walk_depth
     return if depth >= MAX_AST_DEPTH
-    @@walk_depth = depth + 1
+    fiber.noir_ts_walk_depth = depth + 1
 
     begin
       if count <= NAMED_CHILD_CURSOR_THRESHOLD
@@ -457,7 +454,7 @@ module Noir::TreeSitter
         each_named_child_via_cursor(node) { |child| yield child }
       end
     ensure
-      @@walk_depth = depth
+      fiber.noir_ts_walk_depth = depth
     end
   end
 
@@ -488,13 +485,14 @@ module Noir::TreeSitter
   # chain link, and a generated `x.b.b.b…(1)` chain of 100k links
   # overflowed the stack and aborted the whole scan.
   def self.descend(&)
-    depth = @@walk_depth
+    fiber = Fiber.current
+    depth = fiber.noir_ts_walk_depth
     return if depth >= MAX_AST_DEPTH
-    @@walk_depth = depth + 1
+    fiber.noir_ts_walk_depth = depth + 1
     begin
       yield
     ensure
-      @@walk_depth = depth
+      fiber.noir_ts_walk_depth = depth
     end
   end
 
