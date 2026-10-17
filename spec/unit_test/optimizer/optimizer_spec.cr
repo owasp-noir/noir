@@ -566,6 +566,24 @@ describe "EndpointOptimizer" do
       ])
     end
 
+    it "folds a .http concrete example into the code route without its browser headers" do
+      optimizer = EndpointOptimizer.new(logger, options)
+
+      code = tech_endpoint("/api/gadgets/item/{itemId}", "GET", "java_spring", "src/main/java/GadgetController.java", 5)
+      code.params << Param.new("itemId", "", "path")
+
+      http_file = tech_endpoint("/api/gadgets/item/42", "GET", "http_file", "requests/manual.http", 1)
+      %w[Cookie Origin Referer X-Tenant].each { |name| http_file.params << Param.new(name, "", "header") }
+
+      result = optimizer.optimize_endpoints([code, http_file])
+
+      result.map(&.url).should eq(["/api/gadgets/item/{itemId}"])
+      result[0].params.map { |param| "#{param.name}:#{param.param_type}" }.sort!.should eq([
+        "X-Tenant:header",
+        "itemId:path",
+      ])
+    end
+
     it "drops body-less collection GraphQL transport placeholders when operation endpoints exist" do
       optimizer = EndpointOptimizer.new(logger, options)
       collection_details = Details.new(PathInfo.new("insomnia.json", 1))
