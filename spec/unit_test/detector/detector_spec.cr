@@ -545,4 +545,50 @@ describe "detect_techs passive results" do
       FileUtils.rm_rf(temp_dir)
     end
   end
+
+  it "does not cache content it read only for the passive scan" do
+    temp_dir = File.tempname("noir_detector_passive_cache")
+    Dir.mkdir_p(temp_dir)
+
+    begin
+      notes = File.join(temp_dir, "notes.txt")
+      app = File.join(temp_dir, "app.py")
+      File.write(notes, "token = noir-secret-marker\n")
+      File.write(app, "from flask import Flask\napp = Flask(__name__)\n")
+      rule = PassiveScan.new(YAML.parse(<<-YAML))
+        id: spec-marker
+        info:
+          name: "Spec marker"
+          author: ["spec"]
+          severity: "high"
+          description: "Spec marker"
+          reference: [""]
+        matchers-condition: "or"
+        matchers:
+          - type: "word"
+            patterns: ["noir-secret-marker"]
+            condition: "or"
+        category: "secret"
+        techs: ["*"]
+        YAML
+
+      options = create_test_options
+      options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+      logger = NoirLogger.new(false, false, false, true)
+      locator = CodeLocator.instance
+      locator.clear_all
+
+      _, passive = detect_techs([temp_dir], options, [rule], logger)
+
+      passive.map(&.file_path).should eq([notes])
+      locator.all_files.should contain(notes)
+      # Without `-P` the walk never reads notes.txt; with it, the content
+      # is read for the rule but must not take content-cache budget.
+      locator.content_for(notes).should be_nil
+      locator.content_for(app).should_not be_nil
+    ensure
+      CodeLocator.instance.clear_all
+      FileUtils.rm_rf(temp_dir) if temp_dir
+    end
+  end
 end
