@@ -603,6 +603,9 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
       while item = pending.receive?
         full_path = item.path
         candidate_detector_indices = item.detector_indices
+        # The walker reads a file with no applicable detector only for the
+        # passive scan; without `-P` it is never read at all.
+        read_for_detection = !candidate_detector_indices.empty? || item.android_source_file
 
         reply = item.reply
         if reply.nil?
@@ -683,9 +686,18 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
         end
 
         channel.send({full_path, content, candidate_detector_indices})
-        # Register the path in file_map and (budget permitting)
-        # cache the content so analyzers can skip the re-read.
-        locator.register_file(full_path, content)
+        # Register the path in file_map and (budget permitting) cache the
+        # content so analyzers can skip the re-read — but only for a file
+        # detection asked for. A file read just for the passive scan stays
+        # uncached, as it is without `-P`: caching every text file of the
+        # tree filled the content budget with files nothing reads again
+        # (gitlab: ~430MB peak without `-P`, ~800MB with it) and crowded
+        # out the files analyzers do re-read.
+        if read_for_detection
+          locator.register_file(full_path, content)
+        else
+          locator.register_path(full_path)
+        end
       end
     ensure
       # A sequencer that died must not leave the walker blocked on a full
