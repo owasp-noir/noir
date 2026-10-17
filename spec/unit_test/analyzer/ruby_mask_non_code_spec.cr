@@ -94,3 +94,20 @@ describe "Analyzer::Ruby::RubyEngine.mask_non_code" do
     elapsed.should be < 2.seconds
   end
 end
+
+describe "Analyzer::Ruby::RubyEngine.non_code_hint?" do
+  it "decides once per path for every Ruby analyzer, until the next scan clears it" do
+    Noir::ExtractionResultCache.clear_all
+    path = "/spec/non_code_hint/app.rb"
+    with_heredoc = "x = <<~SQL\n  SELECT 1\nSQL\n"
+
+    Analyzer::Ruby::RubyEngine.non_code_hint?(path, "puts 1\n").should be_false
+    # Same path in the same scan: the first answer stands.
+    Analyzer::Ruby::RubyEngine.non_code_hint?(path, with_heredoc).should be_false
+
+    Noir::ExtractionResultCache.clear_all
+    Analyzer::Ruby::RubyEngine.non_code_hint?(path, with_heredoc).should be_true
+  ensure
+    Noir::ExtractionResultCache.clear_all
+  end
+end
