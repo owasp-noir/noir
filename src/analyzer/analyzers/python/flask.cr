@@ -3,6 +3,7 @@ require "../../../miniparsers/python_route_extractor"
 require "../../../miniparsers/python_route_extractor_ts"
 require "../../engines/python_engine"
 require "./flask_family"
+require "../../../utils/worker_threads"
 
 module Analyzer::Python
   class Flask < PythonEngine
@@ -123,6 +124,7 @@ module Analyzer::Python
       # Pre-filter .py sources once (no site-packages/tests) instead of
       # O(bases × files) path_under_root checks.
       python_files = python_source_files
+      prefetch_flask_parses(python_files)
       base_paths.each do |current_base_path|
         state.flask_instances[{current_base_path, "app"}] ||= "" # Common flask instance name
         python_files.each do |path|
@@ -131,7 +133,7 @@ module Analyzer::Python
 
           isolating_file_errors(path) do
             file_content = fetch_file_content(path)
-            next unless flask_relevant_source?(file_content)
+            next unless flask_relevant_file?(path, file_content)
             collect_flask_appbuilder_classes(path, current_base_path, file_content, fab)
             analyze_flask_source(path, current_base_path, file_content, state)
           end
@@ -1038,6 +1040,38 @@ module Analyzer::Python
     # with Flask-shaped (usually empty) params.
     COMPETING_FRAMEWORK_IMPORT_RE =
       /^\s*(?:from|import)\s+(?:fastapi|sanic|litestar|starlette|quart|robyn|ninja|bottle|aiohttp|falcon|pyramid|tornado)\b/m
+
+    # `analyze_flask_source`'s tree-sitter pre-pass is pure and memoized
+    # (`extract_decorations_and_blueprints`), so it runs here for every file
+    # the pass will reach, on `Noir::WorkerThreads`; the sequential pass then
+    # takes the parse from the memo instead of doing it on the analyzer's
+    # own fiber, and its output and order are unchanged.
+    # ponytail: warms at most half the memo's capacity so nothing warmed is
+    # evicted before use; files past that are parsed inline as before.
+    private def prefetch_flask_parses(paths : Array(::String)) : Nil
+      sources = [] of ::String
+      paths.each do |path|
+        break if sources.size >= Noir::ExtractionResultCache::DEFAULT_MAX_ENTRIES // 2
+        begin
+          content = fetch_file_content(path)
+          sources << content if flask_relevant_file?(path, content) && !flask_appbuilder_only_source?(content)
+        rescue
+          # The pass reads and reports this file itself.
+        end
+      end
+      Noir::WorkerThreads.map(sources) do |source|
+        Noir::TreeSitterPythonRouteExtractor.extract_decorations_and_blueprints(source, ["flask"])
+        nil
+      end
+    end
+
+    # `flask_relevant_source?`, decided once per file for the prefetch and
+    # every base's pass.
+    @flask_relevance = Hash(::String, Bool).new
+
+    private def flask_relevant_file?(path : ::String, source : ::String) : Bool
+      @flask_relevance.fetch(path) { @flask_relevance[path] = flask_relevant_source?(source) }
+    end
 
     private def flask_relevant_source?(source : ::String) : Bool
       # Strip # comments (to EOL) before relevance heuristics. This prevents

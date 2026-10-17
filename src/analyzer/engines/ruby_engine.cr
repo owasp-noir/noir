@@ -1,5 +1,7 @@
 require "../../models/analyzer"
 require "../../miniparsers/ruby_callee_extractor"
+require "../../miniparsers/extraction_result_cache"
+require "../../utils/text_file"
 
 module Analyzer::Ruby
   abstract class RubyEngine < Analyzer
@@ -227,15 +229,42 @@ module Analyzer::Ruby
     # numbers and per-line walks are unaffected. Ruby analyzers read sources
     # through this instead of `read_file_content`.
     protected def ruby_source(path : String) : String
-      RubyEngine.mask_non_code(read_file_content(path))
+      content = read_file_content(path)
+      RubyEngine.non_code_hint?(path, content) ? RubyEngine.mask_hinted(content) : content
     end
 
     EVAL_CALL_RE          = /(?:\b|_)eval\b/
     RUBY_NON_CODE_HINT_RE = /^=begin|^__END__|<<[~-]?["'`]?[A-Za-z_]/m
 
+    # Whether `path` can hold anything `mask_non_code` blanks out, decided
+    # once per file for every Ruby analyzer. Each of them (Rails, Grape,
+    # Sinatra, the CLI, ActionCable, GraphQL, …) used to run this
+    # whole-file regex on every `.rb` file again; on gitlab it was the
+    # largest single cost of the analysis phase. Only the answer is kept,
+    # so the cache costs a Bool per file, not a masked copy.
+    @@non_code_hints = Hash(String, Bool).new
+    @@non_code_hints_mutex = Mutex.new
+
+    Noir::ExtractionResultCache.register_clearer do
+      @@non_code_hints_mutex.synchronize { @@non_code_hints.clear }
+    end
+
+    def self.non_code_hint?(path : String, content : String) : Bool
+      cached = @@non_code_hints_mutex.synchronize { @@non_code_hints[path]? }
+      return cached unless cached.nil?
+      hint = content.matches?(RUBY_NON_CODE_HINT_RE, options: Noir::TextFile::MATCH_OPTIONS)
+      @@non_code_hints_mutex.synchronize { @@non_code_hints[path] = hint }
+      hint
+    end
+
     def self.mask_non_code(content : String) : String
       return content unless content.matches?(RUBY_NON_CODE_HINT_RE)
+      mask_hinted(content)
+    end
 
+    # `mask_non_code` for content already known to match
+    # `RUBY_NON_CODE_HINT_RE`.
+    def self.mask_hinted(content : String) : String
       lines = content.split('\n')
       index = HeredocTerminators.new(lines)
       in_block_comment = false
