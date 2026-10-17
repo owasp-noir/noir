@@ -53,6 +53,11 @@ jobs:
           echo "endpoints: $count"
           test "$count" -gt 0
       - name: Build spec suite
-        run: crystal build spec/suite.cr -o bin/noir_spec.exe
+        # Every spec file's top-level code lands in one unoptimized
+        # `__crystal_main`, and on win64 each by-value struct (Endpoint is
+        # ~200 bytes) gets its own stack slot there; the frame passed the 8 MB
+        # default reserve (0xC00000FD before the first spec). Link flags come
+        # after Crystal's own /STACK, so this one wins.
+        run: crystal build spec/suite.cr -o bin/noir_spec.exe --link-flags=/STACK:0x2000000
       - name: Run specs
         run: ./bin/noir_spec.exe

@@ -253,6 +253,18 @@ module Noir
       params
     end
 
+    # Just the `params=` / `headers=` constraints: the conditions that pick
+    # this handler among others mapped to the same method + path.
+    def extract_route_conditions_from_method(method : LibTreeSitter::TSNode,
+                                             source : String,
+                                             verb : String,
+                                             string_constants = Hash(String, String).new,
+                                             local_string_constants = Hash(String, String).new) : Array(Param)
+      conditions = [] of Param
+      append_constraint_params(method, source, verb, conditions, string_constants, local_string_constants)
+      conditions
+    end
+
     def extract_server_request_parameters_from_method(method : LibTreeSitter::TSNode,
                                                       source : String,
                                                       verb : String,

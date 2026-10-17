@@ -86,6 +86,14 @@ struct Endpoint
   # opt in; empty for the rest.
   @callees : Array(Callee) = [] of Callee
 
+  # Request conditions beyond method + URL that pick one handler among
+  # several at the same address (Spring `params=` / `headers=`). The
+  # optimizer keeps endpoints whose conditions differ apart instead of
+  # unioning their params. Not serialized: the params already carry them.
+  @[JSON::Field(ignore: true)]
+  @[YAML::Field(ignore: true)]
+  property route_conditions : Array(Param) = [] of Param
+
   def initialize(@url : String, @method : String, params : Array(Param) = [] of Param,
                  details : Details = Details.new, @internal : Bool = false)
     @params = params.map(&.detached_copy)

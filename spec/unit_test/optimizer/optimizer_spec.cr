@@ -269,7 +269,7 @@ describe "EndpointOptimizer" do
       result[0].details.code_paths.map(&.path).should eq(["UserApi.kt", "UserController.kt"])
     end
 
-    {"kotlin_spring", "java_spring"}.each do |technology|
+    {"kotlin_spring", "java_spring", "js_express", "go_gin"}.each do |technology|
       it "keeps identical #{technology} endpoints from separate build modules distinct" do
         optimizer = EndpointOptimizer.new(logger, options)
         temp_dir = File.join(Dir.tempdir, "noir-optimizer-modules-#{Process.pid}-#{Time.utc.to_unix_ms}")
@@ -302,6 +302,30 @@ describe "EndpointOptimizer" do
           FileUtils.rm_rf(temp_dir) if Dir.exists?(temp_dir)
         end
       end
+    end
+
+    it "keeps handlers with different request conditions apart" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      build = ->(line : Int32, conditions : Array(Param)) do
+        endpoint = Endpoint.new("/gate/reset", "GET", conditions, Details.new(PathInfo.new("GateController.java", line)))
+        endpoint.details.technology = "java_spring"
+        endpoint.route_conditions = conditions
+        endpoint
+      end
+      ticket = [Param.new("ticket", "", "query")]
+
+      result = optimizer.optimize_endpoints([
+        build.call(7, [] of Param),
+        build.call(10, ticket),
+        build.call(13, [Param.new("relink", "", "query")]),
+        build.call(16, ticket),
+      ])
+
+      result.map { |endpoint| {endpoint.params.map(&.name), endpoint.details.code_paths.map(&.line)} }.should eq([
+        {[] of String, [7]},
+        {["ticket"], [10, 16]},
+        {["relink"], [13]},
+      ])
     end
 
     it "keeps multi-module endpoints distinct even when a collection shares the path" do
