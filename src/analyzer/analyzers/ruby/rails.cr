@@ -1827,19 +1827,21 @@ module Analyzer::Ruby
       # the whole body for every (method × action) pair — O(M·A) recompiled
       # regexes per controller, quadratic in the action count. Whole-token
       # set membership is equivalent to the `\b…\b` word-boundary match for
-      # identifier names while running in O(M·body + M·A).
+      # identifier names. Testing every action against every body was
+      # still O(M·A) set lookups — 256M for a 16k-action controller — so
+      # look the body's tokens up among the actions instead, and put the
+      # matches back in action order (it is the params' order).
+      action_order = Hash(String, Int32).new
+      defined_actions.each_with_index { |action, index| action_order[action] = index }
       method_bodies.each do |method_name, body_lines|
-        tokens = Set(String).new
+        matches = Set(String).new
         body_lines.each do |line|
-          line.scan(/[A-Za-z_]\w*[!?=]?/) { |m| tokens << m[0] }
+          line.scan(/[A-Za-z_]\w*[!?=]?/) do |m|
+            token = m[0]
+            matches << token if token != method_name && action_order.has_key?(token)
+          end
         end
-
-        matches = [] of String
-        defined_actions.each do |candidate|
-          next if candidate == method_name
-          matches << candidate if tokens.includes?(candidate)
-        end
-        helper_calls[method_name] = matches unless matches.empty?
+        helper_calls[method_name] = matches.to_a.sort_by! { |action| action_order[action] } unless matches.empty?
       end
 
       helper_calls

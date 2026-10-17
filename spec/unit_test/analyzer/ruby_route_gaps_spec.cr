@@ -61,6 +61,33 @@ describe "Ruby route gaps" do
     param_names(find_ep(endpoints, "PATCH", "/products/1"), "form").should eq(%w[sku])
   end
 
+  it "merges a Rails action's helper params in the order the helpers are defined" do
+    endpoints = scan_ruby_tree({
+      "Gemfile"                               => RAILS_GEMFILE,
+      "config/routes.rb"                      => "Rails.application.routes.draw do\n  get '/reports', to: 'reports#index'\nend\n",
+      "app/controllers/reports_controller.rb" => <<-RUBY,
+        class ReportsController < ApplicationController
+          def alpha_filter
+            params[:alpha]
+          end
+
+          def beta_filter
+            params[:beta]
+          end
+
+          def index
+            beta_filter
+            alpha_filter
+            params[:page]
+          end
+        end
+        RUBY
+    })
+
+    report = find_ep(endpoints, "GET", "/reports")
+    report.params.select(&.param_type.==("query")).map(&.name).should eq(%w[page alpha beta])
+  end
+
   it "gives shallow-nested Rails resources unnested member routes" do
     controller = "class CommentsController < ApplicationController\n  def index; end\n  def create; end\n  def show; end\n  def destroy; end\nend\n"
     endpoints = scan_ruby_tree({
