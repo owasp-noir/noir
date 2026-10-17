@@ -136,20 +136,6 @@ class RubyAuthTagger < FrameworkTagger
   CONTROLLER_AUTH_LINE = 1_u8
   CLASS_LINE           = 2_u8
 
-  # For each line, the closest flagged line at or above it (-1 if none). The
-  # walk still started over from every action and stepped past each
-  # unflagged line on the way to the class, so a controller with N actions
-  # stayed O(N²); this takes it from flag to flag.
-  private def flagged_line_jumps(path : String, flags : Array(UInt8)) : Array(Int32)
-    @flagged_line_jumps[path] ||= begin
-      last = -1
-      flags.map_with_index do |flag, idx|
-        last = idx unless flag == 0
-        last
-      end
-    end
-  end
-
   private def controller_line_flags(path : String, lines : Array(String)) : Array(UInt8)
     @controller_line_flags[path] ||= lines.map do |line|
       if line.matches?(CONTROLLER_AUTH_ANY)
@@ -179,7 +165,10 @@ class RubyAuthTagger < FrameworkTagger
       # Returning after the first match used to drop Devise when a closer
       # `before_action :authorize` won the walk, and skipped body authorize.
       flags = controller_line_flags(path_info.path, lines)
-      controller = check_controller_auth(lines, line_idx, flags, flagged_line_jumps(path_info.path, flags))
+      # The walk below starts over from every action, so it hops from flag
+      # to flag rather than stepping past each unflagged line to the class.
+      jumps = nearest_match_above(@flagged_line_jumps, path_info.path, flags) { |flag| flag != 0 }
+      controller = check_controller_auth(lines, line_idx, flags, jumps)
       # skip_before_action only suppresses authentication callbacks — not
       # independent authorize / CanCanCan checks in the action body.
       unless controller[:skipped]

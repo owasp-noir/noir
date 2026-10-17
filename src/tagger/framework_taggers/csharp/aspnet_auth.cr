@@ -55,6 +55,7 @@ class AspnetAuthTagger < FrameworkTagger
     super
     @fallback_roots = Set(String?).new
     @controllers_global_roots = Set(String?).new
+    @class_lines = Hash(String, Array(Int32)).new
   end
 
   # Collects the project roots (nearest `.csproj`) whose live, non-test
@@ -223,7 +224,7 @@ class AspnetAuthTagger < FrameworkTagger
   # The attribute lines above the class enclosing `method_line`.
   private def class_attribute_lines(path : String, lines : Array(String), method_line : Int32) : Array(String)
     attrs = [] of String
-    idx = nearest_line_above(path, lines) { |current| current.includes?("class ") && (current.includes?(":") || current.includes?("{")) }[method_line]
+    idx = nearest_match_above(@class_lines, path, lines) { |line| current = line.strip; current.includes?("class ") && (current.includes?(":") || current.includes?("{")) }[method_line]
     return attrs if idx < 0
 
     attr_idx = idx - 1

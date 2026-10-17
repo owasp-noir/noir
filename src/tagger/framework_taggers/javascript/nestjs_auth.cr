@@ -68,6 +68,7 @@ class NestjsAuthTagger < FrameworkTagger
   def initialize(options : Hash(String, YAML::Any))
     super
     @global_guards = Hash(String?, String).new
+    @class_lines = Hash(String, Array(Int32)).new
   end
 
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
@@ -224,7 +225,7 @@ class NestjsAuthTagger < FrameworkTagger
   # The decorator lines above the class enclosing `method_line`.
   private def class_decorator_lines(path : String, lines : Array(String), method_line : Int32) : Array(String)
     decorators = [] of String
-    idx = nearest_line_above(path, lines) { |current| current.includes?("class ") && current.includes?("{") }[method_line]
+    idx = nearest_match_above(@class_lines, path, lines) { |line| current = line.strip; current.includes?("class ") && current.includes?("{") }[method_line]
     return decorators if idx < 0
 
     class_idx = idx - 1

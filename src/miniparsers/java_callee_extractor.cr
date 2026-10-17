@@ -49,7 +49,7 @@ module Noir::JavaCalleeExtractor
     sink = [] of Tuple(String, String, Int32)
     return sink if class_name.empty? || method_name.empty?
 
-    method_node = find_method(method_index || build_method_index(root, source), class_name, method_name, target_line)
+    method_node = find_method(method_index || build_method_index(root, source, class_name), class_name, method_name, target_line)
     return sink unless method_node
     body = Noir::TreeSitter.field(method_node, "body")
     return sink unless body
@@ -170,17 +170,19 @@ module Noir::JavaCalleeExtractor
   # `{class name, method name}`, in tree order. Spring resolves callees for
   # every route of a file against one root, and walking the whole tree per
   # route made a controller with N handlers cost O(N²) — build it once and
-  # pass it as `method_index:`, like `decl_index:`.
+  # pass it as `method_index:`, like `decl_index:`. `only_class` indexes
+  # just that class, for a caller resolving a single method.
   alias MethodIndex = Hash(Tuple(String, String), Array(LibTreeSitter::TSNode))
 
-  def build_method_index(root : LibTreeSitter::TSNode, source : String) : MethodIndex
+  def build_method_index(root : LibTreeSitter::TSNode, source : String, only_class : String? = nil) : MethodIndex
     index = MethodIndex.new
     walk_class_decls(root) do |decl|
       name_node = Noir::TreeSitter.field(decl, "name")
       next unless name_node
+      class_name = Noir::TreeSitter.node_text(name_node, source)
+      next if only_class && class_name != only_class
       body = Noir::TreeSitter.field(decl, "body")
       next unless body
-      class_name = Noir::TreeSitter.node_text(name_node, source)
       Noir::TreeSitter.each_named_child(body) do |member|
         next unless Noir::TreeSitter.node_type(member) == "method_declaration"
         mn = Noir::TreeSitter.field(member, "name")

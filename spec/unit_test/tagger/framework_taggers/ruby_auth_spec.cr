@@ -421,6 +421,10 @@ describe "RubyAuthTagger (Grape route scope)" do
     dir = File.tempname("noir_grape_scope")
     Dir.mkdir_p(dir)
     api = File.join(dir, "api.rb")
+    # Each route below sits right after a line indented deeper than itself
+    # (a continued `desc`), so the scope walk has to hop over deeper runs —
+    # and `/open/ping` must not pick up the guard inside the sibling
+    # `group :inner` block it hops over.
     File.write(api, <<-RB)
       class API < Grape::API
         namespace :admin do
@@ -430,12 +434,23 @@ describe "RubyAuthTagger (Grape route scope)" do
             'a'
           end
 
+          desc 'Users',
+               hidden: true
           get '/users' do
             'b'
           end
         end
 
         namespace :open do
+          group :inner do
+            before { authenticate! }
+            get '/x' do
+              'x'
+            end
+          end
+
+          desc 'Ping',
+               hidden: true
           get '/ping' do
             'p'
           end
@@ -455,13 +470,15 @@ describe "RubyAuthTagger (Grape route scope)" do
         details.technology = "ruby_grape"
         Endpoint.new(url, "GET", [] of Param, details)
       end
-      users = at.call("/admin/users", 9)
-      ping = at.call("/open/ping", 15)
-      health = at.call("/health", 20)
+      users = at.call("/admin/users", 11)
+      inner = at.call("/open/inner/x", 19)
+      ping = at.call("/open/ping", 26)
+      health = at.call("/health", 31)
 
-      RubyAuthTagger.new(noir_options).perform([users, ping, health])
+      RubyAuthTagger.new(noir_options).perform([users, inner, ping, health])
 
       users.tags.map(&.description).should eq(["Protected by Grape authenticate!"])
+      inner.tags.map(&.description).should eq(["Protected by Grape authenticate!"])
       ping.tags.should be_empty
       health.tags.should be_empty
     ensure
