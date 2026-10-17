@@ -441,8 +441,14 @@ module Analyzer::Go
     # Cheap gate before the tree-sitter route pass. Handler-only files often
     # import Gin/Echo for `*gin.Context` / `echo.Context`, but they cannot emit
     # endpoints unless they contain a route/static registration call.
-    def go_route_source_candidate?(content : String, extra_methods : Array(String)) : Bool
-      return true if content_matches?(content, GO_HTTP_ROUTE_CALL_RE)
+    #
+    # `verb_calls: false` drops the shared `.GET(` / `.Get(` gate for a
+    # framework that registers no routes through verb-named methods
+    # (gorilla/mux: `Router.Get(name)` *looks up* a named route). In a
+    # package that imports the framework, `.Get(` / `.Put(` on caches,
+    # maps and clients otherwise sends nearly every file to the parser.
+    def go_route_source_candidate?(content : String, extra_methods : Array(String), verb_calls : Bool = true) : Bool
+      return true if verb_calls && content_matches?(content, GO_HTTP_ROUTE_CALL_RE)
       extra_methods.any? do |method|
         method_regex = @extra_method_regexes[method] ||= /\.#{Regex.escape(method)}\s*\(/
         content_matches?(content, method_regex)
@@ -464,12 +470,13 @@ module Analyzer::Go
                                framework_dirs : Set(String),
                                import_marker : String | Array(String),
                                extra_methods : Array(String),
+                               verb_calls : Bool = true,
                                &extract : String, String -> T) : Hash(String, T) forall T
       candidates = get_files_by_extension(".go").select do |path|
         next false if GoEngine.go_test_file?(base_relative_path(path))
         content = file_contents[path]?
         next false if content.nil?
-        framework_route_source_candidate?(content, File.dirname(path), framework_dirs, import_marker, extra_methods)
+        framework_route_source_candidate?(content, File.dirname(path), framework_dirs, import_marker, extra_methods, verb_calls)
       end
       prefetch_sources(candidates, file_contents, &extract)
     end
@@ -493,9 +500,10 @@ module Analyzer::Go
                                           dir : String,
                                           framework_dirs : Set(String),
                                           import_marker : String | Array(String),
-                                          extra_methods : Array(String)) : Bool
+                                          extra_methods : Array(String),
+                                          verb_calls : Bool = true) : Bool
       return false unless content_matches?(content, import_marker_regex(import_marker)) || framework_dirs.includes?(dir)
-      go_route_source_candidate?(content, extra_methods)
+      go_route_source_candidate?(content, extra_methods, verb_calls)
     end
 
     # --- Cross-file function body pre-pass --------------------------------

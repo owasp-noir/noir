@@ -21,6 +21,12 @@ module Analyzer::Go
         content, cross_file_groups,
         group_method: "Subrouter",
         handlefunc_methods: true,
+        # gorilla/mux registers nothing through a verb-named method —
+        # `Router.Get(name)` looks a named route up — so `.Get("X", …)` /
+        # `.Any("k", v)` on env readers, caches and loggers are not routes
+        # (minio's `env.Get("_MINIO_SCANNER", …)`, mattermost's
+        # `mlog.Any("panic", r)`).
+        verb_calls: false,
       )
     end
 
@@ -44,7 +50,7 @@ module Analyzer::Go
       framework_dirs = framework_package_dirs(file_contents, IMPORT_MARKER)
       # Route and static-file parses of every candidate file, on the worker
       # threads; the pass below consumes them (see `prefetch_route_sources`).
-      prefetched = prefetch_route_sources(file_contents, framework_dirs, IMPORT_MARKER, ROUTE_METHODS) do |path, content|
+      prefetched = prefetch_route_sources(file_contents, framework_dirs, IMPORT_MARKER, ROUTE_METHODS, verb_calls: false) do |path, content|
         {extract_mux_routes(content, ts_groups_for_directory(package_groups, File.dirname(path))),
          Noir::TreeSitterGoRouteExtractor.extract_mux_statics(content)}
       end
@@ -54,7 +60,7 @@ module Analyzer::Go
         next unless File.exists?(path)
         content = file_contents[path]? || read_file_content(path)
         dir = File.dirname(path)
-        next unless framework_route_source_candidate?(content, dir, framework_dirs, IMPORT_MARKER, ROUTE_METHODS)
+        next unless framework_route_source_candidate?(content, dir, framework_dirs, IMPORT_MARKER, ROUTE_METHODS, verb_calls: false)
         lines = GoEngine.strip_comments(content).lines
         last_endpoint = Endpoint.new("", "")
 
