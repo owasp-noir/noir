@@ -1,7 +1,9 @@
 package com.acme.zoo.web.api
 
 import com.acme.zoo.web.Hdr
+import com.acme.zoo.web.OnePaths
 import com.acme.zoo.web.RoutePaths
+import com.acme.zoo.web.Wire
 import com.acme.zoo.web.dto.FeedRequest
 import com.acme.zoo.web.dto.PingReq
 import com.acme.zoo.web.dto.SearchFilter
@@ -25,6 +27,15 @@ class ZooController {
 
     @GetMapping(RoutePaths.V1.X)
     fun nested(): String = "x"
+
+    @GetMapping(OnePaths.A)
+    fun oneA(@RequestHeader(Wire.TOP_H) t: String): String = t
+
+    @GetMapping(OnePaths.B)
+    fun oneB(@RequestHeader(Wire.Deep.DEEP_H) d: String): String = d
+
+    @GetMapping("/unresolved")
+    fun unresolved(@RequestHeader(Missing.HDR) m: String): String = m
 
     @PostMapping("/cb")
     fun cb(@RequestHeader(TOKEN_HDR) token: String, @RequestParam(Q_NAME) query: String): String = token

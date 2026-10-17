@@ -13,3 +13,7 @@ object RoutePaths {
     }
     const val AFTER = "/after-nested"
 }
+
+object OnePaths { const val A = "/one-a"; const val B = "/one-b" }
+
+object Wire { object Deep { const val DEEP_H = "x-deep-one" }; const val TOP_H = "x-top-one" }

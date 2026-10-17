@@ -94,36 +94,42 @@ module Noir
           end
         end
 
-        if match = line.match(/^\s*(?:class|object|interface)\s+([A-Za-z_][A-Za-z0-9_]*)/)
-          # A body-less sibling type declared at this depth is not a parent.
-          while (top = type_stack.last?) && top[1] >= depth
-            type_stack.pop
+        # One line can hold several declarations (`object P { const val
+        # A = "/a"; const val B = "/b" }`), so scan it statement by statement.
+        each_statement(line, scrubbed_lines[idx]? || line) do |statement, delimiter|
+          if match = statement.match(/^\s*(?:class|object|interface)\s+([A-Za-z_][A-Za-z0-9_]*)/)
+            # A body-less sibling type declared at this depth is not a parent.
+            while (top = type_stack.last?) && top[1] >= depth
+              type_stack.pop
+            end
+            type_stack << {match[1], depth}
           end
-          type_stack << {match[1], depth}
-        end
 
-        name = value = nil
-        if (match = line.match(CONST_DECL_RE)) && (template = concat_as_template(line.byte_slice(match.byte_end(0))))
-          name, value = match[1], template
-        elsif match = line.match(/\b(?:const\s+)?val\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?::\s*String)?\s*=\s*"([^"]*)"/)
-          name, value = match[1], match[2]
-        end
-
-        if name && value
-          constants[name] ||= value
-          unless type_stack.empty?
-            qualified = type_stack.join('.', &.[0])
-            constants["#{type_stack.last[0]}.#{name}"] ||= value
-            constants["#{qualified}.#{name}"] ||= value
-            constants["#{package_name}.#{qualified}.#{name}"] ||= value unless package_name.empty?
+          name = value = nil
+          if (match = statement.match(CONST_DECL_RE)) && (template = concat_as_template(statement.byte_slice(match.byte_end(0))))
+            name, value = match[1], template
+          elsif match = statement.match(/\b(?:const\s+)?val\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?::\s*String)?\s*=\s*"([^"]*)"/)
+            name, value = match[1], match[2]
           end
-        end
 
-        structural = scrubbed_lines[idx]? || line
-        depth += structural.count('{') - structural.count('}')
-        if structural.includes?('}')
-          while (top = type_stack.last?) && depth <= top[1]
-            type_stack.pop
+          if name && value
+            constants[name] ||= value
+            unless type_stack.empty?
+              qualified = type_stack.join('.', &.[0])
+              constants["#{type_stack.last[0]}.#{name}"] ||= value
+              constants["#{qualified}.#{name}"] ||= value
+              constants["#{package_name}.#{qualified}.#{name}"] ||= value unless package_name.empty?
+            end
+          end
+
+          case delimiter
+          when '{'
+            depth += 1
+          when '}'
+            depth -= 1
+            while (top = type_stack.last?) && depth <= top[1]
+              type_stack.pop
+            end
           end
         end
       end
@@ -131,6 +137,23 @@ module Noir
       # Same-file references resolve here; cross-file ones stay as `$REF`
       # for the analyzer's second pass over every file's constants.
       expand_constant_interpolations(constants)
+    end
+
+    # Yield `line` cut at each `{`, `}` and `;` of `structural`, its
+    # char-aligned string/comment-blanked mask, with the delimiter that
+    # ended each piece (nil for the tail).
+    private def each_statement(line : String, structural : String, &)
+      reader = Char::Reader.new(line)
+      start = 0
+      structural.each_char do |char|
+        break unless reader.has_next?
+        pos = reader.pos
+        reader.next_char
+        next unless char.in?('{', '}', ';')
+        yield line.byte_slice(start, pos - start), char
+        start = reader.pos
+      end
+      yield line.byte_slice(start), nil
     end
 
     # `const val X = A + "/b" + Paths.C`: string literals and (dotted)
