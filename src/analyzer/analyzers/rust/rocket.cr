@@ -114,7 +114,7 @@ module Analyzer::Rust
       all_files.each do |path|
         next unless File.exists?(path) && File.extname(path) == ".rs"
         next if RustEngine.test_path?(base_relative_path(path))
-        base = configured_base_for(path)
+        base = crate_scope_for(path)
         src = read_file_content(path)
         next unless src.matches?(MOUNT_INDEX_EVIDENCE_RE)
         file_mod = primary_module(path)
@@ -358,7 +358,7 @@ module Analyzer::Rust
     private def lookup_mount_prefixes(leaf : String, file_path : String) : Array(String)?
       index = @mount_index
       return unless index
-      if prefixes = index[{configured_base_for(file_path), primary_module(file_path), leaf}]?
+      if prefixes = index[{crate_scope_for(file_path), primary_module(file_path), leaf}]?
         return prefixes
       end
       nil
