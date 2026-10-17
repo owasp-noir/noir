@@ -82,6 +82,49 @@ module Analyzer::Rust
       Regex.new("^\\s*(?:#{escaped}\\s*[=.]|\\[(?:[\\w.-]+\\.)?dependencies\\.#{escaped}\\])", Regex::Options::MULTILINE)
     end
 
+    # The key that scopes a project-wide mount / prefix index for `path`: its
+    # Cargo workspace root, else its nearest crate root, else the scan base.
+    # Keying by scan base alone let two unrelated crates scanned as one `-b`
+    # share an index, so one crate's `scope("/a")` prefixed the other's
+    # same-named handlers. A workspace stays one scope because its member
+    # crates mount each other's routers.
+    protected def crate_scope_for(path : String) : String
+      manifests = cargo_manifest_dirs
+      return configured_base_for(path) if manifests.empty?
+
+      dir = File.dirname(Noir::PathScope.expand(path))
+      nearest = nil
+      workspace = nil
+      loop do
+        unless (is_workspace = manifests[dir]?).nil?
+          nearest ||= dir
+          workspace = dir if is_workspace
+        end
+        parent = File.dirname(dir)
+        break if parent == dir
+        dir = parent
+      end
+      workspace || nearest || configured_base_for(path)
+    end
+
+    # Normalized directory of every scanned `Cargo.toml` => whether it
+    # declares a `[workspace]`.
+    private def cargo_manifest_dirs : Hash(String, Bool)
+      @cargo_manifest_dirs ||= begin
+        dirs = {} of String => Bool
+        all_files.each do |file|
+          next unless File.basename(file) == "Cargo.toml"
+          content = read_file_content(file) rescue ""
+          dirs[Noir::PathScope.normalize_root(File.dirname(file))] = content.matches?(CARGO_WORKSPACE_RE)
+        end
+        dirs
+      end
+    end
+
+    @cargo_manifest_dirs : Hash(String, Bool)?
+
+    CARGO_WORKSPACE_RE = /(?m)^\s*\[workspace\]/
+
     private def path_under_crate_roots?(path : String, roots : Array(String)) : Bool
       return true if roots.empty?
 

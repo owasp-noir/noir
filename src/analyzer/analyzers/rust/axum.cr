@@ -1148,7 +1148,7 @@ module Analyzer::Rust
                                          handler_context_cache : Hash(String, HandlerContext),
                                          endpoints : Array(Endpoint))
       file_mod = primary_module(path)
-      base = configured_base_for(path)
+      base = crate_scope_for(path)
       each_attribute_pair(root) do |attr_item, function|
         next if RustEngine.inside_test_region?(attr_item, test_regions)
         route = extract_utoipa_attr(attr_item, source)
@@ -1249,7 +1249,7 @@ module Analyzer::Rust
         next if RustEngine.test_path?(base_relative_path(fpath))
         src = read_file_content(fpath)
         next unless src.matches?(CROSS_NEST_EVIDENCE_RE)
-        base = configured_base_for(fpath)
+        base = crate_scope_for(fpath)
         begin
           test_regions = RustEngine.collect_cfg_test_regions(src)
           Noir::TreeSitter.parse_rust(src) do |root|
@@ -1370,7 +1370,7 @@ module Analyzer::Rust
       result = Hash(String, Array(String)).new
       idx = @cross_nest_prefix
       return result if idx.nil? || idx.empty?
-      base = configured_base_for(path)
+      base = crate_scope_for(path)
       mod = primary_module(path)
       idx.each do |key, prefixes|
         kbase, kmod, kleaf = key
@@ -1511,7 +1511,7 @@ module Analyzer::Rust
       all_files.each do |fpath|
         next unless File.exists?(fpath) && File.extname(fpath) == ".rs"
         next if RustEngine.test_path?(base_relative_path(fpath))
-        base = configured_base_for(fpath)
+        base = crate_scope_for(fpath)
         src = read_file_content(fpath)
         next unless src.matches?(UTOIPA_INDEX_EVIDENCE_RE)
         file_mod = primary_module(fpath)

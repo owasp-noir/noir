@@ -296,7 +296,7 @@ module Analyzer::Rust
       all_files.each do |path|
         next unless File.exists?(path) && File.extname(path) == ".rs"
         next if RustEngine.test_path?(base_relative_path(path))
-        base = configured_base_for(path)
+        base = crate_scope_for(path)
         src = read_file_content(path)
         next unless src.includes?("scope(") && src.includes?(".service(")
         begin
@@ -376,7 +376,7 @@ module Analyzer::Rust
     private def lookup_cross_file_prefixes(name : String, file_path : String) : Array(String)?
       regs = @cross_file_scope_regs
       return unless regs
-      base = configured_base_for(file_path)
+      base = crate_scope_for(file_path)
       matched = [] of String
       regs.each do |r|
         next unless r[:base] == base
@@ -424,7 +424,7 @@ module Analyzer::Rust
       all_files.each do |fpath|
         next unless File.exists?(fpath) && File.extname(fpath) == ".rs"
         next if RustEngine.test_path?(base_relative_path(fpath))
-        base = configured_base_for(fpath)
+        base = crate_scope_for(fpath)
         src = read_file_content(fpath)
         next unless src.includes?(".configure(") && src.includes?("scope(")
         begin
@@ -569,7 +569,7 @@ module Analyzer::Rust
     private def lookup_configure_prefixes(name : String, file_path : String) : Array(String)?
       regs = @configure_fn_prefix
       return unless regs
-      base = configured_base_for(file_path)
+      base = crate_scope_for(file_path)
       matched = [] of String
       regs.each do |r|
         next unless r[:base] == base

@@ -85,7 +85,7 @@ module Analyzer::Rust
       all_files.each do |fpath|
         next unless File.exists?(fpath) && File.extname(fpath) == ".rs"
         next if RustEngine.test_path?(base_relative_path(fpath))
-        base = configured_base_for(fpath)
+        base = crate_scope_for(fpath)
         src = read_file_content(fpath)
         next unless src.includes?("#[handler]")
         begin
@@ -212,7 +212,7 @@ module Analyzer::Rust
             if handler_function = function_index[leaf]?
               extract_function_params(handler_function, original_source, endpoint)
               attach_handler_callees(handler_function, original_source, path, endpoint) if include_callee
-            elsif info = @global_handler_info.try(&.[{configured_base_for(path), leaf}]?)
+            elsif info = @global_handler_info.try(&.[{crate_scope_for(path), leaf}]?)
               # The handler lives in another file (`routes/x.rs` references a
               # `#[handler]` in `handler/x.rs`). Its params + callees were
               # precomputed in the cross-file index.
@@ -245,7 +245,7 @@ module Analyzer::Rust
       verb = Noir::TreeSitter.node_text(verb_field, source).downcase
       return unless HTTP_VERBS.includes?(verb)
 
-      route_path = find_chain_path(fn_node, source, router_prefixes, configured_base_for(file_path))
+      route_path = find_chain_path(fn_node, source, router_prefixes, crate_scope_for(file_path))
       return unless route_path
 
       handler_name = first_handler_argument(call, source)
@@ -263,7 +263,7 @@ module Analyzer::Rust
                                       file_path : String) : Hash(Int32, String)
       map = {} of Int32 => String
       visited = Set(Int32).new
-      base = configured_base_for(file_path)
+      base = crate_scope_for(file_path)
       walk(chain_root) do |node|
         next unless Noir::TreeSitter.node_type(node) == "call_expression"
         next if visited.includes?(node_byte(node))
@@ -623,7 +623,7 @@ module Analyzer::Rust
         best = r if best.nil? || (r[1] - r[0]) < (best[1] - best[0])
       end
       return unless chosen = best
-      prefixes = ext[{configured_base_for(file_path), chosen[2]}]?
+      prefixes = ext[{crate_scope_for(file_path), chosen[2]}]?
       return unless prefixes
       cleaned = prefixes.reject(&.empty?)
       cleaned.empty? ? nil : cleaned
@@ -639,7 +639,7 @@ module Analyzer::Rust
       all_files.each do |fpath|
         next unless File.exists?(fpath) && File.extname(fpath) == ".rs"
         next if RustEngine.test_path?(base_relative_path(fpath))
-        base = configured_base_for(fpath)
+        base = crate_scope_for(fpath)
         src = read_file_content(fpath)
         next unless src.matches?(FN_EDGE_EVIDENCE_RE)
         begin
@@ -786,7 +786,7 @@ module Analyzer::Rust
       all_files.each do |fpath|
         next unless File.exists?(fpath) && File.extname(fpath) == ".rs"
         next if RustEngine.test_path?(base_relative_path(fpath))
-        base = configured_base_for(fpath)
+        base = crate_scope_for(fpath)
         src = read_file_content(fpath)
         next unless src.includes?(": &") && src.includes?("str")
         src.scan(pattern) do |m|
