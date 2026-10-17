@@ -84,6 +84,51 @@ describe "PassiveRulesUpdater" do
   end
 
   {% unless flag?(:windows) %}
+    describe ".check_for_updates fetch_interval" do
+      # A rules checkout whose `git` is a stub that logs each invocation, so
+      # the spec sees which calls a check makes without touching the network.
+      with_stub_git = ->(fetch_head_age : Time::Span?, interval : Time::Span?) do
+        calls = [] of String
+        with_isolated_rules_env do |home, _|
+          git_dir = File.join(home, "passive_rules", ".git")
+          Dir.mkdir_p(git_dir)
+          if age = fetch_head_age
+            fetch_head = File.join(git_dir, "FETCH_HEAD")
+            File.write(fetch_head, "")
+            File.touch(fetch_head, Time.utc - age)
+          end
+          bin = File.join(home, "bin")
+          log = File.join(home, "git.log")
+          Dir.mkdir_p(bin)
+          File.write(File.join(bin, "git"), "#!/bin/sh\necho \"$1\" >> '#{log}'\n[ \"$1\" = rev-list ] && echo 0\nexit 0\n")
+          File.chmod(File.join(bin, "git"), 0o755)
+          prev_path = ENV["PATH"]?
+          ENV["PATH"] = "#{bin}:#{prev_path}"
+          begin
+            logger = NoirLogger.new(debug: false, verbose: false, colorize: false, no_log: true)
+            PassiveRulesUpdater.check_for_updates(logger, false, interval).should be_true
+          ensure
+            ENV["PATH"] = prev_path
+          end
+          calls = File.read(log).split
+        end
+        calls
+      end
+
+      it "skips the remote fetch when the last one is within the interval" do
+        with_stub_git.call(1.hour, 24.hours).should eq(["rev-list"])
+      end
+
+      it "fetches when the last fetch is older than the interval, or never happened" do
+        with_stub_git.call(25.hours, 24.hours).should eq(["fetch", "rev-list"])
+        with_stub_git.call(nil, 24.hours).should eq(["fetch", "rev-list"])
+      end
+
+      it "always fetches without an interval (rules update, --passive-scan-auto-update)" do
+        with_stub_git.call(1.hour, nil).should eq(["fetch", "rev-list"])
+      end
+    end
+
     describe ".run_git" do
       it "terminates a git call that overruns git_timeout instead of blocking" do
         # A fake `git` that hangs like a fetch against a blackholed remote.

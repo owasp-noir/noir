@@ -100,8 +100,19 @@ module PassiveRulesUpdater
     dir_populated?(bundled_rules_path)
   end
 
-  # Check if the passive rules directory is a git repository and needs updates
-  def self.check_for_updates(logger : NoirLogger, auto_update : Bool = false) : Bool
+  # How long a scan trusts the last `git fetch` of the rules. Every `-P`
+  # scan used to fetch before doing anything else — about half a second on
+  # a good network, up to `git_timeout` on a bad one, for rules that change
+  # a few times a month.
+  SCAN_FETCH_INTERVAL = 24.hours
+
+  # Check if the passive rules directory is a git repository and needs updates.
+  #
+  # With `fetch_interval`, the network fetch is skipped when the last one
+  # (`.git/FETCH_HEAD`) is younger than that; the behind-count still comes
+  # from the local `origin/main`, so a stale-rules notice keeps appearing.
+  def self.check_for_updates(logger : NoirLogger, auto_update : Bool = false,
+                             fetch_interval : Time::Span? = nil) : Bool
     rules_path = user_rules_path
 
     # Image-baked install: the user-managed path is empty / missing
@@ -132,8 +143,9 @@ module PassiveRulesUpdater
     logger.debug "Checking for passive rules updates..."
 
     begin
-      # Fetch latest updates from remote
-      unless run_git(["fetch", "--quiet"], logger, rules_path)
+      if fetched_within?(git_dir, fetch_interval)
+        logger.debug "Passive rules were fetched recently; skipping the remote fetch."
+      elsif !run_git(["fetch", "--quiet"], logger, rules_path)
         logger.debug "Failed to fetch updates for passive rules"
         return false
       end
@@ -170,6 +182,14 @@ module PassiveRulesUpdater
       logger.debug "Error checking for passive rules updates: #{ex.message}"
       false
     end
+  end
+
+  private def self.fetched_within?(git_dir : String, interval : Time::Span?) : Bool
+    return false unless interval
+    return false unless info = File.info?(File.join(git_dir, "FETCH_HEAD"))
+    Time.utc - info.modification_time < interval
+  rescue File::Error
+    false
   end
 
   # Update the passive rules repository
