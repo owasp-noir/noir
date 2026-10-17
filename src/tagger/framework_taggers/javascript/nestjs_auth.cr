@@ -68,6 +68,7 @@ class NestjsAuthTagger < FrameworkTagger
   def initialize(options : Hash(String, YAML::Any))
     super
     @global_guards = Hash(String?, String).new
+    @class_lines = Hash(String, Array(Int32)).new
   end
 
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
@@ -112,7 +113,7 @@ class NestjsAuthTagger < FrameworkTagger
       line_idx = line_num - 1
 
       # Check if endpoint (or its whole controller) is explicitly public
-      class_decorators = class_decorator_lines(lines, line_idx)
+      class_decorators = class_decorator_lines(path_info.path, lines, line_idx)
       if public?(lines, line_idx) || class_decorators.any? { |line| PUBLIC_PATTERNS.any? { |pattern| line.matches?(pattern) } }
         return
       end
@@ -222,24 +223,17 @@ class NestjsAuthTagger < FrameworkTagger
   end
 
   # The decorator lines above the class enclosing `method_line`.
-  private def class_decorator_lines(lines : Array(String), method_line : Int32) : Array(String)
+  private def class_decorator_lines(path : String, lines : Array(String), method_line : Int32) : Array(String)
     decorators = [] of String
-    idx = method_line
-    while idx >= 0
-      current = lines[idx].strip
+    idx = nearest_match_above(@class_lines, path, lines) { |line| current = line.strip; current.includes?("class ") && current.includes?("{") }[method_line]
+    return decorators if idx < 0
 
-      if current.includes?("class ") && current.includes?("{")
-        class_idx = idx - 1
-        while class_idx >= 0 && class_idx >= idx - 10
-          decorator = lines[class_idx].strip
-          break if decorator.empty? && class_idx < idx - 1
-          decorators << decorator
-          class_idx -= 1
-        end
-        break
-      end
-
-      idx -= 1
+    class_idx = idx - 1
+    while class_idx >= 0 && class_idx >= idx - 10
+      decorator = lines[class_idx].strip
+      break if decorator.empty? && class_idx < idx - 1
+      decorators << decorator
+      class_idx -= 1
     end
     decorators
   end

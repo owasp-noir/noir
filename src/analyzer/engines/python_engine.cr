@@ -862,8 +862,8 @@ module Analyzer::Python
                                                   caller_path : ::String,
                                                   caller_source : ::String?) : Array(Callee)
       source_cache = Hash(::String, ::String).new
-      source_cache[caller_path] = caller_source || read_file_content(caller_path)
-      import_map = find_imported_modules(app_base_path, caller_path, source_cache[caller_path])
+      source = source_cache[caller_path] = caller_source || read_file_content(caller_path)
+      import_map = callee_import_map(app_base_path, caller_path, source)
 
       callees.map do |callee|
         if definition = resolve_python_callee_definition(callee.name, caller_path, source_cache, import_map)
@@ -905,57 +905,92 @@ module Analyzer::Python
       return if parts.empty?
 
       if parts.size == 1
-        line = find_python_function_or_class_line(source, parts[0])
+        line = find_python_function_or_class_line(path, source, parts[0])
         return {path, line} if line
         return
       end
 
-      if line = find_python_class_method_line(source, parts[0], parts[1])
+      if line = find_python_class_method_line(path, source, parts[0], parts[1])
         return {path, line}
       end
     end
 
-    private def find_python_function_or_class_line(source : ::String, name : ::String) : Int32?
+    # Callee resolution runs once per endpoint, and each lookup used to
+    # re-split the file and scan it from the top — once per callee, even for
+    # a dotted `request.args.get` that names no class in it — so a module
+    # with N handlers cost O(N²). Each file's definitions are indexed once,
+    # keyed by path; `source` is kept to tell a different text for the same
+    # path apart (compared by content, so a re-read file still hits).
+    private record DefinitionIndex,
+      source : ::String,
+      # First line (0-based) that defines the name as a function or class.
+      first_def_or_class : Hash(::String, Int32),
+      # For the first class of each name, the first line in its body that
+      # defines each function name (nested ones included).
+      class_methods : Hash(::String, Hash(::String, Int32))
+
+    @definition_indexes = Hash(::String, DefinitionIndex).new
+    @callee_import_maps = Hash(Tuple(::String, ::String), Tuple(::String, Hash(::String, Tuple(::String, Int32)))).new
+
+    private def callee_import_map(app_base_path : ::String, caller_path : ::String, source : ::String) : Hash(::String, Tuple(::String, Int32))
+      key = {app_base_path, caller_path}
+      if (cached = @callee_import_maps[key]?) && cached[0] == source
+        return cached[1]
+      end
+      import_map = find_imported_modules(app_base_path, caller_path, source)
+      @callee_import_maps[key] = {source, import_map}
+      import_map
+    end
+
+    private def definition_index(path : ::String, source : ::String) : DefinitionIndex
+      if (cached = @definition_indexes[path]?) && cached.source == source
+        return cached
+      end
+
+      first_def_or_class = Hash(::String, Int32).new
+      class_methods = Hash(::String, Hash(::String, Int32)).new
+      # Bodies of the first class of each name still open at this line,
+      # as {class indent, methods}; indents strictly increase. A body ends
+      # at the first line indented no deeper than its class, not counting
+      # blank, comment or decorator lines.
+      open = [] of Tuple(Int32, Hash(::String, Int32))
       source.lines.each_with_index do |line, index|
         stripped = line.lstrip
-        next if stripped.starts_with?("#")
-        if python_def_matches?(stripped, name) || python_class_matches?(stripped, name)
-          return index + 1
-        end
-      end
-    end
-
-    private def find_python_class_method_line(source : ::String, class_name : ::String, method_name : ::String) : Int32?
-      lines = source.lines
-      class_indent : Int32? = nil
-
-      lines.each_with_index do |line, index|
-        stripped = line.lstrip
-        next if stripped.starts_with?("#")
-
-        if class_indent.nil?
-          next unless python_class_matches?(stripped, class_name)
-
-          class_indent = line.size - stripped.size
-          next
-        end
-
+        next if stripped.empty? || stripped.starts_with?('@') || stripped.starts_with?('#')
         indent = line.size - stripped.size
-        next if stripped.empty? || stripped.starts_with?("@") || stripped.starts_with?("#")
-        if current_class_indent = class_indent
-          return if indent <= current_class_indent
+        while (last = open.last?) && last[0] >= indent
+          open.pop
         end
 
-        return index + 1 if python_def_matches?(stripped, method_name)
+        if name = definition_name(stripped, "def ", '(') || definition_name(stripped, "async def ", '(')
+          first_def_or_class[name] ||= index
+          open.each { |entry| entry[1][name] ||= index }
+        elsif name = definition_name(stripped, "class ", ':', '(')
+          first_def_or_class[name] ||= index
+          unless class_methods.has_key?(name)
+            methods = class_methods[name] = Hash(::String, Int32).new
+            open << {indent, methods}
+          end
+        end
       end
+      @definition_indexes[path] = DefinitionIndex.new(source, first_def_or_class, class_methods)
     end
 
-    private def python_def_matches?(stripped : ::String, name : ::String) : Bool
-      stripped.starts_with?("def #{name}(") || stripped.starts_with?("async def #{name}(")
+    # The name a `def NAME(` / `async def NAME(` / `class NAME:` /
+    # `class NAME(` line declares: the text between `keyword` and the first
+    # terminator.
+    private def definition_name(stripped : ::String, keyword : ::String, *terminators : Char) : ::String?
+      return unless stripped.starts_with?(keyword)
+      stop = terminators.compact_map { |char| stripped.index(char, keyword.size) }.min?
+      stripped[keyword.size...stop] if stop
     end
 
-    private def python_class_matches?(stripped : ::String, name : ::String) : Bool
-      stripped.starts_with?("class #{name}:") || stripped.starts_with?("class #{name}(")
+    private def find_python_function_or_class_line(path : ::String, source : ::String, name : ::String) : Int32?
+      definition_index(path, source).first_def_or_class[name]?.try(&.+(1))
+    end
+
+    private def find_python_class_method_line(path : ::String, source : ::String, class_name : ::String, method_name : ::String) : Int32?
+      definition_index(path, source).class_methods[class_name]?.try(&.[method_name]?).try(&.+(1))
     end
 
     class FunctionParameter

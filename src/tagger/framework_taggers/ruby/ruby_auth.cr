@@ -116,6 +116,8 @@ class RubyAuthTagger < FrameworkTagger
     @rails_indexed = false
     @rails_classes = Hash({String, Int32}, RailsClass).new
     @rails_by_name = Hash(String, Array(RailsClass)).new
+    @scope_lines = Hash(String, ScopeLines).new
+    @flagged_line_jumps = Hash(String, Array(Int32)).new
   end
 
   # A Ruby class or module under a `controllers` directory, with the
@@ -162,7 +164,11 @@ class RubyAuthTagger < FrameworkTagger
       # Rails/Hanami: collect controller before_action authn *and* authz.
       # Returning after the first match used to drop Devise when a closer
       # `before_action :authorize` won the walk, and skipped body authorize.
-      controller = check_controller_auth(lines, line_idx, controller_line_flags(path_info.path, lines))
+      flags = controller_line_flags(path_info.path, lines)
+      # The walk below starts over from every action, so it hops from flag
+      # to flag rather than stepping past each unflagged line to the class.
+      jumps = nearest_match_above(@flagged_line_jumps, path_info.path, flags) { |flag| flag != 0 }
+      controller = check_controller_auth(lines, line_idx, flags, jumps)
       # skip_before_action only suppresses authentication callbacks — not
       # independent authorize / CanCanCan checks in the action body.
       unless controller[:skipped]
@@ -187,15 +193,10 @@ class RubyAuthTagger < FrameworkTagger
       end
       return if authn_desc || authz_desc || controller[:skipped] || controller[:opted_out]
 
-      # Check Sinatra/Rack patterns in context
-      description = check_sinatra_auth(lines, line_idx, endpoint.url)
-      if description
-        endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "ruby_auth"))
-        return
-      end
-
-      # Check Grape patterns (before blocks, http_basic, etc.)
-      description = check_grape_auth(lines, line_idx, endpoint.url)
+      # Sinatra/Rack patterns first, then Grape (before blocks, http_basic,
+      # etc.), both over the same route scope.
+      scope = route_scope(path_info.path, lines, line_idx, endpoint.url)
+      description = match_scope(scope, SINATRA_AUTH_PATTERNS) || match_scope(scope, GRAPE_AUTH_PATTERNS)
       if description
         endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "ruby_auth"))
         return
@@ -240,7 +241,7 @@ class RubyAuthTagger < FrameworkTagger
     value.gsub(/%[iwIW][\[(]/, " ").scan(/\w+[?!]?/).map(&.[0])
   end
 
-  private def check_controller_auth(lines : Array(String), action_line : Int32, flags : Array(UInt8)) : NamedTuple(authn: String?, authz: String?, skipped: Bool, opted_out: Bool, class_idx: Int32?)
+  private def check_controller_auth(lines : Array(String), action_line : Int32, flags : Array(UInt8), jumps : Array(Int32)) : NamedTuple(authn: String?, authz: String?, skipped: Bool, opted_out: Bool, class_idx: Int32?)
     # Walk backwards to find the controller class and before_action declarations
     idx = action_line
     action_name = extract_action_name(lines, action_line)
@@ -251,13 +252,11 @@ class RubyAuthTagger < FrameworkTagger
     class_idx : Int32? = nil
 
     while idx >= 0
-      unless flags[idx] == CONTROLLER_AUTH_LINE
-        if flags[idx] == CLASS_LINE
-          class_idx = idx
-          break
-        end
-        idx -= 1
-        next
+      idx = jumps[idx]
+      break if idx < 0
+      if flags[idx] == CLASS_LINE
+        class_idx = idx
+        break
       end
 
       current = lines[idx].strip
@@ -447,19 +446,11 @@ class RubyAuthTagger < FrameworkTagger
     nil
   end
 
-  private def check_sinatra_auth(lines : Array(String), route_line : Int32, url : String) : String?
-    match_route_scope(lines, route_line, SINATRA_AUTH_PATTERNS, url)
-  end
-
   private def extract_action_name(lines : Array(String), line_idx : Int32) : String?
     return if line_idx < 0 || line_idx >= lines.size
     line = lines[line_idx].strip
     match = line.match(/def\s+(\w+)/)
     match ? match[1] : nil
-  end
-
-  private def check_grape_auth(lines : Array(String), route_line : Int32, url : String) : String?
-    match_route_scope(lines, route_line, GRAPE_AUTH_PATTERNS, url)
   end
 
   # Sinatra/Grape guards that cover the route at `route_line`: its own block
@@ -472,26 +463,93 @@ class RubyAuthTagger < FrameworkTagger
   # own `protected!` call.
   # ponytail: filters declared below the route are not seen; Sinatra applies
   # them anyway — scan forward too if that shape turns up.
-  private def match_route_scope(lines : Array(String), route_line : Int32, patterns, url : String) : String?
-    scope = ruby_block_lines(lines, route_line)
+  private def route_scope(path : String, lines : Array(String), route_line : Int32, url : String) : Array(String)
+    index = scope_lines(path, lines)
+    scope = ruby_block_lines(index, route_line)
     indent = line_indent(lines[route_line])
-    (route_line - 1).downto(0) do |idx|
-      stripped = lines[idx].strip
-      next if stripped.empty? || stripped.starts_with?('#')
-      current = line_indent(lines[idx])
-      next if current > indent
-      indent = current
-      next unless stripped.matches?(/^(?:before|use|http_basic)\b/)
-      next unless filter_covers?(stripped, url)
-      scope.concat(ruby_block_lines(lines, idx))
+    idx = route_line - 1
+    while idx >= 0 && index.skip?(idx)
+      idx -= 1
     end
+    while idx >= 0 && index.indent[idx] > indent
+      idx = index.prev_shallower[idx]
+    end
+    # From here the walk reads exactly `idx` and its `prev_level` ancestors;
+    # `filter_up` visits only the filter statements among them.
+    idx = index.filter_up[idx] if idx >= 0
+    while idx >= 0
+      stripped = index.stripped[idx]
+      scope.concat(ruby_block_lines(index, idx)) if filter_covers?(stripped, url)
+      idx = index.prev_level[idx]
+      idx = index.filter_up[idx] if idx >= 0
+    end
+    scope
+  end
 
+  private def match_scope(scope : Array(String), patterns) : String?
     scope.each do |line|
       patterns.each do |pattern, desc|
         return desc if line.matches?(pattern)
       end
     end
     nil
+  end
+
+  # Per-line facts for `route_scope`, built once per file. Its walk used to
+  # strip every line from the route back to the top of the file, for every
+  # endpoint, so a file with N routes cost O(N²) (gitlab's Grape API: ~9s
+  # under `-T`). The two hops jump straight over the lines the walk
+  # ignores: `prev_shallower` past a run indented deeper than the scope it
+  # is in, `prev_level` past the body of a sibling statement, and
+  # `filter_up` to the closest `before`/`use`/`http_basic` statement among
+  # a line and its `prev_level` ancestors — the walk otherwise still read
+  # every sibling, which is every route of a Rails `routes.rb`. All three
+  # are -1 when there is none and only meaningful on lines that aren't
+  # `skip?`.
+  private record ScopeLines,
+    stripped : Array(String),
+    indent : Array(Int32),
+    prev_shallower : Array(Int32),
+    prev_level : Array(Int32),
+    filter_up : Array(Int32) do
+    def skip?(idx : Int32) : Bool
+      line = stripped[idx]
+      line.empty? || line.starts_with?('#')
+    end
+  end
+
+  private def scope_lines(path : String, lines : Array(String)) : ScopeLines
+    @scope_lines[path] ||= begin
+      stripped = lines.map(&.strip)
+      indent = lines.map { |line| line_indent(line) }
+      prev_shallower = Array(Int32).new(lines.size, -1)
+      prev_level = Array(Int32).new(lines.size, -1)
+      filter_up = Array(Int32).new(lines.size, -1)
+      shallower = [] of Int32 # line indexes, indents strictly increasing
+      level = [] of Int32     # line indexes, indents non-decreasing
+      lines.each_index do |idx|
+        line = stripped[idx]
+        next if line.empty? || line.starts_with?('#')
+        while (last = shallower.last?) && indent[last] >= indent[idx]
+          shallower.pop
+        end
+        while (last = level.last?) && indent[last] > indent[idx]
+          level.pop
+        end
+        prev_shallower[idx] = shallower.last? || -1
+        prev_level[idx] = level.last? || -1
+        filter_up[idx] = if line.matches?(/^(?:before|use|http_basic)\b/)
+                           idx
+                         elsif (parent = prev_level[idx]) >= 0
+                           filter_up[parent]
+                         else
+                           -1
+                         end
+        shallower << idx
+        level << idx
+      end
+      ScopeLines.new(stripped, indent, prev_shallower, prev_level, filter_up)
+    end
   end
 
   # `before '/admin/*' do` only runs for matching paths; a bare `before do`
@@ -504,13 +562,13 @@ class RubyAuthTagger < FrameworkTagger
   end
 
   # The line at `idx` and the lines indented under it — its block body.
-  private def ruby_block_lines(lines : Array(String), idx : Int32) : Array(String)
-    block = [lines[idx].strip]
-    indent = line_indent(lines[idx])
-    ((idx + 1)...lines.size).each do |j|
-      stripped = lines[j].strip
+  private def ruby_block_lines(index : ScopeLines, idx : Int32) : Array(String)
+    block = [index.stripped[idx]]
+    indent = index.indent[idx]
+    ((idx + 1)...index.stripped.size).each do |j|
+      stripped = index.stripped[j]
       next if stripped.empty?
-      break if line_indent(lines[j]) <= indent
+      break if index.indent[j] <= indent
       block << stripped
     end
     block

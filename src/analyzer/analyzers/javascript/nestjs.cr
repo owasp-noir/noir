@@ -787,7 +787,7 @@ module Analyzer::Javascript
               extract_decorator_parameters(signature[:params], endpoint)
               extract_interceptor_parameters(decorator_block, endpoint)
               extract_request_object_params(class_content, signature, endpoint)
-              attach_method_callees_from_signature(class_content, signature, file_path, endpoint, controller_start_line) if include_callee
+              attach_method_callees_from_signature(class_content, signature, file_path, endpoint, controller_start_line, chars, line_pos, line_count) if include_callee
 
               result << endpoint
             end
@@ -849,24 +849,23 @@ module Analyzer::Javascript
       versions
     end
 
-    private def attach_method_callees(content : String, start_pos : Int32, file_path : String, endpoint : Endpoint, controller_start_line : Int32)
-      if signature = method_signature_after_decorators(content, start_pos)
-        attach_method_callees_from_signature(content, signature, file_path, endpoint, controller_start_line)
-      end
-    end
-
     private def extract_method_body(content : String, start_pos : Int32) : Tuple(String, Int32)?
       signature = method_signature_after_decorators(content, start_pos)
       return unless signature
       body_from_signature(content, signature)
     end
 
-    private def attach_method_callees_from_signature(content : String, signature, file_path : String, endpoint : Endpoint, controller_start_line : Int32)
+    # `newlines` is the count of newlines in `chars` before `from`, a point at
+    # or before the body (the caller's running decorator line count), so only
+    # the signature is counted here rather than the class up to every route.
+    private def attach_method_callees_from_signature(content : String, signature, file_path : String, endpoint : Endpoint, controller_start_line : Int32,
+                                                     chars : Array(Char), from : Int32, newlines : Int32)
       body_info = body_from_signature(content, signature)
       return unless body_info
 
       body, open_brace_idx = body_info
-      open_brace_line = controller_start_line + content[0...open_brace_idx].count('\n')
+      (from...open_brace_idx).each { |idx| newlines += 1 if chars.unsafe_fetch(idx) == '\n' }
+      open_brace_line = controller_start_line + newlines
       language = file_path.ends_with?(".ts") || file_path.ends_with?(".tsx") ? :typescript : :javascript
       Noir::JSCalleeExtractor.callees_for_function_body(body, file_path, open_brace_line, language: language).each do |name, callee_path, line|
         endpoint.push_callee(Callee.new(name, path: callee_path, line: line))

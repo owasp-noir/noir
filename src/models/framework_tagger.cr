@@ -176,6 +176,22 @@ class FrameworkTagger < Tagger
     lines
   end
 
+  # For each index of `items`, the closest index at or before it whose item
+  # satisfies the block (-1 if none), built once per file and kept in
+  # `cache` under `path`. For the "find the enclosing declaration" walks
+  # that otherwise rescan from every endpoint back to the class line —
+  # O(N²) for a class with N handlers. The caller owns `cache`, one per
+  # predicate, since a hit does not run the block.
+  def nearest_match_above(cache : Hash(String, Array(Int32)), path : String, items : Array(T), & : T -> Bool) : Array(Int32) forall T
+    cache[path] ||= begin
+      last = -1
+      items.map_with_index do |item, idx|
+        last = idx if yield item
+        last
+      end
+    end
+  end
+
   # The annotation lines stacked *below* the route marker at `route_idx`,
   # down to the declaration they decorate. An endpoint's line is its route
   # marker (`@GetMapping`, `@app.route`, `#[Route]`, `@Get()`), and auth

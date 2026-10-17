@@ -31,6 +31,7 @@ module NoirAIContext
     @route_scope_cache : Hash(String, String)
     @brace_depth_cache : Hash(String, Array(Int32))
     @class_declaration_cache : Hash(String, Array(NamedTuple(line: Int32, depth: Int32, annotations: Array(String))))
+    @shallower_line_cache : Hash(String, Array(Int32))
 
     def initialize
       @file_cache = {} of String => Array(String)
@@ -38,6 +39,7 @@ module NoirAIContext
       @route_scope_cache = {} of String => String
       @brace_depth_cache = {} of String => Array(Int32)
       @class_declaration_cache = {} of String => Array(NamedTuple(line: Int32, depth: Int32, annotations: Array(String)))
+      @shallower_line_cache = {} of String => Array(Int32)
     end
 
     def snippet_for(path : String?, line : Int32?, radius : Int32) : String?
@@ -111,7 +113,7 @@ module NoirAIContext
       # which read as a bug and — worse — spent part of the snippet's
       # character budget, truncating real code off the end.
       lead_lines = decorator_lines_before(lines, line - 1)
-      class_lead_lines = enclosing_python_class_decorator_lines(lines, line - 1)
+      class_lead_lines = enclosing_python_class_decorator_lines(path, lines, line - 1)
       lead_lines = class_lead_lines + lead_lines
 
       # A controller-level guard is separated from the handler by the class
@@ -242,31 +244,52 @@ module NoirAIContext
     # the class definition, so add the class's own decorators when the anchor
     # is an indented Python method. This also carries class-level auth
     # decorators into the method scope without changing the handler boundary.
-    private def enclosing_python_class_decorator_lines(lines : Array(String), line_idx : Int32) : Array(String)
+    private def enclosing_python_class_decorator_lines(path : String, lines : Array(String), line_idx : Int32) : Array(String)
       return [] of String if line_idx < 0 || line_idx >= lines.size
 
-      method_indent = lines[line_idx].size - lines[line_idx].lstrip.size
+      method_indent = indent_of(lines[line_idx])
       return [] of String if method_indent <= 0
 
+      # The enclosing block opener is the closest earlier non-blank line
+      # indented less than the method. Walking there line by line ran for
+      # every endpoint — on every language, since any indented handler gets
+      # here — so a class with N methods cost O(N²). `shallower_lines` hops
+      # over each deeper run in one step.
       class_idx = line_idx - 1
-      while class_idx >= 0
-        raw_line = lines[class_idx]
-        stripped = raw_line.strip
-        if stripped.empty?
-          class_idx -= 1
-          next
-        end
-
-        line_indent = raw_line.size - raw_line.lstrip.size
-        if line_indent < method_indent
-          return [] of String unless stripped.starts_with?("class ")
-
-          return decorator_lines_before(lines, class_idx)
-        end
+      while class_idx >= 0 && lines[class_idx].strip.empty?
         class_idx -= 1
       end
+      shallower = shallower_lines(path, lines)
+      while class_idx >= 0 && indent_of(lines[class_idx]) >= method_indent
+        class_idx = shallower[class_idx]
+      end
+      return [] of String if class_idx < 0
+      return [] of String unless lines[class_idx].strip.starts_with?("class ")
 
-      [] of String
+      decorator_lines_before(lines, class_idx)
+    end
+
+    # For each non-blank line, the closest earlier non-blank line indented
+    # less than it (-1 if none); blank lines hold -1 and are never looked up.
+    private def shallower_lines(path : String, lines : Array(String)) : Array(Int32)
+      @shallower_line_cache[path] ||= begin
+        result = Array(Int32).new(lines.size, -1)
+        open = [] of Tuple(Int32, Int32) # {line, indent}, indents strictly increasing
+        lines.each_with_index do |raw_line, idx|
+          next if raw_line.strip.empty?
+          indent = indent_of(raw_line)
+          while (last = open.last?) && last[1] >= indent
+            open.pop
+          end
+          result[idx] = open.last?.try(&.[0]) || -1
+          open << {idx, indent}
+        end
+        result
+      end
+    end
+
+    private def indent_of(line : String) : Int32
+      line.size - line.lstrip.size
     end
 
     private def class_level_lead_lines(path : String, lines : Array(String), endpoint_idx : Int32) : Array(String)
