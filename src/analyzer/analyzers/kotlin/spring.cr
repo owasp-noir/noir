@@ -840,6 +840,11 @@ module Analyzer::Kotlin
           line = route.line + 1
           details = Details.new(PathInfo.new(path, line))
           endpoint = Endpoint.new(Noir::URLPath.join_rooted(base_path, route.path), route.verb, parameters, details)
+          if method
+            endpoint.route_conditions = Noir::TreeSitterKotlinParameterExtractor.extract_route_conditions_from_method(
+              method, content, format_verb, string_constants, local_string_constants || Hash(String, String).new
+            )
+          end
           attach_method_security_tags(endpoint, method, content)
 
           # Functional router method references can point at a handler

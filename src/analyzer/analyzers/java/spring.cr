@@ -231,6 +231,7 @@ module Analyzer::Java
                 resolve_endpoint_path(Noir::URLPath.join_rooted(base_path, route.path), spring_properties),
                 route.verb, parameters, details, is_internal_client
               )
+              endpoint.route_conditions = route.params
 
               # 1-hop callees out of the handler method body. Cross-file
               # definition resolution is intentionally out of scope —
@@ -271,6 +272,7 @@ module Analyzer::Java
                       resolve_endpoint_path(Noir::URLPath.join_rooted(configured_base_path, inherited_path), spring_properties),
                       entry_route.verb, parameters, details
                     )
+                    endpoint.route_conditions = implementation.params + entry_route.params
 
                     # The route is declared on the interface (springdoc /
                     # OpenAPI `*Api` contracts), but the behaviour — and

@@ -208,7 +208,7 @@ class EndpointOptimizer
       # `/users/{id}` and `/users/{user}` are kept as it reported them.
       dedup_url = unified_url if cross_tech_keys.includes?({tiny_tmp.method, unified_url})
 
-      key = {tiny_tmp.method, dedup_url, endpoint_source_scope(tiny_tmp, unified_url, cross_tech_keys)}
+      key = {tiny_tmp.method, dedup_url, endpoint_source_scope(tiny_tmp, unified_url, cross_tech_keys) + route_condition_key(tiny_tmp)}
 
       if final_map.has_key?(key)
         dup = final_map[key]
@@ -657,11 +657,21 @@ class EndpointOptimizer
     framework_source_scope(endpoint)
   end
 
+  # Handlers that share an address but match different request conditions
+  # (Spring `params="ticket"` vs `params="relink"`) are separate endpoints:
+  # unioning them would send every handler's selector in one request.
+  private def route_condition_key(endpoint : Endpoint) : String
+    return "" if endpoint.route_conditions.empty?
+    "|" + endpoint.route_conditions.map { |param| "#{param.param_type}:#{param.name}=#{param.value}" }.sort!.join("&")
+  end
+
   # The build-module scope an endpoint carries on its own merits (ignoring any
-  # cross-technology neutralization). Only scoped framework endpoints get one;
-  # collection / graphql / static endpoints stay unscoped.
+  # cross-technology neutralization). Code endpoints get the project root of
+  # their first path, so two separately deployed apps of a monorepo that serve
+  # the same route stay two endpoints; declarations (specs, collections, infra
+  # config) and graphql / Spring static endpoints stay unscoped.
   private def framework_source_scope(endpoint : Endpoint) : String
-    return "" unless {"kotlin_spring", "java_spring"}.includes?(endpoint.details.technology)
+    return "" if NoirTechs::DECLARATION_TECHS.includes?(endpoint.details.technology || "")
     return "" if graphql_endpoint?(endpoint)
     return "" if spring_static_asset?(endpoint)
 
@@ -688,9 +698,12 @@ class EndpointOptimizer
 
   private def source_project_scope(path : String) : String
     return "" if path.empty?
-    @source_scope_cache[path] ||= begin
+    start_dir = File.directory?(path) ? path : File.dirname(path)
+    # Keyed by directory: every code endpoint is scoped now, and its files
+    # share far fewer directories than paths.
+    @source_scope_cache[start_dir] ||= begin
       scope = ""
-      dir = File.directory?(path) ? path : File.dirname(path)
+      dir = start_dir
 
       while dir && !dir.empty? && dir != "."
         if PROJECT_MANIFEST_FILES.any? { |manifest| File.exists?(File.join(dir, manifest)) }
