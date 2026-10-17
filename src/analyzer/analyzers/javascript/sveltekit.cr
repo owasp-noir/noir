@@ -37,36 +37,58 @@ module Analyzer::Javascript
     API_EXTENSIONS  = [".ts", ".js", ".mjs"]
     EXTENSIONS      = PAGE_EXTENSIONS + API_EXTENSIONS
 
+    CONFIG_BASENAMES = ["svelte.config.js", "svelte.config.ts", "svelte.config.mjs", "svelte.config.cjs"]
+
+    # `kit: { paths: { base: '/x' } }`, literal strings only: an env lookup
+    # or interpolated template has no value to read statically.
+    PATHS_BASE_RE = /\bpaths\s*:\s*\{[^}]*?\bbase\s*:\s*(['"`])(\/[^'"`$]*)\1/
+
     def analyze
       result = [] of Endpoint
       mutex = Mutex.new
       include_callee = callees_needed?
-      project_roots = discover_js_project_roots(
-        ["@sveltejs/kit", "\"svelte-kit\""],
-        ["svelte.config.js", "svelte.config.ts", "svelte.config.mjs", "svelte.config.cjs"]
-      )
+      project_roots = discover_js_project_roots(["@sveltejs/kit", "\"svelte-kit\""], CONFIG_BASENAMES)
 
       # `src/routes/` must sit directly in a project root: a sample app nested
       # below a real one (docs tutorial overlays, test fixtures) is not served.
-      route_dirs = project_roots.map { |root| File.join(root, "src/routes/") }
+      # Each maps to the root's `kit.paths.base`, which prefixes every route.
+      route_dirs = project_roots.to_h { |root| {File.join(root, "src/routes/"), paths_base(root)} }
 
       parallel_file_scan(EXTENSIONS) do |path|
         expanded = Noir::PathScope.expand(path)
-        next unless route_dirs.empty? || route_dirs.any? { |dir| expanded.starts_with?(dir) }
+        base = ""
+        unless route_dirs.empty?
+          dir = route_dirs.keys.find { |route_dir| expanded.starts_with?(route_dir) } || next
+          base = route_dirs[dir]
+        end
         relative = src_routes_relative(path) || next
         leaf = File.basename(relative)
         next if private_segment_in?(relative)
 
         if page_file?(leaf)
-          analyze_page(path, relative, result, mutex)
+          analyze_page(path, url_for(relative, base), result, mutex)
         elsif page_server_file?(leaf)
-          analyze_page_server(path, relative, result, mutex)
+          analyze_page_server(path, url_for(relative, base), result, mutex)
         elsif server_file?(leaf)
-          analyze_api_route(path, relative, result, mutex, include_callee)
+          analyze_api_route(path, url_for(relative, base), result, mutex, include_callee)
         end
       end
 
       result
+    end
+
+    private def paths_base(root : String) : String
+      CONFIG_BASENAMES.each do |name|
+        config = File.join(root, name)
+        next unless File.file?(config)
+        content = Noir::JSRouteExtractor.strip_js_comments(read_file_content(config))
+        if match = content.match(PATHS_BASE_RE)
+          return match[2].rstrip('/')
+        end
+      rescue IO::Error
+        next
+      end
+      ""
     end
 
     private def private_segment_in?(relative : String) : Bool
@@ -91,8 +113,7 @@ module Analyzer::Javascript
       API_EXTENSIONS.any? { |ext| leaf.ends_with?(ext) }
     end
 
-    private def analyze_page(path : String, relative : String, result : Array(Endpoint), mutex : Mutex)
-      url = url_for(relative)
+    private def analyze_page(path : String, url : String, result : Array(Endpoint), mutex : Mutex)
       endpoint = file_route_endpoint(url, "GET", path)
       mutex.synchronize { result << endpoint }
     end
@@ -104,7 +125,7 @@ module Analyzer::Javascript
     # distinct from the page's GET (emitted by the `+page.svelte`
     # sibling), so emit a POST. `load`-only `+page.server` files add no
     # endpoint of their own.
-    private def analyze_page_server(path : String, relative : String, result : Array(Endpoint), mutex : Mutex)
+    private def analyze_page_server(path : String, url : String, result : Array(Endpoint), mutex : Mutex)
       # Comments blanked in place (line numbers kept), so a commented-out
       # export is not a route.
       content = begin
@@ -115,7 +136,6 @@ module Analyzer::Javascript
       end
       return unless form_actions?(content)
 
-      url = url_for(relative)
       line = form_actions_line(content) || 1
       endpoint = file_route_endpoint(url, "POST", path, line)
       mutex.synchronize { result << endpoint }
@@ -135,8 +155,7 @@ module Analyzer::Javascript
       nil
     end
 
-    private def analyze_api_route(path : String, relative : String, result : Array(Endpoint), mutex : Mutex, include_callee : Bool)
-      url = url_for(relative)
+    private def analyze_api_route(path : String, url : String, result : Array(Endpoint), mutex : Mutex, include_callee : Bool)
       # Comments blanked in place (line numbers kept), so a commented-out
       # export is not a route.
       content = begin
@@ -158,9 +177,12 @@ module Analyzer::Javascript
       end
     end
 
-    # Drops the `+page.*` / `+server.*` leaf.
-    private def url_for(relative : String) : String
-      file_route_url(relative.split('/')[0...-1])
+    # Drops the `+page.*` / `+server.*` leaf; the root route of a based app
+    # is the bare base (`/greenhouse`, not `/greenhouse/`).
+    private def url_for(relative : String, base : String) : String
+      url = file_route_url(relative.split('/')[0...-1])
+      return url if base.empty?
+      url == "/" ? base : base + url
     end
 
     private def attach_callees(endpoint : Endpoint, path : String, content : String, verb : String)
