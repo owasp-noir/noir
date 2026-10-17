@@ -28,7 +28,7 @@ Noir의 기본 규칙은 코드에 하드코딩된 시크릿(API 키, 토큰, �
 
 `-P`를 켜면 Noir는 다음을 합니다.
 1. 첫 실행 시 [noir-passive-rules](https://github.com/owasp-noir/noir-passive-rules) 저장소를 `~/.config/noir/passive_rules/`로 클론
-2. 로컬과 원격 저장소를 비교해 업데이트 확인
+2. 로컬과 원격 저장소를 비교해 업데이트 확인. 원격 fetch는 하루에 한 번까지만 하고, 그 사이의 스캔은 마지막 fetch 결과와 비교합니다. `--passive-scan-auto-update`와 `noir rules update`는 항상 fetch합니다.
 3. 규칙이 오래된 경우 알림
 4. 자동 업데이트를 켰다면 규칙 업데이트
 

@@ -28,7 +28,7 @@ The official Docker image ships a rules snapshot at `/opt/noir/passive_rules`. W
 
 With `-P` enabled, Noir:
 1. Initializes rules on first run by cloning [noir-passive-rules](https://github.com/owasp-noir/noir-passive-rules) to `~/.config/noir/passive_rules/`
-2. Checks for updates by comparing local and remote repositories
+2. Checks for updates by comparing local and remote repositories. The remote is fetched at most once a day; scans in between compare against the last fetch. `--passive-scan-auto-update` and `noir rules update` always fetch.
 3. Notifies you when rules are outdated
 4. Updates them, if auto-update is on
 

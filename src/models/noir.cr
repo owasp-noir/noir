@@ -118,8 +118,11 @@ class NoirRunner
         PassiveRulesUpdater.initialize_rules(@logger)
 
         # Check for updates (auto-update if enabled)
+        # `--passive-scan-auto-update` asks for the latest rules, so it
+        # always fetches; a plain `-P` reuses a recent fetch.
         auto_update = any_to_bool(@options["passive_scan_auto_update"])
-        PassiveRulesUpdater.check_for_updates(@logger, auto_update)
+        fetch_interval = auto_update ? nil : PassiveRulesUpdater::SCAN_FETCH_INTERVAL
+        PassiveRulesUpdater.check_for_updates(@logger, auto_update, fetch_interval)
       end
 
       if !custom_rule_paths.empty?
