@@ -25,3 +25,18 @@ FunctionalTester.new("fixtures/specification/openrpc/common/", {
     Param.new("jsonrpc_session_login", "", "json"),
   ]),
 ]).perform_tests
+
+# A server `url` of `{endpoint}` is the whole base URL, not a path segment:
+# a `default` is substituted the way OAS3 does it, and with no default the
+# server is unusable, so the method falls back to the root.
+FunctionalTester.new("fixtures/specification/openrpc/server_variables/", {
+  :techs     => 1,
+  :endpoints => 2,
+}, [
+  Endpoint.new("/v1/rpc#node_status", "POST", [
+    Param.new("jsonrpc_node_status", "", "json"),
+  ]),
+  Endpoint.new("/#node_peers", "POST", [
+    Param.new("jsonrpc_node_peers", "", "json"),
+  ]),
+]).perform_tests

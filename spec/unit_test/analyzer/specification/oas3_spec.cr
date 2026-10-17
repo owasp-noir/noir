@@ -31,6 +31,18 @@ describe "OAS3 Analyzer" do
     analyzer.get_base_path(servers).should eq("https://api.example.com/api/v2")
   end
 
+  it "does not root an undefaulted leading server variable as a path" do
+    servers = JSON.parse(%([{"url":"{endpoint}"},{"url":"{host}/v1"},{"url":"api/{version}"}]))
+
+    oas3_analyzer.get_base_path(servers).should eq("/api/{version}")
+  end
+
+  it "skips a server variable that is not a mapping" do
+    servers = JSON.parse(%([{"url":"/api/{version}","variables":{"version":"v2"}}]))
+
+    oas3_analyzer.get_base_path(servers).should eq("/api/{version}")
+  end
+
   it "uses --url as the fallback base when no server matches" do
     servers = JSON.parse(%([{"url":"https://other.example.com/v1"}]))
     analyzer = oas3_analyzer("https://api.example.com")

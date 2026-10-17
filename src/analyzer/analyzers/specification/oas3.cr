@@ -48,23 +48,12 @@ module Analyzer::Specification
       end
     end
 
-    private def server_url_json(server_obj : JSON::Any) : String
-      url = server_obj["url"]?.try(&.as_s?) || ""
-      if variables = server_obj["variables"]?.try(&.as_h?)
-        variables.each do |name, variable_obj|
-          default = variable_obj["default"]?.try(&.as_s?)
-          url = url.gsub("{#{name}}", default) if default
-        end
-      end
-      url
-    end
-
     private def server_url_yaml(server_obj : YAML::Any) : String
       url = server_obj[YAML::Any.new("url")]?.try(&.as_s?) || ""
       if variables_node = server_obj[YAML::Any.new("variables")]?
         if variables = variables_node.as_h?
           variables.each do |name, variable_obj|
-            default = variable_obj[YAML::Any.new("default")]?.try(&.as_s?)
+            default = variable_obj.as_h?.try(&.[YAML::Any.new("default")]?).try(&.as_s?)
             url = url.gsub("{#{name}}", default) if default
           end
         end
