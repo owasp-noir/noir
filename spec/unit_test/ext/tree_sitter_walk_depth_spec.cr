@@ -26,6 +26,12 @@ private def deepest_reach : Int32
 end
 
 describe "Noir::TreeSitter.each_named_child depth bound" do
+  # Every assertion below runs on the spec's own fiber, and the counter is
+  # per fiber, so walks in other specs (or other fibers) cannot skew it.
+  it "starts the spec at rest" do
+    Fiber.current.noir_ts_walk_depth.should eq(0)
+  end
+
   it "stops descending at MAX_AST_DEPTH" do
     deepest_reach.should eq(Noir::TreeSitter::MAX_AST_DEPTH)
   end
@@ -50,6 +56,34 @@ describe "Noir::TreeSitter.each_named_child depth bound" do
       end
     end
 
+    deepest_reach.should eq(Noir::TreeSitter::MAX_AST_DEPTH)
+  end
+
+  # Two fibers on one thread, each suspended inside a walk, unwind out of
+  # order. A thread-wide counter came back at 1 here and cut every later
+  # walk on the thread one level short (#3115).
+  it "keeps the counter per fiber when walks interleave" do
+    inside = [] of Int32
+    after = [] of Int32
+    done = Channel(Nil).new
+
+    2.times do
+      spawn do
+        Noir::TreeSitter.parse_python("x = ((1))\n") do |root|
+          Noir::TreeSitter.each_named_child(root) do
+            inside << Fiber.current.noir_ts_walk_depth
+            Fiber.yield
+          end
+        end
+        after << Fiber.current.noir_ts_walk_depth
+        done.send(nil)
+      end
+    end
+    2.times { done.receive }
+
+    inside.should eq([1, 1])
+    after.should eq([0, 0])
+    Fiber.current.noir_ts_walk_depth.should eq(0)
     deepest_reach.should eq(Noir::TreeSitter::MAX_AST_DEPTH)
   end
 
