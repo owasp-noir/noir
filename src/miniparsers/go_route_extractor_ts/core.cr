@@ -232,7 +232,8 @@ module Noir
                        handle_many_method : String? = nil,
                        handle_many_methods : Array(String) = [] of String,
                        closure_group_methods : Array(String) = [] of String,
-                       mount_methods : Array(String) = [] of String) : Array(Route)
+                       mount_methods : Array(String) = [] of String,
+                       verb_calls : Bool = true) : Array(Route)
       routes = [] of Route
       group_prefixes = external_groups.dup
       all_handle_many = handle_many_methods.dup
@@ -274,7 +275,7 @@ module Noir
 
         Noir::TreeSitter.walk(root) do |node|
           next unless Noir::TreeSitter.node_type(node) == "call_expression"
-          if route = decode_verb_call(node, source, group_prefixes, extra_verbs, group_method, group_aliases, string_values, closure_groups)
+          if verb_calls && (route = decode_verb_call(node, source, group_prefixes, extra_verbs, group_method, group_aliases, string_values, closure_groups))
             routes << route
           elsif handle_method && (route = decode_handle_call(node, source, group_prefixes, handle_method, group_method, group_aliases, string_values))
             routes << route
