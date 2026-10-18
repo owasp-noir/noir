@@ -194,12 +194,10 @@ module Analyzer::Java
             # — on every emitted route.
             file_constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants_from(root, content, java_project_constants(path))
 
-            # The method-declaration index used to resolve callee call
-            # sites is likewise file-scoped; build it once (only when
-            # callees are requested) and reuse it across every route in
-            # the file rather than rebuilding it per route.
-            file_decl_index = include_callee ? Noir::JavaCalleeExtractor.build_method_decl_index(root, content) : nil
-            file_method_index = nil.as(Noir::JavaCalleeExtractor::MethodIndex?)
+            # Callee lookups share the file's method and declaration
+            # indexes across every route, built on the first route that
+            # needs them.
+            file_callees = Noir::JavaCalleeExtractor::FileCallees.new(root, content, path)
             # Same for the handler-method lookups below (built on the first route).
             param_index = nil.as(Noir::TreeSitterJavaParameterExtractor::FileIndex?)
 
@@ -239,10 +237,7 @@ module Analyzer::Java
               # `Callee#path` points at the call site, matching every
               # other analyzer's first-cut honest scope.
               if include_callee && !(route.class_name.empty? || route.method_name.empty?)
-                file_method_index ||= Noir::JavaCalleeExtractor.build_method_index(root, content)
-                Noir::JavaCalleeExtractor.callees_in_method(
-                  root, content, path, route.class_name, route.method_name, route.line, decl_index: file_decl_index, method_index: file_method_index
-                ).each do |entry|
+                file_callees.callees_in_method(route.class_name, route.method_name, route.line).each do |entry|
                   name, callee_path, callee_line = entry
                   endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
                 end
@@ -284,10 +279,7 @@ module Analyzer::Java
                     # callees from that implementing body rather than the
                     # empty interface method.
                     if include_callee && !(implementation.class_name.empty? || entry_route.method_name.empty?)
-                      file_method_index ||= Noir::JavaCalleeExtractor.build_method_index(root, content)
-                      Noir::JavaCalleeExtractor.callees_in_method(
-                        root, content, path, implementation.class_name, entry_route.method_name, decl_index: file_decl_index, method_index: file_method_index
-                      ).each do |callee_entry|
+                      file_callees.callees_in_method(implementation.class_name, entry_route.method_name).each do |callee_entry|
                         name, callee_path, callee_line = callee_entry
                         endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
                       end

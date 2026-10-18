@@ -122,14 +122,15 @@ module NoirMobileLinker
       end
     else
       Noir::TreeSitter.parse_java(content) do |root|
+        file_callees = Noir::JavaCalleeExtractor::FileCallees.new(root, content, path)
         handler_methods.each do |method|
-          Noir::JavaCalleeExtractor.callees_in_method(root, content, path, simple, method).each do |name, fpath, line|
+          file_callees.callees_in_method(simple, method).each do |name, fpath, line|
             append_android_callee(callees, name, fpath, line)
           end
         end
         android_delegate_methods(callees).each do |delegate|
           target_line = delegate[:line].try { |line| line - 1 }
-          Noir::JavaCalleeExtractor.callees_in_method(root, content, path, simple, delegate[:name], target_line).each do |name, fpath, line|
+          file_callees.callees_in_method(simple, delegate[:name], target_line).each do |name, fpath, line|
             append_android_callee(callees, name, fpath, line)
           end
         end

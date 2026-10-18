@@ -318,11 +318,12 @@ module Analyzer::Java
       return result unless @include_callee
 
       Noir::TreeSitter.parse_java(file[:content]) do |root|
+        file_callees = Noir::JavaCalleeExtractor::FileCallees.new(root, file[:content], file[:path])
         method_names.uniq.each do |method_name|
           next if method_name.empty? || result.has_key?(method_name)
 
           callees = [] of Callee
-          Noir::JavaCalleeExtractor.callees_in_method(root, file[:content], file[:path], class_name, method_name).each do |entry|
+          file_callees.callees_in_method(class_name, method_name).each do |entry|
             name, callee_path, callee_line = entry
             callees << Callee.new(name, path: callee_path, line: callee_line)
           end

@@ -72,6 +72,27 @@ module Noir::JavaCalleeExtractor
     sink
   end
 
+  # `callees_in_method` for many handlers of one parsed file. Each call
+  # without `decl_index:` / `method_index:` walks the whole tree twice to
+  # build them, so a class with N actions resolved one by one cost O(N²)
+  # (Struts2, 4000 `@Action` methods: 36s under `--ai-context`). This
+  # builds both on first use and reuses them. Only valid while the tree
+  # `root` belongs to is alive — inside the `parse_java` block.
+  class FileCallees
+    @decl_index : Hash(String, Int32?)?
+    @method_index : MethodIndex?
+
+    def initialize(@root : LibTreeSitter::TSNode, @source : String, @file_path : String)
+    end
+
+    def callees_in_method(class_name : String, method_name : String, target_line : Int32? = nil) : Array(Tuple(String, String, Int32))
+      decl_index = @decl_index ||= JavaCalleeExtractor.build_method_decl_index(@root, @source)
+      method_index = @method_index ||= JavaCalleeExtractor.build_method_index(@root, @source)
+      JavaCalleeExtractor.callees_in_method(@root, @source, @file_path, class_name, method_name, target_line,
+        decl_index: decl_index, method_index: method_index)
+    end
+  end
+
   # Lambda/handler entry point used by DSL analyzers (Javalin, Spark,
   # …) where the handler body is a `lambda_expression`'s body — a
   # `block` or a single expression — not a `method_declaration`.
