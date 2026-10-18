@@ -246,6 +246,7 @@ class EndpointOptimizer
         end
         dup = promote_scalar_context(dup, tiny_tmp)
         dup = absorb_technologies(dup, tiny_tmp)
+        dup.handler ||= tiny_tmp.handler
         final_map[key] = dup
       else
         final_map[key] = tiny_tmp

@@ -153,13 +153,13 @@ noir query --no-guard --sink any --from report.json    # 인증 없이 SQL 싱�
 레코드를 출력하고, 매칭이 없으면 가장 가까운 라우트를 `candidates`로 출력한 뒤
 종료 코드 1을 반환합니다.
 
-`reach`는 `FILE`을 경로 접미사로 보고 Noir가 기록한 모든 위치(라우트 선언, callee,
-가드, 소스, 싱크, 검증기)와 비교해 근거를 `via`에 나열합니다. `:LINE`을 주면 근거를
+`reach`는 `FILE`을 경로 접미사로 보고 Noir가 기록한 모든 위치(라우트 선언, 핸들러 정의,
+callee, 가드, 소스, 싱크, 검증기)와 비교해 근거를 `via`에 나열합니다. `:LINE`을 주면 근거를
 거리순으로 정렬하고 `nearest_line`을 채웁니다. Noir는 함수 범위가 아니라 선언
 줄만 기록하므로, 줄 번호는 필터가 아니라 정렬 기준입니다.
 
 `query`의 필터는 AND로 결합되고, 한 필터 안의 쉼표 목록은 OR입니다:
-`--method`, `--url`, `--path`, `--tech`, `--tag`, `--param`, `--param-type`,
+`--method`, `--url`, `--path`, `--handler`, `--tech`, `--tag`, `--param`, `--param-type`,
 `--protocol`, `--guard` / `--no-guard`, `--sink`, `--source`, `--signal`
 (`any`는 비어 있지 않은 버킷에 매칭). `--guard`에서 rate limiter는 가드로 치지 않으며, 어떤 엔드포인트도 갖지 않은 kind를 주면 stderr에 리포트에 있는 kind 목록과 함께 알려줍니다.
 
@@ -168,10 +168,12 @@ noir query --no-guard --sink any --from report.json    # 인증 없이 SQL 싱�
 같습니다: `0` 매칭, `1` 매칭 없음, `2` 사용법 오류. `--from`과 함께 스캔 경로나 플래그를
 주면 오류입니다(아무것도 스캔하지 않으므로).
 
-압축 행은 엔드포인트 레코드의 투영이며 빈 버킷은 생략됩니다:
+압축 행은 엔드포인트 레코드의 투영이며 빈 버킷은 생략됩니다. `path:line`은 라우트가
+*선언된* 곳, `handler`는 그 본문이 *있는* 곳(분석기가 정의 위치를 해석한 경우)입니다:
 
 ```json
-{"method":"POST","url":"/api/users/{id}","path":"src/users.go","line":42,"tech":"go_gin",
+{"method":"POST","url":"/api/users/{id}","path":"src/routes.go","line":42,"tech":"go_gin",
+ "handler":{"name":"updateUser","path":"src/users.go","line":80},
  "params":["id:path","name:json"],"guards":["RequireAuth"],"sinks":["sql"],
  "signals":["idor_review"],"callees":["db.Exec","render"]}
 ```

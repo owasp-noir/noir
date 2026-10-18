@@ -81,6 +81,8 @@ class Noir::GoNamedHandler
   @refs = Hash(String, Array(Key)).new
   @lines = Hash(Key, Array(String)).new
   @targets = Hash(Key, Array(Endpoint)).new
+  # Plain-reference handler text -> the body it names (no one-hop calls).
+  @handlers = Hash(String, Key).new
   @declared : Hash(String, Set(String))? = nil
   @receivers = Hash(String, Array(Tuple(Noir::GoCalleeExtractor::FunctionBody, String?, String))).new
 
@@ -163,6 +165,7 @@ class Noir::GoNamedHandler
       next if body.nil? || registers_routes.call(body)
 
       key = {body.file_path, body.start_row}
+      @handlers[handler] = key
       # One hop further: the functions the handler body calls.
       calls = body.source.scan(CALL_RE).map(&.[1]).uniq!
       @refs[handler] = [key].concat(keys_for.call(calls, File.dirname(body.file_path), key)).uniq
@@ -220,6 +223,19 @@ class Noir::GoNamedHandler
     return false unless key = @rows[index]?
     (@lines[key] ||= [] of String) << line
     true
+  end
+
+  # The route's handler resolved to its definition: the last plain
+  # reference among the handler arguments (middleware comes first), or nil
+  # for a closure or a name this file and its package cannot resolve.
+  def handler_for(route : Noir::TreeSitterGoRouteExtractor::Route) : Handler?
+    route.handler_args.reverse_each do |arg|
+      name = arg.strip
+      if key = @handlers[name]?
+        return Handler.new(name, key[0], key[1] + 1)
+      end
+    end
+    nil
   end
 
   def bind(route : Noir::TreeSitterGoRouteExtractor::Route, endpoint : Endpoint)

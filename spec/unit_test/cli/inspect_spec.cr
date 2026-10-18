@@ -131,6 +131,21 @@ describe Noir::CLI::Inspect do
       Noir::CLI::Inspect.path_matches?(nil, "items.go").should be_false
     end
 
+    it "names the handler's file as evidence and projects it onto the row" do
+      ep = endpoint("GET", "/u", "config/routes.rb", 4)
+      ep.handler = Handler.new("users#show", "app/controllers/users_controller.rb", 12)
+      rows = Noir::CLI::Inspect.reach([ep], "users_controller.rb", nil, false)
+      rows.first.via.map { |v| {v.kind, v.name, v.line} }.should eq([{"handler", "users#show", 12}])
+      rows.first.path.should eq("config/routes.rb")
+      JSON.parse(rows.first.to_json)["handler"]["line"].should eq(12)
+      rows.first.to_text.should contain("handler=users#show@app/controllers/users_controller.rb:12")
+
+      f = Noir::CLI::QueryCommand.parse_filters(["--handler", "users#"]).filters
+      Noir::CLI::Inspect.query([ep, endpoint("GET", "/v")], f, false).map(&.url).should eq(["/u"])
+      f = Noir::CLI::QueryCommand.parse_filters(["--handler", "controllers/*"]).filters
+      Noir::CLI::Inspect.query([ep], f, false).size.should eq(1)
+    end
+
     it "lists the evidence from the file, routes and callees alike" do
       rows = Noir::CLI::Inspect.reach(endpoints, "items.go", nil, false)
       rows.map(&.url).should eq(["/items/:id"])

@@ -155,13 +155,13 @@ full endpoint record; on a miss it prints the nearest routes as `candidates`
 and exits 1.
 
 `reach` matches `FILE` as a path suffix against every location Noir recorded
-(route declarations, callees, guards, sources, sinks, validators) and lists
-the evidence in `via`. `:LINE` orders the evidence by distance and sets
+(route declarations, the handler's definition, callees, guards, sources, sinks,
+validators) and lists the evidence in `via`. `:LINE` orders the evidence by distance and sets
 `nearest_line`; Noir records declaration lines, not function spans, so the
 line orders rather than filters.
 
 `query` filters AND together; a comma list inside one filter is OR:
-`--method`, `--url`, `--path`, `--tech`, `--tag`, `--param`, `--param-type`,
+`--method`, `--url`, `--path`, `--handler`, `--tech`, `--tag`, `--param`, `--param-type`,
 `--protocol`, `--guard` / `--no-guard`, `--sink`, `--source`, `--signal`
 (`any` matches a non-empty bucket). A rate limiter does not count as a guard for `--guard`, and a kind no endpoint carries is reported on stderr with the kinds the report does have.
 
@@ -171,10 +171,13 @@ Shared flags: `--from <report>`, `-f jsonl|json|text` (jsonl default),
 matched, `2` usage error. A scan path or flag next to `--from` is an error, since
 nothing is scanned.
 
-The compact row is a projection of the endpoint record, empty buckets omitted:
+The compact row is a projection of the endpoint record, empty buckets omitted.
+`path:line` is where the route is *declared*; `handler` is where its body
+*lives*, when the analyzer could resolve the definition:
 
 ```json
-{"method":"POST","url":"/api/users/{id}","path":"src/users.go","line":42,"tech":"go_gin",
+{"method":"POST","url":"/api/users/{id}","path":"src/routes.go","line":42,"tech":"go_gin",
+ "handler":{"name":"updateUser","path":"src/users.go","line":80},
  "params":["id:path","name:json"],"guards":["RequireAuth"],"sinks":["sql"],
  "signals":["idor_review"],"callees":["db.Exec","render"]}
 ```

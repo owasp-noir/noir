@@ -207,6 +207,8 @@ module Noir::CLI::Inspect
     property line : Int32?
     @[JSON::Field(ignore_serialize: tech.nil?)]
     property tech : String?
+    @[JSON::Field(ignore_serialize: handler.nil?)]
+    property handler : Handler?
     @[JSON::Field(ignore_serialize: params.empty?)]
     property params = [] of String
     @[JSON::Field(ignore_serialize: tags.empty?)]
@@ -248,6 +250,7 @@ module Noir::CLI::Inspect
         row.line = location.line
       end
       row.tech = endpoint.details.technology
+      row.handler = endpoint.handler
       row.params = endpoint.params.map { |p| "#{p.name}:#{p.param_type}" }
       row.tags = endpoint.tags.map(&.name).uniq!
       row.callees = endpoint.callees.map(&.name).uniq!
@@ -269,6 +272,13 @@ module Noir::CLI::Inspect
           io << ':' << line if line
         end
         io << "  " << tech if tech
+        if h = handler
+          io << "  handler=" << h.name
+          if hp = h.path
+            io << '@' << hp
+            io << ':' << h.line if h.line
+          end
+        end
         {"guards", guards, "sinks", sinks, "signals", signals, "tags", tags}.each_slice(2) do |(label, values)|
           io << "  " << label << '=' << values.as(Array(String)).join(',') unless values.as(Array(String)).empty?
         end
@@ -460,6 +470,9 @@ module Noir::CLI::Inspect
         declared ||= cp
         via << Via.new("route", nil, cp.line)
       end
+      if (handler = endpoint.handler) && path_matches?(handler.path, file)
+        via << Via.new("handler", handler.name, handler.line)
+      end
       endpoint.callees.each do |callee|
         via << Via.new("callee", callee.name, callee.line) if path_matches?(callee.path, file)
       end
@@ -499,6 +512,7 @@ module Noir::CLI::Inspect
     methods : Array(String) = [] of String,
     url : String? = nil,
     path : String? = nil,
+    handler : String? = nil,
     techs : Array(String) = [] of String,
     tags : Array(String) = [] of String,
     params : Array(String) = [] of String,
@@ -512,6 +526,7 @@ module Noir::CLI::Inspect
       return false unless methods.empty? || methods.includes?(endpoint.method.upcase)
       return false unless (u = url).nil? || Inspect.glob_or_substring?(u, endpoint.url)
       return false unless (p = path).nil? || endpoint.details.code_paths.any? { |cp| Inspect.path_glob?(p, cp.path) }
+      return false unless (h = handler).nil? || endpoint.handler.try { |eh| eh.name.includes?(h) || Inspect.path_glob?(h, eh.path || "") }
       unless techs.empty?
         have = endpoint.details.technologies.empty? ? [endpoint.details.technology].compact : endpoint.details.technologies
         return false unless (have & techs).present?

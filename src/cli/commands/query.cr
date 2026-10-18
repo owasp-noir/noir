@@ -9,7 +9,7 @@ require "../inspect"
 module Noir::CLI::QueryCommand
   # Filter flags and the `Filters` field each one fills. Every one takes a
   # value except the guard switches.
-  VALUE_FLAGS = %w[--method --url --path --tech --tag --param --param-type --protocol --sink --source --signal]
+  VALUE_FLAGS = %w[--method --url --path --handler --tech --tag --param --param-type --protocol --sink --source --signal]
 
   record Parsed, filters : Inspect::Filters, rest : Array(String), errors : Array(String)
 
@@ -54,6 +54,7 @@ module Noir::CLI::QueryCommand
       methods: values["--method"].map(&.upcase),
       url: values["--url"].first?,
       path: values["--path"].first?,
+      handler: values["--handler"].first?,
       techs: values["--tech"],
       tags: values["--tag"],
       params: values["--param"],
@@ -95,6 +96,7 @@ module Noir::CLI::QueryCommand
         --method GET,POST      HTTP method
         --url <glob|substr>    Route URL (glob when it contains * ? [, substring otherwise)
         --path <glob|substr>   Source path as reported (a relative glob also matches as a suffix)
+        --handler <substr|glob> Handler name contains, or handler file matches
         --tech <name,...>      Technology (e.g. go_gin, python_django)
         --tag <name,...>       Tag name (auth, admin, ...)
         --param <name,...>     Parameter name

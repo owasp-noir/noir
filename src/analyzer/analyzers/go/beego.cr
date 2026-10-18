@@ -113,6 +113,7 @@ module Analyzer::Go
                     new_endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
                   end
                 end
+                new_endpoint.handler = named.handler_for(route) unless beego_router_lines.includes?(route.line)
                 result << new_endpoint
                 named.bind(route, new_endpoint) unless beego_router_lines.includes?(route.line)
                 last_endpoint = new_endpoint
