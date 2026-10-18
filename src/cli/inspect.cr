@@ -1,4 +1,5 @@
 require "json"
+require "levenshtein"
 require "../models/endpoint"
 require "../utils/url_path"
 require "../utils/http_symbols"
@@ -117,6 +118,12 @@ module Noir::CLI::Inspect
   # The endpoint list to query: a saved report or a live scan.
   def self.load(common : Common, scan_argv : Array(String)) : Array(Endpoint)
     if from = common.from
+      # Nothing is scanned, so a scan path or flag here is a mistake — and a
+      # mistyped filter (`--no-gaurd`) would otherwise return the whole
+      # surface as if it were the answer.
+      unless scan_argv.empty?
+        Noir::CLI.die("--from reads a report and scans nothing; unexpected argument(s): #{scan_argv.join(" ")}", EXIT_USAGE)
+      end
       load_report(from)
     else
       options, args = ScanCommand.parse_options(scan_argv)
@@ -134,18 +141,42 @@ module Noir::CLI::Inspect
     text = File.read(path)
     # A `-f json` document parses whole; a `-f jsonl` stream does not (or is
     # a single endpoint line), so it falls back to one object per line.
+    report = false
     objects = begin
       doc = JSON.parse(text)
-      doc.as_h? && doc["endpoints"]? ? doc["endpoints"].as_a : [doc]
+      if doc.as_h? && (list = doc["endpoints"]?)
+        report = true
+        list.as_a
+      else
+        [doc]
+      end
     rescue JSON::ParseException
       text.each_line.compact_map { |line| line.blank? ? nil : JSON.parse(line) }.to_a
     end
-    objects.compact_map do |obj|
+    endpoints = objects.compact_map do |obj|
       next unless obj.as_h? && obj["url"]? && obj["method"]?
       Endpoint.from_json(obj.to_json)
     end
-  rescue ex : File::Error | JSON::ParseException | JSON::SerializableError
+    if !report && endpoints.empty?
+      Noir::CLI.die("--from #{path}: not a noir report (expected `noir scan -f json` or `-f jsonl` output)", EXIT_USAGE)
+    end
+    endpoints
+  rescue ex : IO::Error | JSON::ParseException | JSON::SerializableError
     Noir::CLI.die("--from #{path}: #{ex.message}", EXIT_USAGE)
+  end
+
+  # Guards that gate *who* may call the route. Rate limiting is a guard the
+  # augmentor records, but "no auth" is what `--no-guard` asks.
+  def self.auth_guards(context : AIContext?) : Array(AIContextEntry)
+    return [] of AIContextEntry unless context
+    context.guards.reject { |g| g.kind == "rate_limit_guard" }
+  end
+
+  # Signals worth filtering on: the route/detector/method ones restate
+  # method, url and tech, and would make `--signal any` match everything.
+  def self.derived_signals(context : AIContext?) : Array(AIContextEntry)
+    return [] of AIContextEntry unless context
+    context.signals.reject { |s| RESTATING_SIGNAL_SOURCES.includes?(s.source) }
   end
 
   # Evidence tying an endpoint to a file (`reach`).
@@ -219,13 +250,11 @@ module Noir::CLI::Inspect
       row.tech = endpoint.details.technology
       row.params = endpoint.params.map { |p| "#{p.name}:#{p.param_type}" }
       row.tags = endpoint.tags.map(&.name).uniq!
-      row.callees = endpoint.callees.map(&.name)
+      row.callees = endpoint.callees.map(&.name).uniq!
       if context = endpoint.ai_context
         row.guards = context.guards.map(&.name).uniq!
         row.sinks = context.sinks.map(&.kind).uniq!
-        row.signals = context.signals.compact_map do |signal|
-          # Route / detector / method signals restate method, url and tech.
-          next if RESTATING_SIGNAL_SOURCES.includes?(signal.source)
+        row.signals = Inspect.derived_signals(context).map do |signal|
           signal.kind == "priority_review" ? "priority_review:#{signal.name}" : signal.kind
         end.uniq!
       end
@@ -270,35 +299,73 @@ module Noir::CLI::Inspect
 
   # ---- trace: concrete request path → declared route ----------------------
 
-  # `{id}` `:id` `<int:pk>` `[id]` `$id` `${id}` `*` match one segment;
-  # `**` `{path*}` `{...rest}` `[...slug]` `*path` `:rest*` match the rest.
-  REST_PLACEHOLDER = /\A(?:\*\*|\{[^}]*\*\}|\{\.\.\.[^}]*\}|\[\.\.\.[^\]]*\]|\*[A-Za-z_]\w*|:[A-Za-z_]\w*\*)/
-  ONE_PLACEHOLDER  = /\A(?:\$\{[^}]*\}|\{[^}]*\}|<[^>]*>|\[[^\]]*\]|:[A-Za-z_]\w*|\$[A-Za-z_]\w*|\*)/
+  # `{id}` `:id` `<int:pk>` `[id]` `$id` `${id}` match one segment; `*`
+  # `**` `{path*}` `{...rest}` `[...slug]` `[[...slug]]` `*path` `:rest*`
+  # match the rest (Express's bare `*` is a catch-all, not one segment).
+  REST_PLACEHOLDER = /\A(?:\*\*|\{[^}]*\*\}|\{\.\.\.[^}]*\}|\[\[\.\.\.[^\]]*\]\]|\[\.\.\.[^\]]*\]|\*[A-Za-z_]\w*|:[A-Za-z_]\w*\*|\*)/
+  ONE_PLACEHOLDER  = /\A(?:\$\{[^}]*\}|\{[^}]*\}|<[^>]*>|\[[^\]]*\]|:[A-Za-z_]\w*|\$[A-Za-z_]\w*)/
   PLACEHOLDER_CHAR = /[{:<\[$*]/
 
   # The regex a declared route matches request paths against, or nil for a
   # pattern Noir cannot turn into one.
   def self.route_regex(endpoint : Endpoint) : Regex?
-    route = request_path(endpoint.url)
+    # The request is compared without its trailing slash, so the route loses
+    # its own first: Django's `x/<int:pk>/` must match `/x/5`.
+    route = strip_trailing_slash(request_path(endpoint.url))
     if endpoint.regex_path?
       return Regex.new("\\A#{URLPath.strip_regex_anchors(route).rchop('/')}/?\\z") rescue nil
     end
     pattern = String.build do |io|
-      scanner = route
-      until scanner.empty?
-        if m = scanner.match(REST_PLACEHOLDER)
-          io << ".*"
-          scanner = scanner[m[0].size..]
-        elsif m = scanner.match(ONE_PLACEHOLDER)
-          io << "[^/]+"
-          scanner = scanner[m[0].size..]
-        else
-          io << Regex.escape(scanner[0].to_s)
-          scanner = scanner[1..]
+      scan_placeholders(route) do |kind, text|
+        case kind
+        when :rest then io << ".*"
+        when :one  then io << "[^/]+"
+        else            io << Regex.escape(text)
         end
       end
     end
     Regex.new("\\A#{pattern}/?\\z")
+  end
+
+  # Walks a route, yielding `:rest` / `:one` placeholders and `:literal`
+  # characters in order.
+  private def self.scan_placeholders(route : String, &)
+    scanner = route
+    until scanner.empty?
+      if m = scanner.match(REST_PLACEHOLDER)
+        yield :rest, m[0]
+        scanner = scanner[m[0].size..]
+      elsif m = scanner.match(ONE_PLACEHOLDER)
+        yield :one, m[0]
+        scanner = scanner[m[0].size..]
+      else
+        yield :literal, scanner[0].to_s
+        scanner = scanner[1..]
+      end
+    end
+  end
+
+  # How specific a route is: fewer catch-alls, then fewer placeholders,
+  # then more literal text. `/u/:id` outranks `/*proxyPath` for `/u/5`.
+  def self.specificity(url : String) : {Int32, Int32, Int32}
+    rest = 0
+    one = 0
+    literal = 0
+    scan_placeholders(strip_trailing_slash(request_path(url))) do |kind, text|
+      case kind
+      when :rest then rest += 1
+      when :one  then one += 1
+      else            literal += text.size
+      end
+    end
+    {rest, one, -literal}
+  end
+
+  private def self.strip_trailing_slash(path : String) : String
+    while path.size > 1 && path.ends_with?('/')
+      path = path.rchop('/')
+    end
+    path
   end
 
   # The path part of an endpoint URL: `-u` prefixes a scheme+host, a
@@ -313,11 +380,7 @@ module Noir::CLI::Inspect
   end
 
   private def self.normalize(path : String) : String
-    path = path.split('?', 2)[0]
-    while path.size > 1 && path.ends_with?('/')
-      path = path.rchop('/')
-    end
-    path
+    strip_trailing_slash(path.split('?', 2)[0])
   end
 
   record Match, endpoint : Endpoint, matched_by : String
@@ -333,29 +396,43 @@ module Noir::CLI::Inspect
       if route == wanted
         exact << Match.new(endpoint, "exact")
       elsif (regex = route_regex(endpoint)) && regex.matches?(wanted)
-        pattern << Match.new(endpoint, "pattern")
+        spec = specificity(endpoint.url)
+        pattern << Match.new(endpoint, spec[0] > 0 ? "wildcard" : "pattern")
       end
     end
+    # Most specific first, so `--limit 1` is the route a router would pick.
+    pattern.sort_by! { |m| specificity(m.endpoint.url) }
     exact + pattern
   end
 
-  # Nearest declared routes by shared leading segments, for a miss. Any
-  # method: the row names it, and "that path exists, but as PATCH" is the
-  # answer a miss most often needs.
+  # Nearest declared routes for a miss: most shared leading segments
+  # (case-insensitive, placeholders count), then the closest spelling of the
+  # first segment that differs (`/rest/baskets/3` → `/rest/basket/:id`), then
+  # the closest length. Any method: the row names it, and "that path exists,
+  # but as PATCH" is the answer a miss most often needs.
   def self.candidates(endpoints : Array(Endpoint), path : String, limit = 5) : Array(Row)
     wanted = normalize(path).split('/').reject(&.empty?)
     scored = endpoints.compact_map do |endpoint|
       segments = normalize(request_path(endpoint.url)).split('/').reject(&.empty?)
       shared = 0
+      literal = 0
       segments.each_with_index do |seg, i|
-        break unless (w = wanted[i]?) && (seg == w || seg.matches?(PLACEHOLDER_CHAR))
+        break unless (w = wanted[i]?) && (seg.compare(w, case_insensitive: true) == 0 || seg.matches?(PLACEHOLDER_CHAR))
+        literal += 1 unless seg.matches?(PLACEHOLDER_CHAR)
         shared += 1
       end
-      next if shared == 0
-      {shared, (segments.size - wanted.size).abs, endpoint}
+      typo = if (seg = segments[shared]?) && (w = wanted[shared]?)
+               Levenshtein.distance(seg.downcase, w.downcase)
+             else
+               Int32::MAX
+             end
+      # A catch-all shares every segment with everything; it is only a
+      # candidate when some literal text agrees or a segment is a near miss.
+      next if literal == 0 && typo > 1
+      {shared, typo, (segments.size - wanted.size).abs, endpoint}
     end
-    scored.sort_by! { |shared, delta, ep| {-shared, delta, ep.url} }
-    scored.first(limit).map { |_, _, ep| Row.compact(ep) }
+    scored.sort_by! { |shared, typo, delta, ep| {-shared, typo, delta, ep.url} }
+    scored.first(limit).map { |_, _, _, ep| Row.compact(ep) }
   end
 
   # ---- reach: file[:line] → endpoints that touch it -----------------------
@@ -375,10 +452,13 @@ module Noir::CLI::Inspect
   # rather than filters. Tree-sitter spans would make it a filter.
   def self.reach(endpoints : Array(Endpoint), file : String, line : Int32?, full : Bool) : Array(Row)
     file = file.lchop("./")
-    endpoints.compact_map do |endpoint|
+    rows = endpoints.compact_map do |endpoint|
       via = [] of Via
+      declared = nil
       endpoint.details.code_paths.each do |cp|
-        via << Via.new("route", nil, cp.line) if path_matches?(cp.path, file)
+        next unless path_matches?(cp.path, file)
+        declared ||= cp
+        via << Via.new("route", nil, cp.line)
       end
       endpoint.callees.each do |callee|
         via << Via.new("callee", callee.name, callee.line) if path_matches?(callee.path, file)
@@ -397,10 +477,20 @@ module Noir::CLI::Inspect
         via.sort_by! { |v| (l = v.line) ? (l - line).abs : Int32::MAX }
       end
       row = Row.build(endpoint, full)
+      # The row names the declaration in *this* file, not whichever merged
+      # copy the optimizer listed first.
+      if declared && !full
+        row.path = declared.path
+        row.line = declared.line
+      end
       row.via = via
       row.nearest_line = via.first.line if line
       row
     end
+    if line
+      rows.sort_by! { |row| (l = row.nearest_line) ? (l - line).abs : Int32::MAX }
+    end
+    rows
   end
 
   # ---- query: AND-ed filters, comma lists OR ------------------------------
@@ -421,7 +511,7 @@ module Noir::CLI::Inspect
     def matches?(endpoint : Endpoint) : Bool
       return false unless methods.empty? || methods.includes?(endpoint.method.upcase)
       return false unless (u = url).nil? || Inspect.glob_or_substring?(u, endpoint.url)
-      return false unless (p = path).nil? || endpoint.details.code_paths.any? { |cp| Inspect.glob_or_substring?(p, cp.path) }
+      return false unless (p = path).nil? || endpoint.details.code_paths.any? { |cp| Inspect.path_glob?(p, cp.path) }
       unless techs.empty?
         have = endpoint.details.technologies.empty? ? [endpoint.details.technology].compact : endpoint.details.technologies
         return false unless (have & techs).present?
@@ -432,11 +522,11 @@ module Noir::CLI::Inspect
       return false unless protocols.empty? || protocols.includes?(endpoint.protocol)
       context = endpoint.ai_context
       unless (g = guard).nil?
-        return false unless g == !(context.nil? || context.guards.empty?)
+        return false unless g == !Inspect.auth_guards(context).empty?
       end
       return false unless Inspect.bucket_matches?(sinks, context.try(&.sinks))
       return false unless Inspect.bucket_matches?(sources, context.try(&.sources))
-      return false unless Inspect.bucket_matches?(signals, context.try(&.signals))
+      return false unless Inspect.bucket_matches?(signals, Inspect.derived_signals(context))
       true
     end
   end
@@ -460,6 +550,37 @@ module Noir::CLI::Inspect
     value.includes?(pattern)
   end
 
+  # Reported paths carry the scan root (`corpus/app/routes/x.ts`), so a glob
+  # written from inside the app (`routes/*`) is also tried as a suffix.
+  def self.path_glob?(pattern : String, value : String) : Bool
+    return true if glob_or_substring?(pattern, value)
+    return false if pattern.starts_with?('/') || pattern.starts_with?('*') || !pattern.matches?(/[*?\[]/)
+    glob_or_substring?("**/#{pattern}", value)
+  end
+
+  # Filter values that no endpoint can satisfy, so a typo (`--sink file`
+  # for `file_io`) or a report scanned without `--ai-context` is said out
+  # loud instead of returning an empty answer that looks final.
+  def self.filter_warnings(endpoints : Array(Endpoint), filters : Filters) : Array(String)
+    warnings = [] of String
+    asks_context = !filters.guard.nil? || !(filters.sinks.empty? && filters.sources.empty? && filters.signals.empty?)
+    if asks_context && endpoints.none?(&.ai_context)
+      warnings << "no endpoint carries ai_context; scan with --ai-context (or drop --from)"
+      return warnings
+    end
+    {
+      {"sink", filters.sinks, endpoints.flat_map { |e| e.ai_context.try(&.sinks) || [] of AIContextEntry }},
+      {"source", filters.sources, endpoints.flat_map { |e| e.ai_context.try(&.sources) || [] of AIContextEntry }},
+      {"signal", filters.signals, endpoints.flat_map { |e| derived_signals(e.ai_context) }},
+    }.each do |label, wanted, entries|
+      seen = entries.map(&.kind).uniq!.sort!
+      unknown = wanted.reject { |k| k == "any" || seen.includes?(k) }
+      next if unknown.empty?
+      warnings << "no endpoint carries #{label} kind #{unknown.join(", ")}; kinds in this report: #{seen.empty? ? "(none)" : seen.join(", ")}"
+    end
+    warnings
+  end
+
   def self.query(endpoints : Array(Endpoint), filters : Filters, full : Bool) : Array(Row)
     endpoints.select { |e| filters.matches?(e) }.map { |e| Row.build(e, full) }
   end
@@ -473,7 +594,8 @@ module Noir::CLI::Inspect
         --full                 Emit the full endpoint record instead of the compact row
         --limit <n>            Print at most n rows
         --count                Print only the number of matches
-        Any `noir scan` flag (-b, --exclude-path, --only-techs, -t, -u, --config-file, ...)
+        Any `noir scan` flag (-b, --exclude-path, --only-techs, -t, -u, --config-file, ...);
+                             not with --from, which scans nothing
 
       #{Noir::CLI.section("EXIT CODES:")}
         0 matched, 1 nothing matched, 2 usage error

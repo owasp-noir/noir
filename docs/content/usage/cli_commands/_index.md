@@ -146,7 +146,7 @@ noir scan ./app -f json --ai-context --include callee -o report.json   # once
 
 noir trace "POST /api/users/42" --from report.json     # request → route, guards, params, sinks, callees
 noir reach src/handlers/users.go:57 --from report.json # file → endpoints declared in or calling into it
-noir query --no-guard --sink sql --from report.json    # unauthenticated routes that reach a SQL sink
+noir query --no-guard --sink any --from report.json    # unauthenticated routes that reach a SQL sink
 ```
 
 `trace` maps a concrete request path onto the declared route: `/api/users/42`
@@ -163,12 +163,13 @@ line orders rather than filters.
 `query` filters AND together; a comma list inside one filter is OR:
 `--method`, `--url`, `--path`, `--tech`, `--tag`, `--param`, `--param-type`,
 `--protocol`, `--guard` / `--no-guard`, `--sink`, `--source`, `--signal`
-(`any` matches a non-empty bucket).
+(`any` matches a non-empty bucket). A rate limiter does not count as a guard for `--guard`, and a kind no endpoint carries is reported on stderr with the kinds the report does have.
 
 Shared flags: `--from <report>`, `-f jsonl|json|text` (jsonl default),
 `--full` (the unchanged endpoint record instead of the compact row),
 `--limit <n>`, `--count`. Exit codes follow grep: `0` matched, `1` nothing
-matched, `2` usage error.
+matched, `2` usage error. A scan path or flag next to `--from` is an error, since
+nothing is scanned.
 
 The compact row is a projection of the endpoint record, empty buckets omitted:
 

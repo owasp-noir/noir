@@ -35,6 +35,10 @@ module Noir::CLI::ReachCommand
 
     endpoints = Inspect.load(common, scan_args + positionals[1..])
     rows = Inspect.reach(endpoints, file, line, common.full)
+    if rows.empty?
+      known = endpoints.any? { |e| e.details.code_paths.any? { |cp| Inspect.path_matches?(cp.path, file) } }
+      STDERR.puts "noir reach: no endpoint references #{file}#{known ? "" : " (no route is declared in a file by that name; try a shorter suffix)"}"
+    end
     exit(Inspect.emit(rows, common))
   end
 

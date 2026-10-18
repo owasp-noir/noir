@@ -49,7 +49,12 @@ module Noir::CLI::TraceCommand
 
     if matches.empty?
       candidates = Inspect.candidates(endpoints, target.path)
-      puts({"query" => label, "match" => false, "candidates" => candidates}.to_json)
+      if common.format == "text"
+        puts "no match: #{label}"
+        candidates.each { |row| puts "candidate: #{row.to_text}" }
+      else
+        puts({"query" => label, "match" => false, "candidates" => candidates}.to_json)
+      end
       exit(Inspect::EXIT_NO_MATCH)
     end
 
@@ -73,7 +78,8 @@ module Noir::CLI::TraceCommand
       Maps a concrete request path to its declared route: `/api/users/42`
       matches `/api/users/{id}`, `:id`, `<int:pk>`, `[id]`, `*`. Prints the full
       endpoint record (handler, params, guards, sinks, callees, ...). On a miss,
-      prints the nearest routes as candidates and exits 1.
+      prints the nearest routes as candidates and exits 1. Pattern matches are
+      ordered most-specific first (`matched_by`: exact, pattern, wildcard).
 
       #{Noir::CLI.section("EXAMPLES:")}
         noir trace "POST /api/users/42" ./app

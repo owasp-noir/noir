@@ -26,8 +26,10 @@ module Noir::CLI::QueryCommand
       name = parts[0]
       inline = parts[1]?
       case name
-      when "--guard"    then guard = true
-      when "--no-guard" then guard = false
+      when "--guard", "--no-guard"
+        wanted = name == "--guard"
+        errors << "--guard and --no-guard are exclusive" if !guard.nil? && guard != wanted
+        guard = wanted
       when .in?(VALUE_FLAGS)
         value = inline
         if value.nil?
@@ -77,6 +79,7 @@ module Noir::CLI::QueryCommand
 
     positionals, scan_args = Inspect.split_positionals(parsed.rest)
     endpoints = Inspect.load(common, scan_args + positionals)
+    Inspect.filter_warnings(endpoints, parsed.filters).each { |w| STDERR.puts "noir query: #{w}" }
     rows = Inspect.query(endpoints, parsed.filters, common.full)
     exit(Inspect.emit(rows, common))
   end
@@ -91,21 +94,23 @@ module Noir::CLI::QueryCommand
       #{Noir::CLI.section("FILTERS:")}
         --method GET,POST      HTTP method
         --url <glob|substr>    Route URL (glob when it contains * ? [, substring otherwise)
-        --path <glob|substr>   Source path of the route
+        --path <glob|substr>   Source path as reported (a relative glob also matches as a suffix)
         --tech <name,...>      Technology (e.g. go_gin, python_django)
         --tag <name,...>       Tag name (auth, admin, ...)
         --param <name,...>     Parameter name
         --param-type <t,...>   Parameter type (query, json, form, header, cookie, path)
         --protocol <p,...>     http, ws, cli, ...
-        --guard / --no-guard   Has / lacks an auth guard (ai_context.guards)
-        --sink <kind,...|any>  Reaches a sink of this kind (sql, command, file, ...)
+        --guard / --no-guard   Has / lacks an auth guard (ai_context.guards; rate limiting does not count)
+        --sink <kind,...|any>  Reaches a sink of this kind (sql, command, file_io, outbound_http,
+                               template_render, redirect, mass_assignment, ...)
         --source <kind|any>    Reads a source of this kind
         --signal <kind|any>    Carries a derived signal (idor_review, ssrf, open_redirect, ...)
+                               A kind no endpoint carries is reported on stderr with the kinds seen.
 
       #{Noir::CLI.section("EXAMPLES:")}
-        noir query --no-guard --sink sql ./app
+        noir query --no-guard --sink any ./app
         noir query --signal idor_review --method PUT,DELETE --from report.json
-        noir query --path 'src/billing/**' --count ./app
+        noir query --path 'billing/**' --count ./app
 
       #{Noir::CLI.section("OPTIONS:")}
       #{Inspect.common_help}

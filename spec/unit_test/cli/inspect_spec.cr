@@ -59,6 +59,10 @@ describe Noir::CLI::Inspect do
       endpoint("GET", "/posts/<int:pk>/comments"),
       endpoint("GET", "/docs/[...slug]"),
       endpoint("GET", "/static/**"),
+      endpoint("GET", "/catalogue/<slug>/"),
+      endpoint("OPTIONS", "/*"),
+      endpoint("GET", "/u/*rest"),
+      endpoint("GET", "/u/:id"),
       endpoint("GET", "http://example.com/health"),
       endpoint("GET", "^/re/(\\d+)/$", kind: "regex"),
       endpoint("ANY", "/any"),
@@ -72,13 +76,14 @@ describe Noir::CLI::Inspect do
 
     it "maps a concrete segment onto every placeholder syntax" do
       {
-        "/users/42"           => "/users/{id}",
-        "/files/a/b/c.txt"    => "/files/*filepath",
-        "/posts/7/comments"   => "/posts/<int:pk>/comments",
-        "/docs/a/b"           => "/docs/[...slug]",
-        "/static/css/app.css" => "/static/**",
-        "/re/12/"             => "^/re/(\\d+)/$",
-        "/health"             => "http://example.com/health",
+        "/users/42"                 => "/users/{id}",
+        "/files/a/b/c.txt"          => "/files/*filepath",
+        "/posts/7/comments"         => "/posts/<int:pk>/comments",
+        "/docs/a/b"                 => "/docs/[...slug]",
+        "/static/css/app.css"       => "/static/**",
+        "/re/12/"                   => "^/re/(\\d+)/$",
+        "/health"                   => "http://example.com/health",
+        "/catalogue/blue-shirt_42/" => "/catalogue/<slug>/",
       }.each do |request, route|
         matches = Noir::CLI::Inspect.trace(endpoints, "GET", request)
         matches.map(&.endpoint.url).should eq([route]), "#{request} should match #{route}"
@@ -88,17 +93,27 @@ describe Noir::CLI::Inspect do
     it "filters by method, treating ANY as every method, and ignores method when nil" do
       Noir::CLI::Inspect.trace(endpoints, "DELETE", "/users/42").map(&.endpoint.url).should eq(["/users/:id"])
       Noir::CLI::Inspect.trace(endpoints, "POST", "/any").size.should eq(1)
-      Noir::CLI::Inspect.trace(endpoints, nil, "/users/42").map(&.endpoint.url).should eq(["/users/{id}", "/users/:id"])
+      Noir::CLI::Inspect.trace(endpoints, nil, "/users/42").map(&.endpoint.url).should eq(["/users/{id}", "/users/:id", "/*"])
     end
 
     it "does not let a placeholder swallow more than one segment" do
       Noir::CLI::Inspect.trace(endpoints, "GET", "/users/42/extra").should be_empty
     end
 
-    it "offers the nearest routes as candidates on a miss" do
+    it "treats a bare * as a catch-all and ranks it below a specific route" do
+      Noir::CLI::Inspect.trace(endpoints, "OPTIONS", "/a/b/c").map(&.matched_by).should eq(["wildcard"])
+      matches = Noir::CLI::Inspect.trace(endpoints, "GET", "/u/5")
+      matches.map(&.endpoint.url).should eq(["/u/:id", "/u/*rest"])
+      matches.map(&.matched_by).should eq(["pattern", "wildcard"])
+    end
+
+    it "offers the nearest routes as candidates on a miss, forgiving case and typos" do
       rows = Noir::CLI::Inspect.candidates(endpoints, "/users/42/extra")
       rows.first(2).map(&.url).sort!.should eq(["/users/:id", "/users/{id}"])
       Noir::CLI::Inspect.candidates(endpoints, "/nothing/here").should be_empty
+      Noir::CLI::Inspect.candidates(endpoints, "/Users/42").first.url.should start_with("/users/")
+      Noir::CLI::Inspect.candidates(endpoints, "/userz").first.url.should eq("/users")
+      Noir::CLI::Inspect.candidates(endpoints, "/posts/1/comment").first.url.should eq("/posts/<int:pk>/comments")
     end
   end
 
@@ -125,11 +140,23 @@ describe Noir::CLI::Inspect do
       rows.first.via.map { |v| {v.kind, v.name} }.should eq([{"callee", "repo.Update"}])
     end
 
-    it "orders evidence by distance to the line without filtering" do
+    it "orders evidence and rows by distance to the line without filtering" do
       rows = Noir::CLI::Inspect.reach(endpoints, "api/items.go", 78, false)
       rows.first.via.first.kind.should eq("sink")
       rows.first.nearest_line.should eq(80)
       rows.first.via.size.should eq(3)
+
+      near_health = endpoint("GET", "/health2", "src/api/items.go", 400)
+      rows = Noir::CLI::Inspect.reach(endpoints + [near_health], "api/items.go", 390, false)
+      rows.map(&.url).should eq(["/health2", "/items/:id"])
+    end
+
+    it "names the declaration in the matched file, not the first merged copy" do
+      ep = endpoint("GET", "/ping", "other/hello.go", 31)
+      ep.details.add_path(PathInfo.new("basic/main.go", 17))
+      rows = Noir::CLI::Inspect.reach([ep], "basic/main.go", nil, false)
+      rows.first.path.should eq("basic/main.go")
+      rows.first.line.should eq(17)
     end
   end
 
@@ -149,11 +176,31 @@ describe Noir::CLI::Inspect do
       Noir::CLI::Inspect.query(endpoints, f, false).should be_empty
     end
 
-    it "tells guarded from unguarded, counting a missing context as unguarded" do
+    it "tells guarded from unguarded, counting a missing context or a rate limiter as unguarded" do
+      limited = endpoint("POST", "/2fa", "src/2fa.go", 1)
+      ctx = AIContext.new
+      ctx.push_guard(AIContextEntry.new("rate_limit_guard", "rateLimit"))
+      limited.ai_context = ctx
+      all = endpoints + [limited]
       f = Noir::CLI::QueryCommand.parse_filters(["--no-guard"]).filters
-      Noir::CLI::Inspect.query(endpoints, f, false).map(&.url).should eq(["/api/v1/items", "/health"])
+      Noir::CLI::Inspect.query(all, f, false).map(&.url).should eq(["/api/v1/items", "/health", "/2fa"])
       f = Noir::CLI::QueryCommand.parse_filters(["--guard"]).filters
+      Noir::CLI::Inspect.query(all, f, false).map(&.url).should eq(["/admin/users"])
+      Noir::CLI::QueryCommand.parse_filters(["--guard", "--no-guard"]).errors.should eq(["--guard and --no-guard are exclusive"])
+    end
+
+    it "ignores restating signals for --signal any and matches a relative path glob as a suffix" do
+      f = Noir::CLI::QueryCommand.parse_filters(["--signal", "any"]).filters
       Noir::CLI::Inspect.query(endpoints, f, false).map(&.url).should eq(["/admin/users"])
+      f = Noir::CLI::QueryCommand.parse_filters(["--path", "src/*"]).filters
+      Noir::CLI::Inspect.query([endpoint("GET", "/x", "corpus/app/src/a.go", 1)], f, false).size.should eq(1)
+    end
+
+    it "warns about filter kinds no endpoint carries and about a report without ai_context" do
+      f = Noir::CLI::QueryCommand.parse_filters(["--sink", "file", "--signal", "any"]).filters
+      Noir::CLI::Inspect.filter_warnings(endpoints, f).should eq(["no endpoint carries sink kind file; kinds in this report: command, sql"])
+      Noir::CLI::Inspect.filter_warnings([bare], f).first.should start_with("no endpoint carries ai_context")
+      Noir::CLI::Inspect.filter_warnings(endpoints, Noir::CLI::QueryCommand.parse_filters(["--sink", "sql"]).filters).should be_empty
     end
 
     it "matches url/path as a glob or a substring, tags, params and signals" do

@@ -145,7 +145,7 @@ noir scan ./app -f json --ai-context --include callee -o report.json   # 한 번
 
 noir trace "POST /api/users/42" --from report.json     # 요청 → 라우트, 가드, 파라미터, 싱크, callee
 noir reach src/handlers/users.go:57 --from report.json # 파일 → 그 파일에 선언되거나 호출하는 엔드포인트
-noir query --no-guard --sink sql --from report.json    # 인증 없이 SQL 싱크에 닿는 라우트
+noir query --no-guard --sink any --from report.json    # 인증 없이 SQL 싱크에 닿는 라우트
 ```
 
 `trace`는 실제 요청 경로를 선언된 라우트에 대응시킵니다. `/api/users/42`는
@@ -161,11 +161,12 @@ noir query --no-guard --sink sql --from report.json    # 인증 없이 SQL 싱�
 `query`의 필터는 AND로 결합되고, 한 필터 안의 쉼표 목록은 OR입니다:
 `--method`, `--url`, `--path`, `--tech`, `--tag`, `--param`, `--param-type`,
 `--protocol`, `--guard` / `--no-guard`, `--sink`, `--source`, `--signal`
-(`any`는 비어 있지 않은 버킷에 매칭).
+(`any`는 비어 있지 않은 버킷에 매칭). `--guard`에서 rate limiter는 가드로 치지 않으며, 어떤 엔드포인트도 갖지 않은 kind를 주면 stderr에 리포트에 있는 kind 목록과 함께 알려줍니다.
 
 공통 플래그: `--from <report>`, `-f jsonl|json|text` (기본 jsonl), `--full`(압축
 행 대신 엔드포인트 레코드 전체), `--limit <n>`, `--count`. 종료 코드는 grep과
-같습니다: `0` 매칭, `1` 매칭 없음, `2` 사용법 오류.
+같습니다: `0` 매칭, `1` 매칭 없음, `2` 사용법 오류. `--from`과 함께 스캔 경로나 플래그를
+주면 오류입니다(아무것도 스캔하지 않으므로).
 
 압축 행은 엔드포인트 레코드의 투영이며 빈 버킷은 생략됩니다:
 
