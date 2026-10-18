@@ -5,6 +5,7 @@
       <result name="success">/WEB-INF/admin/dashboard.jsp</result>
       <result name="error">/WEB-INF/admin/error.jsp</result>
     </action>
+    <action name="dashboard-refresh" class="com.example.actions.admin.DashboardAction" method="refresh"/>
     <action name="reports/*" class="com.example.actions.admin.ReportAction" method="{1}"/>
   </package>
 </struts>
