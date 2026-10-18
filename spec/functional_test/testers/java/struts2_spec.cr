@@ -15,6 +15,8 @@ orders_destroy.push_callee(Callee.new("ordersService.deleteById"))
 # admin-struts.xml, not from a Java-source-discovered route.
 admin_dashboard = Endpoint.new("/admin/dashboard", "ANY")
 admin_dashboard.push_callee(Callee.new("dashboardService.loadStats"))
+admin_dashboard_refresh = Endpoint.new("/admin/dashboard-refresh", "ANY")
+admin_dashboard_refresh.push_callee(Callee.new("dashboardService.refreshStats"))
 
 expected_endpoints = [
   Endpoint.new("/user/list", "ANY"),
@@ -22,6 +24,7 @@ expected_endpoints = [
   Endpoint.new("/user/user_*", "ANY", [Param.new("wildcard", "", "path")]),
   Endpoint.new("/user/audit", "ANY"),
   admin_dashboard,
+  admin_dashboard_refresh,
   Endpoint.new("/admin/reports/*", "ANY", [Param.new("wildcard", "", "path")]),
   Endpoint.new("/admin/users/create", "ANY"),
   Endpoint.new("/admin/users/save", "ANY"),

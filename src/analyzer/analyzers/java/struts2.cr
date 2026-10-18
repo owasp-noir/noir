@@ -138,31 +138,40 @@ module Analyzer::Java
       end
     end
 
-    # 1-hop callees for an XML-configured action by resolving its
-    # `class`/`method` (default `execute`) to the handler source. Returns
-    # empty unless enrichment is on and the handler file is indexed.
-    private def xml_action_callees(action : XmlAction, config_path : String) : Array(Callee)
-      callees = [] of Callee
-      return callees unless @include_callee
-      return callees if action.class_name.empty?
+    # 1-hop callees for XML-configured actions, resolving each action's
+    # `class`/`method` (default `execute`) to the handler source. Each
+    # handler file is parsed once for all of its actions. Empty unless
+    # enrichment is on and the handler file is indexed.
+    private def xml_action_callees(actions : Array(XmlAction), config_path : String) : Hash(XmlAction, Array(Callee))
+      result = Hash(XmlAction, Array(Callee)).new
+      return result unless @include_callee
 
-      handler_path = @handler_index[{configured_base_for(config_path), action.class_name}]?
-      return callees unless handler_path && File.exists?(handler_path)
-
-      simple_name = action.class_name.split('.').last
-      method_name = action.method_name.empty? ? "execute" : action.method_name
-      handler_content = read_file_content(handler_path)
-
-      Noir::TreeSitter.parse_java(handler_content) do |root|
-        Noir::JavaCalleeExtractor.callees_in_method(root, handler_content, handler_path, simple_name, method_name).each do |entry|
-          name, callee_path, callee_line = entry
-          callees << Callee.new(name, path: callee_path, line: callee_line)
-        end
+      by_handler = Hash(String, Array(XmlAction)).new
+      actions.each do |action|
+        next if action.class_name.empty?
+        handler_path = @handler_index[{configured_base_for(config_path), action.class_name}]?
+        next unless handler_path && File.exists?(handler_path)
+        (by_handler[handler_path] ||= [] of XmlAction) << action
       end
-      callees
-    rescue e : Exception
-      @logger.debug "Failed to extract Struts XML callees for #{action.class_name}: #{e.message}"
-      [] of Callee
+
+      by_handler.each do |handler_path, handler_actions|
+        handler_content = read_file_content(handler_path)
+        Noir::TreeSitter.parse_java(handler_content) do |root|
+          file_callees = Noir::JavaCalleeExtractor::FileCallees.new(root, handler_content, handler_path)
+          handler_actions.each do |action|
+            simple_name = action.class_name.split('.').last
+            method_name = action.method_name.empty? ? "execute" : action.method_name
+            result[action] = file_callees.callees_in_method(simple_name, method_name).map do |(name, callee_path, callee_line)|
+              Callee.new(name, path: callee_path, line: callee_line)
+            end
+          rescue e : Exception
+            @logger.debug "Failed to extract Struts XML callees for #{action.class_name}: #{e.message}"
+          end
+        end
+      rescue e : Exception
+        @logger.debug "Failed to extract Struts XML callees from #{handler_path}: #{e.message}"
+      end
+      result
     end
 
     private def struts_config_files(file_list : Array(String)) : Array(String)
@@ -199,11 +208,12 @@ module Analyzer::Java
       end
 
       packages = collect_packages(root, content)
+      action_callees = xml_action_callees(packages.values.flat_map(&.actions), path)
       packages.each_value do |package_config|
         namespace = package_namespace(package_config, packages, Set(String).new)
         package_config.actions.each do |action|
           add_route(namespace_join(namespace, normalize_action_pattern(action.name)), "ANY", path, action.line,
-            callees: xml_action_callees(action, path))
+            callees: action_callees[action]? || [] of Callee)
         end
       end
     rescue e : Exception
