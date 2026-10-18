@@ -1560,6 +1560,7 @@ module Analyzer::Python
           suspicious_http_methods.uniq.each do |http_method_name|
             details = Details.new(PathInfo.new(filepath, definition_line))
             endpoint = Endpoint.new(url, http_method_name, filter_params(http_method_name, suspicious_params), details)
+            endpoint.handler = Handler.new(function_or_class_name, filepath, definition_line)
             handler_callees.each { |c| endpoint.push_callee(c) }
             endpoints << endpoint
           end
@@ -1670,6 +1671,7 @@ module Analyzer::Python
             details = Details.new(PathInfo.new(filepath, definition_line))
             endpoint_params = common_params + (method_params[http_method_name]? || [] of Param)
             endpoint = Endpoint.new(url, http_method_name, filter_params(http_method_name, endpoint_params), details)
+            endpoint.handler = Handler.new(function_or_class_name, filepath, definition_line)
             if callees = method_callees[http_method_name]?
               callees.each { |c| endpoint.push_callee(c) }
             end

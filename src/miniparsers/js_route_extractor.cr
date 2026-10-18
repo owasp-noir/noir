@@ -1,5 +1,6 @@
 require "../models/endpoint"
 require "../miniparsers/js_callee_extractor"
+require "../miniparsers/js_handler_resolver"
 require "../minilexers/js_lexer"
 require "../miniparsers/js_parser"
 require "../models/code_locator"
@@ -365,6 +366,7 @@ module Noir
           # route rather than once per prefix and expanded method.
           context = Endpoint.new("", "")
           extract_params_from_context(offsets, pattern, context)
+          handler = named_handler(content, start_byte, file_path)
 
           # Handle router.all by expanding to all HTTP methods
           prefixes.each do |prefix|
@@ -383,6 +385,7 @@ module Noir
 
                 context.params.each { |param| endpoint.push_param(param) }
                 attach_callees(endpoint, callees_by_route, normalized_method, pattern.raw_path, line_number)
+                endpoint.handler = handler
 
                 endpoints << endpoint
               end
@@ -396,6 +399,7 @@ module Noir
 
               context.params.each { |param| endpoint.push_param(param) }
               attach_callees(endpoint, callees_by_route, normalized_method, pattern.raw_path, line_number)
+              endpoint.handler = handler
 
               endpoints << endpoint
             end
@@ -1124,6 +1128,27 @@ module Noir
       end
 
       content_matches?(content, SIBLING_FRAMEWORK_MARKER)
+    end
+
+    # The route's last argument resolved to a definition when it is a
+    # plain reference (`login`, `users.create`, `auth()`); nil for an
+    # inline closure. `start_byte` is the route call's byte offset: byte
+    # arithmetic to the closing paren, so a non-ASCII file costs O(args)
+    # per route rather than O(file).
+    def self.named_handler(content : String, start_byte : Int32, file_path : String) : Handler?
+      return if start_byte < 0
+      open_paren = content.byte_index('(', start_byte) || return
+      close_paren = JSLiteralScanner.find_matching_paren_at_byte(content, open_paren) || return
+      args_slice = content.byte_slice(open_paren + 1, close_paren - open_paren - 1)
+      args = Noir::TopLevelSplit.split_spans(args_slice, ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS, 0, args_slice.size)
+      # A `route('/x').get(h)` link carries only the handler; a plain
+      # `app.get('/x')` has only the path, which no reference regex accepts.
+      return if args.empty?
+      Noir::JSHandlerResolver.resolve(args.last[0], content, file_path)
+    rescue
+      # Best-effort field: a resolver error must not cost the route — the
+      # per-file isolation above this would drop every route in the file.
+      nil
     end
 
     def self.attach_callees(endpoint : Endpoint,

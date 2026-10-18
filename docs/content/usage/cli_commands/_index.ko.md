@@ -19,6 +19,9 @@ noir <command> [arguments] [flags]
 | 명령어                  | 설명                                                   |
 |------------------------|--------------------------------------------------------|
 | `noir scan PATHS...`   | 하나 이상의 코드베이스에서 엔드포인트 탐지              |
+| `noir trace "<METHOD> <URL>"` | 요청을 라우트·가드·파라미터·싱크로 매핑          |
+| `noir reach FILE[:LINE]` | 소스 파일에 닿는 엔드포인트 목록                      |
+| `noir query [FILTERS]` | AND 조건 필터로 공격 표면 검색                          |
 | `noir list techs`      | 지원하는 언어, 프레임워크, 분석기 목록                  |
 | `noir list taggers`    | 기본 태거와 프레임워크별 태거 목록                      |
 | `noir list formats`    | 지원하는 출력 형식 목록                                 |
@@ -127,6 +130,52 @@ v1.0에서 제거되었습니다. 대신 `--ai-provider ollama [--ai-model NAME]
 
 ```bash
 noir scan ./app --ai-provider ollama --ai-model llama3
+```
+
+## Trace, Reach, Query
+
+엔드포인트를 나열하는 대신 추적하기 위한 질의 명령 세 개입니다. AI 에이전트(또는
+특정 질문을 가진 리뷰어)에게 필요한 형태로, 좁은 질문을 던지면 작은 답을
+돌려줍니다. 각 명령은 `--ai-context all --include callee`가 적용된 스캔을 실행하며
+`scan`의 모든 플래그를 받습니다. `--from`으로 저장된 리포트를 읽으면 스캔 한 번으로
+여러 질문에 답할 수 있습니다.
+
+```bash
+noir scan ./app -f json --ai-context --include callee -o report.json   # 한 번만
+
+noir trace "POST /api/users/42" --from report.json     # 요청 → 라우트, 가드, 파라미터, 싱크, callee
+noir reach src/handlers/users.go:57 --from report.json # 파일 → 그 파일에 선언되거나 호출하는 엔드포인트
+noir query --no-guard --sink any --from report.json    # 인증 없이 SQL 싱크에 닿는 라우트
+```
+
+`trace`는 실제 요청 경로를 선언된 라우트에 대응시킵니다. `/api/users/42`는
+`/api/users/{id}`, `:id`, `<int:pk>`, `[id]`, `*`에 매칭됩니다. 전체 엔드포인트
+레코드를 출력하고, 매칭이 없으면 가장 가까운 라우트를 `candidates`로 출력한 뒤
+종료 코드 1을 반환합니다.
+
+`reach`는 `FILE`을 경로 접미사로 보고 Noir가 기록한 모든 위치(라우트 선언, 핸들러 정의,
+callee, 가드, 소스, 싱크, 검증기)와 비교해 근거를 `via`에 나열합니다. `:LINE`을 주면 근거를
+거리순으로 정렬하고 `nearest_line`을 채웁니다. Noir는 함수 범위가 아니라 선언
+줄만 기록하므로, 줄 번호는 필터가 아니라 정렬 기준입니다.
+
+`query`의 필터는 AND로 결합되고, 한 필터 안의 쉼표 목록은 OR입니다:
+`--method`, `--url`, `--path`, `--handler`, `--tech`, `--tag`, `--param`, `--param-type`,
+`--protocol`, `--guard` / `--no-guard`, `--sink`, `--source`, `--signal`
+(`any`는 비어 있지 않은 버킷에 매칭). `--guard`에서 rate limiter는 가드로 치지 않으며, 어떤 엔드포인트도 갖지 않은 kind를 주면 stderr에 리포트에 있는 kind 목록과 함께 알려줍니다.
+
+공통 플래그: `--from <report>`, `-f jsonl|json|text` (기본 jsonl), `--full`(압축
+행 대신 엔드포인트 레코드 전체), `--limit <n>`, `--count`. 종료 코드는 grep과
+같습니다: `0` 매칭, `1` 매칭 없음, `2` 사용법 오류. `--from`과 함께 스캔 경로나 플래그를
+주면 오류입니다(아무것도 스캔하지 않으므로).
+
+압축 행은 엔드포인트 레코드의 투영이며 빈 버킷은 생략됩니다. `path:line`은 라우트가
+*선언된* 곳, `handler`는 그 본문이 *있는* 곳(분석기가 정의 위치를 해석한 경우)입니다:
+
+```json
+{"method":"POST","url":"/api/users/{id}","path":"src/routes.go","line":42,"tech":"go_gin",
+ "handler":{"name":"updateUser","path":"src/users.go","line":80},
+ "params":["id:path","name:json"],"guards":["RequireAuth"],"sinks":["sql"],
+ "signals":["idor_review"],"callees":["db.Exec","render"]}
 ```
 
 ## List

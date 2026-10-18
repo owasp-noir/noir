@@ -39,6 +39,9 @@ alikes = "alikes"
 # `sade` is a JavaScript CLI framework (referenced by the js_cli analyzer);
 # typos mis-flags it as `sad`.
 sade = "sade"
+# `--no-gaurd` is a deliberately mistyped flag quoted in a comment in
+# src/cli/inspect.cr, explaining why a mistyped filter must not pass silently.
+gaurd = "gaurd"
 
 [files]
 extend-exclude = [

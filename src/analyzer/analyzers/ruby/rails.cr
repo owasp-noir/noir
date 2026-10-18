@@ -564,6 +564,7 @@ module Analyzer::Ruby
         action_params = action_name ? params_for_action(ctrl_path, action_name, root_verb) : ([] of Param)
         endpoint = Endpoint.new(url, root_verb, action_params, scan.details)
         attach_callees_for_action(endpoint, ctrl_path, action_name) if action_name
+        endpoint.handler = handler_for_action(ctrl_path, action_name) if action_name
         @result << endpoint
       end
     end
@@ -687,6 +688,7 @@ module Analyzer::Ruby
           action_params = promote_identifier_to_path(action_params) unless in_collection || in_new
           endpoint = Endpoint.new(url, verb, action_params, scan.details)
           attach_callees_for_action(endpoint, ctrl_path, action_name)
+          endpoint.handler = handler_for_action(ctrl_path, action_name)
           @result << endpoint
         end
         return
@@ -719,6 +721,7 @@ module Analyzer::Ruby
 
         endpoint = Endpoint.new(url, verb, action_params, scan.details)
         attach_callees_for_action(endpoint, ctrl_path, action_name) if action_name
+        endpoint.handler = handler_for_action(ctrl_path, action_name) if action_name
         @result << endpoint
         return
       end
@@ -765,6 +768,7 @@ module Analyzer::Ruby
 
       endpoint = Endpoint.new(url, verb, action_params, scan.details)
       attach_callees_for_action(endpoint, ctrl_path, action) if action = action_name
+      endpoint.handler = handler_for_action(ctrl_path, action) if action = action_name
       @result << endpoint
     end
 
@@ -805,6 +809,7 @@ module Analyzer::Ruby
                         end
         endpoint = Endpoint.new(url, match_verb, action_params, scan.details)
         attach_callees_for_action(endpoint, ctrl_path, action_name) if action_name
+        endpoint.handler = handler_for_action(ctrl_path, action_name) if action_name
         @result << endpoint
       end
     end
@@ -1231,6 +1236,7 @@ module Analyzer::Ruby
         action_params = ctrl_path ? params_for_action(ctrl_path, action, verb) : ([] of Param)
         endpoint = Endpoint.new(url, verb, action_params, details)
         attach_callees_for_action(endpoint, ctrl_path, action)
+        endpoint.handler = handler_for_action(ctrl_path, action)
         @result << endpoint
       end
     end
@@ -1444,30 +1450,35 @@ module Analyzer::Ruby
           details = Details.new(PathInfo.new(path, data.action_lines["index"]?))
           endpoint = Endpoint.new(index_url, "GET", last_params, details)
           attach_callees_for_action(endpoint, data, "index")
+          endpoint.handler = handler_for_action(data, "index", path)
           endpoints << endpoint
         when "GET/SHOW"
           last_params = promote_identifier_to_path(action_params(data, "show", "GET"))
           details = Details.new(PathInfo.new(path, data.action_lines["show"]?))
           endpoint = Endpoint.new(member_url, "GET", last_params, details)
           attach_callees_for_action(endpoint, data, "show")
+          endpoint.handler = handler_for_action(data, "show", path)
           endpoints << endpoint
         when "POST"
           last_params = action_params(data, "create", method)
           details = Details.new(PathInfo.new(path, data.action_lines["create"]?))
           endpoint = Endpoint.new(index_url, method, last_params, details)
           attach_callees_for_action(endpoint, data, "create")
+          endpoint.handler = handler_for_action(data, "create", path)
           endpoints << endpoint
         when "DELETE"
           last_params = promote_identifier_to_path(action_params(data, "destroy", method))
           details = Details.new(PathInfo.new(path, data.action_lines["destroy"]?))
           endpoint = Endpoint.new(member_url, method, last_params, details)
           attach_callees_for_action(endpoint, data, "destroy")
+          endpoint.handler = handler_for_action(data, "destroy", path)
           endpoints << endpoint
         else
           last_params = promote_identifier_to_path(action_params(data, "update", method))
           details = Details.new(PathInfo.new(path, data.action_lines["update"]?))
           endpoint = Endpoint.new(member_url, method, last_params, details)
           attach_callees_for_action(endpoint, data, "update")
+          endpoint.handler = handler_for_action(data, "update", path)
           endpoints << endpoint
         end
       end
@@ -1845,6 +1856,20 @@ module Analyzer::Ruby
       end
 
       helper_calls
+    end
+
+    # `articles#show` at the action's `def` line in the controller file —
+    # the file an agent opens after the route. nil when the controller file
+    # was not found; the line is nil when the action is inherited or
+    # generated.
+    private def handler_for_action(controller_path : String?, action : String) : Handler?
+      return if controller_path.nil?
+      handler_for_action(extract_controller_data(controller_path), action, controller_path)
+    end
+
+    private def handler_for_action(data : ControllerData, action : String, controller_path : String) : Handler
+      controller = File.basename(controller_path, ".rb").rchop("_controller")
+      Handler.new("#{controller}##{action}", controller_path, data.action_lines[action]?)
     end
 
     private def attach_callees_for_action(endpoint : Endpoint, controller_path : String?, action : String)

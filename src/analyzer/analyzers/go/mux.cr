@@ -107,6 +107,7 @@ module Analyzer::Go
                     new_endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
                   end
                 end
+                new_endpoint.handler = named.handler_for(route)
                 result << new_endpoint
                 named.bind(route, new_endpoint)
                 last_endpoint = new_endpoint

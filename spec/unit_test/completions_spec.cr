@@ -187,19 +187,19 @@ describe "Completion Script Generation" do
   describe "v1 subcommand awareness" do
     it "zsh completion lists every top-level subcommand" do
       script = Noir::Completions::Zsh.script
-      %w[scan list cache config rules completion version help].each do |verb|
+      %w[scan trace reach query list cache config rules completion version help].each do |verb|
         script.should contain(verb)
       end
     end
 
     it "bash completion lists every top-level subcommand" do
       script = Noir::Completions::Bash.script
-      script.should contain("scan list cache config rules completion version help")
+      script.should contain("scan trace reach query list cache config rules completion version help")
     end
 
     it "fish completion registers each top-level subcommand" do
       script = Noir::Completions::Fish.script
-      %w[scan list cache config rules completion version help].each do |verb|
+      %w[scan trace reach query list cache config rules completion version help].each do |verb|
         script.should contain("-a #{verb}")
       end
     end
@@ -209,7 +209,7 @@ describe "Completion Script Generation" do
       # Wires into the Elvish completion API
       script.should contain("edit:completion:arg-completer[noir]")
       # Lists each v1 verb as a candidate
-      script.should contain("[scan list cache config rules completion version help]")
+      script.should contain("[scan trace reach query list cache config rules completion version help]")
       # Falls back to file completion when the user starts typing a scan path
       script.should contain("edit:complete-filename")
     end
@@ -306,7 +306,7 @@ describe "Completion Script Generation" do
 
     it "fish completes `noir help <cmd>` with the subcommand list" do
       Noir::Completions::Fish.script.should contain(
-        "-n '__fish_noir_using_command help' -a 'scan list cache config rules completion version help'")
+        "-n '__fish_noir_using_command help' -a 'scan trace reach query list cache config rules completion version help'")
     end
   end
 end

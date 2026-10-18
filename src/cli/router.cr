@@ -2,6 +2,9 @@ require "./common"
 require "./legacy"
 require "../models/logger"
 require "./commands/scan"
+require "./commands/trace"
+require "./commands/reach"
+require "./commands/query"
 require "./commands/list"
 require "./commands/cache"
 require "./commands/config"
@@ -13,6 +16,9 @@ require "./commands/help"
 # Top-level subcommand router.
 #
 #   noir scan ./app          → ScanCommand
+#   noir trace "GET /x" ./app → TraceCommand
+#   noir reach users.go ./app → ReachCommand
+#   noir query --no-guard ./app → QueryCommand
 #   noir list techs          → ListCommand
 #   noir cache info          → CacheCommand
 #   noir config show         → ConfigCommand
@@ -119,6 +125,9 @@ module Noir::CLI::Router
   private def self.route(command : String, args : Array(String))
     case command
     when "scan"       then ScanCommand.run(args)
+    when "trace"      then TraceCommand.run(args)
+    when "reach"      then ReachCommand.run(args)
+    when "query"      then QueryCommand.run(args)
     when "list"       then ListCommand.run(strip_global_flags(args))
     when "cache"      then CacheCommand.run(strip_global_flags(args))
     when "config"     then ConfigCommand.run(strip_global_flags(args))

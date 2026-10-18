@@ -80,6 +80,13 @@ struct Endpoint
   @[YAML::Field(ignore_serialize: metadata.nil?)]
   property metadata : Hash(String, String)?
 
+  # The function that serves the route, resolved to its definition (see
+  # `Handler`). nil when the analyzer cannot resolve it, and omitted from
+  # JSON/YAML then so reports without one are unchanged.
+  @[JSON::Field(ignore_serialize: handler.nil?)]
+  @[YAML::Field(ignore_serialize: handler.nil?)]
+  property handler : Handler?
+
   # Per-endpoint context for AI code reviewers: 1-hop callees from the
   # handler body. Best-effort, intentionally incomplete on dynamic
   # dispatch / middleware / decorators. Populated by analyzers that
@@ -397,6 +404,25 @@ struct Callee
   end
 
   def ==(other : Callee) : Bool
+    @name == other.name && @path == other.path && @line == other.line
+  end
+end
+
+# The function that serves a route, as the route names it (`listUsers`,
+# `h.Show`, `articles#show`), with its definition site when the analyzer
+# could resolve one. `details.code_paths` is where the route is *declared*;
+# this is where its body *lives* — the file an agent opens next. Best-effort:
+# only analyzers with definition resolution populate it, and a route whose
+# handler is an inline closure has none to name.
+struct Handler
+  include JSON::Serializable
+  include YAML::Serializable
+  property name, path, line
+
+  def initialize(@name : String, @path : String? = nil, @line : Int32? = nil)
+  end
+
+  def ==(other : Handler) : Bool
     @name == other.name && @path == other.path && @line == other.line
   end
 end

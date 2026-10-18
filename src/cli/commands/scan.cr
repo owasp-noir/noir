@@ -29,13 +29,30 @@ module Noir::CLI::ScanCommand
   WARNING_COLOR = Colorize::Color256.new(208)
 
   def self.run(argv : Array(String))
-    # Stage ARGV through OptionParser (positional path discovery happens
-    # inside `run_options_parser`). Dup `argv` upfront because callers
-    # commonly pass ARGV itself, which we are about to clear. The v0
-    # deliver/probe flag tokens (`--send-req`, `--use-matchers`, etc.)
-    # are rewritten to their v1 equivalents *before* the parser runs,
-    # so the LEGACY surface never appears in `scan -h` and the parser
-    # itself only needs to know about one set of names.
+    noir_options, args_copy = parse_options(argv)
+    prepare!(noir_options, args_copy)
+
+    if noir_options["nolog"] == false
+      Noir::Banner.print
+    end
+
+    run_scan(noir_options)
+  end
+
+  # Stage ARGV through OptionParser (positional path discovery happens
+  # inside `run_options_parser`). Dup `argv` upfront because callers
+  # commonly pass ARGV itself, which we are about to clear. The v0
+  # deliver/probe flag tokens (`--send-req`, `--use-matchers`, etc.)
+  # are rewritten to their v1 equivalents *before* the parser runs,
+  # so the LEGACY surface never appears in `scan -h` and the parser
+  # itself only needs to know about one set of names.
+  #
+  # Returns the translated argv alongside the options: it, not the hash, is
+  # what says which settings the user typed on this command line — by the
+  # time the parser returns, a config-file value and a CLI flag are the same
+  # entry in the same hash. The query verbs (`trace`/`reach`/`query`) share
+  # this and `prepare!` so they accept every scan flag with scan's semantics.
+  def self.parse_options(argv : Array(String)) : {Hash(String, YAML::Any), Array(String)}
     args_copy = Noir::CLI::Legacy.translate_flag_aliases(argv.dup)
     saved = ARGV.dup
     begin
@@ -47,11 +64,7 @@ module Noir::CLI::ScanCommand
       ARGV.clear
       ARGV.concat(saved)
     end
-
-    # `args_copy`, not `noir_options`, is what says which settings the user
-    # typed on this command line: by the time the parser returns, a
-    # config-file value and a CLI flag are the same entry in the same hash.
-    execute(noir_options, args_copy)
+    {noir_options, args_copy}
   end
 
   # Long-flag tokens present on the command line, with `--flag=value`
@@ -66,7 +79,9 @@ module Noir::CLI::ScanCommand
     names
   end
 
-  private def self.execute(noir_options : Hash(String, YAML::Any), argv : Array(String))
+  # Normalizes and validates parsed options in place; dies on the first
+  # problem. Everything a scan checks before it starts, minus the banner.
+  def self.prepare!(noir_options : Hash(String, YAML::Any), argv : Array(String))
     cli_flags = cli_flag_names(argv)
 
     apply_cache_flags(noir_options)
@@ -77,12 +92,27 @@ module Noir::CLI::ScanCommand
     validate_exclude_path!(noir_options, argv)
     validate_blank_tech_flags!(argv)
     validate_options!(noir_options)
+  end
 
-    if noir_options["nolog"] == false
-      Noir::Banner.print
+  # Detect + analyze with no report, no diff and no exit: the endpoint list
+  # the query verbs filter. Deliver flags (`--probe`, `--export-*`) still run
+  # inside `analyze`, exactly as on a scan.
+  def self.collect(noir_options : Hash(String, YAML::Any)) : NoirRunner
+    app = NoirRunner.new noir_options
+    app.logger.loading "Detecting technologies in the base directory." do
+      app.detect
     end
-
-    run_scan(noir_options)
+    if app.techs.empty?
+      app.logger.warning "No technologies detected."
+    else
+      exclude_techs = NoirTechs.resolve_tech_list(app.options["exclude_techs"].to_s).to_set
+      app.techs = app.techs.reject { |tech| exclude_techs.includes?(tech) }
+    end
+    app.logger.loading "Starting code analysis." do
+      app.analyze
+    end
+    report_coverage_gaps(app.logger, app.analyzer_failures, "")
+    app
   end
 
   private def self.apply_cache_flags(noir_options : Hash(String, YAML::Any))
