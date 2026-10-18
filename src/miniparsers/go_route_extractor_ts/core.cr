@@ -96,6 +96,13 @@ module Noir
       # (`http.Get`/`http.Post` client calls are already dropped by the
       # scheme / handler-arg guards.)
       "http",
+      # Settings readers and stores whose `Get`/`Put` take a string key
+      # and a value: `env.Get("_MINIO_SCANNER", config.EnableOn)` (the
+      # minio/pkg `env` package), `store.Put("timeout", timeout)`.
+      "env", "store",
+      # Mattermost's structured logger: `mlog.Any("panic", r)`, the
+      # `zap.Any` / `slog.Any` shape above under another name.
+      "mlog",
     }
 
     # Chain methods that return the receiving router/group unchanged —
@@ -190,6 +197,12 @@ module Noir
 
     # Appends the text of a handler argument to `sink`, flattening the
     # `append(mws, h)...` spread Hertz/Gin apps use for middleware chains.
+    private def address_of?(arg : LibTreeSitter::TSNode, source : String) : Bool
+      return false unless Noir::TreeSitter.node_type(arg) == "unary_expression"
+      operator = Noir::TreeSitter.field(arg, "operator")
+      !operator.nil? && Noir::TreeSitter.node_text(operator, source) == "&"
+    end
+
     private def collect_handler_arg_texts(arg : LibTreeSitter::TSNode, source : String, sink : Array(String))
       case Noir::TreeSitter.node_type(arg)
       when "variadic_argument"
@@ -1208,6 +1221,9 @@ module Noir
               Noir::TreeSitter.node_type(arg) != "raw_string_literal"
           # First non-string positional arg after the path is treated as
           # the handler — matches Gin/Echo/Fiber calling conventions.
+          # An address (`&v`) is an out-parameter, never a handler func:
+          # `cache.Get("latest_version_cache", &v)` is a lookup.
+          return if handler_text.empty? && address_of?(arg, source)
           handler_text = Noir::TreeSitter.node_text(arg, source) if handler_text.empty?
           collect_handler_arg_texts(arg, source, handler_args)
         end
