@@ -338,7 +338,7 @@ module Analyzer::Java
       # in the file. On a default scan we skip the parse entirely.
       if @include_callee
         Noir::TreeSitter.parse_java(content) do |root|
-          analyze_java_classes(path, config, package_annotations, content, root)
+          analyze_java_classes(path, config, package_annotations, content, Noir::JavaCalleeExtractor::FileCallees.new(root, content, path))
         end
       else
         analyze_java_classes(path, config, package_annotations, content, nil)
@@ -351,7 +351,7 @@ module Analyzer::Java
                                      config : ConventionConfig,
                                      package_annotations : Hash(ScopedNameKey, String),
                                      content : String,
-                                     root : LibTreeSitter::TSNode?)
+                                     file_callees : Noir::JavaCalleeExtractor::FileCallees?)
       package_name = Noir::TreeSitterJavaParameterExtractor.extract_package_name(content)
       # Scan a comment-blanked copy (same offsets and lines) so a comment
       # after or between annotations (`@Action("x") // note`) does not end
@@ -376,7 +376,7 @@ module Analyzer::Java
           class_actions.each do |action_path|
             resolved = action_path.empty? ? namespace_join(class_namespace, class_action_base) : resolve_action_path(action_path, class_namespace)
             # A class-level @Action defaults to the `execute` handler.
-            add_route(resolved, "ANY", path, klass.line, callees: callees_for(root, content, path, klass.name, "execute"))
+            add_route(resolved, "ANY", path, klass.line, callees: callees_for(file_callees, klass.name, "execute"))
           end
 
           methods.each do |method|
@@ -385,7 +385,7 @@ module Analyzer::Java
 
             action_paths.each do |action_path|
               resolved = action_path.empty? ? namespace_join(class_namespace, class_action_base) : resolve_action_path(action_path, class_namespace)
-              add_route(resolved, "ANY", path, method.line, callees: callees_for(root, content, path, klass.name, method.name))
+              add_route(resolved, "ANY", path, method.line, callees: callees_for(file_callees, klass.name, method.name))
             end
           end
 
@@ -394,10 +394,10 @@ module Analyzer::Java
 
           base_path = namespace_join(class_namespace, class_action_base)
           if rest_controller?(klass, config)
-            add_rest_routes(path, base_path, methods, root, content, klass.name)
+            add_rest_routes(path, base_path, methods, file_callees, klass.name)
           else
             # A convention action without an explicit method defaults to `execute`.
-            add_route(base_path, "ANY", path, klass.line, callees: callees_for(root, content, path, klass.name, "execute"))
+            add_route(base_path, "ANY", path, klass.line, callees: callees_for(file_callees, klass.name, "execute"))
           end
         end
       end
@@ -405,17 +405,15 @@ module Analyzer::Java
 
     # 1-hop callees out of the action handler method body, mirroring the
     # Spring analyzer. Returns an empty list unless callee/ai-context
-    # enrichment was requested (`root` is nil on a default scan). The
-    # tree-sitter root is shared across every route in the file.
-    private def callees_for(root : LibTreeSitter::TSNode?,
-                            content : String,
-                            path : String,
+    # enrichment was requested (`file_callees` is nil on a default scan).
+    # One parse and its indexes are shared across every route in the file.
+    private def callees_for(file_callees : Noir::JavaCalleeExtractor::FileCallees?,
                             class_name : String,
                             method_name : String) : Array(Callee)
       callees = [] of Callee
-      return callees if root.nil? || class_name.empty? || method_name.empty?
+      return callees if file_callees.nil? || class_name.empty? || method_name.empty?
 
-      Noir::JavaCalleeExtractor.callees_in_method(root, content, path, class_name, method_name).each do |entry|
+      file_callees.callees_in_method(class_name, method_name).each do |entry|
         name, callee_path, callee_line = entry
         callees << Callee.new(name, path: callee_path, line: callee_line)
       end
@@ -604,8 +602,7 @@ module Analyzer::Java
     private def add_rest_routes(path : String,
                                 base_path : String,
                                 methods : Array(JavaMethod),
-                                root : LibTreeSitter::TSNode?,
-                                content : String,
+                                file_callees : Noir::JavaCalleeExtractor::FileCallees?,
                                 class_name : String)
       methods.each do |method|
         route = REST_METHODS[method.name]?
@@ -614,7 +611,7 @@ module Analyzer::Java
         verb, suffix = route
         params = suffix.includes?(":id") ? [Param.new("id", "", "path")] : [] of Param
         add_route(namespace_join(base_path, suffix), verb, path, method.line, params,
-          callees: callees_for(root, content, path, class_name, method.name))
+          callees: callees_for(file_callees, class_name, method.name))
       end
     end
 
