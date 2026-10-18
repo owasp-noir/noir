@@ -16,6 +16,9 @@ module Noir::CLI::HelpCommand
     case argv.first?
     when nil, "help", "-h", "--help" then print_top_level
     when "scan"                      then ScanCommand.run(["--help"])
+    when "trace"                     then TraceCommand.print_help
+    when "reach"                     then ReachCommand.print_help
+    when "query"                     then QueryCommand.print_help
     when "list"                      then ListCommand.print_help
     when "cache"                     then CacheCommand.print_help
     when "config"                    then ConfigCommand.print_help

@@ -19,6 +19,9 @@ noir <command> [arguments] [flags]
 | Command                | Purpose                                                 |
 |------------------------|---------------------------------------------------------|
 | `noir scan PATHS...`   | Discover endpoints in one or more codebases             |
+| `noir trace "<METHOD> <URL>"` | Map a request to its route, guards, params and sinks |
+| `noir reach FILE[:LINE]` | List the endpoints that touch a source file           |
+| `noir query [FILTERS]` | Search the attack surface with AND-ed filters           |
 | `noir list techs`      | List supported languages, frameworks, and analyzers     |
 | `noir list taggers`    | List built-in and framework-specific taggers            |
 | `noir list formats`    | List supported output formats                           |
@@ -128,6 +131,51 @@ instead:
 
 ```bash
 noir scan ./app --ai-provider ollama --ai-model llama3
+```
+
+## Trace, Reach, Query
+
+Three query verbs for tracking endpoints rather than listing them. They are
+the shape an AI agent (or a reviewer with a specific question) needs: ask a
+narrow question, get a small answer. Each runs a scan with
+`--ai-context all --include callee` implied and accepts every `scan` flag, or
+reads a saved report with `--from` so one scan answers many questions.
+
+```bash
+noir scan ./app -f json --ai-context --include callee -o report.json   # once
+
+noir trace "POST /api/users/42" --from report.json     # request → route, guards, params, sinks, callees
+noir reach src/handlers/users.go:57 --from report.json # file → endpoints declared in or calling into it
+noir query --no-guard --sink sql --from report.json    # unauthenticated routes that reach a SQL sink
+```
+
+`trace` maps a concrete request path onto the declared route: `/api/users/42`
+matches `/api/users/{id}`, `:id`, `<int:pk>`, `[id]` and `*`. It prints the
+full endpoint record; on a miss it prints the nearest routes as `candidates`
+and exits 1.
+
+`reach` matches `FILE` as a path suffix against every location Noir recorded
+(route declarations, callees, guards, sources, sinks, validators) and lists
+the evidence in `via`. `:LINE` orders the evidence by distance and sets
+`nearest_line`; Noir records declaration lines, not function spans, so the
+line orders rather than filters.
+
+`query` filters AND together; a comma list inside one filter is OR:
+`--method`, `--url`, `--path`, `--tech`, `--tag`, `--param`, `--param-type`,
+`--protocol`, `--guard` / `--no-guard`, `--sink`, `--source`, `--signal`
+(`any` matches a non-empty bucket).
+
+Shared flags: `--from <report>`, `-f jsonl|json|text` (jsonl default),
+`--full` (the unchanged endpoint record instead of the compact row),
+`--limit <n>`, `--count`. Exit codes follow grep: `0` matched, `1` nothing
+matched, `2` usage error.
+
+The compact row is a projection of the endpoint record, empty buckets omitted:
+
+```json
+{"method":"POST","url":"/api/users/{id}","path":"src/users.go","line":42,"tech":"go_gin",
+ "params":["id:path","name:json"],"guards":["RequireAuth"],"sinks":["sql"],
+ "signals":["idor_review"],"callees":["db.Exec","render"]}
 ```
 
 ## List

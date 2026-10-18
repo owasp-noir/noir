@@ -8,7 +8,7 @@ describe Noir::CLI::HelpCommand do
       banner_sink = IO::Memory.new
       Noir::CLI::HelpCommand.print_top_level(io, banner_sink)
       out = io.to_s
-      %w[scan list cache config rules completion version help].each do |cmd|
+      %w[scan trace reach query list cache config rules completion version help].each do |cmd|
         out.should contain(cmd)
       end
       out.should contain("--no-color")

@@ -38,6 +38,9 @@ module Noir::CLI::Catalog
 
   COMMANDS = [
     Command.new("scan", "Discover endpoints in one or more codebases", args: "[PATHS...]"),
+    Command.new("trace", "Map a request to its route, guards, params and sinks", args: "\"<METHOD> <URL>\" [PATHS...]"),
+    Command.new("reach", "List the endpoints that touch a source file", args: "<FILE[:LINE]> [PATHS...]"),
+    Command.new("query", "Search the attack surface with AND-ed filters", args: "[FILTERS] [PATHS...]"),
     Command.new("list", "Enumerate built-in catalogs", LIST_SUBJECTS),
     Command.new("cache", "Manage the on-disk LLM response cache", CACHE_ACTIONS),
     Command.new("config", "Manage the user-level YAML configuration", CONFIG_ACTIONS),
@@ -49,15 +52,19 @@ module Noir::CLI::Catalog
 
   NAMES = COMMANDS.map(&.name)
 
+  # Verbs whose next word is a path or a scan flag rather than a fixed
+  # vocabulary: `scan` and the query verbs that ride its parser.
+  SCAN_LIKE = %w[scan trace reach query]
+
   # The verb → next-word vocabulary pairs a completion script needs, in the
-  # order its `case` should test them. `scan` is excluded: it is the
-  # fallback branch every shell falls through to, and its next word is a
-  # path or a flag rather than a fixed word.
+  # order its `case` should test them. `SCAN_LIKE` verbs are excluded: scan
+  # is the fallback branch every shell falls through to, and the query verbs
+  # take its flags and paths too.
   #
   # `help` completes the verb list itself, which is why this can't simply be
   # `Command#actions`.
   def self.completable : Array(Tuple(String, Array(String)))
-    COMMANDS.reject { |command| command.name == "scan" }.map do |command|
+    COMMANDS.reject { |command| SCAN_LIKE.includes?(command.name) }.map do |command|
       {command.name, command.name == "help" ? NAMES : command.actions}
     end
   end
