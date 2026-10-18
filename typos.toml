@@ -42,9 +42,6 @@ sade = "sade"
 # `--no-gaurd` is a deliberately mistyped flag quoted in a comment in
 # src/cli/inspect.cr, explaining why a mistyped filter must not pass silently.
 gaurd = "gaurd"
-# `catch-alls` (hyphenated "catch-all") in a comment in src/cli/inspect.cr;
-# typos splits on the hyphen and mis-flags the `alls` token as `all`/`falls`.
-alls = "alls"
 
 [files]
 extend-exclude = [

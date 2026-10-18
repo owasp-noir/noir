@@ -355,7 +355,7 @@ module Noir::CLI::Inspect
     end
   end
 
-  # How specific a route is: fewer catch-alls, then fewer placeholders,
+  # How specific a route is: fewer catch-all segments, then fewer placeholders,
   # then more literal text. `/u/:id` outranks `/*proxyPath` for `/u/5`.
   def self.specificity(url : String) : {Int32, Int32, Int32}
     rest = 0
