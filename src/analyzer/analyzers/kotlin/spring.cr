@@ -18,6 +18,11 @@ module Analyzer::Kotlin
     KOTLIN_EXTENSION = "kt"
     alias SpringRoute = Noir::TreeSitterKotlinRouteExtractor::Route
 
+    # Constructor-injected receiver types by (file, class): each lookup
+    # walks the whole tree, and every handler in a controller asks for
+    # the same class.
+    @injected_receiver_types = Hash(Tuple(String, String), Hash(String, String)).new
+
     SPRING_FRAMEWORK_CALLEE_NAMES = Set{
       "ok", "created", "accepted", "noContent", "notFound", "badRequest",
       "status", "body", "build", "buildAndAwait", "bodyValueAndAwait",
@@ -725,6 +730,7 @@ module Analyzer::Kotlin
 
         dto_index = dto_builder.build_for_with_root(path, content, root)
         method_nodes = Noir::TreeSitterKotlinParameterExtractor.index_functions_from(root, content)
+        file_callees = Noir::KotlinCalleeExtractor::FileCallees.new(root, content, path)
 
         stomp_routes.each do |route|
           route_path = route.verb == "GET" ? Noir::URLPath.join_rooted(webflux_base_path, route.path) : route.path
@@ -748,7 +754,7 @@ module Analyzer::Kotlin
           if include_callee && !(route.class_name.empty? || route.method_name.empty?)
             before_callee_count = endpoint.callees.size
             attach_method_callees(
-              endpoint, root, content, path, route.class_name, route.method_name, line, method_nodes,
+              endpoint, file_callees, route.class_name, route.method_name, line, method_nodes,
               method_index, package_name, imports
             )
             if endpoint.callees.size == before_callee_count
@@ -776,7 +782,7 @@ module Analyzer::Kotlin
           if include_callee && !(route.class_name.empty? || route.method_name.empty?)
             before_callee_count = endpoint.callees.size
             attach_method_callees(
-              endpoint, root, content, path, route.class_name, route.method_name, line, method_nodes,
+              endpoint, file_callees, route.class_name, route.method_name, line, method_nodes,
               method_index, package_name, imports
             )
             if endpoint.callees.size == before_callee_count
@@ -871,7 +877,7 @@ module Analyzer::Kotlin
           if include_callee && !(route.class_name.empty? || route.method_name.empty?)
             before_callee_count = endpoint.callees.size
             attach_method_callees(
-              endpoint, root, content, path, route.class_name, route.method_name, line, method_nodes,
+              endpoint, file_callees, route.class_name, route.method_name, line, method_nodes,
               method_index, package_name, imports
             )
             if !route.handler_reference && endpoint.callees.size == before_callee_count
@@ -931,7 +937,7 @@ module Analyzer::Kotlin
 
               if include_callee && !(implementation.class_name.empty? || entry_route.method_name.empty?)
                 attach_method_callees(
-                  endpoint, root, content, path, implementation.class_name, entry_route.method_name, nil, method_nodes,
+                  endpoint, file_callees, implementation.class_name, entry_route.method_name, nil, method_nodes,
                   method_index, package_name, imports
                 )
               end
@@ -1027,7 +1033,7 @@ module Analyzer::Kotlin
         if include_callee
           handler_imports = Noir::TreeSitterKotlinParameterExtractor.extract_imports_from(handler_root, entry.source)
           attach_method_callees(
-            endpoint, handler_root, entry.source, entry.path, entry.class_name, entry.method_name, entry.line, method_nodes,
+            endpoint, Noir::KotlinCalleeExtractor::FileCallees.new(handler_root, entry.source, entry.path), entry.class_name, entry.method_name, entry.line, method_nodes,
             method_index, entry.package_name, handler_imports
           )
         end
@@ -1037,9 +1043,7 @@ module Analyzer::Kotlin
     end
 
     private def attach_method_callees(endpoint : Endpoint,
-                                      root : LibTreeSitter::TSNode,
-                                      source : String,
-                                      path : String,
+                                      file_callees : Noir::KotlinCalleeExtractor::FileCallees,
                                       class_name : String,
                                       method_name : String,
                                       route_line : Int32?,
@@ -1049,9 +1053,7 @@ module Analyzer::Kotlin
                                       imports : Array(Noir::ImportGraph::ImportRef) = [] of Noir::ImportGraph::ImportRef,
                                       expansion_depth : Int32 = 0,
                                       expansion_seen : Set(String)? = nil)
-      direct_entries = Noir::KotlinCalleeExtractor.callees_in_method(
-        root, source, path, class_name, method_name, route_line
-      )
+      direct_entries = file_callees.callees_in_method(class_name, method_name, route_line)
       expansion_entries = [] of Tuple(String, String, Int32)
       direct_entries.each do |entry|
         name, callee_path, callee_line = entry
@@ -1069,10 +1071,8 @@ module Analyzer::Kotlin
         next unless helper_node
 
         helper_line = Noir::TreeSitter.node_start_row(helper_node) + 1
-        add_code_path_once(endpoint, path, helper_line)
-        Noir::KotlinCalleeExtractor.callees_in_method(
-          root, source, path, class_name, helper_name, helper_line
-        ).each do |helper_entry|
+        add_code_path_once(endpoint, file_callees.file_path, helper_line)
+        file_callees.callees_in_method(class_name, helper_name, helper_line).each do |helper_entry|
           name, callee_path, callee_line = helper_entry
           push_spring_callee(endpoint, name, callee_path, callee_line)
           expansion_entries << helper_entry
@@ -1080,7 +1080,7 @@ module Analyzer::Kotlin
       end
 
       expand_injected_receiver_callees(
-        endpoint, method_index, package_name, imports, root, source, class_name, expansion_entries,
+        endpoint, method_index, package_name, imports, file_callees, class_name, expansion_entries,
         expansion_depth, expansion_seen || Set(String).new
       )
     end
@@ -1089,8 +1089,7 @@ module Analyzer::Kotlin
                                                  method_index : SpringMethodIndex?,
                                                  package_name : String,
                                                  imports : Array(Noir::ImportGraph::ImportRef),
-                                                 root : LibTreeSitter::TSNode,
-                                                 source : String,
+                                                 file_callees : Noir::KotlinCalleeExtractor::FileCallees,
                                                  class_name : String,
                                                  entries : Array(Tuple(String, String, Int32)),
                                                  expansion_depth : Int32,
@@ -1098,7 +1097,8 @@ module Analyzer::Kotlin
       return unless method_index
       return if expansion_depth >= 2
 
-      receiver_types = constructor_injected_receiver_types(root, source, class_name)
+      receiver_types = @injected_receiver_types[{file_callees.file_path, class_name}] ||=
+        constructor_injected_receiver_types(file_callees.root, file_callees.source, class_name)
       return if receiver_types.empty?
 
       entries.each do |entry|
@@ -1123,7 +1123,7 @@ module Analyzer::Kotlin
           resolved_imports = Noir::TreeSitterKotlinParameterExtractor.extract_imports_from(resolved_root, resolved.source)
           resolved_method_nodes = Noir::TreeSitterKotlinParameterExtractor.index_functions_from(resolved_root, resolved.source)
           attach_method_callees(
-            endpoint, resolved_root, resolved.source, resolved.path, resolved.class_name, resolved.method_name,
+            endpoint, Noir::KotlinCalleeExtractor::FileCallees.new(resolved_root, resolved.source, resolved.path), resolved.class_name, resolved.method_name,
             resolved.line, resolved_method_nodes, method_index, resolved.package_name, resolved_imports,
             expansion_depth + 1, expansion_seen
           )
