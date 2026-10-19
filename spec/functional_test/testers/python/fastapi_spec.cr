@@ -72,6 +72,11 @@ expected_endpoints = [
   Endpoint.new("/v1/local/status", "GET", [
     Param.new("region", "", "query"),
   ]),
+  # `Depends()` on the password-flow form reads the two form fields.
+  Endpoint.new("/api/login/access-token", "POST", [
+    Param.new("username", "", "form"),
+    Param.new("password", "", "form"),
+  ]),
   # Pydantic body models: docstrings, comments and `:` inside a default
   # do not end the field list, base-class fields are inherited, and
   # `Optional[...]` / `Annotated[..., Body()]` still name the model.
@@ -108,4 +113,14 @@ it "marks FastAPI websocket endpoints with ws protocol", tags: "functional" do
   registered_websocket = tester.app.endpoints.find { |endpoint| endpoint.url == "/api/ws/registered/{channel}" }
   registered_websocket.should_not be_nil
   registered_websocket.try(&.protocol).should eq("ws")
+end
+
+it "names the def each FastAPI decorator applies to as the handler", tags: "functional" do
+  by_url = tester.app.endpoints.to_h { |ep| { {ep.method, ep.url}, ep.handler } }
+  by_url[{"PUT", "/api/items/{item_id}"}].should eq(Handler.new("upsert_item", "./spec/functional_test/fixtures/python/fastapi/api.py", 21))
+  by_url[{"GET", "/api/cbv/items/{item_id}"}].should eq(Handler.new("ItemViews.get_item", "./spec/functional_test/fixtures/python/fastapi/api.py", 146))
+  by_url[{"POST", "/api/login/access-token"}].try(&.name).should eq("login_access_token")
+  by_url[{"POST", "/api/constant/registered"}].try(&.name).should eq("registered_handler")
+  # Only the `StaticFiles` mount has no def to name.
+  tester.app.endpoints.reject(&.url.ends_with?("/*")).count(&.handler.nil?).should eq(0)
 end

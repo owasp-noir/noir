@@ -804,6 +804,26 @@ module Analyzer::Python
       nil
     end
 
+    # The handler whose `def` sits at 0-based `def_index`: its name, the
+    # file and the 1-based def line. A method is reported as
+    # `Class.method` (Flask `MethodView`, aiohttp `View`), found by walking
+    # up to the first less-indented statement.
+    # ponytail: a def nested inside a function reports its bare name.
+    def handler_at(lines : Array(::String), def_index : Int32, path : ::String) : Handler?
+      def_match = lines[def_index]?.try(&.match(/\A(\s*)(?:async\s+)?def\s+([A-Za-z_]\w*)/)) || return
+      indent, name = def_match[1].size, def_match[2]
+      i = def_index - 1
+      while indent > 0 && i >= 0
+        line = lines[i]
+        i -= 1
+        stripped = line.lstrip
+        next if stripped.empty? || stripped.starts_with?('#') || stripped.starts_with?('@') || line.size - stripped.size >= indent
+        name = "#{$1}.#{name}" if stripped =~ /\Aclass\s+([A-Za-z_]\w*)/
+        break
+      end
+      Handler.new(name, path, def_index + 1)
+    end
+
     # Build 1-hop callees observed in `body` (a handler's Python
     # source). `body_start_line` is the 0-based file line at which
     # `body`'s first character sits, so tree-sitter rows can be
