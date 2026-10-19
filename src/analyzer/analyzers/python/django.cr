@@ -21,6 +21,14 @@ module Analyzer::Python
     # `http_method_names = ["get", "post"]` on a view class.
     DRF_HTTP_METHOD_NAMES_RE = /^\s+http_method_names\s*=\s*[\[(]([^\])]*)[\])]/m
 
+    # An auth decorator applied in the urlconf itself:
+    # `path("saved/", login_required(SavedView.as_view()))`,
+    # `permission_required("x")(view)`. The view file never shows it, so the
+    # auth tagger (which reads decorators at the handler's line) cannot see
+    # it; the analyzer tags the endpoint it builds from that pattern instead.
+    URLCONF_AUTH_WRAPPER_RE = /\b(login_required|permission_required|staff_member_required|user_passes_test)\s*\(/
+    TAGGER                  = "django_analyzer"
+
     # `def get(...)` / `async def post(...)` method heads in class-based
     # views. Precompiled — an interpolated literal would be recompiled on
     # every line of every CBV class body. Uses `HTTP_METHODS_EXCLUDING_QUERY`
@@ -528,16 +536,17 @@ module Analyzer::Python
           if view.empty?
             endpoints << Endpoint.new(url, "GET", Details.new(route_path))
           else
+            wrapper = urlconf_auth_wrapper(view)
             view = extract_wrapped_view_reference(view)
             if view_target = resolve_django_view_target(view, package_map)
               filepath, function_or_class_name = view_target
               extract_endpoints_from_file(url, filepath, function_or_class_name).each do |endpoint|
                 append_code_path(endpoint.details, route_path)
-                endpoints << endpoint
+                endpoints << tag_urlconf_auth(endpoint, wrapper)
               end
             else
               # By default, Django allows requests with methods other than GET as well
-              endpoints << Endpoint.new(url, "GET", Details.new(route_path))
+              endpoints << tag_urlconf_auth(Endpoint.new(url, "GET", Details.new(route_path)), wrapper)
             end
           end
         end
@@ -817,18 +826,19 @@ module Analyzer::Python
           append_code_path(endpoint.details, parent_route_path)
           endpoints << endpoint
         else
+          wrapper = urlconf_auth_wrapper(view)
           view = extract_wrapped_view_reference(view)
           if view_target = resolve_django_view_target(view, package_map)
             filepath, function_or_class_name = view_target
             extract_endpoints_from_file(url, filepath, function_or_class_name).each do |endpoint|
               append_code_path(endpoint.details, route_path)
               append_code_path(endpoint.details, parent_route_path)
-              endpoints << endpoint
+              endpoints << tag_urlconf_auth(endpoint, wrapper)
             end
           else
             endpoint = Endpoint.new(url, "GET", Details.new(route_path))
             append_code_path(endpoint.details, parent_route_path)
-            endpoints << endpoint
+            endpoints << tag_urlconf_auth(endpoint, wrapper)
           end
         end
       end
@@ -1284,6 +1294,7 @@ module Analyzer::Python
           next
         end
 
+        wrapper = urlconf_auth_wrapper(view)
         view = extract_wrapped_view_reference(view)
         resolved = resolve_django_view_reference(view, package_map)
         if resolved
@@ -1291,13 +1302,13 @@ module Analyzer::Python
           if /^[a-zA-Z_][a-zA-Z0-9_]*$/.match(function_or_class_name)
             extract_endpoints_from_file(url, filepath, function_or_class_name).each do |endpoint|
               append_code_path(endpoint.details, route_path)
-              endpoints << endpoint
+              endpoints << tag_urlconf_auth(endpoint, wrapper)
             end
             next
           end
         end
 
-        endpoints << Endpoint.new(url, "GET", Details.new(route_path))
+        endpoints << tag_urlconf_auth(Endpoint.new(url, "GET", Details.new(route_path)), wrapper)
       end
 
       endpoints
@@ -1405,8 +1416,25 @@ module Analyzer::Python
       if as_view_match = view.match(/([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\.as_view\s*\(/)
         return as_view_match[1]
       end
+      # `login_required(views.drafts)` / `cache_page(60)(views.drafts)`: the
+      # function view is the last call's sole argument.
+      # ponytail: any `f(x)` unwraps to `x`, so a factory taking a view would too.
+      if wrapped_match = view.match(/\(\s*([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*\)\s*\z/)
+        return wrapped_match[1]
+      end
 
       view
+    end
+
+    # The auth decorator wrapping `view` in the urlconf, read before
+    # `extract_wrapped_view_reference` strips it; nil when there is none.
+    private def urlconf_auth_wrapper(view : ::String) : ::String?
+      view.match(URLCONF_AUTH_WRAPPER_RE).try(&.[1])
+    end
+
+    private def tag_urlconf_auth(endpoint : Endpoint, wrapper : ::String?) : Endpoint
+      endpoint.add_tag(Tag.new("auth", "Protected by Django #{wrapper} in urlconf", TAGGER)) if wrapper
+      endpoint
     end
 
     private def clean_python_reference(expression : ::String) : ::String
