@@ -1,5 +1,10 @@
 from django.http import HttpResponse
 from django.views.generic import FormView, View
+from oscar.core.loading import get_classes
+
+ProductView, CatalogueView = get_classes(
+    "fixture_shop.search", ["ProductView", "CatalogueView"]
+)
 
 
 class BasketAddView(FormView):

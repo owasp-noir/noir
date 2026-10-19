@@ -29,6 +29,27 @@ module Analyzer::Python
     URLCONF_AUTH_WRAPPER_RE = /\b(login_required|permission_required|staff_member_required|user_passes_test)\s*\(/
     TAGGER                  = "django_analyzer"
 
+    # Verbs Django's own class-based views accept, for a urlconf that mounts
+    # one directly (`auth_views.PasswordResetView.as_view()`): the class lives
+    # in site-packages, outside the scan, so its body cannot be read.
+    # `LogoutView` answered GET too below Django 5.
+    DJANGO_BUILTIN_VIEW_METHODS = {
+      "LoginView"                 => %w[GET POST],
+      "LogoutView"                => %w[GET POST],
+      "PasswordChangeView"        => %w[GET POST],
+      "PasswordChangeDoneView"    => %w[GET],
+      "PasswordResetView"         => %w[GET POST],
+      "PasswordResetDoneView"     => %w[GET],
+      "PasswordResetConfirmView"  => %w[GET POST],
+      "PasswordResetCompleteView" => %w[GET],
+      "TemplateView"              => %w[GET],
+      "RedirectView"              => %w[GET],
+    }
+
+    # A module-level `X = get_class("search.views", "X")` or
+    # `A, X = get_classes("m", ["A", "X"])` (Oscar's dynamic loader).
+    VIEW_LOADER_BINDING_RE = /^(\([\w,\s]+\)|[\w, \t]+?)\s*=\s*get_class(?:es)?\(\s*['"]([\w.]+)['"]\s*,\s*([\[(][^\])]*[\])]|['"]\w+['"])/m
+
     # `def get(...)` / `async def post(...)` method heads in class-based
     # views. Precompiled — an interpolated literal would be recompiled on
     # every line of every CBV class body. Uses `HTTP_METHODS_EXCLUDING_QUERY`
@@ -548,7 +569,9 @@ module Analyzer::Python
               end
             else
               # By default, Django allows requests with methods other than GET as well
-              endpoints << tag_urlconf_auth(Endpoint.new(url, "GET", Details.new(entry_path)), wrapper)
+              unresolved_view_endpoints(url, view, original_content, entry_path).each do |endpoint|
+                endpoints << tag_urlconf_auth(endpoint, wrapper)
+              end
             end
           end
         end
@@ -736,14 +759,61 @@ module Analyzer::Python
                                                app_config_path : ::String, package_map) : Tuple(::String, ::String)?
       expression = app_config_refs[view.lchop?("self.") || return]? || return
       if loader = expression.match(/\bget_class\s*\(\s*['"]([\w.]+)['"]\s*,\s*['"](\w+)['"]/)
-        app_dir = "#{File.dirname(app_config_path)}/"
-        # Whole tree, not `@django_base_path`: the loader walks INSTALLED_APPS,
-        # and the sandbox project that anchors the scan does not contain them.
-        candidates = get_files_by_relative_path("#{loader[1].gsub('.', '/')}.py")
-        file = candidates.find(&.starts_with?(app_dir)) || candidates.min_by? { |c| {c.count('/'), c} }
+        file = get_class_module_file(loader[1], app_config_path)
         return file ? {file, loader[2]} : nil
       end
       resolve_django_view_target(expression, package_map)
+    end
+
+    # The file an Oscar loader's app-relative dotted module (`basket.views`)
+    # names: `basket/views.py` or `basket/views/__init__.py`, preferring the
+    # one under `near`'s directory.
+    private def get_class_module_file(dotted : ::String, near : ::String) : ::String?
+      near_dir = "#{File.dirname(near)}/"
+      relative = dotted.gsub('.', '/')
+      # Whole tree, not `@django_base_path`: the loader walks INSTALLED_APPS,
+      # and the sandbox project that anchors the scan does not contain them.
+      candidates = get_files_by_relative_path("#{relative}.py") + get_files_by_relative_path("#{relative}/__init__.py")
+      candidates.find(&.starts_with?(near_dir)) || candidates.min_by? { |c| {c.count('/'), c} }
+    end
+
+    # Where `name` really lives when `filepath` only re-binds it at module
+    # level: `X = get_class("search.views", "X")`, a `get_classes(...)`
+    # tuple, or `from .catalogue import Y as X`. Nil when it is bound some
+    # other way, or not at all.
+    private def resolve_view_reexport(filepath : ::String, content : ::String, name : ::String) : Tuple(::String, ::String)?
+      content.scan(VIEW_LOADER_BINDING_RE) do |binding|
+        index = binding[1].delete("()").split(',').map(&.strip).index(name) || next
+        target = binding[3].scan(/['"](\w+)['"]/)[index]?.try(&.[1]) || next
+        file = get_class_module_file(binding[2], filepath) || next
+        return {file, target}
+      end
+      file, original = Noir::ImportGraph::Python.find_imported_symbols(@django_base_path, filepath, content)[name]? || return
+      {file, original} unless original.empty?
+    end
+
+    # A urlconf view nothing in the tree defines. Django's own class-based
+    # views (`auth_views.PasswordResetView`, `generic.RedirectView`) get
+    # the verbs they accept and the reference as a location-less handler;
+    # anything else stays a bare GET.
+    # ponytail: the import is read one line at a time, so a parenthesised
+    # multi-line `from django... import (...)` does not count.
+    private def unresolved_view_endpoints(url : ::String, view : ::String, content : ::String,
+                                          entry_path : PathInfo) : Array(Endpoint)
+      root = view.partition('.')[0]
+      methods = DJANGO_BUILTIN_VIEW_METHODS[view.rpartition('.')[2]]?
+      django_import = methods && content.each_line.any? do |line|
+        statement = line.strip
+        statement.starts_with?("from django") &&
+          statement.partition(" import ")[2].split(',').any? { |spec| spec.split(/\s+as\s+/).last.strip == root }
+      end
+      return [Endpoint.new(url, "GET", Details.new(entry_path))] unless methods && django_import
+
+      methods.map do |method|
+        endpoint = Endpoint.new(url, method, Details.new(entry_path))
+        endpoint.handler = Handler.new(view)
+        endpoint
+      end
     end
 
     private def resolve_django_app_config_path(label : ::String) : ::String?
@@ -882,9 +952,10 @@ module Analyzer::Python
               endpoints << tag_urlconf_auth(endpoint, wrapper)
             end
           else
-            endpoint = Endpoint.new(url, "GET", Details.new(entry_path))
-            append_code_path(endpoint.details, parent_route_path)
-            endpoints << tag_urlconf_auth(endpoint, wrapper)
+            unresolved_view_endpoints(url, view, read_file_content(current_app_config_path), entry_path).each do |endpoint|
+              append_code_path(endpoint.details, parent_route_path)
+              endpoints << tag_urlconf_auth(endpoint, wrapper)
+            end
           end
         end
       end
@@ -1365,7 +1436,9 @@ module Analyzer::Python
           end
         end
 
-        endpoints << tag_urlconf_auth(Endpoint.new(url, "GET", Details.new(entry_path)), wrapper)
+        unresolved_view_endpoints(url, view, read_file_content(django_urls.filepath), entry_path).each do |endpoint|
+          endpoints << tag_urlconf_auth(endpoint, wrapper)
+        end
       end
 
       endpoints
@@ -1542,7 +1615,7 @@ module Analyzer::Python
     end
 
     # Extract endpoints from a given file
-    def extract_endpoints_from_file(url : ::String, filepath : ::String, function_or_class_name : ::String)
+    def extract_endpoints_from_file(url : ::String, filepath : ::String, function_or_class_name : ::String, hops = 0)
       @logger.debug "Extracting endpoints from #{filepath}"
 
       endpoints = Array(Endpoint).new
@@ -1769,6 +1842,12 @@ module Analyzer::Python
 
           return endpoints
         end
+      end
+
+      # Neither defined here: follow a module-level re-export to the real
+      # view. The hop bound also breaks a re-export cycle.
+      if hops < 3 && (target = resolve_view_reexport(filepath, content, function_or_class_name))
+        return extract_endpoints_from_file(url, target[0], target[1], hops + 1)
       end
 
       # Default to GET method

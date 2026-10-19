@@ -16,8 +16,13 @@ class FixtureShopConfig:
         self.remove_view = get_class(
             "fixture_shop.views", "VoucherRemoveView"
         )
+        # `views.py` only re-binds this name; the class lives two hops on.
+        self.catalogue_view = get_class("fixture_shop.views", "CatalogueView")
 
     def get_urls(self):
+        from allauth.account import views as allauth_views
+        from django.contrib.auth import views as auth_views
+
         urls = [
             path("orders/", views.shop_orders, name="shop-orders"),
             path("reports/", include(self.reports_app.urls[0])),
@@ -27,5 +32,10 @@ class FixtureShopConfig:
                 self.remove_view.as_view(),
                 name="vouchers-remove",
             ),
+            path("catalogue/", self.catalogue_view.as_view(), name="catalogue"),
+            # Django's own view, outside the scan: named, verbs from the table.
+            path("password-reset/", auth_views.PasswordResetView.as_view()),
+            # Same class name, not Django's: stays an unnamed GET.
+            path("login/", allauth_views.LoginView.as_view()),
         ]
         return urls
