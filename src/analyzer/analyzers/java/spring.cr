@@ -200,6 +200,7 @@ module Analyzer::Java
             file_callees = Noir::JavaCalleeExtractor::FileCallees.new(root, content, path)
             # Same for the handler-method lookups below (built on the first route).
             param_index = nil.as(Noir::TreeSitterJavaParameterExtractor::FileIndex?)
+            model_attribute_methods = nil.as(Hash(String, Array(String))?)
 
             Noir::TreeSitterJavaRouteExtractor.extract_routes_from(root, content, visible_meta_mappings, file_constants).each do |route|
               is_feign_client = feign_clients.includes?(route.class_name)
@@ -231,6 +232,7 @@ module Analyzer::Java
                 route.verb, parameters, details, is_internal_client
               )
               endpoint.route_conditions = route.params
+              endpoint.handler = jvm_route_handler(route, path)
 
               # 1-hop callees out of the handler method body. Cross-file
               # definition resolution is intentionally out of scope —
@@ -240,6 +242,17 @@ module Analyzer::Java
                 file_callees.callees_in_method(route.class_name, route.method_name, route.line).each do |entry|
                   name, callee_path, callee_line = entry
                   endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
+                end
+                # `@ModelAttribute` methods run before every handler of
+                # their controller, so their callees (the `findById` that
+                # loads the owner a handler then edits) belong to every
+                # route of the class.
+                model_attribute_methods ||= model_attribute_methods_by_class(root, content)
+                model_attribute_methods[route.class_name]?.try &.each do |method_name|
+                  file_callees.callees_in_method(route.class_name, method_name).each do |entry|
+                    name, callee_path, callee_line = entry
+                    endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
+                  end
                 end
               end
 
@@ -793,6 +806,23 @@ module Analyzer::Java
         after_idx += 1
       end
       after_idx < code.size && code[after_idx] == '('
+    end
+
+    # Names of the method-level `@ModelAttribute` methods of every class
+    # in the file: Spring runs them before each handler of that class.
+    private def model_attribute_methods_by_class(root : LibTreeSitter::TSNode,
+                                                 content : String) : Hash(String, Array(String))
+      by_class = Hash(String, Array(String)).new
+      Noir::JavaCalleeExtractor.build_method_index(root, content).each do |(class_name, method_name), nodes|
+        next unless nodes.any? { |node| java_annotated?(node, content, "ModelAttribute") }
+        (by_class[class_name] ||= [] of String) << method_name
+      end
+      by_class
+    end
+
+    private def java_annotated?(decl : LibTreeSitter::TSNode, content : String, wanted : String) : Bool
+      each_java_annotation(decl, content) { |name, _, _| return true if name == wanted }
+      false
     end
 
     private def each_java_annotation(decl : LibTreeSitter::TSNode,

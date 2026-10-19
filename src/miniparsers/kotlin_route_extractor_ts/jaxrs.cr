@@ -138,7 +138,7 @@ module Noir
         params = jaxrs_params(member, source, consumes, dto_index, constants)
         callees = include_callees ? function_callees(member, source) : [] of Tuple(String, Int32)
         routes << TreeSitterJaxRsExtractor::Route.new(verb, full_path, class_name, function_name(member, source),
-          verb_line, consumes, params, callees)
+          verb_line, consumes, params, callees, signature_line: function_name_row(member))
       end
     end
 

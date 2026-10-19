@@ -111,9 +111,11 @@ module Noir
       getter callees : Array(Tuple(String, Int32))
       getter file_path : String?
       getter protocol : String
+      getter signature_line : Int32? # 0-based line of the method name (the handler), nil for class-level routes
 
       def initialize(@verb, @path, @class_name, @method_name, @line,
-                     @parameter_format, @params, @callees, @file_path = nil, @protocol = "http")
+                     @parameter_format, @params, @callees, @file_path = nil, @protocol = "http",
+                     @signature_line = nil)
       end
     end
 
@@ -376,7 +378,7 @@ module Noir
         line = Noir::TreeSitter.node_start_row(verb_node)
         callees = include_callees ? collect_method_callees(member, source) : [] of Tuple(String, Int32)
         routes << Route.new(verb, full_path, class_name, method_name, line,
-          method_consumes, params, callees, current_file)
+          method_consumes, params, callees, current_file, signature_line: Noir::TreeSitter.name_row(member))
       end
 
       collect_implemented_interface_routes(decl, source, class_path, class_consumes,

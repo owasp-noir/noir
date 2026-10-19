@@ -8,14 +8,24 @@ module Noir
     end
 
     private def function_name(func : LibTreeSitter::TSNode, source : String) : String
+      function_name_node(func).try { |node| Noir::TreeSitter.node_text(node, source) } || ""
+    end
+
+    # 0-based row of the function name: the signature line, below the
+    # annotation stack that `node_start_row(func)` would report.
+    private def function_name_row(func : LibTreeSitter::TSNode) : Int32?
+      function_name_node(func).try { |node| Noir::TreeSitter.node_start_row(node) }
+    end
+
+    # tree-sitter-kotlin exposes no `name` field; the name is the first
+    # `simple_identifier` child.
+    private def function_name_node(func : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
       count = LibTreeSitter.ts_node_named_child_count(func)
       count.times do |i|
         child = LibTreeSitter.ts_node_named_child(func, i.to_u32)
-        if Noir::TreeSitter.node_type(child) == "simple_identifier"
-          return Noir::TreeSitter.node_text(child, source)
-        end
+        return child if Noir::TreeSitter.node_type(child) == "simple_identifier"
       end
-      ""
+      nil
     end
 
     # Walk every annotation on a class/function declaration. Kotlin

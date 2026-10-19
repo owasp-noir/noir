@@ -61,8 +61,9 @@ module Noir
       getter method_name : String # Java method name, or "" when class-level only
       getter line : Int32         # 0-based line of the method annotation
       getter params : Array(Param)
+      getter signature_line : Int32? # 0-based line of the method name (the handler), nil for class-level routes
 
-      def initialize(@verb, @path, @class_name, @method_name, @line, @params = [] of Param)
+      def initialize(@verb, @path, @class_name, @method_name, @line, @params = [] of Param, @signature_line = nil)
       end
     end
 
@@ -666,8 +667,10 @@ module Noir
                                       constants : Hash(String, String),
                                       meta_mappings : Hash(String, ClassMapping))
       method_name = ""
+      signature_line = nil
       if name_node = Noir::TreeSitter.field(method, "name")
         method_name = Noir::TreeSitter.node_text(name_node, source)
+        signature_line = Noir::TreeSitter.node_start_row(name_node)
       end
 
       each_annotation(method, source) do |ann_name, args_node, ann_line|
@@ -704,7 +707,7 @@ module Noir
           class_prefixes.each do |class_prefix|
             full = Noir::URLPath.join_absorbing(class_prefix, path)
             verbs.each do |verb|
-              routes << Route.new(verb, full, class_name, method_name, ann_line, route_params)
+              routes << Route.new(verb, full, class_name, method_name, ann_line, route_params, signature_line)
             end
           end
         end

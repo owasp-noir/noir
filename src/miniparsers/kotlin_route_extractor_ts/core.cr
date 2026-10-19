@@ -43,10 +43,11 @@ module Noir
       getter handler_reference : String?
       getter inline_callees : Array(NamedTuple(name: String, line: Int32))
       getter messaging_destinations : Array(String)
+      getter signature_line : Int32? # 0-based line of the function name (the handler), nil for class-level routes
 
       def initialize(@verb, @path, @class_name, @method_name, @line, @handler_reference = nil,
                      @inline_callees = [] of NamedTuple(name: String, line: Int32),
-                     @messaging_destinations = [] of String)
+                     @messaging_destinations = [] of String, @signature_line = nil)
       end
     end
 
@@ -826,6 +827,7 @@ module Noir
                                         string_constants : Hash(String, String),
                                         local_string_constants : Hash(String, String))
       method_name = function_name(func, source)
+      signature_line = function_name_row(func)
 
       each_annotation(func, source) do |ann_name, args, ann_line|
         next unless ANNOTATION_VERBS.has_key?(ann_name)
@@ -847,7 +849,7 @@ module Noir
           paths.each do |path|
             full = Noir::URLPath.join_absorbing(class_prefix, path)
             verbs.each do |verb|
-              routes << Route.new(verb, full, class_name, method_name, ann_line)
+              routes << Route.new(verb, full, class_name, method_name, ann_line, signature_line: signature_line)
             end
           end
         end

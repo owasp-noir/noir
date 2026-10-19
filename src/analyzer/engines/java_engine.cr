@@ -159,10 +159,21 @@ module Analyzer::Java
     private def jvm_route_endpoint(route, url : String, file : String) : Endpoint
       endpoint = Endpoint.new(url, route.verb, route.params, Details.new(PathInfo.new(file, route.line + 1)))
       endpoint.protocol = route.protocol
+      endpoint.handler = jvm_route_handler(route, file)
       route.callees.each do |(name, line)|
         endpoint.push_callee(Callee.new(name, path: file, line: line))
       end
       endpoint
+    end
+
+    # The method an annotation-declared route decorates, as
+    # `Class.method` at its signature line (1-based). nil for class-level
+    # routes (no method) and for routes whose extractor has no
+    # `signature_line`.
+    private def jvm_route_handler(route, file : String) : Handler?
+      return if route.class_name.empty? || route.method_name.empty?
+      signature_line = route.signature_line || return
+      Handler.new("#{route.class_name}.#{route.method_name}", file, signature_line + 1)
     end
 
     private def jvm_source?(path : String) : Bool
