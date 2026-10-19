@@ -15,7 +15,14 @@ expected_endpoints = [
   Endpoint.new("/", "GET"),
 ]
 
-FunctionalTester.new("fixtures/python/flask/", {
+tester = FunctionalTester.new("fixtures/python/flask/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
-}, expected_endpoints).perform_tests
+}, expected_endpoints)
+tester.perform_tests
+
+it "names the def each Flask route decorator applies to as the handler", tags: "functional" do
+  sign = tester.app.endpoints.find! { |ep| ep.method == "POST" && ep.url == "/sign" }
+  sign.handler.should eq(Handler.new("sign_sample", "./spec/functional_test/fixtures/python/flask/app.py", 17))
+  tester.app.endpoints.count(&.handler.nil?).should eq(0)
+end

@@ -506,7 +506,8 @@ module Analyzer::Python
           body,
           request_params,
           definition_base_path: definition_base_path,
-          source: source
+          source: source,
+          handler: handler_at(lines, method_index, path)
         )
       end
     end
@@ -554,7 +555,8 @@ module Analyzer::Python
         function_body,
         request_params,
         definition_base_path: definition_base_path,
-        source: source
+        source: source,
+        handler: handler_at(lines, def_index, path)
       )
     end
 
@@ -568,7 +570,8 @@ module Analyzer::Python
                                                       *,
                                                       definition_base_path : ::String,
                                                       source : ::String,
-                                                      handler_path : ::String? = nil)
+                                                      handler_path : ::String? = nil,
+                                                      handler : Handler? = nil)
       seen = Set(::String).new
       all_params = [] of Param
 
@@ -585,6 +588,7 @@ module Analyzer::Python
       details = Details.new(PathInfo.new(path, report_line + 1))
       endpoint = Endpoint.new(route_path, method, details)
       endpoint.protocol = "ws" if websocket_response_body?(function_body)
+      endpoint.handler = handler
       all_params.each { |p| endpoint.push_param(p) }
 
       push_callees_from(
@@ -630,7 +634,8 @@ module Analyzer::Python
         request_params,
         definition_base_path: definition_base_path,
         source: handler_source,
-        handler_path: handler_path
+        handler_path: handler_path,
+        handler: handler_at(handler_lines, def_index, handler_path)
       )
 
       true
