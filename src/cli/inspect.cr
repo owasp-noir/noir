@@ -335,13 +335,20 @@ module Noir::CLI::Inspect
     end
   end
 
+  # Directories that hold copies of an app's code rather than the app:
+  # juice-shop keeps a snippet of every route under `data/static/codefixes/`
+  # and the optimizer merges it with the real `server.ts` declaration.
+  COPY_DIRS = Set{"codefixes", "fixtures", "fixture", "snippets", "samples", "examples", "example", "vendor", "node_modules", "test", "tests", "__tests__", "spec", "testdata"}
+
   # The declaration the compact row names when the optimizer merged several
-  # files into one endpoint. The shallowest path wins: an app's own file sits
-  # nearer the root than a fixture, vendored or generated copy of it
-  # (`server.ts` over `data/static/codefixes/x.ts`). Ties keep scan order.
-  # ponytail: a depth heuristic; `declarations` says when it was applied.
+  # files into one endpoint: the first one that is not under a copy
+  # directory, else the first. Scan order is kept otherwise, since analyzers
+  # put the declaring file first and its include chain after it (Django's
+  # `apps.py` before `urls.py`).
+  # ponytail: a directory-name list; `declarations` says when it mattered.
   def self.primary_declaration(endpoint : Endpoint) : PathInfo?
-    endpoint.details.code_paths.min_by?(&.path.count('/'))
+    paths = endpoint.details.code_paths
+    paths.find { |cp| cp.path.split('/').none? { |seg| COPY_DIRS.includes?(seg) } } || paths.first?
   end
 
   # Prints rows in `common.format` and returns the exit code. `-f text`

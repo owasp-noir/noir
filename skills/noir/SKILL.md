@@ -58,7 +58,7 @@ PATCH /items/:id  src/handlers.go:18  go_gin  handler=updateItem@src/items.go:40
 
 - `path:line` is where the route is *declared*. When the same route is
   declared in several files (a fixture or vendored copy next to the real one),
-  `path` is the shallowest and `declarations=N` says how many; `--full` lists
+  `path` is the first one outside a copy directory (`fixtures/`, `codefixes/`, `vendor/`, ...) and `declarations=N` says how many; `--full` lists
   them all. `handler` is where its body *lives*, present when the analyzer
   resolved the definition (Go, Rails, Django, Express and friends). Open
   `handler` first when you need the code.

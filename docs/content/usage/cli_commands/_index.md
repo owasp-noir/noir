@@ -180,8 +180,8 @@ matched, `2` usage error. A scan path or flag next to `--from` is an error, sinc
 nothing is scanned.
 
 The compact row is a projection of the endpoint record, empty buckets omitted.
-`path:line` is where the route is *declared* (the shallowest file when copies
-were merged, with `declarations` counting them); `handler` is where its body
+`path:line` is where the route is *declared* (the first file outside a copy directory
+when copies were merged, with `declarations` counting them); `handler` is where its body
 *lives*, when the analyzer could resolve the definition:
 
 ```json
