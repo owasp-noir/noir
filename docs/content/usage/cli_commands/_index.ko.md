@@ -178,6 +178,10 @@ callee, 가드, 소스, 싱크, 검증기)와 비교해 근거를 `via`에 나�
  "signals":["idor_review"],"callees":["db.Exec","render"]}
 ```
 
+이 명령들과 스캔 한 번 후 `--from`으로 질의하는 루프, 에이전트가 알아야 할 주의점을
+정리한 에이전트 스킬이 [`skills/noir/SKILL.md`](https://github.com/owasp-noir/noir/blob/main/skills/noir/SKILL.md)에
+있습니다. 에이전트의 스킬 디렉터리에 복사해 사용하세요.
+
 ## List
 
 `noir list`는 내장 카탈로그를 출력합니다.
