@@ -219,6 +219,7 @@ module Analyzer::Python
                 full_path = normalize_fastapi_path_params(router_class.join(http_route_path))
                 base_endpoint = Endpoint.new(full_path, emit_methods.first, params, details)
                 base_endpoint.protocol = "ws" if websocket_route
+                base_endpoint.handler = handler_at(codelines, def_line, path)
 
                 # `parse_code_block(codelines[def_line..])` keeps the
                 # def line, so body row 0 lives at file line `def_line`.
@@ -240,6 +241,7 @@ module Analyzer::Python
                                     else
                                       Endpoint.new(full_path, method, params, details).tap do |dup_ep|
                                         dup_ep.protocol = "ws" if websocket_route
+                                        dup_ep.handler = base_endpoint.handler
                                         base_endpoint.callees.each { |c| dup_ep.push_callee(c) }
                                       end
                                     end
@@ -266,6 +268,7 @@ module Analyzer::Python
                 prog_details = Details.new(PathInfo.new(path, index + 1))
                 prog_params = [] of Param
                 prog_callees = [] of Callee
+                prog_handler = nil.as(Handler?)
                 if callees_needed?
                   if handler_callee = extract_programmatic_handler_callee(prog_tail)
                     prog_callees << Callee.new(handler_callee, path, index + 1)
@@ -277,6 +280,7 @@ module Analyzer::Python
                   handler_lines = handler_source.split("\n")
                   handler_imports = handler_path == path ? import_modules : find_fastapi_imported_modules(import_base_path, handler_path, handler_source)
                   if handler_def_line = find_function_def_line(handler_lines, handler_name)
+                    prog_handler = handler_at(handler_lines, handler_def_line, handler_path)
                     prog_params = extract_fastapi_handler_params(handler_lines, handler_def_line, prog_full, handler_source, handler_imports)
                     if handler_codeblock = parse_code_block(handler_lines[handler_def_line..])
                       prog_callees.concat(build_callees_from(
@@ -292,6 +296,7 @@ module Analyzer::Python
                 prog_methods.each do |m|
                   endpoint = Endpoint.new(prog_full, m, prog_params, prog_details)
                   endpoint.protocol = "ws" if prog_websocket_route
+                  endpoint.handler = prog_handler
                   prog_callees.each { |c| endpoint.push_callee(c) }
                   result << endpoint
                 end
@@ -1064,6 +1069,12 @@ module Analyzer::Python
         next if param.name == "*" || path_param_names.includes?(param.name)
         next if param.name.in?(%w[self cls])
         next if param.type == "WebSocket"
+        # `Depends()` on a password-flow form model reads the two
+        # `application/x-www-form-urlencoded` fields the client must send.
+        if param.type.includes?("OAuth2PasswordRequestForm")
+          params << Param.new("username", "", "form") << Param.new("password", "", "form")
+          next
+        end
         next if fastapi_dependency_param?(param)
 
         default_value = return_literal_value(param.default)

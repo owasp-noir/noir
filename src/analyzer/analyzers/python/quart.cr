@@ -198,6 +198,7 @@ module Analyzer::Python
             definition_base_path: python_base_path_for(path),
             source: source,
           )
+          handler = handler_at(lines, class_def_index, path)
 
           if is_ws
             # `@app.websocket("/ws")` always emits a single WS endpoint;
@@ -210,6 +211,7 @@ module Analyzer::Python
               details = Details.new(PathInfo.new(path, line_index + 1))
               endpoint = Endpoint.new(route_url.gsub("//", "/"), "GET", details)
               endpoint.protocol = "ws"
+              endpoint.handler = handler
               handler_callees.each { |c| endpoint.push_callee(c) }
               result << endpoint
             end
@@ -219,6 +221,7 @@ module Analyzer::Python
           default_method = HTTP_METHODS.find { |http_method| function_name.downcase == http_method.downcase } || "GET"
           prefixes.flat_map { |p| get_endpoints(default_method, route_path, extra_params, codeblock_lines, p) }.each do |route_endpoint|
             route_endpoint.details = Details.new(PathInfo.new(path, line_index + 1))
+            route_endpoint.handler = handler
             handler_callees.each { |c| route_endpoint.push_callee(c) }
             result << route_endpoint
           end

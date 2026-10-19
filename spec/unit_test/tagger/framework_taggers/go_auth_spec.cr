@@ -514,3 +514,20 @@ describe "GoAuthTagger (sibling route groups)" do
     me.tags.map(&.description).should eq(["Protected by Go AuthRequired middleware"])
   end
 end
+
+describe "GoAuthTagger session stores" do
+  it "does not count a session store middleware as a guard" do
+    lines = [
+      "package main",
+      "",
+      "func main() {",
+      "\tr := gin.Default()",
+      "\tr.Use(sessions.Sessions(\"mysession\", store))",
+      "\tr.GET(\"/profile\", func(c *gin.Context) {",
+      "\t\tc.JSON(200, nil)",
+      "\t})",
+      "}",
+    ]
+    run_go_auth(lines, "/profile", "GET", 6).tags.map(&.name).should_not contain("auth")
+  end
+end
