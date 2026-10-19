@@ -50,5 +50,13 @@ func main() {
 		}
 	})
 
+	// A sub-router mounted on the default mux: its routes are reported on
+	// their own; the mount is not a route answering every method at /v2/.
+	api := http.NewServeMux()
+	api.HandleFunc("GET /v2/ping", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("pong"))
+	})
+	http.Handle("/v2/", api)
+
 	http.ListenAndServe(":8080", mux)
 }

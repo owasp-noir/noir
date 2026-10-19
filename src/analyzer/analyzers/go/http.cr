@@ -10,6 +10,16 @@ module Analyzer::Go
     # Registration calls that make a file worth the route parse.
     ROUTE_METHODS = ["HandleFunc", "Handle"]
 
+    ROUTER_CALL_METHODS = /\.(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|Any|Handle|HandleFunc|Group|Use|Get|Post|Put|Patch|Delete|Route|Mount)\s*\(/
+
+    # Whether the handler argument is a bare identifier this file registers
+    # routes on (`r := gin.Default(); r.GET(...); http.Handle("/", r)`).
+    private def router_mount?(route, content : String) : Bool
+      name = route.handler_args.last?.try(&.strip) || return false
+      return false unless name.matches?(/\A[A-Za-z_]\w*\z/)
+      content.matches?(/\b#{Regex.escape(name)}#{ROUTER_CALL_METHODS.source}/)
+    end
+
     def analyze
       # Source Analysis
       # Groups are irrelevant for net/http — this analyzer only ever wanted
@@ -106,6 +116,10 @@ module Analyzer::Go
 
           if ts_hits = routes_by_line[index]?
             ts_hits.each do |route|
+              # `http.Handle("/", r)` hands the tree to a router whose own
+              # routes are already reported; it is a mount, not a route
+              # answering every method at "/".
+              next if router_mount?(route, content)
               verbs = if route.verb.upcase == "ANY" || route.verb.upcase == "ALL"
                         Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb)
                       else
