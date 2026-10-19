@@ -60,9 +60,11 @@ expected_endpoints = [
     ep.push_callee(Callee.new("AuditLog.write", line: 22))
   end,
 
+  # `@ModelAttribute findOrder` runs before every handler of OrderController.
   Endpoint.new("/api/orders/legacy", "GET").tap do |ep|
-    ep.push_callee(Callee.new("AuditLog.write", line: 13))
-    ep.push_callee(Callee.new("getLegacy", line: 14))
+    ep.push_callee(Callee.new("AuditLog.write", line: 14))
+    ep.push_callee(Callee.new("getLegacy", line: 15))
+    ep.push_callee(Callee.new("OrderStore.load", line: 25))
   end,
 
   Endpoint.new("/api/teams/{nation}", "GET").tap do |ep|
@@ -125,6 +127,11 @@ describe "Kotlin Spring annotation handlers", tags: "functional" do
     types = tester.endpoints.find! { |ep| ep.method == "GET" && ep.url == "/api/roles/types" }
     types.details.code_paths.first.line.should eq(15)
     types.handler.should eq(Handler.new("RoleTypesController.types", types.details.code_paths.first.path, 16))
+  end
+
+  it "keeps @ModelAttribute callees inside their own controller" do
+    create = tester.endpoints.find! { |ep| ep.method == "POST" && ep.url == "/api/users/" }
+    create.callees.map(&.name).should_not contain("OrderStore.load")
   end
 end
 

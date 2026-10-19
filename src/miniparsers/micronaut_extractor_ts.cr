@@ -110,8 +110,11 @@ module Noir
       getter interface_names : Array(String)
       getter paths : Array(String)
       getter line : Int32
+      # Method name -> 0-based row of its name, for the `@Override` that
+      # handles an interface-declared route.
+      getter method_rows : Hash(String, Int32)
 
-      def initialize(@class_name, @interface_names, @paths, @line)
+      def initialize(@class_name, @interface_names, @paths, @line, @method_rows = {} of String => Int32)
       end
     end
 
@@ -205,7 +208,7 @@ module Noir
           paths = annotation_paths_named(node, "Controller", source, constants, class_name)
           unless paths.empty?
             implementations << ControllerInterfaceImplementation.new(
-              class_name, interface_names, paths, Noir::TreeSitter.node_start_row(node)
+              class_name, interface_names, paths, Noir::TreeSitter.node_start_row(node), method_rows(node, source)
             )
           end
         end
@@ -214,6 +217,18 @@ module Noir
       Noir::TreeSitter.each_named_child(node) do |child|
         walk_controller_interface_implementations(child, source, implementations, constants, depth + 1)
       end
+    end
+
+    # First declaration wins for overloads.
+    private def method_rows(class_decl : LibTreeSitter::TSNode, source : String) : Hash(String, Int32)
+      rows = {} of String => Int32
+      return rows unless body = Noir::TreeSitter.field(class_decl, "body")
+      Noir::TreeSitter.each_named_child(body) do |member|
+        next unless Noir::TreeSitter.node_type(member) == "method_declaration"
+        next unless name_node = Noir::TreeSitter.field(member, "name")
+        rows[Noir::TreeSitter.node_text(name_node, source)] ||= Noir::TreeSitter.node_start_row(name_node)
+      end
+      rows
     end
 
     private def type_identifier_text(decl : LibTreeSitter::TSNode, source : String) : String

@@ -10,4 +10,10 @@ import org.springframework.web.bind.annotation.RequestMapping;
 public interface CatalogApi {
     @GetMapping("/{id}")
     String getItem(@PathVariable String id);
+
+    // Not overridden by CatalogApiController: no implementing handler.
+    @GetMapping("/ping")
+    default String ping() {
+        return "pong";
+    }
 }

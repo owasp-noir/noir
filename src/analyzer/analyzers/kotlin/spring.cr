@@ -800,6 +800,7 @@ module Analyzer::Kotlin
         # `params=` constraint expansion matches across both routes
         # (mirrors the legacy `||=` quirk: first verb wins).
         first_verb = Hash(String, String).new
+        model_attribute_functions = nil.as(Hash(String, Array(String))?)
         route_methods = routes.map { |route| route_method_node(method_nodes, route.class_name, route.method_name, route.line) }
         routes.each_with_index do |route, idx|
           first_verb[route_verb_key(route, route_methods[idx])] ||= route.verb
@@ -885,6 +886,17 @@ module Analyzer::Kotlin
               handler_line = method ? Noir::TreeSitter.node_start_row(method) + 1 : line
               push_spring_callee(endpoint, "#{route.class_name}.#{route.method_name}", path, handler_line)
             end
+            # `@ModelAttribute` functions run before every handler of their
+            # controller, so their callees (the lookup a handler then edits)
+            # belong to every route of the class.
+            model_attribute_functions ||= model_attribute_functions_by_class(method_nodes, content)
+            model_attribute_functions[route.class_name]?.try &.each do |function_name|
+              next if function_name == route.method_name
+              attach_method_callees(
+                endpoint, file_callees, route.class_name, function_name, nil, method_nodes,
+                method_index, package_name, imports
+              )
+            end
           end
           attach_cross_file_handler_details(
             endpoint, method_index, package_name, imports, path, route, format_verb, parameter_format, dto_builder, include_callee
@@ -934,7 +946,12 @@ module Analyzer::Kotlin
               details = Details.new(PathInfo.new(entry.path, entry_route.line + 1))
               details.add_path(PathInfo.new(path, implementation.line + 1))
               endpoint = Endpoint.new(Noir::URLPath.join_rooted(base_path, inherited_path), entry_route.verb, parameters, details)
-              attach_method_security_tags(endpoint, method_nodes["#{implementation.class_name}##{entry_route.method_name}"]?, content)
+              impl_function = method_nodes["#{implementation.class_name}##{entry_route.method_name}"]?
+              attach_method_security_tags(endpoint, impl_function, content)
+              # The body lives on the `override fun`, not the interface function.
+              if impl_function && (impl_row = Noir::TreeSitterKotlinRouteExtractor.function_name_row(impl_function))
+                endpoint.handler = Handler.new("#{implementation.class_name}.#{entry_route.method_name}", path, impl_row + 1)
+              end
 
               if include_callee && !(implementation.class_name.empty? || entry_route.method_name.empty?)
                 attach_method_callees(
@@ -948,6 +965,21 @@ module Analyzer::Kotlin
           end
         end
       end
+    end
+
+    # Names of the `@ModelAttribute` functions of every class in the file:
+    # Spring runs them before each handler of that class.
+    private def model_attribute_functions_by_class(method_nodes : Hash(String, LibTreeSitter::TSNode),
+                                                   content : String) : Hash(String, Array(String))
+      by_class = Hash(String, Array(String)).new
+      method_nodes.each do |key, node|
+        next unless Noir::TreeSitterKotlinRouteExtractor.annotated?(node, content, "ModelAttribute")
+        class_name, _, function_name = key.partition('#')
+        function_name = function_name.partition('@')[0]
+        functions = by_class[class_name] ||= [] of String
+        functions << function_name unless functions.includes?(function_name)
+      end
+      by_class
     end
 
     # The function a route's annotation sits on. Overloads share

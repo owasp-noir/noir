@@ -290,7 +290,8 @@ module Noir
                                        constants : Hash(String, String)? = nil,
                                        index : FileIndex? = nil,
                                        injected_annotations : Set(String)? = nil,
-                                       converted_types : Set(String)? = nil) : Array(Param)
+                                       converted_types : Set(String)? = nil,
+                                       disallowed_fields : Array(String)? = nil) : Array(Param)
       index ||= build_file_index(root, source)
       method = find_method(index, class_name, method_name, target_line)
       return [] of Param unless method
@@ -301,7 +302,7 @@ module Noir
       resolved_constants = constants || TreeSitterJavaRouteExtractor.extract_string_constants_from(root, source)
       model_attributes = index.suppliers[class_name] ||= model_attribute_suppliers(root, source, class_name)
       collect_method_params(method, source, verb, parameter_format, class_fields, resolved_constants, class_name, model_attributes,
-        injected_annotations || Set(String).new, converted_types || Set(String).new)
+        injected_annotations || Set(String).new, converted_types || Set(String).new, disallowed_fields || [] of String)
     end
 
     # Per-file memo for callers that look up many routes in one parsed
@@ -807,7 +808,8 @@ module Noir
                                       current_class : String,
                                       model_attributes = [] of ModelAttributeSupplier,
                                       injected_annotations = Set(String).new,
-                                      converted_types = Set(String).new) : Array(Param)
+                                      converted_types = Set(String).new,
+                                      disallowed_fields = [] of String) : Array(Param)
       params = [] of Param
       fparams = Noir::TreeSitter.field(method, "parameters")
       return params unless fparams
@@ -820,7 +822,7 @@ module Noir
 
       Noir::TreeSitter.each_named_child(fparams) do |fp|
         next unless Noir::TreeSitter.node_type(fp) == "formal_parameter"
-        current_format = emit_param_for(fp, method, source, verb, current_format, parameter_format, class_fields, constants, current_class, params, model_attributes, injected_annotations, converted_types)
+        current_format = emit_param_for(fp, method, source, verb, current_format, parameter_format, class_fields, constants, current_class, params, model_attributes, injected_annotations, converted_types, disallowed_fields)
       end
 
       # Collapse duplicate `(name, type)` params. A handler binding two
@@ -845,7 +847,8 @@ module Noir
                                sink : Array(Param),
                                model_attributes = [] of ModelAttributeSupplier,
                                injected_annotations = Set(String).new,
-                               converted_types = Set(String).new) : String?
+                               converted_types = Set(String).new,
+                               disallowed_fields = [] of String) : String?
       type_node = Noir::TreeSitter.field(fp, "type")
       name_node = Noir::TreeSitter.field(fp, "name")
       return parameter_format unless type_node && name_node
@@ -1045,9 +1048,12 @@ module Noir
           if nested
             nested.each do |sub|
               next unless sub.access_modifier == "public" || sub.has_setter?
+              next if disallowed_field?("#{field.name}.#{sub.name}", disallowed_fields)
               sink << Param.new("#{field.name}.#{sub.name}", Noir::JvmLiteral.value_of(sub.init_value), effective_format)
             end
           else
+            # `WebDataBinder#setDisallowedFields` drops the property from binding.
+            next if !json_body && disallowed_field?(field.name_for(effective_format), disallowed_fields)
             field_format = !json_body && multipart_type?(field.type_name) ? "form" : effective_format
             sink << Param.new(field.name_for(effective_format), expanded_default, field_format)
           end
@@ -1055,6 +1061,13 @@ module Noir
       end
 
       carry_format
+    end
+
+    # Spring `PatternMatchUtils.simpleMatch`: `*` matches any run of characters.
+    private def disallowed_field?(name : String, patterns : Array(String)) : Bool
+      patterns.any? do |pattern|
+        pattern.includes?('*') ? name.matches?(Regex.new("\\A#{pattern.split('*').map { |part| Regex.escape(part) }.join(".*")}\\z")) : name == pattern
+      end
     end
 
     private def multipart_type?(type_name : String) : Bool
