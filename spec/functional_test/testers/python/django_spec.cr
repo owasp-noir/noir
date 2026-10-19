@@ -168,6 +168,23 @@ expected_endpoints = [
   ]),
   Endpoint.new("/shop/orders/", "POST", [Param.new("token", "", "form")]),
   Endpoint.new("/shop/reports/daily/", "GET", [Param.new("period", "", "query")]),
+  # `self.add_view = get_class("fixture_shop.views", "BasketAddView")` in
+  # the AppConfig's `ready()`: the class resolves through the loader call,
+  # and its `http_method_names = ["post"]` replaces the GET+POST a
+  # `FormView` would otherwise imply. `VoucherRemoveView` inherits the
+  # allowlist from a base in the same file.
+  Endpoint.new("/shop/add/<int:pk>/", "POST", [
+    Param.new("quantity", "", "form"),
+    Param.new("pk", "", "path"),
+  ]),
+  Endpoint.new("/shop/vouchers/<int:pk>/remove/", "POST", [Param.new("pk", "", "path")]),
+  # `urlpatterns += i18n_patterns(path('intl/', ...))` serves `/en/intl/`;
+  # `{lang}` stands for the language-code segment so a real request path
+  # still traces to the route.
+  Endpoint.new("/{lang}/intl/", "GET", [
+    Param.new("period", "", "query"),
+    Param.new("lang", "", "path"),
+  ]),
   # `core/api/urls.py` is reached only through
   # `path(settings.BASE_PATH, include(api_patterns))` in the root urlconf, so
   # these two endpoints exercise the whole chain that used to break:
@@ -187,7 +204,23 @@ expected_endpoints = [
   Endpoint.new("/api/core/nodes/{pk}/", "GET", [Param.new("pk", "", "path")]),
 ]
 
-FunctionalTester.new("fixtures/python/django/", {
+tester = FunctionalTester.new("fixtures/python/django/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
-}, expected_endpoints).perform_tests
+}, expected_endpoints)
+tester.perform_tests
+
+describe "Django route lines", tags: "functional" do
+  # Each `path(...)` entry carries its own line, whether it sits in a
+  # `urlpatterns` list, an AppConfig's `get_urls`, or the `path()` that
+  # mounts that app config, so `noir reach apps.py:24` can order by it.
+  it "points each urlconf and app-config entry at its path() line" do
+    lines = tester.endpoints.to_h do |ep|
+      {"#{ep.method} #{ep.url}", ep.details.code_paths.map { |cp| "#{File.basename(cp.path)}:#{cp.line}" }}
+    end
+    lines["POST /shop/add/<int:pk>/"].should eq(["views.py:5", "apps.py:24", "urls.py:56"])
+    lines["POST /shop/vouchers/<int:pk>/remove/"].should eq(["views.py:17", "apps.py:25", "urls.py:56"])
+    lines["GET /shop/reports/daily/"].should eq(["views.py:506", "apps.py:12", "apps.py:23", "urls.py:56"])
+    lines["GET /{lang}/intl/"].should eq(["views.py:506", "urls.py:62"])
+  end
+end
