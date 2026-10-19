@@ -48,7 +48,7 @@ describe Noir::JSHandlerResolver do
     with_app do |dir, server|
       Dir.cd(dir) do
         h = Noir::JSHandlerResolver.resolve("login()", server, "server.ts").not_nil!
-        {h.path, h.line}.should eq({"routes/login.ts", 3})
+        {h.path, h.line}.should eq({File.join("routes", "login.ts"), 3})
       end
     end
   end
