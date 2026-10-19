@@ -343,12 +343,17 @@ describe "query verb reliability (#3139)" do
     Noir::CLI::Inspect::Row.compact(ep).guards.should be_empty
   end
 
-  it "names the shallowest declaration and counts the copies" do
+  it "names the first declaration outside a copy directory and counts the copies" do
     ep = endpoint("GET", "/api/Users", "app/data/static/codefixes/x_1.ts", 10)
     ep.details.code_paths << PathInfo.new("app/data/static/codefixes/x_2.ts", 10)
     ep.details.code_paths << PathInfo.new("app/server.ts", 391)
     row = Noir::CLI::Inspect::Row.compact(ep)
     {row.path, row.line, row.declarations}.should eq({"app/server.ts", 391, 3})
+    # Django lists the declaring app config first and its include chain after.
+    chain = endpoint("GET", "/basket/saved/", "src/oscar/apps/basket/apps.py")
+    chain.details.code_paths << PathInfo.new("src/oscar/config.py")
+    chain.details.code_paths << PathInfo.new("sandbox/urls.py")
+    Noir::CLI::Inspect::Row.compact(chain).path.should eq("src/oscar/apps/basket/apps.py")
     Noir::CLI::Inspect::Row.compact(endpoint("GET", "/one", "a.go", 1)).declarations.should be_nil
   end
 
