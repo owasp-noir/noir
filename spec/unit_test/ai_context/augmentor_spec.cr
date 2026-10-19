@@ -1549,7 +1549,7 @@ describe "NoirAIContext" do
       guarded = Endpoint.new("/rest/admin", "GET")
       guarded.details = Details.new(PathInfo.new(path, 2))
 
-      contexts = NoirAIContext.apply([named, guarded]).map { |ep| ep.ai_context.should_not be_nil }
+      contexts = NoirAIContext.apply([named, guarded]).map(&.ai_context.should_not(be_nil))
       contexts[0].guards.map(&.kind).should_not contain("auth_guard")
       contexts[1].guards.map(&.kind).should contain("auth_guard")
     end
