@@ -62,7 +62,31 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{"requests": 0})
 	})
 
+	// Named like guards, but their bodies only pass the request on.
+	refreshed := r.Group("/", TokenRefresher())
+	refreshed.GET("/session", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"session": true})
+	})
+	logged := r.Group("/logged")
+	logged.Use(LoginLogger())
+	logged.GET("/events", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"events": []string{}})
+	})
+
 	r.Run(":8080")
+}
+
+func TokenRefresher() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Next()
+	}
+}
+
+func LoginLogger() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		println("login", c.Request.URL.Path)
+		c.Next()
+	}
 }
 
 func Checkpoint() gin.HandlerFunc {

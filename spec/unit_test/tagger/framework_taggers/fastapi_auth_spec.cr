@@ -92,6 +92,31 @@ describe "FastAPIAuthTagger" do
     plain.tags.map(&.name).should eq(["auth"])
   end
 
+  # app/accounts.py imports `load_account` from loose_deps (checks nothing)
+  # and strict_deps (checks `is_admin`), which both define that name.
+  #  9: @router.get("/")                Depends(load_account)
+  # 14: @router.delete("/{account_id}") Depends(strict_deps.load_account)
+  it "judges a dependency by the module the route imports it from" do
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(fixture_base)
+    accounts = "#{fixture_base}/app/accounts.py"
+    loose = Endpoint.new("/accounts/", "GET", [] of Param, Details.new(PathInfo.new(accounts, 9)))
+    strict = Endpoint.new("/accounts/{account_id}", "DELETE", [] of Param, Details.new(PathInfo.new(accounts, 14)))
+
+    CodeLocator.instance.clear_all
+    Dir.glob("#{fixture_base}/**/*.py").each { |path| CodeLocator.instance.register_path(path) }
+    begin
+      FastAPIAuthTagger.new(noir_options).perform([loose, strict])
+    ensure
+      CodeLocator.instance.clear_all
+    end
+
+    loose.tags.should be_empty
+    strict.tags.map { |t| {t.name, t.description} }.should eq([
+      {"authz", "Protected by FastAPI Depends(strict_deps.load_account)"},
+    ])
+  end
+
   it "reads Annotated auth aliases, wrapped signatures and router dependencies" do
     CodeLocator.instance.clear_all
     tmpdir = File.tempname("fastapi_aliases")
