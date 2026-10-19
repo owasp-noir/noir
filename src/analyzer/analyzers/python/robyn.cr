@@ -89,6 +89,7 @@ module Analyzer::Python
             details = Details.new(PathInfo.new(path, deco.decorator_line + 1))
             endpoint = Endpoint.new(full_path, http_method, params, details)
             endpoint.protocol = "ws" if attr == "websocket"
+            endpoint.handler = handler_at(lines, def_index, path) if def_index >= 0
             result << endpoint
           end
         end

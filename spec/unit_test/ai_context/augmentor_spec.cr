@@ -1563,6 +1563,24 @@ describe "NoirAIContext" do
     end
   end
 
+  it "does not read a handler named authenticatedUsers as an authentication guard" do
+    source = <<-CODE
+      app.get('/rest/user/authentication-details', authenticatedUsers())
+      app.get('/rest/admin', authenticateUser(), listAdmins())
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      named = Endpoint.new("/rest/user/authentication-details", "GET")
+      named.details = Details.new(PathInfo.new(path, 1))
+      guarded = Endpoint.new("/rest/admin", "GET")
+      guarded.details = Details.new(PathInfo.new(path, 2))
+
+      contexts = NoirAIContext.apply([named, guarded]).map(&.ai_context.should_not(be_nil))
+      contexts[0].guards.map(&.kind).should_not contain("auth_guard")
+      contexts[1].guards.map(&.kind).should contain("auth_guard")
+    end
+  end
+
   it "classifies callees by what they do, not by a word in their name (#3139)" do
     source = <<-CODE
       count = session.exec(count_statement).one()

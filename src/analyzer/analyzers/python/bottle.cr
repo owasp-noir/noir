@@ -347,8 +347,10 @@ module Analyzer::Python
       )
 
       details = Details.new(PathInfo.new(path, line_index + 1))
+      handler = handler_at(lines, def_index, path)
       methods.each do |method|
         endpoint = Endpoint.new(route_path, method, details)
+        endpoint.handler = handler
         path_params.each { |p| endpoint.push_param(p) }
         # One handler serving several verbs: a body is only read on the ones
         # that can carry it.

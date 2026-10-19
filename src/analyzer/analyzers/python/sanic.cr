@@ -236,6 +236,7 @@ module Analyzer::Python
               get_endpoints(method, route_path, extra_params, codeblock_lines, full_prefix, route_attr).each do |endpoint|
                 details = Details.new(PathInfo.new(path, line_index + 1))
                 endpoint.details = details
+                endpoint.handler = handler_at(lines, _class_def_index, path)
 
                 handler_callees.each { |c| endpoint.push_callee(c) }
 
