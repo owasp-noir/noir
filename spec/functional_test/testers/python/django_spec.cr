@@ -178,6 +178,13 @@ expected_endpoints = [
     Param.new("pk", "", "path"),
   ]),
   Endpoint.new("/shop/vouchers/<int:pk>/remove/", "POST", [Param.new("pk", "", "path")]),
+  # `views.CatalogueView` is only a `get_classes(...)` re-binding; the
+  # class sits behind it and an `import ... as` in `search/__init__.py`.
+  Endpoint.new("/shop/catalogue/", "GET", [Param.new("sort", "", "query")]),
+  # Django's `PasswordResetView` is a FormView outside the scan.
+  Endpoint.new("/shop/password-reset/", "GET"),
+  Endpoint.new("/shop/password-reset/", "POST"),
+  Endpoint.new("/shop/login/", "GET"),
   # `urlpatterns += i18n_patterns(path('intl/', ...))` serves `/en/intl/`;
   # `{lang}` stands for the language-code segment so a real request path
   # still traces to the route.
@@ -218,9 +225,33 @@ describe "Django route lines", tags: "functional" do
     lines = tester.endpoints.to_h do |ep|
       {"#{ep.method} #{ep.url}", ep.details.code_paths.map { |cp| "#{File.basename(cp.path)}:#{cp.line}" }}
     end
-    lines["POST /shop/add/<int:pk>/"].should eq(["views.py:5", "apps.py:24", "urls.py:56"])
-    lines["POST /shop/vouchers/<int:pk>/remove/"].should eq(["views.py:17", "apps.py:25", "urls.py:56"])
-    lines["GET /shop/reports/daily/"].should eq(["views.py:506", "apps.py:12", "apps.py:23", "urls.py:56"])
+    lines["POST /shop/add/<int:pk>/"].should eq(["views.py:10", "apps.py:29", "urls.py:56"])
+    lines["POST /shop/vouchers/<int:pk>/remove/"].should eq(["views.py:22", "apps.py:30", "urls.py:56"])
+    lines["GET /shop/reports/daily/"].should eq(["views.py:506", "apps.py:12", "apps.py:28", "urls.py:56"])
     lines["GET /{lang}/intl/"].should eq(["views.py:506", "urls.py:62"])
+  end
+end
+
+describe "Django view resolution past the urlconf", tags: "functional" do
+  handlers = tester.endpoints.to_h { |ep| {"#{ep.method} #{ep.url}", ep.handler} }
+
+  it "follows a module-level re-export to the class that handles the route" do
+    handler = handlers["GET /shop/catalogue/"].not_nil!
+    handler.name.should eq("BrowseView")
+    handler.path.not_nil!.should end_with("fixture_shop/search/catalogue.py")
+    handler.line.should eq(6)
+  end
+
+  it "names Django's own view as the handler, without a location" do
+    %w[GET POST].each do |method|
+      handler = handlers["#{method} /shop/password-reset/"].not_nil!
+      handler.name.should eq("auth_views.PasswordResetView")
+      handler.path.should be_nil
+    end
+  end
+
+  it "leaves a same-named view from another package unnamed" do
+    handlers["GET /shop/login/"].should be_nil
+    handlers.has_key?("POST /shop/login/").should be_false
   end
 end
