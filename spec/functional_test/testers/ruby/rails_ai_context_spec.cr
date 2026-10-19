@@ -69,5 +69,21 @@ describe "--ai-context on Rails auth fixtures", tags: "functional" do
     destroy_context.signals.map(&.kind).should_not contain("identifier_input")
     destroy_context.signals.map(&.kind).should contain("idor")
     destroy_context.validators.should be_empty
+
+    # ApplicationController's `before_action :authenticate_user` only
+    # decodes a token when one is sent: no guard on the public actions.
+    articles_index = endpoints.find! { |ep| ep.method == "GET" && ep.url == "/articles" }
+    articles_index.ai_context.should_not be_nil
+    articles_index.ai_context.not_nil!.guards.should be_empty
+
+    # `get :feed, on: :collection` has routes.rb as its only code path; the
+    # `before_action :authenticate_user!, except: [:index, :show]` is read
+    # through the resolved handler.
+    feed_endpoint = endpoints.find! { |ep| ep.method == "GET" && ep.url == "/articles/feed" }
+    feed_endpoint.details.code_paths.all?(&.path.ends_with?("config/routes.rb")).should be_true
+    feed_context = feed_endpoint.ai_context
+    feed_context = feed_context.should_not be_nil
+    feed_context.guards.map(&.kind).should eq(["auth_guard"])
+    feed_context.guards[0].source.should eq("ruby_auth")
   end
 end
