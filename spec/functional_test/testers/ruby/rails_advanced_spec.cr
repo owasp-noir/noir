@@ -166,13 +166,17 @@ expected_endpoints = [
     Param.new("X-Ping", "", "header"),
   ]),
 
-  # devise_for :users — sample of generated routes
+  # devise_for :users — sample of generated routes. No app/models/user.rb
+  # in this fixture, so every Devise module's routes are kept.
   Endpoint.new("/users/sign_in", "GET"),
   Endpoint.new("/users/sign_in", "POST"),
   Endpoint.new("/users/sign_out", "DELETE"),
   Endpoint.new("/users/sign_up", "GET"),
+  Endpoint.new("/users/cancel", "GET"),
   Endpoint.new("/users", "POST"),
   Endpoint.new("/users/password/new", "GET"),
+  Endpoint.new("/users/confirmation", "POST"),
+  Endpoint.new("/users/unlock", "POST"),
 
   # mount Sidekiq::Web, at: "/sidekiq"
   Endpoint.new("/sidekiq", "GET"),
@@ -215,7 +219,7 @@ total_endpoints = 1 +  # root
                   3 +  # /up + /ping + legacy string-via match
                   3 +  # optional-segment routes /feed + /report/rss + optional scope
                   2 +  # %w[browse annotate].each unrolled to /repo/:id/browse + /annotate
-                  20 + # devise_for :users
+                  21 + # devise_for :users (full table, model not in scan)
                   1 +  # mount sidekiq
                   1 +  # multiline parenthesized get
                   3    # draw :external at root and under two scopes
