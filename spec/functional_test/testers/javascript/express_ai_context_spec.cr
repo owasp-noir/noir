@@ -18,7 +18,34 @@ describe "--ai-context on Express auth fixtures", tags: "functional" do
     app.analyze
 
     endpoints = app.endpoints
-    endpoints.size.should eq(16)
+    endpoints.size.should eq(25)
+
+    # The handler lives in routes/search.js: the route carries that body's
+    # query param, its callees (with the handler file as their path) and the
+    # sql sink built there, not just the `app.get(...)` line in server.js.
+    search = endpoints.find! { |ep| ep.method == "GET" && ep.url == "/rest/products/search" }
+    search.params.map { |p| {p.name, p.param_type} }.should eq([{"q", "query"}])
+    search.callees.map(&.name).should contain("models.sequelize.query().then().catch")
+    search.callees.first.path.should_not(be_nil).should end_with("express_auth/routes/search.js")
+    search.ai_context.should_not(be_nil).sinks.map(&.kind).should contain("sql")
+
+    # `app.use('/ftp/:file', servePublicFiles())`: the mounted definition
+    # answers the request itself, so it is a route under every method.
+    ftp = endpoints.select { |ep| ep.url == "/ftp/:file" }
+    ftp.map(&.method).sort.should eq(%w[DELETE GET HEAD OPTIONS PATCH POST PUT])
+    ftp.first.handler.try(&.name).should eq("servePublicFiles()")
+    ftp.first.callees.map(&.name).should contain("res.sendFile")
+    # It answers 403 to a bad file name, but it is the handler, not a guard.
+    ftp.first.ai_context.should_not(be_nil).guards.should be_empty
+
+    # A path-mounted guard or rate limiter is not a route: the mount only
+    # guards the routes declared under it.
+    endpoints.count { |ep| ep.url == "/rest/basket" }.should eq(0)
+    # A router factory on a path is the prefix of its own routes, not a route.
+    endpoints.count { |ep| ep.url == "/legacy" }.should eq(0)
+    endpoints.count { |ep| ep.url == "/legacy/:gid" }.should eq(1)
+    endpoints.count { |ep| ep.url == "/rest/user/reset-password" }.should eq(0)
+    endpoints.count { |ep| ep.url == "/rest/user/authentication-details" }.should eq(1)
 
     public_context = endpoints.find! { |ep| ep.method == "GET" && ep.url == "/public" }.ai_context
     public_context = public_context.should_not be_nil

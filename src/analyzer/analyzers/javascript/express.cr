@@ -77,6 +77,10 @@ module Analyzer::Javascript
         # Routes registered by calling a forwarding helper
         # (`setupApiRoute(router, 'get', '/:cid', …)`).
         extract_route_helper_calls(helper_scanner, path, content, result, include_callee)
+
+        # `app.use('/ftp/:file', servePublicFiles())`: a path-mounted
+        # handler that answers the request is a route for every method.
+        extract_use_handler_routes(path, content, result, include_callee)
       rescue e
         logger.debug "Parser failed for #{path}: #{e.message}, falling back to regex"
 
@@ -148,6 +152,52 @@ module Analyzer::Javascript
         callees.concat(handler_callees(handler_source, handler_start, content, path))
       end
       callees
+    end
+
+    USE_PATH_RE = /\b[A-Za-z_$][\w$]*\.use\s*\(\s*['"]([^'"]+)['"]\s*,/
+
+    # A mount whose last argument resolves to a definition that sends the
+    # response and never calls bare `next()` is a handler (juice-shop's
+    # `serveKeyFiles()`); one that calls `next()` is middleware (a guard, a
+    # decoder) and stays a mount. A Router mount is already a prefix, an
+    # inline closure has no name, and a package import (`swaggerUi.serve`)
+    # has no definition in the scan to read, so those three never register.
+    private def extract_use_handler_routes(path : String, content : String, result : Array(Endpoint), include_callee : Bool)
+      return unless content.includes?(".use")
+      return if Noir::JSRouteExtractor.minified_content?(content)
+      content = Noir::JSRouteExtractor.strip_js_comments(content)
+      prefixes = CodeLocator.instance.all(ExpressConstants.file_key(Noir::PathScope.expand(path)))
+      prefixes = [""] if prefixes.empty?
+
+      content.scan(USE_PATH_RE) do |m|
+        call_start = m.begin(0)
+        paren_open = content.index('(', call_start) || next
+        paren_close = Noir::JSRouteExtractor.find_matching_paren(content, paren_open) || next
+        args = split_top_level_args(content, paren_open + 1, paren_close)
+        next if args.size < 2
+        handler = Noir::JSHandlerResolver.resolve(args.last[0], content, path) || next
+        facts = Noir::JSRouteExtractor.handler_definition_facts(handler, include_callee) || next
+        next unless facts.responds
+
+        line = line_number_for_index(content, call_start)
+        # `/ftp(?!/quarantine)/:file`: a lookaround only constrains the
+        # segment, so `trace "GET /ftp/x"` should land on `/ftp/:file`.
+        mount_path = m[1].gsub(/\(\?[!=<][^)]*\)/, "")
+        prefixes.each do |prefix|
+          url = prefix.empty? ? mount_path : Noir::URLPath.join(prefix, mount_path)
+          FILE_ROUTE_METHODS.each do |method|
+            endpoint = Endpoint.new(url, method, Details.new(PathInfo.new(path, line)))
+            url.scan(/:(\w+)/) { |pm| endpoint.push_param(Param.new(pm[1], "", "path")) }
+            Noir::JSRouteExtractor.apply_handler_facts(endpoint, facts)
+            endpoint.handler = handler
+            result << endpoint
+          end
+        end
+      end
+    rescue e
+      # Auxiliary pass: its failure must not send the file to the regex
+      # fallback on top of the routes the parser already emitted.
+      logger.debug "Express use-handler pass failed for #{path}: #{e.message}"
     end
 
     private def analyze_with_regex(path : String, result : Array(Endpoint), static_dirs : Array(Hash(String, String)) = [] of Hash(String, String))
