@@ -109,6 +109,50 @@ describe "RubyAuthTagger" do
     FileUtils.rm_rf(tmpdir)
   end
 
+  it "reads an app-defined callback's body: a token decoder is no guard, a 401 is" do
+    CodeLocator.instance.clear_all
+    Dir.glob("#{fixture_base}/app/controllers/*.rb") { |path| CodeLocator.instance.register_path(path) }
+    articles_path = "#{fixture_base}/app/controllers/articles_controller.rb"
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(fixture_base)
+      # articles#index (line 4) inherits ApplicationController's
+      # `before_action :authenticate_user`, whose body only decodes an
+      # `Authorization` header when one is present.
+      index = Endpoint.new("/articles", "GET", [] of Param, Details.new(PathInfo.new(articles_path, 4)))
+      # posts#show (line 10) runs the app's own `authenticate_user!`, which
+      # answers `head :unauthorized`.
+      show = Endpoint.new("/posts/1", "GET", [] of Param, Details.new(PathInfo.new(controller_path, 10)))
+
+      RubyAuthTagger.new(noir_options).perform([index, show])
+
+      index.tags.should be_empty
+      show.tags.map(&.description).should eq(["Protected by authenticate_user! (app-defined, rejects in its body)"])
+    ensure
+      CodeLocator.instance.clear_all
+    end
+  end
+
+  it "reads the controller callbacks through the handler when the route is declared in routes.rb" do
+    CodeLocator.instance.clear_all
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(fixture_base)
+    routes_path = "#{fixture_base}/config/routes.rb"
+    articles_path = "#{fixture_base}/app/controllers/articles_controller.rb"
+
+    feed = Endpoint.new("/articles/feed", "GET", [] of Param, Details.new(PathInfo.new(routes_path, 4)))
+    feed.handler = Handler.new("articles#feed", articles_path, 12)
+    index = Endpoint.new("/articles", "GET", [] of Param, Details.new(PathInfo.new(routes_path, 3)))
+    index.handler = Handler.new("articles#index", articles_path, 4)
+
+    RubyAuthTagger.new(noir_options).perform([feed, index])
+
+    feed.tags.map(&.name).should eq(["auth"])
+    feed.tags[0].description.should contain("authenticate_user!")
+    index.tags.should be_empty
+  end
+
   it "inherits auth callbacks from parent controllers and concerns" do
     CodeLocator.instance.clear_all
     tmpdir = File.tempname("ruby_inherited_auth")

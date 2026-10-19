@@ -118,6 +118,9 @@ class RubyAuthTagger < FrameworkTagger
     @rails_by_name = Hash(String, Array(RailsClass)).new
     @scope_lines = Hash(String, ScopeLines).new
     @flagged_line_jumps = Hash(String, Array(Int32)).new
+    @rails_defs = Hash(String, Array({String, Int32})).new
+    @callback_guards = Hash(String, String?).new
+    @rejecting_defs = Hash(String, Bool).new
   end
 
   # A Ruby class or module under a `controllers` directory, with the
@@ -148,12 +151,29 @@ class RubyAuthTagger < FrameworkTagger
     end
   end
 
-  private def check_endpoint(endpoint : Endpoint)
+  # The locations to read guards from: the resolved handler (`articles#feed`
+  # at its `def` in the controller) first, then the code paths. A route
+  # declared only in `routes.rb` (`get :feed, on: :collection`) has the
+  # routes file as its one code path, where no `before_action` lives.
+  # ponytail: a handler without a line (inherited/implicit action) is not
+  # walked; its controller's callbacks still apply.
+  private def guard_locations(endpoint : Endpoint) : Array({String, Int32})
+    locations = [] of {String, Int32}
+    if (handler = endpoint.handler) && (path = handler.path) && (line = handler.line)
+      locations << {path, line}
+    end
     endpoint.details.code_paths.each do |path_info|
-      lines = read_file_lines(path_info.path)
+      if line = path_info.line
+        locations << {path_info.path, line}
+      end
+    end
+    locations.uniq!
+  end
+
+  private def check_endpoint(endpoint : Endpoint)
+    guard_locations(endpoint).each do |path, line_num|
+      lines = read_file_lines(path)
       next if lines.nil?
-      line_num = path_info.line
-      next if line_num.nil?
       # Skip stale/out-of-range line refs: a line beyond the content we
       # read would crash the lines[idx] walks below with IndexError.
       next if line_num < 1 || line_num > lines.size
@@ -164,17 +184,17 @@ class RubyAuthTagger < FrameworkTagger
       # Rails/Hanami: collect controller before_action authn *and* authz.
       # Returning after the first match used to drop Devise when a closer
       # `before_action :authorize` won the walk, and skipped body authorize.
-      flags = controller_line_flags(path_info.path, lines)
+      flags = controller_line_flags(path, lines)
       # The walk below starts over from every action, so it hops from flag
       # to flag rather than stepping past each unflagged line to the class.
-      jumps = nearest_match_above(@flagged_line_jumps, path_info.path, flags) { |flag| flag != 0 }
+      jumps = nearest_match_above(@flagged_line_jumps, path, flags) { |flag| flag != 0 }
       controller = check_controller_auth(lines, line_idx, flags, jumps)
       # skip_before_action only suppresses authentication callbacks — not
       # independent authorize / CanCanCan checks in the action body.
       unless controller[:skipped]
         authn_desc = controller[:authn]
         if authn_desc.nil? && (class_idx = controller[:class_idx])
-          authn_desc = inherited_authn(path_info.path, class_idx, extract_action_name(lines, line_idx))
+          authn_desc = inherited_authn(path, class_idx, extract_action_name(lines, line_idx))
         end
       end
       authz_desc = controller[:authz]
@@ -195,7 +215,7 @@ class RubyAuthTagger < FrameworkTagger
 
       # Sinatra/Rack patterns first, then Grape (before blocks, http_basic,
       # etc.), both over the same route scope.
-      scope = route_scope(path_info.path, lines, line_idx, endpoint.url)
+      scope = route_scope(path, lines, line_idx, endpoint.url)
       description = match_scope(scope, SINATRA_AUTH_PATTERNS) || match_scope(scope, GRAPE_AUTH_PATTERNS)
       if description
         endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "ruby_auth"))
@@ -273,11 +293,9 @@ class RubyAuthTagger < FrameworkTagger
       end
       registered = live_callbacks(current, skipped_callbacks)
 
-      unless skipped
-        BEFORE_ACTION_AUTHN_PATTERNS.each do |pattern, desc|
-          if registered.matches?(pattern) && applies_to_action?(current, action_name)
-            authn_desc ||= desc
-          end
+      if !skipped && applies_to_action?(current, action_name)
+        registered.scan(BEFORE_ACTION_CALLBACKS) do |line|
+          line[1].scan(/:(\w+[!?]?)/) { |name| authn_desc ||= callback_guard(name[1]) }
         end
       end
 
@@ -362,8 +380,8 @@ class RubyAuthTagger < FrameworkTagger
           callback = name[1]
           if m[1]?
             active.delete(callback)
-          elsif desc = BEFORE_ACTION_AUTHN_PATTERNS.find { |pattern, _| "before_action :#{callback}".matches?(pattern) }
-            active[callback] = desc[1]
+          elsif desc = callback_guard(callback)
+            active[callback] = desc
           end
         end
       end
@@ -415,13 +433,85 @@ class RubyAuthTagger < FrameworkTagger
           @rails_classes[{path, idx}] = klass
           (@rails_by_name[full] ||= [] of RailsClass) << klass
           stack << {klass, indent}
-        elsif stripped.matches?(/^def\s/)
+        elsif m = stripped.match(/^def\s+(?:self\.)?(\w+[!?]?)/)
+          (@rails_defs[m[1]] ||= [] of {String, Int32}) << {path, idx}
           def_indent = indent unless stripped.matches?(/\bend$|^def\s+[\w.?!]+(?:\([^)]*\))?\s*=[^=]/)
         elsif (top = stack.last?) && stripped.matches?(RAILS_CALLBACK_LINE)
           top[0].callbacks << stripped
         end
       end
     end
+  end
+
+  # Lines that end the request: a 401/403, a redirect, a raise, the
+  # `authenticate_or_request_with_*` / `request_http_*` helpers that answer
+  # 401 themselves, or a bang auth call.
+  CALLBACK_REJECTS = /\b(?:head\s+(?::unauthorized|:forbidden|401|403)|status:\s*(?::unauthorized|:forbidden|401|403)|redirect_to|redirect_back|raise|throw|halt|authenticate_or_request_with_http_\w+|request_http_\w+_authentication)\b|\w*auth\w*!/
+  # An `if` whose condition only asks whether a credential was sent: the
+  # rejection under it never fires for a request that carries none.
+  CREDENTIAL_PRESENT_IF = /^if\s+(?!.*(?:!|\bnot\b|\.(?:nil|blank|empty)\?)).*\b(?:request|params|cookies|session|token|header|bearer|jwt|authorization)\b/i
+
+  # The guard an authentication callback stands for, or nil when it is not
+  # one. A callback the app defines itself (under `controllers/`) is read
+  # rather than trusted by name: `before_action :authenticate_user` that
+  # only decodes an `Authorization` header when one is present is a token
+  # decoder, not a gate, and tagged every public action of the app. A name
+  # with no definition in the app (Devise's `authenticate_user!`) keeps
+  # its pattern description.
+  private def callback_guard(callback : String) : String?
+    return @callback_guards[callback] if @callback_guards.has_key?(callback)
+    desc = BEFORE_ACTION_AUTHN_PATTERNS.find { |pattern, _| "before_action :#{callback}".matches?(pattern) }.try(&.[1])
+    if desc
+      index_rails_classes unless @rails_indexed
+      if @rails_defs.has_key?(callback)
+        desc = body_rejects?(callback, Set(String).new) ? "#{callback} (app-defined, rejects in its body)" : nil
+      end
+    end
+    @callback_guards[callback] = desc
+  end
+
+  # Whether any definition of `name` can reject a request: a
+  # `CALLBACK_REJECTS` line, a `super` in the callback's own body (the
+  # library guard it overrides), or a call to another app method that can,
+  # that is not nested under a credential-presence `if` without an `else`.
+  # ponytail: nesting is read from indentation, and a condition is judged
+  # by its text; a guard spelled `if token_valid?(header) ... else head 401`
+  # is still read right, one hidden behind a positive credential check
+  # that rejects on its own branch is not.
+  private def body_rejects?(name : String, visited : Set(String)) : Bool
+    return @rejecting_defs[name] if @rejecting_defs.has_key?(name)
+    top = visited.empty?
+    return false unless visited.add?(name)
+    @rejecting_defs[name] = @rails_defs[name].any? do |path, def_idx|
+      next false unless lines = read_file_lines(path)
+      def_indent = line_indent(lines[def_idx])
+      body = [] of {Int32, String}
+      body << {def_indent, lines[def_idx].strip.sub(/^def\s+(?:self\.)?\w+[!?]?/, "")}
+      ((def_idx + 1)...lines.size).each do |idx|
+        stripped = lines[idx].strip
+        next if stripped.empty? || stripped.starts_with?('#')
+        break if line_indent(lines[idx]) <= def_indent
+        body << {line_indent(lines[idx]), stripped}
+      end
+      body.each_with_index.any? do |(_, text), i|
+        rejects = text.matches?(CALLBACK_REJECTS) || (top && text.matches?(/\bsuper\b/)) ||
+                  text.scan(/\b[a-z_]\w*[!?]?/).any? { |m| @rails_defs.has_key?(m[0]) && body_rejects?(m[0], visited) }
+        rejects && !credential_gated?(body, i)
+      end
+    end
+  end
+
+  # Whether `body[i]` sits under a `CREDENTIAL_PRESENT_IF` block (at any
+  # depth) that has no `else` / `elsif` between the `if` and the line.
+  private def credential_gated?(body : Array({Int32, String}), i : Int32) : Bool
+    indent = body[i][0]
+    (i - 1).downto(1) do |j|
+      next unless body[j][0] < indent
+      indent = body[j][0]
+      next unless body[j][1].matches?(CREDENTIAL_PRESENT_IF)
+      return true unless ((j + 1)...i).any? { |k| body[k][0] == indent && body[k][1].matches?(/^els(?:e|if)\b/) }
+    end
+    false
   end
 
   private def check_action_body_auth(lines : Array(String), action_line : Int32) : String?
