@@ -33,8 +33,10 @@ FunctionalTester.new("fixtures/javascript/apollo/", {
 # typeDefs uses a plain backtick template literal with a leading `#graphql` marker.
 FunctionalTester.new("fixtures/javascript/apollo_express/", {
   :techs     => 2,
-  :endpoints => 3,
+  :endpoints => 5,
 }, [
+  Endpoint.new("/api/graphql", "GET"),
+  Endpoint.new("/api/graphql", "POST"),
   Endpoint.new("/api/graphql#Query.ping", "POST", [
     Param.new("graphql_query_ping", "", "json"),
   ]),

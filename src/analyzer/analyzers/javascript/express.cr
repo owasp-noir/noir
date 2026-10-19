@@ -156,12 +156,23 @@ module Analyzer::Javascript
 
     USE_PATH_RE = /\b[A-Za-z_$][\w$]*\.use\s*\(\s*['"]([^'"]+)['"]\s*,/
 
+    # Deliberate exception to "no name lists": package-provided serving
+    # factories (`swaggerUi.serve`, `express.static`, `serveIndex`, …) have no
+    # definition in the scan to read, and register a `GET` route at the mount
+    # path (or `GET` + `POST` for GraphQL / Apollo middleware) rather than all
+    # seven methods.
+    PACKAGE_SERVING_GET_RE =
+      /\A(?:express\s*\.\s*static|serveStatic|serveIndex)\s*\(|\AswaggerUi\s*\.\s*(?:serve\b|setup\s*\()/
+    PACKAGE_SERVING_GRAPHQL_RE =
+      /\A(?:graphqlHTTP|createHandler|(?:[A-Za-z_$][\w$]*\s*\.\s*)?expressMiddleware)\s*\(/
+
     # A mount whose last argument resolves to a definition that sends the
     # response and never calls bare `next()` is a handler (juice-shop's
-    # `serveKeyFiles()`); one that calls `next()` is middleware (a guard, a
-    # decoder) and stays a mount. A Router mount is already a prefix, an
-    # inline closure has no name, and a package import (`swaggerUi.serve`)
-    # has no definition in the scan to read, so those three never register.
+    # `serveKeyFiles()`); so is an inline closure (`(req, res) => { res.send(…) }`)
+    # that obeys the same rule. One that calls `next()` is middleware (a guard,
+    # a decoder) and stays a mount; a Router mount is already a prefix. Package
+    # serving factories above have no definition in the scan and register their
+    # known serving verbs (`GET`, or `GET` + `POST` for GraphQL) at the mount path.
     private def extract_use_handler_routes(path : String, content : String, result : Array(Endpoint), include_callee : Bool)
       return unless content.includes?(".use")
       return if Noir::JSRouteExtractor.minified_content?(content)
@@ -175,14 +186,35 @@ module Analyzer::Javascript
         paren_close = Noir::JSRouteExtractor.find_matching_paren(content, paren_open) || next
         args = split_top_level_args(content, paren_open + 1, paren_close)
         next if args.size < 2
-        handler = Noir::JSHandlerResolver.resolve(args.last[0], content, path) || next
-        facts = Noir::JSRouteExtractor.handler_definition_facts(handler, include_callee) || next
-        next unless facts.responds
 
         line = line_number_for_index(content, call_start)
         # `/ftp(?!/quarantine)/:file`: a lookaround only constrains the
         # segment, so `trace "GET /ftp/x"` should land on `/ftp/:file`.
         mount_path = m[1].gsub(/\(\?[!=<][^)]*\)/, "")
+
+        if methods = package_serving_methods(args[1..])
+          prefixes.each do |prefix|
+            url = prefix.empty? ? mount_path : Noir::URLPath.join(prefix, mount_path)
+            methods.each do |method|
+              next if route_recorded_for_file?(result, path, url, method)
+              endpoint = Endpoint.new(url, method, Details.new(PathInfo.new(path, line)))
+              url.scan(/:(\w+)/) { |pm| endpoint.push_param(Param.new(pm[1], "", "path")) }
+              result << endpoint
+            end
+          end
+          next
+        end
+
+        last_source, last_start = args.last
+        handler = nil.as(Handler?)
+        facts = if resolved = Noir::JSHandlerResolver.resolve(last_source, content, path)
+                  handler = resolved
+                  Noir::JSRouteExtractor.handler_definition_facts(resolved, include_callee)
+                else
+                  Noir::JSRouteExtractor.inline_closure_facts(last_source, path, line_number_for_index(content, last_start), include_callee)
+                end
+        next unless facts && facts.responds
+
         prefixes.each do |prefix|
           url = prefix.empty? ? mount_path : Noir::URLPath.join(prefix, mount_path)
           FILE_ROUTE_METHODS.each do |method|
@@ -198,6 +230,15 @@ module Analyzer::Javascript
       # Auxiliary pass: its failure must not send the file to the regex
       # fallback on top of the routes the parser already emitted.
       logger.debug "Express use-handler pass failed for #{path}: #{e.message}"
+    end
+
+    private def package_serving_methods(handler_args : Array(Tuple(String, Int32))) : Array(String)?
+      handler_args.each do |arg_source, _|
+        stripped = arg_source.strip
+        return ["GET", "POST"] if stripped.matches?(PACKAGE_SERVING_GRAPHQL_RE)
+        return ["GET"] if stripped.matches?(PACKAGE_SERVING_GET_RE)
+      end
+      nil
     end
 
     private def analyze_with_regex(path : String, result : Array(Endpoint), static_dirs : Array(Hash(String, String)) = [] of Hash(String, String))

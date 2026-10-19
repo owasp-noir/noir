@@ -72,7 +72,13 @@ describe "--ai-context on Express auth fixtures", tags: "functional" do
     # and a route whose only argument is the guard has no handler.
     users = endpoints.find! { |ep| ep.method == "GET" && ep.url == "/api/Users" }
     users.handler.should be_nil
+    users.callees.should be_empty
     users.ai_context.should_not(be_nil).guards.map(&.name).should eq(["Express security.isAuthorized() (expressjwt) middleware"])
+
+    user_put = endpoints.find! { |ep| ep.method == "PUT" && ep.url == "/api/Users/:id" }
+    user_put.handler.should be_nil
+    user_put.callees.should be_empty
+    user_put.ai_context.should_not(be_nil).guards.map(&.name).should eq(["Express security.denyAll() (expressjwt) middleware"])
 
     login = endpoints.find! { |ep| ep.method == "POST" && ep.url == "/rest/user/login" }
     login.handler.try(&.name).should eq("login")

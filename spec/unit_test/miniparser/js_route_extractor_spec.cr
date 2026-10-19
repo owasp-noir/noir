@@ -1061,6 +1061,93 @@ describe Noir::JSRouteExtractor do
         file.delete
       end
     end
+
+    it "extracts destructured request parameters from signature" do
+      content = <<-JS
+        app.post('/sig-nested', ({ body: { title, count } }, res) => res.json({ title, count }));
+        app.get('/sig-alias', ({ query, headers }, res) => res.send(query.keyword + headers.authorization));
+        app.get('/sig-path/:fileId', ({ params }, res) => res.send(params.fileId));
+        app.get('/sig-cookies', ({ cookies: { token } }, res) => res.send(token));
+        JS
+      file = File.tempfile("noir_js_sig_destruct", ".js")
+      begin
+        File.write(file.path, content)
+        routes = Noir::JSRouteExtractor.extract_routes(file.path, content)
+        by_url = routes.to_h { |e| {e.url, e.params.map { |p| {p.name, p.param_type} }} }
+
+        by_url["/sig-nested"].should eq([{"title", "json"}, {"count", "json"}])
+        by_url["/sig-alias"].should eq([{"keyword", "query"}, {"authorization", "header"}])
+        by_url["/sig-path/:fileId"].should eq([{"fileId", "path"}])
+        by_url["/sig-cookies"].should eq([{"token", "cookie"}])
+      ensure
+        file.delete
+      end
+    end
+
+    it "extracts destructured variable declarations and optional chaining" do
+      content = <<-JS
+        app.post('/destruct-vars', (req, res) => {
+          const { id } = req.params;
+          const { auth } = req.headers;
+          const { token } = req.cookies;
+          const message = req.body?.messages;
+          const field = req.query?.fields;
+          res.json({ id, auth, token, message, field });
+        });
+        JS
+      file = File.tempfile("noir_js_opt_chain", ".js")
+      begin
+        File.write(file.path, content)
+        route = Noir::JSRouteExtractor.extract_routes(file.path, content).first
+        route.params.map { |p| {p.name, p.param_type} }.should eq([
+          {"messages", "json"},
+          {"fields", "query"},
+          {"auth", "header"},
+          {"token", "cookie"},
+          {"id", "path"},
+        ])
+      ensure
+        file.delete
+      end
+    end
+  end
+
+  describe "guard definitions and inline closures" do
+    it "marks expressjwt concise arrow as guard and empties callees" do
+      source = <<-JS
+        export const denyAll = () => expressJwt({ secret: '' + Math.random() } as any);
+        export const isAuthorized = () => expressJwt({ secret: 'sec' });
+        JS
+      file = File.tempfile("noir_guard_defs", ".js")
+      begin
+        File.write(file.path, source)
+        deny_handler = Handler.new("denyAll", file.path, 1)
+        deny_facts = Noir::JSRouteExtractor.handler_definition_facts(deny_handler, true).should_not be_nil
+        deny_facts.guard.should be_true
+        deny_facts.callees.should be_empty
+
+        auth_handler = Handler.new("isAuthorized", file.path, 2)
+        auth_facts = Noir::JSRouteExtractor.handler_definition_facts(auth_handler, true).should_not be_nil
+        auth_facts.guard.should be_true
+        auth_facts.callees.should be_empty
+      ensure
+        file.delete
+      end
+    end
+
+    it "reads inline closure facts for mounts" do
+      serving = "(req, res) => res.status(200).send('OK')"
+      facts = Noir::JSRouteExtractor.inline_closure_facts(serving, "/fake/path.js", 1, true).should_not be_nil
+      facts.responds.should be_true
+
+      mw = "(req, res, next) => next()"
+      mw_facts = Noir::JSRouteExtractor.inline_closure_facts(mw, "/fake/path.js", 1, true).should_not be_nil
+      mw_facts.responds.should be_false
+
+      err = "(err, req, res, next) => res.status(500).send(err)"
+      err_facts = Noir::JSRouteExtractor.inline_closure_facts(err, "/fake/path.js", 1, true)
+      err_facts.should be_nil
+    end
   end
 
   describe "large files" do
