@@ -176,7 +176,7 @@ module Analyzer::Go
         end
       end
       if is_bind_line
-        add_param_to_endpoint(Param.new("body", "", "json"), target)
+        add_param_to_endpoint(Param.new("body", "", bind_param_type(line)), target)
       end
       # Read accessor only: `.Cookie("name")`. The `.Cookie(` anchor excludes
       # Header.Get/Cookie.Get; the SetCookie exclusion avoids the write API.
@@ -185,6 +185,19 @@ module Analyzer::Go
         if match
           target.params << Param.new(match[1], "", "cookie")
         end
+      end
+    end
+
+    # Where a bind call reads from: `ShouldBindQuery(&q)` and
+    # `ShouldBindWith(&q, binding.Query)` read the query string, not a JSON
+    # body; `BindHeader` / `BindUri` the header / path; `binding.Form*` a form.
+    private def bind_param_type(line : String) : String
+      case line
+      when /Bind(?:Query)\s*\(|binding\.Query\b/ then "query"
+      when /BindHeader\s*\(|binding\.Header\b/   then "header"
+      when /BindUri\s*\(|binding\.Uri\b/         then "path"
+      when /binding\.Form(?:Post|Multipart)?\b/  then "form"
+      else                                            "json"
       end
     end
 

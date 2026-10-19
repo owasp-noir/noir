@@ -21,12 +21,18 @@ module Noir::JSCalleeExtractor
     "all"     => "ALL",
   }
   FALLBACK_RESERVED_CALLEES = Set{
+    "async", # `beforeLoad: async () => {` is a keyword before a paren, not a call
+    "await",
     "catch",
+    "do",
+    "else",
     "for",
     "function",
     "if",
+    "new",
     "return",
     "switch",
+    "typeof",
     "while",
   }
   EVENT_HANDLER_CALLS = Set{

@@ -53,6 +53,18 @@ describe Noir::JSCalleeExtractor do
     ])
   end
 
+  it "never reports a keyword before a paren as a callee" do
+    body = <<-TS
+
+        beforeLoad: async () => {
+          if (!(await isLoggedIn())) throw redirect({ to: "/login" })
+        }
+      TS
+
+    callees = Noir::JSCalleeExtractor.callees_for_function_body(body, "admin.tsx", 10, language: :typescript)
+    callees.map(&.[0]).should eq(["isLoggedIn", "redirect"])
+  end
+
   it "falls back for TypeScript-only syntax inside a method body" do
     body = <<-TS
 
