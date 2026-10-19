@@ -13,7 +13,6 @@ class GoAuthTagger < FrameworkTagger
     /\.Use\s*\(\s*(\w*[Aa]uth\w*)/,
     /\.Use\s*\(\s*(\w*JWT\w*)/i,
     /\.Use\s*\(\s*(\w*[Tt]oken\w*)/,
-    /\.Use\s*\(\s*(\w*[Ss]ession\w*)/,
     /\.Use\s*\(\s*(\w*[Pp]ermission\w*)/,
     /\.Use\s*\(\s*(\w*[Ll]ogin\w*)/,
     /\.Use\s*\(\s*(\w*RBAC\w*)/i,
@@ -74,7 +73,9 @@ class GoAuthTagger < FrameworkTagger
 
   # A name the loose `.Use(` patterns above would accept, applied to the
   # unqualified function name of a middleware argument.
-  AUTHISH_NAME = /auth|jwt|token|session|permission|login|rbac|acl/i
+  # `sessions.Sessions(store)` is a session *store*, not a check; a session
+  # middleware that rejects is found by reading its body.
+  AUTHISH_NAME = /auth|jwt|token|permission|login|rbac|acl/i
 
   # A middleware body that can refuse the request: a 401/403 status handed to
   # a reply or abort call (`AbortWithStatus(http.StatusUnauthorized)`,

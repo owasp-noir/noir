@@ -653,6 +653,7 @@ module Analyzer::Python
         fn_params = fn_codeblock_lines.empty? ? [] of Param : get_filtered_params(m, extract_request_params(fn_codeblock_lines))
         endpoint = Endpoint.new(fn_full_path, m, fn_params)
         endpoint.details = fn_details
+        endpoint.handler = handler_at(fn_lines, fn_def_index, fn_path) if fn_def_index
 
         unless fn_codeblock.nil? || fn_def_index.nil?
           push_callees_from(
@@ -842,6 +843,7 @@ module Analyzer::Python
             (prefixes || [prefix]).flat_map { |p| get_endpoints(method, route_path, method_extra_params, codeblock_lines, p) }.each do |endpoint|
               details = Details.new(PathInfo.new(path, line_index + 1))
               endpoint.details = details
+              endpoint.handler = handler_at(lines, _class_def_index, path)
 
               push_callees_from(
                 endpoint,
@@ -961,6 +963,7 @@ module Analyzer::Python
               details = Details.new(PathInfo.new(class_file, method_def_index + 1))
               endpoint = Endpoint.new(route_url, http_method, params.dup)
               endpoint.details = details
+              endpoint.handler = handler_at(class_lines, method_def_index, class_file)
 
               push_callees_from(
                 endpoint,
