@@ -4,6 +4,7 @@ from typing import FrozenSet, Optional,Union
 from fastapi_utils.cbv import cbv
 from typing_extensions import Annotated
 from fastapi.responses import JSONResponse
+from fastapi.security import OAuth2PasswordRequestForm
 from fastapi import FastAPI, Path, Query, status, Body, Header, Cookie, Depends, Security, Request, Response, APIRouter, WebSocket
 from pydantic import BaseModel, Field
 
@@ -242,3 +243,10 @@ async def patch_order(order_id: int, order: Optional[OrderBase] = None):
 @api.put("/orders/{order_id}")
 async def put_order(order_id: int, order: Annotated[OrderCreate, Body()]):
     return order
+
+
+@api.post("/login/access-token")
+def login_access_token(
+    form_data: Annotated[OAuth2PasswordRequestForm, Depends()]
+):
+    return {"user": form_data.username}
