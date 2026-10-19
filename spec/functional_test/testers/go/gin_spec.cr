@@ -58,6 +58,10 @@ expected_endpoints = [
   Endpoint.new("/inventory", "POST", [
     Param.new("body", "", "json"),
   ]),
+  # handlers.go: ShouldBindWith(&q, binding.Query) reads the query string
+  Endpoint.new("/filter", "GET", [
+    Param.new("body", "", "query"),
+  ]),
   # server.go: root route registered with an empty path directly on the
   # engine (unresolved/empty base_prefix) must surface as "/" instead of
   # vanishing.

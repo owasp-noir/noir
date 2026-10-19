@@ -398,7 +398,11 @@ struct Callee
   include YAML::Serializable
   property name, path, line
 
-  MAX_PER_ENDPOINT = 10
+  # A handler with ten framework calls before its one repository write
+  # (Spring's `POST .../pets/{petId}/edit`: validation, model, redirect,
+  # then `saveAndFlush`) lost the write at 10, and the write is what an
+  # agent asks for.
+  MAX_PER_ENDPOINT = 20
 
   def initialize(@name : String, @path : String? = nil, @line : Int32? = nil)
   end

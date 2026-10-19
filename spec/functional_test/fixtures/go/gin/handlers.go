@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin/binding"
 )
 
 // Separate handler function
@@ -36,6 +37,14 @@ func setupAdditionalRoutes(r *gin.Engine) {
 		n := 1
 		_ = c.DefaultQuery("page", strconv.Itoa(n))
 		_ = c.Query("limit")
+		c.JSON(http.StatusOK, nil)
+	})
+
+	// Query binding through the generic ShouldBindWith: the bound struct
+	// is read from the query string, not a JSON body.
+	r.GET("/filter", func(c *gin.Context) {
+		var q struct{ Page int }
+		_ = c.ShouldBindWith(&q, binding.Query)
 		c.JSON(http.StatusOK, nil)
 	})
 

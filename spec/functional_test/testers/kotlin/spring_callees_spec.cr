@@ -236,6 +236,7 @@ describe "--ai-context on Kotlin Spring constructor-injected callee expansion", 
     endpoint.callees.size.should eq(Callee::MAX_PER_ENDPOINT)
     names.should contain("budgetRepository.save")
     names.should contain("budgetRepository.deleteById")
-    names.count(&.starts_with?("budgetRepository.findAll")).should be < 9
+    # 19 reads and 2 writes compete for 20 slots; a read loses, never a write.
+    names.count(&.starts_with?("budgetRepository.findAll")).should be < 19
   end
 end
