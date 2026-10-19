@@ -86,7 +86,7 @@ module Noir::JSHandlerResolver
     # own path is reported (relative when the scan base was), so `reach`
     # matches both the same way.
     return resolved if Path[from_file].absolute?
-    Path[resolved].relative_to?(Dir.current).try(&.to_s) || resolved
+    Path[resolved].relative_to?(Dir.current).try(&.to_posix.to_s) || resolved
   end
 
   # 1-based line of `name`'s definition in `path`, by the shapes a handler
