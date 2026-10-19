@@ -629,7 +629,7 @@ module NoirAIContext
     end
 
     OBJECT_LOOKUP_PRIMARY_CALLEE_PATTERN  = /(?:^|\.)(?:findById|findOne|getOne|existsById|find\w*ById|find\w*By\w*Id|(?:find|count|exists)By\w*Id)\b/i
-    OBJECT_LOOKUP_FALLBACK_CALLEE_PATTERN = /(?:^|\.)(?:deleteById|removeById|get\w*ById|retrieve\w*)\b/i
+    OBJECT_LOOKUP_FALLBACK_CALLEE_PATTERN = /(?:^|\.)(?:deleteById|removeById|get\w*ById|retrieve\w*)\b|\b(?:session|db|repo|repository)\.get\b/i
 
     private def add_object_lookup_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
       return if context.signals.any? { |s| s.kind == "object_lookup" }

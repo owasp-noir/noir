@@ -1537,6 +1537,39 @@ describe "NoirAIContext" do
     end
   end
 
+  it "classifies callees by what they do, not by a word in their name (#3139)" do
+    source = <<-CODE
+      count = session.exec(count_statement).one()
+      r.Body = http.MaxBytesReader(w, r.Body, 8<<20)
+      safe := html.EscapeString(message)
+      item = session.get(Item, id)
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/items/{id}", "PUT")
+      endpoint.push_param(Param.new("id", "", "path"))
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+      endpoint.push_callee(Callee.new("session.exec", path, 1))
+      endpoint.push_callee(Callee.new("http.MaxBytesReader", path, 2))
+      endpoint.push_callee(Callee.new("html.EscapeString", path, 3))
+      endpoint.push_callee(Callee.new("session.get", path, 4))
+      endpoint.push_callee(Callee.new("session.commit", path, 4))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+      kinds = context.sinks.map(&.kind)
+      kinds.should contain("sql") # SQLModel's session.exec is a query
+      kinds.should_not contain("command_exec")
+      kinds.should_not contain("outbound_http")   # a body limiter makes no request
+      kinds.should_not contain("template_render") # escaping is not rendering
+      # `session.get(Item, id)` is the object lookup the write is scoped by.
+      context.signals.map(&.kind).should contain("object_lookup")
+      context.signals.map(&.kind).should_not contain("object_write")
+    end
+  end
+
   it "surfaces database query parameter binding as validator evidence" do
     source = <<-CODE
       suspend fun findOne(id: String): Post? =

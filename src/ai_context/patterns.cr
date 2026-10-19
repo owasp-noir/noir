@@ -13,7 +13,7 @@ module NoirAIContext
   # (`useCase.execute`), so they count as SQL only on a DB-ish
   # receiver. Raw SQL on any other receiver still surfaces through the
   # `select ... from` source pattern.
-  SQL_RECEIVER_CALL = /\b(?:\w*db|db\w*|database|\w*conn(?:ection)?|con|cursor|cur|_?cr|pool|session|tx|transaction|stmt|statement|knex|sequelize|pg\w*|mysqli?|sqlite3?|pdo|sqlx?|repo|queryRunner|manager|jdbcTemplate|entityManager|dataSource)(?:\.|->|::)(?:query|execute)\b/i
+  SQL_RECEIVER_CALL = /\b(?:\w*db|db\w*|database|\w*conn(?:ection)?|con|cursor|cur|_?cr|pool|session|tx|transaction|stmt|statement|knex|sequelize|pg\w*|mysqli?|sqlite3?|pdo|sqlx?|repo|queryRunner|manager|jdbcTemplate|entityManager|dataSource)(?:\.|->|::)(?:query|execute|exec)\b/i
 
   SINK_PATTERNS = [
     PatternDefinition.new(
@@ -35,7 +35,8 @@ module NoirAIContext
       "Potential command execution sink inferred from code or callee name",
       82,
       name_patterns: [/\bexec\b/i, /\bsystem\b/i, /\bspawn\b/i, /\bpopen\b/i, /\bshell\b/i],
-      source_patterns: [/\bexec\s*\(/i, /\bsystem\s*\(/i, /\bspawn\s*\(/i, /\bpopen\s*\(/i, /ProcessBuilder/i, /Runtime\.getRuntime/i, /subprocess\./i]
+      # `session.exec(` / `cursor.exec(` are queries, see SQL_RECEIVER_CALL.
+      source_patterns: [/(?<!session\.|cursor\.|conn\.|pool\.|stmt\.|db\.|tx\.|sql\.)\bexec\s*\(/i, /\bsystem\s*\(/i, /\bspawn\s*\(/i, /\bpopen\s*\(/i, /ProcessBuilder/i, /Runtime\.getRuntime/i, /subprocess\./i]
     ),
     PatternDefinition.new(
       "file_io",
@@ -55,7 +56,8 @@ module NoirAIContext
       "template_render",
       "Potential template/render sink inferred from code or callee name",
       62,
-      name_patterns: [/\brender\b/i, /\btemplate\b/i, /\bhtml\b/i, /\brespond\b/i],
+      # `html.EscapeString` / `html.escape` sanitize; they are not a render.
+      name_patterns: [/\brender\b/i, /\btemplate\b/i, /\bhtml\b(?!\.(?:un)?escape)/i, /\brespond\b/i],
       source_patterns: [/\brender(_template)?\s*\(/i, /\breturn\s+render\b/i, /\brespond_to\b/i]
     ),
     PatternDefinition.new(
@@ -64,7 +66,9 @@ module NoirAIContext
       64,
       name_patterns: [
         /\b(?:reqwest|hyper|hyper_util|ureq|surf|isahc|attohttpc|awc)::[A-Za-z_][A-Za-z0-9_:!]*/i,
-        /\bhttp\b/i,
+        # Go's net/http is also the server package: a body limiter, an
+        # error writer or a status constant makes no outbound request.
+        /\bhttp\b(?!\.(?:MaxBytesReader|Error|NotFound|SetCookie|Handle|HandleFunc|FileServer|StripPrefix|ListenAndServe|Status[A-Z]|Method[A-Z]|TimeoutHandler|DetectContentType|Cookie\b|Header\b|Request\b|ResponseWriter|Server\b|NewServeMux|ServeFile|ServeContent))/i,
         /\bfetch\b/i,
         /\bclient\b/i,
         /\baxios\b/i,
@@ -161,7 +165,7 @@ module NoirAIContext
       name_patterns: [/\binstance_eval\b/, /\bclass_eval\b/, /\bcreate_function\b/],
       source_patterns: [
         /\beval\s*\(/,
-        /\bexec\s*\(/, # Python's exec (overlaps with shell exec but resolved by context)
+        /(?<![\w.])exec\s*\(/, # Python's builtin exec; a method named exec is a query or a shell
         /\bcompile\s*\([^)]*,\s*['"]exec['"]/,
         /\bnew\s+Function\s*\(/,
         /\bFunction\s*\([^)]*\)\s*\(/,
@@ -181,7 +185,7 @@ module NoirAIContext
     # surface this shape and aren't necessarily vulnerable.
     PatternDefinition.new(
       "mass_assignment",
-      "Potential mass-assignment — request params written into a model without an explicit field allowlist",
+      "Request params written into a model (mass assignment); check that the field allowlist, if any, covers only the fields this route may set",
       60,
       name_patterns: [/\bupdate_attributes\b/, /\bassign_attributes\b/],
       source_patterns: [
