@@ -1,14 +1,15 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
+require "../../../miniparsers/js_handler_resolver"
+require "../../../utils/js_literal_scanner"
+require "../../../utils/top_level_split"
 require "../prefix_scope"
 
 @[Noir::TaggerFor(key: "express_auth", name: "Express Auth Tagger", desc: "Identifies Express.js authentication patterns (Passport, JWT, auth middleware)", order: 40)]
 class ExpressAuthTagger < FrameworkTagger
   include PrefixScope
 
-  PASSPORT_PATTERNS = [
-    /passport\.authenticate\s*\(/,
-  ]
+  PASSPORT_PATTERN = /passport\.authenticate\s*\(/
 
   # Passport strategies that *are* the login flow — `local` checks the
   # submitted password on `POST /login`, the OAuth/OIDC/SAML ones start or
@@ -33,6 +34,27 @@ class ExpressAuthTagger < FrameworkTagger
     /\bverifyToken\b/,
     /\bcheckAuth\b/,
   ]
+
+  # What a middleware's *definition* must be able to do to count as a guard
+  # whatever it is called: refuse the request. `jwt.verify(` alone is
+  # deliberately absent — a function that verifies a token and then calls
+  # `next()` unconditionally (juice-shop's `updateAuthenticatedUsers`) is
+  # not a guard, and it is `app.use()`d over every route.
+  REFUSING_DEFINITION = /\bexpress[jJ]wt\s*\(|\bpassport\.authenticate\s*\(|(?:\b\w+\.)?(?:status|sendStatus|send)\s*\(\s*40[13]\s*\)?|\bnext\s*\(\s*(?:new\s+)?\w*(?:Unauthori[sz]ed|Forbidden)\w*|\bcreateError\s*\(\s*40[13]\b|\bnext\s*\(\s*\{[^}]*\b40[13]\b/
+
+  # `(err, req, res, next)`: an error handler answers 401 *for* a guard;
+  # it is not one.
+  ERROR_HANDLER_SIGNATURE = /\(\s*err\w*\s*[,:]/
+
+  # A definition that answers the request itself, refusals aside: in the
+  # handler position that is the handler (`login()` answers 401 to a wrong
+  # password), not a guard in front of one.
+  HANDLER_RESPONSE = /\b(?:res|response)\s*\.\s*(?:json|send|render|redirect|sendFile|end|status)\s*\(/
+
+  # ponytail: brace/paren-counted spans; a registration whose closure runs
+  # past 60 lines or a definition past 40 is read truncated, not re-parsed.
+  MAX_STATEMENT_LINES  = 60
+  MAX_DEFINITION_LINES = 40
 
   # `app.use('/prefix', authMiddleware)` — the guarded path is spelled out, so
   # the rule can be matched against endpoint URLs anywhere in the scan (the
@@ -64,7 +86,11 @@ class ExpressAuthTagger < FrameworkTagger
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
     # Pre-scan: Find app.use() level auth middleware
     pre_scan_app_use_auth
-    super
+    # Endpoint is a struct: a cleared `handler` lives on the copy.
+    endpoints.each_with_index do |endpoint, idx|
+      endpoints[idx] = check_endpoint(endpoint)
+    end
+    endpoints
   end
 
   private def pre_scan_app_use_auth
@@ -82,11 +108,17 @@ class ExpressAuthTagger < FrameworkTagger
         lines.each_with_index do |line, idx|
           stripped = line.strip
           next unless stripped.includes?(".use")
-          next unless has_auth_middleware_in_line?(stripped)
+          next unless stripped.matches?(ROUTE_DECLARATION)
+          statement = Noir::CComments.strip(get_route_statement(lines, idx).join("\n"), quotes: %("'`))
+          guard = (call_args(statement) || [statement]).each do |arg|
+            found = guard_description(arg, file)
+            break found if found
+          end
+          next unless guard
 
           if match = stripped.match(MOUNTED_USE)
             prefix = match[1]
-            @mounted_auth_rules << {prefix: prefix, description: "Protected by Express app.use() auth middleware on #{prefix}"}
+            @mounted_auth_rules << {prefix: prefix, description: "#{guard} via app.use() on #{prefix}"}
           elsif match = stripped.match(BARE_USE)
             # A path-less `use(auth)` guards the routes registered on THIS
             # object, below THIS line — nothing else. Registering it as a
@@ -98,7 +130,7 @@ class ExpressAuthTagger < FrameworkTagger
               file:        expanded,
               receiver:    receiver,
               line:        idx + 1,
-              description: "Protected by Express #{receiver}.use() auth middleware",
+              description: "#{guard} via #{receiver}.use()",
             }
           end
         end
@@ -106,7 +138,7 @@ class ExpressAuthTagger < FrameworkTagger
     end
   end
 
-  private def check_endpoint(endpoint : Endpoint)
+  private def check_endpoint(endpoint : Endpoint) : Endpoint
     receiver_description = nil
 
     # Check route definition line for auth patterns
@@ -116,41 +148,20 @@ class ExpressAuthTagger < FrameworkTagger
       line_num = path_info.line
       next if line_num.nil?
 
-      # Check the route definition line and a few lines around it (same statement)
+      # The whole registration statement, argument by argument: any
+      # argument may be the guard, so each is read on its own.
       route_lines = get_route_statement(lines, line_num - 1) # 0-indexed
-      # Passport needs its strategy string; every other marker is an
-      # identifier, so match those against the code alone.
       route_text = Noir::CComments.strip(route_lines.join("\n"), quotes: %("'`))
-      route_code = code_only(route_text)
-
-      # Check for passport.authenticate in route definition
-      PASSPORT_PATTERNS.each do |pattern|
-        if route_text.matches?(pattern)
-          strategies = route_text.scan(/passport\.authenticate\s*\(\s*['"]([^'"]+)['"]/).map(&.[1])
-          strategy = strategies.empty? ? "unknown" : strategies.find { |name| !name.matches?(PASSPORT_LOGIN_STRATEGY) }
-          if strategy
-            endpoint.add_tag(Tag.new("auth", "Protected by Passport.js #{strategy} strategy", "express_auth"))
-            return
-          end
-        end
-      end
-
-      # Check for JWT middleware
-      JWT_MIDDLEWARE_PATTERNS.each do |pattern|
-        if route_code.matches?(pattern)
-          endpoint.add_tag(Tag.new("auth", "Protected by Express JWT middleware", "express_auth"))
-          return
-        end
-      end
-
-      # Check for generic auth middleware names in route definition
-      AUTH_MIDDLEWARE_NAMES.each do |pattern|
-        if route_code.matches?(pattern)
-          match = route_code.match(pattern)
-          middleware_name = match ? match[0] : "auth"
-          endpoint.add_tag(Tag.new("auth", "Protected by Express #{middleware_name} middleware", "express_auth"))
-          return
-        end
+      args = call_args(route_text)
+      (args || [route_text]).each_with_index do |arg, idx|
+        last = !args.nil? && idx == args.size - 1
+        description = guard_description(arg, path_info.path, handler_position: last) || next
+        endpoint.add_tag(Tag.new("auth", description, "express_auth"))
+        # `app.get('/api/Users', security.isAuthorized())`: the guard is the
+        # only callable, so the analyzer reported it as the handler. It is
+        # not one — the request falls through to the next match.
+        endpoint.handler = nil if args && idx == args.size - 1
+        return endpoint
       end
 
       receiver_description ||= check_receiver_use_auth(path_info.path, lines, line_num - 1)
@@ -162,6 +173,80 @@ class ExpressAuthTagger < FrameworkTagger
     if description
       endpoint.add_tag(Tag.new("auth", description, "express_auth"))
     end
+    endpoint
+  end
+
+  # Why `arg` (one argument of a registration, as written) guards the
+  # route, or nil. Passport needs its strategy string; the inline and named
+  # markers are identifiers, so they match the code alone; anything else is
+  # followed to its definition.
+  private def guard_description(arg : String, file : String, handler_position : Bool = false) : String?
+    if arg.matches?(PASSPORT_PATTERN)
+      strategies = arg.scan(/passport\.authenticate\s*\(\s*['"]([^'"]+)['"]/).map(&.[1])
+      strategy = strategies.empty? ? "unknown" : strategies.find { |name| !name.matches?(PASSPORT_LOGIN_STRATEGY) }
+      return strategy ? "Protected by Passport.js #{strategy} strategy" : nil
+    end
+
+    code = code_only(arg)
+    return "Protected by Express JWT middleware" if JWT_MIDDLEWARE_PATTERNS.any? { |pattern| code.matches?(pattern) }
+    AUTH_MIDDLEWARE_NAMES.each do |pattern|
+      if match = code.match(pattern)
+        return "Protected by Express #{match[0]} middleware"
+      end
+    end
+
+    if resolved = refusing_definition(arg, file, handler_position)
+      name, evidence = resolved
+      "Protected by Express #{name} (#{evidence}) middleware"
+    end
+  end
+
+  # `arg` resolved to its definition (same file or a relative import) and
+  # the marker there that lets it refuse a request; nil for an inline
+  # closure, a package import, a body that only decodes and continues, or
+  # — in the handler position — one that serves the request itself.
+  private def refusing_definition(arg : String, file : String, handler_position : Bool) : {String, String}?
+    content = read_file(file) || return
+    handler = Noir::JSHandlerResolver.resolve(arg, content, file) || return
+    path, line = handler.path, handler.line
+    return if path.nil? || line.nil?
+    body = definition_extent(read_file_lines(path) || return, line - 1)
+    return if body.first?.try(&.matches?(ERROR_HANDLER_SIGNATURE))
+    code = code_only(body.join("\n"))
+    evidence = code.match(REFUSING_DEFINITION) || return
+    return if handler_position && code.gsub(REFUSING_DEFINITION, "").matches?(HANDLER_RESPONSE)
+    {handler.name.gsub(/\s+/, ""), evidence[0].gsub(/\s+/, "").chomp('(')}
+  rescue
+    nil
+  end
+
+  # The lines of the definition starting at `idx`: a one-line arrow
+  # (`isAuthorized = () => expressJwt(...)`) is one line; a braced body runs
+  # to the brace that closes it.
+  private def definition_extent(lines : Array(String), idx : Int32) : Array(String)
+    result = [] of String
+    return result if idx < 0 || idx >= lines.size
+    depth = 0
+    i = idx
+    while i < lines.size && i < idx + MAX_DEFINITION_LINES
+      result << lines[i]
+      code = code_only(lines[i])
+      depth += code.count('{') - code.count('}')
+      break if depth <= 0
+      i += 1
+    end
+    result
+  end
+
+  # The arguments of the registration `statement` opens with (the `(`…`)`
+  # after its `.get(` / `.use(` / …), split at the top level so a closure
+  # body or an object literal stays one argument. Nil when the statement
+  # holds no registration.
+  private def call_args(statement : String) : Array(String)?
+    head = statement.match(ROUTE_DECLARATION) || return
+    open_paren = statement.index('(', head.begin(0)) || return
+    close_paren = Noir::JSLiteralScanner.find_matching_paren(statement, open_paren) || statement.size
+    Noir::TopLevelSplit.split(statement[open_paren + 1...close_paren], ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS)
   end
 
   # Get lines that make up a route statement (handles multi-line route definitions)
@@ -196,15 +281,15 @@ class ExpressAuthTagger < FrameworkTagger
     # while the statement is actually still open. The route line's own
     # parentheses say whether it is: `app.get('/x', (req, res) => { … });`
     # closes on itself, and reading one line past it attributed the NEXT
-    # route's `requireAuth` to this one.
-    depth = paren_depth(lines[line_idx])
+    # route's `requireAuth` to this one. Parentheses are counted on the
+    # code alone, so a `(` in a path literal or a trailing comment cannot
+    # hold the statement open.
+    depth = paren_depth(code_only(lines[line_idx]))
     i = line_idx + 1
-    while depth > 0 && i < lines.size && i <= line_idx + 3
-      stripped = lines[i].strip
-      break if stripped.empty?
-      break if stripped.matches?(ROUTE_DECLARATION)
+    while depth > 0 && i < lines.size && i < line_idx + MAX_STATEMENT_LINES
+      break if lines[i].strip.matches?(ROUTE_DECLARATION)
       result << lines[i]
-      depth += paren_depth(lines[i])
+      depth += paren_depth(code_only(lines[i]))
       i += 1
     end
 
@@ -282,12 +367,5 @@ class ExpressAuthTagger < FrameworkTagger
     end
 
     nil
-  end
-
-  private def has_auth_middleware_in_line?(line : String) : Bool
-    line = code_only(line)
-    PASSPORT_PATTERNS.any? { |p| line.matches?(p) } ||
-      JWT_MIDDLEWARE_PATTERNS.any? { |p| line.matches?(p) } ||
-      AUTH_MIDDLEWARE_NAMES.any? { |p| line.matches?(p) }
   end
 end

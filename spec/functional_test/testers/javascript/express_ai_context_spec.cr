@@ -18,7 +18,7 @@ describe "--ai-context on Express auth fixtures", tags: "functional" do
     app.analyze
 
     endpoints = app.endpoints
-    endpoints.size.should eq(5)
+    endpoints.size.should eq(16)
 
     public_context = endpoints.find! { |ep| ep.method == "GET" && ep.url == "/public" }.ai_context
     public_context = public_context.should_not be_nil
@@ -40,5 +40,15 @@ describe "--ai-context on Express auth fixtures", tags: "functional" do
     health_context = endpoints.find! { |ep| ep.method == "GET" && ep.url == "/api/health" }.ai_context
     health_context = health_context.should_not be_nil
     health_context.guards.should be_empty
+
+    # A middleware the tagger knows only by definition: the guard is named,
+    # and a route whose only argument is the guard has no handler.
+    users = endpoints.find! { |ep| ep.method == "GET" && ep.url == "/api/Users" }
+    users.handler.should be_nil
+    users.ai_context.should_not(be_nil).guards.map(&.name).should eq(["Express security.isAuthorized() (expressjwt) middleware"])
+
+    login = endpoints.find! { |ep| ep.method == "POST" && ep.url == "/rest/user/login" }
+    login.handler.try(&.name).should eq("login")
+    login.ai_context.should_not(be_nil).guards.should be_empty
   end
 end

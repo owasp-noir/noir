@@ -132,8 +132,10 @@ module NoirTaggers
   end
 
   private def self.run_framework_taggers(endpoints : Array(Endpoint), options : Hash(String, YAML::Any), use_taggers_arr : Array(String), logger : NoirLogger)
-    # Group endpoints by technology for efficient dispatch
-    endpoints_by_tech = endpoints.group_by(&.details.technology)
+    # Group endpoints by technology for efficient dispatch. Indices, not
+    # endpoints: Endpoint is a struct, so a tagger that changes a field
+    # (`handler = nil`) changes its copy, which is written back below.
+    endpoints_by_tech = (0...endpoints.size).to_a.group_by { |idx| endpoints[idx].details.technology }
     endpoints_by_tech.delete(nil)
     return if endpoints_by_tech.empty?
 
@@ -152,17 +154,19 @@ module NoirTaggers
       # logger and a base-path resolution just to be discarded.
       next unless is_all || use_taggers_arr.includes?(entry.key)
 
-      matching_endpoints = [] of Endpoint
+      matching_indices = [] of Int32
       target_techs(entry.key).each do |tech|
         if endpoints_by_tech.has_key?(tech)
-          matching_endpoints.concat(endpoints_by_tech[tech])
+          matching_indices.concat(endpoints_by_tech[tech])
         end
       end
 
-      next if matching_endpoints.empty?
+      next if matching_indices.empty?
+      matching_endpoints = matching_indices.map { |idx| endpoints[idx] }
 
       begin
         build(entry.key, options).try(&.perform(matching_endpoints))
+        matching_indices.each_with_index { |idx, pos| endpoints[idx] = matching_endpoints[pos] }
       rescue ex
         logger.warning "Framework tagger '#{entry.key}' failed: #{ex.message}"
       end

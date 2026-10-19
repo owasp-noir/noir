@@ -398,6 +398,95 @@ describe "ExpressAuthTagger" do
     FileUtils.rm_rf(tmpdir)
   end
 
+  # server.js line reference:
+  #  8: app.use(security.updateAuthenticatedUsers());            decodes and continues
+  # 11: app.use('/rest/basket', security.isAuthorized(), security.appendUserId());
+  # 20: app.get('/rest/2fa/status', security.isAuthorized(), asyncHandler(twoFactorStatus));
+  # 23: app.post('/rest/2fa/setup',  (rateLimit / security.isAuthorized() / handler on the lines below)
+  # 30: app.get('/api/Users', security.isAuthorized());
+  # 32:   .get(security.isAuthorized())
+  # 36: app.get('/rest/order-history/orders', security.isAccounting(), asyncHandler(listOrders));
+  # 39: app.get('/rest/basket/:id', asyncHandler(getBasket));
+  # 42: app.post('/rest/user/data-export', security.appendUserId(), asyncHandler(dataExport));
+  # 45: app.post('/rest/user/login', login);
+  # 49: app.get('/rest/user/authentication-details', asyncHandler(authenticatedUsers()));  mounted guard on 48
+  # 52: app.use(security.errorHandler);
+  # 53: app.get('/rest/users/list', asyncHandler(authenticatedUsers()));
+  describe "middleware resolved to its definition" do
+    server_path = "#{fixture_base}/server.js"
+
+    build = ->(method : String, url : String, line : Int32, handler : Handler?) do
+      details = Details.new(PathInfo.new(server_path, line))
+      details.technology = "js_express"
+      endpoint = Endpoint.new(url, method, [] of Param, details)
+      endpoint.handler = handler
+      endpoint
+    end
+
+    run = ->(endpoints : Array(Endpoint)) do
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(fixture_base)
+      locator = CodeLocator.instance
+      Dir.glob("#{fixture_base}/**/*").each do |file|
+        locator.register_path(file) unless File.directory?(file)
+      end
+      # The resolver follows `./lib/security` inside the scan base and
+      # caches what it finds: pin both, since other specs leave theirs.
+      previous_bases = locator.scan_base_paths
+      locator.scan_base_paths = [fixture_base]
+      Noir::JSHandlerResolver.reset
+      begin
+        ExpressAuthTagger.new(noir_options).perform(endpoints)
+      ensure
+        locator.scan_base_paths = previous_bases
+      end
+    end
+
+    it "treats a middleware whose definition can refuse as a guard, wherever it is written" do
+      endpoints = run.call([
+        build.call("GET", "/rest/2fa/status", 20, nil),
+        build.call("POST", "/rest/2fa/setup", 23, nil),
+        build.call("GET", "/rest/order-history/orders", 36, nil),
+        build.call("GET", "/rest/basket/:id", 39, nil),
+        build.call("GET", "/rest/user/authentication-details", 49, nil),
+      ])
+
+      endpoints.map { |ep| ep.tags.map(&.description) }.should eq([
+        ["Protected by Express security.isAuthorized() (expressjwt) middleware"],
+        ["Protected by Express security.isAuthorized() (expressjwt) middleware"],
+        ["Protected by Express security.isAccounting() (res.status(403)) middleware"],
+        ["Protected by Express security.isAuthorized() (expressjwt) middleware via app.use() on /rest/basket"],
+        ["Protected by Express security.isAuthorized() (expressjwt) middleware via app.use() on /rest/user/authentication-details"],
+      ])
+    end
+
+    it "clears the handler when the guard is the registration's only argument" do
+      guard = Handler.new("security.isAuthorized()", "#{fixture_base}/lib/security.js", 7)
+      endpoints = run.call([
+        build.call("GET", "/api/Users", 30, guard),
+        build.call("GET", "/api/Users/:id", 32, guard),
+        build.call("GET", "/rest/2fa/status", 20, Handler.new("twoFactorStatus", server_path, 59)),
+      ])
+
+      endpoints[0].tags.map(&.name).should eq(["auth"])
+      endpoints[0].handler.should be_nil
+      endpoints[1].handler.should be_nil
+      # A real handler after the guard stays.
+      endpoints[2].handler.try(&.name).should eq("twoFactorStatus")
+    end
+
+    it "does not count a middleware that only decodes and continues, a handler that answers 401, or an error handler" do
+      endpoints = run.call([
+        build.call("POST", "/rest/user/data-export", 42, nil),
+        build.call("POST", "/rest/user/login", 45, Handler.new("login", server_path, 64)),
+        build.call("GET", "/rest/users/list", 53, nil),
+      ])
+
+      endpoints.map(&.tags).should eq([[] of Tag, [] of Tag, [] of Tag])
+      endpoints[1].handler.try(&.name).should eq("login")
+    end
+  end
+
   it "does not read auth names in path literals or comments as middleware" do
     tmpdir = File.tempname("express_literals")
     Dir.mkdir_p(tmpdir)
