@@ -108,7 +108,19 @@ expected_endpoints = [
   ]),
 ]
 
-FunctionalTester.new("fixtures/java/micronaut/", {
+tester = FunctionalTester.new("fixtures/java/micronaut/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
-}, expected_endpoints).perform_tests
+}, expected_endpoints)
+tester.perform_tests
+
+describe "Micronaut interface-declared routes", tags: "functional" do
+  it "names the @Override, not the interface method" do
+    lookup = tester.endpoints.find! { |ep| ep.method == "GET" && ep.url == "/books/interface/{isbn}" }
+    lookup.details.code_paths.first.path.should end_with("BookApi.java")
+    handler = lookup.handler.should_not be_nil
+    handler.name.should eq("BookController.interfaceLookup")
+    handler.path.to_s.should end_with("BookController.java")
+    handler.line.should eq(162)
+  end
+end

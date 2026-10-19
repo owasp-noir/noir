@@ -100,7 +100,12 @@ module Analyzer::Java
               entry_route = entry.route
               implementation.paths.each do |implementation_path|
                 inherited_path = Noir::URLPath.join_trimmed(implementation_path, entry_route.path)
-                @result << jvm_route_endpoint(entry_route, Noir::URLPath.join_trimmed(base_path, inherited_path), entry.path)
+                endpoint = jvm_route_endpoint(entry_route, Noir::URLPath.join_trimmed(base_path, inherited_path), entry.path)
+                # The body lives on the `@Override`, not the interface method.
+                endpoint.handler = implementation.method_rows[entry_route.method_name]?.try do |row|
+                  Handler.new("#{implementation.class_name}.#{entry_route.method_name}", path, row + 1)
+                end
+                @result << endpoint
               end
             end
           end

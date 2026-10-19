@@ -58,6 +58,17 @@ expected_endpoints = [
   Endpoint.new("/api/users/legacy", "GET").tap do |ep|
     ep.push_callee(Callee.new("service.load", line: 39))
   end,
+
+  # `default` interface method no controller overrides.
+  Endpoint.new("/api/catalog/ping", "GET"),
+
+  # `@InitBinder` disallows `id` / `*.id`; the `@ControllerAdvice`
+  # disallows `secret` for every controller.
+  Endpoint.new("/binder/pets", "POST", [
+    Param.new("name", "", "form"),
+    Param.new("owner.city", "", "form"),
+  ]),
+  Endpoint.new("/binder/lookup", "GET", [Param.new("id", "", "query")]),
 ]
 
 tester = FunctionalTester.new("fixtures/java/spring_callees/", {
@@ -75,6 +86,27 @@ describe "Spring annotation handlers", tags: "functional" do
     legacy = tester.endpoints.find! { |ep| ep.method == "GET" && ep.url == "/api/users/legacy" }
     legacy.details.code_paths.first.line.should eq(43)
     legacy.handler.should eq(Handler.new("UserController.legacy", legacy.details.code_paths.first.path, 44))
+  end
+
+  it "names the @Override, not the interface method, for an interface-declared route" do
+    item = tester.endpoints.find! { |ep| ep.method == "GET" && ep.url == "/api/catalog/{id}" }
+    item.details.code_paths.first.path.should end_with("CatalogApi.java")
+    handler = item.handler.should_not be_nil
+    handler.name.should eq("CatalogApiController.getItem")
+    handler.path.to_s.should end_with("CatalogApiController.java")
+    handler.line.should eq(8)
+
+    ping = tester.endpoints.find! { |ep| ep.method == "GET" && ep.url == "/api/catalog/ping" }
+    ping.handler.should be_nil
+  end
+
+  it "drops the bound fields an @InitBinder disallows, but not an explicit @RequestParam" do
+    pets = tester.endpoints.find! { |ep| ep.method == "POST" && ep.url == "/binder/pets" }
+    pets.params.map(&.name).should_not contain("id")
+    pets.params.map(&.name).should_not contain("owner.id")
+    pets.params.map(&.name).should_not contain("secret")
+    lookup = tester.endpoints.find! { |ep| ep.method == "GET" && ep.url == "/binder/lookup" }
+    lookup.params.map(&.name).should eq(["id"])
   end
 
   it "attributes @ModelAttribute callees to every route of the controller" do

@@ -66,6 +66,8 @@ module Analyzer::Java
     INJECTED_META_RE          = Regex.union(Noir::TreeSitterJavaParameterExtractor::INJECTED_PARAM_ANNOTATIONS.map { |name| "@#{name}" })
     # `implements Formatter<PetType>` / `Converter<String, PetType>`: the target type.
     CONVERTER_TARGET_RE = /\b(?:Formatter|Converter)\s*<\s*(?:[\w.]+\s*,\s*)?(?:[\w]+\.)*(\w+)\s*>/
+    # `dataBinder.setDisallowedFields("id", "*.id")` in an `@InitBinder`.
+    DISALLOWED_FIELDS_RE = /\bsetDisallowedFields\s*\(([^)]*)\)/
 
     # `collect_interface_route_index` gates.
     INTERFACE_OR_ABSTRACT_RE  = Regex.union("interface", "abstract")
@@ -145,7 +147,7 @@ module Analyzer::Java
       # servlet context paths come from `path_config_for` (application.yml
       # / .properties under each project root).
       java_files = get_files_by_extension(".java").reject { |path| JavaEngine.test_path?(base_relative_path(path)) }
-      path_configs, spring_property_maps, stomp_prefixes, meta_annotation_index, interface_route_index, injected_annotation_index, converted_type_index =
+      path_configs, spring_property_maps, stomp_prefixes, meta_annotation_index, interface_route_index, injected_annotation_index, converted_type_index, advice_disallowed_index =
         build_spring_indexes(java_files)
 
       java_files.each do |path|
@@ -157,6 +159,8 @@ module Analyzer::Java
         injected_annotations = injected_annotation_index[project_root]?
         converted_types = converted_type_index[project_root]?
         content = read_file_content(path)
+        # ponytail: file-scoped, ignores `@InitBinder("name")` targets and advice selectors.
+        disallowed_fields = disallowed_binder_fields(content) + (advice_disallowed_index[project_root]? || [] of String)
         @result.concat(spring_security_endpoints(path, configured_base_path))
 
         # Only files that mention Spring MVC / Feign bindings carry
@@ -218,7 +222,7 @@ module Analyzer::Java
               parameters = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters_from(
                 root, content, route.class_name, route.method_name, route.verb, parameter_format, dto_index, route.line,
                 constants: file_constants, index: param_index, injected_annotations: injected_annotations,
-                converted_types: converted_types
+                converted_types: converted_types, disallowed_fields: disallowed_fields
               )
               merge_route_condition_params(parameters, route.params)
 
@@ -283,6 +287,13 @@ module Analyzer::Java
                       entry_route.verb, parameters, details
                     )
                     endpoint.route_conditions = implementation.params + entry_route.params
+                    # The body lives on the `@Override`, not the interface method;
+                    # no override in this class, no handler.
+                    param_index ||= Noir::TreeSitterJavaParameterExtractor.build_file_index(root, content)
+                    if (impl_method = param_index.methods["#{implementation.class_name}##{entry_route.method_name}"]?.try(&.first?)) &&
+                       (impl_row = Noir::TreeSitter.name_row(impl_method))
+                      endpoint.handler = Handler.new("#{implementation.class_name}.#{entry_route.method_name}", path, impl_row + 1)
+                    end
 
                     # The route is declared on the interface (springdoc /
                     # OpenAPI `*Api` contracts), but the behaviour — and
@@ -440,6 +451,7 @@ module Analyzer::Java
       SpringInterfaceRouteIndex,
       Hash(String, Set(String)),
       Hash(String, Set(String)),
+      Hash(String, Array(String)),
     )
       path_configs = Hash(String, SpringPathConfig).new
       spring_property_maps = Hash(String, Hash(String, String)).new
@@ -452,6 +464,8 @@ module Analyzer::Java
       # Per project root: types a registered `Formatter`/`Converter` builds
       # from one request value, so a nested field of that type stays scalar.
       converted_types = Hash(String, Set(String)).new
+      # Per project root: fields a `@ControllerAdvice` `@InitBinder` disallows for every controller.
+      advice_disallowed = Hash(String, Array(String)).new
       project_roots = Set(String).new
 
       java_files.each do |path|
@@ -461,6 +475,10 @@ module Analyzer::Java
         content = read_file_content(path)
         if content.includes?("implements")
           content.scan(CONVERTER_TARGET_RE) { |match| (converted_types[project_root] ||= Set(String).new) << match[1] }
+        end
+        if content.includes?("ControllerAdvice")
+          fields = disallowed_binder_fields(content)
+          (advice_disallowed[project_root] ||= [] of String).concat(fields) unless fields.empty?
         end
         # One union pass rejects the files that can feed neither index
         # before the two individual scans run.
@@ -506,7 +524,7 @@ module Analyzer::Java
       end
 
       interface_index = collect_interface_route_index(java_files, meta_index)
-      {path_configs, spring_property_maps, stomp_prefixes, meta_index, interface_index, injected_annotations, converted_types}
+      {path_configs, spring_property_maps, stomp_prefixes, meta_index, interface_index, injected_annotations, converted_types, advice_disallowed}
     end
 
     private def collect_interface_route_index(java_files : Array(String),
@@ -806,6 +824,15 @@ module Analyzer::Java
         after_idx += 1
       end
       after_idx < code.size && code[after_idx] == '('
+    end
+
+    private def disallowed_binder_fields(content : String) : Array(String)
+      fields = [] of String
+      return fields unless content.includes?("setDisallowedFields")
+      content.scan(DISALLOWED_FIELDS_RE) do |call|
+        call[1].scan(/"([^"]*)"/) { |literal| fields << literal[1] }
+      end
+      fields
     end
 
     # Names of the method-level `@ModelAttribute` methods of every class

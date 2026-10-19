@@ -13,7 +13,7 @@ module Noir
 
     # 0-based row of the function name: the signature line, below the
     # annotation stack that `node_start_row(func)` would report.
-    private def function_name_row(func : LibTreeSitter::TSNode) : Int32?
+    def function_name_row(func : LibTreeSitter::TSNode) : Int32?
       function_name_node(func).try { |node| Noir::TreeSitter.node_start_row(node) }
     end
 
@@ -42,6 +42,12 @@ module Noir
           yield entry[0], entry[1], Noir::TreeSitter.node_start_row(ann)
         end
       end
+    end
+
+    # Whether `decl` carries `@<name>` (simple name) in its own modifiers.
+    def annotated?(decl : LibTreeSitter::TSNode, source : String, name : String) : Bool
+      each_annotation(decl, source) { |ann_name, _, _| return true if ann_name == name }
+      false
     end
 
     private def find_modifiers(decl : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?

@@ -524,12 +524,14 @@ module Noir
       return if feign_client?(node, source)
 
       prefixes = join_prefixes(outer_prefixes, class_mapping_prefixes(node, source, pending, string_constants, local_string_constants))
+      # An interface function has no body; the implementing class supplies the handler.
+      has_handler = !interface_decl?(node, source)
 
       if body = class_body(node)
         Noir::TreeSitter.each_named_child(body) do |member|
           case Noir::TreeSitter.node_type(member)
           when "function_declaration"
-            collect_function_routes(member, source, class_name, prefixes, routes, string_constants, local_string_constants)
+            collect_function_routes(member, source, class_name, prefixes, routes, string_constants, local_string_constants, has_handler)
           when "class_declaration", "object_declaration", "interface_declaration"
             walk_classes(member, source, prefixes, routes, string_constants, local_string_constants, depth + 1)
           end
@@ -825,9 +827,10 @@ module Noir
                                         class_prefixes : Array(String),
                                         routes : Array(Route),
                                         string_constants : Hash(String, String),
-                                        local_string_constants : Hash(String, String))
+                                        local_string_constants : Hash(String, String),
+                                        has_handler : Bool = true)
       method_name = function_name(func, source)
-      signature_line = function_name_row(func)
+      signature_line = has_handler ? function_name_row(func) : nil
 
       each_annotation(func, source) do |ann_name, args, ann_line|
         next unless ANNOTATION_VERBS.has_key?(ann_name)
