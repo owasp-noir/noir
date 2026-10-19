@@ -32,7 +32,7 @@ describe "--ai-context on Express auth fixtures", tags: "functional" do
     # `app.use('/ftp/:file', servePublicFiles())`: the mounted definition
     # answers the request itself, so it is a route under every method.
     ftp = endpoints.select { |ep| ep.url == "/ftp/:file" }
-    ftp.map(&.method).sort.should eq(%w[DELETE GET HEAD OPTIONS PATCH POST PUT])
+    ftp.map(&.method).sort!.should eq(%w[DELETE GET HEAD OPTIONS PATCH POST PUT])
     ftp.first.handler.try(&.name).should eq("servePublicFiles()")
     ftp.first.callees.map(&.name).should contain("res.sendFile")
     # It answers 403 to a bad file name, but it is the handler, not a guard.
