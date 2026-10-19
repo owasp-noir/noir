@@ -167,7 +167,8 @@ expected_endpoints = [
   ]),
 
   # devise_for :users — sample of generated routes. No app/models/user.rb
-  # in this fixture, so every Devise module's routes are kept.
+  # in this fixture, so every default Devise module's routes are kept (and
+  # opt-in :omniauthable is not).
   Endpoint.new("/users/sign_in", "GET"),
   Endpoint.new("/users/sign_in", "POST"),
   Endpoint.new("/users/sign_out", "DELETE"),
@@ -177,6 +178,18 @@ expected_endpoints = [
   Endpoint.new("/users/password/new", "GET"),
   Endpoint.new("/users/confirmation", "POST"),
   Endpoint.new("/users/unlock", "POST"),
+
+  # devise_for :admins, only: [:sessions] and
+  # devise_for :members, only: [:sessions, :registrations], skip: [:registrations]
+  Endpoint.new("/admins/sign_in", "GET"),
+  Endpoint.new("/admins/sign_in", "POST"),
+  Endpoint.new("/admins/sign_out", "DELETE"),
+  Endpoint.new("/members/sign_in", "GET"),
+  Endpoint.new("/members/sign_in", "POST"),
+  Endpoint.new("/members/sign_out", "DELETE"),
+
+  # devise_scope :user do get 'login', to: 'devise/sessions#new' end
+  Endpoint.new("/login", "GET"),
 
   # mount Sidekiq::Web, at: "/sidekiq"
   Endpoint.new("/sidekiq", "GET"),
@@ -219,7 +232,10 @@ total_endpoints = 1 +  # root
                   3 +  # /up + /ping + legacy string-via match
                   3 +  # optional-segment routes /feed + /report/rss + optional scope
                   2 +  # %w[browse annotate].each unrolled to /repo/:id/browse + /annotate
-                  21 + # devise_for :users (full table, model not in scan)
+                  21 + # devise_for :users (default table, model not in scan)
+                  3 +  # devise_for :admins, only: [:sessions]
+                  3 +  # devise_for :members, only: [:sessions, :registrations], skip: [:registrations]
+                  1 +  # devise_scope :user do get 'login', ... end
                   1 +  # mount sidekiq
                   1 +  # multiline parenthesized get
                   3    # draw :external at root and under two scopes

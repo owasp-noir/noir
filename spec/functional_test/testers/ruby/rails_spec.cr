@@ -70,11 +70,13 @@ expected_endpoints = [
   Endpoint.new("/manifest", "GET"),
 
   # devise_for :users under `scope :api`: `path_names: { sign_in: :login }`
-  # renames the sessions path, and the model's `devise` line (no
-  # :confirmable / :lockable) leaves out the confirmation and unlock routes.
+  # renames the sessions path, `config.sign_out_via = :get` in
+  # `config/initializers/devise.rb` switches sign_out to GET, and the model's
+  # `devise` line (no :confirmable / :lockable, with :omniauthable) leaves out
+  # confirmation/unlock while adding the OmniAuth routes.
   Endpoint.new("/api/users/login", "GET"),
   Endpoint.new("/api/users/login", "POST"),
-  Endpoint.new("/api/users/sign_out", "DELETE"),
+  Endpoint.new("/api/users/sign_out", "GET"),
   Endpoint.new("/api/users/cancel", "GET"),
   Endpoint.new("/api/users/sign_up", "GET"),
   Endpoint.new("/api/users/edit", "GET"),
@@ -87,6 +89,10 @@ expected_endpoints = [
   Endpoint.new("/api/users/password/edit", "GET"),
   Endpoint.new("/api/users/password", "PATCH"),
   Endpoint.new("/api/users/password", "PUT"),
+  Endpoint.new("/api/users/auth/:provider", "GET"),
+  Endpoint.new("/api/users/auth/:provider", "POST"),
+  Endpoint.new("/api/users/auth/:provider/callback", "GET"),
+  Endpoint.new("/api/users/auth/:provider/callback", "POST"),
 
   # `resources :profiles, param: :username`: the member key is a path
   # segment, and the nested singular resource sees it as `profile_username`.
@@ -107,10 +113,14 @@ tester = FunctionalTester.new("fixtures/ruby/rails/", {
 }, expected_endpoints)
 tester.perform_tests
 
-it "reads fetch on bare params only, not on a *_params hash", tags: "functional" do
+it "reads subscript and fetch on bare params only, not on a *_params hash", tags: "functional" do
   show = tester.app.endpoints.find { |endpoint| endpoint.url == "/posts/1" && endpoint.method == "GET" }
   show.should_not be_nil
   show.not_nil!.params.map(&.name).should_not contain("theme")
+
+  login = tester.app.endpoints.find { |endpoint| endpoint.url == "/api/users/login" && endpoint.method == "POST" }
+  login.should_not be_nil
+  login.not_nil!.params.should be_empty
 end
 
 it "does not carry show's params into create through `render :show`", tags: "functional" do
@@ -133,4 +143,5 @@ it "emits no routes for Devise modules the model does not declare", tags: "funct
   urls.should_not contain("/api/users/sign_in")
   urls.any?(&.includes?("/confirmation")).should be_false
   urls.any?(&.includes?("/unlock")).should be_false
+  tester.app.endpoints.any? { |e| e.url == "/api/users/sign_out" && e.method == "DELETE" }.should be_false
 end

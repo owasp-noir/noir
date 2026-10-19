@@ -45,7 +45,16 @@ module Analyzer::Ruby
         {"POST", "%{unlock}", "unlocks", "create"},
         {"GET", "%{unlock}", "unlocks", "show"},
       ],
+      "omniauthable" => [
+        {"GET", "auth/:provider", "omniauth_callbacks", "passthru"},
+        {"POST", "auth/:provider", "omniauth_callbacks", "passthru"},
+        {"GET", "auth/:provider/callback", "omniauth_callbacks", "failure"},
+        {"POST", "auth/:provider/callback", "omniauth_callbacks", "failure"},
+      ],
     }
+    # Modules assumed when `app/models/<scope>.rb` is not in the scan.
+    # `:omniauthable` is opt-in and only emits routes when declared on the model.
+    DEVISE_DEFAULT_MODULES = %w[database_authenticatable registerable recoverable confirmable lockable]
     # Devise's `Mapping#default_path_names`: every key names itself except
     # `registration`, which is empty (`/users/sign_up`, not `/users/registration/sign_up`).
     DEVISE_PATH_NAMES = {"sign_in" => "sign_in", "sign_out" => "sign_out", "sign_up" => "sign_up",
@@ -423,7 +432,8 @@ module Analyzer::Ruby
         when "scope"          then handle_scope(args, opens_block, scan)
         when "controller"     then handle_controller(args, opens_block, scan)
         when "root"           then handle_root(args, scan)
-        when "devise_for"     then handle_devise_for(args, scan)
+        when "devise_for"     then handle_devise_for(args, opens_block, scan)
+        when "devise_scope"   then scan.stack << Frame.new(:neutral) if opens_block
         when "use_doorkeeper" then handle_use_doorkeeper(opens_block, scan)
         when "mount"          then handle_mount(args, scan)
         when "concerns"       then handle_concerns(args, scan)
@@ -595,45 +605,85 @@ module Analyzer::Ruby
     end
 
     # devise_for :users, path: "u", path_names: { sign_in: :login },
-    #                    controllers: { sessions: :sessions }
-    private def handle_devise_for(args : String, scan : RouteFileState)
+    #                    controllers: { sessions: :sessions },
+    #                    skip: [:registrations], only: [:sessions]
+    private def handle_devise_for(args : String, opens_block : Bool, scan : RouteFileState)
+      scan.stack << Frame.new(:neutral) if opens_block
       return unless m = args.match(/^\s*:(\w+)/)
       scope_name = m[1]
       # One flat parse: the keys inside Devise's `path_names:` and
       # `controllers:` hashes (sign_in, sessions, ...) never collide with
       # its top-level options, so nested hashes need no parser of their own.
       options = parse_options(args)
+      only_list = parse_symbol_list(options["only"]?)
+      skip_list = parse_symbol_list(options["skip"]?)
       prefix = current_path_prefix(scan.stack)
       base = "/#{prefix.empty? ? "" : "#{prefix}/"}#{options["path"]? || scope_name}"
       names = DEVISE_PATH_NAMES.merge(options.select(DEVISE_PATH_NAMES.keys))
 
       # Only the modules the model declares get routes: a `User` without
-      # `:confirmable` has no `/users/confirmation`. A model the scan cannot
-      # see (or one that gets its modules from a concern) keeps the full
-      # table rather than guessing.
+      # `:confirmable` has no `/users/confirmation`, and `:omniauthable`
+      # routes only exist when the model turns `:omniauthable` on. A model
+      # the scan cannot see keeps the default table rather than guessing.
       model = options["class_name"]?.try(&.underscore) || singularize(scope_name)
-      modules = devise_modules("#{scan.framework_root}/app/models/#{model}.rb") || DEVISE_MODULE_ROUTES.keys
+      modules = devise_modules("#{scan.framework_root}/app/models/#{model}.rb") || DEVISE_DEFAULT_MODULES
+      sign_out_verbs = devise_sign_out_verbs(scan.framework_root, options["sign_out_via"]?)
 
       modules.each do |mod|
         next unless routes = DEVISE_MODULE_ROUTES[mod]?
-        routes.each do |verb, template, group, action|
+        routes.each do |default_verb, template, group, action|
+          next unless devise_module_allowed?(mod, group, only_list, skip_list)
           url = "#{base}/#{template % names}".gsub(%r{/+}, "/").rchop('/')
           ctrl_name = options[group]? || "devise/#{group}"
           ctrl_path = find_controller_file(scan.framework_root, ctrl_name, scan.stack)
-          endpoint = Endpoint.new(url, verb, params_for_action(ctrl_path, action, verb), scan.details)
-          attach_callees_for_action(endpoint, ctrl_path, action)
-          endpoint.handler = handler_for_action(ctrl_path, action)
-          @result << endpoint
+          verbs = (group == "sessions" && action == "destroy") ? sign_out_verbs : [default_verb]
+          verbs.each do |verb|
+            action_params = params_for_action(ctrl_path, action, verb)
+            promote_path_params(action_params, url_param_names(url))
+            endpoint = Endpoint.new(url, verb, action_params, scan.details)
+            attach_callees_for_action(endpoint, ctrl_path, action)
+            endpoint.handler = handler_for_action(ctrl_path, action)
+            @result << endpoint
+          end
         end
       end
+    end
+
+    private def devise_module_allowed?(mod : String, group : String, only : Array(String), skip : Array(String)) : Bool
+      return false if skip.includes?("all")
+      singular = group.rchop('s')
+      return false if skip.includes?(mod) || skip.includes?(group) || skip.includes?(singular)
+      return true if only.empty?
+      only.includes?(mod) || only.includes?(group) || only.includes?(singular)
+    end
+
+    # `config.sign_out_via = :get` (or `[:get, :delete]`) in
+    # `config/initializers/devise.rb` overrides the HTTP verb(s) of Devise's
+    # `sign_out` route (`sessions#destroy`, default `DELETE`).
+    private def devise_sign_out_verbs(framework_root : String, option : String?) : Array(String)
+      verbs = parse_symbol_list(option).map(&.upcase).uniq!
+      return verbs unless verbs.empty?
+
+      init_path = "#{framework_root}/config/initializers/devise.rb"
+      if known_file?(init_path)
+        if m = ruby_source(init_path).match(/^\s*(?:config|Devise)\.sign_out_via\s*=\s*([^\n#]+)/m)
+          verbs = parse_symbol_list(m[1]).map(&.upcase).uniq!
+          return verbs unless verbs.empty?
+        end
+      end
+
+      ["DELETE"]
     end
 
     # The symbols of the model's `devise :a, :b, ...` declaration, which
     # may wrap over lines; nil when the file is missing or has no such line.
     private def devise_modules(model_path : String) : Array(String)?
       return unless known_file?(model_path)
-      return unless m = ruby_source(model_path).match(/^\s*devise\s+((?::\w+\s*,?\s*)+)/m)
-      parse_symbol_list(m[1])
+      source = ruby_source(model_path)
+      return unless m = source.match(/^\s*devise\s*\(?\s*((?::\w+\s*,?\s*(?:#[^\n]*)?\s*)+)/m)
+      mods = parse_symbol_list(m[1].gsub(/#[^\n]*/, ""))
+      mods << "omniauthable" if source.matches?(/\bomniauth_providers\s*:/) && !mods.includes?("omniauthable")
+      mods
     end
 
     # ponytail: ies/es/s rules only; `statuses` loses just the final `s`.
@@ -1013,10 +1063,12 @@ module Analyzer::Ruby
     end
 
     # Rails commonly writes compact inline route scopes:
-    # `collection { get "preview" }` / `member { post :use }`.
+    # `collection { get "preview" }` / `member { post :use }` /
+    # `devise_scope :user do get "login", to: "devise/sessions#new" end`.
     # The parser is stack-based, so normalize these to the same do/end
     # structure before route extraction.
-    INLINE_ROUTE_BLOCK = /^(member|collection|new)\s*\{\s*(.+?)\s*\}\s*$/
+    INLINE_ROUTE_BLOCK  = /^(member|collection|new)\s*\{\s*(.+?)\s*\}\s*$/
+    INLINE_DEVISE_SCOPE = /^devise_scope\b\s*\(?\s*(?::\w+|['"][^'"]+['"])\s*\)?\s*(?:\bdo\b\s*(.+?)\s*\bend|\{\s*(.+?)\s*\})\s*$/
 
     private def expand_inline_route_blocks(lines : Array(RouteLine)) : Array(RouteLine)
       result = [] of RouteLine
@@ -1026,6 +1078,14 @@ module Analyzer::Ruby
           # so they all report it.
           result << line.with_text("#{m[1]} do")
           result << line.with_text(m[2].strip)
+          result << line.with_text("end")
+        elsif m = line.text.match(INLINE_DEVISE_SCOPE)
+          body = (m[1]? || m[2]?).to_s
+          result << line.with_text("devise_scope do")
+          Noir::TopLevelSplit.split(body, ';', PERMIT_SPLIT).each do |stmt|
+            stripped = stmt.strip
+            result << line.with_text(stripped) unless stripped.empty?
+          end
           result << line.with_text("end")
         else
           result << line
@@ -1666,7 +1726,7 @@ module Analyzer::Ruby
         if buf = permit_buf
           if args = permit_args(buf, permit_mask)
             permit_buf = nil
-            names = permit_mask.match(PERMIT_OPEN).try(&.[0].starts_with?("params")) ? expect_names(args) : permit_names(args)
+            names = permit_mask.match(PERMIT_OPEN).try(&.[0].includes?("expect")) ? expect_names(args) : permit_names(args)
             names.each do |name|
               next if this_method.empty?
               params_body_by_action[this_method] ||= [] of Param
@@ -1681,12 +1741,12 @@ module Analyzer::Ruby
 
         # Every param source below is a `[ ... ]` subscript or a
         # `params.fetch(` / `params.dig(` call (on bare `params` only:
-        # `source_params.fetch(:x)` reads a nested key). A line with neither
-        # cannot match any of them, so skip the regex ops — this runs on
-        # every line of every controller in the app.
+        # `sign_in_params[:x]` / `source_params.fetch(:x)` read a nested key).
+        # A line with neither cannot match any of them, so skip the regex
+        # ops — this runs on every line of every controller in the app.
         line = folded_lines[index]
         if line.includes?('[') || line.includes?("params.")
-          line.scan(/(?:params\[|(?<![\w.])params\.(?:fetch|dig)\s*\()\s*(?::(\w+)|['"]([^'"]+)['"])\s*[\],)]/) do |m|
+          line.scan(/(?<![\w.])params(?:\[|\.(?:fetch|dig)\s*\()\s*(?::(\w+)|['"]([^'"]+)['"])\s*[\],)]/) do |m|
             name = (m[1]? || m[2]?).to_s.strip
             next if name.empty? || this_method.empty?
             params_body_by_action[this_method] ||= [] of Param
@@ -1722,8 +1782,9 @@ module Analyzer::Ruby
 
     PERMIT_MAX_LINES = 200
     PERMIT_SPLIT     = Noir::TopLevelSplit::Rules.new
-    # `permit(` or Rails 8's `params.expect(` (strong params in one call).
-    PERMIT_OPEN = /params\.expect\s*\(|permit\s*\(/
+    # `params.permit(`, `params.require(...).permit(`, `params.fetch(...).permit(`,
+    # or Rails 8's `params.expect(` (anchored to bare `params`).
+    PERMIT_OPEN = /(?<![\w.])params\.(?:expect\s*\(|(?:(?:require|fetch)\s*\([^)]*\)\s*\.)?permit\s*\()|(?<![\w.])permit\s*\(/
 
     # Text between the parens of the first `permit(` / `params.expect(`, or nil
     # while unbalanced. `mask` is `text` with string literals blanked (see

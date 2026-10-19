@@ -118,6 +118,9 @@ Rails.application.routes.draw do
   end
 
   devise_for :users
+  devise_for :admins, only: [:sessions]
+  devise_for :members, only: [:sessions, :registrations], skip: [:registrations]
+  devise_scope :user do get 'login', to: 'devise/sessions#new' end
 
   mount Sidekiq::Web, at: "/sidekiq"
 
