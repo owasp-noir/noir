@@ -81,7 +81,12 @@ module Noir::JSHandlerResolver
   private def resolve_specifier(from_file : String, specifier : String) : String?
     return unless specifier.starts_with?('.')
     boundary = CodeLocator.instance.scan_base_paths.find { |base| from_file.starts_with?(base) }
-    Noir::ImportGraph.resolve_relative_import(from_file, specifier, boundary: boundary)
+    resolved = Noir::ImportGraph.resolve_relative_import(from_file, specifier, boundary: boundary) || return
+    # ImportGraph expands to an absolute path; report it the way the route's
+    # own path is reported (relative when the scan base was), so `reach`
+    # matches both the same way.
+    return resolved if Path[from_file].absolute?
+    Path[resolved].relative_to?(Dir.current).try(&.to_s) || resolved
   end
 
   # 1-based line of `name`'s definition in `path`, by the shapes a handler
