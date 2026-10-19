@@ -32,15 +32,18 @@ also runs live (`noir trace "GET /x" ./app`) with the same output; use that
 for a one-off question, `--from` when you will ask more than once. A verb
 with `--from` rejects scan paths and flags, since nothing is scanned.
 
-Logs go to stderr; stdout carries only the answer. Exit codes follow grep:
-`0` matched, `1` nothing matched, `2` usage error.
+Logs and hints go to stderr; stdout carries only the answer (on a `trace`
+miss the candidates are the answer). Exit codes follow grep: `0` matched, `1`
+nothing matched, `2` usage error, including an unknown flag.
 
 ## Reading the output
 
 Default is one compact JSON row per endpoint (`-f jsonl`); `-f text` is the
-cheapest to read, `-f json` wraps rows in an array, `--full` emits the whole
-endpoint record (same schema as `scan -f jsonl --ai-context --include callee`).
-`--limit N` caps rows, `--count` prints only the number.
+cheapest to read, `-f json` wraps rows in an array. `--full` replaces the
+compact fields with `{"endpoint": {...}}`, the unchanged record in the
+`scan -f jsonl --ai-context --include callee` schema, keeping `matched_by` and
+`via` beside it; `-f text` prints its one line either way. `--limit N` caps
+rows (candidates too), `--count` prints only the number.
 
 ```
 PATCH /items/:id  src/handlers.go:18  go_gin  handler=updateItem@src/items.go:40  guards=authorized  sinks=sql  signals=path_param,idor_review  via=route@18,source:path.id@18
@@ -53,21 +56,30 @@ PATCH /items/:id  src/handlers.go:18  go_gin  handler=updateItem@src/items.go:40
  "signals":["path_param","idor_review"],"callees":["db.Exec","c.JSON"]}
 ```
 
-- `path:line` is where the route is *declared*. `handler` is where its body
-  *lives*, present when the analyzer resolved the definition (Go, Rails, Django,
-  Express and friends). Open `handler` first when you need the code.
+- `path:line` is where the route is *declared*. When the same route is
+  declared in several files (a fixture or vendored copy next to the real one),
+  `path` is the shallowest and `declarations=N` says how many; `--full` lists
+  them all. `handler` is where its body *lives*, present when the analyzer
+  resolved the definition (Go, Rails, Django, Express and friends). Open
+  `handler` first when you need the code.
 - `guards` are auth guards only; a rate limiter is not one. `sinks` and
   `signals` are kinds (`sql`, `command`, `file_io`, `outbound_http`,
   `template_render`, `redirect`, `mass_assignment`; `idor_review`, `ssrf`,
   `open_redirect`, `guard_absence`, ...). Empty buckets are omitted.
 - `reach` adds `via`: the evidence from the named file as `kind:name@line`
-  (route, handler, callee, guard, source, sink, validator). With `:LINE`,
-  evidence and rows are ordered by distance to the line and `nearest_line` is
-  set. Noir records declaration lines, not function spans, so the line orders
-  rather than filters.
-- `trace` prints `matched_by`: `exact`, `pattern` (one placeholder per
-  segment: `{id}`, `:id`, `<int:pk>`, `[id]`, `$id`, `*`) or `wildcard`
-  (`**`, `*path`, `{path*}`, `[...slug]`). Most specific route first. On a miss
+  (route, handler, callee, guard, source, sink, validator). When the suffix
+  names several files or the route was merged from copies, an entry outside
+  the row's own file carries its path (`callee:render@apps/b/main.go:12`).
+  With `:LINE`, evidence and rows are ordered by distance to the line and
+  `nearest_line` is set. Noir records declaration lines, not function spans,
+  so the line orders rather than filters; stderr says when no line was
+  recorded at all. Callee paths are the call site, so `reach` on a file that
+  only *defines* called functions is empty, and stderr says so.
+- `trace` prints `matched_by` (in text too): `exact`, `pattern` (one
+  placeholder per segment: `{id}`, `:id`, `<int:pk>`, `[id]`, `$id`, `*`) or
+  `wildcard` (`**`, `*path`, `{path*}`, `[...slug]`). Every matching route is
+  printed, most specific first; which one the framework dispatches to is its
+  rule, so take the first. A HEAD request traces to the GET route. On a miss
   it prints `candidates` (the closest routes by shared segments, case and
   one-typo tolerant) and exits 1, so the next guess is informed.
 
@@ -77,16 +89,24 @@ Filters AND together; a comma list inside one filter is OR.
 
 ```
 --method GET,POST        --url <glob|substr>      --path <glob|substr>
---handler <substr|glob>  --tech go_gin,python_django   --tag auth,admin
+--handler <glob|substr>  --tech go_gin,python_django   --tag auth,admin
 --param <name,..>        --param-type query,json,form,header,cookie,path
 --protocol http,ws,cli   --guard | --no-guard
 --sink <kind,..|any>     --source <kind,..|any>   --signal <kind,..|any>
+--validator <kind,..|any>
 ```
 
-A kind that no endpoint in the report carries is reported on stderr together
-with the kinds the report does have, so read stderr on an unexpected empty
-result. A report scanned without `--ai-context` has no guards, sinks, sources
-or signals at all, and the verb says so.
+A glob is one when it contains `*`, `?` or `[`: `*` crosses `/` (`'*users*'`
+finds `/accounts/users/`), `{id}` is literal (`'/owners/{ownerId}/*'` works as
+written), and a relative `--path` glob matches from any `/`. Without glob
+characters the value is a substring. `--param` with `--param-type` must be
+satisfied by the same parameter.
+
+A value that no endpoint in the report carries (a method, tech, tag, param,
+type, protocol or kind) is reported on stderr together with the values the
+report does have, so read stderr on an unexpected empty result. A report
+scanned without `--ai-context` has no guards, sinks, sources or signals at
+all, and the verb says so.
 
 ## Tracking a diff
 

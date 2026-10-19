@@ -9,7 +9,7 @@ require "../inspect"
 module Noir::CLI::QueryCommand
   # Filter flags and the `Filters` field each one fills. Every one takes a
   # value except the guard switches.
-  VALUE_FLAGS = %w[--method --url --path --handler --tech --tag --param --param-type --protocol --sink --source --signal]
+  VALUE_FLAGS = %w[--method --url --path --handler --tech --tag --param --param-type --protocol --sink --source --signal --validator]
 
   record Parsed, filters : Inspect::Filters, rest : Array(String), errors : Array(String)
 
@@ -36,10 +36,12 @@ module Noir::CLI::QueryCommand
           i += 1
           value = args[i]?
         end
-        if value.nil?
+        items = value.try(&.split(',').map(&.strip).reject(&.empty?)) || [] of String
+        # `--sink ''` would otherwise be no filter at all, silently.
+        if items.empty?
           errors << "#{name} requires a value"
         else
-          values[name].concat(value.split(',').map(&.strip).reject(&.empty?))
+          values[name].concat(items)
         end
       when "--"
         rest.concat(args[i..])
@@ -64,6 +66,7 @@ module Noir::CLI::QueryCommand
       sinks: values["--sink"],
       sources: values["--source"],
       signals: values["--signal"],
+      validators: values["--validator"],
     )
     Parsed.new(filters, rest, errors)
   end
@@ -94,20 +97,23 @@ module Noir::CLI::QueryCommand
 
       #{Noir::CLI.section("FILTERS:")}
         --method GET,POST      HTTP method
-        --url <glob|substr>    Route URL (glob when it contains * ? [, substring otherwise)
-        --path <glob|substr>   Source path as reported (a relative glob also matches as a suffix)
-        --handler <substr|glob> Handler name contains, or handler file matches
+        --url <glob|substr>    Route URL: a glob when it contains * ? [ (* crosses /, {id} is
+                               literal), a substring otherwise
+        --path <glob|substr>   Source path as reported (a relative glob also matches from any /)
+        --handler <glob|substr> Handler name, or handler file (same glob rules)
         --tech <name,...>      Technology (e.g. go_gin, python_django)
         --tag <name,...>       Tag name (auth, admin, ...)
         --param <name,...>     Parameter name
-        --param-type <t,...>   Parameter type (query, json, form, header, cookie, path)
+        --param-type <t,...>   Parameter type (query, json, form, header, cookie, path);
+                               with --param, one parameter must satisfy both
         --protocol <p,...>     http, ws, cli, ...
         --guard / --no-guard   Has / lacks an auth guard (ai_context.guards; rate limiting does not count)
         --sink <kind,...|any>  Reaches a sink of this kind (sql, command, file_io, outbound_http,
                                template_render, redirect, mass_assignment, ...)
         --source <kind|any>    Reads a source of this kind
         --signal <kind|any>    Carries a derived signal (idor_review, ssrf, open_redirect, ...)
-                               A kind no endpoint carries is reported on stderr with the kinds seen.
+        --validator <kind|any> Carries a validator of this kind
+                               A value no endpoint carries is reported on stderr with the values seen.
 
       #{Noir::CLI.section("EXAMPLES:")}
         noir query --no-guard --sink any ./app
