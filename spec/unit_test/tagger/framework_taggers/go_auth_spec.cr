@@ -203,6 +203,14 @@ describe "GoAuthTagger (middleware resolved from its definition)" do
   it "does not tag a route whose per-route middleware only logs" do
     tag_at.call("/metrics", "GET", 61).should be_empty
   end
+
+  it "does not let a guard-like name rescue a group middleware whose body only passes on" do
+    tag_at.call("/session", "GET", 67).should be_empty
+  end
+
+  it "does not let a guard-like name rescue a .Use middleware whose body only passes on" do
+    tag_at.call("/logged/events", "GET", 72).should be_empty
+  end
 end
 
 # Verify new Go framework targets (Hertz, Iris, GF) are supported by the same tagger

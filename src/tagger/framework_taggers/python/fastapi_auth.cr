@@ -1,6 +1,7 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 require "../../../analyzer/analyzers/python/python_helper"
+require "../../../miniparsers/import_graph"
 
 @[Noir::TaggerFor(key: "fastapi_auth", name: "FastAPI Auth Tagger", desc: "Identifies FastAPI authentication patterns (Depends, Security, OAuth2)", order: 100)]
 class FastAPIAuthTagger < FrameworkTagger
@@ -72,12 +73,20 @@ class FastAPIAuthTagger < FrameworkTagger
     @auth_aliases = Hash(String, String).new
     @dependency_aliases = Hash(String, String).new
     @authz_dependencies = Set(String).new
+    @file_aliases = Hash(String, Hash(String, String)).new
+    @authz_defs = Hash(String, Set(String)).new
+    @def_names = Hash(String, Set(String)).new
+    @imports = Hash(String, Hash(String, Tuple(String, String))).new
   end
 
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
     @auth_aliases.clear
     @dependency_aliases.clear
     @authz_dependencies.clear
+    @file_aliases.clear
+    @authz_defs.clear
+    @def_names.clear
+    @imports.clear
     collect_files_by_extension(".py").each do |path|
       content = read_file(path)
       next unless content
@@ -89,18 +98,18 @@ class FastAPIAuthTagger < FrameworkTagger
           end
           if dep = line.match(ANNOTATED_ALIAS_DEPENDENCY)
             @dependency_aliases[m[1]] = dep[2]
+            (@file_aliases[path] ||= Hash(String, String).new)[m[1]] = dep[2]
           end
         end
       end
-      index_authz_dependencies(content) if content.matches?(AUTHZ_FIELD)
+      index_authz_dependencies(path, content) if content.matches?(AUTHZ_FIELD)
     end
     super
   end
 
-  # Top-level `def`s whose body checks a role / ownership field, by bare
-  # name. ponytail: names are not scoped to their module, so two modules
-  # defining the same dependency name share one verdict.
-  private def index_authz_dependencies(content : String)
+  # Top-level `def`s whose body checks a role / ownership field, per file
+  # and (for the unresolved-import fallback) by bare name.
+  private def index_authz_dependencies(path : String, content : String)
     name : String? = nil
     body = [] of String
     (content.lines << "").each do |line|
@@ -110,6 +119,7 @@ class FastAPIAuthTagger < FrameworkTagger
       end
       if (current = name) && body.any?(&.matches?(AUTHZ_FIELD))
         @authz_dependencies << current
+        (@authz_defs[path] ||= Set(String).new) << current
       end
       body.clear
       name = line.match(PYTHON_DEF).try(&.[1])
@@ -129,11 +139,11 @@ class FastAPIAuthTagger < FrameworkTagger
       # declared on.
       header = handler_header(lines, line_num - 1)
       description = auth_desc(header)
-      authz = authz_desc(header)
+      authz = authz_desc(header, path_info.path)
       if (description.nil? || authz.nil?) && (receiver = header.match(ROUTE_DECORATOR).try(&.[1]))
         router = router_statement(lines, receiver)
         description ||= auth_desc(router)
-        authz ||= authz_desc(router)
+        authz ||= authz_desc(router, path_info.path)
       end
       authz ||= body_authz_desc(lines, line_num - 1)
       next if description.nil? && authz.nil?
@@ -144,22 +154,85 @@ class FastAPIAuthTagger < FrameworkTagger
     end
   end
 
-  # A `Depends(x)` / `Security(x)` (or an `Annotated` alias of one) whose
-  # definition checks a role / ownership field.
-  private def authz_desc(text : String) : String?
+  # A `Depends(x)` / `Security(x)` (or an `Annotated` alias of one) in
+  # route file `path` whose definition checks a role / ownership field.
+  private def authz_desc(text : String, path : String) : String?
     text.scan(DEPENDENCY_CALL) do |m|
-      return "FastAPI #{m[1]}(#{m[2]})" if authz_dependency?(m[2])
+      return "FastAPI #{m[1]}(#{m[2]})" if authz_dependency?(m[2], path)
     end
     text.scan(/:\s*(\w+)\b/) do |m|
-      if (callable = @dependency_aliases[m[1]]?) && authz_dependency?(callable)
+      alias_path, callable = resolve_alias(m[1], path)
+      if callable && authz_dependency?(callable, alias_path)
         return "FastAPI Depends(#{callable}) (#{m[1]})"
       end
     end
     nil
   end
 
-  private def authz_dependency?(callable : String) : Bool
-    @authz_dependencies.includes?(callable.split('.').last)
+  # The `Annotated` alias `name` as seen from `path`, with the file that
+  # declares it: the same file, else the module it is imported from, else
+  # any file declaring that alias name.
+  private def resolve_alias(name : String, path : String) : Tuple(String, String?)
+    if callable = @file_aliases[path]?.try(&.[name]?)
+      return {path, callable}
+    end
+    if (target = imported_symbols(path)[name]?) && (callable = @file_aliases[target[0]]?.try(&.[target[1]]?))
+      return {target[0], callable}
+    end
+    {path, @dependency_aliases[name]?}
+  end
+
+  # `callable` (`x` or `deps.x`) resolved from `path`: the same file's
+  # `def x`, else the module the file imports it from. When neither finds a
+  # definition (a re-export through `__init__.py`, an import we cannot
+  # resolve), fall back to the bare-name index, where two modules defining
+  # the same name share one verdict.
+  private def authz_dependency?(callable : String, path : String) : Bool
+    module_name, _, name = callable.rpartition('.')
+    file = nil
+    if module_name.empty?
+      if defines?(path, name)
+        file = path
+      elsif (symbol = imported_symbols(path)[name]?) && !symbol[1].empty?
+        file, name = symbol
+      end
+    elsif (symbol = imported_symbols(path)[module_name]?) && symbol[1].empty?
+      file = symbol[0]
+    end
+    if file && defines?(file, name)
+      return !!@authz_defs[file]?.try(&.includes?(name))
+    end
+    @authz_dependencies.includes?(name)
+  end
+
+  private def defines?(path : String, name : String) : Bool
+    names = @def_names[path] ||= begin
+      set = Set(String).new
+      read_file(path).try &.each_line { |line| line.match(PYTHON_DEF).try { |m| set << m[1] } }
+      set
+    end
+    names.includes?(name)
+  end
+
+  # What each import in `path` binds, `{declaring file, original name}`.
+  # An absolute import anchors at the package root, which the tagger does
+  # not know, so each ancestor directory inside the scan base is tried and
+  # the nearest one that resolves a name wins.
+  private def imported_symbols(path : String) : Hash(String, Tuple(String, String))
+    @imports[path] ||= begin
+      symbols = Hash(String, Tuple(String, String)).new
+      content = read_file(path) || ""
+      dir = File.dirname(path)
+      while @base_paths.any? { |base| dir.starts_with?(base) }
+        Noir::ImportGraph::Python.find_imported_symbols(dir, path, content).each do |local, target|
+          symbols[local] ||= target
+        end
+        parent = File.dirname(dir)
+        break if parent == dir
+        dir = parent
+      end
+      symbols
+    end
   end
 
   # The handler's own body: from its `def` to the next line at or above

@@ -8,17 +8,6 @@ require "../../../utils/top_level_split"
 class GoAuthTagger < FrameworkTagger
   include GoRouteGroupScope
 
-  # Middleware usage patterns in route groups
-  USE_AUTH_MIDDLEWARE_PATTERNS = [
-    /\.Use\s*\(\s*(\w*[Aa]uth\w*)/,
-    /\.Use\s*\(\s*(\w*JWT\w*)/i,
-    /\.Use\s*\(\s*(\w*[Tt]oken\w*)/,
-    /\.Use\s*\(\s*(\w*[Pp]ermission\w*)/,
-    /\.Use\s*\(\s*(\w*[Ll]ogin\w*)/,
-    /\.Use\s*\(\s*(\w*RBAC\w*)/i,
-    /\.Use\s*\(\s*(\w*ACL\w*)/i,
-  ]
-
   # JWT library patterns
   JWT_PATTERNS = [
     /echojwt\.\w+/,
@@ -71,10 +60,12 @@ class GoAuthTagger < FrameworkTagger
   # {"gin", "BasicAuth"}. A closure (`func(c *gin.Context) {`) is excluded.
   MIDDLEWARE_REFERENCE = /\A((?:\w+\s*\.\s*)*)(?!func\b)(\w+)\s*(?:\(|\z)/
 
-  # A name the loose `.Use(` patterns above would accept, applied to the
-  # unqualified function name of a middleware argument.
-  # `sessions.Sessions(store)` is a session *store*, not a check; a session
-  # middleware that rejects is found by reading its body.
+  # A name that reads as a guard, applied to a middleware argument
+  # (`gin.BasicAuth`, `echojwt.WithConfig`) only when its definition is not in
+  # the scan: a library constructor or an interface method. A definition that
+  # is found decides on its body, so `LoginLogger()` / `TokenRefresher()` that
+  # only pass the request on are not guards whatever they are called.
+  # `sessions.Sessions(store)` is a session *store*, not a check.
   AUTHISH_NAME = /auth|jwt|token|permission|login|rbac|acl/i
 
   # A middleware body that can refuse the request: a 401/403 status handed to
@@ -172,15 +163,6 @@ class GoAuthTagger < FrameworkTagger
 
     before = @middleware_scopes.size
 
-    # Check for .Use() with auth middleware
-    USE_AUTH_MIDDLEWARE_PATTERNS.each do |pattern|
-      match = stripped.match(pattern)
-      if match
-        middleware_name = match[1]
-        add_middleware_scope(scope, middleware_name, "Protected by Go middleware #{middleware_name}")
-      end
-    end
-
     # Check for JWT library middleware
     JWT_PATTERNS.each do |pattern|
       if stripped.matches?(pattern) && stripped.includes?(".Use")
@@ -191,7 +173,8 @@ class GoAuthTagger < FrameworkTagger
     end
     return unless before == @middleware_scopes.size
 
-    # No known name on the line: read each middleware argument's definition.
+    # Read each middleware argument's definition; its name counts only when
+    # the definition is not in the scan.
     middleware_args(stripped).each do |arg|
       description = guard_by_definition(arg, dir, authish_name: true)
       add_middleware_scope(scope, arg, description) if description
@@ -220,27 +203,30 @@ class GoAuthTagger < FrameworkTagger
   end
 
   # A tag description for middleware argument `arg` when its definition can
-  # reject the request, or (with `authish_name`) when its name says so; nil
-  # when it is a closure, unresolvable, or only passes the request on.
+  # reject the request, or (with `authish_name`) when the definition is not in
+  # the scan and its name says so; nil when it is a closure or only passes the
+  # request on.
   private def guard_by_definition(arg : String, dir : String, authish_name : Bool = false) : String?
     ref = arg.match(MIDDLEWARE_REFERENCE)
     return unless ref
     qualifier = ref[1].gsub(/\s+/, "").rchop('.')
     name = ref[2]
     display = qualifier.empty? ? name : "#{qualifier}.#{name}"
-    if rejecting_definition?(qualifier, name, dir)
+    case rejecting_definition?(qualifier, name, dir)
+    when true
       "Protected by Go middleware #{display} (verified from its body: replies 401/403)"
-    elsif authish_name && name.matches?(AUTHISH_NAME)
-      "Protected by Go middleware #{display}"
+    when nil
+      "Protected by Go middleware #{display}" if authish_name && display.matches?(AUTHISH_NAME)
     end
   end
 
   # Whether the function `qualifier.name`, resolved from the package in
-  # `dir`, replies 401/403 itself or through one unqualified helper it calls.
+  # `dir`, replies 401/403 itself or through one unqualified helper it calls;
+  # nil when no definition is found.
   # ponytail: same package plus a sibling package directory named like the
   # qualifier, one hop deep; a guard reached through an interface, a third
   # party module or a deeper call chain still resolves by name only.
-  private def rejecting_definition?(qualifier : String, name : String, dir : String) : Bool
+  private def rejecting_definition?(qualifier : String, name : String, dir : String) : Bool?
     bodies = [] of Noir::GoCalleeExtractor::FunctionBody
     if qualifier.empty?
       @bodies.functions_for(dir)[name]?.try { |body| bodies << body }
@@ -250,6 +236,7 @@ class GoAuthTagger < FrameworkTagger
         @bodies.functions_for(pkg)[name]?.try { |body| bodies << body }
       end
     end
+    return if bodies.empty?
     bodies.any? do |body|
       source = code_only(body.source)
       next true if source.matches?(REJECTS_REQUEST)
@@ -296,11 +283,10 @@ class GoAuthTagger < FrameworkTagger
         # only stop once we're past that first line.
         break if above_line.empty? && check_idx < line_idx - 1
 
-        USE_AUTH_MIDDLEWARE_PATTERNS.each do |pattern|
-          match = above_line.match(pattern)
-          if match
-            middleware_name = match[1]
-            endpoint.add_tag(Tag.new("auth", "Protected by Go #{middleware_name} middleware", "go_auth"))
+        if above_line.includes?(".Use")
+          middleware_args(above_line).each do |arg|
+            next unless description = guard_by_definition(arg, File.dirname(path_info.path), authish_name: true)
+            endpoint.add_tag(Tag.new("auth", description, "go_auth"))
             return
           end
         end
