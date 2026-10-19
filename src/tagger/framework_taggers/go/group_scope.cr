@@ -67,6 +67,12 @@ module GoRouteGroupScope
   # A `.Use(...)` / `.Pre(...)` middleware registration call.
   USE_CALL = /(\w+)\.(?:Use|Pre)\s*\(/
 
+  # `name := parent.Group("/seg", mw...)` — middleware handed to the group
+  # constructor instead of a later `.Use`; gin, Iris (`Party`) and Fiber all
+  # take it. The group is already in `Scopes#groups` by the time the line is
+  # yielded, so the scope is a lookup.
+  GROUP_WITH_MIDDLEWARE = /\A(\w+)\s*:?=\s*\w+\.(?:Group|Party)\s*\(\s*"[^"]*"\s*,/
+
   # `r.Group("/api").Use(auth)` — the group is created and the middleware
   # registered in one chained expression, so it is neither an assignment nor a
   # closure group. `USE_CALL` cannot see the receiver here (the character
@@ -81,6 +87,10 @@ module GoRouteGroupScope
     getter groups = {} of String => Scope
     # Open closure groups, each with the brace depth it lives above.
     getter frames = [] of NamedTuple(threshold: Int32, scope: Scope)
+    # Assignment groups that add no path segment (`authV1 := apiV1.Group("/")`,
+    # `clientAuth := g.Group("")`): their prefix is their parent's, so a
+    # prefix match cannot tell their routes from the parent's own.
+    getter aliases = Set(String).new
 
     # The innermost enclosing closure group, or Global at file scope.
     def current : Scope
@@ -128,15 +138,18 @@ module GoRouteGroupScope
 
       assigned =
         if m = stripped.match(ASSIGN_GROUP)
-          {m[1], scopes.extend(scopes.receiver(m[2]), m[3])}
+          {m[1], scopes.extend(scopes.receiver(m[2]), m[3]), m[3].delete('/').empty?}
         elsif m = stripped.match(ASSIGN_GROUP_ANY)
-          {m[1], UNKNOWN_SCOPE}
+          {m[1], UNKNOWN_SCOPE, false}
         end
 
       # Closure group: its prefix stays active until braces unwind.
       scopes.frames << {threshold: depth, scope: closure_scope} if closure_scope
       # Assignment group: remember the variable's scope for later `.Use`.
-      scopes.groups[assigned[0]] = assigned[1] if assigned
+      if assigned
+        scopes.groups[assigned[0]] = assigned[1]
+        scopes.aliases << assigned[0] if assigned[2]
+      end
 
       yield stripped, scopes
 
@@ -161,6 +174,14 @@ module GoRouteGroupScope
     return if receiver.nil?
 
     scopes.receiver(receiver)
+  end
+
+  # The scope the constructor middleware of `name := parent.Group("/seg",
+  # mw...)` guards, or nil when the line is not that shape.
+  def resolve_group_middleware_scope(stripped : String, scopes : Scopes) : Scope?
+    if m = stripped.match(GROUP_WITH_MIDDLEWARE)
+      scopes.groups[m[1]]?
+    end
   end
 
   # Join a base prefix and a new path segment into a normalized URL prefix:

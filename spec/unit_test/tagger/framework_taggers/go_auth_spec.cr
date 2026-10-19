@@ -150,6 +150,61 @@ describe "GoAuthTagger" do
   end
 end
 
+# A middleware whose name the lists do not know is still a guard when its
+# definition can answer 401/403 (gin-gonic/examples `versioning/main.go`
+# `Group("/", AuthMiddleWare())`, `cookie/main.go` `GET("/home", CookieTool(),
+# ...)`), and a middleware that only logs and calls `c.Next()` is not one
+# whatever position it is passed in.
+describe "GoAuthTagger (middleware resolved from its definition)" do
+  fixture_base = File.expand_path("../../../functional_test/fixtures/go/gin_auth", __DIR__)
+  main_path = "#{fixture_base}/main.go"
+
+  # main.go line reference:
+  # 42: v1 := r.Group("/v1")
+  # 43: v1.GET("/users", func(c *gin.Context) {
+  # 46: authV1 := v1.Group("/", Checkpoint())
+  # 47: authV1.POST("/users/add", func(c *gin.Context) {
+  # 52: r.GET("/home", CookieTool(), func(c *gin.Context) {
+  # 57: traced := r.Group("/traced", Trace())
+  # 58: traced.GET("/ping", func(c *gin.Context) {
+  # 61: r.GET("/metrics", Trace(), func(c *gin.Context) {
+  tag_at = ->(url : String, method : String, line : Int32) do
+    CodeLocator.instance.clear_all
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(fixture_base)
+    locator = CodeLocator.instance
+    Dir.glob("#{fixture_base}/**/*").each do |file|
+      next if File.directory?(file)
+      locator.register_path(file)
+    end
+    details = Details.new(PathInfo.new(main_path, line))
+    details.technology = "go_gin"
+    endpoint = Endpoint.new(url, method, [] of Param, details)
+    GoAuthTagger.new(noir_options).perform([endpoint])
+    endpoint.tags.map(&.description)
+  end
+
+  it "tags a group whose constructor middleware aborts with 401" do
+    tag_at.call("/v1/users/add", "POST", 47).should eq(["Protected by Go middleware Checkpoint (verified from its body: replies 401/403)"])
+  end
+
+  it "does not tag the parent group's own route that shares the prefix" do
+    tag_at.call("/v1/users", "GET", 43).should be_empty
+  end
+
+  it "tags a route whose per-route middleware replies 403" do
+    tag_at.call("/home", "GET", 52).should eq(["Protected by Go middleware CookieTool (verified from its body: replies 401/403)"])
+  end
+
+  it "does not tag a group whose constructor middleware only logs" do
+    tag_at.call("/traced/ping", "GET", 58).should be_empty
+  end
+
+  it "does not tag a route whose per-route middleware only logs" do
+    tag_at.call("/metrics", "GET", 61).should be_empty
+  end
+end
+
 # Verify new Go framework targets (Hertz, Iris, GF) are supported by the same tagger
 describe "GoAuthTagger (expanded targets)" do
   fixture_base = File.expand_path("../../../functional_test/fixtures/go/gin_auth", __DIR__)
@@ -244,11 +299,14 @@ describe "GoAuthTagger (root-group static-asset exemption)" do
   end
 
   it "still tags a non-static route covered only by the root-group scope" do
-    # `/data` lives far from the `.Use` line (no inline match), so it is
-    # tagged purely via the group scope — proving the exemption is narrow
-    # and does not drop genuinely protected routes.
-    endpoint = run_go_auth(root_group_fixture, "/data", "GET", 30)
+    # `/data` is registered on `clientAuth` with a bare handler (no inline
+    # match), so it is tagged purely via the group scope — proving the
+    # exemption is narrow and does not drop genuinely protected routes. A
+    # root group shares the engine's prefix, so the scope is credited only
+    # to routes registered on its variable.
+    endpoint = run_go_auth(root_group_fixture, "/data", "GET", 9)
     endpoint.tags.any? { |t| t.name == "auth" }.should be_true
+    run_go_auth(root_group_fixture, "/data", "GET", 30).tags.should be_empty
   end
 
   it "still tags a non-static route under a chained group .Use(auth)" do
