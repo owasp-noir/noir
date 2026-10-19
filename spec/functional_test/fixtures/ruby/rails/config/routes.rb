@@ -7,6 +7,18 @@ Rails.application.routes.draw do
 
   resources :articles, only: [:create, :update]
 
+  scope :api do
+    # `controllers:` swaps the sessions controller for the app's own and
+    # `path_names:` renames sign_in; the model picks the Devise modules.
+    devise_for :users, controllers: { sessions: :sessions },
+                       path_names: { sign_in: :login }
+
+    # `param:` renames the member key; nested routes see `profile_username`.
+    resources :profiles, param: :username, only: [:show] do
+      resource :follow, only: [:create, :destroy]
+    end
+  end
+
   query "search", to: "posts#index"
   match "filter", to: "posts#index", via: :query
   match "both", to: "posts#index", via: [:get, :query]
