@@ -428,7 +428,9 @@ module NoirAIContext
       source_patterns: [
         /passport\.authenticate/i,
         /expressjwt/i,
-        /\bauthenticate\w*\b/i,
+        # `authenticate(`, `authenticate_user!`, `authenticateUser`; not a
+        # handler *named* `authenticatedUsers`.
+        /\bauthenticate(?:_\w+|[A-Z]\w*)?!?\b/,
         /\bverifyToken\b/i,
         /\brequireAuth\b/i,
         /\blogin_required\b/i,

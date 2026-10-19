@@ -90,7 +90,13 @@ expected_endpoints = [
   Endpoint.new("/assets/*", "GET"),
 ]
 
-FunctionalTester.new("fixtures/python/flask_advanced/", {
+tester = FunctionalTester.new("fixtures/python/flask_advanced/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
-}, expected_endpoints).perform_tests
+}, expected_endpoints)
+tester.perform_tests
+
+it "names a MethodView handler as Class.method", tags: "functional" do
+  users_post = tester.app.endpoints.find! { |ep| ep.method == "POST" && ep.url == "/api/users" }
+  users_post.handler.should eq(Handler.new("UserAPI.post", "./spec/functional_test/fixtures/python/flask_advanced/app.py", 78))
+end
