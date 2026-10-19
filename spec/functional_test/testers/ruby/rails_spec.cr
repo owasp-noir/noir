@@ -75,20 +75,47 @@ expected_endpoints = [
   # `devise` line (no :confirmable / :lockable, with :omniauthable) leaves out
   # confirmation/unlock while adding the OmniAuth routes.
   Endpoint.new("/api/users/login", "GET"),
-  Endpoint.new("/api/users/login", "POST"),
+  Endpoint.new("/api/users/login", "POST", [
+    Param.new("email", "", "json"),
+    Param.new("password", "", "json"),
+  ]),
   Endpoint.new("/api/users/sign_out", "GET"),
   Endpoint.new("/api/users/cancel", "GET"),
   Endpoint.new("/api/users/sign_up", "GET"),
   Endpoint.new("/api/users/edit", "GET"),
-  Endpoint.new("/api/users", "PATCH"),
-  Endpoint.new("/api/users", "PUT"),
+  Endpoint.new("/api/users", "PATCH", [
+    Param.new("email", "", "json"),
+    Param.new("password", "", "json"),
+    Param.new("password_confirmation", "", "json"),
+    Param.new("current_password", "", "json"),
+  ]),
+  Endpoint.new("/api/users", "PUT", [
+    Param.new("email", "", "json"),
+    Param.new("password", "", "json"),
+    Param.new("password_confirmation", "", "json"),
+    Param.new("current_password", "", "json"),
+  ]),
   Endpoint.new("/api/users", "DELETE"),
-  Endpoint.new("/api/users", "POST"),
+  Endpoint.new("/api/users", "POST", [
+    Param.new("email", "", "json"),
+    Param.new("password", "", "json"),
+    Param.new("password_confirmation", "", "json"),
+  ]),
   Endpoint.new("/api/users/password/new", "GET"),
-  Endpoint.new("/api/users/password", "POST"),
+  Endpoint.new("/api/users/password", "POST", [
+    Param.new("email", "", "json"),
+  ]),
   Endpoint.new("/api/users/password/edit", "GET"),
-  Endpoint.new("/api/users/password", "PATCH"),
-  Endpoint.new("/api/users/password", "PUT"),
+  Endpoint.new("/api/users/password", "PATCH", [
+    Param.new("reset_password_token", "", "json"),
+    Param.new("password", "", "json"),
+    Param.new("password_confirmation", "", "json"),
+  ]),
+  Endpoint.new("/api/users/password", "PUT", [
+    Param.new("reset_password_token", "", "json"),
+    Param.new("password", "", "json"),
+    Param.new("password_confirmation", "", "json"),
+  ]),
   Endpoint.new("/api/users/auth/:provider", "GET"),
   Endpoint.new("/api/users/auth/:provider", "POST"),
   Endpoint.new("/api/users/auth/:provider/callback", "GET"),
@@ -113,14 +140,15 @@ tester = FunctionalTester.new("fixtures/ruby/rails/", {
 }, expected_endpoints)
 tester.perform_tests
 
-it "reads subscript and fetch on bare params only, not on a *_params hash", tags: "functional" do
+it "reads subscript and fetch on bare params only, while attaching Devise sign_in_params", tags: "functional" do
   show = tester.app.endpoints.find { |endpoint| endpoint.url == "/posts/1" && endpoint.method == "GET" }
   show.should_not be_nil
   show.not_nil!.params.map(&.name).should_not contain("theme")
 
   login = tester.app.endpoints.find { |endpoint| endpoint.url == "/api/users/login" && endpoint.method == "POST" }
   login.should_not be_nil
-  login.not_nil!.params.should be_empty
+  login.not_nil!.params.map { |p| "#{p.name}:#{p.param_type}" }.should eq(["email:json", "password:json"])
+  login.not_nil!.params.map(&.name).should_not contain("remember_token")
 end
 
 it "does not carry show's params into create through `render :show`", tags: "functional" do

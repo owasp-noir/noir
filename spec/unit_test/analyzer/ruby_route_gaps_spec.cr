@@ -297,5 +297,30 @@ describe "Ruby route gaps" do
     urls.should contain("GET /login")
     urls.should_not contain("GET /users/sign_up")
     urls.should_not contain("POST /users")
+    find_ep(endpoints, "POST", "/users/sign_in").params.map { |p| "#{p.name}:#{p.param_type}" }.should eq(%w[email:form password:form])
+  end
+
+  it "uses a subclass's redefined Devise param reader instead of Devise's built-in defaults" do
+    endpoints = scan_ruby_tree({
+      "Gemfile"                                   => RAILS_GEMFILE,
+      "app/controllers/application_controller.rb" => "class ApplicationController < ActionController::API\nend\n",
+      "app/controllers/sessions_controller.rb"    => <<-RUBY,
+        class SessionsController < Devise::SessionsController
+          private
+          def sign_in_params
+            params.require(:user).permit(:username, :otp)
+          end
+        end
+        RUBY
+      "config/routes.rb" => "Rails.application.routes.draw do\n  devise_for :users, controllers: { sessions: :sessions }\nend\n",
+    })
+
+    find_ep(endpoints, "POST", "/users/sign_in").params.map { |p| "#{p.name}:#{p.param_type}" }.should eq(%w[username:json otp:json])
+    find_ep(endpoints, "POST", "/users").params.map { |p| "#{p.name}:#{p.param_type}" }.should eq(%w[email:json password:json password_confirmation:json])
+    find_ep(endpoints, "PATCH", "/users").params.map { |p| "#{p.name}:#{p.param_type}" }.should eq(%w[email:json password:json password_confirmation:json current_password:json])
+    find_ep(endpoints, "POST", "/users/password").params.map { |p| "#{p.name}:#{p.param_type}" }.should eq(%w[email:json])
+    find_ep(endpoints, "PUT", "/users/password").params.map { |p| "#{p.name}:#{p.param_type}" }.should eq(%w[reset_password_token:json password:json password_confirmation:json])
+    find_ep(endpoints, "POST", "/users/confirmation").params.map { |p| "#{p.name}:#{p.param_type}" }.should eq(%w[email:json])
+    find_ep(endpoints, "POST", "/users/unlock").params.map { |p| "#{p.name}:#{p.param_type}" }.should eq(%w[email:json])
   end
 end
