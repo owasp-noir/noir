@@ -110,8 +110,13 @@ class ExpressAuthTagger < FrameworkTagger
           next unless stripped.includes?(".use")
           next unless stripped.matches?(ROUTE_DECLARATION)
           statement = Noir::CComments.strip(get_route_statement(lines, idx).join("\n"), quotes: %("'`))
-          guard = (call_args(statement) || [statement]).each do |arg|
-            found = guard_description(arg, file)
+          args = call_args(statement) || [statement]
+          # The last argument of `app.use('/ftp/:file', serveFiles())` is the
+          # mount's handler when its definition serves the request: it
+          # answers 403 to a bad name, which no more makes it a guard than
+          # `login()` answering 401 does.
+          guard = args.each_with_index do |arg, arg_idx|
+            found = guard_description(arg, file, handler_position: arg_idx == args.size - 1)
             break found if found
           end
           next unless guard

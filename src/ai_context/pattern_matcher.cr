@@ -65,6 +65,10 @@ module NoirAIContext
     private def suppress_pattern_detection?(kind : String, name : String, snippet : String?) : Bool
       case kind
       when "sql"
+        # A receiver-qualified call (`sequelize.query(...)`) is a database
+        # call whatever the lines around it read; the request-accessor gate
+        # below exists for a bare `query(`, not for this.
+        return false if name.matches?(SQL_RECEIVER_CALL)
         return true if name.matches?(/\b(URL\.Query|QueryParam|request\.query|req\.query|query_params|searchParams)\b/i)
         return true if snippet && snippet.matches?(/\b(URL\.Query\(\)\.Get|QueryParam\(|request\.query\.|req\.query\.|searchParams\.get)\b/i)
       when "template_render"

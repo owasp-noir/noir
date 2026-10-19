@@ -1363,6 +1363,32 @@ describe "NoirAIContext" do
     end
   end
 
+  it "keeps a receiver-qualified query call a sql sink when the request query is read beside it" do
+    # juice-shop `routes/search.ts`: the SQL is built from `req.query.q`
+    # two lines above `sequelize.query(...)`. The request-accessor gate is
+    # for a bare `query(`, not for a call on a database receiver.
+    source = <<-CODE
+      function searchProducts() {
+        return (req, res, next) => {
+          const criteria = req.query.q || ''
+          models.sequelize.query("SELECT * FROM Products WHERE name LIKE '%" + criteria + "%'")
+        }
+      }
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/rest/products/search", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+      endpoint.push_callee(Callee.new("models.sequelize.query", path, 4))
+      endpoint.push_param(Param.new("q", "", "query"))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.sinks.map(&.kind).should contain("sql")
+    end
+  end
+
   it "classifies Kotlin Spring document-store query callees separately from sql sinks" do
     source = <<-CODE
       suspend fun findOne(id: String): Post? =

@@ -367,6 +367,7 @@ module Noir
           context = Endpoint.new("", "")
           extract_params_from_context(offsets, pattern, context)
           handler = named_handler(content, start_byte, file_path)
+          handler_facts = handler ? handler_definition_facts(handler, include_callees) : nil
 
           # Handle router.all by expanding to all HTTP methods
           prefixes.each do |prefix|
@@ -386,6 +387,7 @@ module Noir
                 context.params.each { |param| endpoint.push_param(param) }
                 attach_callees(endpoint, callees_by_route, normalized_method, pattern.raw_path, line_number)
                 endpoint.handler = handler
+                apply_handler_facts(endpoint, handler_facts)
 
                 endpoints << endpoint
               end
@@ -400,6 +402,7 @@ module Noir
               context.params.each { |param| endpoint.push_param(param) }
               attach_callees(endpoint, callees_by_route, normalized_method, pattern.raw_path, line_number)
               endpoint.handler = handler
+              apply_handler_facts(endpoint, handler_facts)
 
               endpoints << endpoint
             end
@@ -1149,6 +1152,92 @@ module Noir
       # Best-effort field: a resolver error must not cost the route — the
       # per-file isolation above this would drop every route in the file.
       nil
+    end
+
+    # What a resolved handler's definition reads and calls. `app.get('/x',
+    # search())` in server.ts has nothing on its own line; the `req.query.q`
+    # and the `sequelize.query(...)` live in routes/search.ts, and an agent
+    # asking `--sink sql` needs them on the route. One hop: the definition's
+    # own body (for a factory, that includes the closure it returns), cached
+    # per definition because factories are reused across routes.
+    # `responds` says the body answers the request itself (sends and never
+    # calls bare `next()`), which is what tells a path-mounted handler from
+    # a path-mounted guard.
+    record HandlerFacts, params : Array(Param), callees : Array(JSCalleeExtractor::Entry), responds : Bool
+
+    RESPONDS_RE  = /\b(?:res|response|reply)\s*(?:\.status\s*\([^)]*\)\s*)?\.(?:send|sendFile|sendfile|json|jsonp|render|end|redirect|download|write)\s*\(/
+    BARE_NEXT_RE = /\bnext\s*\(\s*\)/
+    # A router factory (`module.exports = () => { router.get('/:id', …);
+    # return router }`) sends inside the routes it registers; it is a
+    # mount, not a handler.
+    ROUTER_BODY_RE = /\bRouter\s*\(|\breturn\s+\w*[rR]outer\b|\.(?:get|post|put|delete|patch|all|route)\s*\(\s*['"`]\//
+
+    @@handler_facts = Hash(UInt64, HandlerFacts).new
+    @@handler_facts_mutex = Mutex.new
+
+    Noir::ExtractionResultCache.register_clearer do
+      @@handler_facts_mutex.synchronize { @@handler_facts.clear }
+    end
+
+    def self.handler_definition_facts(handler : Handler, include_callees : Bool) : HandlerFacts?
+      path = handler.path || return
+      line = handler.line || return
+      key = ExtractionResultCache.key(path, "js_handler_facts", line.to_s, include_callees ? "callees" : "")
+      ExtractionResultCache.fetch(@@handler_facts, key, @@handler_facts_mutex) do
+        read_handler_facts(path, line, include_callees)
+      end
+    rescue
+      # Same contract as `named_handler`: never cost the route.
+      nil
+    end
+
+    def self.apply_handler_facts(endpoint : Endpoint, facts : HandlerFacts?)
+      return unless facts
+      facts.params.each { |param| endpoint.push_param(param) }
+      facts.callees.each do |name, callee_path, callee_line|
+        endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
+      end
+    end
+
+    private def self.read_handler_facts(path : String, line : Int32, include_callees : Bool) : HandlerFacts
+      content = strip_js_comments(TextFile.read(path))
+      line_start = 0
+      (line - 1).times do
+        line_start = (content.byte_index('\n', line_start) || return empty_handler_facts) + 1
+      end
+      line_end = content.byte_index('\n', line_start) || content.bytesize
+      # The body brace is the one after `=>` when the line is an arrow, so a
+      # `Request<{ id: string }>` annotation is not taken for the body.
+      # ponytail: a brace on a later line (a signature that wraps) and a
+      # concise arrow (`= () => expressJwt(...)`) yield the definition line only.
+      brace_from = content.byte_index("=>", line_start) || line_start
+      brace_from = line_start if brace_from >= line_end
+      open = content.byte_index('{', brace_from)
+      body = if open && open < line_end && (close = JSLiteralScanner.find_matching_brace_at_byte(content, open))
+               content.byte_slice(open + 1, close - open - 1)
+             else
+               content.byte_slice(line_start, line_end - line_start)
+             end
+
+      context = Endpoint.new("", "")
+      extract_body_params(body, context)
+      extract_query_params(body, context)
+      extract_header_params(body, context)
+      extract_cookie_params(body, context)
+      extract_path_params(body, context)
+
+      callees = if include_callees
+                  language = path.matches?(/\.[mc]?tsx?\z/) ? :typescript : :javascript
+                  JSCalleeExtractor.callees_for_function_body(body, path, line, language: language)
+                else
+                  [] of JSCalleeExtractor::Entry
+                end
+      responds = body.matches?(RESPONDS_RE) && !body.matches?(BARE_NEXT_RE) && !body.matches?(ROUTER_BODY_RE)
+      HandlerFacts.new(context.params, callees, responds)
+    end
+
+    private def self.empty_handler_facts : HandlerFacts
+      HandlerFacts.new([] of Param, [] of JSCalleeExtractor::Entry, false)
     end
 
     def self.attach_callees(endpoint : Endpoint,
