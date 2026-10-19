@@ -368,6 +368,7 @@ module Noir
           extract_params_from_context(offsets, pattern, context)
           handler = named_handler(content, start_byte, file_path)
           handler_facts = handler ? handler_definition_facts(handler, include_callees) : nil
+          handler = nil if handler_facts.try(&.guard)
 
           # Handle router.all by expanding to all HTTP methods
           prefixes.each do |prefix|
@@ -1163,7 +1164,7 @@ module Noir
     # `responds` says the body answers the request itself (sends and never
     # calls bare `next()`), which is what tells a path-mounted handler from
     # a path-mounted guard.
-    record HandlerFacts, params : Array(Param), callees : Array(JSCalleeExtractor::Entry), responds : Bool
+    record HandlerFacts, params : Array(Param), callees : Array(JSCalleeExtractor::Entry), responds : Bool, guard : Bool = false
 
     RESPONDS_RE  = /\b(?:res|response|reply)\s*(?:\.status\s*\([^)]*\)\s*)?\.(?:send|sendFile|sendfile|json|jsonp|render|end|redirect|download|write)\s*\(/
     BARE_NEXT_RE = /\bnext\s*\(\s*\)/
@@ -1171,6 +1172,14 @@ module Noir
     # return router }`) sends inside the routes it registers; it is a
     # mount, not a handler.
     ROUTER_BODY_RE = /\bRouter\s*\(|\breturn\s+\w*[rR]outer\b|\.(?:get|post|put|delete|patch|all|route)\s*\(\s*['"`]\//
+
+    # Mirrors ExpressAuthTagger::REFUSING_DEFINITION: a definition whose only
+    # response is a 401/403 refusal (or that calls bare `next()` without
+    # sending a non-refusal response) is a middleware/guard, not the route's
+    # handler, so its body must not pollute the route's params or callees.
+    GUARD_REFUSAL_RE           = /\bexpress[jJ]wt\s*\(|\bpassport\.authenticate\s*\(|(?:\b(?:res|response|reply)\s*\.\s*)?(?:status|sendStatus|send)\s*\(\s*40[13]\s*\)\s*(?:\.\s*(?:json|send|end)\s*\([^)]*\))?|\bnext\s*\(\s*(?:new\s+)?\w*(?:Unauthori[sz]ed|Forbidden)\w*|\bcreateError\s*\(\s*40[13]\b|\bnext\s*\(\s*\{[^}]*\b40[13]\b/
+    ERROR_HANDLER_SIGNATURE_RE = /\A\s*(?:async\s+)?(?:function(?:\s+[A-Za-z_$][\w$]*)?\s*)?\(\s*err\w*\s*[,:]/
+    INLINE_CLOSURE_START_RE    = /\A\s*(?:async\s+)?(?:function\b|\(|[A-Za-z_$][\w$]*\s*=>)/
 
     @@handler_facts = Hash(UInt64, HandlerFacts).new
     @@handler_facts_mutex = Mutex.new
@@ -1191,12 +1200,67 @@ module Noir
       nil
     end
 
+    # Facts for an inline closure passed directly to `app.use('/path', (req, res) => { … })`.
+    # Returns nil when `source` is not a function expression or arrow closure.
+    def self.inline_closure_facts(source : String, path : String, line : Int32, include_callees : Bool) : HandlerFacts?
+      stripped = source.strip
+      return unless stripped.matches?(INLINE_CLOSURE_START_RE)
+      return if stripped.matches?(ERROR_HANDLER_SIGNATURE_RE)
+
+      body_open = if stripped.matches?(/\A(?:async\s+)?function\b/)
+                    paren_open = stripped.byte_index('(') || return
+                    paren_close = JSLiteralScanner.find_matching_paren_at_byte(stripped, paren_open) || return
+                    stripped.byte_index('{', paren_close) || return
+                  elsif (paren_open = stripped.byte_index('(')) && stripped.byte_slice(0, paren_open).matches?(/\A(?:async\s*)?\z/)
+                    paren_close = JSLiteralScanner.find_matching_paren_at_byte(stripped, paren_open) || return
+                    rest = stripped.byte_slice(paren_close + 1, stripped.bytesize - paren_close - 1)
+                    arrow_match = rest.match(/\A(?:\s*:\s*[^{=;]+)?\s*=>\s*/m) || return
+                    after_arrow = paren_close + 1 + arrow_match.byte_end(0)
+                    after_arrow < stripped.bytesize && stripped.to_slice[after_arrow] == '{'.ord ? after_arrow : nil
+                  elsif arrow_match = stripped.match(/\A(?:async\s+)?[A-Za-z_$][\w$]*\s*=>\s*/)
+                    after_arrow = arrow_match.byte_end(0)
+                    after_arrow < stripped.bytesize && stripped.to_slice[after_arrow] == '{'.ord ? after_arrow : nil
+                  else
+                    return
+                  end
+
+      body = if body_open && (body_close = JSLiteralScanner.find_matching_brace_at_byte(stripped, body_open))
+               stripped.byte_slice(body_open + 1, body_close - body_open - 1)
+             else
+               stripped
+             end
+
+      responds = body.matches?(RESPONDS_RE) && !body.matches?(BARE_NEXT_RE) && !body.matches?(ROUTER_BODY_RE) && !guard_definition?(body)
+      return empty_handler_facts unless responds
+
+      context = Endpoint.new("", "")
+      extract_body_params(stripped, context)
+      extract_query_params(stripped, context)
+      extract_header_params(stripped, context)
+      extract_cookie_params(stripped, context)
+      extract_path_params(stripped, context)
+
+      callees = if include_callees
+                  language = path.matches?(/\.[mc]?tsx?\z/) ? :typescript : :javascript
+                  JSCalleeExtractor.callees_for_function_body(body, path, line, language: language)
+                else
+                  [] of JSCalleeExtractor::Entry
+                end
+      HandlerFacts.new(context.params, callees, true)
+    rescue
+      nil
+    end
+
     def self.apply_handler_facts(endpoint : Endpoint, facts : HandlerFacts?)
       return unless facts
       facts.params.each { |param| endpoint.push_param(param) }
       facts.callees.each do |name, callee_path, callee_line|
         endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
       end
+    end
+
+    private def self.guard_definition?(body : String) : Bool
+      body.matches?(GUARD_REFUSAL_RE) && !body.gsub(GUARD_REFUSAL_RE, "").matches?(RESPONDS_RE)
     end
 
     private def self.read_handler_facts(path : String, line : Int32, include_callees : Bool) : HandlerFacts
@@ -1206,38 +1270,64 @@ module Noir
         line_start = (content.byte_index('\n', line_start) || return empty_handler_facts) + 1
       end
       line_end = content.byte_index('\n', line_start) || content.bytesize
-      # The body brace is the one after `=>` when the line is an arrow, so a
-      # `Request<{ id: string }>` annotation is not taken for the body.
+      # The body brace is the one after the last `=>` on the line (or after
+      # a `function` signature's closing `)`), so destructured parameters
+      # `({ query })` and `Request<{ id: string }>` annotations are not
+      # mistaken for the function body.
       # ponytail: a brace on a later line (a signature that wraps) and a
       # concise arrow (`= () => expressJwt(...)`) yield the definition line only.
-      brace_from = content.byte_index("=>", line_start) || line_start
-      brace_from = line_start if brace_from >= line_end
+      brace_from = line_start
+      while (arrow = content.byte_index("=>", brace_from)) && arrow < line_end
+        brace_from = arrow + 2
+      end
+      if brace_from == line_start && (paren_open = content.byte_index('(', line_start)) && paren_open < line_end
+        if paren_close = JSLiteralScanner.find_matching_paren_at_byte(content, paren_open)
+          brace_from = paren_close + 1 if paren_close < line_end
+        end
+      end
       open = content.byte_index('{', brace_from)
-      body = if open && open < line_end && (close = JSLiteralScanner.find_matching_brace_at_byte(content, open))
-               content.byte_slice(open + 1, close - open - 1)
-             else
-               content.byte_slice(line_start, line_end - line_start)
-             end
+      # A brace opens the function body only if it immediately follows `=>`
+      # or a parameter list `)`. A brace after `(` is an object argument in
+      # a concise arrow (`() => expressJwt({ ... })`), so the body is the
+      # definition line itself.
+      is_body_brace = false
+      if open && open < line_end
+        prev = open - 1
+        bytes = content.to_slice
+        while prev >= line_start && bytes[prev].unsafe_chr.ascii_whitespace?
+          prev -= 1
+        end
+        is_body_brace = prev >= line_start && (bytes[prev] == '>'.ord || bytes[prev] == ')'.ord)
+      end
+
+      if is_body_brace && open && open < line_end && (close = JSLiteralScanner.find_matching_brace_at_byte(content, open))
+        body = content.byte_slice(open + 1, close - open - 1)
+        signature_and_body = content.byte_slice(line_start, close - line_start + 1)
+      else
+        body = content.byte_slice(line_start, line_end - line_start)
+        signature_and_body = body
+      end
 
       context = Endpoint.new("", "")
-      extract_body_params(body, context)
-      extract_query_params(body, context)
-      extract_header_params(body, context)
-      extract_cookie_params(body, context)
-      extract_path_params(body, context)
+      extract_body_params(signature_and_body, context)
+      extract_query_params(signature_and_body, context)
+      extract_header_params(signature_and_body, context)
+      extract_cookie_params(signature_and_body, context)
+      extract_path_params(signature_and_body, context)
 
-      callees = if include_callees
+      guard = guard_definition?(body)
+      callees = if include_callees && !guard
                   language = path.matches?(/\.[mc]?tsx?\z/) ? :typescript : :javascript
                   JSCalleeExtractor.callees_for_function_body(body, path, line, language: language)
                 else
                   [] of JSCalleeExtractor::Entry
                 end
-      responds = body.matches?(RESPONDS_RE) && !body.matches?(BARE_NEXT_RE) && !body.matches?(ROUTER_BODY_RE)
-      HandlerFacts.new(context.params, callees, responds)
+      responds = body.matches?(RESPONDS_RE) && !body.matches?(BARE_NEXT_RE) && !body.matches?(ROUTER_BODY_RE) && !guard
+      HandlerFacts.new(context.params, callees, responds, guard)
     end
 
     private def self.empty_handler_facts : HandlerFacts
-      HandlerFacts.new([] of Param, [] of JSCalleeExtractor::Entry, false)
+      HandlerFacts.new([] of Param, [] of JSCalleeExtractor::Entry, false, false)
     end
 
     def self.attach_callees(endpoint : Endpoint,
@@ -1555,6 +1645,7 @@ module Noir
       while anchor = HANDLER_ANCHOR_RE.match_at_byte_index(args_slice, search)
         anchor_idx = anchor.byte_begin(0)
         arrow = anchor[0] == "=>"
+        sig_start = arrow ? argument_start_before(args_bytes, search, anchor_idx) : anchor_idx
         body_open = if arrow
                       ws_end = anchor.byte_end(0)
                       while ws_end < args_bytes.size && args_bytes[ws_end].unsafe_chr.ascii_whitespace?
@@ -1567,14 +1658,14 @@ module Noir
                     end
         body_close = body_open && JSLiteralScanner.find_matching_brace_at_byte(args_slice, body_open)
         if body_open && body_close
-          handler = {body_open, body_close + 1}
+          handler = {sig_start, body_close + 1}
           search = body_close + 1
         elsif arrow
           # Concise arrow (`(req, res) => res.json(req.query)`): the body is
           # the expression up to the end of this argument, skipped whole so
           # an arrow nested in it is not taken for the handler.
           expr_end = argument_end(args_bytes, anchor.byte_end(0))
-          handler = {anchor.byte_end(0), expr_end}
+          handler = {sig_start, expr_end}
           search = expr_end
         else
           handler = nil
@@ -1612,6 +1703,38 @@ module Noir
         end
         stop < bytes.size && bytes[stop] == '('.ord
       end
+    end
+
+    # Start of the argument containing `target`, scanning forward from `from`
+    # and advancing past each top-level `,`.
+    private def self.argument_start_before(bytes : Bytes, from : Int32, target : Int32) : Int32
+      depth = 0
+      quote = 0_u8
+      start = from
+      i = from
+      while i < target
+        byte = bytes[i]
+        if quote != 0
+          if byte == '\\'.ord
+            i += 1
+          elsif byte == quote
+            quote = 0_u8
+          end
+        else
+          case byte
+          when '\''.ord, '"'.ord, '`'.ord
+            quote = byte
+          when '('.ord, '['.ord, '{'.ord
+            depth += 1
+          when ')'.ord, ']'.ord, '}'.ord
+            depth -= 1 if depth > 0
+          when ','.ord
+            start = i + 1 if depth == 0
+          end
+        end
+        i += 1
+      end
+      start
     end
 
     # End (exclusive) of the argument starting at byte `from` of an
@@ -1823,7 +1946,7 @@ module Noir
     def self.extract_body_params(handler_body : String, endpoint : Endpoint)
       # Look for req.body.X or const/let/var { X } = req.body
       # First check the destructuring pattern
-      handler_body.scan(/(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*(?:req|request)\.body/) do |match|
+      handler_body.scan(/(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*(?:req|request)\??\.body/) do |match|
         params = match[1].split(",").map(&.strip)
         params.each do |param|
           clean_param = clean_destructured_param(param)
@@ -1839,15 +1962,17 @@ module Noir
         end
       end
 
-      # Check direct property access: req.body.X
-      handler_body.scan(/(?:req|request)\.body\.(\w+)/) do |match|
+      # Check direct property access: req.body.X / req.body?.X
+      handler_body.scan(/(?:req|request)\??\.body\??\.(\w+)/) do |match|
         endpoint.push_param(Param.new(match[1], "", "json"))
       end
 
       # Check array access: req.body['X'] or req.body["X"]
-      handler_body.scan(/(?:req|request)\.body\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |match|
+      handler_body.scan(/(?:req|request)\??\.body(?:\?\.)?\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |match|
         endpoint.push_param(Param.new(match[1], "", "json"))
       end
+
+      extract_destructured_prop_params(handler_body, "body", "json", endpoint)
 
       # Hono-style: const { X } = await c.req.json()
       handler_body.scan(/(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*await\s+\w+\.req\.json\s*\(/) do |match|
@@ -1879,7 +2004,7 @@ module Noir
 
     def self.extract_query_params(handler_body : String, endpoint : Endpoint)
       # Look for destructuring: const/let/var { X } = req.query
-      handler_body.scan(/(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*(?:req|request)\.query/) do |match|
+      handler_body.scan(/(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*(?:req|request)\??\.query/) do |match|
         params = match[1].split(",").map(&.strip)
         params.each do |param|
           clean_param = clean_destructured_param(param)
@@ -1895,14 +2020,16 @@ module Noir
         end
       end
 
-      # Look for req.query.X
-      handler_body.scan(/(?:req|request)\.query\.(\w+)/) do |match|
+      # Look for req.query.X / req.query?.X
+      handler_body.scan(/(?:req|request)\??\.query\??\.(\w+)/) do |match|
         endpoint.push_param(Param.new(match[1], "", "query"))
       end
 
-      handler_body.scan(/(?:req|request)\.query\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |match|
+      handler_body.scan(/(?:req|request)\??\.query(?:\?\.)?\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |match|
         endpoint.push_param(Param.new(match[1], "", "query"))
       end
+
+      extract_destructured_prop_params(handler_body, "query", "query", endpoint)
 
       handler_body.scan(/ctx(?:\.request)?\.query\.(\w+)/) do |match|
         endpoint.push_param(Param.new(match[1], "", "query"))
@@ -1929,28 +2056,38 @@ module Noir
     end
 
     def self.extract_header_params(handler_body : String, endpoint : Endpoint)
+      # Destructuring: const/let/var { authorization } = req.headers
+      handler_body.scan(/(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*(?:req|request|ctx(?:\.request)?)\??\.headers/) do |match|
+        match[1].split(",").each do |param|
+          clean_param = clean_destructured_param(param.strip)
+          endpoint.push_param(Param.new(clean_param, "", "header")) unless clean_param.empty?
+        end
+      end
+
       # Express/Fastify-style: req.headers / req.header
-      handler_body.scan(/(?:req|request)\.headers\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |match| # req.headers["x-token"]
+      handler_body.scan(/(?:req|request)\??\.headers(?:\?\.)?\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |match| # req.headers["x-token"]
         endpoint.push_param(Param.new(match[1], "", "header"))
       end
-      handler_body.scan(/(?:req|request)\.headers\s*\[\s*([A-Za-z_$]\w*)\s*\]/) do |match| # req.headers[CONST] — unresolved
+      handler_body.scan(/(?:req|request)\??\.headers(?:\?\.)?\s*\[\s*([A-Za-z_$]\w*)\s*\]/) do |match| # req.headers[CONST] — unresolved
         push_unresolved_param(endpoint, match[1], "header")
       end
-      handler_body.scan(/(?:req|request)\.headers\.(\w++)(?!\s*\()/) do |match| # req.headers.authorization
+      handler_body.scan(/(?:req|request)\??\.headers\??\.(\w++)(?!\s*\()/) do |match| # req.headers.authorization
         endpoint.push_param(Param.new(match[1], "", "header"))
       end
-      handler_body.scan(/(?:req|request)\.headers\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match| # Fetch API: req.headers.get("x-token")
+      handler_body.scan(/(?:req|request)\??\.headers\??\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match| # Fetch API: req.headers.get("x-token")
         endpoint.push_param(Param.new(match[1], "", "header"))
       end
-      handler_body.scan(/(?:req|request)\.header\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match| # req.header("x-token")
+      handler_body.scan(/(?:req|request)\??\.header\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match| # req.header("x-token")
         endpoint.push_param(Param.new(match[1], "", "header"))
       end
-      handler_body.scan(/(?:req|request)\.header\s*\(\s*([A-Za-z_$]\w*)\s*\)/) do |match| # req.header(CONST) — unresolved
+      handler_body.scan(/(?:req|request)\??\.header\s*\(\s*([A-Za-z_$]\w*)\s*\)/) do |match| # req.header(CONST) — unresolved
         push_unresolved_param(endpoint, match[1], "header")
       end
-      handler_body.scan(/(?:req|request)\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match| # req.get("x-token")
+      handler_body.scan(/(?:req|request)\??\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match| # req.get("x-token")
         endpoint.push_param(Param.new(match[1], "", "header"))
       end
+
+      extract_destructured_prop_params(handler_body, "headers", "header", endpoint)
 
       # Koa-style: ctx.headers / ctx.header / ctx.get
       handler_body.scan(/ctx\.headers\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |match| # ctx.headers["x-token"]
@@ -1984,19 +2121,29 @@ module Noir
     end
 
     def self.extract_cookie_params(handler_body : String, endpoint : Endpoint)
+      # Destructuring: const/let/var { token } = req.cookies
+      handler_body.scan(/(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*(?:req|request|ctx)\??\.cookies/) do |match|
+        match[1].split(",").each do |param|
+          clean_param = clean_destructured_param(param.strip)
+          endpoint.push_param(Param.new(clean_param, "", "cookie")) unless clean_param.empty?
+        end
+      end
+
       # Express/Fastify-style: req.cookies
-      handler_body.scan(/(?:req|request)\.cookies\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |match| # req.cookies["session"]
+      handler_body.scan(/(?:req|request)\??\.cookies(?:\?\.)?\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |match| # req.cookies["session"]
         endpoint.push_param(Param.new(match[1], "", "cookie"))
       end
-      handler_body.scan(/(?:req|request)\.cookies\s*\[\s*([A-Za-z_$]\w*)\s*\]/) do |match| # req.cookies[CONST] — unresolved
+      handler_body.scan(/(?:req|request)\??\.cookies(?:\?\.)?\s*\[\s*([A-Za-z_$]\w*)\s*\]/) do |match| # req.cookies[CONST] — unresolved
         push_unresolved_param(endpoint, match[1], "cookie")
       end
-      handler_body.scan(/(?:req|request)\.cookies\.(\w++)(?!\s*\()/) do |match| # req.cookies.session
+      handler_body.scan(/(?:req|request)\??\.cookies\??\.(\w++)(?!\s*\()/) do |match| # req.cookies.session
         endpoint.push_param(Param.new(match[1], "", "cookie"))
       end
-      handler_body.scan(/(?:req|request)\.cookies\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match| # Bun: req.cookies.get("session")
+      handler_body.scan(/(?:req|request)\??\.cookies\??\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match| # Bun: req.cookies.get("session")
         endpoint.push_param(Param.new(match[1], "", "cookie"))
       end
+
+      extract_destructured_prop_params(handler_body, "cookies", "cookie", endpoint)
 
       # Koa-style: ctx.cookies.get
       handler_body.scan(/ctx\.cookies\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match| # ctx.cookies.get("session")
@@ -2016,25 +2163,110 @@ module Noir
     end
 
     def self.extract_path_params(handler_body : String, endpoint : Endpoint)
+      # Destructuring: const/let/var { id } = req.params
+      handler_body.scan(/(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*(?:req|request|ctx)\??\.params/) do |match|
+        match[1].split(",").each do |param|
+          clean_param = clean_destructured_param(param.strip)
+          endpoint.push_param(Param.new(clean_param, "", "path")) unless clean_param.empty?
+        end
+      end
+
       # Express/Fastify-style: req.params.X
-      handler_body.scan(/(?:req|request)\.params\.(\w+)/) do |match|
-        endpoint.push_param(Param.new(match[1], "", "path")) unless endpoint.params.any? { |p| p.name == match[1] && p.param_type == "path" }
+      handler_body.scan(/(?:req|request)\??\.params\??\.(\w+)/) do |match|
+        endpoint.push_param(Param.new(match[1], "", "path"))
       end
 
       # Express/Fastify-style: req.params['X']
-      handler_body.scan(/(?:req|request)\.params\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |match|
-        endpoint.push_param(Param.new(match[1], "", "path")) unless endpoint.params.any? { |p| p.name == match[1] && p.param_type == "path" }
+      handler_body.scan(/(?:req|request)\??\.params(?:\?\.)?\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |match|
+        endpoint.push_param(Param.new(match[1], "", "path"))
       end
+
+      extract_destructured_prop_params(handler_body, "params", "path", endpoint)
 
       # Hono-style: c.req.param('id')
       handler_body.scan(/\w+\.req\.param\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
-        endpoint.push_param(Param.new(match[1], "", "path")) unless endpoint.params.any? { |p| p.name == match[1] && p.param_type == "path" }
+        endpoint.push_param(Param.new(match[1], "", "path"))
       end
 
-      # Koa-style: ctx.params.X
+      # Koa-style: ctx.params.X / ctx.params['X']
       handler_body.scan(/ctx\.params\.(\w+)/) do |match|
-        endpoint.push_param(Param.new(match[1], "", "path")) unless endpoint.params.any? { |p| p.name == match[1] && p.param_type == "path" }
+        endpoint.push_param(Param.new(match[1], "", "path"))
       end
+      handler_body.scan(/ctx\.params\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |match|
+        endpoint.push_param(Param.new(match[1], "", "path"))
+      end
+    end
+
+    # Extracts parameters when a request property (`body`, `query`, `params`,
+    # `headers`, `cookies`) is destructured in a handler's parameter signature
+    # (`({ body: { name } }) => …`, `({ query, headers }) => { query.q }`) or
+    # from `req`/`request` (`const { body, query } = req`).
+    private def self.extract_destructured_prop_params(handler_body : String, prop : String, param_type : String, endpoint : Endpoint)
+      return unless handler_body.includes?(prop) && handler_body.includes?('{')
+      clauses = request_destructured_clauses(handler_body)
+      return if clauses.empty?
+
+      bound_vars = Set(String).new
+      clauses.each do |clause|
+        next unless clause.includes?(prop)
+        clause.scan(/\b#{prop}\s*:\s*\{\s*([^}]+)\s*\}/) do |match|
+          match[1].split(",").each do |param|
+            clean_param = clean_destructured_param(param.strip)
+            endpoint.push_param(Param.new(clean_param, "", param_type)) unless clean_param.empty?
+          end
+        end
+        bound_vars << prop if clause.matches?(/\b#{prop}\b(?!\s*:)/)
+        clause.scan(/\b#{prop}\s*:\s*([A-Za-z_$][\w$]*)\b/) do |match|
+          bound_vars << match[1]
+        end
+      end
+
+      bound_vars.each do |var_name|
+        escaped = Regex.escape(var_name)
+        handler_body.scan(/(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*#{escaped}\b(?!\s*\.)/) do |match|
+          match[1].split(",").each do |param|
+            clean_param = clean_destructured_param(param.strip)
+            endpoint.push_param(Param.new(clean_param, "", param_type)) unless clean_param.empty?
+          end
+        end
+        handler_body.scan(/(?<![.\w$])#{escaped}\??\.(\w++)(?!\s*\()/) do |match|
+          endpoint.push_param(Param.new(match[1], "", param_type))
+        end
+        handler_body.scan(/(?<![.\w$])#{escaped}(?:\?\.)?\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |match|
+          endpoint.push_param(Param.new(match[1], "", param_type))
+        end
+      end
+    end
+
+    # Object-destructuring clauses `{ … }` that sit in a function signature's
+    # first parameter (`({ query, headers }: Request, res: Response) => …`) or
+    # destructure `req`/`request` directly (`const { body, query } = req`).
+    private def self.request_destructured_clauses(handler_body : String) : Array(String)
+      clauses = [] of String
+      handler_body.scan(/\(\s*\{/) do |match|
+        open_paren = match.byte_begin(0)
+        open_brace = match.byte_end(0) - 1
+        close_brace = JSLiteralScanner.find_matching_brace_at_byte(handler_body, open_brace) || next
+        close_paren = JSLiteralScanner.find_matching_paren_at_byte(handler_body, open_paren) || next
+        after_len = [handler_body.bytesize - close_paren - 1, 120].min
+        after_paren = after_len > 0 ? handler_body.byte_slice(close_paren + 1, after_len) : ""
+        before_paren = handler_body.byte_slice(0, open_paren)
+        if after_paren.matches?(/\A(?:\s*:\s*[^{=;]+)?\s*=>/m) ||
+           before_paren.matches?(/\bfunction(?:\s+[A-Za-z_$][\w$]*)?\s*\z/)
+          clauses << handler_body.byte_slice(open_brace + 1, close_brace - open_brace - 1)
+        end
+      end
+      handler_body.scan(/(?:const|let|var)\s*\{/) do |match|
+        open_brace = match.byte_end(0) - 1
+        close_brace = JSLiteralScanner.find_matching_brace_at_byte(handler_body, open_brace) || next
+        after_len = [handler_body.bytesize - close_brace - 1, 120].min
+        next unless after_len > 0
+        after_brace = handler_body.byte_slice(close_brace + 1, after_len)
+        if after_brace.matches?(/\A(?:\s*:\s*[^=;]+)?\s*=\s*(?:req|request|ctx(?:\.request)?)\b(?!\s*[\.\[])/)
+          clauses << handler_body.byte_slice(open_brace + 1, close_brace - open_brace - 1)
+        end
+      end
+      clauses
     end
 
     private def self.clean_destructured_param(param : String) : String
