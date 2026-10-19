@@ -846,6 +846,7 @@ module Analyzer::Kotlin
           line = route.line + 1
           details = Details.new(PathInfo.new(path, line))
           endpoint = Endpoint.new(Noir::URLPath.join_rooted(base_path, route.path), route.verb, parameters, details)
+          endpoint.handler = jvm_route_handler(route, path)
           if method
             endpoint.route_conditions = Noir::TreeSitterKotlinParameterExtractor.extract_route_conditions_from_method(
               method, content, format_verb, string_constants, local_string_constants || Hash(String, String).new

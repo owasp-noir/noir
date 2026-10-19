@@ -112,12 +112,21 @@ expected_endpoints = [
   end,
 ]
 
-FunctionalTester.new("fixtures/kotlin/spring_callees/", {
+tester = FunctionalTester.new("fixtures/kotlin/spring_callees/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
 }, expected_endpoints, {
   "include_callee" => YAML::Any.new(true),
-}).perform_tests
+})
+tester.perform_tests
+
+describe "Kotlin Spring annotation handlers", tags: "functional" do
+  it "names the decorated function at its signature line" do
+    types = tester.endpoints.find! { |ep| ep.method == "GET" && ep.url == "/api/roles/types" }
+    types.details.code_paths.first.line.should eq(15)
+    types.handler.should eq(Handler.new("RoleTypesController.types", types.details.code_paths.first.path, 16))
+  end
+end
 
 describe "--ai-context on Kotlin Spring constructor-injected callee expansion", tags: "functional" do
   before_each do

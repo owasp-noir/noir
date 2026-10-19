@@ -94,14 +94,7 @@ module Analyzer::Java
           Noir::TreeSitterJaxRsExtractor.extract_routes_from(root, content, dto_index, bean_index, subresource_sources,
             custom_verb_annotations: custom_verb_annotations, include_callees: include_callee,
             project_constants: java_project_constants(path)).each do |route|
-            line = route.line + 1
-            details = Details.new(PathInfo.new(route.file_path || path, line))
-            endpoint = Endpoint.new(Noir::URLPath.join_trimmed(base_path, route.path), route.verb, route.params, details)
-            endpoint.protocol = route.protocol
-            route.callees.each do |name, callee_line|
-              endpoint.push_callee(Callee.new(name, path: route.file_path || path, line: callee_line))
-            end
-            @result << endpoint
+            @result << jvm_route_endpoint(route, Noir::URLPath.join_trimmed(base_path, route.path), route.file_path || path)
           end
         end
       end

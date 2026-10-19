@@ -29,9 +29,20 @@ expected_endpoints = [
   end,
 ]
 
-FunctionalTester.new("fixtures/java/micronaut_callees/", {
+tester = FunctionalTester.new("fixtures/java/micronaut_callees/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
 }, expected_endpoints, {
   "include_callee" => YAML::Any.new(true),
-}).perform_tests
+})
+tester.perform_tests
+
+describe "Micronaut annotation handlers", tags: "functional" do
+  it "names the decorated method at its signature line on every fanned-out uri" do
+    %w[/books/popular /books/featured].each do |url|
+      highlights = tester.endpoints.find! { |ep| ep.method == "GET" && ep.url == url }
+      highlights.details.code_paths.first.line.should eq(23)
+      highlights.handler.should eq(Handler.new("BookController.highlights", highlights.details.code_paths.first.path, 24))
+    end
+  end
+end

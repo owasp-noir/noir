@@ -343,6 +343,12 @@ module Noir::TreeSitter
     LibTreeSitter.ts_node_is_null(child) ? nil : child
   end
 
+  # 0-based row of a declaration's `name` field: the signature line, which
+  # sits below however many annotation lines the declaration starts with.
+  def self.name_row(node : LibTreeSitter::TSNode) : Int32?
+    field(node, "name").try { |name| node_start_row(name) }
+  end
+
   def self.first_named_child(node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
     return if LibTreeSitter.ts_node_named_child_count(node) == 0
     LibTreeSitter.ts_node_named_child(node, 0_u32)

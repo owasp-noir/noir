@@ -21,9 +21,20 @@ expected_endpoints = [
   end,
 ]
 
-FunctionalTester.new("fixtures/java/jaxrs_callees/", {
+tester = FunctionalTester.new("fixtures/java/jaxrs_callees/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
 }, expected_endpoints, {
   "include_callee" => YAML::Any.new(true),
-}).perform_tests
+})
+tester.perform_tests
+
+describe "JAX-RS annotation handlers", tags: "functional" do
+  # `@POST` on line 14, `@Path` on 15, the signature on 16: the handler
+  # is the method, not the first annotation of its stack.
+  it "names the decorated method at its signature line" do
+    create = tester.endpoints.find! { |ep| ep.method == "POST" && ep.url == "/users/{id}" }
+    create.details.code_paths.first.line.should eq(14)
+    create.handler.should eq(Handler.new("UserResource.create", create.details.code_paths.first.path, 16))
+  end
+end

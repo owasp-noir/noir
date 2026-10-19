@@ -97,7 +97,7 @@ module Noir
             path_vars = TreeSitterMicronautExtractor.uri_template_path_vars(normalized_path)
             params = micronaut_params(member, source, consumes, dto_index, constants, query_vars, path_vars)
             routes << TreeSitterMicronautExtractor::Route.new(verb, normalized_path, class_name, method_name,
-              verb_line, params, callees)
+              verb_line, params, callees, signature_line: function_name_row(member))
           end
         end
       end

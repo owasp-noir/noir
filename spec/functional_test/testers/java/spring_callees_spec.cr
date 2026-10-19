@@ -50,11 +50,37 @@ expected_endpoints = [
     ep.push_callee(Callee.new("catalogService.load", line: 9))
     ep.push_callee(Callee.new("AuditLog.write", line: 10))
   end,
+
+  # `@ModelAttribute findUser` runs before every handler of UserController,
+  # so its `service.load` belongs to this route too (spring-petclinic's
+  # `findOwner` → `owners.findById` is the object lookup an IDOR review
+  # needs on every owner route).
+  Endpoint.new("/api/users/legacy", "GET").tap do |ep|
+    ep.push_callee(Callee.new("service.load", line: 39))
+  end,
 ]
 
-FunctionalTester.new("fixtures/java/spring_callees/", {
+tester = FunctionalTester.new("fixtures/java/spring_callees/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
 }, expected_endpoints, {
   "include_callee" => YAML::Any.new(true),
-}).perform_tests
+})
+tester.perform_tests
+
+describe "Spring annotation handlers", tags: "functional" do
+  # `details.code_paths` stays on the annotation line; the handler is the
+  # method the annotation stack decorates, at its own signature line.
+  it "names the decorated method at its signature line" do
+    legacy = tester.endpoints.find! { |ep| ep.method == "GET" && ep.url == "/api/users/legacy" }
+    legacy.details.code_paths.first.line.should eq(43)
+    legacy.handler.should eq(Handler.new("UserController.legacy", legacy.details.code_paths.first.path, 44))
+  end
+
+  it "attributes @ModelAttribute callees to every route of the controller" do
+    create = tester.endpoints.find! { |ep| ep.method == "POST" && ep.url == "/api/users/" }
+    create.callees.map(&.name).should contain("service.load")
+    legacy_order = tester.endpoints.find! { |ep| ep.method == "GET" && ep.url == "/api/orders/legacy" }
+    legacy_order.callees.map(&.name).should_not contain("service.load")
+  end
+end

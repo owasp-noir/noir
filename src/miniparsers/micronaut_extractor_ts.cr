@@ -98,8 +98,10 @@ module Noir
       getter params : Array(Param)
       getter callees : Array(Tuple(String, Int32))
       getter protocol : String
+      getter signature_line : Int32? # 0-based line of the method name (the handler), nil for class-level routes
 
-      def initialize(@verb, @path, @class_name, @method_name, @line, @params, @callees, @protocol = "http")
+      def initialize(@verb, @path, @class_name, @method_name, @line, @params, @callees, @protocol = "http",
+                     @signature_line = nil)
       end
     end
 
@@ -310,7 +312,8 @@ module Noir
             path_vars = uri_template_path_vars(normalized_path)
             params = collect_method_params(member, source, method_consumes, dto_index, constants, class_name, query_vars.to_set, path_vars.to_set)
             merge_query_template_params(params, unbound_query_template_vars(member, source, query_vars))
-            routes << Route.new(verb, normalized_path, class_name, method_name, line, params, callees)
+            routes << Route.new(verb, normalized_path, class_name, method_name, line, params, callees,
+              signature_line: Noir::TreeSitter.name_row(member))
           end
         end
       end
@@ -374,7 +377,8 @@ module Noir
             path_vars = uri_template_path_vars(normalized_path)
             params = collect_method_params(member, source, method_consumes, dto_index, constants, interface_name, query_vars.to_set, path_vars.to_set)
             merge_query_template_params(params, unbound_query_template_vars(member, source, query_vars))
-            routes[interface_name] << Route.new(verb, normalized_path, interface_name, method_name, line, params, callees)
+            routes[interface_name] << Route.new(verb, normalized_path, interface_name, method_name, line, params, callees,
+              signature_line: Noir::TreeSitter.name_row(member))
           end
         end
       end
