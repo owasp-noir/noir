@@ -49,7 +49,12 @@ module Noir::CLI::TraceCommand
 
     if matches.empty?
       candidates = Inspect.candidates(endpoints, target.path)
-      if common.format == "text"
+      if limit = common.limit
+        candidates = candidates.first(limit)
+      end
+      if common.count
+        puts 0
+      elsif common.format == "text"
         puts "no match: #{label}"
         candidates.each { |row| puts "candidate: #{row.to_text}" }
       else
@@ -79,7 +84,9 @@ module Noir::CLI::TraceCommand
       matches `/api/users/{id}`, `:id`, `<int:pk>`, `[id]`, `*`. Prints the full
       endpoint record (handler, params, guards, sinks, callees, ...). On a miss,
       prints the nearest routes as candidates and exits 1. Pattern matches are
-      ordered most-specific first (`matched_by`: exact, pattern, wildcard).
+      ordered most-specific first (`matched_by`: exact, pattern, wildcard); a
+      HEAD request also traces to the GET route. Every match is printed, since
+      which one a router picks is the framework's rule; the first is the best.
 
       #{Noir::CLI.section("EXAMPLES:")}
         noir trace "POST /api/users/42" ./app

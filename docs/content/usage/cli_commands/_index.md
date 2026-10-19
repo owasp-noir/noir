@@ -150,20 +150,28 @@ noir query --no-guard --sink any --from report.json    # unauthenticated routes 
 ```
 
 `trace` maps a concrete request path onto the declared route: `/api/users/42`
-matches `/api/users/{id}`, `:id`, `<int:pk>`, `[id]` and `*`. It prints the
+matches `/api/users/{id}`, `:id`, `<int:pk>`, `[id]` and `*`, and a HEAD
+request traces to the GET route. Every matching route is printed, most
+specific first, with `matched_by` (exact, pattern, wildcard). It prints the
 full endpoint record; on a miss it prints the nearest routes as `candidates`
 and exits 1.
 
 `reach` matches `FILE` as a path suffix against every location Noir recorded
 (route declarations, the handler's definition, callees, guards, sources, sinks,
-validators) and lists the evidence in `via`. `:LINE` orders the evidence by distance and sets
+validators) and lists the evidence in `via`; an entry outside the row's own
+file carries its path. `:LINE` orders the evidence by distance and sets
 `nearest_line`; Noir records declaration lines, not function spans, so the
-line orders rather than filters.
+line orders rather than filters. Inheritance and dynamic loading are not
+followed.
 
 `query` filters AND together; a comma list inside one filter is OR:
 `--method`, `--url`, `--path`, `--handler`, `--tech`, `--tag`, `--param`, `--param-type`,
-`--protocol`, `--guard` / `--no-guard`, `--sink`, `--source`, `--signal`
-(`any` matches a non-empty bucket). A rate limiter does not count as a guard for `--guard`, and a kind no endpoint carries is reported on stderr with the kinds the report does have.
+`--protocol`, `--guard` / `--no-guard`, `--sink`, `--source`, `--signal`,
+`--validator` (`any` matches a non-empty bucket). A glob (`*`, `?`, `[`) lets
+`*` cross `/` and keeps `{id}` literal; anything else is a substring.
+`--param` and `--param-type` must be satisfied by one parameter. A rate
+limiter does not count as a guard, on the row or for `--guard`, and a value no
+endpoint carries is reported on stderr with the values the report does have.
 
 Shared flags: `--from <report>`, `-f jsonl|json|text` (jsonl default),
 `--full` (the unchanged endpoint record instead of the compact row),
@@ -172,7 +180,8 @@ matched, `2` usage error. A scan path or flag next to `--from` is an error, sinc
 nothing is scanned.
 
 The compact row is a projection of the endpoint record, empty buckets omitted.
-`path:line` is where the route is *declared*; `handler` is where its body
+`path:line` is where the route is *declared* (the shallowest file when copies
+were merged, with `declarations` counting them); `handler` is where its body
 *lives*, when the analyzer could resolve the definition:
 
 ```json

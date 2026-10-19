@@ -126,12 +126,26 @@ module Noir::CLI::Inspect
       end
       load_report(from)
     else
+      unknown = unknown_flags(scan_argv)
+      unless unknown.empty?
+        Noir::CLI.die("unknown flag(s): #{unknown.join(" ")}. Run `noir scan --help` for the scan flags a verb accepts.", EXIT_USAGE)
+      end
       options, args = ScanCommand.parse_options(scan_argv)
       options["ai_context"] = YAML::Any.new(true)
       options["ai_context_features"] = YAML::Any.new("")
       options["include_callee"] = YAML::Any.new(true)
       ScanCommand.prepare!(options, args)
       ScanCommand.collect(options).endpoints
+    end
+  end
+
+  # Flags scan's parser would reject. Caught here so the verb keeps its exit
+  # code 2 instead of scan's usage page and exit 1.
+  def self.unknown_flags(scan_argv : Array(String)) : Array(String)
+    scan_argv.select do |arg|
+      next false unless arg.starts_with?('-') && arg.size > 1
+      name = arg.split('=', 2)[0]
+      ScanFlags::FLAGS.none?(&.names.includes?(name)) && !Legacy::LEGACY_FLAG_ALIASES.has_key?(name)
     end
   end
 
@@ -179,7 +193,9 @@ module Noir::CLI::Inspect
     context.signals.reject { |s| RESTATING_SIGNAL_SOURCES.includes?(s.source) }
   end
 
-  # Evidence tying an endpoint to a file (`reach`).
+  # Evidence tying an endpoint to a file (`reach`). `path` is set only when
+  # the evidence sits in a different file than the row's `path` (a shared
+  # basename, a merged copy), so the agent is never sent to the wrong file.
   struct Via
     include JSON::Serializable
     property kind : String
@@ -187,8 +203,23 @@ module Noir::CLI::Inspect
     property name : String?
     @[JSON::Field(ignore_serialize: line.nil?)]
     property line : Int32?
+    @[JSON::Field(ignore_serialize: path.nil?)]
+    property path : String?
 
-    def initialize(@kind, @name = nil, @line = nil)
+    def initialize(@kind, @name = nil, @line = nil, @path = nil)
+    end
+
+    def to_text : String
+      String.build do |io|
+        io << kind
+        io << ':' << name if name
+        if p = path
+          io << '@' << p
+          io << ':' << line if line
+        elsif line
+          io << '@' << line
+        end
+      end
     end
   end
 
@@ -205,6 +236,10 @@ module Noir::CLI::Inspect
     property path : String?
     @[JSON::Field(ignore_serialize: line.nil?)]
     property line : Int32?
+    # How many files declare this route (the optimizer merges copies). Set
+    # only above one, so the agent knows `path` is one of several.
+    @[JSON::Field(ignore_serialize: declarations.nil?)]
+    property declarations : Int32?
     @[JSON::Field(ignore_serialize: tech.nil?)]
     property tech : String?
     @[JSON::Field(ignore_serialize: handler.nil?)]
@@ -245,9 +280,11 @@ module Noir::CLI::Inspect
 
     def self.compact(endpoint : Endpoint) : Row
       row = new(endpoint.method, endpoint.url)
-      if location = endpoint.details.code_paths.first?
+      if location = Inspect.primary_declaration(endpoint)
         row.path = location.path
         row.line = location.line
+        copies = endpoint.details.code_paths.size
+        row.declarations = copies if copies > 1
       end
       row.tech = endpoint.details.technology
       row.handler = endpoint.handler
@@ -255,7 +292,8 @@ module Noir::CLI::Inspect
       row.tags = endpoint.tags.map(&.name).uniq!
       row.callees = endpoint.callees.map(&.name).uniq!
       if context = endpoint.ai_context
-        row.guards = context.guards.map(&.name).uniq!
+        # The same guards `--guard` counts: a rate limiter is not "who may call".
+        row.guards = Inspect.auth_guards(context).map(&.name).uniq!
         row.sinks = context.sinks.map(&.kind).uniq!
         row.signals = Inspect.derived_signals(context).map do |signal|
           signal.kind == "priority_review" ? "priority_review:#{signal.name}" : signal.kind
@@ -265,13 +303,23 @@ module Noir::CLI::Inspect
     end
 
     def to_text : String
+      # `--full` carries the record and nothing else; text has one shape.
+      if ep = endpoint
+        row = Row.compact(ep)
+        row.matched_by = matched_by
+        row.via = via
+        row.nearest_line = nearest_line
+        return row.to_text
+      end
       String.build do |io|
         io << method << ' ' << url
         if p = path
           io << "  " << p
           io << ':' << line if line
+          io << "  declarations=" << declarations if declarations
         end
         io << "  " << tech if tech
+        io << "  matched_by=" << matched_by if matched_by
         if h = handler
           io << "  handler=" << h.name
           if hp = h.path
@@ -282,11 +330,18 @@ module Noir::CLI::Inspect
         {"guards", guards, "sinks", sinks, "signals", signals, "tags", tags}.each_slice(2) do |(label, values)|
           io << "  " << label << '=' << values.as(Array(String)).join(',') unless values.as(Array(String)).empty?
         end
-        unless via.empty?
-          io << "  via=" << via.join(',') { |v| "#{v.kind}#{v.name ? ":#{v.name}" : ""}#{v.line ? "@#{v.line}" : ""}" }
-        end
+        io << "  via=" << via.join(',', &.to_text) unless via.empty?
       end
     end
+  end
+
+  # The declaration the compact row names when the optimizer merged several
+  # files into one endpoint. The shallowest path wins: an app's own file sits
+  # nearer the root than a fixture, vendored or generated copy of it
+  # (`server.ts` over `data/static/codefixes/x.ts`). Ties keep scan order.
+  # ponytail: a depth heuristic; `declarations` says when it was applied.
+  def self.primary_declaration(endpoint : Endpoint) : PathInfo?
+    endpoint.details.code_paths.min_by?(&.path.count('/'))
   end
 
   # Prints rows in `common.format` and returns the exit code. `-f text`
@@ -395,13 +450,21 @@ module Noir::CLI::Inspect
 
   record Match, endpoint : Endpoint, matched_by : String
 
+  # Whether a route declared for `declared` serves a `wanted` request method.
+  # Frameworks answer HEAD from the GET route, so a HEAD request traces to it.
+  def self.method_serves?(declared : String, wanted : String?) : Bool
+    return true unless wanted
+    declared = declared.upcase
+    declared == wanted || ::synthetic_any_method?(declared) || (wanted == "HEAD" && declared == "GET")
+  end
+
   # Routes matching a concrete request, exact matches first.
   def self.trace(endpoints : Array(Endpoint), method : String?, path : String) : Array(Match)
     wanted = normalize(path)
     exact = [] of Match
     pattern = [] of Match
     endpoints.each do |endpoint|
-      next if method && endpoint.method.upcase != method && !::synthetic_any_method?(endpoint.method)
+      next unless method_serves?(endpoint.method, method)
       route = normalize(request_path(endpoint.url))
       if route == wanted
         exact << Match.new(endpoint, "exact")
@@ -468,24 +531,26 @@ module Noir::CLI::Inspect
       endpoint.details.code_paths.each do |cp|
         next unless path_matches?(cp.path, file)
         declared ||= cp
-        via << Via.new("route", nil, cp.line)
+        via << Via.new("route", nil, cp.line, cp.path)
       end
       if (handler = endpoint.handler) && path_matches?(handler.path, file)
-        via << Via.new("handler", handler.name, handler.line)
+        via << Via.new("handler", handler.name, handler.line, handler.path)
       end
       endpoint.callees.each do |callee|
-        via << Via.new("callee", callee.name, callee.line) if path_matches?(callee.path, file)
+        via << Via.new("callee", callee.name, callee.line, callee.path) if path_matches?(callee.path, file)
       end
       # Signals are derived from the other buckets, not located in the file.
       if context = endpoint.ai_context
         {"guard" => context.guards, "source" => context.sources, "sink" => context.sinks,
          "validator" => context.validators}.each do |kind, entries|
           entries.each do |entry|
-            via << Via.new(kind, entry.name, entry.line) if path_matches?(entry.path, file)
+            via << Via.new(kind, entry.name, entry.line, entry.path) if path_matches?(entry.path, file)
           end
         end
       end
       next if via.empty?
+      # Static assets and merged copies repeat the same evidence verbatim.
+      via.uniq! { |v| {v.kind, v.name, v.line, v.path} }
       if line
         via.sort_by! { |v| (l = v.line) ? (l - line).abs : Int32::MAX }
       end
@@ -496,6 +561,9 @@ module Noir::CLI::Inspect
         row.path = declared.path
         row.line = declared.line
       end
+      # Evidence in the row's own file needs no path; the rest keeps one.
+      own = row.path || declared.try(&.path)
+      via.map! { |v| v.path = nil if v.path == own; v }
       row.via = via
       row.nearest_line = via.first.line if line
       row
@@ -521,19 +589,22 @@ module Noir::CLI::Inspect
     guard : Bool? = nil,
     sinks : Array(String) = [] of String,
     sources : Array(String) = [] of String,
-    signals : Array(String) = [] of String do
+    signals : Array(String) = [] of String,
+    validators : Array(String) = [] of String do
     def matches?(endpoint : Endpoint) : Bool
       return false unless methods.empty? || methods.includes?(endpoint.method.upcase)
       return false unless (u = url).nil? || Inspect.glob_or_substring?(u, endpoint.url)
       return false unless (p = path).nil? || endpoint.details.code_paths.any? { |cp| Inspect.path_glob?(p, cp.path) }
-      return false unless (h = handler).nil? || endpoint.handler.try { |eh| eh.name.includes?(h) || Inspect.path_glob?(h, eh.path || "") }
+      return false unless (h = handler).nil? || endpoint.handler.try { |eh| Inspect.glob_or_substring?(h, eh.name) || Inspect.path_glob?(h, eh.path || "") }
       unless techs.empty?
         have = endpoint.details.technologies.empty? ? [endpoint.details.technology].compact : endpoint.details.technologies
         return false unless (have & techs).present?
       end
       return false unless tags.empty? || endpoint.tags.any? { |t| tags.includes?(t.name) }
-      return false unless params.empty? || endpoint.params.any? { |p| params.includes?(p.name) }
-      return false unless param_types.empty? || endpoint.params.any? { |p| param_types.includes?(p.param_type) || param_types.includes?(p.request_type) }
+      # One parameter has to satisfy both `--param` and `--param-type`.
+      unless params.empty? && param_types.empty?
+        return false unless endpoint.params.any? { |p| param_matches?(p) }
+      end
       return false unless protocols.empty? || protocols.includes?(endpoint.protocol)
       context = endpoint.ai_context
       unless (g = guard).nil?
@@ -542,7 +613,13 @@ module Noir::CLI::Inspect
       return false unless Inspect.bucket_matches?(sinks, context.try(&.sinks))
       return false unless Inspect.bucket_matches?(sources, context.try(&.sources))
       return false unless Inspect.bucket_matches?(signals, Inspect.derived_signals(context))
+      return false unless Inspect.bucket_matches?(validators, context.try(&.validators))
       true
+    end
+
+    private def param_matches?(param : Param) : Bool
+      return false unless params.empty? || params.includes?(param.name)
+      param_types.empty? || param_types.includes?(param.param_type) || param_types.includes?(param.request_type)
     end
   end
 
@@ -553,24 +630,46 @@ module Noir::CLI::Inspect
     wanted.includes?("any") || entries.any? { |e| wanted.includes?(e.kind) }
   end
 
-  # A glob when it looks like one, a substring otherwise. `File.match?`
-  # raises lazily on a malformed pattern; that falls back to substring too.
+  # A glob when it looks like one, a substring otherwise. The glob is the
+  # agent's, not the shell's: `*` and `**` match anything including `/`
+  # (every Django URL ends in `/`, `*users*` has to find it), `?` one
+  # character, `[...]` a class, and `{`, `}` are literal so a route with
+  # `{id}` in it can be matched as written.
+  GLOB_CHARS = /[*?\[]/
+
   def self.glob_or_substring?(pattern : String, value : String) : Bool
-    if pattern.matches?(/[*?\[]/)
-      begin
-        return File.match?(pattern, value)
-      rescue
-      end
-    end
-    value.includes?(pattern)
+    return value.includes?(pattern) unless pattern.matches?(GLOB_CHARS)
+    glob_regex(pattern).matches?(value)
   end
 
   # Reported paths carry the scan root (`corpus/app/routes/x.ts`), so a glob
-  # written from inside the app (`routes/*`) is also tried as a suffix.
+  # written from inside the app (`routes/*`) also matches from any `/`.
   def self.path_glob?(pattern : String, value : String) : Bool
-    return true if glob_or_substring?(pattern, value)
-    return false if pattern.starts_with?('/') || pattern.starts_with?('*') || !pattern.matches?(/[*?\[]/)
-    glob_or_substring?("**/#{pattern}", value)
+    return value.includes?(pattern) unless pattern.matches?(GLOB_CHARS)
+    return glob_regex(pattern).matches?(value) if pattern.starts_with?('/') || pattern.starts_with?('*')
+    glob_regex(pattern, anchored: false).matches?(value)
+  end
+
+  @@glob_regexes = Hash(String, Regex).new
+
+  private def self.glob_regex(pattern : String, anchored : Bool = true) : Regex
+    @@glob_regexes["#{anchored}:#{pattern}"] ||= begin
+      body = String.build do |io|
+        pattern.each_char do |c|
+          case c
+          when '*' then io << ".*"
+          when '?' then io << '.'
+          when '[' then io << '['
+          when ']' then io << ']'
+          else          io << Regex.escape(c.to_s)
+          end
+        end
+      end
+      Regex.new("#{anchored ? "\\A" : "(?:\\A|/)"}#{body}\\z")
+    rescue ArgumentError
+      # An unbalanced `[`: it was not a glob after all, so substring.
+      Regex.new(Regex.escape(pattern))
+    end
   end
 
   # Filter values that no endpoint can satisfy, so a typo (`--sink file`
@@ -578,20 +677,36 @@ module Noir::CLI::Inspect
   # loud instead of returning an empty answer that looks final.
   def self.filter_warnings(endpoints : Array(Endpoint), filters : Filters) : Array(String)
     warnings = [] of String
-    asks_context = !filters.guard.nil? || !(filters.sinks.empty? && filters.sources.empty? && filters.signals.empty?)
+    asks_context = !filters.guard.nil? || !(filters.sinks.empty? && filters.sources.empty? && filters.signals.empty? && filters.validators.empty?)
     if asks_context && endpoints.none?(&.ai_context)
       warnings << "no endpoint carries ai_context; scan with --ai-context (or drop --from)"
       return warnings
     end
+    contexts = endpoints.compact_map(&.ai_context)
     {
-      {"sink", filters.sinks, endpoints.flat_map { |e| e.ai_context.try(&.sinks) || [] of AIContextEntry }},
-      {"source", filters.sources, endpoints.flat_map { |e| e.ai_context.try(&.sources) || [] of AIContextEntry }},
-      {"signal", filters.signals, endpoints.flat_map { |e| derived_signals(e.ai_context) }},
-    }.each do |label, wanted, entries|
-      seen = entries.map(&.kind).uniq!.sort!
+      {"method", filters.methods, endpoints.map(&.method.upcase)},
+      {"tech", filters.techs, endpoints.flat_map { |e| e.details.technologies.empty? ? [e.details.technology].compact : e.details.technologies }},
+      {"tag", filters.tags, endpoints.flat_map(&.tags.map(&.name))},
+      {"param", filters.params, endpoints.flat_map(&.params.map(&.name))},
+      {"param type", filters.param_types, endpoints.flat_map { |e| e.params.flat_map { |p| [p.param_type, p.request_type] } }},
+      {"protocol", filters.protocols, endpoints.map(&.protocol)},
+      {"sink kind", filters.sinks, contexts.flat_map(&.sinks.map(&.kind))},
+      {"source kind", filters.sources, contexts.flat_map(&.sources.map(&.kind))},
+      {"signal kind", filters.signals, contexts.flat_map { |c| derived_signals(c).map(&.kind) }},
+      {"validator kind", filters.validators, contexts.flat_map(&.validators.map(&.kind))},
+    }.each do |label, wanted, seen|
+      seen = seen.uniq.sort!
       unknown = wanted.reject { |k| k == "any" || seen.includes?(k) }
       next if unknown.empty?
-      warnings << "no endpoint carries #{label} kind #{unknown.join(", ")}; kinds in this report: #{seen.empty? ? "(none)" : seen.join(", ")}"
+      # A signal the compact row hides (it restates method/url/tech) is not
+      # "unknown"; say why it does not filter.
+      if label == "signal kind"
+        restating = contexts.flat_map { |c| c.signals.select { |s| RESTATING_SIGNAL_SOURCES.includes?(s.source) }.map(&.kind) }.uniq!
+        hidden, unknown = unknown.partition { |k| restating.includes?(k) }
+        warnings << "signal #{hidden.join(", ")} restates the row's method, url or tech and does not filter" unless hidden.empty?
+        next if unknown.empty?
+      end
+      warnings << "no endpoint carries #{label} #{unknown.join(", ")}; in this report: #{seen.empty? ? "(none)" : seen.join(", ")}"
     end
     warnings
   end
@@ -606,7 +721,7 @@ module Noir::CLI::Inspect
     <<-HELP
         --from <report>        Read endpoints from a `noir scan -f json|jsonl` report instead of scanning
         -f, --format <fmt>     jsonl (default), json, or text
-        --full                 Emit the full endpoint record instead of the compact row
+        --full                 Emit the full endpoint record (jsonl/json; text keeps its one line)
         --limit <n>            Print at most n rows
         --count                Print only the number of matches
         Any `noir scan` flag (-b, --exclude-path, --only-techs, -t, -u, --config-file, ...);

@@ -213,7 +213,7 @@ describe Noir::CLI::Inspect do
 
     it "warns about filter kinds no endpoint carries and about a report without ai_context" do
       f = Noir::CLI::QueryCommand.parse_filters(["--sink", "file", "--signal", "any"]).filters
-      Noir::CLI::Inspect.filter_warnings(endpoints, f).should eq(["no endpoint carries sink kind file; kinds in this report: command, sql"])
+      Noir::CLI::Inspect.filter_warnings(endpoints, f).should eq(["no endpoint carries sink kind file; in this report: command, sql"])
       Noir::CLI::Inspect.filter_warnings([bare], f).first.should start_with("no endpoint carries ai_context")
       Noir::CLI::Inspect.filter_warnings(endpoints, Noir::CLI::QueryCommand.parse_filters(["--sink", "sql"]).filters).should be_empty
     end
@@ -324,5 +324,99 @@ describe Noir::CLI::ReachCommand do
     Noir::CLI::ReachCommand.parse_target("src/a.go:42").should eq({"src/a.go", 42})
     Noir::CLI::ReachCommand.parse_target("src/a.go").should eq({"src/a.go", nil})
     Noir::CLI::ReachCommand.parse_target("C:/x/a.go").should eq({"C:/x/a.go", nil})
+  end
+end
+
+describe "query verb reliability (#3139)" do
+  it "prints the one text line for --full rows, with matched_by" do
+    ep = with_context(endpoint("GET", "/u/:id", "a.go", 3), guards: ["RequireAuth"])
+    row = Noir::CLI::Inspect::Row.full(ep)
+    row.matched_by = "pattern"
+    row.to_text.should eq("GET /u/:id  a.go:3  go_gin  matched_by=pattern  guards=RequireAuth")
+  end
+
+  it "shows only auth guards on the compact row, as --guard counts them" do
+    ep = endpoint("POST", "/2fa", "a.go", 1)
+    ctx = AIContext.new
+    ctx.push_guard(AIContextEntry.new("rate_limit_guard", "rateLimit"))
+    ep.ai_context = ctx
+    Noir::CLI::Inspect::Row.compact(ep).guards.should be_empty
+  end
+
+  it "names the shallowest declaration and counts the copies" do
+    ep = endpoint("GET", "/api/Users", "app/data/static/codefixes/x_1.ts", 10)
+    ep.details.code_paths << PathInfo.new("app/data/static/codefixes/x_2.ts", 10)
+    ep.details.code_paths << PathInfo.new("app/server.ts", 391)
+    row = Noir::CLI::Inspect::Row.compact(ep)
+    {row.path, row.line, row.declarations}.should eq({"app/server.ts", 391, 3})
+    Noir::CLI::Inspect::Row.compact(endpoint("GET", "/one", "a.go", 1)).declarations.should be_nil
+  end
+
+  it "globs across / and treats {id} as literal; a relative path glob matches from any /" do
+    g = ->(p : String, v : String) { Noir::CLI::Inspect.glob_or_substring?(p, v) }
+    g.call("*users*", "/accounts/users/").should be_true
+    g.call("/owners/{ownerId}/*", "/owners/{ownerId}/pets/new").should be_true
+    g.call("/owners/{ownerId}/*", "/owners/find").should be_false
+    g.call("/api/v?", "/api/v1").should be_true
+    g.call("users", "/api/users").should be_true # substring
+    g.call("[", "/x[").should be_true            # unbalanced class: literal
+    pg = ->(p : String, v : String) { Noir::CLI::Inspect.path_glob?(p, v) }
+    pg.call("routes/*", "corpus/app/routes/login.ts").should be_true
+    pg.call("routes/*.go", "corpus/app/routes/login.ts").should be_false
+    pg.call("/corpus/*", "corpus/app/x.go").should be_false
+  end
+
+  it "traces HEAD to the GET route" do
+    get = endpoint("GET", "/owners", "a.java", 1)
+    Noir::CLI::Inspect.trace([get], "HEAD", "/owners").map(&.matched_by).should eq(["exact"])
+    Noir::CLI::Inspect.trace([get], "POST", "/owners").should be_empty
+  end
+
+  it "requires one parameter to satisfy --param and --param-type together" do
+    ep = endpoint("PATCH", "/users/{user_id}", "u.py", 1)
+    ep.push_param(Param.new("user_id", "", "path"))
+    ep.push_param(Param.new("email", "", "json"))
+    both = Noir::CLI::QueryCommand.parse_filters(["--param", "email", "--param-type", "path"]).filters
+    Noir::CLI::Inspect.query([ep], both, false).should be_empty
+    same = Noir::CLI::QueryCommand.parse_filters(["--param", "email", "--param-type", "json"]).filters
+    Noir::CLI::Inspect.query([ep], same, false).size.should eq(1)
+  end
+
+  it "warns for every filter value nobody carries, and explains restating signals" do
+    ep = with_context(endpoint("GET", "/x", "a.go", 1), sinks: ["sql"])
+    ep.add_tag(Tag.new("auth", "", "hunt"))
+    f = Noir::CLI::QueryCommand.parse_filters(["--tag", "nope", "--method", "PUT", "--signal", "route_definition"]).filters
+    Noir::CLI::Inspect.filter_warnings([ep], f).should eq([
+      "no endpoint carries method PUT; in this report: GET",
+      "no endpoint carries tag nope; in this report: auth",
+      "signal route_definition restates the row's method, url or tech and does not filter",
+    ])
+  end
+
+  it "rejects an empty filter value and accepts --validator" do
+    Noir::CLI::QueryCommand.parse_filters(["--sink", ""]).errors.should eq(["--sink requires a value"])
+    Noir::CLI::QueryCommand.parse_filters(["--validator", "any"]).filters.validators.should eq(["any"])
+  end
+
+  it "names unknown scan flags before scanning" do
+    Noir::CLI::Inspect.unknown_flags(["-b", "x", "--exclude-path", "y", "--bogus", "--no-gaurd=1"]).should eq(["--bogus", "--no-gaurd=1"])
+  end
+
+  it "keeps the file on via entries outside the row's file and drops duplicates" do
+    ep = endpoint("GET", "/", "apps/a/main.go", 5)
+    ep.details.code_paths << PathInfo.new("apps/b/main.go", 9)
+    ep.details.code_paths << PathInfo.new("apps/b/main.go", 9)
+    ep.push_callee(Callee.new("render", "apps/b/main.go", 12))
+    rows = Noir::CLI::Inspect.reach([ep], "main.go", nil, false)
+    rows.size.should eq(1)
+    rows[0].via.map(&.to_text).should eq(["route@5", "route@apps/b/main.go:9", "callee:render@apps/b/main.go:12"])
+    JSON.parse(rows[0].via[0].to_json)["path"]?.should be_nil
+  end
+
+  it "explains an empty reach differently for a seen file and an unseen name" do
+    ep = endpoint("GET", "/x", "app/controllers/articles_controller.rb", 4)
+    ep.push_callee(Callee.new("current_user", "app/controllers/application_controller.rb", 36))
+    Noir::CLI::ReachCommand.empty_hint([ep], "application_controller.rb").should start_with("Noir recorded no route")
+    Noir::CLI::ReachCommand.empty_hint([ep], "nothing.rb").should start_with("no recorded location ends with nothing.rb")
   end
 end
