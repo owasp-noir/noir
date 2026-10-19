@@ -212,7 +212,9 @@ module NoirAIContext
             break
           end
         else
-          statement_done = !is_decorator && (stripped.ends_with?(";") || stripped.ends_with?(")") || stripped.ends_with?(" do"))
+          # `),` closes a list entry (`path('x', view),` in a Django
+          # urlconf): the next line is the sibling route, not this one.
+          statement_done = !is_decorator && (stripped.ends_with?(";") || stripped.ends_with?(")") || stripped.ends_with?("),") || stripped.ends_with?(" do"))
           break if statement_done && paren_balance <= 0
         end
       end

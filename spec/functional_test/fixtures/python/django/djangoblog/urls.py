@@ -15,6 +15,7 @@ Including another URLconf
 """
 from django.apps import apps
 from django.conf import settings
+from django.conf.urls.i18n import i18n_patterns
 from django.conf.urls.static import static
 from django.contrib.sitemaps.views import sitemap
 from django.urls import include
@@ -22,6 +23,7 @@ from django.urls import path
 from django.urls import re_path
 from haystack.views import search_view_factory
 
+from blog import views as blog_views
 from blog.views import EsSearchView
 from djangoblog.admin_site import admin_site
 from djangoblog.elasticsearch_backend import ElasticSearchModelSearchForm
@@ -55,6 +57,11 @@ urlpatterns = [
                   path(settings.BASE_PATH, include(api_patterns)),
                   # [REDACTED]
               ] + static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
+# Every route in here serves under a language-code segment (`/en/intl/`).
+urlpatterns += i18n_patterns(
+    path('intl/', blog_views.shop_daily_report, name='intl-report'),
+)
+
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL,
                           document_root=settings.MEDIA_ROOT)

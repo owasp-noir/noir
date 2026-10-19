@@ -300,7 +300,7 @@ module Analyzer::Python
       end
 
       list_start = content.index(list) || 0
-      extract_route_mappings(list).each do |route, view|
+      extract_route_mappings(list).each do |route, view, _offset|
         url = join_url_parts(prefix, normalize_django_route(route))
         line = route.empty? ? nil : content.index(route, list_start).try { |idx| content[0, idx].count('\n') + 1 }
         if router = view.index("URLRouter(")
@@ -468,8 +468,10 @@ module Analyzer::Python
       return direct_router_endpoints if urlpatterns_contents.empty?
 
       urlpatterns_contents.each do |urlpatterns_content|
+        list_line = list_start_line(original_content, urlpatterns_content)
         extract_route_mappings(urlpatterns_content).each do |route_mapping|
-          route, view = route_mapping
+          route, view, offset = route_mapping
+          entry_path = route_entry_path(route_path, list_line, offset)
           route = normalize_django_route(route)
           url = "/#{django_urls.prefix}/#{route}".gsub(/\/+/, "/")
           if new_route_path = resolve_dotted_include_target(view)
@@ -484,7 +486,7 @@ module Analyzer::Python
           end
 
           if app_config_path = resolve_django_app_config_include_path(view, app_config_refs)
-            extract_endpoints_from_django_app_config(join_url_parts(django_urls.prefix, route).lchop("/"), app_config_path, route_path).each do |endpoint|
+            extract_endpoints_from_django_app_config(join_url_parts(django_urls.prefix, route).lchop("/"), app_config_path, entry_path).each do |endpoint|
               endpoints << endpoint
             end
             next
@@ -534,19 +536,19 @@ module Analyzer::Python
           end
 
           if view.empty?
-            endpoints << Endpoint.new(url, "GET", Details.new(route_path))
+            endpoints << Endpoint.new(url, "GET", Details.new(entry_path))
           else
             wrapper = urlconf_auth_wrapper(view)
             view = extract_wrapped_view_reference(view)
             if view_target = resolve_django_view_target(view, package_map)
               filepath, function_or_class_name = view_target
               extract_endpoints_from_file(url, filepath, function_or_class_name).each do |endpoint|
-                append_code_path(endpoint.details, route_path)
+                append_code_path(endpoint.details, entry_path)
                 endpoints << tag_urlconf_auth(endpoint, wrapper)
               end
             else
               # By default, Django allows requests with methods other than GET as well
-              endpoints << tag_urlconf_auth(Endpoint.new(url, "GET", Details.new(route_path)), wrapper)
+              endpoints << tag_urlconf_auth(Endpoint.new(url, "GET", Details.new(entry_path)), wrapper)
             end
           end
         end
@@ -554,6 +556,19 @@ module Analyzer::Python
 
       endpoints.concat(direct_router_endpoints)
       endpoints
+    end
+
+    # 1-based line in `content` where the list body `body` starts, or nil
+    # when `body` is not a verbatim slice of it (a rewritten binding).
+    private def list_start_line(content : ::String, body : ::String) : Int32?
+      start = content.index(body) || return
+      content[0, start].count('\n') + 1
+    end
+
+    # `route_path` pointed at the entry `offset` lines into the list that
+    # starts at `list_line`; the bare file path when that line is unknown.
+    private def route_entry_path(route_path : PathInfo, list_line : Int32?, offset : Int32) : PathInfo
+      list_line ? PathInfo.new(route_path.path, list_line + offset) : route_path
     end
 
     private def extract_urlpatterns_contents(content : ::String, urlpattern_lists : Hash(::String, ::String)) : Array(::String)
@@ -678,17 +693,23 @@ module Analyzer::Python
       pattern_lists
     end
 
+    # Attribute name → right-hand side of each `self.X = ...` an AppConfig
+    # binds in `ready()`: another app config (`apps.get_app_config("x")`)
+    # or a view class (`get_class("basket.views", "BasketView")`,
+    # `views.BasketView`) that `get_urls` then mounts as `self.X.as_view()`.
     private def extract_django_app_config_refs(content : ::String) : Hash(::String, ::String)
       refs = Hash(::String, ::String).new
-      content.each_line do |line|
-        next if line.lstrip.starts_with?("#")
-        line.scan(/\bself\.([A-Za-z_][A-Za-z0-9_]*)\s*=\s*apps\.get_app_config\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
-          next unless match.size == 3
-          refs[match[1]] = match[2]
-        end
+      lines = content.split("\n")
+      lines.each_with_index do |line, index|
+        next unless line.includes?("self.")
+        assignment = line.match(/^\s*self\.([A-Za-z_][A-Za-z0-9_]*)\s*=(?!=)\s*(.+)$/) || next
+        expression = python_paren_delta(line) > 0 ? collect_python_expression(lines, index, line).partition(/=\s*/)[2] : assignment[2]
+        refs[assignment[1]] = expression.strip
       end
       refs
     end
+
+    APP_CONFIG_LABEL_RE = /\bapps\.get_app_config\s*\(\s*['"]([^'"]+)['"]\s*\)/
 
     private def resolve_django_app_config_include_path(view : ::String,
                                                        app_config_refs : Hash(::String, ::String)) : ::String?
@@ -698,10 +719,31 @@ module Analyzer::Python
 
       if self_match = view.match(/\bself\.([A-Za-z_][A-Za-z0-9_]*)\.urls\b/)
         ref_name = self_match[1]
-        if label = app_config_refs[ref_name]?
+        if label = app_config_refs[ref_name]?.try(&.match(APP_CONFIG_LABEL_RE)).try(&.[1])
           resolve_django_app_config_path(label)
         end
       end
+    end
+
+    # `self.add_view` in an AppConfig's `get_urls` → `{views file, class}`
+    # through the `ready()` binding. Oscar's `get_class("basket.views",
+    # "BasketAddView")` names a module by its app-relative dotted path, so
+    # it resolves to the `basket/views.py` nearest the apps.py; any other
+    # expression (`views.BasketAddView`) goes through the file's imports.
+    # ponytail: an Oscar fork overriding the module elsewhere in the
+    # tree is not preferred over the original.
+    private def resolve_app_config_view_target(view : ::String, app_config_refs : Hash(::String, ::String),
+                                               app_config_path : ::String, package_map) : Tuple(::String, ::String)?
+      expression = app_config_refs[view.lchop?("self.") || return]? || return
+      if loader = expression.match(/\bget_class\s*\(\s*['"]([\w.]+)['"]\s*,\s*['"](\w+)['"]/)
+        app_dir = "#{File.dirname(app_config_path)}/"
+        # Whole tree, not `@django_base_path`: the loader walks INSTALLED_APPS,
+        # and the sandbox project that anchors the scan does not contain them.
+        candidates = get_files_by_relative_path("#{loader[1].gsub('.', '/')}.py")
+        file = candidates.find(&.starts_with?(app_dir)) || candidates.min_by? { |c| {c.count('/'), c} }
+        return file ? {file, loader[2]} : nil
+      end
+      resolve_django_view_target(expression, package_map)
     end
 
     private def resolve_django_app_config_path(label : ::String) : ::String?
@@ -779,13 +821,15 @@ module Analyzer::Python
                                                      seen : Array(::String) = [] of ::String) : Array(Endpoint)
       endpoints = [] of Endpoint
 
+      list_line = list_start_line(read_file_content(current_app_config_path), pattern_content)
       extract_route_mappings(pattern_content).each do |route_mapping|
-        route, view = route_mapping
+        route, view, offset = route_mapping
+        entry_path = route_entry_path(route_path, list_line, offset)
         route = normalize_django_route(route)
         nested_prefix = join_url_parts(prefix, route).lchop("/")
 
         if nested_app_config_path = resolve_django_app_config_include_path(view, app_config_refs)
-          extract_endpoints_from_django_app_config(nested_prefix, nested_app_config_path, route_path).each do |endpoint|
+          extract_endpoints_from_django_app_config(nested_prefix, nested_app_config_path, entry_path).each do |endpoint|
             append_code_path(endpoint.details, parent_route_path)
             endpoints << endpoint
           end
@@ -812,7 +856,7 @@ module Analyzer::Python
           new_django_urls = DjangoUrls.new(nested_prefix, imported_urlconf_path, @django_base_path)
           unless @visited_url_paths.has_key? new_django_urls.filepath
             extract_endpoints(new_django_urls).each do |endpoint|
-              append_code_path(endpoint.details, route_path)
+              append_code_path(endpoint.details, entry_path)
               append_code_path(endpoint.details, parent_route_path)
               endpoints << endpoint
             end
@@ -822,21 +866,23 @@ module Analyzer::Python
 
         url = join_url_parts(prefix, route)
         if view.empty?
-          endpoint = Endpoint.new(url, "GET", Details.new(route_path))
+          endpoint = Endpoint.new(url, "GET", Details.new(entry_path))
           append_code_path(endpoint.details, parent_route_path)
           endpoints << endpoint
         else
           wrapper = urlconf_auth_wrapper(view)
           view = extract_wrapped_view_reference(view)
-          if view_target = resolve_django_view_target(view, package_map)
+          view_target = resolve_django_view_target(view, package_map) ||
+                        resolve_app_config_view_target(view, app_config_refs, current_app_config_path, package_map)
+          if view_target
             filepath, function_or_class_name = view_target
             extract_endpoints_from_file(url, filepath, function_or_class_name).each do |endpoint|
-              append_code_path(endpoint.details, route_path)
+              append_code_path(endpoint.details, entry_path)
               append_code_path(endpoint.details, parent_route_path)
               endpoints << tag_urlconf_auth(endpoint, wrapper)
             end
           else
-            endpoint = Endpoint.new(url, "GET", Details.new(route_path))
+            endpoint = Endpoint.new(url, "GET", Details.new(entry_path))
             append_code_path(endpoint.details, parent_route_path)
             endpoints << tag_urlconf_auth(endpoint, wrapper)
           end
@@ -910,13 +956,21 @@ module Analyzer::Python
       nil
     end
 
-    private def extract_route_mappings(content : ::String) : Array(Tuple(::String, ::String))
-      mappings = [] of Tuple(::String, ::String)
+    # `{route, view, line offset}` per `path|re_path|url(...)` entry in
+    # `content`; the offset is the entry's 0-based line within `content`,
+    # for `route_entry_path` to turn into a file line.
+    private def extract_route_mappings(content : ::String) : Array(Tuple(::String, ::String, Int32))
+      mappings = [] of Tuple(::String, ::String, Int32)
       # Comments go first: a commented-out `path(...)` or a `(` in a
       # trailing comment would otherwise be read as code once lines are
       # joined into one logical call.
       lines = content.split("\n").map { |line| strip_python_comment(line) }
       inline_include_depth = 0
+      # `i18n_patterns(path(...), ...)` serves everything it holds under a
+      # language-code segment (`/en/basket/`); `{lang}` stands for it.
+      # ponytail: `prefix_default_language=False` also serves the bare path
+      # for the default language; that twin is not emitted.
+      i18n = content.lstrip.starts_with?("i18n_patterns")
 
       lines.each_with_index do |line, index|
         if inline_include_depth > 0
@@ -972,7 +1026,8 @@ module Analyzer::Python
           route ||= "" if view_expr.matches?(/\binclude\s*\(/)
           next unless route
 
-          mappings << {route, view_expr}
+          route = "{lang}/#{Noir::URLPath.strip_regex_anchors(route)}" if i18n
+          mappings << {route, view_expr, index}
         end
 
         # Same for a nested Channels `path(prefix, URLRouter([...]))` body.
@@ -1222,8 +1277,10 @@ module Analyzer::Python
                                                    seen : Array(::String) = [] of ::String) : Array(Endpoint)
       endpoints = [] of Endpoint
 
+      list_line = list_start_line(read_file_content(django_urls.filepath), pattern_content)
       extract_route_mappings(pattern_content).each do |route_mapping|
-        route, view = route_mapping
+        route, view, offset = route_mapping
+        entry_path = route_entry_path(route_path, list_line, offset)
         route = normalize_django_route(route)
         nested_mount = join_url_parts(mount_route, route).lchop("/")
 
@@ -1290,7 +1347,7 @@ module Analyzer::Python
 
         url = join_url_parts(django_urls.prefix, mount_route, route)
         if view.empty?
-          endpoints << Endpoint.new(url, "GET", Details.new(route_path))
+          endpoints << Endpoint.new(url, "GET", Details.new(entry_path))
           next
         end
 
@@ -1301,14 +1358,14 @@ module Analyzer::Python
           filepath, function_or_class_name = resolved
           if /^[a-zA-Z_][a-zA-Z0-9_]*$/.match(function_or_class_name)
             extract_endpoints_from_file(url, filepath, function_or_class_name).each do |endpoint|
-              append_code_path(endpoint.details, route_path)
+              append_code_path(endpoint.details, entry_path)
               endpoints << tag_urlconf_auth(endpoint, wrapper)
             end
             next
           end
         end
 
-        endpoints << tag_urlconf_auth(Endpoint.new(url, "GET", Details.new(route_path)), wrapper)
+        endpoints << tag_urlconf_auth(Endpoint.new(url, "GET", Details.new(entry_path)), wrapper)
       end
 
       endpoints
@@ -1690,6 +1747,10 @@ module Analyzer::Python
             end
           end
 
+          if declared = declared_http_method_names(view_file, class_codeblock, class_define_line)
+            suspicious_http_methods = declared
+          end
+
           if suspicious_http_methods.empty?
             return endpoints
           end
@@ -1712,6 +1773,32 @@ module Analyzer::Python
 
       # Default to GET method
       [Endpoint.new(url, "GET", Details.new(PathInfo.new(filepath)))]
+    end
+
+    # The verbs `View.dispatch` lets through when the class (or a base
+    # declared in the same file) sets `http_method_names`; every other
+    # verb gets a 405, so the declaration replaces whatever the class name
+    # and `def` scan implied. `BasketAddView(FormView)` with `["post"]`
+    # has no GET. Nil when nothing in reach declares it.
+    # ponytail: one level of same-file bases; a mixin from another module
+    # that sets it is not read. HEAD/OPTIONS/TRACE are no surface of their
+    # own and are dropped.
+    private def declared_http_method_names(view_file : ViewFileIndex, class_codeblock : ::String,
+                                           class_define_line : ::String, depth = 0) : Array(::String)?
+      if allowed = class_codeblock.match(DRF_HTTP_METHOD_NAMES_RE)
+        return allowed[1].scan(/['"]([A-Za-z]+)['"]/).map(&.[1].upcase) & %w[GET POST PUT PATCH DELETE]
+      end
+      return if depth > 0
+      bases = class_define_line.match(/\(([^)]*)\)/).try(&.[1]) || return
+      bases.split(',').each do |base|
+        base_start = view_file.classes[base.strip]? || next
+        base_lines = view_file.tail(base_start)
+        base_codeblock = parse_python_class_codeblock(base_lines) || parse_code_block(base_lines) || next
+        if declared = declared_http_method_names(view_file, base_codeblock, base_codeblock.lines.first? || "", depth + 1)
+          return declared
+        end
+      end
+      nil
     end
 
     private def default_drf_generic_view_methods(class_define_line : ::String) : Array(::String)?
