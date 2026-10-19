@@ -54,6 +54,7 @@ class EndpointOptimizer
   def initialize(@logger : NoirLogger, @options : Hash(String, YAML::Any))
     @pvalue_rules = initialize_pvalue_rules
     @source_scope_cache = Hash(String, String).new
+    @go_program_dirs = Hash(String, Set(String)).new
   end
 
   # Main optimization workflow - calls all optimization steps
@@ -717,8 +718,42 @@ class EndpointOptimizer
         dir = parent
       end
 
+      # One Go module, many programs (gin-gonic/examples, a `cmd/` tree):
+      # each `package main` directory is its own deployable, so `POST
+      # /upload` in two of them must not merge into one row carrying the
+      # first one's path and the other's handler.
+      if path.ends_with?(".go") && !scope.empty? && go_program_dir?(start_dir, scope)
+        scope = Noir::PathScope.expand(start_dir)
+      end
+
       scope
     end
+  end
+
+  # Whether `dir` holds a `package main` and the module at `module_root`
+  # holds more than one such directory. A single-binary module keeps the
+  # module as its scope, whatever directory its routes are declared in.
+  private def go_program_dir?(dir : String, module_root : String) : Bool
+    programs = @go_program_dirs[module_root] ||= begin
+      found = Set(String).new
+      Dir.glob(File.join(module_root, "**", "*.go")) do |file|
+        next if file.ends_with?("_test.go") || file.includes?("/vendor/") || file.includes?("/testdata/")
+        found << File.dirname(file) if go_main_package?(file)
+      end
+      found
+    end
+    programs.size > 1 && programs.includes?(Noir::PathScope.expand(dir))
+  end
+
+  private def go_main_package?(file : String) : Bool
+    File.open(file) do |io|
+      # The package clause follows the license header; 4 KB covers one.
+      buffer = Bytes.new(4096)
+      read = io.read(buffer)
+      String.new(buffer[0, read]).matches?(/^package\s+main\b/m)
+    end
+  rescue IO::Error
+    false
   end
 
   # Get allowed HTTP methods. AsyncAPI verbs (`PUBLISH`, `SUBSCRIBE`,

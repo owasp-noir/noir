@@ -328,6 +328,56 @@ describe "EndpointOptimizer" do
       ])
     end
 
+    it "keeps the programs of a multi-program Go module distinct, and merges within one program" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      temp_dir = File.join(Dir.tempdir, "noir-optimizer-gomulti-#{Process.pid}-#{Time.utc.to_unix_ms}")
+      upload_single = File.join(temp_dir, "upload-file/single/main.go")
+      upload_multi = File.join(temp_dir, "upload-file/multiple/main.go")
+      helper = File.join(temp_dir, "upload-file/multiple/routes.go")
+
+      begin
+        {upload_single, upload_multi}.each do |main|
+          Dir.mkdir_p(File.dirname(main))
+          File.write(main, "// license\npackage main\n\nfunc main() {}\n")
+        end
+        File.write(helper, "package main\n\nfunc routes() {}\n")
+        File.write(File.join(temp_dir, "go.mod"), "module example.com/examples\n")
+
+        a = tech_endpoint("/upload", "POST", "go_gin", upload_single, 15)
+        b = tech_endpoint("/upload", "POST", "go_gin", upload_multi, 15)
+        c = tech_endpoint("/upload", "POST", "go_gin", helper, 3)
+
+        result = optimizer.optimize_endpoints([a, b, c])
+        result.size.should eq(2)
+        paths = result.map(&.details.code_paths.map(&.path).sort!)
+        paths.should contain([upload_single])
+        paths.should contain([upload_multi, helper].sort!)
+      ensure
+        FileUtils.rm_rf(temp_dir)
+      end
+    end
+
+    it "keeps one module scope for a single-program Go module" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      temp_dir = File.join(Dir.tempdir, "noir-optimizer-gosingle-#{Process.pid}-#{Time.utc.to_unix_ms}")
+      main = File.join(temp_dir, "cmd/api/main.go")
+      handler = File.join(temp_dir, "internal/handlers/health.go")
+
+      begin
+        Dir.mkdir_p(File.dirname(main))
+        Dir.mkdir_p(File.dirname(handler))
+        File.write(main, "package main\n\nfunc main() {}\n")
+        File.write(handler, "package handlers\n")
+        File.write(File.join(temp_dir, "go.mod"), "module example.com/app\n")
+
+        a = tech_endpoint("/health", "GET", "go_gin", main, 9)
+        b = tech_endpoint("/health", "GET", "go_gin", handler, 4)
+        optimizer.optimize_endpoints([a, b]).size.should eq(1)
+      ensure
+        FileUtils.rm_rf(temp_dir)
+      end
+    end
+
     it "keeps multi-module endpoints distinct even when a collection shares the path" do
       # Regression: a collection sharing the path adds a second technology, which
       # previously neutralized the build-module scope for every endpoint at that
