@@ -182,6 +182,10 @@ The compact row is a projection of the endpoint record, empty buckets omitted.
  "signals":["idor_review"],"callees":["db.Exec","render"]}
 ```
 
+An agent skill that teaches these verbs, the scan-once loop and the caveats
+to carry lives at [`skills/noir/SKILL.md`](https://github.com/owasp-noir/noir/blob/main/skills/noir/SKILL.md);
+copy it into your agent's skills directory.
+
 ## List
 
 `noir list` prints the built-in catalogs.
