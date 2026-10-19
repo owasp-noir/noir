@@ -182,3 +182,30 @@ describe "Noir::GoNamedHandler wrapped handlers and callees" do
     seen.values.flatten.join.should_not contain("qo")
   end
 end
+
+describe "Noir::GoNamedHandler#handler_for" do
+  it "reports the last argument only: a named handler, never a middleware before a closure" do
+    source = <<-GO
+      package main
+
+      func main() {
+      	r.GET("/home", CookieTool(), func(c *gin.Context) {})
+      	r.GET("/stream", HeadersMiddleware(), stream.serveHTTP())
+      	r.POST("/items", Auth(), createItem)
+      }
+
+      func CookieTool() gin.HandlerFunc { return nil }
+      func HeadersMiddleware() gin.HandlerFunc { return nil }
+      func Auth() gin.HandlerFunc { return nil }
+      func createItem(c *gin.Context) {}
+      func (stream *Event) serveHTTP() gin.HandlerFunc { return nil }
+      GO
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source)
+    named = Noir::GoNamedHandler.new(source, "main.go", routes)
+    by_path = routes.to_h { |r| {r.path, named.handler_for(r)} }
+    by_path["/home"].should be_nil
+    by_path["/items"].try(&.name).should eq("createItem")
+    by_path["/items"].try(&.line).should eq(12)
+    by_path["/stream"].try(&.name).should eq("stream.serveHTTP()")
+  end
+end

@@ -11,6 +11,7 @@ private def with_app(&)
   File.write(File.join(dir, "lib", "auth.ts"), "export const isAuthorized = () => (req, res, next) => next()\n")
   server = <<-JS
     import express from 'express'
+    import axios from 'axios'
     import { login } from './routes/login'
     import * as security from './lib/auth'
     const users = require('./routes/users')
@@ -40,7 +41,7 @@ describe Noir::JSHandlerResolver do
       {h.path, h.line}.should eq({File.join(dir, "routes", "users.js"), 2})
 
       h = Noir::JSHandlerResolver.resolve(" local ", server, path).not_nil!
-      {h.name, h.path, h.line}.should eq({"local", path, 6})
+      {h.name, h.path, h.line}.should eq({"local", path, 7})
     end
   end
 
@@ -53,15 +54,30 @@ describe Noir::JSHandlerResolver do
     end
   end
 
+  it "unwraps transparent async wrappers and reports no handler for middleware factories" do
+    with_app do |dir, server|
+      path = File.join(dir, "server.ts")
+      h = Noir::JSHandlerResolver.resolve("utils.asyncHandler(login())", server, path).not_nil!
+      {h.name, h.path, h.line}.should eq({"login()", File.join(dir, "routes", "login.ts"), 3})
+      h = Noir::JSHandlerResolver.resolve("wrap(users.create)", server, path).not_nil!
+      {h.name, h.line}.should eq({"users.create", 2})
+      # `validate(schema)` is middleware around `schema`, not a wrapped handler.
+      Noir::JSHandlerResolver.resolve("validate(login)", server, path).should be_nil
+      Noir::JSHandlerResolver.resolve("cors()", server, path).should be_nil
+      Noir::JSHandlerResolver.resolve("express.static", server, path).should be_nil
+      Noir::JSHandlerResolver.resolve("bodyParser.json()", server, path).should be_nil
+    end
+  end
+
   it "returns nil for closures, calls with arguments, unknown members and package imports" do
     with_app do |dir, server|
       path = File.join(dir, "server.ts")
       Noir::JSHandlerResolver.resolve("(req, res) => res.send(1)", server, path).should be_nil
-      Noir::JSHandlerResolver.resolve("utils.wrap(login())", server, path).should be_nil
+      Noir::JSHandlerResolver.resolve("utils.validate(login())", server, path).should be_nil
       Noir::JSHandlerResolver.resolve("nothing.here", server, path).should be_nil
-      # `express` is a package: the name is kept, nothing is resolved.
-      h = Noir::JSHandlerResolver.resolve("express.static", server, path).not_nil!
-      {h.name, h.path, h.line}.should eq({"express.static", nil, nil})
+      # `axios` is a package: the name is kept, nothing is resolved.
+      h = Noir::JSHandlerResolver.resolve("axios.get", server, path).not_nil!
+      {h.name, h.path, h.line}.should eq({"axios.get", nil, nil})
     end
   end
 end

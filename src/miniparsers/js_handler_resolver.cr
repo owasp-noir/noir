@@ -16,6 +16,21 @@ module Noir::JSHandlerResolver
 
   REFERENCE_RE = /\A([A-Za-z_$][\w$]*)(?:\s*\.\s*([A-Za-z_$][\w$]*))?\s*(?:\(\s*\))?\z/
 
+  # `utils.asyncHandler(login())`, `wrap(ctrl.show)`: the handler is the
+  # argument, the wrapper only catches its rejection. Only names that are
+  # conventionally transparent; `validate(schema)` is middleware, not a
+  # wrapped `schema`.
+  # ponytail: a name list; reading the wrapper's body would be the upgrade.
+  WRAPPER_RE = /\A(?:[A-Za-z_$][\w$]*\.)?(?:asyncHandler|asyncWrap|asyncWrapper|asyncMiddleware|wrap|wrapAsync|catchAsync|catchErrors|handleAsync|expressAsyncHandler|tryCatch|ah)\s*\((.+)\)\z/m
+
+  # Factories that register middleware, never a route's handler. A route
+  # whose last argument is one of these has no named handler to report.
+  MIDDLEWARE_FACTORIES = Set{
+    "cors", "helmet", "morgan", "compression", "cookieParser", "csrf", "csurf",
+    "rateLimit", "serveStatic", "favicon", "session", "methodOverride", "multer",
+    "bodyParser", "express", "passport", "serveIndex", "timeout", "responseTime",
+  }
+
   IMPORT_DEFAULT_RE = /\bimport\s+([A-Za-z_$][\w$]*)\s*(?:,\s*\{[^}]*\}\s*)?from\s*['"]([^'"]+)['"]/
   IMPORT_NAMED_RE   = /\bimport\s*(?:[A-Za-z_$][\w$]*\s*,\s*)?\{([^}]*)\}\s*from\s*['"]([^'"]+)['"]/
   IMPORT_STAR_RE    = /\bimport\s*\*\s*as\s+([A-Za-z_$][\w$]*)\s*from\s*['"]([^'"]+)['"]/
@@ -37,8 +52,12 @@ module Noir::JSHandlerResolver
   # is a plain reference that resolves to a definition.
   def resolve(handler_text : String, content : String, file_path : String) : Handler?
     text = handler_text.strip
+    if wrapped = text.match(WRAPPER_RE)
+      text = wrapped[1].strip
+    end
     return unless m = text.match(REFERENCE_RE)
     base, member = m[1], m[2]?
+    return if MIDDLEWARE_FACTORIES.includes?(base)
 
     if spec = imports_of(content, file_path)[base]?
       target = resolve_specifier(file_path, spec[0]) || return Handler.new(text)

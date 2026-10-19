@@ -225,17 +225,16 @@ class Noir::GoNamedHandler
     true
   end
 
-  # The route's handler resolved to its definition: the last plain
-  # reference among the handler arguments (middleware comes first), or nil
-  # for a closure or a name this file and its package cannot resolve.
+  # The route's handler resolved to its definition: the *last* handler
+  # argument, which is the one that answers (everything before it is
+  # middleware). A closure there means the declaration line is the handler
+  # and nothing is reported; a middleware before a closure is never promoted,
+  # since `route.GET("/home", CookieTool(), func(c) {...})` is not handled
+  # by CookieTool.
   def handler_for(route : Noir::TreeSitterGoRouteExtractor::Route) : Handler?
-    route.handler_args.reverse_each do |arg|
-      name = arg.strip
-      if key = @handlers[name]?
-        return Handler.new(name, key[0], key[1] + 1)
-      end
-    end
-    nil
+    name = route.handler_args.last?.try(&.strip) || return
+    key = @handlers[name]? || return
+    Handler.new(name, key[0], key[1] + 1)
   end
 
   def bind(route : Noir::TreeSitterGoRouteExtractor::Route, endpoint : Endpoint)
