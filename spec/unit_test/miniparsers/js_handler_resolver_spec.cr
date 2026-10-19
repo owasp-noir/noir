@@ -44,6 +44,15 @@ describe Noir::JSHandlerResolver do
     end
   end
 
+  it "keeps the handler path relative when the route's path is relative" do
+    with_app do |dir, server|
+      Dir.cd(dir) do
+        h = Noir::JSHandlerResolver.resolve("login()", server, "server.ts").not_nil!
+        {h.path, h.line}.should eq({File.join("routes", "login.ts"), 3})
+      end
+    end
+  end
+
   it "returns nil for closures, calls with arguments, unknown members and package imports" do
     with_app do |dir, server|
       path = File.join(dir, "server.ts")
