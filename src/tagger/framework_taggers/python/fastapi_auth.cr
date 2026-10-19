@@ -52,6 +52,17 @@ class FastAPIAuthTagger < FrameworkTagger
 
   ROUTE_DECORATOR = /^\s*@(\w+)\.(?:get|post|put|patch|delete|options|head|trace|api_route|websocket)\b/
 
+  # Authorization, as opposed to authentication: a role / ownership field
+  # being read, or the handler answering 403. A dependency counts only on
+  # the field — `get_current_user` raises 403 for a bad token, which is
+  # authentication — while a route body counts on either.
+  # ponytail: `.permissions` / `.roles` may be a data read rather than a
+  # check; a per-statement `if` parse would separate them.
+  AUTHZ_FIELD                = /\.(?:is_superuser|is_admin|is_staff|owner_id|roles?|permissions?|scopes)\b/
+  FORBIDDEN                  = /status_code\s*=\s*(?:403\b|status\.HTTP_403_FORBIDDEN)|\bHTTP_403_FORBIDDEN\b|HTTPException\s*\(\s*403\b/
+  PYTHON_DEF                 = /^(?:async\s+)?def\s+(\w+)\s*\(/
+  ANNOTATED_ALIAS_DEPENDENCY = /^\s*(\w+)\s*(?::\s*[\w.\[\]]+\s*)?=\s*Annotated\s*\[.*\bDepends\s*\(\s*([\w.]+)/
+
   def self.target_techs : Array(String)
     ["python_fastapi"]
   end
@@ -59,19 +70,50 @@ class FastAPIAuthTagger < FrameworkTagger
   def initialize(options : Hash(String, YAML::Any))
     super
     @auth_aliases = Hash(String, String).new
+    @dependency_aliases = Hash(String, String).new
+    @authz_dependencies = Set(String).new
   end
 
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
     @auth_aliases.clear
+    @dependency_aliases.clear
+    @authz_dependencies.clear
     collect_files_by_extension(".py").each do |path|
       content = read_file(path)
-      next unless content && content.includes?("Annotated")
-      content.each_line do |line|
-        next unless (m = line.match(ANNOTATED_ALIAS)) && (desc = dependency_desc(m[2]))
-        @auth_aliases[m[1]] = desc
+      next unless content
+      if content.includes?("Annotated")
+        content.each_line do |line|
+          next unless m = line.match(ANNOTATED_ALIAS)
+          if desc = dependency_desc(m[2])
+            @auth_aliases[m[1]] = desc
+          end
+          if dep = line.match(ANNOTATED_ALIAS_DEPENDENCY)
+            @dependency_aliases[m[1]] = dep[2]
+          end
+        end
       end
+      index_authz_dependencies(content) if content.matches?(AUTHZ_FIELD)
     end
     super
+  end
+
+  # Top-level `def`s whose body checks a role / ownership field, by bare
+  # name. ponytail: names are not scoped to their module, so two modules
+  # defining the same dependency name share one verdict.
+  private def index_authz_dependencies(content : String)
+    name : String? = nil
+    body = [] of String
+    (content.lines << "").each do |line|
+      if !line.blank? && line[0].ascii_whitespace?
+        body << line if name
+        next
+      end
+      if (current = name) && body.any?(&.matches?(AUTHZ_FIELD))
+        @authz_dependencies << current
+      end
+      body.clear
+      name = line.match(PYTHON_DEF).try(&.[1])
+    end
   end
 
   private def check_endpoint(endpoint : Endpoint)
@@ -87,14 +129,69 @@ class FastAPIAuthTagger < FrameworkTagger
       # declared on.
       header = handler_header(lines, line_num - 1)
       description = auth_desc(header)
-      if description.nil? && (receiver = header.match(ROUTE_DECORATOR).try(&.[1]))
-        description = auth_desc(router_statement(lines, receiver))
+      authz = authz_desc(header)
+      if (description.nil? || authz.nil?) && (receiver = header.match(ROUTE_DECORATOR).try(&.[1]))
+        router = router_statement(lines, receiver)
+        description ||= auth_desc(router)
+        authz ||= authz_desc(router)
       end
-      if description
-        endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "fastapi_auth"))
-        return
+      authz ||= body_authz_desc(lines, line_num - 1)
+      next if description.nil? && authz.nil?
+
+      endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "fastapi_auth")) if description
+      endpoint.add_tag(Tag.new("authz", "Protected by #{authz}", "fastapi_auth")) if authz
+      return
+    end
+  end
+
+  # A `Depends(x)` / `Security(x)` (or an `Annotated` alias of one) whose
+  # definition checks a role / ownership field.
+  private def authz_desc(text : String) : String?
+    text.scan(DEPENDENCY_CALL) do |m|
+      return "FastAPI #{m[1]}(#{m[2]})" if authz_dependency?(m[2])
+    end
+    text.scan(/:\s*(\w+)\b/) do |m|
+      if (callable = @dependency_aliases[m[1]]?) && authz_dependency?(callable)
+        return "FastAPI Depends(#{callable}) (#{m[1]})"
       end
     end
+    nil
+  end
+
+  private def authz_dependency?(callable : String) : Bool
+    @authz_dependencies.includes?(callable.split('.').last)
+  end
+
+  # The handler's own body: from its `def` to the next line at or above
+  # the `def`'s indent.
+  private def body_authz_desc(lines : Array(String), start : Int32) : String?
+    idx = start
+    while idx < lines.size && idx < start + 60 && !lines[idx].lstrip.matches?(PYTHON_DEF)
+      idx += 1
+    end
+    return if idx >= lines.size
+    def_indent = lines[idx].size - lines[idx].lstrip.size
+    # Skip the (possibly wrapped) signature: its closing `) -> T:` sits at
+    # the `def`'s own indent.
+    depth = 0
+    while idx < lines.size && idx < start + 60
+      code = Analyzer::Python::Helper.strip_python_comment(lines[idx]).rstrip
+      depth += code.count('(') + code.count('[') - code.count(')') - code.count(']')
+      idx += 1
+      break if depth <= 0 && code.ends_with?(':')
+    end
+    while idx < lines.size && idx < start + 400
+      line = lines[idx]
+      break if !line.blank? && line.size - line.lstrip.size <= def_indent
+      code = Analyzer::Python::Helper.strip_python_comment(line)
+      if code.matches?(FORBIDDEN)
+        return "FastAPI handler 403 check"
+      elsif code.matches?(AUTHZ_FIELD)
+        return "FastAPI handler ownership/role check"
+      end
+      idx += 1
+    end
+    nil
   end
 
   private def auth_desc(text : String) : String?

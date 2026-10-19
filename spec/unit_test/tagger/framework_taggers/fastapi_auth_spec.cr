@@ -63,6 +63,35 @@ describe "FastAPIAuthTagger" do
     endpoint.tags.empty?.should be_true
   end
 
+  # 48: @app.delete("/users/{user_id}", dependencies=[Depends(get_current_active_superuser)])
+  # 53: @app.put("/items/{item_id}")   body: owner_id != current_user.id -> 403
+  # 61: @app.patch("/notes/{note_id}") Depends(get_current_user) only
+  it "tags authorization from a role-checking dependency or the handler's own 403" do
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(fixture_base)
+    at = ->(line : Int32, method : String) { Endpoint.new("/#{line}", method, [] of Param, Details.new(PathInfo.new(main_path, line))) }
+    superuser, ownership, plain = at.call(48, "DELETE"), at.call(53, "PUT"), at.call(61, "PATCH")
+
+    # The dependency index is built from the files the detector registered.
+    CodeLocator.instance.clear_all
+    CodeLocator.instance.register_path(main_path)
+    begin
+      FastAPIAuthTagger.new(noir_options).perform([superuser, ownership, plain])
+    ensure
+      CodeLocator.instance.clear_all
+    end
+
+    superuser.tags.map { |t| {t.name, t.description} }.should eq([
+      {"auth", "Protected by FastAPI Depends(get_current_active_superuser)"},
+      {"authz", "Protected by FastAPI Depends(get_current_active_superuser)"},
+    ])
+    ownership.tags.map { |t| {t.name, t.description} }.should eq([
+      {"auth", "Protected by FastAPI Depends(get_current_user)"},
+      {"authz", "Protected by FastAPI handler ownership/role check"},
+    ])
+    plain.tags.map(&.name).should eq(["auth"])
+  end
+
   it "reads Annotated auth aliases, wrapped signatures and router dependencies" do
     CodeLocator.instance.clear_all
     tmpdir = File.tempname("fastapi_aliases")
