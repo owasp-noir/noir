@@ -1,5 +1,6 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
+require "../../../miniparsers/rails_callback_chain"
 
 @[Noir::TaggerFor(key: "ruby_auth", name: "Ruby Auth Tagger", desc: "Identifies Ruby authentication patterns (Devise, Pundit, CanCanCan, Warden)", order: 120)]
 class RubyAuthTagger < FrameworkTagger
@@ -89,9 +90,6 @@ class RubyAuthTagger < FrameworkTagger
   SKIP_CALLBACKS          = /\bskip_before_action\s+((?::\w+[!?]?\s*,?\s*)+)/
   BEFORE_ACTION_CALLBACKS = /(?<!skip_)before_action\s+((?::\w+[!?]?\s*,?\s*)+)/
 
-  # Class-body lines that change the callback chain a subclass inherits.
-  RAILS_CALLBACK_LINE = /^(?:include|(?:prepend_|skip_)?before_action|allow_unauthenticated_access)\b/
-
   # Cheap gate for `check_controller_auth`'s backward walk, which runs to the
   # enclosing `class` — or, in a Sinatra/Grape/Roda file that has none, to line
   # 0 — for *every* endpoint in the file. Mechanically the union of the three
@@ -110,22 +108,16 @@ class RubyAuthTagger < FrameworkTagger
     ["ruby_rails", "ruby_sinatra", "ruby_hanami", "ruby_grape", "ruby_roda"]
   end
 
+  @rails_chain : Noir::RailsCallbackChain? = nil
+
   def initialize(options : Hash(String, YAML::Any))
     super
     @controller_line_flags = Hash(String, Array(UInt8)).new
-    @rails_indexed = false
-    @rails_classes = Hash({String, Int32}, RailsClass).new
-    @rails_by_name = Hash(String, Array(RailsClass)).new
     @scope_lines = Hash(String, ScopeLines).new
     @flagged_line_jumps = Hash(String, Array(Int32)).new
-    @rails_defs = Hash(String, Array({String, Int32})).new
     @callback_guards = Hash(String, String?).new
     @rejecting_defs = Hash(String, Bool).new
   end
-
-  # A Ruby class or module under a `controllers` directory, with the
-  # class-body lines that touch the callback chain (`RAILS_CALLBACK_LINE`).
-  record RailsClass, name : String, namespace : String, parent : String?, callbacks : Array(String) = [] of String
 
   # Per-line flags for `check_controller_auth`, computed once per file.
   #
@@ -235,30 +227,7 @@ class RubyAuthTagger < FrameworkTagger
   end
 
   private def applies_to_action?(current : String, action_name : String?) : Bool
-    if only = callback_option(current, ONLY_OPTION)
-      return !!(action_name && only.includes?(action_name))
-    end
-    if except = callback_option(current, EXCEPT_OPTION)
-      return !(action_name && except.includes?(action_name))
-    end
-    true
-  end
-
-  ONLY_OPTION   = /\bonly:/
-  EXCEPT_OPTION = /\bexcept:/
-
-  # The action names an `only:` / `except:` option lists, in any of its
-  # spellings: `:show`, `[:show, :edit]`, `%i[show edit]`, `"show"`.
-  # Matching `":#{action}"` against the raw line missed the `%i[ new create ]`
-  # the Rails generators write, and let `:new` match `:new_session`.
-  private def callback_option(line : String, option : Regex) : Array(String)?
-    match = line.match(option)
-    return unless match
-    value = line[match.end..]
-    if stop = value.index(/\b\w+:(?!:)/)
-      value = value[0, stop]
-    end
-    value.gsub(/%[iwIW][\[(]/, " ").scan(/\w+[?!]?/).map(&.[0])
+    Noir::RailsCallbackChain.applies_to_action?(current, action_name)
   end
 
   private def check_controller_auth(lines : Array(String), action_line : Int32, flags : Array(UInt8), jumps : Array(Int32)) : NamedTuple(authn: String?, authz: String?, skipped: Bool, opted_out: Bool, class_idx: Int32?)
@@ -337,108 +306,27 @@ class RubyAuthTagger < FrameworkTagger
     m[1].scan(/:(\w+[!?]?)/).reject { |name| skipped.includes?(name[1]) }.join('\n') { |name| "before_action :#{name[1]}" }
   end
 
-  # A controller's own class body is only half its callback chain: Devise's
-  # `before_action :authenticate_user!` usually sits in ApplicationController,
-  # and `rails generate authentication` (Rails 8) installs
-  # `before_action :require_authentication` through an `Authentication`
-  # concern ApplicationController includes, so every controller is
-  # authenticated unless it opts out. Resolve what the parent chain leaves
-  # active for `action`, honouring `skip_before_action` /
-  # `allow_unauthenticated_access` and their `only:` / `except:` lists.
+  # A controller's own class body is only half its callback chain (see
+  # `Noir::RailsCallbackChain`): the first callback its parents, concerns and
+  # own body leave active for `action` that guards the request.
   private def inherited_authn(path : String, class_idx : Int32, action : String?) : String?
-    index_rails_classes unless @rails_indexed
-    leaf = @rails_classes[{path, class_idx}]?
+    chain = rails_chain
+    leaf = chain.classes[{path, class_idx}]?
     return unless leaf && leaf.parent
-    active = Hash(String, String).new
-    # The leaf's own callbacks run last, so its `skip_before_action` lines
-    # remove what the parents registered.
-    apply_ancestor(leaf, action, active, 0)
-    active.first_value?
-  end
-
-  private def apply_ancestor(klass : RailsClass?, action : String?, active : Hash(String, String), depth : Int32)
-    return unless klass && depth < 16
-    if parent = klass.parent
-      apply_ancestor(lookup_rails_class(parent, klass.namespace), action, active, depth + 1)
-    end
-    apply_callbacks(klass, action, active, depth)
-  end
-
-  private def apply_callbacks(klass : RailsClass, action : String?, active : Hash(String, String), depth : Int32)
-    klass.callbacks.each do |line|
-      if line.starts_with?("include")
-        line.scan(/[A-Z][\w:]*/) do |m|
-          if (mod = lookup_rails_class(m[0], klass.namespace)) && depth < 16
-            apply_callbacks(mod, action, active, depth + 1)
-          end
-        end
-      elsif line.starts_with?("allow_unauthenticated_access")
-        active.delete("require_authentication") if applies_to_action?(line, action)
-      elsif m = line.match(/^(skip_)?\w*before_action\s+((?::\w+[!?]?\s*,?\s*)+)/)
-        next unless applies_to_action?(line, action)
-        m[2].scan(/:(\w+[!?]?)/) do |name|
-          callback = name[1]
-          if m[1]?
-            active.delete(callback)
-          elsif desc = callback_guard(callback)
-            active[callback] = desc
-          end
-        end
+    chain.resolve(leaf, action).callbacks.each do |callback|
+      if desc = callback_guard(callback)
+        return desc
       end
     end
   end
 
-  # Ruby resolves a bare constant from the innermost namespace outwards. Two
-  # definitions of one name (reopened, or the same name in two apps of a
-  # monorepo) are ambiguous and resolve to nothing.
-  private def lookup_rails_class(name : String, namespace : String) : RailsClass?
-    name = name.lchop("::")
-    scopes = namespace.split("::", remove_empty: true)
-    scopes.size.downto(0) do |n|
-      full = (scopes[0, n] + [name]).join("::")
-      if found = @rails_by_name[full]?
-        return found.size == 1 ? found.first : nil
-      end
-    end
-    nil
-  end
-
-  # Every class and module under a `controllers` directory, with the
-  # class-body lines that touch the callback chain. Lines inside a `def` are
-  # not class-body: the `Authentication` concern's own
-  # `def allow_unauthenticated_access` wraps a `skip_before_action` that
-  # runs only when a controller calls it.
-  private def index_rails_classes
-    @rails_indexed = true
-    collect_files_by_extension(".rb").each do |path|
-      next unless base_relative_path(path).includes?("controllers")
-      next unless lines = read_file_lines(path)
-      stack = [] of {RailsClass, Int32}
-      def_indent : Int32? = nil
-      lines.each_with_index do |line, idx|
-        stripped = line.strip
-        next if stripped.empty? || stripped.starts_with?('#')
-        indent = line.size - line.lstrip.size
-        if open_def = def_indent
-          def_indent = nil if indent <= open_def && stripped == "end"
-          next
-        end
-        while (top = stack.last?) && top[1] >= indent
-          stack.pop
-        end
-        if m = stripped.match(/^(?:class|module)\s+([A-Z][\w:]*)(?:\s*<\s*([\w:]+))?/)
-          namespace = stack.last?.try(&.[0].name) || ""
-          full = namespace.empty? ? m[1] : "#{namespace}::#{m[1]}"
-          klass = RailsClass.new(full, namespace, m[2]?)
-          @rails_classes[{path, idx}] = klass
-          (@rails_by_name[full] ||= [] of RailsClass) << klass
-          stack << {klass, indent}
-        elsif m = stripped.match(/^def\s+(?:self\.)?(\w+[!?]?)/)
-          (@rails_defs[m[1]] ||= [] of {String, Int32}) << {path, idx}
-          def_indent = indent unless stripped.matches?(/\bend$|^def\s+[\w.?!]+(?:\([^)]*\))?\s*=[^=]/)
-        elsif (top = stack.last?) && stripped.matches?(RAILS_CALLBACK_LINE)
-          top[0].callbacks << stripped
-        end
+  # Every class and module under a `controllers` directory.
+  private def rails_chain : Noir::RailsCallbackChain
+    @rails_chain ||= Noir::RailsCallbackChain.new.tap do |chain|
+      collect_files_by_extension(".rb").each do |path|
+        next unless base_relative_path(path).includes?("controllers")
+        next unless lines = read_file_lines(path)
+        chain.add_file(path, lines)
       end
     end
   end
@@ -462,8 +350,7 @@ class RubyAuthTagger < FrameworkTagger
     return @callback_guards[callback] if @callback_guards.has_key?(callback)
     desc = BEFORE_ACTION_AUTHN_PATTERNS.find { |pattern, _| "before_action :#{callback}".matches?(pattern) }.try(&.[1])
     if desc
-      index_rails_classes unless @rails_indexed
-      if @rails_defs.has_key?(callback)
+      if rails_chain.defs.has_key?(callback)
         desc = body_rejects?(callback, Set(String).new) ? "#{callback} (app-defined, rejects in its body)" : nil
       end
     end
@@ -482,7 +369,7 @@ class RubyAuthTagger < FrameworkTagger
     return @rejecting_defs[name] if @rejecting_defs.has_key?(name)
     top = visited.empty?
     return false unless visited.add?(name)
-    @rejecting_defs[name] = @rails_defs[name].any? do |path, def_idx|
+    @rejecting_defs[name] = rails_chain.defs[name].any? do |path, def_idx|
       next false unless lines = read_file_lines(path)
       def_indent = line_indent(lines[def_idx])
       body = [] of {Int32, String}
@@ -495,7 +382,7 @@ class RubyAuthTagger < FrameworkTagger
       end
       body.each_with_index.any? do |(_, text), i|
         rejects = text.matches?(CALLBACK_REJECTS) || (top && text.matches?(/\bsuper\b/)) ||
-                  text.scan(/\b[a-z_]\w*[!?]?/).any? { |m| @rails_defs.has_key?(m[0]) && body_rejects?(m[0], visited) }
+                  text.scan(/\b[a-z_]\w*[!?]?/).any? { |m| rails_chain.defs.has_key?(m[0]) && body_rejects?(m[0], visited) }
         rejects && !credential_gated?(body, i)
       end
     end
