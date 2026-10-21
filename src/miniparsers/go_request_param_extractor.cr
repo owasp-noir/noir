@@ -8,6 +8,18 @@ module Noir::GoRequestParamExtractor
 
   MAX_HELPER_DEPTH = 3
 
+  # A stdlib request-header read, whatever the request is called: `r` /
+  # `req`, gin's `c.Request`, echo's `c.Request()`. `Header.Get("X")`,
+  # `Header.Values("X")` and `Header["X"]`; not a `Header["X"] = v` write,
+  # nor `w.Header().Get` (the response's own headers).
+  HEADER_READ_RE = /\.Header\s*(?:\.\s*(?:Get|Values)\s*\(\s*["`]([^"`]+)["`]|\[\s*["`]([^"`]+)["`]\s*\](?!\s*=[^=]))/
+
+  # Every header `text` reads, as `header` params. Shared by the Go
+  # adapters whose handlers see a `*http.Request`.
+  def header_params(text : String) : Array(Param)
+    text.scan(HEADER_READ_RE).map { |m| Param.new(m[1]? || m[2], "", "header") }
+  end
+
   # Function and method tables restricted to `dirs`, behind the `func ` /
   # `func (` per-file gates. A directory is parsed only when a route file
   # in it asks for its table. See `Noir::GoCalleeExtractor::LazyPackageBodies`.
@@ -191,7 +203,7 @@ module Noir::GoRequestParamExtractor
     append_regex_param(params, call_text, /\.Form\s*\.\s*Get\s*\(\s*["`]([^"`]+)["`]/, form_value_param_type(http_method))
     append_regex_param(params, call_text, /\.PostFormValue\s*\(\s*["`]([^"`]+)["`]/, "form")
     append_regex_param(params, call_text, /\.FormValue\s*\(\s*["`]([^"`]+)["`]/, form_value_param_type(http_method))
-    append_regex_param(params, call_text, /\.Header\s*\.\s*Get\s*\(\s*["`]([^"`]+)["`]/, "header")
+    params.concat(header_params(call_text))
     append_regex_param(params, call_text, /\.Cookie\s*\(\s*["`]([^"`]+)["`]/, "cookie")
     append_regex_param(params, call_text, /\.PathValue\s*\(\s*["`]([^"`]+)["`]/, "path")
 

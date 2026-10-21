@@ -2,6 +2,7 @@ require "../../../models/analyzer"
 require "../../../miniparsers/go_callee_extractor"
 require "../../../miniparsers/go_route_extractor_ts"
 require "../../../miniparsers/go_named_handler"
+require "../../../miniparsers/go_request_param_extractor"
 
 module Analyzer::Go
   class Httprouter < Analyzer
@@ -20,7 +21,6 @@ module Analyzer::Go
       {"ByName(", /ByName\s*\(\s*[\"']([^\"']+)[\"']\s*\)/, "path"},
       {"Query().Get(", /Query\(\)\s*\.\s*Get\s*\(\s*[\"']([^\"']+)[\"']\s*\)/, "query"},
       {"PostFormValue(", /PostFormValue\s*\(\s*[\"']([^\"']+)[\"']\s*\)/, "form"},
-      {"Header.Get(", /Header\s*\.\s*Get\s*\(\s*[\"']([^\"']+)[\"']\s*\)/, "header"},
       {"Cookie(", /Cookie\s*\(\s*[\"']([^\"']+)[\"']\s*\)/, "cookie"},
     ]
 
@@ -112,6 +112,7 @@ module Analyzer::Go
           extract_param(line, regex, param_type, ep)
         end
       end
+      Noir::GoRequestParamExtractor.header_params(line).each { |header| ep.params << header } unless ep.url.empty?
 
       # Stdlib body-decoding idioms used by raw httprouter
       # handlers. Captures both the JSON-decoder pattern

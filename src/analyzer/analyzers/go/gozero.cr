@@ -173,6 +173,7 @@ module Analyzer::Go
           add_param_to_endpoint(get_param(line, pattern), endpoint)
         end
       end
+      Noir::GoRequestParamExtractor.header_params(line).each { |header| add_param_to_endpoint(header, endpoint) }
 
       # gozero's canonical body-binding entrypoint is
       # `httpx.Parse(r, &req)` / `httpx.ParseJsonBody`;

@@ -54,6 +54,13 @@ class Noir::GoNamedHandler
   # `name *T` as a parameter, receiver, struct field or `var`.
   DECLARED_TYPE_RE = /(?:\A|[\n(,]|\bvar)[ \t]*([A-Za-z_]\w*)[ \t]+\*?(?:[A-Za-z_]\w*\.)?([A-Za-z_]\w*)/
 
+  # Library middleware whose request read lives in a dependency the scan
+  # never sees, with that read as the source line the adapters parse:
+  # gin's BasicAuth checks the `Authorization` header.
+  LIBRARY_READS = {
+    {/\Agin\.BasicAuth(?:ForRealm)?\s*\(/, %(c.Request.Header.Get("Authorization"))},
+  }
+
   # A route registration with a path literal: the stand-in for the
   # same-file route-row check on a body declared in another file.
   ROUTE_CALL_RE = /\.(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|Get|Post|Put|Delete|Patch|Head|Options|Any|All|Handle|HandleFunc|Group|Route|Mount)\s*\(\s*"\//
@@ -85,6 +92,9 @@ class Noir::GoNamedHandler
   @handlers = Hash(String, Key).new
   @declared : Hash(String, Set(String))? = nil
   @receivers = Hash(String, Array(Tuple(Noir::GoCalleeExtractor::FunctionBody, String?, String))).new
+  # `.Use` / group middleware each route runs behind, see
+  # `TreeSitterGoRouteExtractor#route_middleware`.
+  @middleware = Hash(Tuple(Int32, String), Array(String)).new
 
   # `listA` -> {"", "listA"}, `h.List` -> {"h", "List"}, `RateLimit()` ->
   # {"", "RateLimit"}. Anything else (closures, calls with arguments,
@@ -97,11 +107,16 @@ class Noir::GoNamedHandler
 
   def initialize(content : String, path : String, routes : Array(Noir::TreeSitterGoRouteExtractor::Route), scope : Scope? = nil)
     return if routes.empty?
+    @middleware = Noir::TreeSitterGoRouteExtractor.route_middleware(content, routes)
     references = Hash(String, Tuple(String, String)).new
     wrapped = Set(String).new
     routes.each do |r|
-      r.handler_args.each do |h|
-        if ref = self.class.reference(h)
+      handler_args(r).each do |h|
+        if read = LIBRARY_READS.find { |re, _| h.strip.matches?(re) }
+          key = {h.strip, -1}
+          @lines[key] = [read[1]]
+          @refs[h.strip] = [key]
+        elsif ref = self.class.reference(h)
           references[h.strip] = ref
         else
           wrapped << h.strip
@@ -239,9 +254,15 @@ class Noir::GoNamedHandler
 
   def bind(route : Noir::TreeSitterGoRouteExtractor::Route, endpoint : Endpoint)
     return if @refs.empty?
-    route.handler_args.flat_map { |handler| @refs[handler.strip]? || [] of Key }.uniq!.each do |key|
+    handler_args(route).flat_map { |handler| @refs[handler.strip]? || [] of Key }.uniq!.each do |key|
       (@targets[key] ||= [] of Endpoint) << endpoint
     end
+  end
+
+  # The route's handler args behind the middleware it runs after.
+  private def handler_args(route : Noir::TreeSitterGoRouteExtractor::Route) : Array(String)
+    mw = @middleware[{route.line, route.router_name}]?
+    mw ? mw + route.handler_args : route.handler_args
   end
 
   # Yields every claimed line with each endpoint routed to its handler.

@@ -141,12 +141,7 @@ module Analyzer::Go
         add_param_to_endpoint(Param.new("body", "", "json"), ep)
       end
 
-      if line.includes?("Request().Header.Get(")
-        match = line.match(/Request\(\)\.Header\.Get\(\s*\"(.*)\"\s*\)/)
-        if match
-          ep.params << Param.new(match[1], "", "header")
-        end
-      end
+      Noir::GoRequestParamExtractor.header_params(line).each { |header| add_param_to_endpoint(header, ep) }
 
       if line.includes?("Cookie(") &&
          !line.includes?("Header.Get") && !line.includes?("Query().Get") &&
