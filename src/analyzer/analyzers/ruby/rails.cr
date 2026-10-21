@@ -127,8 +127,8 @@ module Analyzer::Ruby
       # this frame get shallow member routes.
       property? shallow : Bool
       # A shallow-nested resources frame: its member path stands on its own
-      # (`comments/1`, not `posts/1/comments/1`), so it replaces the enclosing
-      # resources' paths for everything nested under it.
+      # (`comments/:id`, not `posts/:post_id/comments/:id`), so it replaces
+      # the enclosing resources' paths for everything nested under it.
       property? shallow_member : Bool
       # The URL key a plural `resources` frame binds (`:id`, or `param:`),
       # which nested routes see as `<singular>_<param>`; nil on a singular
@@ -739,12 +739,20 @@ module Analyzer::Ruby
       mods
     end
 
-    # ponytail: ies/es/s rules only; `statuses` loses just the final `s`.
-    # Rails' irregular inflections (person/people) are not modelled.
+    SINGULAR_IRREGULARS = {"people" => "person", "men" => "man", "children" => "child"}
+
+    # The common subset of ActiveSupport's singular rules, applied to the
+    # word's tail as Rails does (`scheduled_statuses` -> `scheduled_status`).
+    # It names nested route keys (`:status_id`), so it has to agree with Rails.
+    # ponytail: no `-ves`/`-oes`/`-ices` rules and a short irregular list;
+    # add one when a route key comes out wrong.
     private def singularize(name : String) : String
-      return "#{name.rchop("ies")}y" if name.ends_with?("ies") && name.size > 3
-      return name.rchop("es") if name.matches?(/(ss|x|ch|sh)es\z/)
-      return name.rchop('s') if name.ends_with?('s') && name.size > 1
+      return name if name.matches?(/(?:\A|_)(?:news|series|species|information|equipment|money|rice|fish|sheep|jeans|police)\z/)
+      SINGULAR_IRREGULARS.each { |plural, single| return name.rchop(plural) + single if name.ends_with?(plural) }
+      return name.rchop("es") if name.matches?(/(?:alias|status|bus|ss|x|ch|sh)es\z/)
+      return "#{name.rchop("ies")}y" if name.matches?(/(?:[^aeiouy]|qu)ies\z/)
+      return "#{name.rchop('a')}um" if name.matches?(/[ti]a\z/)
+      return name.rchop('s') if name.ends_with?('s') && !name.ends_with?("ss") && name.size > 1
       name
     end
 
@@ -792,11 +800,8 @@ module Analyzer::Ruby
         scan.concern_resources[concern_name] ||= [] of ConcernResource
         scan.concern_resources[concern_name] << ConcernResource.new(kind_kw, name, options, current_concern_relative_stack(stack))
         if opens_block
-          url_segment = options["path"]? || name
-          singular = (kind_kw == "resource")
-          child_path = singular ? url_segment : "#{url_segment}/1"
-          stack << Frame.new(:resources, path: child_path, resource_name: name,
-            param_name: resource_param_name(options, singular))
+          stack << Frame.new(:resources, path: options["path"]? || name, resource_name: options["as"]?.presence || name,
+            param_name: resource_param_name(options, kind_kw == "resource"))
         end
         return
       end
@@ -805,48 +810,38 @@ module Analyzer::Ruby
 
       concern_names = parse_symbol_list(options["concerns"]?)
       unless concern_names.empty?
-        url_segment = options["path"]? || name
         virtual_stack = stack.dup
-        virtual_stack << Frame.new(:resources, path: (kind_kw == "resource" ? url_segment : "#{url_segment}/1"),
-          resource_name: name, controller_path: existing_controller_path,
+        virtual_stack << Frame.new(:resources, path: options["path"]? || name,
+          resource_name: options["as"]?.presence || name, controller_path: existing_controller_path,
           param_name: resource_param_name(options, kind_kw == "resource"))
         emit_concern_resources(concern_names, scan.concern_resources, scan.framework_root, virtual_stack)
       end
 
       return unless opens_block
 
-      url_segment = options["path"]? || name
-      singular = (kind_kw == "resource")
-      child_path = singular ? url_segment : "#{url_segment}/1"
       # A `module:` on the resources line also scopes nested
       # resources/routes inside its block, so carry it on the frame's
       # controller_subdir for children to inherit.
-      stack << Frame.new(:resources, path: child_path, resource_name: name,
+      stack << Frame.new(:resources, path: options["path"]? || name, resource_name: options["as"]?.presence || name,
         controller_path: existing_controller_path, controller_subdir: options["module"]? || "",
         shallow: options["shallow"]? == "true", shallow_member: shallow_nested?(stack, options),
-        param_name: resource_param_name(options, singular))
+        param_name: resource_param_name(options, kind_kw == "resource"))
     end
 
     private def resource_param_name(options : Hash(String, String), singular : Bool) : String?
       singular ? nil : (options["param"]? || "id")
     end
 
-    # The keys the plural `resources` frames of `stack` bind as parents of a
-    # nested route: `article_slug` under `resources :articles, param: :slug`.
-    private def nested_param_names(stack : Array(Frame)) : Array(String)
-      stack.compact_map do |f|
-        next unless f.kind == :resources && (param = f.param_name)
-        "#{singularize(f.resource_name.to_s)}_#{param}"
-      end
-    end
-
-    # The keys a custom action under the innermost `resources` of `stack`
-    # binds: the parents' nested keys plus, on a member route, its own.
-    private def path_param_names(stack : Array(Frame), member : Bool) : Array(String)
-      return [] of String unless own = stack.rindex { |f| f.kind == :resources }
-      names = nested_param_names(stack[0, own])
-      stack[own].param_name.try { |param| names << param } if member
-      names
+    # The path a `resources` frame puts in front of a route under it, as Rails
+    # routes it: `articles/:article_id` (`<singular>_<param>`, so `param:
+    # :slug` gives `:article_slug`) for nested routes, `articles/:slug` on
+    # `member`, bare `articles` on `collection`, `articles/new` on `new`. A
+    # singular `resource` binds no key.
+    private def resource_frame_path(f : Frame, route_scope : String?) : String
+      return "#{f.path}/new" if route_scope == "new"
+      return f.path if route_scope == "collection" || !(param = f.param_name)
+      return "#{f.path}/:#{param}" if route_scope == "member"
+      "#{f.path}/:#{singularize(f.resource_name.to_s)}_#{param}"
     end
 
     # `:slug` / `*path` keys spelled in a literal route string.
@@ -883,7 +878,7 @@ module Analyzer::Ruby
           end
 
           action_params = params_for_action(ctrl_path, action_name, verb)
-          promote_path_params(action_params, path_param_names(stack, !(in_collection || in_new)))
+          promote_path_params(action_params, url_param_names(url))
           endpoint = Endpoint.new(url, verb, action_params, scan.details)
           attach_callees_for_action(endpoint, ctrl_path, action_name)
           endpoint.handler = handler_for_action(ctrl_path, action_name)
@@ -902,7 +897,7 @@ module Analyzer::Ruby
       scoped_controller = current_controller_scope(stack)
       if (am = rest.match(/^\s*:(\w+)\b/)) && (scoped_controller || explicit_route_destination?(rest))
         segment = am[1]
-        prefix = current_path_prefix_for_route(stack, route_scope)
+        prefix = current_path_prefix(stack, route_scope)
         url = prefix.empty? ? "/#{segment}" : "/#{prefix}/#{segment}"
 
         ctrl_action = parse_controller_action(rest, scoped_controller)
@@ -934,7 +929,7 @@ module Analyzer::Ruby
       return unless sm = rest.match(/^\s*(['"])((?:\#\{[^}]*\}|(?!\1).)*)\1/)
 
       path = normalize_ruby_interpolation(strip_optional_route_segments(sm[2]))
-      prefix = current_path_prefix_for_route(stack, route_scope)
+      prefix = current_path_prefix(stack, route_scope)
       path_part = path.starts_with?("/") ? path : "/#{path}"
       url = prefix.empty? ? path_part : "/#{prefix}#{path_part}"
       # `get ""` / `get "/"` inside a namespace/scope composes to a
@@ -980,7 +975,7 @@ module Analyzer::Ruby
       return unless sm = rest.match(/^\s*['"]([^'"]*)['"]/)
 
       path = normalize_ruby_interpolation(strip_optional_route_segments(sm[1]))
-      prefix = current_path_prefix_for_route(stack, parse_options(rest)["on"]?)
+      prefix = current_path_prefix(stack, parse_options(rest)["on"]?)
       path_part = path.starts_with?("/") ? path : "/#{path}"
       url = prefix.empty? ? path_part : "/#{prefix}#{path_part}"
       url = url.rchop('/') if url.size > 1 && url.ends_with?('/')
@@ -1283,48 +1278,10 @@ module Analyzer::Ruby
       nil
     end
 
-    private def current_path_prefix_for_route(stack : Array(Frame), route_scope : String?) : String
-      prefix = current_path_prefix(stack)
-      return prefix if prefix.empty?
-
-      case route_scope
-      when "collection"
-        prefix.ends_with?("/1") ? prefix[0, prefix.size - 2] : prefix
-      when "new"
-        prefix.ends_with?("/1") ? "#{prefix[0, prefix.size - 2]}/new" : "#{prefix}/new"
-      else
-        prefix
-      end
-    end
-
     private def custom_resource_action_url(stack : Array(Frame), action : String, route_scope : String?) : String?
-      resources_idx = nil
-      stack.each_with_index do |f, i|
-        resources_idx = i if f.kind == :resources
-      end
-      return if resources_idx.nil?
-
-      parts = [] of String
-      stack[0, resources_idx].each do |f|
-        parts << f.path unless f.path.empty?
-      end
-
-      rf = stack[resources_idx]
-      seg = rf.path
-      # A shallow resource's member routes drop the parents' segments.
-      if rf.shallow_member? && route_scope != "collection" && route_scope != "new"
-        parts = shallow_path_prefix(stack[0, resources_idx]).split('/', remove_empty: true)
-      end
-      case route_scope
-      when "collection"
-        seg = seg[0, seg.size - 2] if seg.ends_with?("/1")
-      when "new"
-        seg = seg.ends_with?("/1") ? "#{seg[0, seg.size - 2]}/new" : "#{seg}/new"
-      end
-
-      parts << seg unless seg.empty?
-      parts << action
-      "/" + parts.join("/")
+      return unless resources_idx = stack.rindex { |f| f.kind == :resources }
+      prefix = current_path_prefix(stack[0, resources_idx + 1], route_scope)
+      prefix.empty? ? "/#{action}" : "/#{prefix}/#{action}"
     end
 
     private def current_controller_scope(stack : Array(Frame)) : String?
@@ -1418,7 +1375,6 @@ module Analyzer::Ruby
           only: only_list,
           except: except_list,
           singular: singular,
-          path_params: nested_param_names(stack),
           member_param: resource_param_name(options, singular),
         ))
       end
@@ -1583,19 +1539,27 @@ module Analyzer::Ruby
       cleaned.split(/[,\s]+/).map(&.strip.lchop(':').strip).reject(&.empty?)
     end
 
-    private def current_path_prefix(stack : Array(Frame)) : String
+    # `route_scope` (`member`/`collection`/`new`) applies to the innermost
+    # `resources` frame; the frames above it are always nested routes.
+    private def current_path_prefix(stack : Array(Frame), route_scope : String? = nil) : String
+      own = stack.rindex { |f| f.kind == :resources }
       parts = [] of String
       stack.each_with_index do |f, i|
-        parts = shallow_path_prefix(stack[0, i]).split('/', remove_empty: true) if f.shallow_member?
-        next if f.path.empty?
-        parts << f.path
+        scope = i == own ? route_scope : nil
+        # A shallow resource's member and nested routes drop the parents'
+        # segments; its collection and `new` routes keep them.
+        if f.shallow_member? && scope != "collection" && scope != "new"
+          parts = shallow_path_prefix(stack[0, i]).split('/', remove_empty: true)
+        end
+        path = f.kind == :resources ? resource_frame_path(f, scope) : f.path
+        parts << path unless path.empty?
       end
       parts.join("/")
     end
 
     # Rails `shallow`: a resource nested in a shallow scope keeps its
-    # collection routes under the parent (`/posts/1/comments`) but serves its
-    # member routes without it (`/comments/1`).
+    # collection routes under the parent (`/posts/:post_id/comments`) but
+    # serves its member routes without it (`/comments/:id`).
     private def shallow_nested?(stack : Array(Frame), options : Hash(String, String)) : Bool
       return false unless parent_resources_frame(stack)
       options["shallow"]? == "true" || stack.any?(&.shallow?)
@@ -1625,11 +1589,9 @@ module Analyzer::Ruby
       only : Array(String) = [] of String,
       except : Array(String) = [] of String,
       singular : Bool = false,
-      path_params : Array(String) = [] of String,
       member_param : String? = nil,
     )
       endpoints = [] of Endpoint
-      member_params = member_param ? path_params + [member_param] : path_params
 
       return endpoints unless known_file?(path)
 
@@ -1656,7 +1618,9 @@ module Analyzer::Ruby
       end
 
       index_url = compose_url(path_prefix, "/#{resource}")
-      member_url = compose_url(member_prefix, singular ? "/#{resource}" : "/#{resource}/1")
+      member_url = compose_url(member_prefix, member_param ? "/#{resource}/:#{member_param}" : "/#{resource}")
+      path_params = url_param_names(index_url)
+      member_params = url_param_names(member_url)
 
       methods.each do |method|
         case method

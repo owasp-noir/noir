@@ -58,7 +58,7 @@ describe "Ruby route gaps" do
     })
 
     param_names(find_ep(endpoints, "POST", "/products"), "form").should eq(%w[name price tags])
-    param_names(find_ep(endpoints, "PATCH", "/products/1"), "form").should eq(%w[sku])
+    param_names(find_ep(endpoints, "PATCH", "/products/:id"), "form").should eq(%w[sku])
   end
 
   it "merges a Rails action's helper params in the order the helpers are defined" do
@@ -115,15 +115,55 @@ describe "Ruby route gaps" do
     })
     urls = endpoints.map { |e| "#{e.method} #{e.url}" }
 
-    urls.should contain("GET /posts/1/comments")
-    urls.should contain("POST /posts/1/comments")
-    urls.should contain("GET /comments/1")
-    urls.should contain("DELETE /comments/1")
-    urls.should contain("POST /comments/1/approve")
-    urls.should contain("GET /admin/posts/1/comments")
-    urls.should contain("GET /admin/comments/1")
-    urls.should_not contain("GET /posts/1/comments/1")
-    urls.should_not contain("GET /admin/posts/1/comments/1")
+    urls.should contain("GET /posts/:post_id/comments")
+    urls.should contain("POST /posts/:post_id/comments")
+    urls.should contain("GET /comments/:id")
+    urls.should contain("DELETE /comments/:id")
+    urls.should contain("POST /comments/:id/approve")
+    urls.should contain("GET /admin/posts/:post_id/comments")
+    urls.should contain("GET /admin/comments/:id")
+    urls.should_not contain("GET /posts/:post_id/comments/:id")
+    urls.should_not contain("GET /admin/posts/:post_id/comments/:id")
+  end
+
+  it "names Rails resource keys the way Rails routes them" do
+    controller = "class StatusesController < ApplicationController\n  def show; end\nend\n"
+    endpoints = scan_ruby_tree({
+      "Gemfile"          => RAILS_GEMFILE,
+      "config/routes.rb" => <<-RUBY,
+        Rails.application.routes.draw do
+          resources :statuses, only: [:show] do
+            resource :context, only: [:show]
+            get :history
+            member do
+              post :pin
+            end
+            collection do
+              get :recent
+            end
+          end
+          resources :articles, param: :slug, only: [] do
+            resources :comments, only: [:show]
+          end
+          resources :photos, as: :images, only: [] do
+            get :preview
+          end
+        end
+        RUBY
+      "app/controllers/statuses_controller.rb" => controller,
+      "app/controllers/contexts_controller.rb" => "class ContextsController < ApplicationController\n  def show; end\nend\n",
+      "app/controllers/comments_controller.rb" => "class CommentsController < ApplicationController\n  def show; end\nend\n",
+    })
+    urls = endpoints.map { |e| "#{e.method} #{e.url}" }
+
+    urls.should contain("GET /statuses/:id")
+    urls.should contain("GET /statuses/:status_id/context")
+    urls.should contain("GET /statuses/:status_id/history")
+    urls.should contain("POST /statuses/:id/pin")
+    urls.should contain("GET /statuses/recent")
+    urls.should contain("GET /articles/:article_slug/comments/:id")
+    urls.should contain("GET /photos/:image_id/preview")
+    param_names(find_ep(endpoints, "GET", "/articles/:article_slug/comments/:id"), "path").should eq(%w[article_slug id])
   end
 
   it "routes symbol verbs inside a Rails controller block to that controller" do

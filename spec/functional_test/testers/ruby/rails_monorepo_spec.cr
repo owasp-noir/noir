@@ -7,16 +7,16 @@ require "../../func_spec.cr"
 expected_endpoints = [
   Endpoint.new("/secret.html", "GET"),
   Endpoint.new("/posts", "GET"),
-  Endpoint.new("/posts/1", "GET", [
+  Endpoint.new("/posts/:id", "GET", [
     Param.new("X-API-KEY", "", "header"),
   ]),
   Endpoint.new("/posts", "POST", [
     Param.new("title", "", "json"),
     Param.new("context", "", "json"),
   ]),
-  Endpoint.new("/posts/1", "PUT"),
-  Endpoint.new("/posts/1", "PATCH"),
-  Endpoint.new("/posts/1", "DELETE"),
+  Endpoint.new("/posts/:id", "PUT"),
+  Endpoint.new("/posts/:id", "PATCH"),
+  Endpoint.new("/posts/:id", "DELETE"),
   Endpoint.new("/up", "GET"),
 ]
 
