@@ -81,6 +81,10 @@ module Analyzer::Javascript
         # `app.use('/ftp/:file', servePublicFiles())`: a path-mounted
         # handler that answers the request is a route for every method.
         extract_use_handler_routes(path, content, result, include_callee)
+
+        # `finale.resource({ endpoints: [...] })`: CRUD routes the library
+        # registers on `app` itself.
+        extract_finale_resource_routes(path, content, result)
       rescue e
         logger.debug "Parser failed for #{path}: #{e.message}, falling back to regex"
 
@@ -230,6 +234,22 @@ module Analyzer::Javascript
       # Auxiliary pass: its failure must not send the file to the regex
       # fallback on top of the routes the parser already emitted.
       logger.debug "Express use-handler pass failed for #{path}: #{e.message}"
+    end
+
+    # Rows share (method, url) with any guard-only registration of the same
+    # route (`app.put('/api/Hints/:id', security.denyAll())`); the optimizer
+    # merges them, so the guard stays attached. No handler: the controller
+    # is library code.
+    private def extract_finale_resource_routes(path : String, content : String, result : Array(Endpoint))
+      return unless content.includes?(".resource")
+      content = Noir::JSRouteExtractor.strip_js_comments(content)
+      Noir::JSRouteExtractor.finale_resource_routes(content).each do |method, url, call_start|
+        endpoint = Endpoint.new(url, method, Details.new(PathInfo.new(path, line_number_for_index(content, call_start))))
+        url.scan(/:(\w+)/) { |pm| endpoint.push_param(Param.new(pm[1], "", "path")) }
+        result << endpoint
+      end
+    rescue e
+      logger.debug "Express finale pass failed for #{path}: #{e.message}"
     end
 
     private def package_serving_methods(handler_args : Array(Tuple(String, Int32))) : Array(String)?

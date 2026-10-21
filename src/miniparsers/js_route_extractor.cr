@@ -1778,6 +1778,60 @@ module Noir
       JSLiteralScanner.find_matching_paren(content, open_paren_idx)
     end
 
+    FINALE_RESOURCE_RE      = /\b(?:finale|epilogue)\s*\.\s*resource\s*\(/
+    FINALE_ENDPOINTS_RE     = /\bendpoints\s*:\s*\[([^\]]*)\]/
+    FINALE_FOR_OF_RE        = /\bfor\s*\(\s*(?:const|let|var)\s*\{([^}]*)\}\s*of\s+([A-Za-z_$][\w$]*)\s*\)\s*\{/
+    FINALE_PLURAL_METHODS   = %w[GET POST]
+    FINALE_SINGULAR_METHODS = %w[GET PUT DELETE]
+
+    # finale-rest (and its predecessor epilogue) `finale.resource({ endpoints:
+    # ['/users', '/users/:id'] })` registers list + create on the first path
+    # and read + update + delete on the second (the first again when there
+    # is no second). A `${name}` placeholder is expanded when an enclosing
+    # `for (const { name } of models)` walks an array literal declared in the
+    # same file (juice-shop's `autoModels`); any other placeholder drops the
+    # path. Returns `{method, url, call offset}`; pass comment-stripped source.
+    def self.finale_resource_routes(content : String) : Array(Tuple(String, String, Int32))
+      routes = [] of Tuple(String, String, Int32)
+      return routes unless content.includes?(".resource")
+      content.scan(FINALE_RESOURCE_RE) do |m|
+        call_start = m.begin(0)
+        paren_close = find_matching_paren(content, m.end(0) - 1) || next
+        list = content[call_start..paren_close].match(FINALE_ENDPOINTS_RE) || next
+        paths = list[1].scan(/(['"`])(.*?)\1/).map(&.[2])
+        next if paths.empty?
+        {paths[0], paths[1]? || paths[0]}.each_with_index do |template, idx|
+          methods = idx == 0 ? FINALE_PLURAL_METHODS : FINALE_SINGULAR_METHODS
+          finale_expand(content, call_start, template).each do |url|
+            methods.each { |method| routes << {method, url, call_start} }
+          end
+        end
+      end
+      routes.uniq
+    end
+
+    # ponytail: one placeholder, bound by a destructuring for-of over a
+    # same-file array literal, values read as `key: 'literal'`; a general
+    # constant evaluator would cover `.map`/`forEach` and imported lists.
+    private def self.finale_expand(content : String, call_start : Int32, template : String) : Array(String)
+      return [template] unless template.includes?("${")
+      vars = template.scan(/\$\{([^}]*)\}/).map(&.[1].strip).uniq!
+      return [] of String unless vars.size == 1 && vars[0].matches?(/\A[A-Za-z_$][\w$]*\z/)
+      var = vars[0]
+      values = nil.as(Array(String)?)
+      content[0, call_start].scan(FINALE_FOR_OF_RE) do |loop_match|
+        next unless loop_match[1].split(',').any? { |binding| binding.strip == var }
+        body_close = find_matching_brace(content, loop_match.end(0) - 1)
+        next unless body_close && body_close > call_start
+        decl = content.match(/\b(?:const|let|var)\s+#{Regex.escape(loop_match[2])}(?:\s*:[^=\n]*)?\s*=\s*\[/) || next
+        array_close = JSLiteralScanner.find_matching_bracket(content, decl.end(0) - 1) || next
+        values = content[decl.end(0)...array_close]
+          .scan(/(?:^|[{,\s])#{Regex.escape(var)}\s*:\s*['"]([^'"]*)['"]/).map(&.[1])
+      end
+      return [] of String unless values
+      values.map { |value| template.gsub(/\$\{[^}]*\}/, value) }
+    end
+
     private def self.push_unresolved_param(endpoint : Endpoint, name : String, type : String)
       return if name.empty?
       param = Param.new(name, "", type)
