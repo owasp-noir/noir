@@ -15,6 +15,22 @@ module NoirAIContext
   # `select ... from` source pattern.
   SQL_RECEIVER_CALL = /\b(?:\w*db|db\w*|database|\w*conn(?:ection)?|con|cursor|cur|_?cr|pool|session|tx|transaction|stmt|statement|knex|sequelize|pg\w*|mysqli?|sqlite3?|pdo|sqlx?|repo|queryRunner|manager|jdbcTemplate|entityManager|dataSource)(?:\.|->|::)(?:query|execute|exec)\b/i
 
+  # File-system calls as handler bodies spell them: Node's `fs` module and
+  # its camelCase API (`readFileSync`, `createReadStream`, `readdir`),
+  # `os.ReadFile` / `os.Open`, PHP `readfile` / `scandir`, `res.sendFile` /
+  # `send_file` / `send_from_directory`, `http.ServeFile`. The word-bounded
+  # `read` / `file` name patterns match none of them, so a handler whose
+  # only file access was one of these carried no file_io sink.
+  FILE_IO_CALL = /\b(?:fs\.\w+|os\.(?:open|openfile|create|stat|lstat|remove|removeall)\b|(?:read|write|append)_?file(?:_?sync)?|(?:read|open|scan|list)_?dir(?:_?sync)?|create(?:read|write)stream|send_?file|send_from_directory|serve_?file)\b/i
+
+  # Middleware that lists a directory to the client (Express `serveIndex`,
+  # Go `http.FileServer`, which lists by default). A plain static mount
+  # (`express.static`) is deliberately left out: it serves the same fixed
+  # files a static dir expands into, and those asset rows carry no sink.
+  # Matched only on the route's own statement, so the asset rows, anchored
+  # at the asset file with no line, never reach it.
+  DIRECTORY_LISTING_CALL = /\b(?:serveIndex|http\.FileServer)\s*\(/
+
   SINK_PATTERNS = [
     PatternDefinition.new(
       "data_store_query",
@@ -42,8 +58,8 @@ module NoirAIContext
       "file_io",
       "Potential file I/O sink inferred from code or callee name",
       68,
-      name_patterns: [/\bfile\b/i, /\bread\b/i, /\bupload\b/i, /\bdownload\b/i],
-      source_patterns: [/\bFile\.(open|read|write)/, /\bread(File|_text)\b/i, /\bwrite(File|_text)\b/i, /\bsend_file\b/i, /\bsendFile\b/i, /\bdownload\b/i, /\bupload\b/i]
+      name_patterns: [/\bfile\b/i, /\bread\b/i, /\bupload\b/i, /\bdownload\b/i, FILE_IO_CALL],
+      source_patterns: [/\bFile\.(open|read|write)/, /\bread_text\b/i, /\bwrite_text\b/i, /\bdownload\b/i, /\bupload\b/i, FILE_IO_CALL, DIRECTORY_LISTING_CALL]
     ),
     PatternDefinition.new(
       "redirect",
