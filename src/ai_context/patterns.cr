@@ -18,10 +18,11 @@ module NoirAIContext
   # File-system calls as handler bodies spell them: Node's `fs` module and
   # its camelCase API (`readFileSync`, `createReadStream`, `readdir`),
   # `os.ReadFile` / `os.Open`, PHP `readfile` / `scandir`, `res.sendFile` /
-  # `send_file` / `send_from_directory`, `http.ServeFile`. The word-bounded
-  # `read` / `file` name patterns match none of them, so a handler whose
-  # only file access was one of these carried no file_io sink.
-  FILE_IO_CALL = /\b(?:fs\.\w+|os\.(?:open|openfile|create|stat|lstat|remove|removeall)\b|(?:read|write|append)_?file(?:_?sync)?|(?:read|open|scan|list)_?dir(?:_?sync)?|create(?:read|write)stream|send_?file|send_from_directory|serve_?file)\b/i
+  # `send_file` / `send_from_directory`, `http.ServeFile`, gin's
+  # `c.SaveUploadedFile`. The word-bounded `read` / `file` name patterns
+  # match none of them, so a handler whose only file access was one of
+  # these carried no file_io sink.
+  FILE_IO_CALL = /\b(?:fs\.\w+|os\.(?:open|openfile|create|stat|lstat|remove|removeall)\b|(?:read|write|append)_?file(?:_?sync)?|(?:read|open|scan|list)_?dir(?:_?sync)?|create(?:read|write)stream|send_?file|send_from_directory|serve_?file|saveuploadedfile)\b/i
 
   # Middleware that lists a directory to the client (Express `serveIndex`,
   # Go `http.FileServer`, which lists by default). A plain static mount
@@ -58,9 +59,16 @@ module NoirAIContext
       "file_io",
       "Potential file I/O sink inferred from code or callee name",
       68,
-      name_patterns: [/\bfile\b/i, /\bread\b/i, /\bupload\b/i, /\bdownload\b/i, FILE_IO_CALL],
-      source_patterns: [/\bFile\.(open|read|write)/, /\bread_text\b/i, /\bwrite_text\b/i, /\bdownload\b/i, /\bupload\b/i, FILE_IO_CALL, DIRECTORY_LISTING_CALL]
+      # A lowercase `file.` receiver is a variable (an uploaded or parsed
+      # file, a filename string), so `file.Close` / `file.includes` are not
+      # file-system access; only its save/write is. The source scan needs
+      # a file-system call: a bare `upload` / `download` word in the scan
+      # window is usually the route's own path literal or name
+      # (`"/upload"`, `name="voucher-set-download"`), see MOBILE_DOWNLOAD_SINK.
+      name_patterns: [/\bFile\b/, /\bfile\b(?!\.)/, /\bfile\.(?:save|write)/i, /\bread\b/i, /\bupload\b/i, /\bdownload\b/i, FILE_IO_CALL],
+      source_patterns: [/\bFile\.(open|read|write)/, /\bread_text\b/i, /\bwrite_text\b/i, FILE_IO_CALL, DIRECTORY_LISTING_CALL]
     ),
+    MOBILE_DOWNLOAD_SINK,
     PatternDefinition.new(
       "redirect",
       "Potential redirect sink inferred from code or callee name",
@@ -260,10 +268,23 @@ module NoirAIContext
   # (and a latent FP source as the name/source patterns broaden).
   MOBILE_SINK_KINDS = Set{"webview_load", "intent_redirect"}
 
+  # Mobile code names its URL fetch flows `download…`; the bare word is
+  # what `Builder#normalize_mobile_sink` turns into outbound_http. Kept
+  # mobile-only like the kinds above: on an HTTP route it is the route
+  # literal, not file I/O.
+  MOBILE_DOWNLOAD_SINK = PatternDefinition.new(
+    "file_io",
+    "Potential file I/O sink inferred from code or callee name",
+    68,
+    source_patterns: [/\bdownload\b/i, /\bupload\b/i]
+  )
+
   # The non-mobile view of the sink catalog, computed once. Used for
   # HTTP endpoints so the two mobile-only sinks above are never matched
   # against server-side route/callee snippets.
-  NON_MOBILE_SINK_PATTERNS = SINK_PATTERNS.reject { |pattern| MOBILE_SINK_KINDS.includes?(pattern.kind) }
+  NON_MOBILE_SINK_PATTERNS = SINK_PATTERNS.reject do |pattern|
+    MOBILE_SINK_KINDS.includes?(pattern.kind) || pattern.same?(MOBILE_DOWNLOAD_SINK)
+  end
 
   VALIDATOR_PATTERNS = [
     PatternDefinition.new(
@@ -491,6 +512,10 @@ module NoirAIContext
         /\bcan\?\s*\(/,
         /\b(can|cannot)\s+:[\w_!?]+/,
         /\bability\.\w+/i,
+        # Inline ownership check: the loaded record's owner compared with
+        # the current user (`@comment.user_id == @current_user_id`,
+        # `current_user.id != post.author_id`), either operand order.
+        /\.(?:user|author|owner)(?:_id)?\s*[!=]==?\s*@?current_user(?:_id)?\b|\bcurrent_user(?:_id|\.id)?\s*[!=]==?\s*@?\w+\.(?:user|author|owner)(?:_id)?\b/,
       ]
     ),
   ] of PatternDefinition

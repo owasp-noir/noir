@@ -2407,6 +2407,35 @@ describe "NoirAIContext" do
 
   # ===== Phase 5: New heuristic signals =====
 
+  it "reads an inline owner comparison against the current user as authorization" do
+    source = <<-RUBY
+      class CommentsController < ApplicationController
+        before_action :authenticate_user!
+        def destroy
+          @comment = @article.comments.find(params[:id])
+          if @comment.user_id == @current_user_id
+            @comment.destroy
+          else
+            render json: {}, status: :forbidden
+          end
+        end
+      end
+      RUBY
+
+    with_temp_ai_context_source(source, ".rb") do |path|
+      endpoint = Endpoint.new("/comments/:id", "DELETE")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 3))
+      endpoint.details = details
+      endpoint.push_param(Param.new("id", "1", "path"))
+      endpoint.add_tag(Tag.new("auth", "Protected by Devise authenticate_user!", "ruby_auth"))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.guards.map(&.kind).should contain("authz_guard")
+      context.signals.map(&.kind).should_not contain("authz_absence")
+    end
+  end
+
   it "emits authz_absence when authn is present but no authz and the route has a path id" do
     source = <<-CODE
       class UsersController < ApplicationController
@@ -3578,6 +3607,58 @@ describe "NoirAIContext" do
     desc.should_not contain("potentially vulnerable")
     context.sinks.map(&.kind).should_not contain("file_io")
     context.signals.map(&.kind).should_not contain("path_traversal")
+  end
+
+  it "does not read an uploaded file handle or the route literal as file_io" do
+    # gin upload-file/limit-bytes: reads the multipart file and never saves
+    # it. `file.Close` is a handle on the upload and `/upload` is the route's
+    # own path literal; neither is file-system access.
+    source = <<-GO
+      func uploadHandler(c *gin.Context) {
+        file, _, err := c.Request.FormFile("file")
+        defer func() { _ = file.Close() }()
+        c.JSON(http.StatusOK, gin.H{"message": "upload successful"})
+      }
+      r.POST("/upload", uploadHandler)
+      GO
+
+    with_temp_ai_context_source(source, ".go") do |path|
+      endpoint = Endpoint.new("/upload", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 6))
+      endpoint.details = details
+      endpoint.push_callee(Callee.new("c.Request.FormFile", path, 2))
+      endpoint.push_callee(Callee.new("file.Close", path, 3))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.sinks.map(&.kind).should_not contain("file_io")
+    end
+
+    saving = Endpoint.new("/upload", "POST")
+    saving.push_callee(Callee.new("c.FormFile", "main.go", 2))
+    saving.push_callee(Callee.new("c.SaveUploadedFile", "main.go", 3))
+    context = NoirAIContext.apply([saving])[0].ai_context.should_not be_nil
+    context.sinks.map(&.kind).should contain("file_io")
+  end
+
+  it "does not read a download route literal in a URLconf as file_io" do
+    source = <<-PY
+      path(
+          "sets/download/<int:pk>/",
+          self.set_download_view.as_view(),
+          name="voucher-set-download",
+      ),
+      PY
+
+    with_temp_ai_context_source(source, ".py") do |path|
+      endpoint = Endpoint.new("/sets/download/<int:pk>/", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.sinks.map(&.kind).should_not contain("file_io")
+    end
   end
 
   it "still emits path_traversal for actual file-path I/O with a file-named input" do
