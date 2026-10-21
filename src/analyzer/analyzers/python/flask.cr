@@ -64,9 +64,11 @@ module Analyzer::Python
     @view_registration_regex_cache = Hash(::String, Regex).new
     @view_registration_original_regex_cache = Hash(::String, Regex).new
 
+    # `\w*Api` also takes in-repo subclasses (`class ExternalApi(Api)`),
+    # whose constructor keeps the Api's app/blueprint argument.
     private def api_from_instance_regex(instance_name : ::String) : Regex
       @api_from_instance_regex_cache[instance_name] ||=
-        /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(?:flask_restx\.)?Api\((app=)?#{instance_name}[,)]/
+        /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(?:flask_restx\.)?\w*Api\((app=)?#{instance_name}[,)]/
     end
 
     private def add_namespace_call_regex(api_instance_name : ::String) : Regex
@@ -323,7 +325,10 @@ module Analyzer::Python
           api_match = api_line.match api_from_instance_regex(_blueprint_instance_name)
           if api_match
             api_instance_name = api_match[1]
-            fs.api_instances[api_instance_name] ||= join_flask_paths(_prefix, api_kwarg_prefix)
+            # A blueprint declared in this file shadows a same-named one
+            # from another file: every Dify package names its own `bp`.
+            bp_prefix = fs.api_instances[_blueprint_instance_name]? || _prefix
+            fs.api_instances[api_instance_name] ||= join_flask_paths(bp_prefix, api_kwarg_prefix)
           end
         end
       end
