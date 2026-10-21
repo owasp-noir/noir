@@ -96,6 +96,16 @@ describe Noir::CLI::Inspect do
       Noir::CLI::Inspect.trace(endpoints, nil, "/users/42").map(&.endpoint.url).should eq(["/users/{id}", "/users/:id", "/*"])
     end
 
+    it "holds typed placeholders to their type" do
+      typed = [endpoint("GET", "/d/<uuid:id>/docs"), endpoint("GET", "/n/{id:int}"), endpoint("GET", "/g/{id:guid}")]
+      Noir::CLI::Inspect.trace(endpoints, "GET", "/posts/abc/comments").should be_empty
+      Noir::CLI::Inspect.trace(typed, "GET", "/d/5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d/docs").size.should eq(1)
+      Noir::CLI::Inspect.trace(typed, "GET", "/d/kb-legal-docs/docs").should be_empty
+      Noir::CLI::Inspect.trace(typed, "GET", "/n/42").size.should eq(1)
+      Noir::CLI::Inspect.trace(typed, "GET", "/n/forty").should be_empty
+      Noir::CLI::Inspect.trace(typed, "GET", "/g/5a6b7c8d9e0f4a1b8c2d3e4f5a6b7c8d").size.should eq(1)
+    end
+
     it "does not let a placeholder swallow more than one segment" do
       Noir::CLI::Inspect.trace(endpoints, "GET", "/users/42/extra").should be_empty
     end
