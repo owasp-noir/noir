@@ -515,6 +515,15 @@ module Noir::CLI::Inspect
     scored.first(limit).map { |_, _, _, ep| Row.compact(ep) }
   end
 
+  # When only a catch-all answered (`/*unmatched_route`, an SPA fallback),
+  # the request may be a typo of a real route: the nearest declared routes,
+  # wildcard routes left out. Empty when any match is exact or a pattern.
+  def self.wildcard_only_candidates(endpoints : Array(Endpoint), matches : Array(Match), path : String) : Array(Row)
+    return [] of Row if matches.empty? || matches.any? { |m| m.matched_by != "wildcard" }
+    wildcard_urls = matches.map(&.endpoint.url).to_set
+    candidates(endpoints, path).reject { |row| wildcard_urls.includes?(row.url) }
+  end
+
   # ---- reach: file[:line] → endpoints that touch it -----------------------
 
   # Component-wise suffix match: `users.go` and `api/users.go` both name

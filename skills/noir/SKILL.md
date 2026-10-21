@@ -81,7 +81,9 @@ PATCH /items/:id  src/handlers.go:18  go_gin  handler=updateItem@src/items.go:40
   printed, most specific first; which one the framework dispatches to is its
   rule, so take the first. A HEAD request traces to the GET route. On a miss
   it prints `candidates` (the closest routes by shared segments, case and
-  one-typo tolerant) and exits 1, so the next guess is informed.
+  one-typo tolerant) and exits 1, so the next guess is informed. When only a
+  catch-all matched (`/*unmatched_route`, an SPA fallback), the candidates
+  follow the rows too: the request is most likely a typo of one of them.
 
 ## `query` filters
 
