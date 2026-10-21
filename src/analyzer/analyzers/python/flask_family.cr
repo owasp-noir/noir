@@ -260,6 +260,15 @@ module Analyzer::Python
     # of the outermost package (`__init__.py` directory) holding the file.
     private def python_package_root(path : ::String) : ::String
       dir = File.dirname(path)
+      # A namespace subpackage (no `__init__.py`, PEP 420) inside a regular
+      # one — Dify's `controllers/console/explore/` — still imports from the
+      # enclosing package's root, so start from the nearest regular package.
+      stop = python_base_path_for(path)
+      probe = dir
+      until File.exists?(File.join(probe, "__init__.py")) || probe == stop || File.dirname(probe) == probe
+        probe = File.dirname(probe)
+      end
+      dir = probe if File.exists?(File.join(probe, "__init__.py"))
       while File.exists?(File.join(dir, "__init__.py"))
         parent = File.dirname(dir)
         break if parent == dir
