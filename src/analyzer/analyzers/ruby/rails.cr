@@ -134,11 +134,15 @@ module Analyzer::Ruby
       # which nested routes see as `<singular>_<param>`; nil on a singular
       # `resource`, whose URL carries no key.
       property param_name : String?
+      # `with_options only: [:index] do`: options every route call in the
+      # block takes unless it spells its own.
+      property options : Hash(String, String)?
 
       def initialize(@kind : Symbol, @path : String = "", @controller_subdir : String = "",
                      @resource_name : String? = nil, @controller_path : String? = nil,
                      @controller_scope : String? = nil, @shallow : Bool = false,
-                     @shallow_member : Bool = false, @param_name : String? = nil)
+                     @shallow_member : Bool = false, @param_name : String? = nil,
+                     @options : Hash(String, String)? = nil)
       end
     end
 
@@ -153,11 +157,11 @@ module Analyzer::Ruby
       callees_by_action : Hash(String, Array(Noir::RubyCalleeExtractor::Entry)),
       action_lines : Hash(String, Int32)
 
-    record ConcernResource,
-      kind_kw : String,
-      name : String,
-      options : Hash(String, String),
-      stack : Array(Frame)
+    # A `concern :name do ... end` body: its routing lines, replayed wherever
+    # `resources ..., concerns: :name` or `concerns :name` names it. Rails
+    # runs the block at that spot, so a `member do post :approve end` in it
+    # hangs off the resource that names the concern.
+    record ConcernBody, routes_path : String, lines : Array(RouteLine)
 
     # Everything one `routes.rb` walk carries: the file-wide constants plus the
     # mutable parse state the directive handlers below read and update. The
@@ -170,7 +174,7 @@ module Analyzer::Ruby
       getter routes_path : String
       getter parsed_route_files : Set(String)
       getter stack : Array(Frame)
-      getter concern_resources : Hash(String, Array(ConcernResource))
+      getter concerns : Hash(String, ConcernBody)
       # 1-based line of the `config/routes.rb` directive currently being
       # handled, so every endpoint the handlers emit can point at the line
       # the route is declared on rather than at the bare file.
@@ -183,7 +187,7 @@ module Analyzer::Ruby
 
       def initialize(@framework_root : String, @routes_path : String,
                      @parsed_route_files : Set(String), @stack : Array(Frame),
-                     @concern_resources : Hash(String, Array(ConcernResource)))
+                     @concerns : Hash(String, ConcernBody))
         @current_line = nil
         @doorkeeper_skip = Set(String).new
         @doorkeeper_controllers = Hash(String, String).new
@@ -219,6 +223,7 @@ module Analyzer::Ruby
     @gemfile_public_roots : Array(Tuple(String, String))? = nil
     @public_file_candidates : Array(PublicFileCandidate)? = nil
     @callback_chain : Noir::RailsCallbackChain? = nil
+    @replaying_concerns = Set(String).new
 
     def analyze
       files = all_files.reject { |file| ruby_non_production_path?(file) }
@@ -265,8 +270,7 @@ module Analyzer::Ruby
 
     private def parse_routes_file(routes_path : String, framework_root : String)
       parsed_route_files = Set(String).new
-      concern_resources = {} of String => Array(ConcernResource)
-      parse_routes_file(routes_path, framework_root, parsed_route_files, [] of Frame, concern_resources)
+      parse_routes_file(routes_path, framework_root, parsed_route_files, [] of Frame, {} of String => ConcernBody)
     end
 
     private def known_file?(path : String) : Bool
@@ -385,21 +389,31 @@ module Analyzer::Ruby
     private def parse_routes_file(routes_path : String, framework_root : String,
                                   parsed_route_files : Set(String),
                                   inherited_stack : Array(Frame),
-                                  concern_resources : Hash(String, Array(ConcernResource)))
+                                  concerns : Hash(String, ConcernBody))
       expanded_routes_path = Noir::PathScope.expand(routes_path)
       parse_key = route_file_parse_key(expanded_routes_path, inherited_stack)
       return if parsed_route_files.includes?(parse_key)
       parsed_route_files << parse_key
 
       scan = RouteFileState.new(framework_root, routes_path,
-        parsed_route_files, inherited_stack.dup, concern_resources)
+        parsed_route_files, inherited_stack.dup, concerns)
+      walk_route_lines(expand_inline_route_blocks(expand_static_loops(logical_route_lines(routes_path))), scan)
+    end
+
+    # Handles each logical routes.rb statement against the walk's state.
+    private def walk_route_lines(route_lines : Array(RouteLine), scan : RouteFileState)
       local_string_vars = Hash(String, String).new
 
-      expand_inline_route_blocks(expand_static_loops(logical_route_lines(routes_path))).each do |route_line|
+      route_lines.each do |route_line|
         line = route_line.text.strip
         next if line.empty?
         scan.current_line = route_line.line
         line = resolve_local_string_vars(line, local_string_vars)
+
+        if name = current_concern_definition(scan.stack)
+          record_concern_line(name, line, scan)
+          next
+        end
 
         # Handle `end` (top of stack pops one).
         if end_line?(line)
@@ -429,7 +443,7 @@ module Analyzer::Ruby
         # it as a scope. Unknown mounts (engine shipped as a library, host
         # not in scan) fall back to a transparent frame — same as before.
         if opens_block && (em = line.match(/^(?:::)?([A-Z][A-Za-z0-9_:]*)\.routes\.draw\b/))
-          mount_prefix = @engine_mount_prefixes[{configured_base_for(routes_path), em[1]}]?
+          mount_prefix = @engine_mount_prefixes[{configured_base_for(scan.routes_path), em[1]}]?
           if mount_prefix && !mount_prefix.empty?
             scan.stack << Frame.new(:scope, path: mount_prefix)
           else
@@ -461,6 +475,8 @@ module Analyzer::Ruby
         when "collection" then scan.stack << Frame.new(:collection) if opens_block
         when "new"        then scan.stack << Frame.new(:new) if opens_block
         when "shallow"    then scan.stack << Frame.new(:neutral, shallow: true) if opens_block
+        when "with_options"
+          scan.stack << Frame.new(:with_options, options: parse_options(args)) if opens_block
         when "get", "post", "put", "patch", "delete", "head", "options", "query"
           handle_verb_route(directive.upcase, args, scan)
         when "match" then handle_match(args, scan)
@@ -556,16 +572,42 @@ module Analyzer::Ruby
         draw_path = File.join(scan.framework_root, "config", "routes", "#{draw_name}.rb")
         next unless known_file?(draw_path)
         parse_routes_file(draw_path, scan.framework_root, scan.parsed_route_files,
-          scan.stack, scan.concern_resources)
+          scan.stack, scan.concerns)
       end
     end
 
     # concern :commentable do
     private def handle_concern(args : String, opens_block : Bool, scan : RouteFileState)
-      return unless m = args.match(/^\s*:(\w+)/)
-      name = m[1]
-      scan.concern_resources[name] ||= [] of ConcernResource
-      scan.stack << Frame.new(:concern, resource_name: name) if opens_block
+      return unless opens_block && (m = args.match(/^\s*:(\w+)/))
+      scan.concerns[m[1]] = ConcernBody.new(scan.routes_path, [] of RouteLine)
+      scan.stack << Frame.new(:concern, resource_name: m[1])
+    end
+
+    # A line inside a `concern` block is kept for replay, not routed: the
+    # block's own `end` closes it, inner blocks are tracked so their `end`s
+    # stay in the body.
+    private def record_concern_line(name : String, line : String, scan : RouteFileState)
+      if end_line?(line)
+        return if scan.stack.pop.kind == :concern
+      elsif opens_do_block?(line) || opens_keyword_block?(line)
+        scan.stack << Frame.new(:neutral)
+      end
+      scan.concerns[name].lines << RouteLine.new(line, scan.current_line || 0)
+    end
+
+    # Runs the named concerns' bodies at `stack`, each line attributed to
+    # where the concern declares it. A concern naming itself, directly or
+    # through another, is expanded once.
+    private def replay_concerns(names : Array(String), scan : RouteFileState, stack : Array(Frame))
+      names.each do |name|
+        next unless (body = scan.concerns[name]?) && @replaying_concerns.add?(name)
+        # Rails runs the block on the mapper itself, outside any enclosing
+        # `with_options`.
+        replay = RouteFileState.new(scan.framework_root, body.routes_path, scan.parsed_route_files,
+          stack.map { |f| f.kind == :with_options ? Frame.new(:neutral) : f }, scan.concerns)
+        walk_route_lines(body.lines, replay)
+        @replaying_concerns.delete(name)
+      end
     end
 
     # namespace :foo do
@@ -786,46 +828,28 @@ module Analyzer::Ruby
 
     # concerns :commentable / concerns [:commentable, :taggable]
     private def handle_concerns(args : String, scan : RouteFileState)
-      emit_concern_resources(parse_symbol_list(args), scan.concern_resources,
-        scan.framework_root, scan.stack)
+      replay_concerns(parse_symbol_list(args), scan, scan.stack)
     end
 
     # resources :foo / resource :foo
     private def handle_resources(kind_kw : String, args : String, opens_block : Bool, scan : RouteFileState)
       stack = scan.stack
       return unless name = parse_first_route_name(args)
-      options = parse_options(args)
-
-      if concern_name = current_concern_definition(stack)
-        scan.concern_resources[concern_name] ||= [] of ConcernResource
-        scan.concern_resources[concern_name] << ConcernResource.new(kind_kw, name, options, current_concern_relative_stack(stack))
-        if opens_block
-          stack << Frame.new(:resources, path: options["path"]? || name, resource_name: options["as"]?.presence || name,
-            param_name: resource_param_name(options, kind_kw == "resource"))
-        end
-        return
-      end
+      options = with_options_for(stack).merge(parse_options(args))
 
       existing_controller_path = emit_resource_routes(scan.framework_root, stack, kind_kw, name, options)
 
-      concern_names = parse_symbol_list(options["concerns"]?)
-      unless concern_names.empty?
-        virtual_stack = stack.dup
-        virtual_stack << Frame.new(:resources, path: options["path"]? || name,
-          resource_name: options["as"]?.presence || name, controller_path: existing_controller_path,
-          param_name: resource_param_name(options, kind_kw == "resource"))
-        emit_concern_resources(concern_names, scan.concern_resources, scan.framework_root, virtual_stack)
-      end
-
-      return unless opens_block
-
       # A `module:` on the resources line also scopes nested
       # resources/routes inside its block, so carry it on the frame's
-      # controller_subdir for children to inherit.
-      stack << Frame.new(:resources, path: options["path"]? || name, resource_name: options["as"]?.presence || name,
+      # controller_subdir for children to inherit. Its concerns run in the
+      # same scope as the block, ahead of it.
+      frame = Frame.new(:resources, path: options["path"]? || name, resource_name: options["as"]?.presence || name,
         controller_path: existing_controller_path, controller_subdir: options["module"]? || "",
         shallow: options["shallow"]? == "true", shallow_member: shallow_nested?(stack, options),
         param_name: resource_param_name(options, kind_kw == "resource"))
+      concern_names = parse_symbol_list(options["concerns"]?)
+      replay_concerns(concern_names, scan, stack + [frame]) unless concern_names.empty?
+      stack << frame if opens_block
     end
 
     private def resource_param_name(options : Hash(String, String), singular : Bool) : String?
@@ -1007,6 +1031,14 @@ module Analyzer::Ruby
         endpoint.handler = handler_for_action(ctrl_path, action_name) if action_name
         @result << endpoint
       end
+    end
+
+    # Options the enclosing `with_options` blocks hand a route call, inner
+    # blocks over outer.
+    private def with_options_for(stack : Array(Frame)) : Hash(String, String)
+      merged = {} of String => String
+      stack.each { |f| f.options.try { |options| merged.merge!(options) } }
+      merged
     end
 
     private def current_concern_definition(stack : Array(Frame)) : String?
@@ -1297,30 +1329,6 @@ module Analyzer::Ruby
       nil
     end
 
-    private def current_concern_relative_stack(stack : Array(Frame)) : Array(Frame)
-      index = stack.size - 1
-      while index >= 0
-        if stack[index].kind == :concern
-          return [] of Frame if index == stack.size - 1
-          return stack[(index + 1)..].dup
-        end
-        index -= 1
-      end
-      [] of Frame
-    end
-
-    private def emit_concern_resources(names : Array(String),
-                                       concern_resources : Hash(String, Array(ConcernResource)),
-                                       framework_root : String,
-                                       stack : Array(Frame))
-      names.each do |name|
-        next unless resources = concern_resources[name]?
-        resources.each do |resource|
-          emit_resource_routes(framework_root, stack + resource.stack, resource.kind_kw, resource.name, resource.options)
-        end
-      end
-    end
-
     private def emit_resource_routes(framework_root : String,
                                      stack : Array(Frame),
                                      kind_kw : String,
@@ -1580,6 +1588,11 @@ module Analyzer::Ruby
       parts.join("/")
     end
 
+    # The RESTful actions `resources` routes, in the order their rows are
+    # emitted; `update` answers both PUT and PATCH.
+    RESOURCE_ACTION_VERBS = { {"index", "GET"}, {"show", "GET"}, {"create", "POST"},
+                             {"update", "PUT"}, {"update", "PATCH"}, {"destroy", "DELETE"} }
+
     def controller_to_endpoint(
       path : String,
       @url : String,
@@ -1595,71 +1608,22 @@ module Analyzer::Ruby
 
       return endpoints unless known_file?(path)
 
-      data = extract_controller_data(path)
-      defined_actions = data.defined_actions
-
-      methods = [] of String
-      {"index", "show", "create", "update", "destroy"}.each do |name|
-        next unless defined_actions.includes?(name)
-        next unless action_allowed?(name, only, except)
-        case name
-        when "index"
-          methods << "GET/INDEX" unless singular
-        when "show"
-          methods << "GET/SHOW"
-        when "create"
-          methods << "POST"
-        when "update"
-          methods << "PUT"
-          methods << "PATCH"
-        when "destroy"
-          methods << "DELETE"
-        end
-      end
-
       index_url = compose_url(path_prefix, "/#{resource}")
       member_url = compose_url(member_prefix, member_param ? "/#{resource}/:#{member_param}" : "/#{resource}")
       path_params = url_param_names(index_url)
       member_params = url_param_names(member_url)
 
-      methods.each do |method|
-        case method
-        when "GET/INDEX"
-          last_params = promote_path_params(action_params(data, "index", "GET"), path_params)
-          details = Details.new(PathInfo.new(path, data.action_lines["index"]?))
-          endpoint = Endpoint.new(index_url, "GET", last_params, details)
-          attach_callees_for_action(endpoint, data, "index")
-          endpoint.handler = handler_for_action(data, "index", path)
-          endpoints << endpoint
-        when "GET/SHOW"
-          last_params = promote_path_params(action_params(data, "show", "GET"), member_params)
-          details = Details.new(PathInfo.new(path, data.action_lines["show"]?))
-          endpoint = Endpoint.new(member_url, "GET", last_params, details)
-          attach_callees_for_action(endpoint, data, "show")
-          endpoint.handler = handler_for_action(data, "show", path)
-          endpoints << endpoint
-        when "POST"
-          last_params = promote_path_params(action_params(data, "create", method), path_params)
-          details = Details.new(PathInfo.new(path, data.action_lines["create"]?))
-          endpoint = Endpoint.new(index_url, method, last_params, details)
-          attach_callees_for_action(endpoint, data, "create")
-          endpoint.handler = handler_for_action(data, "create", path)
-          endpoints << endpoint
-        when "DELETE"
-          last_params = promote_path_params(action_params(data, "destroy", method), member_params)
-          details = Details.new(PathInfo.new(path, data.action_lines["destroy"]?))
-          endpoint = Endpoint.new(member_url, method, last_params, details)
-          attach_callees_for_action(endpoint, data, "destroy")
-          endpoint.handler = handler_for_action(data, "destroy", path)
-          endpoints << endpoint
-        else
-          last_params = promote_path_params(action_params(data, "update", method), member_params)
-          details = Details.new(PathInfo.new(path, data.action_lines["update"]?))
-          endpoint = Endpoint.new(member_url, method, last_params, details)
-          attach_callees_for_action(endpoint, data, "update")
-          endpoint.handler = handler_for_action(data, "update", path)
-          endpoints << endpoint
-        end
+      RESOURCE_ACTION_VERBS.each do |action, verb|
+        next if singular && action == "index"
+        next unless action_allowed?(action, only, except)
+        next unless owner = action_owner(path, action)
+        on_collection = action == "index" || action == "create"
+        params = promote_path_params(action_params(owner, action, verb, path), on_collection ? path_params : member_params)
+        details = Details.new(PathInfo.new(owner.path, owner.action_lines[action]?))
+        endpoint = Endpoint.new(on_collection ? index_url : member_url, verb, params, details)
+        attach_callees_for_action(endpoint, owner, action)
+        endpoint.handler = handler_for_action(owner, action, path)
+        endpoints << endpoint
       end
 
       endpoints
@@ -1884,7 +1848,7 @@ module Analyzer::Ruby
 
       while index < lines.size
         stripped = strip_inline_comment(lines[index]).strip
-        if m = stripped.match(/^(?:private\s+|protected\s+|public\s+)?def\s+(?:self\.)?([A-Za-z_]\w*[!?=]?)\b/)
+        if m = stripped.match(/^(?:private\s+|protected\s+|public\s+)?def\s+(?:self\.)?([A-Za-z_]\w*[!?=]?)(?!\w)/)
           action = m[1]
           inline_body, closed_on_def_line = inline_def_body(stripped, m[0])
           body_lines = [] of String
@@ -1957,14 +1921,15 @@ module Analyzer::Ruby
     # controller#action). Mirrors the resources flow: per-action headers/cookies
     # plus the action-local body/query params for the verb.
     private def params_for_action(controller_path : String?, action : String, verb : String) : Array(Param)
-      return [] of Param if controller_path.nil?
-      data = extract_controller_data(controller_path)
-      return [] of Param unless data.defined_actions.includes?(action)
+      return [] of Param unless controller_path && (owner = action_owner(controller_path, action))
 
-      action_params(data, action, verb)
+      action_params(owner, action, verb, controller_path)
     end
 
-    private def action_params(data : ControllerData, action : String, verb : String) : Array(Param)
+    # `data` is the file holding `action`'s `def`; `controller_path` is the
+    # routed controller, whose callback chain runs ahead of it.
+    private def action_params(data : ControllerData, action : String, verb : String,
+                              controller_path : String = data.path) : Array(Param)
       result = [] of Param
       merge_action_params(result, data, action, verb)
 
@@ -1973,9 +1938,25 @@ module Analyzer::Ruby
         next if helper_name == action
         merge_action_params(result, data, helper_name, verb)
       end
-      merge_callback_params(result, data.path, action)
+      merge_callback_params(result, controller_path, action)
 
       result
+    end
+
+    # The controller data holding `action`'s `def`: the routed controller's
+    # own, else the nearest ancestor class or included concern that defines
+    # it, the way Ruby looks the method up (`Api::V2::AccountsController <
+    # Api::V1::AccountsController` routes the parent's `index`). nil when no
+    # file along the chain defines it.
+    private def action_owner(controller_path : String, action : String) : ControllerData?
+      data = extract_controller_data(controller_path)
+      return data if data.defined_actions.includes?(action)
+      return unless leaf = callback_chain.controller_in(controller_path)
+      callback_chain.resolve(leaf, nil).paths.each do |path|
+        owner = extract_controller_data(path)
+        return owner if owner.defined_actions.includes?(action)
+      end
+      nil
     end
 
     # Header/cookie reads in the `before_action` callbacks that run ahead of
@@ -2075,23 +2056,25 @@ module Analyzer::Ruby
       helper_calls
     end
 
-    # `articles#show` at the action's `def` line in the controller file —
-    # the file an agent opens after the route. nil when the controller file
-    # was not found; the line is nil when the action is inherited or
-    # generated.
+    # `articles#show` at the action's `def` line — in the routed controller,
+    # or in the ancestor it inherits the action from — the file an agent
+    # opens after the route. nil when the controller file was not found; the
+    # line is nil when no file along the chain defines the action.
     private def handler_for_action(controller_path : String?, action : String) : Handler?
       return if controller_path.nil?
-      handler_for_action(extract_controller_data(controller_path), action, controller_path)
+      data = action_owner(controller_path, action) || extract_controller_data(controller_path)
+      handler_for_action(data, action, controller_path)
     end
 
     private def handler_for_action(data : ControllerData, action : String, controller_path : String) : Handler
       controller = File.basename(controller_path, ".rb").rchop("_controller")
-      Handler.new("#{controller}##{action}", controller_path, data.action_lines[action]?)
+      Handler.new("#{controller}##{action}", data.path, data.action_lines[action]?)
     end
 
     private def attach_callees_for_action(endpoint : Endpoint, controller_path : String?, action : String)
       return if controller_path.nil?
-      attach_callees_for_action(endpoint, extract_controller_data(controller_path), action)
+      data = action_owner(controller_path, action) || extract_controller_data(controller_path)
+      attach_callees_for_action(endpoint, data, action)
     end
 
     private def attach_callees_for_action(endpoint : Endpoint, data : ControllerData, action : String)
@@ -2112,10 +2095,11 @@ module Analyzer::Ruby
     # `controller: "ctrl", action: :show`, and controller-block
     # `get "path" => :action` forms.
     private def parse_controller_action(rest : String, scoped_controller : String? = nil) : Tuple(String, String)?
-      if m = rest.match(/=>\s*['"]([^'"#]+)#([\w]+)['"]/)
+      # Ruby method names may end in `?`/`!` (`to: 'requests#merged?'`).
+      if m = rest.match(/=>\s*['"]([^'"#]+)#(\w+[?!]?)['"]/)
         return {m[1], m[2]}
       end
-      if m = rest.match(/to:\s*['"]([^'"#]+)#([\w]+)['"]/)
+      if m = rest.match(/to:\s*['"]([^'"#]+)#(\w+[?!]?)['"]/)
         return {m[1], m[2]}
       end
       options = parse_options(rest)
@@ -2128,7 +2112,7 @@ module Analyzer::Ruby
         if action = options["action"]?
           return {scoped_controller, action}
         end
-        if m = rest.match(/(?:=>|to:)\s*:(\w+)/)
+        if m = rest.match(/(?:=>|to:)\s*:(\w+[?!]?)/)
           return {scoped_controller, m[1]}
         end
       end

@@ -132,6 +132,27 @@ expected_endpoints = [
   Endpoint.new("/posts/:post_id/comments/:comment_id/likes", "GET"),
   Endpoint.new("/posts/:post_id/comments/:comment_id/likes/:id", "GET"),
 
+  # A concern's member/collection verbs apply to the resource naming it,
+  # and `with_options only: [:index], concerns:` reaches `resources :tags`
+  # (so no `show`, though the controller defines one).
+  Endpoint.new("/trends/tags", "GET"),
+  Endpoint.new("/trends/tags/:id/approve", "POST", [
+    Param.new("id", "", "path"),
+  ]),
+  Endpoint.new("/trends/tags/batch", "POST"),
+  Endpoint.new("/trends/merged", "GET", [
+    Param.new("X-Merge-Token", "", "header"),
+  ]),
+
+  # `show`/`update` live only in the parent Preferences::BaseController.
+  Endpoint.new("/preferences/notifications", "GET"),
+  Endpoint.new("/preferences/notifications", "PUT", [
+    Param.new("locale", "", "form"),
+  ]),
+  Endpoint.new("/preferences/notifications", "PATCH", [
+    Param.new("locale", "", "form"),
+  ]),
+
   # hash-rocket and to: forms. #1359: `=> "ctrl#action"` / `to: "ctrl#action"`
   # resolves the controller and attaches the action's params.
   Endpoint.new("/up", "GET", [
@@ -246,6 +267,9 @@ total_endpoints = 1 +  # root
                   5 +  # inline collection/member/new custom routes
                   6 +  # posts
                   4 +  # posts/:post_id/comments + nested likes from concern
+                  3 +  # trends/tags index + concern member approve + collection batch
+                  1 +  # trends/merged -> tags#merged?
+                  3 +  # preferences/notifications show/update inherited from base
                   3 +  # /up + /ping + legacy string-via match
                   3 +  # optional-segment routes /feed + /report/rss + optional scope
                   2 +  # %w[browse annotate].each unrolled to /repo/:id/browse + /annotate
@@ -257,7 +281,26 @@ total_endpoints = 1 +  # root
                   1 +  # multiline parenthesized get
                   3    # draw :external at root and under two scopes
 
-FunctionalTester.new("fixtures/ruby/rails_advanced/", {
+tester = FunctionalTester.new("fixtures/ruby/rails_advanced/", {
   :techs     => 1,
   :endpoints => total_endpoints,
-}, expected_endpoints).perform_tests
+}, expected_endpoints)
+tester.perform_tests
+
+it "points an inherited action's handler at the parent's def", tags: "functional" do
+  update = tester.app.endpoints.find { |e| e.url == "/preferences/notifications" && e.method == "PATCH" }
+  update.should_not be_nil
+  handler = update.not_nil!.handler.not_nil!
+  handler.name.should eq("notifications#update")
+  handler.path.to_s.should end_with("app/controllers/preferences/base_controller.rb")
+  handler.line.should eq(4)
+end
+
+it "resolves a `?` action to its `def`", tags: "functional" do
+  merged = tester.app.endpoints.find { |e| e.url == "/trends/merged" && e.method == "GET" }
+  merged.should_not be_nil
+  handler = merged.not_nil!.handler.not_nil!
+  handler.name.should eq("tags#merged?")
+  handler.path.to_s.should end_with("app/controllers/trends/tags_controller.rb")
+  handler.line.should eq(15)
+end
