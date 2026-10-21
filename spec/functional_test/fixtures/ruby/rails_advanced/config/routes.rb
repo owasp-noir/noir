@@ -92,6 +92,29 @@ Rails.application.routes.draw do
 
   resources :posts, concerns: :commentable
 
+  # A concern's member/collection routes hang off the resource naming it,
+  # here through `with_options`, whose `only:` also holds for `resources`.
+  namespace :trends do
+    concern :reviewable do
+      member do
+        post :approve
+      end
+      collection { post :batch }
+    end
+
+    with_options only: [:index], concerns: :reviewable do
+      resources :tags
+    end
+
+    # A predicate action: the `def` is `merged?`.
+    get :merged, to: "tags#merged?"
+  end
+
+  # NotificationsController inherits `show`/`update` from its base class.
+  namespace :preferences do
+    resource :notifications, only: [:show, :update]
+  end
+
   get "up" => "rails/health#show"
   get "ping", to: "monitor#ping"
   match "legacy_ping", to: "monitor#ping", via: "get"
