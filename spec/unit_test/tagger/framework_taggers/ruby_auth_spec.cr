@@ -324,6 +324,118 @@ describe "RubyAuthTagger" do
       CodeLocator.instance.clear_all
     end
   end
+
+  it "reads lambda callbacks, optional-token and if: callbacks, and Pundit policies the way Rails runs them" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("ruby_lambda_callback")
+    controllers = File.join(tmpdir, "app", "controllers")
+    Dir.mkdir_p(File.join(controllers, "api"))
+    Dir.mkdir_p(File.join(tmpdir, "app", "policies"))
+    files = {
+      # Mastodon's Api::BaseController
+      "controllers/api/base_controller.rb" => <<-RB,
+        class Api::BaseController < ApplicationController
+          before_action :require_authenticated_user!, if: :disallow_unauthenticated_api_access?
+
+          def require_authenticated_user!
+            render json: { error: 'This method requires an authenticated user' }, status: 401 unless current_user
+          end
+
+          def require_user!
+            render json: { error: 'Your login is currently disabled' }, status: 403 unless current_user
+          end
+
+          def authorize_if_got_token!(*scopes)
+            doorkeeper_authorize!(*scopes) if doorkeeper_token
+          end
+        end
+        RB
+      "controllers/api/statuses_controller.rb" => <<-RB,
+        class Api::StatusesController < Api::BaseController
+          before_action -> { authorize_if_got_token! :read, :'read:statuses' }, except: [:create, :destroy]
+          before_action -> { doorkeeper_authorize! :write, :'write:statuses' }, only: [:create, :destroy]
+          before_action :require_user!, only: [:destroy]
+
+          def index
+          end
+
+          def show
+            authorize @status, :show?
+          end
+
+          def create
+          end
+
+          def destroy
+            authorize @status, :destroy?
+          end
+        end
+        RB
+      "controllers/media_controller.rb" => <<-RB,
+        class MediaController < ApplicationController
+          before_action :authenticate_user!, if: :limited_federation_mode?
+
+          def show
+          end
+        end
+        RB
+      "policies/status_policy.rb" => <<-RB,
+        class StatusPolicy < ApplicationPolicy
+          def show?
+            current_account.nil? || !author.blocking?(current_account)
+          end
+
+          def destroy?
+            owned?
+          end
+        end
+        RB
+    }
+    files.each do |name, body|
+      path = File.join(tmpdir, "app", name)
+      File.write(path, body)
+      CodeLocator.instance.register_path(path)
+    end
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(name : String, line : Int32) do
+        details = Details.new(PathInfo.new(File.join(controllers, name), line))
+        details.technology = "ruby_rails"
+        Endpoint.new("/#{name}/#{line}", "GET", [] of Param, details)
+      end
+      index = at.call("api/statuses_controller.rb", 6)
+      show = at.call("api/statuses_controller.rb", 9)
+      create = at.call("api/statuses_controller.rb", 13)
+      destroy = at.call("api/statuses_controller.rb", 16)
+      media = at.call("media_controller.rb", 4)
+
+      RubyAuthTagger.new(noir_options).perform([index, show, create, destroy, media])
+
+      # authorize_if_got_token! only checks scopes when a token was sent, and
+      # the inherited `if:` callback is off by default; neither near
+      # `doorkeeper_authorize!` reads as "Roda authorize!".
+      index.tags.should be_empty
+      show.tags.map { |t| {t.name, t.description} }.should eq([{"anonymous", "Pundit StatusPolicy#show? admits anonymous callers"}])
+      create.tags.map(&.description).should eq(["Protected by Doorkeeper OAuth authorize"])
+      destroy.tags.map(&.description).should eq(["Protected by require_user! (app-defined, rejects in its body)", "Protected by Pundit authorize"])
+      media.tags.should be_empty
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
+  it "lists the methods a before_action line runs" do
+    callbacks = ->(line : String) { Noir::RailsCallbackChain.before_action_callbacks(line) }
+    callbacks.call("before_action :a!, :b?, only: :show").should eq(["a!", "b?"])
+    callbacks.call("before_action -> { doorkeeper_authorize! :read, :'read:statuses' }, except: :create").should eq(["doorkeeper_authorize!"])
+    callbacks.call("before_action ->(c) { c.authenticate_user! }").should eq([] of String)
+    callbacks.call("before_action { authenticate_user! }").should eq(["authenticate_user!"])
+    callbacks.call("before_action -> { authenticate_user! if limited? }").should eq([] of String)
+    callbacks.call("skip_before_action :authenticate_user!").should eq([] of String)
+  end
 end
 
 # Additional tests for Grape + Roda support (B target)

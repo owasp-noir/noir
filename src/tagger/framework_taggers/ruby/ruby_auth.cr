@@ -16,6 +16,7 @@ class RubyAuthTagger < FrameworkTagger
     {/(?<!skip_)before_action\s+:verify_authenticity_token/, "CSRF verify_authenticity_token"},
     {/(?<!skip_)before_action\s+:doorkeeper_authorize!/, "Doorkeeper OAuth authorize"},
     {/(?<!skip_)before_action\s+:authenticate_with_token/, "token authentication"},
+    {/(?<!skip_)before_action\s+:require_(?:authenticated_)?user!?(?!\w)/, "require_user"},
   ]
 
   # Rails before_action authorization — verify what the caller may do.
@@ -26,10 +27,11 @@ class RubyAuthTagger < FrameworkTagger
   # Union kept for the CONTROLLER_AUTH_ANY gate and the shared walk.
   BEFORE_ACTION_PATTERNS = BEFORE_ACTION_AUTHN_PATTERNS + BEFORE_ACTION_AUTHZ_PATTERNS
 
-  # Pundit / CanCanCan authorization in action body
+  # Pundit / CanCanCan authorization in action body. `\b`: not the
+  # `doorkeeper_authorize!` / `authorize_if_got_token!` an API calls.
   ACTION_AUTH_PATTERNS = [
-    {/authorize\s+@?\w+/, "Pundit authorize"},
-    {/authorize!\s*/, "CanCanCan authorize!"},
+    {/\bauthorize\s+@?\w+/, "Pundit authorize"},
+    {/\bauthorize!/, "CanCanCan authorize!"},
     {/load_and_authorize_resource/, "CanCanCan load_and_authorize_resource"},
   ]
 
@@ -72,7 +74,7 @@ class RubyAuthTagger < FrameworkTagger
     {/r\.halt\s+401/, "Roda 401 halt"},
   ]
   RODA_AUTHZ_PATTERNS = [
-    {/authorize!/, "Roda authorize!"},
+    {/\bauthorize!/, "Roda authorize!"},
   ]
 
   # skip_before_action marks public overrides
@@ -85,10 +87,8 @@ class RubyAuthTagger < FrameworkTagger
     /^\s*allow_unauthenticated_access\b/,
   ]
 
-  # `skip_before_action :a, :b, only: [...]`: the callbacks it removes, and
-  # the callbacks a `before_action` line registers.
-  SKIP_CALLBACKS          = /\bskip_before_action\s+((?::\w+[!?]?\s*,?\s*)+)/
-  BEFORE_ACTION_CALLBACKS = /(?<!skip_)before_action\s+((?::\w+[!?]?\s*,?\s*)+)/
+  # `skip_before_action :a, :b, only: [...]`: the callbacks it removes.
+  SKIP_CALLBACKS = /\bskip_before_action\s+((?::\w+[!?]?\s*,?\s*)+)/
 
   # Cheap gate for `check_controller_auth`'s backward walk, which runs to the
   # enclosing `class` — or, in a Sinatra/Grape/Roda file that has none, to line
@@ -99,6 +99,7 @@ class RubyAuthTagger < FrameworkTagger
     sources = [] of Regex | String
     SKIP_PATTERNS.each { |pattern| sources << pattern }
     sources << SKIP_CALLBACKS
+    sources << Noir::RailsCallbackChain::BLOCK_CALLBACK
     BEFORE_ACTION_PATTERNS.each { |pattern, _| sources << pattern }
     HANAMI_AUTH_PATTERNS.each { |pattern, _| sources << pattern }
     Regex.union(sources)
@@ -116,6 +117,8 @@ class RubyAuthTagger < FrameworkTagger
     @scope_lines = Hash(String, ScopeLines).new
     @flagged_line_jumps = Hash(String, Array(Int32)).new
     @callback_guards = Hash(String, String?).new
+    @callback_authz = Hash(String, String?).new
+    @anonymous_queries = Hash(String, Bool).new
     @rejecting_defs = Hash(String, Bool).new
   end
 
@@ -192,9 +195,8 @@ class RubyAuthTagger < FrameworkTagger
       authz_desc = controller[:authz]
 
       # Action-body authorization (Pundit/CanCanCan) stacks with controller authn.
-      if body_authz = check_action_body_auth(lines, line_idx)
-        authz_desc ||= body_authz
-      end
+      body = check_action_body_auth(lines, line_idx)
+      authz_desc ||= body[:authz]
 
       # add_tag dedupes by (name, tagger), so authn/authz need distinct names.
       if authn_desc
@@ -203,7 +205,11 @@ class RubyAuthTagger < FrameworkTagger
       if authz_desc
         endpoint.add_tag(Tag.new("authz", "Protected by #{authz_desc}", "ruby_auth"))
       end
-      return if authn_desc || authz_desc || controller[:skipped] || controller[:opted_out]
+      # The action's only check is a Pundit query a nil caller passes.
+      if authn_desc.nil? && authz_desc.nil? && (policy = body[:anonymous])
+        endpoint.add_tag(Tag.new("anonymous", "Pundit #{policy} admits anonymous callers", "ruby_auth"))
+      end
+      return if authn_desc || authz_desc || body[:anonymous] || controller[:skipped] || controller[:opted_out]
 
       # Sinatra/Rack patterns first, then Grape (before blocks, http_basic,
       # etc.), both over the same route scope.
@@ -214,7 +220,9 @@ class RubyAuthTagger < FrameworkTagger
         return
       end
 
-      # Check Roda/Rodauth patterns — may yield both authn and authz.
+      # Roda/Rodauth patterns, only on Roda routes: a Rails controller's
+      # `doorkeeper_authorize!` read as "Roda authorize!".
+      next unless endpoint.details.technology == "ruby_roda"
       roda = check_roda_auth(lines, line_idx)
       if roda[:authn]
         endpoint.add_tag(Tag.new("auth", "Protected by #{roda[:authn]}", "ruby_auth"))
@@ -260,17 +268,11 @@ class RubyAuthTagger < FrameworkTagger
       if (m = current.match(SKIP_CALLBACKS)) && applies_to_action?(current, action_name)
         m[1].scan(/:(\w+[!?]?)/) { |name| skipped_callbacks << name[1] }
       end
-      registered = live_callbacks(current, skipped_callbacks)
-
-      if !skipped && applies_to_action?(current, action_name)
-        registered.scan(BEFORE_ACTION_CALLBACKS) do |line|
-          line[1].scan(/:(\w+[!?]?)/) { |name| authn_desc ||= callback_guard(name[1]) }
-        end
-      end
-
-      BEFORE_ACTION_AUTHZ_PATTERNS.each do |pattern, desc|
-        if registered.matches?(pattern) && applies_to_action?(current, action_name)
-          authz_desc ||= desc
+      if applies_to_action?(current, action_name) && !Noir::RailsCallbackChain.conditional?(current)
+        Noir::RailsCallbackChain.before_action_callbacks(current).each do |callback|
+          next if skipped_callbacks.includes?(callback)
+          authn_desc ||= callback_guard(callback) unless skipped
+          authz_desc ||= callback_authz(callback)
         end
       end
 
@@ -299,13 +301,6 @@ class RubyAuthTagger < FrameworkTagger
     {authn: authn_desc, authz: authz_desc, skipped: skipped, opted_out: opted_out, class_idx: class_idx}
   end
 
-  # `line` with the `before_action` callbacks in `skipped` dropped.
-  private def live_callbacks(line : String, skipped : Set(String)) : String
-    return line if skipped.empty?
-    return line unless m = line.match(BEFORE_ACTION_CALLBACKS)
-    m[1].scan(/:(\w+[!?]?)/).reject { |name| skipped.includes?(name[1]) }.join('\n') { |name| "before_action :#{name[1]}" }
-  end
-
   # A controller's own class body is only half its callback chain (see
   # `Noir::RailsCallbackChain`): the first callback its parents, concerns and
   # own body leave active for `action` that guards the request.
@@ -313,7 +308,9 @@ class RubyAuthTagger < FrameworkTagger
     chain = rails_chain
     leaf = chain.classes[{path, class_idx}]?
     return unless leaf && leaf.parent
-    chain.resolve(leaf, action).callbacks.each do |callback|
+    resolved = chain.resolve(leaf, action)
+    resolved.callbacks.each do |callback|
+      next if resolved.conditional.includes?(callback)
       if desc = callback_guard(callback)
         return desc
       end
@@ -338,6 +335,9 @@ class RubyAuthTagger < FrameworkTagger
   # An `if` whose condition only asks whether a credential was sent: the
   # rejection under it never fires for a request that carries none.
   CREDENTIAL_PRESENT_IF = /^if\s+(?!.*(?:!|\bnot\b|\.(?:nil|blank|empty)\?)).*\b(?:request|params|cookies|session|token|header|bearer|jwt|authorization)\b/i
+  # `doorkeeper_authorize!(*scopes) if doorkeeper_token`: a statement whose
+  # trailing `if` is only a credential being present.
+  CREDENTIAL_PRESENT_MODIFIER = /\sif\s+@?\w*(?:token|session|header|bearer|jwt|authorization)\w*(?:\.present\?)?\z/i
 
   # The guard an authentication callback stands for, or nil when it is not
   # one. A callback the app defines itself (under `controllers/`) is read
@@ -355,6 +355,15 @@ class RubyAuthTagger < FrameworkTagger
       end
     end
     @callback_guards[callback] = desc
+  end
+
+  # The same reading for an authorization callback: `authorize_if_got_token!`
+  # that only checks scopes when a token was sent lets anonymous callers in.
+  private def callback_authz(callback : String) : String?
+    return @callback_authz[callback] if @callback_authz.has_key?(callback)
+    desc = BEFORE_ACTION_AUTHZ_PATTERNS.find { |pattern, _| "before_action :#{callback}".matches?(pattern) }.try(&.[1])
+    desc = nil if desc && rails_chain.defs.has_key?(callback) && !body_rejects?(callback, Set(String).new)
+    @callback_authz[callback] = desc
   end
 
   # Whether any definition of `name` can reject a request: a
@@ -383,7 +392,7 @@ class RubyAuthTagger < FrameworkTagger
       body.each_with_index.any? do |(_, text), i|
         rejects = text.matches?(CALLBACK_REJECTS) || (top && text.matches?(/\bsuper\b/)) ||
                   text.scan(/\b[a-z_]\w*[!?]?/).any? { |m| rails_chain.defs.has_key?(m[0]) && body_rejects?(m[0], visited) }
-        rejects && !credential_gated?(body, i)
+        rejects && !credential_gated?(body, i) && !text.matches?(CREDENTIAL_PRESENT_MODIFIER)
       end
     end
   end
@@ -401,10 +410,11 @@ class RubyAuthTagger < FrameworkTagger
     false
   end
 
-  private def check_action_body_auth(lines : Array(String), action_line : Int32) : String?
+  private def check_action_body_auth(lines : Array(String), action_line : Int32) : NamedTuple(authz: String?, anonymous: String?)
     # Scan forward from the action definition for auth calls
     idx = action_line + 1
     end_idx = [action_line + 20, lines.size - 1].min
+    anonymous : String? = nil
 
     while idx <= end_idx
       current = lines[idx].strip
@@ -412,15 +422,41 @@ class RubyAuthTagger < FrameworkTagger
       break if current.starts_with?("def ") && idx > action_line
 
       ACTION_AUTH_PATTERNS.each do |pattern, desc|
-        if current.matches?(pattern)
-          return desc
+        next unless current.matches?(pattern)
+        if policy = anonymous_policy(current)
+          anonymous ||= policy
+        else
+          return {authz: desc, anonymous: nil}
         end
       end
 
       idx += 1
     end
 
-    nil
+    {authz: nil, anonymous: anonymous}
+  end
+
+  # Pundit `authorize @status, :show?` asks `StatusPolicy#show?`. A query
+  # that answers true for a nil caller (`current_account.nil? || ...`) is a
+  # visibility rule anonymous requests pass, not a check on who calls.
+  # ponytail: the policy is found by Rails convention (`@status` →
+  # `policies/status_policy.rb`); a record named otherwise keeps its tag.
+  PUNDIT_CALL      = /\bauthorize\s*\(?\s*@(\w+)\s*,\s*:(\w+\?)/
+  ANONYMOUS_ADMITS = /\b(?:current_account|current_user|user|account)\.nil\?|!\s*user_signed_in\?/
+
+  # `StatusPolicy#show?` when the Pundit call on `line` asks a query that
+  # admits a nil caller, nil otherwise.
+  private def anonymous_policy(line : String) : String?
+    return unless m = line.match(PUNDIT_CALL)
+    label = "#{m[1].camelcase}Policy##{m[2]}"
+    admits = @anonymous_queries.put_if_absent(label) do
+      suffix = "/policies/#{m[1]}_policy.rb"
+      lines = collect_files_by_extension(".rb").find(&.ends_with?(suffix)).try { |path| read_file_lines(path) } || [] of String
+      next false unless def_idx = lines.index(&.strip.starts_with?("def #{m[2]}"))
+      body = lines[(def_idx + 1)..].take_while { |source| source.strip.empty? || line_indent(source) > line_indent(lines[def_idx]) }
+      body.any?(&.matches?(ANONYMOUS_ADMITS))
+    end
+    label if admits
   end
 
   private def extract_action_name(lines : Array(String), line_idx : Int32) : String?

@@ -1571,6 +1571,9 @@ module NoirAIContext
         GUARD_PATTERN_GROUPS.each do |patterns|
           kind = patterns.first.kind
           next if context.guards.any? { |g| g.kind == kind }
+          # The framework said the route admits anonymous callers; a name
+          # match in its source must not overrule that.
+          next if (kind == "auth_guard" || kind == "authz_guard") && endpoint.tags.any? { |t| t.name == "anonymous" }
           if guard = PatternMatcher.detect_from_patterns("", route_scope, patterns, path_info.path, path_info.line, "route_source")
             context.push_guard(guard)
           end
@@ -2028,6 +2031,8 @@ module NoirAIContext
 
     private def guard_tag?(tag : Tag) : Bool
       return true if tag.name == "auth" || tag.name == "authz"
+      # A framework's statement that the route admits anonymous callers.
+      return false if tag.name == "anonymous"
       tag.tagger.downcase.ends_with?("_auth")
     end
 

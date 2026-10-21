@@ -194,6 +194,27 @@ describe "NoirAIContext" do
     end
   end
 
+  it "lets a framework's anonymous verdict overrule a guard name match in the route source" do
+    source = <<-RUBY
+      def show
+        authorize @collection, :show?
+      end
+      RUBY
+
+    with_temp_ai_context_source(source, ".rb") do |path|
+      build = ->(tags : Array(Tag)) do
+        endpoint = Endpoint.new("/collections/1", "GET", [] of Param, Details.new(PathInfo.new(path, 1)))
+        tags.each { |tag| endpoint.add_tag(tag) }
+        NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      end
+
+      build.call([] of Tag).guards.map(&.kind).should eq(["authz_guard"])
+      public_context = build.call([Tag.new("anonymous", "Pundit CollectionPolicy#show? admits anonymous callers", "ruby_auth")])
+      public_context.guards.should be_empty
+      public_context.signals.map(&.kind).should contain("anonymous")
+    end
+  end
+
   it "expands a truncated source-scan match to the full call label" do
     source = <<-CODE
       @router.get(
