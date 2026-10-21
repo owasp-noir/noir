@@ -71,7 +71,19 @@ module Noir::CLI::TraceCommand
       row.matched_by = match.matched_by
       row
     end
-    exit(Inspect.emit(rows, common))
+    status = Inspect.emit(rows, common)
+    unless common.count
+      candidates = Inspect.wildcard_only_candidates(endpoints, matches, target.path)
+      candidates = candidates.first(limit) if limit = common.limit
+      unless candidates.empty?
+        if common.format == "text"
+          candidates.each { |row| puts "candidate: #{row.to_text}" }
+        else
+          puts({"query" => label, "only_wildcard" => true, "candidates" => candidates}.to_json)
+        end
+      end
+    end
+    exit(status)
   end
 
   def self.print_help(io : IO = STDOUT)

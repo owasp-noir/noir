@@ -115,6 +115,16 @@ describe Noir::CLI::Inspect do
       Noir::CLI::Inspect.candidates(endpoints, "/userz").first.url.should eq("/users")
       Noir::CLI::Inspect.candidates(endpoints, "/posts/1/comment").first.url.should eq("/posts/<int:pk>/comments")
     end
+
+    it "names nearby routes when only a catch-all answered, and not otherwise" do
+      typo = Noir::CLI::Inspect.trace(endpoints, "OPTIONS", "/userz/42")
+      typo.map(&.matched_by).should eq(["wildcard"])
+      rows = Noir::CLI::Inspect.wildcard_only_candidates(endpoints, typo, "/userz/42")
+      rows.first.url.should start_with("/users")
+      rows.map(&.url).should_not contain("/*")
+      hit = Noir::CLI::Inspect.trace(endpoints, nil, "/users/42")
+      Noir::CLI::Inspect.wildcard_only_candidates(endpoints, hit, "/users/42").should be_empty
+    end
   end
 
   describe ".reach" do
