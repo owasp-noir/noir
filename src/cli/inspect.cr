@@ -391,12 +391,24 @@ module Noir::CLI::Inspect
       scan_placeholders(route) do |kind, text|
         case kind
         when :rest then io << ".*"
-        when :one  then io << "[^/]+"
+        when :one  then io << typed_segment(text)
         else            io << Regex.escape(text)
         end
       end
     end
     Regex.new("\\A#{pattern}/?\\z")
+  end
+
+  # A typed placeholder only takes what the router would route to it:
+  # Werkzeug/Django `<int:id>` / `<uuid:id>`, ASP.NET `{id:int}` /
+  # `{id:guid}`. `/v1/datasets/kb-legal/documents` is not
+  # `/v1/datasets/<uuid:dataset_id>/documents`.
+  private def self.typed_segment(placeholder : String) : String
+    case placeholder
+    when /\A<int:|\A\{\w+:(?:int|long)\}\z/ then "\\d+"
+    when /\A<uuid:|\A\{\w+:guid\}\z/        then "[0-9a-fA-F]{8}-?(?:[0-9a-fA-F]{4}-?){3}[0-9a-fA-F]{12}"
+    else                                         "[^/]+"
+    end
   end
 
   # Walks a route, yielding `:rest` / `:one` placeholders and `:literal`

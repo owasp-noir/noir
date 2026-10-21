@@ -38,7 +38,14 @@ expected_endpoints = [
 ]
 
 # `:techs => 1`: the `@Controller` files must not also detect as ts_nestjs.
-FunctionalTester.new("fixtures/typescript/midway/", {
+tester = FunctionalTester.new("fixtures/typescript/midway/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
-}, expected_endpoints).perform_tests
+}, expected_endpoints)
+tester.perform_tests
+
+it "names the decorated method as the handler", tags: "functional" do
+  home = tester.app.endpoints.find! { |ep| ep.method == "GET" && ep.url == "/v1" }
+  home.handler.should eq(Handler.new("HomeController.home", "./spec/functional_test/fixtures/typescript/midway/src/controller/home.controller.ts", 8))
+  tester.app.endpoints.count(&.handler.nil?).should eq(0)
+end
