@@ -1,4 +1,5 @@
 require "../../engines/javascript_engine"
+require "../../../miniparsers/import_graph"
 require "../../../miniparsers/js_callee_extractor"
 require "../../../miniparsers/js_route_extractor"
 require "../../../utils/top_level_split"
@@ -327,9 +328,10 @@ module Analyzer::Javascript
     end
 
     # Detect `app.setGlobalPrefix('api', { exclude: [...] })`.
-    # Constants and dynamic expressions are ignored conservatively —
-    # false-positive prefixing would mis-route every controller.
-    private def extract_global_prefix_config(content : String, _path : String) : GlobalPrefixConfig?
+    # Dynamic expressions are ignored conservatively — false-positive
+    # prefixing would mis-route every controller. An `exclude` array may be
+    # a named const (see `exclude_array_source`).
+    private def extract_global_prefix_config(content : String, path : String) : GlobalPrefixConfig?
       literal_values = extract_literal_values(content)
 
       content.scan(/\.setGlobalPrefix\s*\(/) do |match|
@@ -346,30 +348,77 @@ module Analyzer::Javascript
         next if prefixes.nil?
         next if prefixes.size != 1 || prefixes[0].empty?
 
-        excludes = args.size > 1 ? extract_global_prefix_excludes(args[1], literal_values) : [] of GlobalPrefixExclude
+        excludes = args.size > 1 ? extract_global_prefix_excludes(args[1], literal_values, content, path) : [] of GlobalPrefixExclude
         return GlobalPrefixConfig.new(prefixes[0], excludes)
       end
       nil
     end
 
-    private def extract_global_prefix_excludes(options : String, literal_values : Hash(String, Array(String))) : Array(GlobalPrefixExclude)
+    private def extract_global_prefix_excludes(options : String, literal_values : Hash(String, Array(String)), content : String, path : String) : Array(GlobalPrefixExclude)
       excludes = [] of GlobalPrefixExclude
-      match = options.match(/\bexclude\s*:/)
+      match = options.match(/\bexclude\s*:\s*/)
       return excludes unless match
 
-      idx = match.end(0)
-      while idx < options.size && options[idx].whitespace?
-        idx += 1
+      # `exclude: [...]` inline, or `exclude: excludePaths` naming an array
+      # const in this file or imported from another one (immich).
+      array = options[match.end(0)..]
+      unless array.starts_with?('[')
+        name = array.match(/\A[A-Za-z_$][\w$]*/).try(&.[0])
+        array = name && exclude_array_source(name, content, path)
+        return excludes unless array
       end
-      return excludes unless options[idx]? == '['
 
-      close = find_matching_bracket(options, idx)
+      close = find_matching_bracket(array, 0)
       return excludes unless close
 
-      split_top_level(options[(idx + 1)...close], ',').each do |entry|
+      split_top_level(array[1...close], ',').each do |entry|
         excludes.concat(parse_global_prefix_exclude_entry(entry, literal_values))
       end
       excludes
+    end
+
+    # The `[...]` bound to `const name = [...]` in `content`, else in the
+    # file `content` imports `name` from. Relative specifiers resolve through
+    # `ImportGraph`; a path-alias one (`src/constants.js` under a tsconfig
+    # `baseUrl`) names the file by its tail, and the scanned file sharing
+    # the longest directory prefix with `path` wins.
+    private def exclude_array_source(name : String, content : String, path : String) : String?
+      esc = Regex.escape(name)
+      if source = array_const_source(content, esc)
+        return source
+      end
+
+      spec = content.match(/\bimport\s*(?:type\s+)?\{[^}]*\b#{esc}\b[^}]*\}\s*from\s*['"]([^'"]+)['"]/).try(&.[1])
+      return unless spec
+
+      target = if spec.starts_with?(".")
+                 Noir::ImportGraph.resolve_relative_import(path, spec, boundary: import_boundary_for(path))
+               else
+                 stem = "/" + spec.sub(JS_SOURCE_EXT_RE, "")
+                 all_files.select { |file| file.sub(JS_SOURCE_EXT_RE, "").ends_with?(stem) }
+                   .max_by? { |file| common_prefix_size(file, path) }
+               end
+      return unless target
+
+      array_const_source(Noir::JSRouteExtractor.strip_js_comments(read_file_content(target)), esc)
+    end
+
+    JS_SOURCE_EXT_RE = /\.[cm]?[jt]sx?$/
+
+    private def array_const_source(content : String, escaped_name : String) : String?
+      match = content.match(/\b(?:const|let|var)\s+#{escaped_name}\s*(?::[^=]+)?=\s*\[/)
+      return unless match
+      open = match.end(0) - 1
+      close = find_matching_bracket(content, open)
+      content[open..close] if close
+    end
+
+    private def common_prefix_size(a : String, b : String) : Int32
+      size = 0
+      while size < a.bytesize && size < b.bytesize && a.byte_at(size) == b.byte_at(size)
+        size += 1
+      end
+      size
     end
 
     private def parse_global_prefix_exclude_entry(entry : String, literal_values : Hash(String, Array(String))) : Array(GlobalPrefixExclude)
@@ -448,7 +497,7 @@ module Analyzer::Javascript
         # `/v1/cats/...`. Header/Media-Type versioning leaves the URL
         # untouched — we conservatively emit the v-prefixed variant
         # since URI is the most common shape in OSS Nest apps.
-        process_http_methods(controller_content, base_paths, controller_info[:versions], path, result, include_callee, controller_start_line, literal_values)
+        process_http_methods(controller_content, base_paths, controller_info[:versions], path, result, include_callee, controller_start_line, literal_values, controller_info[:class_name])
       end
     end
 
@@ -474,7 +523,7 @@ module Analyzer::Javascript
     end
 
     private def extract_controllers(content : String, literal_values : Hash(String, Array(String)))
-      controllers = [] of NamedTuple(base_paths: Array(String), versions: Array(String), content: String, start_line: Int32)
+      controllers = [] of NamedTuple(base_paths: Array(String), versions: Array(String), content: String, start_line: Int32, class_name: String)
 
       # Find all @Controller decorators and their associated class content
       lines = content.split("\n")
@@ -482,6 +531,7 @@ module Analyzer::Javascript
       current_versions : Array(String) = [] of String
       current_content = [] of String
       controller_start_line = 1
+      class_name = ""
       brace_count = 0
       in_class = false
       skip_until = -1
@@ -510,7 +560,8 @@ module Analyzer::Javascript
         end
 
         # Check for class start after @Controller
-        if current_base_paths && line =~ /(?:export\s+)?(?:default\s+)?(?:abstract\s+)?class\s+\w+/
+        if current_base_paths && (class_match = line.match(/(?:export\s+)?(?:default\s+)?(?:abstract\s+)?class\s+(\w+)/))
+          class_name = class_match[1]
           in_class = true
           brace_count = 0
           controller_start_line = index + 1
@@ -530,6 +581,7 @@ module Analyzer::Javascript
               versions:   current_versions,
               content:    current_content.join("\n") + "\n",
               start_line: controller_start_line,
+              class_name: class_name,
             }
             current_base_paths = nil
             current_versions = [] of String
@@ -714,7 +766,7 @@ module Analyzer::Javascript
       Noir::TopLevelSplit.split(text, delimiter, Noir::TopLevelSplit::Rules::JS)
     end
 
-    private def process_http_methods(class_content : String, base_paths : Array(String), controller_versions : Array(String), file_path : String, result : Array(Endpoint), include_callee : Bool, controller_start_line : Int32, literal_values : Hash(String, Array(String)))
+    private def process_http_methods(class_content : String, base_paths : Array(String), controller_versions : Array(String), file_path : String, result : Array(Endpoint), include_callee : Bool, controller_start_line : Int32, literal_values : Hash(String, Array(String)), class_name : String)
       method_map = route_decorator_methods
 
       # Materialised once per class: the back-walk and line count below index
@@ -776,6 +828,7 @@ module Analyzer::Javascript
         end
         decorator_line = controller_start_line + line_count
         callees = include_callee ? method_callees(class_content, signature, file_path, controller_start_line, chars, line_pos, line_count) : nil
+        handler = Handler.new("#{class_name}.#{signature[:name]}", file_path, method_declaration_line(chars, signature[:start_pos], line_pos, decorator_line))
 
         effective_base_paths.each do |base_path|
           route_paths.each do |route_path|
@@ -783,6 +836,7 @@ module Analyzer::Javascript
             methods.each do |method|
               endpoint = Endpoint.new(full_path, method)
               endpoint.details = Details.new(PathInfo.new(file_path, decorator_line))
+              endpoint.handler = handler
 
               extract_path_parameters(full_path, endpoint)
               extract_decorator_parameters(signature[:params], endpoint)
@@ -797,6 +851,20 @@ module Analyzer::Javascript
           end
         end
       end
+    end
+
+    # Line of the method declaration itself (its first modifier or its name),
+    # not of the decorator above it: `signature_start` sits right after the
+    # last decorator, so skip the whitespace and count the newlines from
+    # `from`, a point at or before it that lies on `from_line`.
+    private def method_declaration_line(chars : Array(Char), signature_start : Int32, from : Int32, from_line : Int32) : Int32
+      pos = signature_start
+      while pos < chars.size && chars.unsafe_fetch(pos).whitespace?
+        pos += 1
+      end
+      line = from_line
+      (from...pos).each { |idx| line += 1 if chars.unsafe_fetch(idx) == '\n' }
+      line
     end
 
     # Start of the decorator block above a route decorator: walk back line
