@@ -2,6 +2,7 @@ require "../../models/analyzer"
 require "../../miniparsers/go_callee_extractor"
 require "../../miniparsers/go_route_extractor_ts"
 require "../../miniparsers/go_named_handler"
+require "../../miniparsers/go_request_param_extractor"
 require "../../utils/worker_threads"
 require "../../utils/c_comments"
 

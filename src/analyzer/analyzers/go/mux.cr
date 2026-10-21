@@ -136,11 +136,10 @@ module Analyzer::Go
         add_param_to_endpoint(get_param(line, "PostFormValue", ep), ep)
       elsif line.includes?("FormValue(")
         add_param_to_endpoint(get_param(line, "FormValue", ep), ep)
-      elsif line.includes?("Header.Get(")
-        add_param_to_endpoint(get_param(line, "Header"), ep)
       elsif line.includes?("Cookie(")
         add_param_to_endpoint(get_param(line, "Cookie"), ep)
       end
+      Noir::GoRequestParamExtractor.header_params(line).each { |header| add_param_to_endpoint(header, ep) }
 
       # Stdlib-style body reads. Gorilla/mux apps almost
       # always use `json.NewDecoder(r.Body).Decode(&v)`
@@ -184,12 +183,6 @@ module Analyzer::Go
         if match = line.match(/FormValue\s*\(\s*[\"']([^\"']+)[\"']\s*\)/)
           param_name = match[1]
           param_type = form_value_param_type(endpoint)
-        end
-      when "Header"
-        # Handle r.Header.Get("User-Agent") pattern
-        if match = line.match(/Header\s*\.\s*Get\s*\(\s*[\"']([^\"']+)[\"']\s*\)/)
-          param_name = match[1]
-          param_type = "header"
         end
       when "Cookie"
         # Handle r.Cookie("auth_token") pattern

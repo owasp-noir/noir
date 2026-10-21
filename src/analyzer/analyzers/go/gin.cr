@@ -186,6 +186,9 @@ module Analyzer::Go
           target.params << Param.new(match[1], "", "cookie")
         end
       end
+      # `c.Request.Header.Get("X")` / `req.Header["X"]`: the stdlib read
+      # `c.GetHeader` wraps.
+      Noir::GoRequestParamExtractor.header_params(line).each { |header| add_param_to_endpoint(header, target) }
     end
 
     # Where a bind call reads from: `ShouldBindQuery(&q)` and

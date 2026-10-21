@@ -2,6 +2,7 @@ require "../../../models/analyzer"
 require "../../../miniparsers/go_callee_extractor"
 require "../../../miniparsers/go_route_extractor_ts"
 require "../../../miniparsers/go_named_handler"
+require "../../../miniparsers/go_request_param_extractor"
 
 module Analyzer::Go
   private class ChiRouteState
@@ -333,8 +334,6 @@ module Analyzer::Go
                   "PostFormValue"
                 elsif line.includes?("FormValue(")
                   "FormValue"
-                elsif line.includes?("Header.Get(")
-                  "Header"
                 elsif line.includes?("Cookie(")
                   "Cookie"
                 end
@@ -343,6 +342,7 @@ module Analyzer::Go
         param = get_param(line, pattern)
         last_endpoint.params << param unless param.name.empty?
       end
+      Noir::GoRequestParamExtractor.header_params(line).each { |header| last_endpoint.params << header }
 
       # Body-binding helpers that consume `r.Body` directly. Chi
       # apps commonly pair the stdlib `json.NewDecoder(r.Body).Decode`
@@ -385,12 +385,6 @@ module Analyzer::Go
         if match = line.match(/FormValue\s*\(\s*[\"']([^\"']+)[\"']\s*\)/)
           param_name = match[1]
           param_type = "form"
-        end
-      when "Header"
-        # Handle r.Header.Get("User-Agent") pattern
-        if match = line.match(/Header\s*\.\s*Get\s*\(\s*[\"']([^\"']+)[\"']\s*\)/)
-          param_name = match[1]
-          param_type = "header"
         end
       when "Cookie"
         # Handle r.Cookie("auth_token") pattern

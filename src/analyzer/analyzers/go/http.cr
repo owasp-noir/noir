@@ -150,11 +150,10 @@ module Analyzer::Go
             add_param_to_endpoint(get_param(line, "PostFormValue", last_endpoint), last_endpoint)
           elsif line.includes?("FormValue(")
             add_param_to_endpoint(get_param(line, "FormValue", last_endpoint), last_endpoint)
-          elsif line.includes?("Header.Get(")
-            add_param_to_endpoint(get_param(line, "Header"), last_endpoint)
           elsif line.includes?("Cookie(")
             add_param_to_endpoint(get_param(line, "Cookie"), last_endpoint)
           end
+          Noir::GoRequestParamExtractor.header_params(line).each { |header| add_param_to_endpoint(header, last_endpoint) }
 
           # Stdlib-style body reads (json or raw) — same heuristic used by mux analyzer.
           if !last_endpoint.url.empty? &&
@@ -188,11 +187,6 @@ module Analyzer::Go
         if match = line.match(/FormValue\s*\(\s*[\"']([^\"']+)[\"']\s*\)/)
           param_name = match[1]
           param_type = form_value_param_type(endpoint)
-        end
-      when "Header"
-        if match = line.match(/Header\s*\.\s*Get\s*\(\s*[\"']([^\"']+)[\"']\s*\)/)
-          param_name = match[1]
-          param_type = "header"
         end
       when "Cookie"
         if match = line.match(/Cookie\s*\(\s*[\"']([^\"']+)[\"']\s*\)/)
