@@ -1,7 +1,9 @@
 from functools import wraps
 
 from flask import abort, current_app, request
-from werkzeug.exceptions import Unauthorized
+from werkzeug.exceptions import Forbidden, Unauthorized
+
+from controllers.models import Member
 
 SIGNUP_ENABLED = True
 INNER_KEY = "change-me"
@@ -43,6 +45,10 @@ def token_required(view=None, *, scope=None):
         @wraps(fn)
         def decorated(*args, **kwargs):
             _bearer_token()
+            # Finding the owner by role checks nothing about the caller.
+            owner = Member.query.filter(Member.role == "owner").first()
+            if owner is None:
+                raise Forbidden("workspace has no owner")
             return fn(*args, **kwargs)
 
         return decorated
@@ -62,9 +68,25 @@ def inner_key_only(view):
     return decorated
 
 
-def admission(*, signup=False):
+def admin_only(view):
+    @wraps(view)
+    def decorated(*args, **kwargs):
+        if not current_user.is_admin:
+            raise Forbidden()
+        return view(*args, **kwargs)
+
+    return decorated
+
+
+def admission(*, signup=False, roles=None):
     def decorator(view):
-        admitted = view
+        @wraps(view)
+        def check_roles(*args, **kwargs):
+            if roles is not None and current_user.role not in roles:
+                raise Forbidden()
+            return view(*args, **kwargs)
+
+        admitted = check_roles
         if signup:
             admitted = signup_enabled(admitted)
         return session_required(admitted)
