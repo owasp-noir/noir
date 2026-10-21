@@ -25,13 +25,15 @@ describe "--ai-context on Rails auth fixtures", tags: "functional" do
     index_context = index_endpoint.ai_context
     index_context = index_context.should_not be_nil
     index_context.guards.should be_empty
-    index_endpoint.params.map(&.name).should be_empty
+    # ApplicationController's `before_action :authenticate_user` reads the
+    # header; `skip_before_action :authenticate_user!` drops a different callback.
+    index_endpoint.params.map { |param| {param.name, param.param_type} }.should eq([{"Authorization", "header"}])
     index_context.signals.map(&.kind).should_not contain("identifier_input")
     index_context.signals.map(&.kind).should_not contain("idor")
 
     show_endpoint = endpoints.find! { |ep| ep.method == "GET" && ep.url == "/posts/1" }
     show_endpoint.details.code_paths.any? { |info| info.path.ends_with?(controller_suffix) && info.line == 10 }.should be_true
-    show_endpoint.params.map { |param| {param.name, param.param_type} }.should eq([{"id", "path"}])
+    show_endpoint.params.map { |param| {param.name, param.param_type} }.should eq([{"id", "path"}, {"Authorization", "header"}])
     show_context = show_endpoint.ai_context
     show_context = show_context.should_not be_nil
     show_context.guards.size.should eq(1)
@@ -50,7 +52,7 @@ describe "--ai-context on Rails auth fixtures", tags: "functional" do
     # auth-vs-authz distinction explicitly.
     create_context.guards.map(&.kind).sort!.should eq(["auth_guard", "authz_guard"])
     create_context.guards.any? { |g| g.source == "ruby_auth" }.should be_true
-    create_endpoint.params.map(&.name).sort!.should eq(["body", "title"])
+    create_endpoint.params.map(&.name).sort!.should eq(["Authorization", "body", "title"])
     create_context.signals.map(&.kind).should contain("state_change")
     create_context.signals.map(&.kind).should_not contain("identifier_input")
     create_context.signals.map(&.kind).should_not contain("idor")
@@ -64,7 +66,7 @@ describe "--ai-context on Rails auth fixtures", tags: "functional" do
     destroy_context.guards.map(&.kind).sort!.should eq(["auth_guard", "authz_guard"])
     destroy_context.guards.any? { |g| g.source == "ruby_auth" }.should be_true
     destroy_context.signals.map(&.kind).should_not contain("authz_absence")
-    destroy_endpoint.params.map { |param| {param.name, param.param_type} }.should eq([{"id", "path"}])
+    destroy_endpoint.params.map { |param| {param.name, param.param_type} }.should eq([{"id", "path"}, {"Authorization", "header"}])
     destroy_context.signals.map(&.kind).should contain("path_param")
     destroy_context.signals.map(&.kind).should_not contain("identifier_input")
     destroy_context.signals.map(&.kind).should contain("idor")
@@ -85,5 +87,15 @@ describe "--ai-context on Rails auth fixtures", tags: "functional" do
     feed_context = feed_context.should_not be_nil
     feed_context.guards.map(&.kind).should eq(["auth_guard"])
     feed_context.guards[0].source.should eq("ruby_auth")
+
+    # Callback reads follow the chain each action actually runs: the
+    # inherited `authenticate_user` is skipped except on show, and
+    # `track_client` (env / fetch / signed cookie) runs only on index.
+    clients_index = endpoints.find! { |ep| ep.method == "GET" && ep.url == "/clients" }
+    clients_index.params.map { |param| {param.name, param.param_type} }.should eq([
+      {"X-Client-Id", "header"}, {"X-Api-Version", "header"}, {"session_hint", "cookie"},
+    ])
+    clients_show = endpoints.find! { |ep| ep.method == "GET" && ep.url == "/clients/1" }
+    clients_show.params.map { |param| {param.name, param.param_type} }.should eq([{"id", "path"}, {"Authorization", "header"}])
   end
 end

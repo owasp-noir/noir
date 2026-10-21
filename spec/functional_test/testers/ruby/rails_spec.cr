@@ -17,13 +17,16 @@ expected_endpoints = [
     Param.new("title", "", "json"),
     Param.new("context", "", "json"),
   ]),
+  # `before_action :check_header, only: %i[ edit update ]` reads X-API-KEY.
   Endpoint.new("/posts/1", "PUT", [
     Param.new("title", "", "json"),
     Param.new("context", "", "json"),
+    Param.new("X-API-KEY", "", "header"),
   ]),
   Endpoint.new("/posts/1", "PATCH", [
     Param.new("title", "", "json"),
     Param.new("context", "", "json"),
+    Param.new("X-API-KEY", "", "header"),
   ]),
   Endpoint.new("/posts/1", "DELETE"),
   Endpoint.new("/posts/1/search", "QUERY"),

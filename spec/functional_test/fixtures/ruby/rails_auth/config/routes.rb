@@ -3,4 +3,5 @@ Rails.application.routes.draw do
   resources :articles, only: [:index, :show] do
     get :feed, on: :collection
   end
+  resources :clients, only: [:index, :show]
 end

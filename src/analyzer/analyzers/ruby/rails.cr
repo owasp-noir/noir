@@ -1,6 +1,7 @@
 require "../../engines/ruby_engine"
 require "../../../utils/top_level_split"
 require "../../../utils/call_fold"
+require "../../../miniparsers/rails_callback_chain"
 
 module Analyzer::Ruby
   class Rails < RubyEngine
@@ -142,6 +143,7 @@ module Analyzer::Ruby
     end
 
     record ControllerData,
+      path : String,
       param_type : String,
       params_method : Hash(String, Array(Param)),
       params_body_by_action : Hash(String, Array(Param)),
@@ -216,10 +218,12 @@ module Analyzer::Ruby
     @known_files = Set(String).new
     @gemfile_public_roots : Array(Tuple(String, String))? = nil
     @public_file_candidates : Array(PublicFileCandidate)? = nil
+    @callback_chain : Noir::RailsCallbackChain? = nil
 
     def analyze
       files = all_files.reject { |file| ruby_non_production_path?(file) }
       @known_files = Set(String).new(files)
+      @callback_chain = nil
       @gemfile_public_roots = nil
       @public_file_candidates = nil
       @engine_mount_prefixes = build_engine_mount_map(files)
@@ -1718,7 +1722,7 @@ module Analyzer::Ruby
       param_type = "form"
 
       unless known_file?(path)
-        empty = ControllerData.new(param_type, params_method, params_body_by_action, params_query_by_action,
+        empty = ControllerData.new(path, param_type, params_method, params_body_by_action, params_query_by_action,
           defined_actions, helper_calls_by_action, callees_by_action, action_lines)
         @controller_data_cache[path] = empty
         return empty
@@ -1789,12 +1793,12 @@ module Analyzer::Ruby
         end
 
         # Every param source below is a `[ ... ]` subscript or a
-        # `params.fetch(` / `params.dig(` call (on bare `params` only:
-        # `sign_in_params[:x]` / `source_params.fetch(:x)` read a nested key).
-        # A line with neither cannot match any of them, so skip the regex
-        # ops — this runs on every line of every controller in the app.
+        # `params.fetch(` / `params.dig(` / `headers.fetch(` call (on bare
+        # `params` only: `sign_in_params[:x]` / `source_params.fetch(:x)` read
+        # a nested key). A line with none cannot match any of them, so skip
+        # the regex ops — this runs on every line of every controller in the app.
         line = folded_lines[index]
-        if line.includes?('[') || line.includes?("params.")
+        if line.includes?('[') || line.includes?("params.") || line.includes?("headers.")
           line.scan(/(?<![\w.])params(?:\[|\.(?:fetch|dig)\s*\()\s*(?::(\w+)|['"]([^'"]+)['"])\s*[\],)]/) do |m|
             name = (m[1]? || m[2]?).to_s.strip
             next if name.empty? || this_method.empty?
@@ -1804,12 +1808,13 @@ module Analyzer::Ruby
             params_query_by_action[this_method] << Param.new(name, "", "query")
           end
 
-          if hm = line.match(/request\.headers\[\s*['"]([^'"]+)['"]\s*\]/)
-            name = hm[1].strip
-            if !name.empty? && !this_method.empty?
-              params_method[this_method] ||= [] of Param
-              params_method[this_method] << Param.new(name, "", "header")
-            end
+          # `request.headers["X-Key"]`, `request.headers.fetch("X-Key")`, and
+          # the Rack spelling `request.env["HTTP_X_KEY"]` (named `X-Key`).
+          line.scan(/request\.(?:headers(?:\[|\.fetch\s*\()\s*['"]([^'"]+)['"]|env\[\s*['"]HTTP_(\w+)['"]\s*\])/) do |hm|
+            name = (hm[1]? || hm[2].split('_').join('-', &.capitalize)).strip
+            next if name.empty? || this_method.empty?
+            params_method[this_method] ||= [] of Param
+            params_method[this_method] << Param.new(name, "", "header")
           end
 
           line.scan(/cookies(?:\.(?:signed|encrypted))?\[\s*(?::(\w+)|['"]([^'"]+)['"])\s*\]/) do |cm|
@@ -1823,7 +1828,7 @@ module Analyzer::Ruby
 
       helper_calls_by_action = build_helper_call_map(method_bodies, defined_actions)
 
-      data = ControllerData.new(param_type, params_method, params_body_by_action, params_query_by_action,
+      data = ControllerData.new(path, param_type, params_method, params_body_by_action, params_query_by_action,
         defined_actions, helper_calls_by_action, callees_by_action, action_lines)
       @controller_data_cache[path] = data
       data
@@ -2004,8 +2009,38 @@ module Analyzer::Ruby
         next if helper_name == action
         merge_action_params(result, data, helper_name, verb)
       end
+      merge_callback_params(result, data.path, action)
 
       result
+    end
+
+    # Header/cookie reads in the `before_action` callbacks that run ahead of
+    # `action`: its controller's own, its ancestors' and their concerns',
+    # less what `skip_before_action` / `only:` / `except:` drop for it.
+    # ApplicationController's token check reads `Authorization` for every
+    # action of the app. A callback's `def` is looked up nearest first along
+    # the chain, as Ruby does.
+    private def merge_callback_params(result : Array(Param), path : String, action : String)
+      chain = callback_chain
+      return unless leaf = chain.controller_in(path)
+      resolved = chain.resolve(leaf, action)
+      resolved.callbacks.each do |callback|
+        next unless file = resolved.paths.find { |p| extract_controller_data(p).defined_actions.includes?(callback) }
+        data = extract_controller_data(file)
+        ([callback] + (data.helper_calls_by_action[callback]? || [] of String)).each do |name|
+          data.params_method[name]?.try &.each { |p| push_unique_param(result, clone_param(p)) }
+        end
+      end
+    end
+
+    # Every class and module under a `controllers` directory of the scan.
+    private def callback_chain : Noir::RailsCallbackChain
+      @callback_chain ||= Noir::RailsCallbackChain.new.tap do |chain|
+        @known_files.each do |path|
+          next unless path.ends_with?(".rb") && base_relative_path(path).includes?("controllers")
+          chain.add_file(path, ruby_source(path).lines)
+        end
+      end
     end
 
     private def merge_action_params(result : Array(Param), data : ControllerData, action : String, verb : String)
