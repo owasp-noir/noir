@@ -204,7 +204,7 @@ module Analyzer::Java
             file_callees = Noir::JavaCalleeExtractor::FileCallees.new(root, content, path)
             # Same for the handler-method lookups below (built on the first route).
             param_index = nil.as(Noir::TreeSitterJavaParameterExtractor::FileIndex?)
-            model_attribute_methods = nil.as(Hash(String, Array(String))?)
+            model_attribute_methods = nil.as(Hash(String, Array(Tuple(String, Array(String))))?)
 
             Noir::TreeSitterJavaRouteExtractor.extract_routes_from(root, content, visible_meta_mappings, file_constants).each do |route|
               is_feign_client = feign_clients.includes?(route.class_name)
@@ -252,7 +252,12 @@ module Analyzer::Java
                 # loads the owner a handler then edits) belong to every
                 # route of the class.
                 model_attribute_methods ||= model_attribute_methods_by_class(root, content)
-                model_attribute_methods[route.class_name]?.try &.each do |method_name|
+                model_attribute_methods[route.class_name]?.try &.each do |(method_name, path_variables)|
+                  # A `@PathVariable` the route does not carry binds null
+                  # (or fails), so the supplier's lookup does not run there:
+                  # spring-petclinic's `findOwner` returns `new Owner()` on
+                  # `/owners/new` and calls `findById` only under `{ownerId}`.
+                  next unless path_variables.all? { |var| endpoint.url.includes?("{#{var}}") || endpoint.url.includes?("{#{var}:") }
                   file_callees.callees_in_method(route.class_name, method_name).each do |entry|
                     name, callee_path, callee_line = entry
                     endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
@@ -835,16 +840,34 @@ module Analyzer::Java
       fields
     end
 
-    # Names of the method-level `@ModelAttribute` methods of every class
-    # in the file: Spring runs them before each handler of that class.
+    # The method-level `@ModelAttribute` methods of every class in the
+    # file, each with the `@PathVariable` names it binds: Spring runs them
+    # before each handler of that class.
     private def model_attribute_methods_by_class(root : LibTreeSitter::TSNode,
-                                                 content : String) : Hash(String, Array(String))
-      by_class = Hash(String, Array(String)).new
+                                                 content : String) : Hash(String, Array(Tuple(String, Array(String))))
+      by_class = Hash(String, Array(Tuple(String, Array(String)))).new
       Noir::JavaCalleeExtractor.build_method_index(root, content).each do |(class_name, method_name), nodes|
-        next unless nodes.any? { |node| java_annotated?(node, content, "ModelAttribute") }
-        (by_class[class_name] ||= [] of String) << method_name
+        next unless node = nodes.find { |candidate| java_annotated?(candidate, content, "ModelAttribute") }
+        (by_class[class_name] ||= [] of Tuple(String, Array(String))) << {method_name, java_path_variables(node, content)}
       end
       by_class
+    end
+
+    # `@PathVariable("id")` / `@PathVariable(name = "id")` name the
+    # variable; a bare `@PathVariable Long id` binds the parameter name.
+    private def java_path_variables(method : LibTreeSitter::TSNode, content : String) : Array(String)
+      variables = [] of String
+      return variables unless params = Noir::TreeSitter.field(method, "parameters")
+      Noir::TreeSitter.each_named_child(params) do |param|
+        each_java_annotation(param, content) do |name, args, _|
+          next unless name == "PathVariable"
+          explicit = args.try { |node| Noir::TreeSitter.node_text(node, content).match(/\A\(\s*(?:(?:name|value)\s*=\s*)?"([^"]+)"/).try(&.[1]) }
+          if variable = explicit || Noir::TreeSitter.field(param, "name").try { |node| Noir::TreeSitter.node_text(node, content) }
+            variables << variable
+          end
+        end
+      end
+      variables
     end
 
     private def java_annotated?(decl : LibTreeSitter::TSNode, content : String, wanted : String) : Bool

@@ -25,7 +25,11 @@ module NoirAIContext
     # names as reads so HTTP method heuristics do not label them as mutations.
     SOAP_READ_OPERATION_PATTERN = /\A(?:[Gg][Ee][Tt]|[Ll][Ii][Ss][Tt]|[Ff][Ii][Nn][Dd])(?:[A-Z]|[_-]|\z)/
 
+    REPOSITORY_SOURCE_EXTS = Set{".java", ".kt"}
+
     @reader : SourceReader
+    @declared_types = {} of Tuple(String, String) => String?
+    @repository_types = {} of String => Bool
 
     def initialize
       @reader = SourceReader.new
@@ -1347,15 +1351,131 @@ module NoirAIContext
           snippet: callee_snippet
         ))
 
-        if raw_sink = PatternMatcher.detect_from_patterns(callee.name, callee_snippet, sink_patterns, callee.path, callee.line, "callee")
+        if type = repository_call_type(callee.name, callee.path)
+          context.push_sink(repository_sink(callee.name, type, callee.path, callee.line, callee_snippet))
+        elsif raw_sink = PatternMatcher.detect_from_patterns(callee.name, callee_snippet, sink_patterns, callee.path, callee.line, "callee")
           sink = normalize_mobile_sink(endpoint, raw_sink)
           context.push_sink(enrich_callee_sink(sink, callee, callee_snippet))
+        end
+        unless context.sinks.any? { |entry| entry.kind == "sql" }
+          helper_repository_sink(callee).try { |entry| context.push_sink(entry) }
         end
 
         if validator = PatternMatcher.detect_from_patterns(callee.name, callee_snippet, VALIDATOR_PATTERNS, callee.path, callee.line, "callee")
           context.push_validator(validator)
         end
       end
+    end
+
+    # The declared type of the receiver in `this.owners.save` /
+    # `owners.findById`, when that type is a data repository and the method
+    # one of its data-access methods. See `DATA_REPOSITORY_TYPE`.
+    private def repository_call_type(name : String, path : String?) : String?
+      return unless path && REPOSITORY_SOURCE_EXTS.includes?(File.extname(path))
+      return unless match = name.match(/\A(?:this\.)?(\w+)\.(\w+)\z/)
+      return unless (type = declared_type(path, match[1])) && repository_type?(type)
+      return unless match[2].matches?(DATA_ACCESS_METHOD) || query_annotated?(type, match[2])
+      type
+    end
+
+    # `private final OwnerRepository owners;`, `(OwnerRepository owners)`,
+    # Kotlin `owners: OwnerRepository`.
+    # ponytail: the first declaration of the name in the file wins (fields
+    # sit above the methods); a same-named local of another type in some
+    # other method is not told apart.
+    private def declared_type(path : String, variable : String) : String?
+      key = {path, variable}
+      return @declared_types[key] if @declared_types.has_key?(key)
+
+      pattern = /\b([A-Z]\w*)(?:<[^;=(){}]*>)?\s+#{variable}\s*[;=,)]|\b#{variable}\s*:\s*([A-Z]\w*)/
+      found = nil
+      @reader.lines_for(path).each do |line|
+        next if line.lstrip.starts_with?('*') || line.lstrip.starts_with?("//")
+        if match = line.match(pattern)
+          found = match[1]? || match[2]?
+          break
+        end
+      end
+      @declared_types[key] = found
+    end
+
+    private def repository_type?(type : String) : Bool
+      return true if type.matches?(DATA_REPOSITORY_TYPE)
+      cached = @repository_types[type]?
+      return cached unless cached.nil?
+
+      @repository_types[type] = false # cycle guard
+      @repository_types[type] = repository_supertypes(type).any? { |base| repository_type?(base) }
+    end
+
+    # Supertypes of an interface declared in the scanned source
+    # (`interface Owners extends JpaRepository<Owner, Integer>`, Kotlin
+    # `interface Owners : CrudRepository<Owner, Int>`), generics dropped.
+    private def repository_supertypes(type : String) : Array(String)
+      pattern = /\binterface\s+#{type}\b(?:<[^{]*?>)?\s*(?:extends\b|:)\s*([^{\n]+)/
+      declaration_files(type).each do |file|
+        next unless match = @reader.lines_for(file).join('\n').match(pattern)
+        bases = match[1]
+        while (stripped = bases.gsub(/<[^<>]*>/, "")) != bases
+          bases = stripped
+        end
+        return bases.split(',').map(&.strip.split('.').last).reject(&.empty?)
+      end
+      [] of String
+    end
+
+    private def declaration_files(type : String) : Array(String)
+      CodeLocator.instance.files_by_basename("#{type}.java") + CodeLocator.instance.files_by_basename("#{type}.kt")
+    end
+
+    # A repository method named outside `DATA_ACCESS_METHOD` still runs SQL
+    # when the annotation stack above its declaration carries `@Query`.
+    private def query_annotated?(type : String, method : String) : Bool
+      call = /\b#{method}\s*\(/
+      declaration_files(type).any? do |file|
+        lines = @reader.lines_for(file)
+        next false unless idx = lines.index(&.matches?(call))
+        idx.downto(Math.max(idx - 8, 0)).any? do |i|
+          line = lines[i].strip
+          break false if i < idx && (line.empty? || line.ends_with?(';') || line.ends_with?('{') || line.ends_with?('}') || line.starts_with?("fun "))
+          line.includes?("@Query")
+        end
+      end
+    end
+
+    # A bare / `this.` callee resolved to a same-class helper
+    # (`findPaginated(page)`): the repository call sits in its body. One
+    # level only; the body is the helper's brace block.
+    private def helper_repository_sink(callee : Callee) : AIContextEntry?
+      path = callee.path
+      return unless path && REPOSITORY_SOURCE_EXTS.includes?(File.extname(path))
+      return unless callee.name.matches?(/\A(?:this\.)?\w+\z/)
+      return unless body = @reader.route_scope_snippet_for(path, callee.line, 40, 4000)
+
+      body.split(" | ").each do |segment|
+        line_no, _, code = segment.partition(": ")
+        code.scan(/(?<![.\w])((?:this\.)?\w+\.\w+)\s*\(/) do |match|
+          if type = repository_call_type(match[1], path)
+            return repository_sink(match[1], type, path, line_no.to_i?, segment, via: callee.name)
+          end
+        end
+      end
+      nil
+    end
+
+    private def repository_sink(name : String, type : String, path : String?, line : Int32?, snippet : String?, via : String? = nil) : AIContextEntry
+      description = "Data-access call on a receiver declared as #{type}, a data repository"
+      description += ", reached through #{via}" if via
+      AIContextEntry.new(
+        "sql",
+        name,
+        source: "callee",
+        description: description,
+        path: path,
+        line: line,
+        confidence: 78,
+        snippet: snippet
+      )
     end
 
     private def enrich_callee_sink(sink : AIContextEntry, callee : Callee, snippet : String?) : AIContextEntry
