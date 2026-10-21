@@ -316,4 +316,56 @@ describe "NestjsAuthTagger" do
       CodeLocator.instance.clear_all
     end
   end
+
+  it "follows what the global guard does with the metadata its decorators set" do
+    CodeLocator.instance.clear_all
+    base = File.expand_path("../../../functional_test/fixtures/javascript/nestjs_auth_metadata", __DIR__)
+    Dir.glob("#{base}/**/*").each { |path| CodeLocator.instance.register_path(path) if File.file?(path) }
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(base)
+    routes = {
+      # `if (options.public) return true`; no metadata throws.
+      "ping"   => {"options/src/photos.controller.ts", 6},
+      "shared" => {"options/src/photos.controller.ts", 10},
+      "perm"   => {"options/src/photos.controller.ts", 14},
+      "admin"  => {"options/src/photos.controller.ts", 18},
+      "noperm" => {"options/src/photos.controller.ts", 22},
+      "bare"   => {"options/src/photos.controller.ts", 26},
+      # `if (isPublic) return true` over `SetMetadata(IS_PUBLIC_KEY, true)`.
+      "public" => {"public/src/cats.controller.ts", 7},
+      "guests" => {"public/src/cats.controller.ts", 11},
+      "jwt"    => {"public/src/cats.controller.ts", 14},
+      # `if (!options) return true`: only decorated routes authenticate.
+      "open"    => {"opt_in/src/notes.controller.ts", 6},
+      "secured" => {"opt_in/src/notes.controller.ts", 9},
+      # `if (!roles) return true` after the guard read the request.
+      "items" => {"afterauth/src/items.controller.ts", 5},
+    }
+    endpoints = routes.transform_values do |(file, line)|
+      details = Details.new(PathInfo.new(File.join(base, file), line))
+      details.technology = "ts_nestjs"
+      Endpoint.new("/x", "GET", [] of Param, details)
+    end
+
+    NestjsAuthTagger.new(noir_options).perform(endpoints.values)
+    tags = endpoints.transform_values(&.tags.map { |tag| "#{tag.name}: #{tag.description}" })
+
+    tags["ping"].should eq(["anonymous: NestJS global APP_GUARD (AuthGuard) admits anonymous callers on @Authenticated({ public: true })"])
+    tags["shared"].should eq(["auth: Protected by NestJS global APP_GUARD (AuthGuard) with @Authenticated({ sharedLink: true })",
+                              "authz: Protected by NestJS @Authenticated({ permission: 'photo.read' })"])
+    tags["perm"].should eq(["auth: Protected by NestJS global APP_GUARD (AuthGuard)",
+                            "authz: Protected by NestJS @Authenticated({ permission: 'photo.create' })"])
+    tags["admin"].should eq(["auth: Protected by NestJS global APP_GUARD (AuthGuard)",
+                             "authz: Protected by NestJS @Authenticated({ admin: true })"])
+    tags["noperm"].should eq(["auth: Protected by NestJS global APP_GUARD (AuthGuard)"])
+    tags["bare"].should eq(["auth: Protected by NestJS global APP_GUARD (AuthGuard)"])
+    tags["public"].should eq(["anonymous: NestJS global APP_GUARD (JwtAuthGuard) admits anonymous callers on @Public()"])
+    tags["guests"].should eq(["anonymous: NestJS global APP_GUARD (JwtAuthGuard) admits anonymous callers on @OpenToGuests()"])
+    tags["jwt"].should eq(["auth: Protected by NestJS global APP_GUARD (JwtAuthGuard)"])
+    tags["open"].should eq(["anonymous: NestJS global APP_GUARD (SessionAuthGuard) admits anonymous callers on routes without its metadata"])
+    tags["secured"].should eq(["auth: Protected by NestJS global APP_GUARD (SessionAuthGuard)"])
+    tags["items"].should eq(["auth: Protected by NestJS global APP_GUARD (TokenAuthGuard)"])
+  ensure
+    CodeLocator.instance.clear_all
+  end
 end
