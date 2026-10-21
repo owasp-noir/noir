@@ -6,6 +6,7 @@ require "../utils/text_file"
 require "../utils/media_filter"
 require "../utils/path_scope"
 require "../utils/c_comments"
+require "../miniparsers/import_graph"
 
 struct SourceContext
   property path : String
@@ -108,6 +109,30 @@ class FrameworkTagger < Tagger
 
   def self.target_techs : Array(String)
     [] of String
+  end
+
+  # What each import in Python file `path` binds, `{declaring file, original
+  # name}`. An absolute import anchors at the package root, which the tagger
+  # does not know, so each ancestor directory inside the scan base is tried
+  # and the nearest one that resolves a name wins.
+  @python_imports = Hash(String, Hash(String, Tuple(String, String))).new
+
+  def python_imported_symbols(path : String) : Hash(String, Tuple(String, String))
+    @python_imports[path] ||= begin
+      symbols = Hash(String, Tuple(String, String)).new
+      content = read_file(path) || ""
+      dir = File.dirname(path)
+      # `under_root?`, not `starts_with?`: `-b ./app` reports paths as `app/...`.
+      while @base_paths.any? { |base| Noir::PathScope.under_root?(dir, base) }
+        Noir::ImportGraph::Python.find_imported_symbols(dir, path, content).each do |local, target|
+          symbols[local] ||= target
+        end
+        parent = File.dirname(dir)
+        break if parent == dir
+        dir = parent
+      end
+      symbols
+    end
   end
 
   # The handler source behind each of `endpoint`'s code paths. A path to a
