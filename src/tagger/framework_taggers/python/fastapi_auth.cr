@@ -1,7 +1,6 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 require "../../../analyzer/analyzers/python/python_helper"
-require "../../../miniparsers/import_graph"
 
 @[Noir::TaggerFor(key: "fastapi_auth", name: "FastAPI Auth Tagger", desc: "Identifies FastAPI authentication patterns (Depends, Security, OAuth2)", order: 100)]
 class FastAPIAuthTagger < FrameworkTagger
@@ -76,7 +75,6 @@ class FastAPIAuthTagger < FrameworkTagger
     @file_aliases = Hash(String, Hash(String, String)).new
     @authz_defs = Hash(String, Set(String)).new
     @def_names = Hash(String, Set(String)).new
-    @imports = Hash(String, Hash(String, Tuple(String, String))).new
   end
 
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
@@ -86,7 +84,6 @@ class FastAPIAuthTagger < FrameworkTagger
     @file_aliases.clear
     @authz_defs.clear
     @def_names.clear
-    @imports.clear
     collect_files_by_extension(".py").each do |path|
       content = read_file(path)
       next unless content
@@ -176,7 +173,7 @@ class FastAPIAuthTagger < FrameworkTagger
     if callable = @file_aliases[path]?.try(&.[name]?)
       return {path, callable}
     end
-    if (target = imported_symbols(path)[name]?) && (callable = @file_aliases[target[0]]?.try(&.[target[1]]?))
+    if (target = python_imported_symbols(path)[name]?) && (callable = @file_aliases[target[0]]?.try(&.[target[1]]?))
       return {target[0], callable}
     end
     {path, @dependency_aliases[name]?}
@@ -193,10 +190,10 @@ class FastAPIAuthTagger < FrameworkTagger
     if module_name.empty?
       if defines?(path, name)
         file = path
-      elsif (symbol = imported_symbols(path)[name]?) && !symbol[1].empty?
+      elsif (symbol = python_imported_symbols(path)[name]?) && !symbol[1].empty?
         file, name = symbol
       end
-    elsif (symbol = imported_symbols(path)[module_name]?) && symbol[1].empty?
+    elsif (symbol = python_imported_symbols(path)[module_name]?) && symbol[1].empty?
       file = symbol[0]
     end
     if file && defines?(file, name)
@@ -212,27 +209,6 @@ class FastAPIAuthTagger < FrameworkTagger
       set
     end
     names.includes?(name)
-  end
-
-  # What each import in `path` binds, `{declaring file, original name}`.
-  # An absolute import anchors at the package root, which the tagger does
-  # not know, so each ancestor directory inside the scan base is tried and
-  # the nearest one that resolves a name wins.
-  private def imported_symbols(path : String) : Hash(String, Tuple(String, String))
-    @imports[path] ||= begin
-      symbols = Hash(String, Tuple(String, String)).new
-      content = read_file(path) || ""
-      dir = File.dirname(path)
-      while @base_paths.any? { |base| dir.starts_with?(base) }
-        Noir::ImportGraph::Python.find_imported_symbols(dir, path, content).each do |local, target|
-          symbols[local] ||= target
-        end
-        parent = File.dirname(dir)
-        break if parent == dir
-        dir = parent
-      end
-      symbols
-    end
   end
 
   # The handler's own body: from its `def` to the next line at or above
