@@ -3593,6 +3593,40 @@ describe "NoirAIContext" do
     context.signals.map(&.kind).should contain("path_traversal")
   end
 
+  # Callee sinks need a name match, and `\bread\b` / `\bfile\b` match none
+  # of the camelCase fs calls, so a handler whose only file access was
+  # `readdir` or `res.sendFile` had no file_io sink.
+  it "emits file_io for camelCase file-system callees" do
+    ["readFile", "readdir", "fs.readFileSync", "fs.createReadStream", "res.sendFile", "fs.existsSync", "os.ReadFile", "send_from_directory"].each do |name|
+      endpoint = Endpoint.new("/x", "GET")
+      endpoint.push_callee(Callee.new(name, "handler.ts", 3))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.sinks.map(&.kind).should contain("file_io")
+    end
+  end
+
+  it "emits file_io for a directory-listing mount but not for a plain static mount" do
+    source = <<-CODE
+      app.use('/ftp', serveIndexMiddleware, serveIndex('ftp', { icons: true }))
+      app.use('/vendor/lib', express.static(path.resolve('node_modules/lib')))
+      CODE
+
+    with_temp_ai_context_source(source, ".ts") do |path|
+      endpoints = [{"/ftp", 1}, {"/vendor/lib", 2}].map do |url, line|
+        endpoint = Endpoint.new(url, "GET")
+        details = endpoint.details
+        details.add_path(PathInfo.new(path, line))
+        endpoint.details = details
+        endpoint
+      end
+
+      contexts = NoirAIContext.apply(endpoints).map(&.ai_context.should_not(be_nil))
+      contexts[0].sinks.map(&.kind).should contain("file_io")
+      contexts[1].sinks.map(&.kind).should_not contain("file_io")
+    end
+  end
+
   it "suppresses unsafe_method when the handler dispatches on request.method" do
     # FP sweep #1 regression: Flask's `@app.route(... methods=['GET',
     # 'POST'])` splits into a GET endpoint and a POST endpoint that
