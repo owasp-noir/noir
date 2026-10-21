@@ -11,16 +11,47 @@ module Noir
     # class-body lines that touch the callback chain (`CALLBACK_LINE`).
     record Klass, name : String, namespace : String, parent : String?, path : String, callbacks : Array(String) = [] of String
 
-    # The callbacks left active for an action, in registration order, and
-    # the files of the classes/modules it passed through, nearest first
-    # (where Ruby looks a callback's `def` up).
-    record Resolution, callbacks : Array(String), paths : Array(String)
+    # The callbacks left active for an action, in registration order, the
+    # files of the classes/modules it passed through, nearest first (where
+    # Ruby looks a callback's `def` up), and the active callbacks registered
+    # under an `if:` condition (see `conditional?`).
+    record Resolution, callbacks : Array(String), paths : Array(String), conditional : Set(String)
 
     # Class-body lines that change the callback chain a subclass inherits.
     CALLBACK_LINE = /^(?:include|(?:prepend_|skip_)?before_action|allow_unauthenticated_access)\b/
 
     ONLY_OPTION   = /\bonly:/
     EXCEPT_OPTION = /\bexcept:/
+
+    # `before_action :a, :b` — the symbol callbacks it registers.
+    SYMBOL_CALLBACKS = /(?<!skip_)before_action\s*\(?\s*((?::\w+[!?]?\s*,?\s*)+)/
+    # `before_action -> { doorkeeper_authorize! :read }` (also `->(c) {`,
+    # `lambda {`, `proc {`, a bare `{ ... }` block): the block body.
+    BLOCK_CALLBACK = /(?<!skip_)before_action\s*\(?\s*(?:->\s*(?:\([^)]*\))?|lambda\s*|proc\s*)?\{(?:\s*\|[^|]*\|)?([^{}]*)\}/
+
+    # The methods a `before_action` line runs: its symbol callbacks, or the
+    # one method its block calls. A block body that is anything but a single
+    # call (`-> { a! if b? }`, `-> { x? && y }`) runs nothing unconditionally
+    # and yields none.
+    def self.before_action_callbacks(line : String) : Array(String)
+      if m = line.match(SYMBOL_CALLBACKS)
+        m[1].scan(/:(\w+[!?]?)/).map(&.[1])
+      elsif (m = line.match(BLOCK_CALLBACK)) && (call = m[1].match(/\A\s*([a-z_]\w*[!?]?)(?:[\s(][^;]*)?\z/)) &&
+            !m[1].matches?(/\b(?:if|unless)\b|&&|\|\|/)
+        [call[1]]
+      else
+        [] of String
+      end
+    end
+
+    # `before_action :x, if: :cond?` runs `x` only when the condition holds,
+    # so a request can skip it: an opt-in such as
+    # `if: :limited_federation_mode?` leaves the action public by default.
+    # `unless:` is read as an exemption, the way `except:` is —
+    # `unless: :devise_controller?` guards every app controller.
+    def self.conditional?(line : String) : Bool
+      line.matches?(/\bif:/)
+    end
 
     getter classes = Hash({String, Int32}, Klass).new
     getter defs = Hash(String, Array({String, Int32})).new
@@ -115,44 +146,52 @@ module Noir
     # registered. A parent outside the scan (`Devise::SessionsController`)
     # ends the chain.
     def resolve(leaf : Klass, action : String?) : Resolution
-      active = [] of String
-      paths = [] of String
-      apply_ancestor(leaf, action, active, paths, 0)
-      Resolution.new(active, paths.reverse.uniq!)
+      resolution = Resolution.new(Array(String).new, Array(String).new, Set(String).new)
+      apply_ancestor(leaf, action, resolution, 0)
+      resolution.paths.reverse!.uniq!
+      resolution
     end
 
-    private def apply_ancestor(klass : Klass?, action : String?, active : Array(String), paths : Array(String), depth : Int32)
+    private def apply_ancestor(klass : Klass?, action : String?, resolution : Resolution, depth : Int32)
       return unless klass && depth < 16
       if parent = klass.parent
-        apply_ancestor(lookup(parent, klass.namespace), action, active, paths, depth + 1)
+        apply_ancestor(lookup(parent, klass.namespace), action, resolution, depth + 1)
       end
-      apply_callbacks(klass, action, active, paths, depth)
+      apply_callbacks(klass, action, resolution, depth)
     end
 
-    private def apply_callbacks(klass : Klass, action : String?, active : Array(String), paths : Array(String), depth : Int32)
+    private def apply_callbacks(klass : Klass, action : String?, resolution : Resolution, depth : Int32)
+      active = resolution.callbacks
       klass.callbacks.each do |line|
         if line.starts_with?("include")
           line.scan(/[A-Z][\w:]*/) do |m|
             if (mod = lookup(m[0], klass.namespace)) && depth < 16
-              apply_callbacks(mod, action, active, paths, depth + 1)
+              apply_callbacks(mod, action, resolution, depth + 1)
             end
           end
         elsif line.starts_with?("allow_unauthenticated_access")
           active.delete("require_authentication") if RailsCallbackChain.applies_to_action?(line, action)
-        elsif m = line.match(/^(skip_)?\w*before_action\s+((?::\w+[!?]?\s*,?\s*)+)/)
+        elsif line.starts_with?("skip_")
           next unless RailsCallbackChain.applies_to_action?(line, action)
-          m[2].scan(/:(\w+[!?]?)/) do |name|
-            callback = name[1]
-            if m[1]?
-              active.delete(callback)
-            elsif !active.includes?(callback)
-              active << callback
+          next unless m = line.match(/^skip_before_action\s+((?::\w+[!?]?\s*,?\s*)+)/)
+          m[1].scan(/:(\w+[!?]?)/) do |name|
+            active.delete(name[1])
+            resolution.conditional.delete(name[1])
+          end
+        elsif RailsCallbackChain.applies_to_action?(line, action)
+          RailsCallbackChain.before_action_callbacks(line).each do |callback|
+            # Registering a callback again replaces its options.
+            if RailsCallbackChain.conditional?(line)
+              resolution.conditional << callback
+            else
+              resolution.conditional.delete(callback)
             end
+            active << callback unless active.includes?(callback)
           end
         end
       end
       # After its concerns, so the reversed list puts a class before them.
-      paths << klass.path
+      resolution.paths << klass.path
     end
   end
 end
