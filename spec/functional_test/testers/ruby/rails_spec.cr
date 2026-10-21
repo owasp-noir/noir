@@ -7,7 +7,7 @@ expected_endpoints = [
     Param.new("login", "", "cookie"),
     Param.new("discount", "", "cookie"),
   ]),
-  Endpoint.new("/posts/1", "GET", [
+  Endpoint.new("/posts/:id", "GET", [
     Param.new("X-API-KEY", "", "header"),
     # `params.fetch(:x)` and `params.dig(:top, ...)` read top-level keys too.
     Param.new("page", "", "query"),
@@ -18,18 +18,18 @@ expected_endpoints = [
     Param.new("context", "", "json"),
   ]),
   # `before_action :check_header, only: %i[ edit update ]` reads X-API-KEY.
-  Endpoint.new("/posts/1", "PUT", [
+  Endpoint.new("/posts/:id", "PUT", [
     Param.new("title", "", "json"),
     Param.new("context", "", "json"),
     Param.new("X-API-KEY", "", "header"),
   ]),
-  Endpoint.new("/posts/1", "PATCH", [
+  Endpoint.new("/posts/:id", "PATCH", [
     Param.new("title", "", "json"),
     Param.new("context", "", "json"),
     Param.new("X-API-KEY", "", "header"),
   ]),
-  Endpoint.new("/posts/1", "DELETE"),
-  Endpoint.new("/posts/1/search", "QUERY"),
+  Endpoint.new("/posts/:id", "DELETE"),
+  Endpoint.new("/posts/:id/search", "QUERY"),
   Endpoint.new("/search", "QUERY", [
     Param.new("user_name", "", "cookie"),
     Param.new("login", "", "cookie"),
@@ -56,13 +56,13 @@ expected_endpoints = [
     Param.new("alpha", "", "form"),
     Param.new("beta", "", "form"),
   ]),
-  Endpoint.new("/articles/1", "PUT", [
+  Endpoint.new("/articles/:id", "PUT", [
     Param.new("one", "", "form"),
     Param.new("tags", "", "form"),
     Param.new("meta", "", "form"),
     Param.new("cat", "", "form"),
   ]),
-  Endpoint.new("/articles/1", "PATCH", [
+  Endpoint.new("/articles/:id", "PATCH", [
     Param.new("one", "", "form"),
     Param.new("tags", "", "form"),
     Param.new("meta", "", "form"),
@@ -126,13 +126,13 @@ expected_endpoints = [
 
   # `resources :profiles, param: :username`: the member key is a path
   # segment, and the nested singular resource sees it as `profile_username`.
-  Endpoint.new("/api/profiles/1", "GET", [
+  Endpoint.new("/api/profiles/:username", "GET", [
     Param.new("username", "", "path"),
   ]),
-  Endpoint.new("/api/profiles/1/follow", "POST", [
+  Endpoint.new("/api/profiles/:profile_username/follow", "POST", [
     Param.new("profile_username", "", "path"),
   ]),
-  Endpoint.new("/api/profiles/1/follow", "DELETE", [
+  Endpoint.new("/api/profiles/:profile_username/follow", "DELETE", [
     Param.new("profile_username", "", "path"),
   ]),
 ]
@@ -144,7 +144,7 @@ tester = FunctionalTester.new("fixtures/ruby/rails/", {
 tester.perform_tests
 
 it "reads subscript and fetch on bare params only, while attaching Devise sign_in_params", tags: "functional" do
-  show = tester.app.endpoints.find { |endpoint| endpoint.url == "/posts/1" && endpoint.method == "GET" }
+  show = tester.app.endpoints.find { |endpoint| endpoint.url == "/posts/:id" && endpoint.method == "GET" }
   show.should_not be_nil
   show.not_nil!.params.map(&.name).should_not contain("theme")
 

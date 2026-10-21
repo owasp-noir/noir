@@ -31,7 +31,7 @@ describe "--ai-context on Rails auth fixtures", tags: "functional" do
     index_context.signals.map(&.kind).should_not contain("identifier_input")
     index_context.signals.map(&.kind).should_not contain("idor")
 
-    show_endpoint = endpoints.find! { |ep| ep.method == "GET" && ep.url == "/posts/1" }
+    show_endpoint = endpoints.find! { |ep| ep.method == "GET" && ep.url == "/posts/:id" }
     show_endpoint.details.code_paths.any? { |info| info.path.ends_with?(controller_suffix) && info.line == 10 }.should be_true
     show_endpoint.params.map { |param| {param.name, param.param_type} }.should eq([{"id", "path"}, {"Authorization", "header"}])
     show_context = show_endpoint.ai_context
@@ -58,7 +58,7 @@ describe "--ai-context on Rails auth fixtures", tags: "functional" do
     create_context.signals.map(&.kind).should_not contain("idor")
     create_context.validators.map(&.kind).should contain("validation")
 
-    destroy_endpoint = endpoints.find! { |ep| ep.method == "DELETE" && ep.url == "/posts/1" }
+    destroy_endpoint = endpoints.find! { |ep| ep.method == "DELETE" && ep.url == "/posts/:id" }
     destroy_endpoint.details.code_paths.any? { |info| info.path.ends_with?(controller_suffix) && info.line == 20 }.should be_true
     destroy_context = destroy_endpoint.ai_context
     destroy_context = destroy_context.should_not be_nil
@@ -95,7 +95,7 @@ describe "--ai-context on Rails auth fixtures", tags: "functional" do
     clients_index.params.map { |param| {param.name, param.param_type} }.should eq([
       {"X-Client-Id", "header"}, {"X-Api-Version", "header"}, {"session_hint", "cookie"},
     ])
-    clients_show = endpoints.find! { |ep| ep.method == "GET" && ep.url == "/clients/1" }
+    clients_show = endpoints.find! { |ep| ep.method == "GET" && ep.url == "/clients/:id" }
     clients_show.params.map { |param| {param.name, param.param_type} }.should eq([{"id", "path"}, {"Authorization", "header"}])
   end
 end

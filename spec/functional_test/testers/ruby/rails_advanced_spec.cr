@@ -23,25 +23,25 @@ expected_endpoints = [
 
   # namespace :admin do resources :reports end
   Endpoint.new("/admin/reports", "GET"),
-  Endpoint.new("/admin/reports/1", "GET"),
+  Endpoint.new("/admin/reports/:id", "GET"),
   Endpoint.new("/admin/reports", "POST"),
-  Endpoint.new("/admin/reports/1", "PUT"),
-  Endpoint.new("/admin/reports/1", "PATCH"),
-  Endpoint.new("/admin/reports/1", "DELETE"),
+  Endpoint.new("/admin/reports/:id", "PUT"),
+  Endpoint.new("/admin/reports/:id", "PATCH"),
+  Endpoint.new("/admin/reports/:id", "DELETE"),
 
   # member/collection actions on namespaced resource. #1359: action-scoped
   # headers must surface on the custom-action endpoint (previously dropped
   # because the controller scan only switched action context on 5 REST names).
-  Endpoint.new("/admin/refunds/1/change_status", "POST", [
+  Endpoint.new("/admin/refunds/:id/change_status", "POST", [
     Param.new("X-Refund-Reason", "", "header"),
     Param.new("status", "", "form"),
   ]),
   # DELETE custom action — no shared body params, only the action's headers.
-  Endpoint.new("/admin/refunds/1/purge", "DELETE", [
+  Endpoint.new("/admin/refunds/:id/purge", "DELETE", [
     Param.new("X-Confirm", "", "header"),
   ]),
   # `permit("note", "kind")` (string form) and member POST verb.
-  Endpoint.new("/admin/refunds/1/update_metadata", "POST", [
+  Endpoint.new("/admin/refunds/:id/update_metadata", "POST", [
     Param.new("note", "", "form"),
     Param.new("kind", "", "form"),
   ]),
@@ -65,7 +65,7 @@ expected_endpoints = [
   # Parenthesized namespace with path override keeps the controller namespace
   # while changing the URL prefix.
   Endpoint.new("/sekret/reports", "GET"),
-  Endpoint.new("/sekret/reports/1", "GET"),
+  Endpoint.new("/sekret/reports/:id", "GET"),
 
   # scope module/path variants resolve controller params through admin/.
   Endpoint.new("/backoffice/heartbeat", "GET", [
@@ -84,27 +84,27 @@ expected_endpoints = [
 
   # scope :api do resources :items, only: [:index, :show] end
   Endpoint.new("/api/items", "GET"),
-  Endpoint.new("/api/items/1", "GET"),
+  Endpoint.new("/api/items/:id", "GET"),
 
   # scope path: "internal" do resources :statements, except: [:destroy] end
   Endpoint.new("/internal/statements", "GET"),
-  Endpoint.new("/internal/statements/1", "GET"),
+  Endpoint.new("/internal/statements/:id", "GET"),
   Endpoint.new("/internal/statements", "POST"),
-  Endpoint.new("/internal/statements/1", "PUT"),
-  Endpoint.new("/internal/statements/1", "PATCH"),
+  Endpoint.new("/internal/statements/:id", "PUT"),
+  Endpoint.new("/internal/statements/:id", "PATCH"),
 
   # resources :scans, controller: "billing/scans", only: [:index]
   Endpoint.new("/scans", "GET"),
 
   # Multiline options and %i lists.
   Endpoint.new("/legacy_posts", "GET"),
-  Endpoint.new("/legacy_posts/1", "GET"),
+  Endpoint.new("/legacy_posts/:id", "GET"),
 
   # Inline custom resource scopes: collection, implicit member, and new.
   Endpoint.new("/refunds/summary", "GET", [
     Param.new("X-Summary", "", "header"),
   ]),
-  Endpoint.new("/refunds/1/preview", "GET", [
+  Endpoint.new("/refunds/:refund_id/preview", "GET", [
     Param.new("X-Preview", "", "header"),
   ]),
   Endpoint.new("/refunds/new/template", "GET", [
@@ -113,7 +113,7 @@ expected_endpoints = [
   Endpoint.new("/refunds/inline_summary", "GET", [
     Param.new("X-Inline-Summary", "", "header"),
   ]),
-  Endpoint.new("/refunds/1/inline_preview", "POST", [
+  Endpoint.new("/refunds/:id/inline_preview", "POST", [
     Param.new("X-Inline-Preview", "", "header"),
   ]),
 
@@ -122,15 +122,15 @@ expected_endpoints = [
   # with `resources :posts, concerns: :commentable` should emit nested
   # comments and preserve nested resources inside the concern.
   Endpoint.new("/posts", "GET"),
-  Endpoint.new("/posts/1", "GET"),
+  Endpoint.new("/posts/:id", "GET"),
   Endpoint.new("/posts", "POST"),
-  Endpoint.new("/posts/1", "PUT"),
-  Endpoint.new("/posts/1", "PATCH"),
-  Endpoint.new("/posts/1", "DELETE"),
-  Endpoint.new("/posts/1/comments", "GET"),
-  Endpoint.new("/posts/1/comments/1", "GET"),
-  Endpoint.new("/posts/1/comments/1/likes", "GET"),
-  Endpoint.new("/posts/1/comments/1/likes/1", "GET"),
+  Endpoint.new("/posts/:id", "PUT"),
+  Endpoint.new("/posts/:id", "PATCH"),
+  Endpoint.new("/posts/:id", "DELETE"),
+  Endpoint.new("/posts/:post_id/comments", "GET"),
+  Endpoint.new("/posts/:post_id/comments/:id", "GET"),
+  Endpoint.new("/posts/:post_id/comments/:comment_id/likes", "GET"),
+  Endpoint.new("/posts/:post_id/comments/:comment_id/likes/:id", "GET"),
 
   # hash-rocket and to: forms. #1359: `=> "ctrl#action"` / `to: "ctrl#action"`
   # resolves the controller and attaches the action's params.
@@ -228,7 +228,7 @@ expected_endpoints = [
 
 # Locking the total count ensures only:/except: filters drop the expected
 # endpoints (e.g. no POST /api/items, no DELETE /internal/statements, no
-# /scans/1) and devise_for emits its full route set.
+# /scans/:id) and devise_for emits its full route set.
 total_endpoints = 1 +  # root
                   2 +  # `#{base_c_route}` interpolation resolved to 2 routes
                   1 +  # `#{ENV.fetch(...)}` nested-quote interpolation placeholder
@@ -245,7 +245,7 @@ total_endpoints = 1 +  # root
                   2 +  # multiline resources options
                   5 +  # inline collection/member/new custom routes
                   6 +  # posts
-                  4 +  # posts/1/comments + nested likes from concern
+                  4 +  # posts/:post_id/comments + nested likes from concern
                   3 +  # /up + /ping + legacy string-via match
                   3 +  # optional-segment routes /feed + /report/rss + optional scope
                   2 +  # %w[browse annotate].each unrolled to /repo/:id/browse + /annotate
