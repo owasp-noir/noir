@@ -15,6 +15,15 @@ module NoirAIContext
   # `select ... from` source pattern.
   SQL_RECEIVER_CALL = /\b(?:\w*db|db\w*|database|\w*conn(?:ection)?|con|cursor|cur|_?cr|pool|session|tx|transaction|stmt|statement|knex|sequelize|pg\w*|mysqli?|sqlite3?|pdo|sqlx?|repo|queryRunner|manager|jdbcTemplate|entityManager|dataSource)(?:\.|->|::)(?:query|execute|exec)\b/i
 
+  # The JVM receiver names no rule above can see (`this.owners.save`),
+  # read off the declaration instead: a type named `*Repository` / `*Dao`,
+  # or one extending such a type (every Spring Data base interface is a
+  # `*Repository`). Only its data-access methods count, so `getClass` /
+  # `toString` on a repository field stay out; a method without such a
+  # name counts when it carries `@Query`.
+  DATA_REPOSITORY_TYPE = /(?:Repository|Dao|DAO)\z/
+  DATA_ACCESS_METHOD   = /\A(?:(?:save|find|delete|exists|count|query)\w*|get\w*By\w*)\z/
+
   # File-system calls as handler bodies spell them: Node's `fs` module and
   # its camelCase API (`readFileSync`, `createReadStream`, `readdir`),
   # `os.ReadFile` / `os.Open`, PHP `readfile` / `scandir`, `res.sendFile` /
