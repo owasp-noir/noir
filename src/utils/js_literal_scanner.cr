@@ -77,6 +77,15 @@ module Noir
       end
     end
 
+    # Find matching closing bracket, skipping literals
+    def self.find_matching_bracket(content : String, open_bracket_idx : Int32) : Int32?
+      if single_byte?(content)
+        find_matching_impl(content.to_slice, open_bracket_idx, '[', ']')
+      else
+        find_matching_impl(content.chars, open_bracket_idx, '[', ']')
+      end
+    end
+
     # The same over a string's already materialized `chars`, for a caller
     # matching many delimiters in one non-ASCII string: the `String` forms
     # above re-materialize it on every call.
