@@ -218,6 +218,7 @@ module Analyzer::Javascript
                   Noir::JSRouteExtractor.inline_closure_facts(last_source, path, line_number_for_index(content, last_start), include_callee)
                 end
         next unless facts && facts.responds
+        chain_callees = Noir::JSRouteExtractor.chain_step_callees(args[1...-1].map(&.[0]), content, path) if include_callee
 
         prefixes.each do |prefix|
           url = prefix.empty? ? mount_path : Noir::URLPath.join(prefix, mount_path)
@@ -225,6 +226,7 @@ module Analyzer::Javascript
             endpoint = Endpoint.new(url, method, Details.new(PathInfo.new(path, line)))
             url.scan(/:(\w+)/) { |pm| endpoint.push_param(Param.new(pm[1], "", "path")) }
             Noir::JSRouteExtractor.apply_handler_facts(endpoint, facts)
+            Noir::JSRouteExtractor.push_callees(endpoint, chain_callees)
             endpoint.handler = handler
             result << endpoint
           end

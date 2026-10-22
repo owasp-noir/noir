@@ -369,6 +369,15 @@ module Noir
           handler = named_handler(content, start_byte, file_path)
           handler_facts = handler ? handler_definition_facts(handler, include_callees) : nil
           handler = nil if handler_facts.try(&.guard)
+          # Only a route that has a handler, named or inline: a guard-only
+          # registration (`app.put('/x', security.denyAll())`) has none for
+          # its steps to feed.
+          chain_callees = if include_callees
+                            route_args = route_arguments(content, start_byte)
+                            if (handler && handler_facts) || route_args.last?.try(&.matches?(INLINE_CLOSURE_START_RE))
+                              chain_step_callees(route_args[0...-1], content, file_path)
+                            end
+                          end
 
           # Handle router.all by expanding to all HTTP methods
           prefixes.each do |prefix|
@@ -389,6 +398,7 @@ module Noir
                 attach_callees(endpoint, callees_by_route, normalized_method, pattern.raw_path, line_number)
                 endpoint.handler = handler
                 apply_handler_facts(endpoint, handler_facts)
+                push_callees(endpoint, chain_callees)
 
                 endpoints << endpoint
               end
@@ -404,6 +414,7 @@ module Noir
               attach_callees(endpoint, callees_by_route, normalized_method, pattern.raw_path, line_number)
               endpoint.handler = handler
               apply_handler_facts(endpoint, handler_facts)
+              push_callees(endpoint, chain_callees)
 
               endpoints << endpoint
             end
@@ -1140,19 +1151,43 @@ module Noir
     # arithmetic to the closing paren, so a non-ASCII file costs O(args)
     # per route rather than O(file).
     def self.named_handler(content : String, start_byte : Int32, file_path : String) : Handler?
-      return if start_byte < 0
-      open_paren = content.byte_index('(', start_byte) || return
-      close_paren = JSLiteralScanner.find_matching_paren_at_byte(content, open_paren) || return
-      args_slice = content.byte_slice(open_paren + 1, close_paren - open_paren - 1)
-      args = Noir::TopLevelSplit.split_spans(args_slice, ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS, 0, args_slice.size)
+      args = route_arguments(content, start_byte)
       # A `route('/x').get(h)` link carries only the handler; a plain
       # `app.get('/x')` has only the path, which no reference regex accepts.
       return if args.empty?
-      Noir::JSHandlerResolver.resolve(args.last[0], content, file_path)
+      Noir::JSHandlerResolver.resolve(args.last, content, file_path)
     rescue
       # Best-effort field: a resolver error must not cost the route — the
       # per-file isolation above this would drop every route in the file.
       nil
+    end
+
+    def self.route_arguments(content : String, start_byte : Int32) : Array(String)
+      return [] of String if start_byte < 0
+      open_paren = content.byte_index('(', start_byte) || return [] of String
+      close_paren = JSLiteralScanner.find_matching_paren_at_byte(content, open_paren) || return [] of String
+      args_slice = content.byte_slice(open_paren + 1, close_paren - open_paren - 1)
+      Noir::TopLevelSplit.split_spans(args_slice, ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS, 0, args_slice.size).map(&.[0])
+    end
+
+    # Callees of the route-specific steps before the handler. In Express's
+    # handler-chain style they do part of the route's work: juice-shop's
+    # `app.post('/file-upload', …, checkFileType, handleZipFileUpload,
+    # handleXmlUpload, handleYamlUpload)` extracts the zip and parses the
+    # XML in steps the last argument never reaches. Only steps that resolve
+    # to app source count (`uploadToMemory.single('file')` and
+    # `express.json()` do not), a guard step reads as no callees
+    # (`read_handler_facts`), and the caller adds these after the handler's
+    # own. Steps nearest the handler come first, so under
+    # `Callee::MAX_PER_ENDPOINT` they outrank the leading validators.
+    def self.chain_step_callees(steps : Array(String), content : String, file_path : String) : Array(JSCalleeExtractor::Entry)
+      steps.reverse.flat_map do |step|
+        handler = Noir::JSHandlerResolver.resolve(step, content, file_path)
+        facts = handler ? handler_definition_facts(handler, true) : nil
+        facts ? facts.callees : [] of JSCalleeExtractor::Entry
+      end
+    rescue
+      [] of JSCalleeExtractor::Entry
     end
 
     # What a resolved handler's definition reads and calls. `app.get('/x',
@@ -1254,7 +1289,11 @@ module Noir
     def self.apply_handler_facts(endpoint : Endpoint, facts : HandlerFacts?)
       return unless facts
       facts.params.each { |param| endpoint.push_param(param) }
-      facts.callees.each do |name, callee_path, callee_line|
+      push_callees(endpoint, facts.callees)
+    end
+
+    def self.push_callees(endpoint : Endpoint, callees : Array(JSCalleeExtractor::Entry)?)
+      callees.try &.each do |name, callee_path, callee_line|
         endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
       end
     end
@@ -1335,12 +1374,7 @@ module Noir
                             method : String,
                             path : String,
                             line : Int32)
-      callees = callees_by_route[JSCalleeExtractor.route_key(method, path, line)]?
-      return unless callees
-
-      callees.each do |name, callee_path, callee_line|
-        endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
-      end
+      push_callees(endpoint, callees_by_route[JSCalleeExtractor.route_key(method, path, line)]?)
     end
 
     # Normalize HTTP method names to standard format
