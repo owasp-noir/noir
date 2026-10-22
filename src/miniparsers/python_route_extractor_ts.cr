@@ -149,8 +149,11 @@ module Noir
         case Noir::TreeSitter.node_type(function)
         when "identifier"
           # `ends_with?` also takes in-repo subclasses (`class IndicoBlueprint(Blueprint)`)
-          # whose constructor keeps Flask's `url_prefix=`.
-          next unless Noir::TreeSitter.node_text(function, source).ends_with?("Blueprint")
+          # whose constructor keeps Flask's `url_prefix=`. fastopenapi's
+          # `FlaskRouter()` is a blueprint-like router too: its routes are
+          # mounted under the prefix of `include_router(router, prefix=...)`.
+          callee = Noir::TreeSitter.node_text(function, source)
+          next unless callee.ends_with?("Blueprint") || callee == "FlaskRouter"
         when "attribute"
           module_node = Noir::TreeSitter.field(function, "object")
           attr_node = Noir::TreeSitter.field(function, "attribute")
