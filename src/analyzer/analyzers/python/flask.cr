@@ -21,6 +21,10 @@ module Analyzer::Python
     FLASK_INSTANCE_RE     = /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(?:flask\.)?Flask\(/
     INIT_APP_RE           = /(#{PYTHON_VAR_NAME_REGEX})\.init_app\((#{PYTHON_VAR_NAME_REGEX})/
     REGISTER_BLUEPRINT_RE = /(#{PYTHON_VAR_NAME_REGEX})\.register_blueprint\((#{DOT_NATION})/
+    # fastopenapi's `<router>.include_router(child, prefix="/x")`. The
+    # receiver is often an expression (Dify's `cast(..., router)`), so only
+    # the child is captured.
+    INCLUDE_ROUTER_RE = /\.include_router\((#{DOT_NATION})/
 
     # Source-ownership and add_url_rule helpers — same constant-only
     # interpolation (DOT_NATION), hoisted so the per-file/per-call sites
@@ -418,6 +422,14 @@ module Analyzer::Python
 
         if url_prefix_match && (declaration = blueprint_declaration(fs.path, blueprint_name))
           add_registered_prefix(state.register_blueprint, declaration[0], declaration[1], url_prefix_match[1])
+        end
+      end
+
+      include_router_match = line.includes?(".include_router(") ? line.match(INCLUDE_ROUTER_RE) : nil
+      if include_router_match
+        prefix_match = original_line.match /\bprefix\s*=\s*[rf]?['"]([^'"]*)['"]/
+        if prefix_match && (declaration = blueprint_declaration(fs.path, include_router_match[1]))
+          add_registered_prefix(state.register_blueprint, declaration[0], declaration[1], prefix_match[1])
         end
       end
     end
@@ -1092,6 +1104,8 @@ module Analyzer::Python
 
       return true if clean.matches?(/^\s*(?:from|import)\s+flask(?:\b|[._])/m)
       return true if clean.includes?("@expose(")
+      # fastopenapi's Flask router declaration (`console_router = FlaskRouter()`).
+      return true if clean.matches?(/\bFlaskRouter\s*\(/)
       # A file that imports a competing decorator-based framework (and
       # never mentions flask) is NOT Flask — its `@app.get`/`@router.post`
       # decorators belong to that framework's analyzer. Without this
