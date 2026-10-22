@@ -427,6 +427,82 @@ describe "RubyAuthTagger" do
     end
   end
 
+  # Doorkeeper's controllers are in the gem, not the scan: their
+  # `authenticate_resource_owner!` / `authenticate_admin!` callbacks run the
+  # blocks the app configures in its doorkeeper initializer.
+  it "reads Doorkeeper base callbacks through the app's initializer blocks" do
+    {
+      # Mastodon's: an anonymous caller is sent to sign in; admin is a 403.
+      {"current_user || redirect_to(new_user_session_url)", "head 403"} => {true, true},
+      # Blocks that only look the caller up let anyone through.
+      {"User.find_by(id: session[:user_id])", "current_user"} => {false, false},
+    }.each do |(owner_block, admin_block), (owner_guarded, admin_guarded)|
+      CodeLocator.instance.clear_all
+      tmpdir = File.tempname("ruby_doorkeeper")
+      controllers = File.join(tmpdir, "app", "controllers", "oauth")
+      Dir.mkdir_p(controllers)
+      Dir.mkdir_p(File.join(tmpdir, "config", "initializers"))
+      files = {
+        "config/initializers/doorkeeper.rb" => <<-RB,
+          Doorkeeper.configure do
+            resource_owner_authenticator do
+              #{owner_block}
+            end
+
+            admin_authenticator do
+              #{admin_block}
+            end
+          end
+          RB
+        "app/controllers/oauth/authorizations_controller.rb" => <<-RB,
+          class OAuth::AuthorizationsController < Doorkeeper::AuthorizationsController
+            prepend_before_action :store_current_location
+
+            def new
+              super
+            end
+
+            def authenticate_resource_owner!
+              super
+            end
+          end
+          RB
+        "app/controllers/oauth/applications_controller.rb" => <<-RB,
+          class OAuth::ApplicationsController < Doorkeeper::ApplicationsController
+            def index
+              super
+            end
+          end
+          RB
+      }
+      files.each do |name, body|
+        path = File.join(tmpdir, name)
+        File.write(path, body)
+        CodeLocator.instance.register_path(path)
+      end
+
+      begin
+        noir_options = create_test_options
+        noir_options["base"] = YAML::Any.new(tmpdir)
+        at = ->(name : String, line : Int32) do
+          details = Details.new(PathInfo.new(File.join(controllers, name), line))
+          details.technology = "ruby_rails"
+          Endpoint.new("/#{name}/#{line}", "GET", [] of Param, details)
+        end
+        authorize = at.call("authorizations_controller.rb", 4)
+        applications = at.call("applications_controller.rb", 2)
+
+        RubyAuthTagger.new(noir_options).perform([authorize, applications])
+
+        authorize.tags.any? { |t| t.name == "auth" }.should eq(owner_guarded)
+        applications.tags.any? { |t| t.name == "auth" }.should eq(admin_guarded)
+      ensure
+        FileUtils.rm_rf(tmpdir)
+        CodeLocator.instance.clear_all
+      end
+    end
+  end
+
   it "lists the methods a before_action line runs" do
     callbacks = ->(line : String) { Noir::RailsCallbackChain.before_action_callbacks(line) }
     callbacks.call("before_action :a!, :b?, only: :show").should eq(["a!", "b?"])
