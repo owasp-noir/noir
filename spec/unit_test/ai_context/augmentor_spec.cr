@@ -3899,6 +3899,24 @@ describe "NoirAIContext" do
       context.signals.map(&.kind).should_not contain("rate_limit_absence")
     end
   end
+
+  it "does NOT emit rate_limit_absence when the only credential is a presented bearer header or session cookie" do
+    endpoint = Endpoint.new("/api/articles", "POST")
+    endpoint.push_param(Param.new("title", "x", "json"))
+    endpoint.push_param(Param.new("Authorization", "Token x", "header"))
+    endpoint.push_param(Param.new("token", "x", "cookie"))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    context.signals.map(&.kind).should contain("credential_input")
+    context.signals.map(&.kind).should_not contain("rate_limit_absence")
+
+    login = Endpoint.new("/api/users/login", "POST")
+    login.push_param(Param.new("password", "x", "json"))
+    login.push_param(Param.new("Authorization", "Token x", "header"))
+
+    login_context = NoirAIContext.apply([login])[0].ai_context.should_not be_nil
+    login_context.signals.map(&.kind).should contain("rate_limit_absence")
+  end
 end
 
 # `--ai-context=…` used to filter the plain-text renderer only,
