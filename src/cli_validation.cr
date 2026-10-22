@@ -1,36 +1,20 @@
 require "colorize"
+require "levenshtein"
 require "yaml"
 require "./tagger/tagger"
 require "./techs/techs"
+require "./llm/acp/targets"
+require "./llm/adapter"
+require "./llm/general/client"
+require "./llm/native_tool_calling"
+require "./output_builder/formats"
+require "./passive_scan/severity"
+require "./utils/path_scope"
+require "./diff_gate"
 
 module Noir::CliValidation
   class Error < Exception
   end
-
-  VALID_OUTPUT_FORMATS = %w[
-    plain
-    yaml
-    json
-    jsonl
-    toml
-    markdown-table
-    sarif
-    html
-    curl
-    httpie
-    powershell
-    adb
-    simctl
-    oas2
-    oas3
-    postman
-    only-url
-    only-param
-    only-header
-    only-cookie
-    only-tag
-    mermaid
-  ]
 
   def self.validate!(options : Hash(String, YAML::Any))
     validate_base_paths!(options)
@@ -41,8 +25,51 @@ module Noir::CliValidation
     validate_config_file!(options)
     validate_tech_names!(options)
     validate_passive_scan_paths!(options)
+    validate_passive_scan_severity!(options)
+    validate_ai_integer_options!(options)
+    validate_ai_sampling!(options)
     validate_ai_provider_pair!(options)
+    validate_ai_native_tools_allowlist!(options)
+    validate_fail_on!(options)
     warn_about_unused_delivery_flags(options)
+    warn_about_contradictory_probe_filters(options)
+  end
+
+  # `--ai-native-tools-allowlist` entries that don't canonicalize to a
+  # provider Noir supports for native tool-calling will never match and the
+  # feature just stays off. Warn so a typo like `opena` is visible instead
+  # of silently disabling tool-calling.
+  def self.validate_ai_native_tools_allowlist!(options : Hash(String, YAML::Any))
+    raw = options["ai_native_tools_allowlist"]?.try(&.to_s) || ""
+    return if raw.empty?
+
+    unknown = raw.split(",").map(&.strip).reject(&.empty?).reject do |provider|
+      LLM::NativeToolCalling.known_provider?(provider)
+    end
+    return if unknown.empty?
+
+    STDERR.puts "WARNING: --ai-native-tools-allowlist: unrecognized provider(s) #{unknown.map(&.inspect).join(", ")}. Native tool-calling supports: #{LLM::NativeToolCalling::KNOWN_PROVIDERS.join(", ")}. These entries will never match.".colorize(:yellow)
+  end
+
+  # A value listed in both --probe-match and --probe-skip is contradictory:
+  # skip wins in the Deliver pipeline, so the matcher is silently defeated.
+  # Surface the overlap instead of quietly filtering it out.
+  def self.warn_about_contradictory_probe_filters(options : Hash(String, YAML::Any))
+    match = string_array(options["probe_match"]?)
+    skip = string_array(options["probe_skip"]?)
+    return if match.empty? || skip.empty?
+
+    overlap = (match & skip).uniq
+    return if overlap.empty?
+
+    STDERR.puts "WARNING: value(s) #{overlap.map(&.inspect).join(", ")} appear in both --probe-match and --probe-skip; --probe-skip takes precedence, so those matches are dropped.".colorize(:yellow)
+  end
+
+  private def self.string_array(value : YAML::Any?) : Array(String)
+    return [] of String if value.nil?
+    raw = value.raw
+    return [] of String unless raw.is_a?(Array)
+    raw.map(&.to_s)
   end
 
   # `--ai-provider` and `--ai-model` need each other to take effect.
@@ -63,9 +90,40 @@ module Noir::CliValidation
     return if provider.empty?
 
     is_acp = provider.downcase.starts_with?("acp:")
-    return if is_acp || !model.empty?
+    if is_acp
+      validate_acp_target!(provider)
+      return
+    end
+    validate_ai_provider_name!(provider)
+    return unless model.empty?
 
     raise Error.new("--ai-provider '#{provider}' needs a companion --ai-model. Pass it with --ai-model, e.g. `noir scan ./app --ai-provider #{provider} --ai-model gpt-4 --ai-key …`. (ACP providers like `acp:claude` or `acp:codex` are the exception and don't need --ai-model.)")
+  end
+
+  # A name that is neither a preset nor an absolute http(s) URL was used as
+  # the request URL verbatim, so every file failed with "Missing scheme"
+  # while the scan itself reported success.
+  def self.validate_ai_provider_name!(provider : String)
+    return if LLM::General::PRESETS.has_key?(provider.downcase)
+    uri = URI.parse(provider) rescue nil
+    return if uri && uri.scheme.try(&.downcase).in?("http", "https") && uri.host.presence
+
+    names = LLM::General::PRESETS.keys
+    hint = Levenshtein.find(provider.downcase, names).try { |name| " Did you mean '#{name}'?" }
+    raise Error.new("--ai-provider '#{provider}' is not a known provider.#{hint} Use a preset (#{names.join(", ")}), an acp:<agent> target, or the http(s) URL of an OpenAI-compatible API, e.g. https://api.example.com/v1.")
+  end
+
+  # Pre-flight rejection of an ACP target Noir will not exec, so an untrusted
+  # `--ai-provider "acp:<cmd>"` fails cleanly before a scan starts rather than
+  # raising from the exec sink partway through one. The list itself lives in
+  # `LLM::ACPTargets` and is shared with that sink — it used to be a second
+  # byte-identical literal here, kept in sync by a comment.
+  def self.validate_acp_target!(provider : String)
+    target = (provider.split(":", 2)[1]?.try(&.strip.downcase)) || ""
+    return if LLM::ACPTargets::KNOWN.includes?(target)
+    return if ENV["NOIR_ACP_ALLOW_CUSTOM_COMMAND"]? == "1"
+
+    raise Error.new("--ai-provider '#{provider}': unsupported ACP target. Allowed acp: targets are #{LLM::ACPTargets::KNOWN.join(", ")}. Running an arbitrary command as an ACP agent is disabled; set NOIR_ACP_ALLOW_CUSTOM_COMMAND=1 to override (only with trusted config).")
   end
 
   # `--passive-scan-path PATH` accepts multiple entries (repeatable),
@@ -86,6 +144,81 @@ module Noir::CliValidation
       raise Error.new("--passive-scan-path does not exist: #{path}") unless File.exists?(path)
       raise Error.new("--passive-scan-path is not a directory: #{path}") unless File.directory?(path)
     end
+  end
+
+  # `--passive-scan-severity` is checked by its own flag handler in
+  # options.cr, but the identical `passive_scan_severity:` config key reached
+  # `PassiveScanSeverity` untouched — and `meets_threshold?` treats an
+  # unrecognized threshold as "include everything" (`return true if
+  # min_level.nil?`). So a typo in the config file didn't loosen the filter
+  # by one level, it removed it, silently, in the direction the user least
+  # wanted. Gate both sources here, in the one place config and CLI meet.
+  def self.validate_passive_scan_severity!(options : Hash(String, YAML::Any))
+    value = options["passive_scan_severity"]?
+    return if value.nil? # library caller that never set the key
+
+    severity = value.to_s
+    unless PassiveScanSeverity.valid?(severity)
+      raise Error.new("Invalid passive scan severity #{severity.inspect}. Valid: #{PassiveScanSeverity.valid_levels.join(", ")}")
+    end
+
+    # The flag handler stores a downcased value; do the same for the config
+    # path so downstream comparisons see one spelling.
+    options["passive_scan_severity"] = YAML::Any.new(severity.downcase)
+  end
+
+  # `--ai-max-token` / `--ai-agent-max-steps` are bounded by
+  # `positive_int_or_die!` on the CLI side. Their config-file twins had no
+  # bound at all, so a negative or zero step budget went straight into the
+  # agent loop. ConfigInitializer has already coerced the value to an Int by
+  # this point; all that's left is the range.
+  #
+  # Zero is meaningful for `ai_max_token` only — it is the shipped default
+  # and the generated template's own value, documented as "provider/model
+  # default" — so it is accepted here even though `--ai-max-token 0` is not.
+  def self.validate_ai_integer_options!(options : Hash(String, YAML::Any))
+    {"ai_max_token" => 0, "ai_agent_max_steps" => 1, "ai_max_requests" => 0}.each do |key, minimum|
+      value = options[key]?
+      next if value.nil?
+
+      raw = value.raw
+      number = raw.is_a?(Int) ? raw.to_i64 : raw.to_s.strip.to_i64?
+      flag = "--#{key.tr("_", "-")}"
+
+      if number.nil?
+        raise Error.new("Invalid #{flag} #{value.to_s.inspect}. Must be an integer.")
+      end
+
+      if number < minimum
+        raise Error.new("Invalid #{flag} '#{number}'. Must be #{minimum == 0 ? "0 or greater (0 = #{key == "ai_max_requests" ? "unlimited" : "provider/model default"})" : "a positive integer"}.")
+      end
+      # Read back with `as_i?`, which raises past Int32.
+      if number > Int32::MAX
+        raise Error.new("Invalid #{flag} '#{number}'. Must be at most #{Int32::MAX}.")
+      end
+    end
+  end
+
+  # `--ai-temperature` / `--ai-seed` and their config keys arrive as text;
+  # "" (the default) means unset. `ai_scope` rides along.
+  def self.validate_ai_sampling!(options : Hash(String, YAML::Any))
+    temperature = options["ai_temperature"]?.to_s.strip
+    # The Messages API caps temperature at 1; above it the request 400s and
+    # the client drops temperature for the rest of the run.
+    max = LLM::AdapterFactory.anthropic_native?(options["ai_provider"]?.to_s) ? 1.0 : 2.0
+    unless temperature.empty? || temperature.to_f?.try(&.in?(0.0..max))
+      raise Error.new("Invalid --ai-temperature '#{temperature}'. Must be a number from 0 to #{max.to_i}.")
+    end
+
+    seed = options["ai_seed"]?.to_s.strip
+    unless seed.empty? || seed.to_i64?
+      raise Error.new("Invalid --ai-seed '#{seed}'. Must be an integer.")
+    end
+
+    # The --ai-scope flag checks its value; the config key did not.
+    scope = options["ai_scope"]?.to_s
+    return if scope.empty? || scope.in?("all", "unmatched")
+    raise Error.new("Invalid --ai-scope '#{scope}'. Valid: all, unmatched")
   end
 
   # `--probe-match` and `--probe-skip` only run inside the Deliver
@@ -129,16 +262,24 @@ module Noir::CliValidation
     {"techs", "only_techs", "exclude_techs"}.each do |key|
       raw = options[key]?.try(&.to_s) || ""
       next if raw.empty?
-      unknown = raw.split(",").map(&.strip).reject(&.empty?).reject do |tech|
-        !NoirTechs.similar_to_tech(tech).empty?
-      end
-      next if unknown.empty?
       cli_flag = case key
                  when "techs"         then "-t/--techs"
                  when "only_techs"    then "--only-techs"
                  when "exclude_techs" then "--exclude-techs"
                  else                      key
                  end
+      names = raw.split(",").map(&.strip).reject(&.empty?)
+      # A value made only of separators or whitespace (`--only-techs ,`,
+      # `--only-techs " "`) names nothing. `--only-techs` then cleared its
+      # detector list and the scan reported zero endpoints with exit 0 and,
+      # under `--no-log`, not one word about why.
+      if names.empty?
+        raise Error.new("#{cli_flag}: #{raw.inspect} names no technology. List supported names with `noir list techs`.")
+      end
+      unknown = names.reject do |tech|
+        !NoirTechs.similar_to_tech(tech).empty?
+      end
+      next if unknown.empty?
       raise Error.new("#{cli_flag}: unknown tech#{"es" if unknown.size > 1} #{unknown.map(&.inspect).join(", ")}. List supported names with `noir list techs`.")
     end
   end
@@ -170,7 +311,15 @@ module Noir::CliValidation
   end
 
   def self.validate_base_paths!(options : Hash(String, YAML::Any))
-    base_paths = options["base"].as_a.map(&.to_s)
+    # Dedupe repeated paths (`noir scan ./app ./app`, or the same dir via
+    # both a positional and -b) so the detector doesn't load, parse and
+    # analyze the identical tree twice. `uniq` preserves first-seen order.
+    # Normalize before deduping so `-b app` and `-b ./app/` collapse into
+    # one entry (and one `code_path` spelling). The CLI parser already
+    # normalized what it saw; this also covers a config-file `base:` list,
+    # and is idempotent.
+    base_paths = options["base"].as_a.map { |p| Noir::PathScope.normalize_base(p.to_s) }.uniq!
+    options["base"] = YAML::Any.new(base_paths.map { |p| YAML::Any.new(p) })
     if base_paths.empty?
       raise Error.new(<<-MSG)
         No path to scan was given.
@@ -182,6 +331,17 @@ module Noir::CliValidation
     end
 
     base_paths.each do |base_path|
+      # An empty entry is `noir scan "$TARGET"` with `TARGET` unset, or
+      # `-b ""`. It reached the check below and produced `Base path does not
+      # exist: ` — a message with nothing after the colon, which names
+      # neither the flag nor the fact that the value was blank. Dropping it
+      # silently would be worse: the scan would then run against whatever
+      # other paths were given, or report "No path to scan was given" for a
+      # command line that plainly had one.
+      if base_path.empty?
+        raise Error.new("Base path is empty. Check the value passed to a positional path or -b/--base-path — an unset shell variable expands to nothing.")
+      end
+
       unless File.exists?(base_path)
         raise Error.new("Base path does not exist: #{base_path}")
       end
@@ -194,16 +354,27 @@ module Noir::CliValidation
 
   def self.validate_output_format!(options : Hash(String, YAML::Any))
     format = options["format"].to_s
-    return if VALID_OUTPUT_FORMATS.includes?(format)
+    return if Noir::OutputFormats.known?(format)
 
-    raise Error.new("Invalid output format '#{format}'. Valid formats: #{VALID_OUTPUT_FORMATS.join(", ")}")
+    raise Error.new("Invalid output format '#{format}'. Valid formats: #{Noir::OutputFormats::NAMES.join(", ")}")
   end
+
+  # Upper bound for --concurrency. A user asking for hundreds of thousands
+  # of fibers doesn't get more throughput — it just exhausts file
+  # descriptors / sockets and can take the process down. Cap at a value far
+  # above any useful setting and warn rather than silently honoring it.
+  MAX_CONCURRENCY = 256
 
   def self.validate_concurrency!(options : Hash(String, YAML::Any))
     raw_value = options["concurrency"].to_s
     value = raw_value.to_i?
     if value.nil? || value < 1
       raise Error.new("Invalid concurrency '#{raw_value}'. Concurrency must be an integer greater than or equal to 1.")
+    end
+
+    if value > MAX_CONCURRENCY
+      STDERR.puts "WARNING: --concurrency #{value} exceeds the safe maximum; clamping to #{MAX_CONCURRENCY}.".colorize(:yellow)
+      value = MAX_CONCURRENCY
     end
 
     options["concurrency"] = YAML::Any.new(value)
@@ -228,15 +399,45 @@ module Noir::CliValidation
     use_taggers = options["use_taggers"].to_s
     return if use_taggers.empty?
 
+    # `--use-taggers ,` asked for taggers and named none, so the scan ran
+    # untagged with no word about it — and `--fail-on auth-removed`, which
+    # reads the auth tag, then could never fire.
+    if use_taggers.split(',').all?(&.strip.empty?)
+      raise Error.new("--use-taggers: #{use_taggers.inspect} names no tagger. Use `noir list taggers` to see available taggers.")
+    end
+
     unknown_taggers = NoirTaggers.unknown_tagger_names(use_taggers)
     return if unknown_taggers.empty?
 
-    raise Error.new("Unknown tagger(s): #{unknown_taggers.join(", ")}. Use --list-taggers to see available taggers.")
+    raise Error.new("Unknown tagger(s): #{unknown_taggers.join(", ")}. Use `noir list taggers` to see available taggers.")
+  end
+
+  # `--fail-on` gates on what a diff found, so it means nothing without one:
+  # a plain scan would never fire it and a CI job would pass forever.
+  def self.validate_fail_on!(options : Hash(String, YAML::Any))
+    raw = options["fail_on"]?.to_s
+    categories = DiffGate.parse(raw)
+    if categories.empty?
+      # `--fail-on ,` (or a templated value that expanded to separators only)
+      # asked for a gate and named no category; returning here left the scan
+      # ungated, and the CI job passed on every pull request.
+      return if raw.strip.empty?
+      raise Error.new("--fail-on: #{raw.inspect} names no category. Valid: #{DiffGate::CATEGORIES.join(", ")}")
+    end
+
+    unknown = DiffGate.unknown(categories)
+    unless unknown.empty?
+      raise Error.new("Unknown --fail-on value(s): #{unknown.join(", ")}. Valid: #{DiffGate::CATEGORIES.join(", ")}")
+    end
+
+    if options["diff"]?.to_s.empty? && options["diff_ref"]?.to_s.empty?
+      raise Error.new("--fail-on needs a diff: pass --diff-ref <ref> or --diff-path <path>.")
+    end
   end
 
   def self.exit_with_error(message : String) : NoReturn
     lines = message.lines
-    STDERR.puts "ERROR: #{lines.first}".colorize(:yellow)
+    STDERR.puts "ERROR: #{lines.first}".colorize(:red)
     lines[1..]?.try do |rest|
       rest.each { |line| STDERR.puts line }
     end

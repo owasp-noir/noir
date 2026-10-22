@@ -1,0 +1,1 @@
+{"name":"api","main":"lib/server.js","dependencies":{"@hapi/hapi":"^21.3.0","joi":"^17.12.0"}}

@@ -1,0 +1,6 @@
+name: alfred_scoped_route
+description: Two functions bind the same variable name to different route() bases.
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+dependencies:
+  alfred: ^1.1.0

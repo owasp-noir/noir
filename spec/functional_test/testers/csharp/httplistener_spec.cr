@@ -32,7 +32,7 @@ tester = FunctionalTester.new("fixtures/csharp/httplistener/", {
 
 tester.perform_tests
 
-describe "C# HttpListener analyzer edge cases" do
+describe "C# HttpListener analyzer edge cases", tags: "functional" do
   it "marks endpoints with the dedicated technology" do
     health = tester.app.endpoints.find { |e| e.url == "/health" && e.method == "GET" }
     health.should_not be_nil

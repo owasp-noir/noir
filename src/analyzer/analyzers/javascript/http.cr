@@ -3,19 +3,13 @@ require "../../../miniparsers/js_http_route_extractor"
 
 module Analyzer::Javascript
   class Http < JavascriptEngine
-    HTTP_EXTENSIONS = [".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts", ".tsx"]
+    analyzer_for "js_http"
 
     def analyze
-      result = [] of Endpoint
-
-      parallel_file_scan(HTTP_EXTENSIONS) do |path|
-        content = read_file_content(path)
-        Noir::JSHttpRouteExtractor.extract(path, content, @is_debug).each do |endpoint|
-          result << endpoint
-        end
-      end
-
-      result
+      files = get_files_by_extensions(Noir::JSHttpRouteExtractor::SOURCE_EXTENSIONS)
+      ordered_scan_files(files) do |path|
+        Noir::JSHttpRouteExtractor.extract(path, read_file_content(path), @is_debug)
+      end.flatten
     end
   end
 end

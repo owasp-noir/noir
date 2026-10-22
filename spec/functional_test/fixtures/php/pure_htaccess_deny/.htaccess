@@ -1,0 +1,4 @@
+# Denies one file by name, not the tree: everything else stays served.
+<Files "config.php">
+    Require all denied
+</Files>

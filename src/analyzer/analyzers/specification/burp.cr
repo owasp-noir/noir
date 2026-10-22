@@ -1,28 +1,21 @@
 require "base64"
 require "uri"
 require "xml"
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
+require "../../../utils/xml_comments"
 
 module Analyzer::Specification
   # Parses Burp Suite sitemap XML exports (`Target → Site map → right-click →
   # Save items`). Each `<item>` holds an absolute URL, a base64-encoded raw
   # HTTP request, and the response — the request blob is the source of truth
   # for method, path, headers, and body.
-  class Burp < Analyzer
-    def analyze
-      locator = CodeLocator.instance
-      burp_files = locator.all("burp-sitemap")
-      return @result unless burp_files.is_a?(Array(String))
+  class Burp < SpecificationEngine
+    analyzer_for "burp"
 
-      burp_files.each do |path|
-        next unless File.exists?(path)
-        begin
-          content = File.read(path, encoding: "utf-8", invalid: :skip)
-          process_file(content, path)
-        rescue e
-          @logger.debug "Failed to parse Burp sitemap #{path}: #{e.message}"
-          @logger.debug_sub e
-        end
+    def analyze
+      each_spec_file(Noir::LocatorKeys::BURP_SITEMAP) do |path|
+        content = read_file_content(path)
+        process_file(content, path)
       end
 
       @result
@@ -34,7 +27,7 @@ module Analyzer::Specification
       # but layering NONET on top keeps a malicious sitemap from turning the
       # analyzer into an SSRF gadget even if a future option change enables
       # NOENT.
-      doc = XML.parse(content, XML::ParserOptions::NONET)
+      doc = Noir::XmlComments.parse(content, XML::ParserOptions::NONET)
       root = doc.root
       return unless root && root.name == "items"
 
@@ -45,9 +38,17 @@ module Analyzer::Specification
       seen = {} of Tuple(String, String) => Endpoint
       details = Details.new(PathInfo.new(path))
 
+      index = 0
       root.children.each do |item|
         next unless item.element? && item.name == "item"
-        process_item(item, details, seen)
+        index += 1
+        begin
+          process_item(item, details, seen)
+        rescue e
+          # One malformed item costs only itself, not the whole sitemap, but
+          # the loss still lands in `errors` and `--strict`.
+          record_skipped_entry(path, "item ##{index}", e)
+        end
       end
 
       seen.each_value { |endpoint| @result << endpoint }
@@ -73,6 +74,10 @@ module Analyzer::Specification
         return unless item_url.includes?(@url)
       end
 
+      if target.matches?(/\Ahttps?:\/\//i)
+        return if parse_absolute_url(target).nil?
+      end
+
       path_only, query = split_target(target)
       key = {method, path_only}
       endpoint = seen[key]?
@@ -93,7 +98,9 @@ module Analyzer::Specification
       return "" if raw.empty?
       if node["base64"]? == "true"
         begin
-          return Base64.decode_string(raw)
+          # A binary body (a multipart file upload) is not UTF-8, and the
+          # regex scans below raise on invalid UTF-8. Scrub, as Caido does.
+          return Base64.decode_string(raw).scrub
         rescue
           return ""
         end
@@ -147,9 +154,10 @@ module Analyzer::Specification
     # entries.
     private def split_target(target : String) : Tuple(String, String)
       normalized = target
-      if normalized.starts_with?("http://") || normalized.starts_with?("https://")
+      if normalized.matches?(/\Ahttps?:\/\//i)
         begin
-          uri = URI.parse(normalized)
+          uri = parse_absolute_url(normalized)
+          return {"", ""} unless uri
           path = uri.path
           query = uri.query
           normalized = path.empty? ? "/" : path
@@ -173,7 +181,7 @@ module Analyzer::Specification
         name, _, value = pair.partition('=')
         decoded_name = safe_unescape(name)
         next if decoded_name.empty?
-        push_unique(endpoint, Param.new(decoded_name, safe_unescape(value), "query"))
+        endpoint.push_param(Param.new(decoded_name, safe_unescape(value), "query"))
       end
     end
 
@@ -187,7 +195,7 @@ module Analyzer::Specification
           # automatically or carry no parameter signal.
           next
         else
-          push_unique(endpoint, Param.new(name, value, "header"))
+          endpoint.push_param(Param.new(name, value, "header"))
         end
       end
     end
@@ -198,7 +206,7 @@ module Analyzer::Specification
         next if trimmed.empty?
         name, _, val = trimmed.partition('=')
         next if name.empty?
-        push_unique(endpoint, Param.new(name, val, "cookie"))
+        endpoint.push_param(Param.new(name, val, "cookie"))
       end
     end
 
@@ -220,13 +228,14 @@ module Analyzer::Specification
           name, _, value = pair.partition('=')
           decoded_name = safe_unescape(name)
           next if decoded_name.empty?
-          push_unique(endpoint, Param.new(decoded_name, safe_unescape(value), "form"))
+          endpoint.push_param(Param.new(decoded_name, safe_unescape(value), "form"))
         end
       elsif content_type_lower.includes?("multipart/form-data")
-        # Parameters live in each part's Content-Disposition `name=` attribute.
-        trimmed_body.scan(/name="([^"]+)"/) do |match|
+        # Parameters live in each part's Content-Disposition `name=` attribute
+        # (`\b` keeps a file part's `filename=` from becoming a parameter).
+        trimmed_body.scan(/\bname="([^"]+)"/) do |match|
           name = match[1]
-          push_unique(endpoint, Param.new(name, "", "form"))
+          endpoint.push_param(Param.new(name, "", "form"))
         end
       end
     end
@@ -234,20 +243,15 @@ module Analyzer::Specification
     private def parse_json_body(endpoint : Endpoint, body : String)
       return if body.strip.empty?
       begin
-        parsed = JSON.parse(body)
+        parsed = parse_json_lenient(body)
         if hash = parsed.as_h?
           hash.each_key do |key|
-            push_unique(endpoint, Param.new(key, "", "json"))
+            endpoint.push_param(Param.new(key, "", "json"))
           end
         end
       rescue e
         logger.debug "Failed to parse Burp JSON body for #{endpoint.url}: #{e}"
       end
-    end
-
-    private def push_unique(endpoint : Endpoint, param : Param)
-      return if endpoint.params.any? { |existing| existing.name == param.name && existing.param_type == param.param_type }
-      endpoint.push_param(param)
     end
 
     private def safe_unescape(value : String) : String
@@ -257,13 +261,6 @@ module Analyzer::Specification
       rescue
         value
       end
-    end
-
-    private def find_child(node : XML::Node, name : String) : XML::Node?
-      node.children.each do |child|
-        return child if child.element? && child.name == name
-      end
-      nil
     end
 
     private def child_text(node : XML::Node, name : String) : String

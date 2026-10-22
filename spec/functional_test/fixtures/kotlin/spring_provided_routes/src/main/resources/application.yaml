@@ -1,0 +1,10 @@
+management:
+  endpoints:
+    web:
+      base-path: /mgmt
+      exposure:
+        include: ["*"]
+        exclude: [env, heapdump]
+  endpoint:
+    info:
+      enabled: false

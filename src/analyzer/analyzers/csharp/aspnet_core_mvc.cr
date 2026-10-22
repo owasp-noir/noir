@@ -1,11 +1,56 @@
 require "../../../models/analyzer"
+require "../../../miniparsers/csharp_type_extractor"
 require "./common"
 
 module Analyzer::CSharp
   class AspNetCoreMvc < Analyzer
+    analyzer_for "cs_aspnet_core_mvc"
+
     include Common
 
     DEFAULT_ROUTE = "{controller=Home}/{action=Index}/{id?}"
+
+    TAGGER                       = "aspnet_core_mvc_analyzer"
+    UNRESOLVED_ROUTE_DESCRIPTION = "Route template is a constant the analyzer cannot read; reported at the controller route"
+
+    CONTROLLER_PLACEHOLDER_RE = /\{controller[=:?}]/
+    ACTION_PLACEHOLDER_RE     = /\{action[=:?}]/
+    # `controller = "Home"` or `action = nameof(HomeController.About)`.
+    CONTROLLER_DEFAULT_RE = /\bcontroller\s*=\s*(?:@?"(\w+)"|nameof\s*\(\s*(?:[\w.]+\.)?(\w+))/i
+    ACTION_DEFAULT_RE     = /\baction\s*=\s*(?:@?"(\w+)"|nameof\s*\(\s*(?:[\w.]+\.)?(\w+))/i
+    # Run over the call with its string literals emptied (so the template's
+    # own `{controller=Home}` can't match): a pin set from a constant or
+    # expression, or a `defaults:` object passed in a variable.
+    UNREADABLE_PIN_RE = /\b(?:controller|action)\s*=\s*(?!"|@"|nameof\b)[\w(]|\bdefaults\s*:\s*(?!new\b)\w/i
+    STRING_LITERAL_RE = /@?"[^"]*"/
+
+    # A conventional route template plus the `controller`/`action` its
+    # `defaults` pin. A template without a `{controller}`/`{action}`
+    # placeholder (`blog/{slug}` + `new { controller = "Blog", action =
+    # "Show" }`) reaches only the pinned action, never every action.
+    #
+    # When a needed pin can't be read statically (`action = Actions.About`),
+    # the template is `standalone?`: reported once from its declaration
+    # rather than attached to a guessed action or dropped.
+    record ConventionalRoute, pattern : String, controller : String? = nil, action : String? = nil,
+      unreadable_pin : Bool = false, file : String = "", line : Int32 = 0 do
+      def applies_to?(controller_name : String, action_name : String) : Bool
+        return false if standalone?
+        reaches?(CONTROLLER_PLACEHOLDER_RE, controller, controller_name) &&
+          reaches?(ACTION_PLACEHOLDER_RE, action, action_name)
+      end
+
+      def standalone? : Bool
+        unreadable_pin &&
+          ((controller.nil? && !pattern.matches?(CONTROLLER_PLACEHOLDER_RE)) ||
+            (action.nil? && !pattern.matches?(ACTION_PLACEHOLDER_RE)))
+      end
+
+      private def reaches?(placeholder : Regex, pinned : String?, name : String) : Bool
+        return true if pattern.matches?(placeholder)
+        !pinned.nil? && pinned.compare(name, case_insensitive: true) == 0
+      end
+    end
 
     # Crystal recompiles an interpolated regex literal on every evaluation
     # (a full PCRE2 JIT compile). The `[FromX]` attribute set is fixed, so
@@ -26,10 +71,36 @@ module Analyzer::CSharp
     @param_name_strip_regexes = Hash(String, Regex).new
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
-      route_patterns_by_base = load_route_patterns_by_base
-      analyze_controllers(route_patterns_by_base, include_callee)
+      include_callee = callees_needed?
+      project_roots = Common.project_roots(get_files_by_extension(".csproj"))
+      route_patterns_by_scope = load_route_patterns_by_scope(project_roots)
+      analyze_controllers(route_patterns_by_scope, project_roots, include_callee)
+      route_patterns_by_scope.each_value do |patterns|
+        patterns.each { |pattern| emit_standalone_route(pattern) if pattern.standalone? }
+      end
       @result
+    end
+
+    private def emit_standalone_route(pattern : ConventionalRoute)
+      route = normalize_route(prune_optional_placeholders(pattern.pattern, [] of Param))
+      endpoint = Endpoint.new(route, "GET", Details.new(PathInfo.new(pattern.file, pattern.line)))
+      align_params_with_route([] of Param, route).each { |param| endpoint.params << param }
+      @result << endpoint
+    end
+
+    # Conventional routing is declared per project, so scope the collected
+    # `MapControllerRoute` templates to the `.csproj` directory that owns the
+    # declaring `Program.cs`/`Startup.cs`, falling back to the configured scan
+    # base for files outside any project.
+    #
+    # Keying on the scan base alone cross-products every template in a
+    # solution with every controller in it: dotnet/aspnetcore, scanned as one
+    # project, produced routes like
+    # `/ConventionalTransformerRoute/{controller}/Login` by applying one
+    # sample's template to another sample's controller — 138 of its 738
+    # `cs_aspnet_core_mvc` endpoints were such phantoms.
+    private def route_scope_for(file : String, project_roots : Array(String)) : String
+      Common.project_root_for(file, project_roots) || configured_base_for(file)
     end
 
     private def extract_params_from_block(block : String) : Array(Param)
@@ -64,59 +135,36 @@ module Analyzer::CSharp
       params.uniq(&.name)
     end
 
-    private def extract_bind_params_from_file(block : String, lines : Array(String)) : Array(Param)
-      return [] of Param unless block.includes?("Bind(")
-
-      params = [] of Param
-      masked_lines = Noir::CSharpLexer.new(lines.join('\n')).masked_lines
-      lines.each_with_index do |line, index|
-        next unless line.includes?("Bind(")
-        next unless line.includes?("public") || line.includes?("private") || line.includes?("protected") || line.includes?("internal") || line.includes?("static")
-
-        _, end_idx = build_signature(lines, masked_lines, index)
-        body = extract_method_block(lines, masked_lines, end_idx)
-        params.concat(extract_params_from_block(body))
-      end
-
-      if params.empty? && block =~ /parameters\.Url/
-        params << Param.new("url", "", "query")
-      end
-
-      params.uniq(&.name)
-    end
-
-    private def load_route_patterns_by_base : Hash(String, Array(String))
-      patterns_by_base = Hash(String, Array(String)).new do |hash, key|
-        hash[key] = [] of String
+    private def load_route_patterns_by_scope(project_roots : Array(String)) : Hash(String, Array(ConventionalRoute))
+      patterns_by_scope = Hash(String, Array(ConventionalRoute)).new do |hash, key|
+        hash[key] = [] of ConventionalRoute
       end
       files = get_files_by_extension(".cs").select do |file|
-        base = File.basename(file)
-        base == "Program.cs" || base == "Startup.cs"
+        base = File.basename(file).downcase
+        base == "program.cs" || base == "startup.cs"
       end
 
       files.each do |file|
-        begin
-          content = read_file_content(file)
-          patterns_by_base[configured_base_for(file)].concat(extract_route_patterns(content))
-        rescue e
-          logger.debug "Failed to read #{file}: #{e.message}"
-        end
+        content = read_file_content(file)
+        patterns_by_scope[route_scope_for(file, project_roots)].concat(extract_route_patterns(content, file))
+      rescue e
+        logger.debug "Failed to read #{file}: #{e.message}"
       end
 
       @base_paths.each do |base_path|
-        patterns_by_base[base_path] << DEFAULT_ROUTE if patterns_by_base[base_path].empty?
+        patterns_by_scope[base_path] << ConventionalRoute.new(DEFAULT_ROUTE) if patterns_by_scope[base_path].empty?
       end
 
-      patterns_by_base.each do |base_path, patterns|
-        patterns << DEFAULT_ROUTE if patterns.empty?
-        patterns_by_base[base_path] = patterns.uniq
+      patterns_by_scope.each do |scope, patterns|
+        patterns << ConventionalRoute.new(DEFAULT_ROUTE) if patterns.empty?
+        patterns_by_scope[scope] = patterns.uniq
       end
 
-      patterns_by_base
+      patterns_by_scope
     end
 
-    private def extract_route_patterns(content : String) : Array(String)
-      patterns = [] of String
+    private def extract_route_patterns(content : String, file : String) : Array(ConventionalRoute)
+      patterns = [] of ConventionalRoute
 
       route_regex = /Map[A-Za-z]*ControllerRoute\s*\((.*?)\)/m
       pattern_regex = /pattern\s*:\s*"([^"]+)"/m
@@ -124,11 +172,15 @@ module Analyzer::CSharp
 
       content.scan(route_regex) do |match|
         call_content = match[1]? || ""
+        controller = CONTROLLER_DEFAULT_RE.match(call_content).try { |m| m[1]? || m[2]? }
+        action = ACTION_DEFAULT_RE.match(call_content).try { |m| m[1]? || m[2]? }
+        unreadable = call_content.gsub(STRING_LITERAL_RE, "\"\"").matches?(UNREADABLE_PIN_RE)
+        line = content[0, match.begin].count('\n') + 1
 
         found_pattern = false
         call_content.scan(pattern_regex) do |pattern_match|
           value = pattern_match[1]?
-          patterns << value if value
+          patterns << ConventionalRoute.new(value, controller, action, unreadable, file, line) if value
           found_pattern = true
         end
 
@@ -136,43 +188,265 @@ module Analyzer::CSharp
         unless found_pattern
           call_content.scan(literal_regex) do |literal_match|
             candidate = literal_match[1]?
-            patterns << candidate if candidate && !candidate.empty?
+            patterns << ConventionalRoute.new(candidate, controller, action, unreadable, file, line) if candidate && !candidate.empty?
           end
         end
       end
 
       if content.includes?("MapDefaultControllerRoute")
-        patterns << DEFAULT_ROUTE
+        patterns << ConventionalRoute.new(DEFAULT_ROUTE)
       end
 
       patterns
     end
 
-    private def analyze_controllers(route_patterns_by_base : Hash(String, Array(String)), include_callee : Bool)
-      controller_files = get_files_by_extension(".cs").select do |file|
-        base = File.basename(file)
-        next false if Common.csharp_test_path?(file)
-        base.includes?("Controller") && !base.ends_with?("RouteConfig.cs") && base != "Program.cs" && base != "Startup.cs"
+    # Discovery reads the whole solution, so the gate in front of `CSharpLexer`
+    # decides what the analyzer costs: bitwarden/server ships 5,512 `.cs` files
+    # and 277 controllers, and lexing all of them is a 5-6x scan.
+    #
+    # Every intrinsic controller marker is visible in the declaring source —
+    # the `*Controller` name suffix, `[Controller]`/`[ApiController]`, and the
+    # `Controller`/`ControllerBase` framework bases. Those files are lexed
+    # up front. A type can still inherit a marker from a local base
+    # (`class Users : BaseApiEndpoint`), so the files that name one of the
+    # marked types are pulled in afterwards, and those that never spell
+    # `Controller` at all only have to be checked against marked names that
+    # do not spell it either — in practice none, so the bulk of a solution is
+    # never read past the substring test.
+    CONTROLLER_MARKER          = "Controller"
+    FRAMEWORK_CONTROLLER_BASES = {"Controller", "ControllerBase"}
+    CONTROLLER_SUFFIX_RE       = /Controller$/i
+    CONTROLLER_MARKER_RE       = /Controller/
+    CONTROLLER_DECLARATION_RE  = /\bclass\s+\w*Controller\b|[\[,]\s*(?:global::)?(?:\w+\.)*(?:Api)?Controller(?:Attribute)?\s*[\]\(,]|:\s*(?:global::)?(?:\w+\.)*Controller(?:Base)?\b/
+    # Only a class with a base list can inherit a marker it does not declare.
+    DERIVED_CLASS_RE = /\bclass\s+\w+[^{};]*+:/
+
+    private def analyze_controllers(route_patterns_by_scope : Hash(String, Array(ConventionalRoute)),
+                                    project_roots : Array(String), include_callee : Bool)
+      queue = [] of String  # declares an intrinsic marker — lex now
+      marked = [] of String # mentions `Controller`; may derive from a marked type
+      plain = [] of String  # never mentions it; only a marker-free base can reach it
+      get_files_by_extension(".cs").each do |file|
+        next if Common.csharp_test_path?(base_relative_path(file))
+        source = file_source(file)
+        # `Controller` gates the expensive test: an intrinsic marker always
+        # contains it, so a file without it can only ever be reached through a
+        # marker-free base, and most of a solution stops here.
+        if source.matches?(CONTROLLER_MARKER_RE)
+          if source.matches?(CONTROLLER_DECLARATION_RE)
+            queue << file
+            next
+          end
+          marked << file if source.matches?(DERIVED_CLASS_RE)
+        elsif source.matches?(DERIVED_CLASS_RE)
+          plain << file
+        end
       end
 
-      controller_files.each do |file|
-        route_patterns = route_patterns_by_base[configured_base_for(file)]? || [DEFAULT_ROUTE]
-        analyze_controller_file(file, route_patterns, include_callee)
+      types_by_scope = Hash(String, Array(Tuple(String, Noir::CSharpType))).new do |hash, key|
+        hash[key] = [] of Tuple(String, Noir::CSharpType)
+      end
+      extracted = Set(String).new
+      all_types = [] of Noir::CSharpType
+      class_routes = Hash(Noir::CSharpType, ClassRoutes).new
+
+      until queue.empty?
+        queue.each do |file|
+          next unless extracted.add?(file)
+          lexer = file_lexer(file)
+          next unless lexer
+          next if Common.aspnet_framework_source?(lexer.code_source)
+          scope = route_scope_for(file, project_roots)
+          Noir::CSharpTypeExtractor.extract(lexer).each do |type|
+            types_by_scope[scope] << {file, type}
+            all_types << type
+            class_routes[type] = class_header_routes(lexer, type)
+          end
+        end
+
+        queue = [] of String
+        names = marker_base_names(all_types)
+        next if names.empty?
+        queue.concat(take_files_naming(marked, names))
+        queue.concat(take_files_naming(plain, names.reject(&.includes?(CONTROLLER_MARKER))))
+      end
+
+      # Selected controllers grouped by file so a file holding several of them
+      # is lexed once, not once per class.
+      selected = Hash(String, Array(Tuple(Noir::CSharpType, Array(ConventionalRoute), ClassRoutes))).new do |hash, key|
+        hash[key] = [] of Tuple(Noir::CSharpType, Array(ConventionalRoute), ClassRoutes)
+      end
+      types_by_scope.each do |scope, entries|
+        index = Hash(String, Array(Noir::CSharpType)).new
+        entries.each { |_, type| (index[type.name] ||= [] of Noir::CSharpType) << type }
+        route_patterns = route_patterns_by_scope[scope]? || [ConventionalRoute.new(DEFAULT_ROUTE)]
+        entries.each do |file, type|
+          # A `partial` controller splits its modifiers, base list and
+          # attributes across files: only one part carries `public class
+          # FooController : ControllerBase`, the rest are bare `partial class
+          # FooController`. Decide on the union, then analyze this part.
+          parts = declaration_parts(type, index)
+          modifiers = parts.flat_map(&.modifiers)
+          next unless modifiers.includes?("public")
+          next if parts.any?(&.generic) || modifiers.includes?("abstract") || modifiers.includes?("static")
+          attributes = controller_attributes(parts, index)
+          next if attributes.includes?("NonController")
+          next unless CONTROLLER_SUFFIX_RE.matches?(type.name) ||
+                      attributes.includes?("Controller") || attributes.includes?("ApiController")
+          selected[file] << {type, route_patterns, inherited_class_routes(parts, index, class_routes)}
+        end
+      end
+
+      selected.each do |file, controllers|
+        lexer = file_lexer(file)
+        next unless lexer
+        controllers.each do |type, route_patterns, routes|
+          analyze_controller(file, lexer, type, route_patterns, routes, include_callee)
+        end
       end
     end
 
-    private def analyze_controller_file(file : String, route_patterns : Array(String), include_callee : Bool)
-      return unless File.exists?(file)
+    # Moves the files naming one of `names` out of `pool` and returns them.
+    private def take_files_naming(pool : Array(String), names : Array(String)) : Array(String)
+      return [] of String if pool.empty? || names.empty?
+      referenced = Regex.union(names.map { |name| /\b#{Regex.escape(name)}\b/ })
+      hits = [] of String
+      keep = [] of String
+      pool.each do |file|
+        if file_source(file).matches?(referenced)
+          hits << file
+        else
+          keep << file
+        end
+      end
+      pool.replace(keep)
+      hits
+    end
 
-      content = read_file_content(file)
-      return unless content.includes?("Controller")
+    private def file_source(file : String) : String
+      read_file_content(file)
+    rescue e
+      logger.debug "Failed to read #{file}: #{e.message}"
+      ""
+    end
 
-      controller_name = extract_controller_name(content)
-      return if controller_name.empty?
+    private def file_lexer(file : String) : Noir::CSharpLexer?
+      Noir::CSharpLexer.new(read_file_content(file))
+    rescue e
+      logger.debug "Failed to read #{file}: #{e.message}"
+      nil
+    end
 
-      controller_route = extract_controller_route(content)
-      lines = content.lines
-      masked_lines = Noir::CSharpLexer.new(content).masked_lines
+    # Names whose subclasses inherit a controller marker. The `*Controller`
+    # name suffix is deliberately absent: ASP.NET Core reads it off the
+    # candidate type itself, never off a base (`class Unmarked :
+    # UnmarkedController` is not a controller).
+    private def marker_base_names(types : Array(Noir::CSharpType)) : Array(String)
+      names = Set(String).new
+      types.each do |type|
+        base = type.base_name
+        names << type.name if type.attributes.includes?("Controller") ||
+                              type.attributes.includes?("ApiController") ||
+                              (base && FRAMEWORK_CONTROLLER_BASES.includes?(base))
+      end
+      loop do
+        added = false
+        types.each do |type|
+          next if names.includes?(type.name)
+          base = type.base_name
+          next unless base && names.includes?(base)
+          names << type.name
+          added = true
+        end
+        break unless added
+      end
+      names.to_a
+    end
+
+    # The parts of one `partial` declaration, or just the type itself. Parts
+    # are matched by simple name, so only `partial` types are grouped: two
+    # unrelated `Helper` classes in different namespaces must not merge.
+    private def declaration_parts(type : Noir::CSharpType,
+                                  index : Hash(String, Array(Noir::CSharpType))) : Array(Noir::CSharpType)
+      return [type] unless type.modifiers.includes?("partial")
+      parts = (index[type.name]? || [type]).select(&.modifiers.includes?("partial"))
+      parts.empty? ? [type] : parts
+    end
+
+    private def controller_attributes(parts : Array(Noir::CSharpType),
+                                      index : Hash(String, Array(Noir::CSharpType)),
+                                      visited = Set(String).new) : Array(String)
+      attributes = [] of String
+      parts.each { |part| attributes.concat(part.attributes) }
+      return attributes unless visited.add?(parts.first.name)
+
+      parts.each do |part|
+        next unless base = part.base_name
+        candidates = index[base]?
+        if candidates.nil? || candidates.empty?
+          attributes << "Controller" if FRAMEWORK_CONTROLLER_BASES.includes?(base)
+          next
+        end
+        # More than one local declaration of the same simple name is ambiguous
+        # without namespace resolution — unless they are the parts of one
+        # `partial` type.
+        next unless candidates.size == 1 || candidates.all?(&.modifiers.includes?("partial"))
+        attributes.concat(controller_attributes(candidates, index, visited))
+      end
+      attributes
+    end
+
+    # The `[Route]` templates and `[Area]` name a controller class declares.
+    alias ClassRoutes = Tuple(Array(String), String?)
+
+    CLASS_ROUTE_RE = /(?:\[|,)\s*(?:global::)?(?:\w+\.)*Route(?:Attribute)?\s*\(\s*(?:template\s*:\s*)?@?"([^"]+)"/
+    CLASS_AREA_RE  = /(?:\[|,)\s*(?:global::)?(?:\w+\.)*Area(?:Attribute)?\s*\(\s*(?:areaName\s*:\s*)?@?"([^"]+)"/
+
+    # Reads the class's own attribute list (every line of it, however many
+    # other attributes sit between `[Route]` and `class`).
+    private def class_header_routes(lexer : Noir::CSharpLexer, type : Noir::CSharpType) : ClassRoutes
+      header_end = Math.min(type.start_line + type.header.count('\n'), lexer.code_lines.size - 1)
+      header = lexer.code_lines[type.start_line..header_end].join('\n')
+      routes = header.scan(CLASS_ROUTE_RE).map(&.[1])
+      {routes, CLASS_AREA_RE.match(header).try(&.[1])}
+    end
+
+    # `[Route]` and `[Area]` are `Inherited = true`: a controller without its
+    # own takes them from the nearest base class that declares them.
+    private def inherited_class_routes(parts : Array(Noir::CSharpType),
+                                       index : Hash(String, Array(Noir::CSharpType)),
+                                       class_routes : Hash(Noir::CSharpType, ClassRoutes),
+                                       visited = Set(String).new) : ClassRoutes
+      routes = parts.flat_map { |part| class_routes[part]?.try(&.[0]) || [] of String }.uniq!
+      area = parts.compact_map { |part| class_routes[part]?.try(&.[1]) }.first?
+      return {routes, area} if !routes.empty? && area
+      return {routes, area} unless visited.add?(parts.first.name)
+
+      parts.each do |part|
+        next unless base = part.base_name
+        candidates = index[base]?
+        next if candidates.nil? || candidates.empty?
+        next unless candidates.size == 1 || candidates.all?(&.modifiers.includes?("partial"))
+        base_routes, base_area = inherited_class_routes(candidates, index, class_routes, visited)
+        routes = base_routes if routes.empty?
+        area ||= base_area
+        break
+      end
+      {routes, area}
+    end
+
+    private def analyze_controller(file : String, lexer : Noir::CSharpLexer, type : Noir::CSharpType,
+                                   route_patterns : Array(ConventionalRoute), class_routes : ClassRoutes,
+                                   include_callee : Bool)
+      controller_name = type.name.sub(CONTROLLER_SUFFIX_RE, "")
+      # Slice the file's already-lexed views down to this class. `line_offset`
+      # puts the reported line back in file coordinates.
+      line_offset = type.start_line
+      lines = lexer.code_lines[type.start_line..type.end_line]
+      masked_lines = lexer.masked_lines[type.start_line..type.end_line]
+      # One route per controller `[Route]`; none falls back to conventional routing.
+      controller_routes, area = class_routes
+      controller_routes = [""] if controller_routes.empty?
 
       # Accumulate every `[Http<Verb>(...)]` on the pending action so a method
       # carrying more than one (`[HttpGet(...)]` + `[HttpHead(...)]` for image/
@@ -183,38 +457,58 @@ module Analyzer::CSharp
       route_attr = ""
       explicit_endpoint_attribute = false
       non_action_attribute = false
-      in_class = false
+      # `[HttpGet(ApiRoutes.X)]`: the route is a constant we cannot read. The
+      # action is still reported, at the class (or conventional) route, and
+      # tagged so the missing suffix is not mistaken for the full path.
+      unresolved_verbs = Set(String).new
+      # `[ActionName("List")]` names the action in the route (`[action]` token
+      # and conventional routing), whatever the method is called.
+      renamed_action : String? = nil
+      depth = 0
 
       i = 0
       while i < lines.size
+        start_index = i
         line = lines[i]
 
-        in_class = true if line.includes?("class") && line.includes?("Controller")
-        if in_class
+        if depth == 1
           # Stitch together a multi-line `[Http<Verb>(\n   "/path",\n
           # Order = 1\n)]` attribute before running the
           # single-line matcher. The `[Http*]` opener arrives without
           # a closing paren on the same line, the path literal lives
           # on a subsequent line; the per-line matcher only
           # saw `[HttpPost(` and recorded POST with an empty path.
-          attr_line, advance = stitch_multiline_attribute(lines, i)
+          attr_line, advance = stitch_multiline_attribute(lines, masked_lines, i)
           line = attr_line if advance > 0
 
-          verb, verb_route, route_attr, found_attribute = collect_verb_route(line, route_attr)
-          explicit_endpoint_attribute ||= found_attribute
-          verb_routes << {verb, verb_route} if verb
+          if accept = collect_accept_verbs(line, route_attr)
+            accept_verbs, accept_route = accept
+            accept_verbs.each { |accept_verb| verb_routes << {accept_verb, accept_route} }
+            explicit_endpoint_attribute = true
+          else
+            verb, verb_route, route_attr, found_attribute, unresolved = collect_verb_route(line, route_attr)
+            explicit_endpoint_attribute ||= found_attribute
+            if verb
+              verb_routes << {verb, verb_route}
+              unresolved_verbs << verb if unresolved
+            end
+          end
           non_action_attribute = true if line.includes?("[NonAction")
+          if rename = ACTION_NAME_RE.match(line)
+            renamed_action = rename[1]
+          end
 
           # Skip the continuation lines we just consumed; they're
           # already folded into `line`.
           i += advance if advance > 0
         end
 
-        if in_class && potential_action_signature?(line)
+        if depth == 1 && potential_member_signature?(masked_lines[i])
           signature, end_index = build_signature(lines, masked_lines, i)
-          if !non_action_attribute && action_method?(signature, explicit_endpoint_attribute)
+          if signature.matches?(/\bpublic\b/) && !non_action_attribute && action_method?(signature, explicit_endpoint_attribute)
             action_name = extract_action_name(signature)
             unless action_name.empty?
+              action_name = renamed_action || action_name
               body_block, body_line, skip_first = extract_callable_body(lines, masked_lines, end_index)
               body_params = extract_params_from_block(body_block)
 
@@ -228,40 +522,41 @@ module Analyzer::CSharp
                 emit_route = route_attr if emit_route.empty? && !route_attr.empty?
                 parameters = extract_parameters(signature, emit_verb)
                 parameters = merge_params(parameters, body_params, emit_verb)
-                effective_action_route = emit_route
-                if !controller_route.empty? && controller_route == effective_action_route
-                  effective_action_route = ""
-                end
-                routes = resolve_routes(controller_route, effective_action_route, controller_name, action_name, parameters, route_patterns)
+                routes = controller_routes.flat_map do |controller_route|
+                  effective_action_route = emit_route
+                  if !controller_route.empty? && controller_route == effective_action_route
+                    effective_action_route = ""
+                  end
+                  resolve_routes(controller_route, effective_action_route, controller_name, action_name, parameters, route_patterns, area)
+                end.uniq!
 
                 routes.each do |route|
-                  details = Details.new(PathInfo.new(file, i + 1))
+                  details = Details.new(PathInfo.new(file, line_offset + i + 1))
                   endpoint = Endpoint.new(route, emit_verb, details)
 
                   align_params_with_route(parameters, route).each do |param|
                     endpoint.params << param
                   end
 
-                  attach_csharp_callees(endpoint, body_block, file, body_line + 1, include_callee, skip_first_line: skip_first)
+                  endpoint.add_tag(Tag.new("unresolved-route", UNRESOLVED_ROUTE_DESCRIPTION, TAGGER)) if unresolved_verbs.includes?(emit_verb)
+                  attach_csharp_callees(endpoint, body_block, file, line_offset + body_line + 1, include_callee, skip_first_line: skip_first)
                   @result << endpoint
                 end
               end
-
-              verb_routes = [] of Tuple(String, String)
-              route_attr = ""
-              explicit_endpoint_attribute = false
-              non_action_attribute = false
             end
           end
-          if non_action_attribute
-            verb_routes = [] of Tuple(String, String)
-            route_attr = ""
-            explicit_endpoint_attribute = false
-          end
+          verb_routes.clear
+          route_attr = ""
+          explicit_endpoint_attribute = false
           non_action_attribute = false
+          unresolved_verbs.clear
+          renamed_action = nil
           i = end_index
         end
 
+        (start_index..i).each do |index|
+          depth += masked_lines[index].count('{') - masked_lines[index].count('}')
+        end
         i += 1
       end
     end
@@ -273,15 +568,18 @@ module Analyzer::CSharp
     # where `advance` is the number of *extra* lines consumed; the
     # caller adds that to its loop index. A non-multi-line case
     # returns `{line, 0}` so the existing fast path is preserved.
-    private def stitch_multiline_attribute(lines : Array(String), start : Int32) : Tuple(String, Int32)
+    private def stitch_multiline_attribute(lines : Array(String), masked : Array(String), start : Int32) : Tuple(String, Int32)
       line = lines[start]
-      return {line, 0} unless line =~ /\[(Http(Post|Get|Put|Delete|Patch|Head|Options)|Route)\b/
+      return {line, 0} unless line =~ /\[(Http(Post|Get|Put|Delete|Patch|Head|Options)|Route|AcceptVerbs)\b/
 
-      # The attribute closes when paren+bracket depth returns to
-      # zero. If the opening line is already balanced (paren and
-      # bracket both close on the same line), no stitching needed.
-      paren = line.count('(') - line.count(')')
-      bracket = line.count('[') - line.count(']')
+      # The attribute closes when paren+bracket depth returns to zero. Depth is
+      # counted over `masked` — a route template is free to carry a literal
+      # `(` or `[` (`[HttpGet("smile-(-face")]`), and counting those as
+      # structure leaves the attribute permanently unbalanced, swallowing every
+      # remaining line of the class. If the opening line is already balanced,
+      # no stitching is needed.
+      paren = delimiter_depth(masked, start, '(', ')')
+      bracket = delimiter_depth(masked, start, '[', ']')
       return {line, 0} if paren <= 0 && bracket <= 0
 
       joined = line.rstrip
@@ -291,15 +589,57 @@ module Analyzer::CSharp
       # unbalanced brackets can't blow up the scan.
       max_read = (start + 8).clamp(0, lines.size - 1)
       while idx <= max_read
-        nxt = lines[idx]
-        joined += " " + nxt.strip
-        paren += nxt.count('(') - nxt.count(')')
-        bracket += nxt.count('[') - nxt.count(']')
+        joined += " " + lines[idx].strip
+        paren += delimiter_depth(masked, idx, '(', ')')
+        bracket += delimiter_depth(masked, idx, '[', ']')
         break if paren <= 0 && bracket <= 0
         idx += 1
       end
 
-      {joined, idx - start}
+      # An attribute that never balances runs `idx` one past `max_read`, which
+      # is the last line. The caller indexes `lines`/`masked_lines` with the
+      # advanced cursor, so it must stay in range.
+      {joined, idx.clamp(start, lines.size - 1) - start}
+    end
+
+    private def delimiter_depth(masked : Array(String), index : Int32, open : Char, close : Char) : Int32
+      line = masked[index]?
+      return 0 unless line
+      line.count(open) - line.count(close)
+    end
+
+    # `[AcceptVerbs("PUT", "PATCH")]` / `[AcceptVerbs("PUT", Route = "Bank")]`
+    # declares an action answering several verbs at one route — the MVC
+    # equivalent of stacking `[HttpPut]` and `[HttpPatch]`. It was ignored
+    # entirely, so such actions fell back to the conventional GET route.
+    ACCEPT_VERBS_RE       = /\[AcceptVerbs\s*\(([^\]]*)\)\s*\]/
+    ACCEPT_VERBS_ROUTE_RE = /\bRoute\s*=\s*@?"([^"]+)"/
+    # ASP.NET Core routing has always accepted an arbitrary method string
+    # through `[AcceptVerbs(...)]`; QUERY (RFC 10008) ships natively as
+    # `HttpMethods.Query` starting with .NET 10.
+    ACCEPT_VERB_TOKENS = %w[GET POST PUT DELETE PATCH HEAD OPTIONS QUERY]
+
+    private def collect_accept_verbs(line : String, route_attr : String) : Tuple(Array(String), String)?
+      match = ACCEPT_VERBS_RE.match(line)
+      return unless match
+
+      args = match[1]
+      route = ACCEPT_VERBS_ROUTE_RE.match(args).try(&.[1]) || route_attr
+      verbs = [] of String
+      args.scan(/@?"([^"]+)"/) do |literal|
+        token = literal[1].upcase
+        next unless ACCEPT_VERB_TOKENS.includes?(token)
+        verbs << token unless verbs.includes?(token)
+      end
+      # `HttpMethods.Put`-style arguments carry the verb as an identifier.
+      args.scan(/\bHttpMethods\s*\.\s*([A-Za-z]+)/) do |token|
+        upcased = token[1].upcase
+        next unless ACCEPT_VERB_TOKENS.includes?(upcased)
+        verbs << upcased unless verbs.includes?(upcased)
+      end
+      return if verbs.empty?
+
+      {verbs, route}
     end
 
     # Attribute name carrying each verb, for `extract_attribute_route`.
@@ -313,28 +653,38 @@ module Analyzer::CSharp
       "[HttpOptions" => {"OPTIONS", "HttpOptions"},
     }
 
-    # Classify one attribute line. Returns `{verb, verb_route, route_attr, found}`:
-    # for an `[Http<Verb>(...)]` the verb + its route (falling back to the
-    # `[Route]` base for a path-less attribute), with `route_attr` left
-    # unchanged; for a verb-less `[Route("x")]` the new base in `route_attr`
-    # (verb `nil`); for any other line, no change and `found = false`. Keeping
-    # the verb separate lets the caller accumulate several verbs on one method.
-    private def collect_verb_route(line : String, route_attr : String) : Tuple(String?, String, String, Bool)
+    # Classify one attribute line. Returns `{verb, verb_route, route_attr, found,
+    # unresolved}`: for an `[Http<Verb>(...)]` the verb + its route (falling back
+    # to the `[Route]` base for a path-less attribute), with `route_attr` left
+    # unchanged, and `unresolved` when its route argument is a constant this
+    # analyzer cannot read; for a verb-less `[Route("x")]` the new base in
+    # `route_attr` (verb `nil`); for any other line, no change and `found =
+    # false`. Keeping the verb separate lets the caller accumulate several
+    # verbs on one method.
+    private def collect_verb_route(line : String, route_attr : String) : Tuple(String?, String, String, Bool, Bool)
       VERB_ATTRIBUTES.each do |marker, pair|
         next unless line.includes?(marker)
         verb, attr = pair
-        return {verb, extract_attribute_route(line, attr, route_attr), route_attr, true}
+        route = extract_attribute_route(line, attr)
+        return {verb, route || route_attr, route_attr, true, route.nil? && line.matches?(UNRESOLVED_ROUTE_ARG_RE)}
       end
 
       if line.includes?("[Route")
-        return {nil, route_attr, extract_attribute_route(line, "Route", route_attr), true}
+        return {nil, route_attr, extract_attribute_route(line, "Route") || route_attr, true, false}
       end
 
-      {nil, route_attr, route_attr, false}
+      {nil, route_attr, route_attr, false, false}
     end
 
-    private def potential_action_signature?(line : String) : Bool
-      line.includes?("public") && line.includes?("(") && !line.includes?(" class ")
+    ACCESS_MODIFIER_RE = /\b(?:public|private|protected|internal)\b/
+    # `class`/`struct`/`interface`/`enum` are reserved, so their presence alone
+    # marks a type declaration. `record` is contextual and a perfectly legal
+    # parameter name (`Save(AuditRecord record)`) — it only declares a type
+    # when an identifier follows it.
+    TYPE_DECLARATION_RE = /\b(?:class|struct|interface|enum)\b|\brecord\s+(?:class\s+|struct\s+)?\w+\s*[<({]/
+
+    private def potential_member_signature?(line : String) : Bool
+      line.matches?(ACCESS_MODIFIER_RE) && line.includes?("(") && !line.matches?(TYPE_DECLARATION_RE)
     end
 
     private def action_method?(signature : String, explicit_endpoint_attribute : Bool) : Bool
@@ -348,24 +698,12 @@ module Analyzer::CSharp
         signature.matches?(/Task\s*<\s*(?:IEnumerable|List|PagedResult|Result|Response|[A-Z]\w*)/)
     end
 
-    private def extract_controller_name(content : String) : String
-      # Any class whose name ends in `Controller` is a controller in ASP.NET
-      # Core, regardless of its base list — so we no longer require a
-      # `: Controller`/`: ControllerBase` suffix. This covers:
-      #   * POCO controllers with no base class (`class UsersController { }`),
-      #   * custom base classes (`: BaseApiController`),
-      #   * C# 12 primary constructors (`class ArticlesController(IMediator m)`),
-      #   * generic controllers (`class CrudController<T>`).
-      # The enclosing file is already filtered to `*Controller.cs`, so the
-      # match is unambiguous. `\b` after `Controller` avoids matching
-      # `FooControllerOptions`-style helper types.
-      match = content.match(/\bclass\s+(\w+)Controller\b/)
-      return "" unless match
-      match[1]
-    end
-
     private def extract_action_name(signature : String) : String
-      match = signature.match(/public\s+(?:async\s+)?(?:override\s+)?(?:virtual\s+)?[\w<>\[\],\s]+\s+(\w+)\s*\(/)
+      # `.` and `?` belong in the return type: `Task<long?>`,
+      # `ActionResult<UserItemDataDto?>` and
+      # `Task<Bit.HttpExtensions.ListResponseModel<T>>` are all real action
+      # signatures that a `[\w<>\[\],\s]` class cannot span.
+      match = signature.match(/public\s+(?:async\s+)?(?:override\s+)?(?:virtual\s+)?[\w<>\[\],\s.?]+\s+(\w+)\s*\(/)
       return "" unless match
       match[1]
     end
@@ -382,6 +720,7 @@ module Analyzer::CSharp
       default_param_type = default_param_type(http_method)
 
       split_csharp_parameters(param_list).each do |param_def|
+        explicit_name = Common.explicit_binding_name(param_def)
         cleaned_def, param_type = normalize_param_definition(param_def)
         next if cleaned_def.empty?
         next if param_type == "service"
@@ -399,7 +738,7 @@ module Analyzer::CSharp
             next if type_token && Common.csharp_service_type?(type_token)
           end
 
-          parameters << Param.new(param_name, "", param_type || default_param_type)
+          parameters << Param.new(explicit_name || param_name, "", param_type || default_param_type)
         end
       end
 
@@ -408,7 +747,10 @@ module Analyzer::CSharp
 
     private def default_param_type(http_method : String) : String
       case http_method
-      when "POST", "PUT", "PATCH"
+      when "POST", "PUT", "PATCH", "QUERY"
+        # QUERY (RFC 10008) carries its criteria in the request body, same as
+        # POST — an unattributed complex-type parameter binds from there, not
+        # the URL query string.
         "form"
       else
         "query"
@@ -447,59 +789,47 @@ module Analyzer::CSharp
       merged
     end
 
-    private def extract_controller_route(content : String) : String
-      lines = content.lines
-      lines.each_with_index do |line, index|
-        if line =~ /class\s+\w+Controller/
-          search_index = index - 1
-          while search_index >= 0 && search_index >= index - 5
-            candidate_line = lines[search_index]
-            if candidate_line.includes?("[Route")
-              route = extract_attribute_route(candidate_line, "Route", "")
-              return route unless route.empty?
-            end
-            search_index -= 1
-          end
-          break
-        end
-      end
-      ""
-    end
-
+    # The attribute's own parens only: in `[HttpPost, ActionName("List")]` or
+    # `[HttpGet][Authorize("Policy")]` the literal belongs to the sibling
+    # attribute, not to a route.
     private ATTRIBUTE_REGEXES = {
-      "HttpPost"    => /\[HttpPost[^(]*+\(\s*"([^"]+)"/,
-      "HttpGet"     => /\[HttpGet[^(]*+\(\s*"([^"]+)"/,
-      "HttpPut"     => /\[HttpPut[^(]*+\(\s*"([^"]+)"/,
-      "HttpDelete"  => /\[HttpDelete[^(]*+\(\s*"([^"]+)"/,
-      "HttpPatch"   => /\[HttpPatch[^(]*+\(\s*"([^"]+)"/,
-      "HttpHead"    => /\[HttpHead[^(]*+\(\s*"([^"]+)"/,
-      "HttpOptions" => /\[HttpOptions[^(]*+\(\s*"([^"]+)"/,
-      "Route"       => /\[Route[^(]*+\(\s*"([^"]+)"/,
+      "HttpPost"    => /\[HttpPost(?:Attribute)?\s*\(\s*"([^"]+)"/,
+      "HttpGet"     => /\[HttpGet(?:Attribute)?\s*\(\s*"([^"]+)"/,
+      "HttpPut"     => /\[HttpPut(?:Attribute)?\s*\(\s*"([^"]+)"/,
+      "HttpDelete"  => /\[HttpDelete(?:Attribute)?\s*\(\s*"([^"]+)"/,
+      "HttpPatch"   => /\[HttpPatch(?:Attribute)?\s*\(\s*"([^"]+)"/,
+      "HttpHead"    => /\[HttpHead(?:Attribute)?\s*\(\s*"([^"]+)"/,
+      "HttpOptions" => /\[HttpOptions(?:Attribute)?\s*\(\s*"([^"]+)"/,
+      "Route"       => /\[Route(?:Attribute)?\s*\(\s*"([^"]+)"/,
     }
+
+    # A `Route("x")` anywhere on the line (`[HttpDelete, EnableRateLimiting("f"),
+    # Route("rm")]`) routes a verb attribute that has no literal of its own.
+    private ROUTE_OWN_RE = /\bRoute(?:Attribute)?\s*\(\s*"([^"]+)"/
 
     private TEMPLATE_REGEX = /Template\s*=\s*"([^"]+)"/
 
-    private def extract_attribute_route(line : String, attribute : String, current_route : String) : String
-      # Try to extract the first string literal inside the attribute
-      regex_with_value = ATTRIBUTE_REGEXES[attribute]? || Regex.new("\\[#{attribute}[^(]*+\\(\\s*\"([^\"]+)\"")
+    # A verb attribute whose first positional argument is not a string literal
+    # or a named argument (`[HttpGet(ApiRoutes.Attendees.Get)]`,
+    # `[HttpGet(Const + "/x")]`): the route exists but cannot be read here, so
+    # the action is reported at the class route with an `unresolved-route` tag.
+    private UNRESOLVED_ROUTE_ARG_RE = /\[Http(?:Post|Get|Put|Delete|Patch|Head|Options)(?:Attribute)?\s*\(\s*(?!["@$]|\w+\s*[=:])[A-Za-z_]/
 
-      if match = regex_with_value.match(line)
-        return match[1]
-      end
+    private ACTION_NAME_RE = /\bActionName(?:Attribute)?\s*\(\s*"([^"]+)"/
 
-      if match = TEMPLATE_REGEX.match(line)
-        return match[1]
-      end
-
-      current_route
+    # The route template the attribute declares, or nil when the line carries
+    # none (the caller keeps its current route).
+    private def extract_attribute_route(line : String, attribute : String) : String?
+      (ATTRIBUTE_REGEXES[attribute].match(line) || ROUTE_OWN_RE.match(line) || TEMPLATE_REGEX.match(line)).try(&.[1])
     end
 
-    private def resolve_routes(controller_route : String, action_route : String, controller_name : String, action_name : String, parameters : Array(Param), route_patterns : Array(String)) : Array(String)
-      routes = build_attribute_routes(controller_route, action_route, controller_name, action_name, parameters)
+    private def resolve_routes(controller_route : String, action_route : String, controller_name : String, action_name : String, parameters : Array(Param), route_patterns : Array(ConventionalRoute), area : String? = nil) : Array(String)
+      routes = build_attribute_routes(controller_route, action_route, controller_name, action_name, parameters, area)
 
       if routes.empty?
         route_patterns.each do |pattern|
-          raw_route = replace_tokens(pattern, controller_name, action_name)
+          next unless pattern.applies_to?(controller_name, action_name)
+          raw_route = replace_tokens(pattern.pattern, controller_name, action_name)
           raw_route = prune_optional_placeholders(raw_route, parameters)
           routes << normalize_route(raw_route)
         end
@@ -508,20 +838,21 @@ module Analyzer::CSharp
       routes.uniq
     end
 
-    private def build_attribute_routes(controller_route : String, action_route : String, controller_name : String, action_name : String, parameters : Array(Param)) : Array(String)
+    private def build_attribute_routes(controller_route : String, action_route : String, controller_name : String, action_name : String, parameters : Array(Param), area : String? = nil) : Array(String)
       routes = [] of String
       has_controller_route = !controller_route.empty?
       has_action_route = !action_route.empty?
 
       return routes unless has_controller_route || has_action_route
 
-      base_route = replace_tokens(controller_route, controller_name, action_name)
-      action_part = replace_tokens(action_route, controller_name, action_name)
+      base_route = replace_tokens(controller_route, controller_name, action_name, area)
+      action_part = replace_tokens(action_route, controller_name, action_name, area)
 
       if !has_action_route
         raw_route = prune_optional_placeholders(base_route, parameters)
         routes << normalize_route(raw_route) unless raw_route.empty?
-      elsif action_part.starts_with?("/")
+      elsif action_part.starts_with?("/") || action_part.starts_with?("~/")
+        # `/x` and `~/x` both override the controller's `[Route]` prefix.
         raw_route = prune_optional_placeholders(action_part, parameters)
         routes << normalize_route(raw_route)
       else
@@ -533,10 +864,11 @@ module Analyzer::CSharp
       routes
     end
 
-    private def replace_tokens(route : String, controller_name : String, action_name : String) : String
+    private def replace_tokens(route : String, controller_name : String, action_name : String, area : String? = nil) : String
       return "" if route.empty?
 
       normalized = route.strip
+      normalized = normalized.gsub("[area]", area) if area
       normalized = normalized.gsub("[controller]", controller_name)
       normalized = normalized.gsub("{controller}", controller_name)
       normalized = normalized.gsub(/{controller=[^}]+}/, controller_name)
@@ -549,32 +881,11 @@ module Analyzer::CSharp
 
     private def normalize_route(route : String) : String
       normalized = route.strip
+      normalized = normalized.lchop('~') if normalized.starts_with?("~/") # app-root marker
       normalized = normalized.gsub(/^\//, "").gsub(/\/+/, "/")
       normalized = "/" + normalized unless normalized.starts_with?("/")
       normalized = "/" if normalized == "//" || normalized == "/"
       normalized
-    end
-
-    private def build_endpoint_from_route(raw_route : String, http_method : String, file : String, line : Int32, extra_params : Array(Param) = [] of Param) : Endpoint?
-      return if raw_route.empty?
-
-      route = normalize_route(raw_route)
-      params = build_path_params(route)
-      extra_params.each do |param|
-        params << param unless params.any? { |p| p.name == param.name && p.param_type == param.param_type }
-      end
-      route = prune_optional_placeholders(route, params)
-
-      details = Details.new(PathInfo.new(file, line))
-      endpoint = Endpoint.new(route, http_method, details)
-      params.each { |param| endpoint.params << param }
-      endpoint
-    end
-
-    private def build_path_params(route : String) : Array(Param)
-      extract_route_placeholders(route).map do |name|
-        Param.new(name, "", "path")
-      end
     end
 
     private def prune_optional_placeholders(route : String, parameters : Array(Param)) : String
@@ -587,16 +898,16 @@ module Analyzer::CSharp
         next unless raw
 
         optional = raw.ends_with?("?")
-        name = raw.split(":").first
-        name = name.gsub(/\?$/, "")
+        name = Common.route_placeholder_name(raw)
 
         if optional && !param_names.includes?(name)
           result = result.gsub("/{#{raw}}", "")
           result = result.gsub("{#{raw}}/", "")
           result = result.gsub("{#{raw}}", "")
-        elsif optional
-          cleaned = raw.gsub("?", "")
-          result = result.gsub("{#{raw}}", "{#{cleaned}}")
+        elsif optional || raw.includes?('=')
+          # `{id?}` -> `{id}` and `{id=5}` -> `{id}`: a default value belongs
+          # to the route template, not to the URL a client sends.
+          result = result.gsub("{#{raw}}", "{#{raw.split('=').first.rstrip('?')}}")
         end
       end
 
@@ -630,10 +941,7 @@ module Analyzer::CSharp
       route.scan(placeholder_regex) do |match|
         raw = match[1]? || match[0]
         next unless raw
-        cleaned = raw.split(":").first
-        cleaned = cleaned.gsub(/\?$/, "")
-        cleaned = cleaned.lstrip("*")
-        keys << cleaned
+        keys << Common.route_placeholder_name(raw)
       end
 
       keys.uniq

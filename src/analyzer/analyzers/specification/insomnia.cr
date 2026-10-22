@@ -1,40 +1,28 @@
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 require "../../../utils/http_symbols"
 require "uri"
 
 module Analyzer::Specification
-  class Insomnia < Analyzer
+  class Insomnia < SpecificationEngine
+    analyzer_for "insomnia"
+
     HTTP_METHODS = ALLOWED_HTTP_METHODS
 
-    def analyze
-      locator = CodeLocator.instance
+    # A `{{ var }}` / `{{ _.var }}` placeholder.
+    TEMPLATE_VAR = /\{\{\s*(?:_\.)?([A-Za-z0-9_.-]+)\s*\}\}/
+    # A `{{ var }}` or a `{% response ... %}` template tag, either of which may
+    # stand unquoted as a JSON body value.
+    BODY_PLACEHOLDER = /#{TEMPLATE_VAR}|\{%.*?%\}/
 
-      json_files = locator.all("insomnia-json")
-      if json_files.is_a?(Array(String))
-        json_files.each do |path|
-          next unless File.exists?(path)
-          content = File.read(path, encoding: "utf-8", invalid: :skip)
-          begin
-            process_v4(JSON.parse(content), path)
-          rescue e
-            @logger.debug "Exception processing #{path}"
-            @logger.debug_sub e
-          end
-        end
+    def analyze
+      each_spec_file(Noir::LocatorKeys::INSOMNIA_JSON) do |path|
+        content = read_file_content(path)
+        process_v4(parse_json_lenient(content), path)
       end
 
-      yaml_files = locator.all("insomnia-yaml")
-      if yaml_files.is_a?(Array(String))
-        yaml_files.each do |path|
-          next unless File.exists?(path)
-          content = File.read(path, encoding: "utf-8", invalid: :skip)
-          begin
-            process_v5(YAML.parse(content), path)
-          rescue e
-            @logger.debug "Exception processing #{path}"
-            @logger.debug_sub e
-          end
-        end
+      each_spec_file(Noir::LocatorKeys::INSOMNIA_YAML) do |path|
+        content = read_file_content(path)
+        process_v5(YAML.parse(content), path)
       end
 
       @result
@@ -46,15 +34,19 @@ module Analyzer::Specification
       resources = json_obj["resources"]?
       return unless resources && resources.as_a?
       env = collect_v4_environment(resources.as_a)
+      groups = {} of String => JSON::Any
+      resources.as_a.each do |resource|
+        next unless resource["_type"]?.try(&.as_s?) == "request_group"
+        id = resource["_id"]?.try(&.as_s?)
+        groups[id] = resource if id
+      end
 
       resources.as_a.each do |resource|
-        begin
-          next unless resource["_type"]?.try(&.as_s?) == "request"
-          process_v4_request(resource, env, source_path)
-        rescue e
-          @logger.debug "Exception processing insomnia v4 resource"
-          @logger.debug_sub e
-        end
+        next unless resource["_type"]?.try(&.as_s?) == "request"
+        process_v4_request(resource, folder_environment(resource, groups, env), source_path)
+      rescue e
+        @logger.debug "Exception processing insomnia v4 resource"
+        @logger.debug_sub e
       end
     end
 
@@ -69,11 +61,30 @@ module Analyzer::Specification
       env
     end
 
+    # `env` overlaid with the `environment` of every request_group above
+    # `request`, the nearest folder winning.
+    private def folder_environment(request : JSON::Any, groups : Hash(String, JSON::Any), env : Hash(String, String)) : Hash(String, String)
+      chain = [] of JSON::Any
+      seen = Set(String).new
+      parent = request["parentId"]?.try(&.as_s?)
+      while parent && seen.add?(parent) && (group = groups[parent]?)
+        chain << group
+        parent = group["parentId"]?.try(&.as_s?)
+      end
+      return env if chain.empty?
+
+      merged = env.dup
+      chain.reverse_each do |g|
+        g["environment"]?.try(&.as_h?).try { |data| collect_json_env_values(merged, data) }
+      end
+      merged
+    end
+
     private def process_v4_request(request : JSON::Any, env : Hash(String, String), source_path : String)
       method = (request["method"]?.try(&.as_s?) || "GET").upcase
       return unless HTTP_METHODS.includes?(method)
       url_raw = resolve_vars(request["url"]?.try(&.as_s?) || "", env)
-      url_path = extract_path_from_url(url_raw)
+      url_path = template_url_path(url_raw, TEMPLATE_VAR)
       params = [] of Param
 
       extract_query_param_names(url_raw).each do |name|
@@ -115,7 +126,7 @@ module Analyzer::Specification
       end
 
       if auth = request["authentication"]?
-        process_json_auth(auth, params)
+        process_auth(auth, env, params)
       end
 
       # Body
@@ -178,13 +189,16 @@ module Analyzer::Specification
       end
 
       candidates.each do |node|
+        # An empty `environments:` is null, and `[]?` on a non-mapping
+        # raises, which used to cost the whole collection.
+        next unless node.as_h?
         data = node["data"]? || node
         if h = data.as_h?
           collect_yaml_env_values(env, h)
         end
         if sub_envs = node["subEnvironments"]?.try(&.as_a?)
           sub_envs.each do |sub_env|
-            if sub_data = sub_env["data"]?.try(&.as_h?)
+            if sub_data = sub_env.as_h?.try(&.[YAML::Any.new("data")]?).try(&.as_h?)
               collect_yaml_env_values(env, sub_data)
             end
           end
@@ -195,25 +209,23 @@ module Analyzer::Specification
 
     private def walk_v5_items(items : Array(YAML::Any), env : Hash(String, String), source_path : String)
       items.each do |item|
-        begin
-          if children_node = item["children"]?
-            if children = children_node.as_a?
-              walk_v5_items(children, env, source_path)
-              next
-            end
+        if children_node = item["children"]?
+          if children = children_node.as_a?
+            walk_v5_items(children, env, source_path)
+            next
           end
-
-          # v5 also stores WebSocket, Socket.IO, gRPC, and MCP nodes with
-          # URLs but without HTTP methods. Only HTTP request nodes are
-          # endpoints for this analyzer.
-          next unless item["url"]?
-          next unless method = item["method"]?.try(&.as_s?)
-          next unless HTTP_METHODS.includes?(method.upcase)
-          process_v5_request(item, env, source_path)
-        rescue e
-          @logger.debug "Exception processing insomnia v5 item"
-          @logger.debug_sub e
         end
+
+        # v5 also stores WebSocket, Socket.IO, gRPC, and MCP nodes with
+        # URLs but without HTTP methods. Only HTTP request nodes are
+        # endpoints for this analyzer.
+        next unless item["url"]?
+        next unless method = item["method"]?.try(&.as_s?)
+        next unless HTTP_METHODS.includes?(method.upcase)
+        process_v5_request(item, env, source_path)
+      rescue e
+        @logger.debug "Exception processing insomnia v5 item"
+        @logger.debug_sub e
       end
     end
 
@@ -221,7 +233,7 @@ module Analyzer::Specification
       method = (item["method"]?.try(&.as_s?) || "").upcase
       return unless HTTP_METHODS.includes?(method)
       url_raw = resolve_vars(item["url"]?.try(&.as_s?) || "", env)
-      url_path = extract_path_from_url(url_raw)
+      url_path = template_url_path(url_raw, TEMPLATE_VAR)
       params = [] of Param
 
       extract_query_param_names(url_raw).each do |name|
@@ -266,7 +278,7 @@ module Analyzer::Specification
       end
 
       if auth = item["authentication"]?
-        process_yaml_auth(auth, params)
+        process_auth(auth, env, params)
       end
 
       if body_node = item["body"]?
@@ -319,44 +331,13 @@ module Analyzer::Specification
       resolved = input
       3.times do
         previous = resolved
-        resolved = resolved.gsub(/\{\{\s*(?:_\.)?([A-Za-z0-9_.-]+)\s*\}\}/) do |match|
+        resolved = resolved.gsub(TEMPLATE_VAR) do |match|
           name = $1
           env.fetch(name, match)
         end
         break if resolved == previous
       end
       resolved
-    end
-
-    private def extract_path_from_url(url_string : String) : String
-      stripped = url_string.strip
-      return "" if stripped.empty?
-
-      if stripped =~ /^https?:\/\//i
-        begin
-          uri = URI.parse(stripped)
-          path = uri.path
-          return normalize_path(path.empty? ? "/" : path)
-        rescue e
-          logger.debug "Failed to parse Insomnia URL '#{stripped}': #{e}"
-        end
-      elsif stripped =~ /^[A-Za-z][A-Za-z0-9+.-]*:\/\//
-        return ""
-      end
-
-      # No scheme — treat as path-only or host-prefixed.
-      without_query = stripped.split("?", 2)[0].split("#", 2)[0]
-      path = without_query
-      unless path.starts_with?("/")
-        if looks_host_prefixed?(path)
-          parts = path.split("/", 2)
-          return "/" if parts.size == 1
-          path = "/" + parts[1]
-        else
-          path = "/" + path
-        end
-      end
-      normalize_path(path)
     end
 
     private def extract_query_param_names(url_string : String) : Array(String)
@@ -395,30 +376,19 @@ module Analyzer::Specification
       vars
     end
 
-    private def looks_host_prefixed?(value : String) : Bool
-      first = value.split("/", 2).first
-      first.includes?(".") || first.includes?(":") || first.downcase == "localhost" || first.includes?("{{")
-    end
-
-    private def normalize_path(path : String) : String
-      normalized = path.empty? ? "/" : path
-      normalized = "/" + normalized unless normalized.starts_with?("/")
-      normalized.gsub(/\{\{\s*(?:_\.)?([A-Za-z0-9_.-]+)\s*\}\}/) do
-        ":#{normalize_var_name($1)}"
-      end
-    end
-
-    private def normalize_var_name(name : String) : String
-      normalized = name.gsub(/[^A-Za-z0-9_]/, "_")
-      normalized = normalized.lstrip('_')
-      normalized = normalized.rstrip('_')
-      normalized.empty? ? "param" : normalized
-    end
-
+    # First-wins, except that a later declaration carrying a value upgrades a
+    # placeholder. The URL scan runs first and registers `{userId}` (and any
+    # `?include=`) with no value at all; the concrete value lives in the
+    # request's own `pathParameters` / `parameters` list, which is read after.
+    # Plain first-wins therefore discarded exactly the entry that had the data
+    # — `pathParameters: [{name: userId, value: "42"}]` produced `userId=`.
     private def add_param(params : Array(Param), name : String, value : String, param_type : String)
       normalized = name.strip
       return if normalized.empty?
-      return if params.any? { |p| p.name == normalized && p.param_type == param_type }
+      if index = params.index { |p| p.name == normalized && p.param_type == param_type }
+        params[index] = Param.new(normalized, value, param_type) if params[index].value.empty? && !value.empty?
+        return
+      end
       params << Param.new(normalized, value, param_type)
     end
 
@@ -428,37 +398,23 @@ module Analyzer::Specification
     end
 
     private def process_json_body_text(text : String, params : Array(Param))
-      parsed = JSON.parse(text)
-      if h = parsed.as_h?
-        h.each { |k, _| add_param(params, k, "", "json") }
-      end
-    rescue e
-      logger.debug "Failed to parse Insomnia JSON body: #{e}"
+      json_body_pairs(text, BODY_PLACEHOLDER).each { |k, _| add_param(params, k, "", "json") }
     end
 
-    private def process_json_auth(auth : JSON::Any, params : Array(Param))
+    # `key` / `value` / `token` are templated the same way the URL is —
+    # `authentication: {type: bearer, token: "{{ token }}"}` against an
+    # `environments.data.token` — so they go through `resolve_vars` too.
+    # Only the URL did, which is why a bearer header came out as the literal
+    # `Bearer {{ token }}` instead of the credential the collection defines.
+    private def process_auth(auth, env : Hash(String, String), params : Array(Param))
       return if auth["disabled"]?.try(&.as_bool?) == true
       type = auth["type"]?.try(&.as_s?) || ""
       process_auth_fields(
         type,
-        auth["key"]?.try(&.as_s?) || "",
-        auth["value"]?.try(&.as_s?) || "",
+        resolve_vars(auth["key"]?.try(&.as_s?) || "", env),
+        resolve_vars(auth["value"]?.try(&.as_s?) || "", env),
         auth["addTo"]?.try(&.as_s?) || "",
-        auth["token"]?.try(&.as_s?) || "",
-        auth["prefix"]?.try(&.as_s?) || "",
-        params
-      )
-    end
-
-    private def process_yaml_auth(auth : YAML::Any, params : Array(Param))
-      return if auth["disabled"]?.try(&.as_bool?) == true
-      type = auth["type"]?.try(&.as_s?) || ""
-      process_auth_fields(
-        type,
-        auth["key"]?.try(&.as_s?) || "",
-        auth["value"]?.try(&.as_s?) || "",
-        auth["addTo"]?.try(&.as_s?) || "",
-        auth["token"]?.try(&.as_s?) || "",
+        resolve_vars(auth["token"]?.try(&.as_s?) || "", env),
         auth["prefix"]?.try(&.as_s?) || "",
         params
       )

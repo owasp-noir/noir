@@ -1,28 +1,21 @@
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 require "uri"
 
 module Analyzer::Specification
-  class Postman < Analyzer
+  class Postman < SpecificationEngine
+    analyzer_for "postman"
+
+    # `{{var}}`, plus the `{{$guid}}` dynamic variables Postman generates.
+    POSTMAN_VAR = /\{\{\s*\$?[A-Za-z0-9_.-]+\s*\}\}/
+
     def analyze
-      locator = CodeLocator.instance
-      postman_files = locator.all("postman-json")
+      each_spec_file(Noir::LocatorKeys::POSTMAN_JSON) do |postman_file|
+        content = read_file_content(postman_file)
+        json_obj = parse_json_lenient(content)
 
-      if postman_files.is_a?(Array(String))
-        postman_files.each do |postman_file|
-          if File.exists?(postman_file)
-            content = File.read(postman_file, encoding: "utf-8", invalid: :skip)
-            json_obj = JSON.parse(content)
-
-            begin
-              # Process items (requests) in the collection
-              if json_obj["item"]?
-                process_items(json_obj["item"], postman_file, collect_variables(json_obj["variable"]?), "", json_obj["auth"]?)
-              end
-            rescue e
-              @logger.debug "Exception processing #{postman_file}"
-              @logger.debug_sub e
-            end
-          end
+        # Process items (requests) in the collection
+        if json_obj["item"]?
+          process_items(json_obj["item"], postman_file, collect_variables(json_obj["variable"]?), "", json_obj["auth"]?)
         end
       end
 
@@ -34,25 +27,23 @@ module Analyzer::Specification
       return unless item_array
 
       item_array.each do |item|
-        begin
-          item_variables = merge_variables(variables, item["variable"]?)
+        item_variables = merge_variables(variables, item["variable"]?)
 
-          # Check if it's a folder (has nested items) or a request
-          if item["item"]?
-            # It's a folder, recurse into it. A folder may declare its own auth,
-            # which overrides the collection/parent auth for everything beneath it.
-            folder_name = item["name"]?.try(&.to_s) || ""
-            new_path = folder_path.empty? ? folder_name : "#{folder_path}/#{folder_name}"
-            folder_auth = item["auth"]? || inherited_auth
-            process_items(item["item"], source_path, item_variables, new_path, folder_auth)
-          elsif item["request"]?
-            # It's a request, process it
-            process_request(item, source_path, item_variables, inherited_auth)
-          end
-        rescue e
-          @logger.debug "Exception processing item"
-          @logger.debug_sub e
+        # Check if it's a folder (has nested items) or a request
+        if item["item"]?
+          # It's a folder, recurse into it. A folder may declare its own auth,
+          # which overrides the collection/parent auth for everything beneath it.
+          folder_name = item["name"]?.try(&.to_s) || ""
+          new_path = folder_path.empty? ? folder_name : "#{folder_path}/#{folder_name}"
+          folder_auth = item["auth"]? || inherited_auth
+          process_items(item["item"], source_path, item_variables, new_path, folder_auth)
+        elsif item["request"]?
+          # It's a request, process it
+          process_request(item, source_path, item_variables, inherited_auth)
         end
+      rescue e
+        @logger.debug "Exception processing item"
+        @logger.debug_sub e
       end
     end
 
@@ -63,8 +54,8 @@ module Analyzer::Specification
         params = [] of Param
         resolved_url = resolve_vars(request_url, variables)
         url_path = extract_path_from_url(resolved_url)
-        extract_query_params(resolved_url).each { |param| add_param(params, param) }
-        extract_path_vars(url_path).each { |name| add_param(params, Param.new(name, "", "path")) }
+        extract_query_params(resolved_url).each { |param| push_param_once(params, param) }
+        extract_path_vars(url_path).each { |name| push_param_once(params, Param.new(name, "", "path")) }
         apply_auth(inherited_auth, params)
         @result << Endpoint.new(url_path, "GET", params, Details.new(PathInfo.new(source_path))) unless url_path.empty?
         return
@@ -94,8 +85,8 @@ module Analyzer::Specification
             param_value = scalar_to_s(header["value"]?) || ""
             # Skip common headers that are not user-controllable
             unless param_name.downcase == "content-type"
-              add_param(params, Param.new(param_name, param_value, "header"))
-              extract_cookie_params(param_value).each { |param| add_param(params, param) } if param_name.downcase == "cookie"
+              push_param_once(params, Param.new(param_name, param_value, "header"))
+              extract_cookie_params(param_value).each { |param| push_param_once(params, param) } if param_name.downcase == "cookie"
             end
           end
         end
@@ -111,15 +102,8 @@ module Analyzer::Specification
           # Try to parse as JSON
           if body["raw"]?
             raw_content = scalar_to_s(body["raw"]?) || ""
-            begin
-              json_body = JSON.parse(raw_content)
-              if json_body.as_h?
-                json_body.as_h.each do |key, value|
-                  add_param(params, Param.new(key, value.to_s, "json"))
-                end
-              end
-            rescue
-              # Not JSON, treat as raw body
+            json_body_pairs(raw_content, POSTMAN_VAR).each do |key, value|
+              push_param_once(params, Param.new(key, value, "json"))
             end
           end
         when "urlencoded"
@@ -129,7 +113,7 @@ module Analyzer::Specification
 
               if param_name = form_param["key"]?.try(&.as_s?)
                 param_value = scalar_to_s(form_param["value"]?) || ""
-                add_param(params, Param.new(param_name, param_value, "form"))
+                push_param_once(params, Param.new(param_name, param_value, "form"))
               end
             end
           end
@@ -140,26 +124,26 @@ module Analyzer::Specification
 
               if param_name = form_param["key"]?.try(&.as_s?)
                 param_value = scalar_to_s(form_param["value"]?) || scalar_to_s(form_param["src"]?) || ""
-                add_param(params, Param.new(param_name, param_value, "form"))
+                push_param_once(params, Param.new(param_name, param_value, "form"))
               end
             end
           end
         when "graphql"
           if graphql = body["graphql"]?
             if query = scalar_to_s(graphql["query"]?)
-              add_param(params, Param.new("query", query, "json"))
+              push_param_once(params, Param.new("query", query, "json"))
             end
 
             if variables_raw = scalar_to_s(graphql["variables"]?)
               begin
-                parsed_variables = JSON.parse(variables_raw)
+                parsed_variables = parse_json_lenient(variables_raw)
                 if variables_hash = parsed_variables.as_h?
                   variables_hash.each do |key, value|
-                    add_param(params, Param.new(key, value.to_s, "json"))
+                    push_param_once(params, Param.new(key, value.to_s, "json"))
                   end
                 end
               rescue
-                add_param(params, Param.new("variables", variables_raw, "json"))
+                push_param_once(params, Param.new("variables", variables_raw, "json"))
               end
             end
           end
@@ -182,9 +166,9 @@ module Analyzer::Specification
     private def process_url(url : JSON::Any, variables : Hash(String, String), params : Array(Param)) : String
       if url_string = url.as_s?
         resolved_url = resolve_vars(url_string, variables)
-        extract_query_params(resolved_url).each { |param| add_param(params, param) }
+        extract_query_params(resolved_url).each { |param| push_param_once(params, param) }
         url_path = extract_path_from_url(resolved_url)
-        extract_path_vars(url_path).each { |name| add_param(params, Param.new(name, "", "path")) }
+        extract_path_vars(url_path).each { |name| push_param_once(params, Param.new(name, "", "path")) }
         return url_path
       end
 
@@ -195,6 +179,12 @@ module Analyzer::Specification
 
       if path_node = url["path"]?
         url_path = extract_path_from_path_node(path_node, variables)
+        # `host: ["{{baseUrl}}"]` with baseUrl `http://h/v1` carries a base
+        # path the `path` array leaves out; the raw/string form keeps it.
+        unless url_path.empty?
+          base = host_base_path(url["host"]?, variables)
+          url_path = join_base_path(base, url_path) unless base.empty?
+        end
       end
       url_path = extract_path_from_url(raw) if url_path.empty? && !raw.empty?
 
@@ -204,11 +194,11 @@ module Analyzer::Specification
 
           if param_name = query_param["key"]?.try(&.as_s?)
             param_value = scalar_to_s(query_param["value"]?) || ""
-            add_param(params, Param.new(param_name, param_value, "query"))
+            push_param_once(params, Param.new(param_name, param_value, "query"))
           end
         end
       elsif !raw.empty?
-        extract_query_params(raw).each { |param| add_param(params, param) }
+        extract_query_params(raw).each { |param| push_param_once(params, param) }
       end
 
       if variable_array = url["variable"]?.try(&.as_a?)
@@ -217,12 +207,12 @@ module Analyzer::Specification
 
           if param_name = path_var["key"]?.try(&.as_s?)
             param_value = scalar_to_s(path_var["value"]?) || ""
-            add_param(params, Param.new(param_name, param_value, "path"))
+            push_param_once(params, Param.new(param_name, param_value, "path"))
           end
         end
       end
 
-      extract_path_vars(url_path).each { |name| add_param(params, Param.new(name, "", "path")) }
+      extract_path_vars(url_path).each { |name| push_param_once(params, Param.new(name, "", "path")) }
       url_path
     end
 
@@ -230,10 +220,20 @@ module Analyzer::Specification
       stripped = url_string.strip
       return "" if stripped.empty?
 
+      if stripped.matches?(ABSOLUTE_SERVER_URL)
+        uri = parse_absolute_url(stripped)
+        return "" unless uri
+        return normalize_path(uri.path) unless uri.path.empty?
+        return "/"
+      end
+
       begin
         uri = URI.parse(stripped)
-        if path = uri.path
-          return normalize_path(path) unless path.empty?
+        # Only a rooted path is settled here. `URI.parse` hands a scheme-less
+        # `{{baseUrl}}/health` or `host.com/get` back whole as its path, which
+        # would keep the host as a segment and skip the host-aware code below.
+        if (path = uri.path) && path.starts_with?('/')
+          return normalize_path(path)
         end
       rescue e
         logger.debug "Failed to parse Postman URL '#{stripped}': #{e}"
@@ -278,6 +278,16 @@ module Analyzer::Specification
       end
 
       segments.empty? ? "" : normalize_path("/#{segments.join("/")}")
+    end
+
+    # The path part of a URL object's resolved `host`, "" when it has none.
+    private def host_base_path(host_node : JSON::Any?, variables : Hash(String, String)) : String
+      return "" unless host_node
+      host = host_node.as_s? || host_node.as_a?.try(&.map { |s| scalar_to_s(s) || "" }.join(".")) || ""
+      host = resolve_vars(host, variables)
+      return "" unless host.includes?('/')
+      path = extract_path_from_url(host)
+      path == "/" ? "" : path.rstrip('/')
     end
 
     private def extract_query_params(url_string : String) : Array(Param)
@@ -376,13 +386,13 @@ module Analyzer::Specification
         name = fields["key"]? || ""
         value = fields["value"]? || ""
         location = (fields["in"]? || "header").downcase == "query" ? "query" : "header"
-        add_param(params, Param.new(name, value, location))
+        push_param_once(params, Param.new(name, value, location))
       when "bearer"
         token = fields["token"]? || ""
         auth_value = token.empty? ? "" : "Bearer #{token}"
-        add_param(params, Param.new("Authorization", auth_value, "header"))
+        push_param_once(params, Param.new("Authorization", auth_value, "header"))
       when "basic", "digest", "oauth1", "oauth2", "hawk", "ntlm", "awsv4", "edgegrid", "jwt", "akamai"
-        add_param(params, Param.new("Authorization", "", "header"))
+        push_param_once(params, Param.new("Authorization", "", "header"))
       end
     end
 
@@ -465,12 +475,6 @@ module Analyzer::Specification
       disabled = node["disabled"]?
       return false unless disabled
       disabled.as_bool? == true || disabled.as_s? == "true"
-    end
-
-    private def add_param(params : Array(Param), param : Param)
-      return if param.name.empty?
-      return if params.any? { |existing| existing.name == param.name && existing.param_type == param.param_type }
-      params << param
     end
   end
 end

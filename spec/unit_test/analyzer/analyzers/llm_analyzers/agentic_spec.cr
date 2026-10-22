@@ -73,6 +73,80 @@ describe Analyzer::AI::Unified do
       end
     end
 
+    # The agent tools walk the filesystem themselves, which is why
+    # `unified_ai.cr` sits on the directory-walk allowlist in
+    # `spec/unit_test/analyzer/layering_boundary_spec.cr`. That exemption is
+    # from the walk, never from what the walk enforces: an excluded file
+    # reached the provider through read_file, showed up in list_directory
+    # and was greppable, so `--exclude-path secrets/` kept a tree out of the
+    # report and shipped it to the LLM anyway.
+    it "applies --exclude-path to every agent tool that walks the tree" do
+      temp_dir = File.tempname
+      Dir.mkdir(temp_dir)
+      begin
+        Dir.mkdir(File.join(temp_dir, "secrets"))
+        File.write(File.join(temp_dir, "secrets", "keys.py"), "AWS_SECRET = 'redacted'")
+        File.write(File.join(temp_dir, "app.py"), "AWS_SECRET = 'in-scope'")
+
+        options = build_ai_options(temp_dir)
+        options["exclude_path"] = YAML::Any.new("secrets/")
+        analyzer = Analyzer::AI::Unified.new(options)
+
+        read = analyzer.__test_run_agent_tool("read_file", %({"path":"secrets/keys.py"}))
+        read.should contain("--exclude-path")
+        read.should_not contain("redacted")
+
+        listing = analyzer.__test_run_agent_tool("list_directory", %({"path":"."}))
+        listing.should_not contain("secrets")
+        listing.should contain("app.py")
+
+        grep = analyzer.__test_run_agent_tool("grep",
+          %({"pattern":"AWS_SECRET","path":".","file_pattern":"*.py"}))
+        grep.should_not contain("secrets/keys.py")
+        grep.should contain("app.py")
+      ensure
+        FileUtils.rm_rf(temp_dir)
+      end
+    end
+
+    it "withholds credentials files from every path that reaches the provider" do
+      temp_dir = File.tempname
+      Dir.mkdir(temp_dir)
+      begin
+        Dir.mkdir(File.join(temp_dir, ".ssh"))
+        File.write(File.join(temp_dir, ".ssh", "id_rsa"), "TOKEN=leak")
+        File.write(File.join(temp_dir, ".env.production"), "TOKEN=leak")
+        File.write(File.join(temp_dir, "deploy.pem"), "TOKEN=leak")
+        File.write(File.join(temp_dir, "prod.tfvars"), "TOKEN=leak")
+        File.write(File.join(temp_dir, "secrets.go"), "TOKEN=route")
+
+        analyzer = Analyzer::AI::Unified.new(build_ai_options(temp_dir))
+        {".env", ".env.local", "id_ed25519.pub", "server.KEY", "credentials", "secrets.yml", ".npmrc", "x.tfstate", "serviceAccountKey.json", "gcp-credentials.json", "prod.env", "id_ed25519_sk", ".s3cfg", "AuthKey_AB12.p8", ".kube/config"}.each do |name|
+          analyzer.sensitive?("/repo/#{name}").should be_true
+        end
+        {"secrets.go", "credentials_controller.rb", "environment.ts", "keys.py", "config", ".git/hooks/config"}.each do |name|
+          analyzer.sensitive?("/repo/#{name}").should be_false
+        end
+
+        analyzer.__test_run_agent_tool("read_file", %({"path":".env.production"})).should_not contain("leak")
+        File.symlink(File.join(temp_dir, ".env.production"), File.join(temp_dir, "config.js"))
+        analyzer.__test_run_agent_tool("read_file", %({"path":"config.js"})).should_not contain("leak")
+        listing = analyzer.__test_run_agent_tool("list_directory", %({"path":"."}))
+        listing.should_not contain("id_rsa")
+        listing.should_not contain("deploy.pem")
+        listing.should contain("secrets.go")
+        grep = analyzer.__test_run_agent_tool("grep", %({"pattern":"TOKEN","path":".","file_pattern":"*"}))
+        grep.should_not contain("leak")
+        grep.should contain("secrets.go")
+
+        options = build_ai_options(temp_dir)
+        options["ai_include_sensitive"] = YAML::Any.new(true)
+        Analyzer::AI::Unified.new(options).__test_run_agent_tool("read_file", %({"path":"deploy.pem"})).should contain("leak")
+      ensure
+        FileUtils.rm_rf(temp_dir)
+      end
+    end
+
     it "truncates large files in read_file tool" do
       temp_dir = File.tempname
       Dir.mkdir(temp_dir)

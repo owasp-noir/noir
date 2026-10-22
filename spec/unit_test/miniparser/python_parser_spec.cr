@@ -219,4 +219,16 @@ describe PythonParser do
       im.to_s.should contain("np")
     end
   end
+
+  describe "package base directory" do
+    it "terminates for a relative path inside a package at the working directory" do
+      with_tmpdir do |root|
+        File.write(File.join(root, "__init__.py"), "")
+        Dir.cd(root) do
+          parser = PythonParser.new("./app.py", "x = 1\n", Hash(String, PythonParser).new)
+          parser.@basedir.should eq(".")
+        end
+      end
+    end
+  end
 end

@@ -1,17 +1,30 @@
 {% include "header.html" %}
-  <div class="docs-layout">
-    {% include "sidebar.html" %}
-    <main class="docs-main">
-      <article class="docs-article">
-        <h1>{{ page.title }}</h1>
+{% include "partials/nav.html" %}
+{% include "partials/search.html" %}
+<div class="docs-container">
+{% include "partials/sidebar.html" %}
+  <main id="main" class="docs-main">
+    <article>
+      {% if page.title is present %}<h1 class="docs-title">{{ page.title | e }}</h1>{% endif %}
+      {% if page.description is present %}<p class="docs-lede">{{ page.description | e }}</p>{% endif %}
+      <div class="prose">
         {{ content }}
-        {% if section.list %}
-        <div class="section-children">
-          <h2>In This Section</h2>
-          <ul class="section-list">
-            {{ section.list }}
-          </ul>
-        </div>
-        {% endif %}
-      </article>
+      </div>
+      <ul class="section-list">
+        {{ section.list }}
+      </ul>
+      {# Sections are _index.md rather than index.md. See page.html for why the
+         path is rebuilt from the URL. #}
+      {% set src = page.url | replace(lang_prefix ~ "/", "/") %}
+      <footer class="docs-article-footer">
+        <a class="edit-link"
+           href="https://github.com/owasp-noir/noir/edit/main/docs/content{{ src }}_index{% if page_language == "ko" %}.ko{% endif %}.md"
+           target="_blank" rel="noopener noreferrer">
+          <svg class="ic" aria-hidden="true"><use href="#i-pencil"/></svg>
+          {{ "ui.edit_page" | t }}
+        </a>
+      </footer>
+    </article>
+  </main>
+  {% include "partials/toc.html" %}
 {% include "footer.html" %}

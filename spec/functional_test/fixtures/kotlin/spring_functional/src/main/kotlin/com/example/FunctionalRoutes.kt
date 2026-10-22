@@ -23,7 +23,7 @@ class RouterConfiguration {
             PUT("/{id}", postHandler::update)
             DELETE("/{id}", postHandler::delete)
         }
-        GET("/imported", importedPostHandler::show)
+        GET(/* cross-file */ "/imported", importedPostHandler::show)
         GET("/inline-audit") { auditService.record(); ok().buildAndAwait() }
         GET("/inline-empty") { ServerResponse.ok().build() }
     }

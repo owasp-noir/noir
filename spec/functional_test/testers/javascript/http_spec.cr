@@ -8,11 +8,19 @@ expected_endpoints = [
     Param.new("name", "", "json"),
     Param.new("email", "", "json"),
   ]),
+  Endpoint.new("/api/users/search", "QUERY", [
+    Param.new("query", "", "json"),
+    Param.new("filter", "", "json"),
+  ]),
   Endpoint.new("/health", "GET"),
   Endpoint.new("/api/users/settings", "PUT", [
     Param.new("x-trace-id", "", "header"),
   ]),
   Endpoint.new("/api/users/archive", "DELETE"),
+  Endpoint.new("/api/users/lookup", "QUERY", [
+    Param.new("id", "", "json"),
+    Param.new("filter", "", "json"),
+  ]),
   Endpoint.new("/api/reports", "GET", [
     Param.new("period", "", "query"),
   ]),

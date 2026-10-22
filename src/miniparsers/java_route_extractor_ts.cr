@@ -1,4 +1,7 @@
+require "../utils/url_path"
 require "../ext/tree_sitter/tree_sitter"
+require "../utils/c_comments"
+require "./extraction_result_cache"
 require "../models/endpoint"
 
 module Noir
@@ -58,8 +61,9 @@ module Noir
       getter method_name : String # Java method name, or "" when class-level only
       getter line : Int32         # 0-based line of the method annotation
       getter params : Array(Param)
+      getter signature_line : Int32? # 0-based line of the method name (the handler), nil for class-level routes
 
-      def initialize(@verb, @path, @class_name, @method_name, @line, @params = [] of Param)
+      def initialize(@verb, @path, @class_name, @method_name, @line, @params = [] of Param, @signature_line = nil)
       end
     end
 
@@ -79,8 +83,15 @@ module Noir
       getter verbs : Array(String)
       getter params : Array(Param)
       getter line : Int32
+      # Method names on the concrete controller that already carry a
+      # direct Spring mapping annotation (@GetMapping / @RequestMapping /
+      # meta-mapping, …). Interface-derived routes for these names must
+      # be skipped: Spring's merged-annotation lookup stops at the
+      # concrete override once it supplies its own mapping.
+      getter annotated_method_names : Set(String)
 
-      def initialize(@class_name, @interface_names, @paths, @verbs, @params, @line)
+      def initialize(@class_name, @interface_names, @paths, @verbs, @params, @line,
+                     @annotated_method_names = Set(String).new)
       end
     end
 
@@ -92,23 +103,43 @@ module Noir
       end
     end
 
+    # Memo for the source-level entry points. Spring's analyzer already
+    # amortises within a file via `_from(root)`, but other callers
+    # (and any future multi-tech overlap) still re-parse whole buffers.
+    @@routes_memo = Hash(UInt64, Array(Route)).new
+    @@constants_memo = Hash(UInt64, Hash(String, String)).new
+    @@memo_mutex = Mutex.new
+
+    ExtractionResultCache.register_clearer do
+      @@memo_mutex.synchronize do
+        @@routes_memo.clear
+        @@constants_memo.clear
+      end
+    end
+
     # Parses `source` and returns every Spring-style route it can
     # resolve. Top-level classes are scanned in order; nested classes
     # inherit their parent class's mapping prefix.
     def extract_routes(source : String) : Array(Route)
-      routes = [] of Route
-      Noir::TreeSitter.parse_java(source) do |root|
-        routes = extract_routes_from(root, source)
+      key = ExtractionResultCache.key(source, "java_routes")
+      ExtractionResultCache.fetch(@@routes_memo, key, mutex: @@memo_mutex) do
+        routes = [] of Route
+        Noir::TreeSitter.parse_java(source) do |root|
+          routes = extract_routes_from(root, source)
+        end
+        routes
       end
-      routes
     end
 
     def extract_string_constants(source : String) : Hash(String, String)
-      constants = Hash(String, String).new
-      Noir::TreeSitter.parse_java(source) do |root|
-        constants = extract_string_constants_from(root, source)
+      key = ExtractionResultCache.key(source, "java_constants")
+      ExtractionResultCache.fetch(@@constants_memo, key, mutex: @@memo_mutex) do
+        constants = Hash(String, String).new
+        Noir::TreeSitter.parse_java(source) do |root|
+          constants = extract_string_constants_from(root, source)
+        end
+        constants
       end
-      constants
     end
 
     # `_from` variant — accept a pre-parsed `root` so the Spring
@@ -117,9 +148,10 @@ module Noir
     # responsibility.
     def extract_routes_from(root : LibTreeSitter::TSNode,
                             source : String,
-                            external_meta_mappings = Hash(String, ClassMapping).new) : Array(Route)
+                            external_meta_mappings = Hash(String, ClassMapping).new,
+                            constants : Hash(String, String)? = nil) : Array(Route)
       routes = [] of Route
-      constants = extract_string_constants_from(root, source)
+      constants ||= extract_string_constants_from(root, source)
       meta_mappings = external_meta_mappings.dup
       collect_meta_mappings(root, source, constants, meta_mappings)
       walk_classes(root, source, [""], [] of String, [] of Param, routes, constants, meta_mappings)
@@ -137,8 +169,9 @@ module Noir
 
     def extract_interface_routes_from(root : LibTreeSitter::TSNode,
                                       source : String,
-                                      external_meta_mappings = Hash(String, ClassMapping).new) : Hash(String, Array(Route))
-      constants = extract_string_constants_from(root, source)
+                                      external_meta_mappings = Hash(String, ClassMapping).new,
+                                      constants : Hash(String, String)? = nil) : Hash(String, Array(Route))
+      constants ||= extract_string_constants_from(root, source)
       meta_mappings = external_meta_mappings.dup
       collect_meta_mappings(root, source, constants, meta_mappings)
       routes = Hash(String, Array(Route)).new { |hash, key| hash[key] = [] of Route }
@@ -148,8 +181,9 @@ module Noir
 
     def extract_controller_interface_implementations_from(root : LibTreeSitter::TSNode,
                                                           source : String,
-                                                          external_meta_mappings = Hash(String, ClassMapping).new) : Array(ControllerInterfaceImplementation)
-      constants = extract_string_constants_from(root, source)
+                                                          external_meta_mappings = Hash(String, ClassMapping).new,
+                                                          constants : Hash(String, String)? = nil) : Array(ControllerInterfaceImplementation)
+      constants ||= extract_string_constants_from(root, source)
       meta_mappings = external_meta_mappings.dup
       collect_meta_mappings(root, source, constants, meta_mappings)
       implementations = [] of ControllerInterfaceImplementation
@@ -157,10 +191,158 @@ module Noir
       implementations
     end
 
-    def extract_string_constants_from(root : LibTreeSitter::TSNode, source : String) : Hash(String, String)
+    # `project_constants` seeds the table with other files' qualified
+    # constants (`Paths.API`, `com.ex.Paths.API`, see
+    # `JavaEngine#java_project_constants`) so `@RequestMapping(Paths.API)`
+    # and `BASE = Paths.API + "/x"` resolve across files. This file's own
+    # qualified keys overwrite the seed. Only the names this file actually
+    # spells are copied — the project table can be thousands of entries.
+    def extract_string_constants_from(root : LibTreeSitter::TSNode,
+                                      source : String,
+                                      project_constants : Hash(String, String)? = nil) : Hash(String, String)
       constants = Hash(String, String).new
-      collect_string_constants(root, source, package_name(root, source), [] of String, constants)
+      imported : Set(String)? = nil
+      if project_constants && !project_constants.empty?
+        source.scan(DOTTED_NAME_RE) do |match|
+          chain = match[0]
+          # `Paths.API.length()` spells `Paths.API` as a prefix.
+          dot = chain.index('.')
+          while dot
+            name = chain[...(chain.index('.', dot + 1) || chain.size)]
+            if value = project_constants[name]?
+              constants[name] = value
+            end
+            dot = chain.index('.', dot + 1)
+          end
+        end
+        imported = seed_static_imports(source, project_constants, constants)
+        seed_inherited_constants(root, source, project_constants, constants)
+      end
+      collect_string_constants(root, source, package_name(root, source), [] of String, constants, imported)
       constants
+    end
+
+    # The project's qualified String constants (`JavaEngine#java_project_constants`).
+    # It also answers "which constants does class X declare", behind an index
+    # built on first use, so `import static pkg.Class.*` in each of thousands
+    # of files costs a lookup instead of a walk over the whole table.
+    class ProjectConstants < Hash(String, String)
+      @by_owner : Hash(String, Array({String, String}))? = nil
+      @index_lock = Mutex.new
+
+      # `{bare name, value}` of every constant declared directly in `owner`
+      # (`com.ex.Paths`), nil when it declares none. The analyzers' worker
+      # threads share one table, so the index is built under a lock.
+      def constants_of(owner : String) : Array({String, String})?
+        index = @index_lock.synchronize do
+          @by_owner ||= begin
+            built = Hash(String, Array({String, String})).new
+            each do |key, value|
+              next unless dot = key.rindex('.')
+              (built[key[...dot]] ||= [] of {String, String}) << {key[(dot + 1)..], value}
+            end
+            built
+          end
+        end
+        index[owner]?
+      end
+    end
+
+    DOTTED_NAME_RE        = /(?<![\w$])[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+/
+    STATIC_IMPORT_NAME_RE = /\bimport\s+static\s+([\w$.]+)\.([\w$]+|\*)\s*;/
+
+    # `import static pkg.Class.NAME` (or `.*`) brings the bare `NAME` into
+    # scope, so `@RequestMapping(NAME + "/ops")` must find the project
+    # constant under that bare name. Seeded before the file's own fields so
+    # `BASE = NAME + "/x"` resolves. Returns the bare names it seeded, so
+    # `collect_string_constants` can let a field of the file's own with the
+    # same name replace the import (it keeps the first bare name otherwise,
+    # which would let the import win over the nearer declaration).
+    private def seed_static_imports(source : String,
+                                    project_constants : Hash(String, String),
+                                    constants : Hash(String, String)) : Set(String)
+      imported = Set(String).new
+      # A plain Hash (specs) is indexed here, once per file; the engine's
+      # table is a `ProjectConstants` and brings its index along.
+      table = project_constants.as?(ProjectConstants)
+      source.scan(STATIC_IMPORT_NAME_RE) do |match|
+        owner = match[1]
+        name = match[2]
+        if name == "*"
+          table ||= ProjectConstants.new.merge!(project_constants)
+          table.constants_of(owner).try &.each do |bare, value|
+            constants[bare] = value
+            imported << bare
+          end
+        elsif value = project_constants["#{owner}.#{name}"]?
+          constants[name] = value
+          imported << name
+        end
+      end
+      imported
+    end
+
+    SINGLE_IMPORT_RE = /^\s*import\s+([\w$.]+)\.([\w$]+)\s*;/m
+
+    # A class reads the constants of the interfaces it implements (and the
+    # class it extends) unqualified: `class C implements Spec` spells
+    # `Spec.HDR` as `HDR`. Seed them as `C.HDR`, which
+    # `resolve_constant_reference` tries before the bare name. One level of
+    # supertypes only; the file's own `C.HDR` declarations still overwrite.
+    private def seed_inherited_constants(root : LibTreeSitter::TSNode,
+                                         source : String,
+                                         project_constants : Hash(String, String),
+                                         constants : Hash(String, String)) : Nil
+      return unless source.includes?("implements") || source.includes?("extends")
+      table = project_constants.as?(ProjectConstants) || ProjectConstants.new.merge!(project_constants)
+      pkg = package_name(root, source)
+      imports = Hash(String, String).new
+      source.scan(SINGLE_IMPORT_RE) { |match| imports[match[2]] = "#{match[1]}.#{match[2]}" }
+      seed_inherited_constants_in(root, source, table, pkg, imports, constants)
+    end
+
+    private def seed_inherited_constants_in(node : LibTreeSitter::TSNode,
+                                            source : String,
+                                            table : ProjectConstants,
+                                            pkg : String,
+                                            imports : Hash(String, String),
+                                            constants : Hash(String, String),
+                                            depth : Int32 = 0) : Nil
+      return if depth > Noir::TreeSitter::MAX_AST_DEPTH
+      Noir::TreeSitter.each_named_child(node) do |child|
+        case Noir::TreeSitter.node_type(child)
+        when "class_declaration", "interface_declaration"
+          class_name = class_simple_name(child, source)
+          Noir::TreeSitter.each_named_child(child) do |clause|
+            case Noir::TreeSitter.node_type(clause)
+            when "superclass", "super_interfaces", "extends_interfaces"
+              next if class_name.empty?
+              each_supertype_name(clause, source) do |super_name|
+                owner = imports[super_name]? || (super_name.includes?('.') || pkg.empty? ? super_name : "#{pkg}.#{super_name}")
+                table.constants_of(owner).try &.each do |bare, value|
+                  constants["#{class_name}.#{bare}"] ||= value
+                end
+              end
+            when "class_body", "interface_body"
+              seed_inherited_constants_in(clause, source, table, pkg, imports, constants, depth + 1)
+            end
+          end
+        end
+      end
+    end
+
+    # Type names in an `extends`/`implements` clause, without descending
+    # into generic arguments (`implements Spec<Dto>` yields `Spec` only).
+    private def each_supertype_name(node : LibTreeSitter::TSNode, source : String, &block : String ->) : Nil
+      Noir::TreeSitter.each_named_child(node) do |child|
+        case Noir::TreeSitter.node_type(child)
+        when "type_identifier", "scoped_type_identifier"
+          block.call(Noir::TreeSitter.node_text(child, source))
+        when "type_arguments"
+        else
+          each_supertype_name(child, source, &block)
+        end
+      end
     end
 
     # ---- private helpers ----------------------------------------------
@@ -189,7 +371,10 @@ module Noir
         # inherited-route index). Walk into it for nested types but don't
         # emit its own method routes, otherwise an un-prefixed phantom
         # endpoint (e.g. `GET /list` for `BaseController.list`) leaks.
-        is_abstract = ty == "class_declaration" && abstract_class?(node, source)
+        #
+        # Likewise Spring registers handlers only on controller types: a
+        # `@Service` with a stray `@PostMapping` is not a route.
+        skip_methods = ty == "class_declaration" && (abstract_class?(node, source) || non_controller_bean?(node, source))
 
         class_name = class_simple_name(node, source)
         mapping = class_mapping(node, source, constants, class_name, meta_mappings)
@@ -198,7 +383,7 @@ module Noir
         prefixes = [] of String
         outer_prefixes.each do |outer_prefix|
           class_prefixes.each do |class_prefix|
-            prefixes << join_paths(outer_prefix, class_prefix)
+            prefixes << Noir::URLPath.join_absorbing(outer_prefix, class_prefix)
           end
         end
         verbs = (outer_verbs + mapping.verbs).uniq
@@ -208,7 +393,7 @@ module Noir
           Noir::TreeSitter.each_named_child(body) do |member|
             case Noir::TreeSitter.node_type(member)
             when "method_declaration"
-              collect_method_routes(member, source, class_name, prefixes, verbs, params, routes, constants, meta_mappings) unless is_abstract
+              collect_method_routes(member, source, class_name, prefixes, verbs, params, routes, constants, meta_mappings) unless skip_methods
             when "class_declaration", "interface_declaration"
               walk_classes(member, source, prefixes, verbs, params, routes, constants, meta_mappings)
             end
@@ -280,7 +465,9 @@ module Noir
           paths = mapping.paths
           paths = [""] if paths.empty?
           implementations << ControllerInterfaceImplementation.new(
-            class_name, interface_names, paths, mapping.verbs, mapping.params, Noir::TreeSitter.node_start_row(node)
+            class_name, interface_names, paths, mapping.verbs, mapping.params,
+            Noir::TreeSitter.node_start_row(node),
+            spring_mapping_method_names(node, source, meta_mappings)
           )
         end
       end
@@ -288,6 +475,35 @@ module Noir
       Noir::TreeSitter.each_named_child(node) do |child|
         walk_controller_interface_implementations(child, source, implementations, constants, meta_mappings, depth + 1)
       end
+    end
+
+    # Method names in `class_decl` whose declarations carry a Spring
+    # mapping annotation (direct or meta). Used to suppress inherited
+    # interface routes that the concrete override re-annotates.
+    private def spring_mapping_method_names(class_decl : LibTreeSitter::TSNode,
+                                            source : String,
+                                            meta_mappings : Hash(String, ClassMapping)) : Set(String)
+      names = Set(String).new
+      return names unless body = Noir::TreeSitter.field(class_decl, "body")
+
+      Noir::TreeSitter.each_named_child(body) do |member|
+        next unless Noir::TreeSitter.node_type(member) == "method_declaration"
+
+        method_name = ""
+        if name_node = Noir::TreeSitter.field(member, "name")
+          method_name = Noir::TreeSitter.node_text(name_node, source)
+        end
+        next if method_name.empty?
+
+        each_annotation(member, source) do |ann_name, _args_node, _line|
+          if ANNOTATION_VERBS.has_key?(ann_name) || meta_mappings.has_key?(ann_name)
+            names << method_name
+            break
+          end
+        end
+      end
+
+      names
     end
 
     private def class_simple_name(class_decl : LibTreeSitter::TSNode, source : String) : String
@@ -304,6 +520,13 @@ module Noir
 
     private def spring_controller_class?(decl : LibTreeSitter::TSNode, source : String) : Bool
       annotated_with_any?(decl, source, Set{"Controller", "RestController"})
+    end
+
+    # A bean stereotype with no controller stereotype and no type-level
+    # `@RequestMapping` (which Spring 5 still accepted as a handler marker).
+    private def non_controller_bean?(decl : LibTreeSitter::TSNode, source : String) : Bool
+      annotated_with_any?(decl, source, Set{"Service", "Repository", "Component", "Configuration"}) &&
+        !annotated_with_any?(decl, source, Set{"Controller", "RestController", "RequestMapping"})
     end
 
     private def annotated_with_any?(decl : LibTreeSitter::TSNode, source : String, names : Set(String)) : Bool
@@ -330,28 +553,45 @@ module Noir
       name == "HttpExchange" || name.ends_with?("Exchange")
     end
 
+    # Simple names of the `implements` interfaces, read straight from the
+    # tree-sitter `interfaces` field (a `super_interfaces` node wrapping a
+    # `type_list`).
+    #
+    # Reading the field rather than slicing the class node's text at the
+    # first `{` matters: the node text starts at the `modifiers` child, so
+    # a class-level annotation whose arguments contain a brace —
+    # `@Produces({MediaType.APPLICATION_JSON})`, `@RequestMapping({"/api"})`,
+    # `@CrossOrigin(origins = {...})` — was mistaken for the class body and
+    # cut the header off before `implements` was ever reached, silently
+    # killing interface route inheritance. `superclass_name` below already
+    # reads its field; this is the same idea for the interface list.
     private def implemented_interface_names(class_decl : LibTreeSitter::TSNode, source : String) : Array(String)
-      header = Noir::TreeSitter.node_text(class_decl, source)
-      if body_start = header.index('{')
-        header = header[...body_start]
-      end
+      names = [] of String
+      return names unless interfaces = Noir::TreeSitter.field(class_decl, "interfaces")
 
-      match = header.match(/\bimplements\s+(.+)\z/m)
-      return [] of String unless match
-
-      names = split_top_level_commas(match[1]).compact_map do |raw|
-        type_name = raw.strip
-        next if type_name.empty?
-        type_name = strip_generic_arguments(type_name)
-        type_name = type_name.split(/\s+/).first? || type_name
-        if idx = type_name.rindex('.')
-          type_name[(idx + 1)..]
+      Noir::TreeSitter.each_named_child(interfaces) do |child|
+        if Noir::TreeSitter.node_type(child) == "type_list"
+          Noir::TreeSitter.each_named_child(child) do |type_node|
+            append_simple_type_name(type_node, source, names)
+          end
         else
-          type_name
+          append_simple_type_name(child, source, names)
         end
       end
-      names.uniq!
       names
+    end
+
+    # Appends the simple name of a type node — generics dropped, package
+    # qualifier dropped, any leading `@Annotation` on an `annotated_type`
+    # discarded — skipping empties and duplicates.
+    private def append_simple_type_name(type_node : LibTreeSitter::TSNode, source : String, names : Array(String))
+      name = strip_generic_arguments(Noir::TreeSitter.node_text(type_node, source))
+      name = name.split(/\s+/).last? || name
+      return if name.empty?
+      if idx = name.rindex('.')
+        name = name[(idx + 1)..]
+      end
+      names << name unless name.empty? || names.includes?(name)
     end
 
     # An `abstract class` is never instantiated as a controller, so its
@@ -381,27 +621,6 @@ module Noir
       else
         name
       end
-    end
-
-    private def split_top_level_commas(text : String) : Array(String)
-      parts = [] of String
-      start = 0
-      depth = 0
-      text.each_char_with_index do |char, index|
-        case char
-        when '<'
-          depth += 1
-        when '>'
-          depth -= 1 if depth > 0
-        when ','
-          if depth == 0
-            parts << text[start...index]
-            start = index + 1
-          end
-        end
-      end
-      parts << text[start..]
-      parts
     end
 
     private def strip_generic_arguments(text : String) : String
@@ -448,8 +667,10 @@ module Noir
                                       constants : Hash(String, String),
                                       meta_mappings : Hash(String, ClassMapping))
       method_name = ""
+      signature_line = nil
       if name_node = Noir::TreeSitter.field(method, "name")
         method_name = Noir::TreeSitter.node_text(name_node, source)
+        signature_line = Noir::TreeSitter.node_start_row(name_node)
       end
 
       each_annotation(method, source) do |ann_name, args_node, ann_line|
@@ -484,9 +705,9 @@ module Noir
         # four routes.
         paths.each do |path|
           class_prefixes.each do |class_prefix|
-            full = join_paths(class_prefix, path)
+            full = Noir::URLPath.join_absorbing(class_prefix, path)
             verbs.each do |verb|
-              routes << Route.new(verb, full, class_name, method_name, ann_line, route_params)
+              routes << Route.new(verb, full, class_name, method_name, ann_line, route_params, signature_line)
             end
           end
         end
@@ -567,6 +788,9 @@ module Noir
                     source.includes?("org.springframework.cloud.gateway")
 
       visible_source = visible_java_code(source)
+      # Slices of this are what get parsed, so a comment inside `.path(...)`
+      # must not read as an argument. Char-aligned with `visible_source`.
+      source = Noir::CComments.strip(source)
       helpers = gateway_predicate_helpers(source, visible_source, constants)
 
       scan_gateway_route_calls(source, visible_source) do |expr, line|
@@ -1081,8 +1305,11 @@ module Noir
     private def decode_string_literal(node : LibTreeSitter::TSNode, source : String) : String
       buf = String.build do |io|
         Noir::TreeSitter.each_named_child(node) do |child|
-          if Noir::TreeSitter.node_type(child) == "string_fragment"
+          case Noir::TreeSitter.node_type(child)
+          when "string_fragment"
             io << Noir::TreeSitter.node_text(child, source)
+          when "escape_sequence"
+            io << Noir::TreeSitter.unescape(Noir::TreeSitter.node_text(child, source))
           end
         end
       end
@@ -1105,6 +1332,7 @@ module Noir
                                          package_name : String,
                                          class_stack : Array(String),
                                          constants : Hash(String, String),
+                                         imported : Set(String)? = nil,
                                          depth : Int32 = 0)
       return if depth > Noir::TreeSitter::MAX_AST_DEPTH
 
@@ -1113,12 +1341,14 @@ module Noir
         name = class_simple_name(node, source)
         next_stack = name.empty? ? class_stack : class_stack + [name]
         Noir::TreeSitter.each_named_child(node) do |child|
-          collect_string_constants(child, source, package_name, next_stack, constants, depth + 1)
+          collect_string_constants(child, source, package_name, next_stack, constants, imported, depth + 1)
         end
         return
       end
 
-      if ty == "field_declaration" && string_field?(node, source)
+      # Interface fields (`interface Routes { String BASE = "/v3"; }`) are
+      # `constant_declaration` nodes — implicitly `public static final`.
+      if (ty == "field_declaration" || ty == "constant_declaration") && string_field?(node, source)
         Noir::TreeSitter.each_named_child(node) do |child|
           next unless Noir::TreeSitter.node_type(child) == "variable_declarator"
           name = Noir::TreeSitter.field(child, "name")
@@ -1127,17 +1357,23 @@ module Noir
           const_name = Noir::TreeSitter.node_text(name, source)
           next unless resolved = resolve_string_value(value, source, constants, class_stack.join("."))
 
-          constants[const_name] ||= resolved
+          if imported && imported.delete(const_name)
+            constants[const_name] = resolved
+          else
+            constants[const_name] ||= resolved
+          end
           unless class_stack.empty?
             class_name = class_stack.join(".")
-            constants["#{class_name}.#{const_name}"] ||= resolved
-            constants["#{package_name}.#{class_name}.#{const_name}"] ||= resolved unless package_name.empty?
+            # `=`, not `||=`: a qualified key is unique within one file, so
+            # this only ever replaces a project-wide seed of the same name.
+            constants["#{class_name}.#{const_name}"] = resolved
+            constants["#{package_name}.#{class_name}.#{const_name}"] = resolved unless package_name.empty?
           end
         end
       end
 
       Noir::TreeSitter.each_named_child(node) do |child|
-        collect_string_constants(child, source, package_name, class_stack, constants, depth + 1)
+        collect_string_constants(child, source, package_name, class_stack, constants, imported, depth + 1)
       end
     end
 
@@ -1216,32 +1452,6 @@ module Noir
       end
 
       nil
-    end
-
-    # Join a class prefix and a method path with exactly one `/`. Also
-    # handles the leading-slash ambiguity Spring is famously relaxed
-    # about: `@RequestMapping("items")` + `@GetMapping("{id}")` maps to
-    # `/items/{id}` even though neither segment has a leading slash.
-    #
-    # Empty method path (`@PostMapping` with no argument, or
-    # `@GetMapping("")`) collapses onto the class prefix — Spring absorbs
-    # the empty segment, so `@RequestMapping("/api")` + `@GetMapping`
-    # maps to `/api`, not `/api/` (see the empty-path branch below).
-    private def join_paths(prefix : String, path : String) : String
-      return path if prefix.empty?
-      # A bare method mapping (`@GetMapping` / `@GetMapping("")`) on a
-      # class mapped to `/api/polls` resolves to `/api/polls` in Spring,
-      # NOT `/api/polls/` — the empty segment is absorbed into the class
-      # prefix. Mirror the jaxrs/quarkus/micronaut extractors and drop
-      # the trailing slash here; only a class prefix that is itself all
-      # slashes (`@RequestMapping("/")`) keeps the root `/`.
-      if path.empty?
-        trimmed = prefix.rstrip('/')
-        return trimmed.empty? ? "/" : trimmed
-      end
-      trimmed_prefix = prefix.rstrip('/')
-      trimmed_path = path.lstrip('/')
-      "#{trimmed_prefix}/#{trimmed_path}"
     end
   end
 end

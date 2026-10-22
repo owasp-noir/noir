@@ -2,6 +2,8 @@ require "../../engines/scala_engine"
 
 module Analyzer::Scala
   class Http4s < ScalaEngine
+    analyzer_for "scala_http4s"
+
     HTTP_METHODS = %w[GET POST PUT DELETE PATCH HEAD OPTIONS]
 
     # Crystal recompiles an interpolated regex literal on every evaluation
@@ -9,15 +11,43 @@ module Analyzer::Scala
     # discovered binding name, so memoize it per name instead.
     @body_as_regexes = Hash(String, Regex).new
 
+    # `object Name extends QueryParamDecoderMatcher[String]("name")` — the
+    # query key is the constructor argument, not the pattern's binding.
+    QUERY_MATCHER_DECL_RE = /\bobject\s+(\w+)\s+extends\s+\w*QueryParam\w*Matcher\s*(?:\[[^(]*\])?\s*\(\s*"([^"]+)"\s*\)/
+
+    # Matcher object name => query key, per configured base. Matchers are
+    # commonly declared in a shared file, so collect them before the
+    # (parallel) per-file scan.
+    @query_matcher_keys = Hash(String, Hash(String, String)).new
+
+    def analyze
+      scan_target_files.each do |path|
+        content = read_file_content(path)
+        next unless content.includes?("QueryParam")
+        keys = @query_matcher_keys[configured_base_for(path)] ||= Hash(String, String).new
+        query_matcher_keys(content).each { |name, key| keys[name] ||= key }
+      end
+      super
+    end
+
     def analyze_file(path : String) : Array(Endpoint)
-      content = File.read(path)
-      extract_routes_from_content(path, content, any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?))
+      content = read_file_content(path)
+      extract_routes_from_content(path, content, callees_needed?)
+    end
+
+    private def query_matcher_keys(content : String) : Hash(String, String)
+      keys = Hash(String, String).new
+      scala_code_lines(content).join('\n').scan(QUERY_MATCHER_DECL_RE) { |m| keys[m[1]] = m[2] }
+      keys
     end
 
     private def extract_routes_from_content(path : String, content : String, include_callee : Bool) : Array(Endpoint)
       endpoints = [] of Endpoint
       lines = content.split('\n')
       code_lines = scala_code_lines(content)
+      # This file's own declarations win over the project-wide index.
+      matcher_keys = (@query_matcher_keys[configured_base_for(path)]? || Hash(String, String).new)
+        .merge(content.includes?("QueryParam") ? query_matcher_keys(content) : Hash(String, String).new)
 
       routes_names = collect_routes_bindings(code_lines)
       mount_prefixes = collect_mount_prefixes(code_lines, routes_names)
@@ -43,7 +73,7 @@ module Analyzer::Scala
 
         if case_line?(trimmed)
           header, end_index = collect_case_header(lines, code_lines, i)
-          if data = parse_case_header(header)
+          if data = parse_case_header(header, matcher_keys)
             methods, segments, path_params, query_params, binding_name = data
             full_path = build_full_path(segments, current_routes_name, mount_prefixes)
             body_text = extract_case_body(lines, code_lines, end_index)
@@ -59,15 +89,11 @@ module Analyzer::Scala
               endpoint = Endpoint.new(full_path, method, [] of Param, Details.new(PathInfo.new(path, i + 1)))
 
               path_params.each do |name|
-                unless endpoint.params.any? { |p| p.name == name && p.param_type == "path" }
-                  endpoint.push_param(Param.new(name, "", "path"))
-                end
+                endpoint.push_param(Param.new(name, "", "path"))
               end
 
               query_params.each do |name|
-                unless endpoint.params.any? { |p| p.name == name && p.param_type == "query" }
-                  endpoint.push_param(Param.new(name, "", "query"))
-                end
+                endpoint.push_param(Param.new(name, "", "query"))
               end
 
               if body_type
@@ -125,7 +151,7 @@ module Analyzer::Scala
     #   case req @ POST -> Root / "users" / IntVar(id) :? FooMatcher(foo) +& BarMatcher(bar)
     # Returns: methods (1+ for union `GET | POST`), path segments,
     # path params, query params, binding name (or nil).
-    private def parse_case_header(header : String)
+    private def parse_case_header(header : String, matcher_keys : Hash(String, String))
       cleaned = header.strip
       return unless cleaned.starts_with?("case ")
       body = cleaned[("case ".size)..].strip
@@ -154,7 +180,7 @@ module Analyzer::Scala
       end
 
       segments, path_params = parse_segments(path_part)
-      query_params = parse_query_matchers(query_part)
+      query_params = parse_query_matchers(query_part, matcher_keys)
 
       {methods, segments, path_params, query_params, binding_name}
     end
@@ -185,14 +211,19 @@ module Analyzer::Scala
       {segments, path_params}
     end
 
-    private def parse_query_matchers(query_part : String) : Array(String)
+    private def parse_query_matchers(query_part : String, matcher_keys : Hash(String, String)) : Array(String)
       params = [] of String
       return params if query_part.empty?
 
       query_part.scan(/(\w+)\s*\(\s*(\w+)\s*\)/) do |m|
         matcher = m[1]
-        name = m[2]
-        next unless matcher.ends_with?("Matcher") || matcher.ends_with?("QueryParamDecoderMatcher") || matcher.includes?("QueryParam")
+        # A declared matcher carries its real key; an undeclared one (defined
+        # in a dependency) falls back to the binding name.
+        name = matcher_keys[matcher]?
+        unless name
+          next unless matcher.ends_with?("Matcher") || matcher.includes?("QueryParam")
+          name = m[2]
+        end
         params << name unless params.includes?(name)
       end
 

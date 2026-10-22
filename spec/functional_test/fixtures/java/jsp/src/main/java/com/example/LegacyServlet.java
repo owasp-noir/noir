@@ -6,6 +6,6 @@ import javax.servlet.http.HttpServletResponse;
 
 public class LegacyServlet extends HttpServlet {
   protected void doPost(HttpServletRequest request, HttpServletResponse response) {
-    request.getParameter("legacyId");
+    request.getParameter(/* legacy */ "legacyId");
   }
 }

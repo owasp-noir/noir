@@ -335,7 +335,7 @@ describe NoirPassiveScan do
       file_content = "This is a critical issue and a high priority item."
 
       # Test critical only
-      results = NoirPassiveScan.detect_with_severity("test_file.txt", file_content, rules, logger, "critical")
+      results = NoirPassiveScan.detect("test_file.txt", file_content, NoirPassiveScan.filter_rules_by_severity(rules, "critical"), logger)
       results.size.should eq(1)
       results[0].info.severity.should eq("critical")
     end
@@ -407,7 +407,7 @@ describe NoirPassiveScan do
       file_content = "This is a critical issue, a high priority item, and a medium concern."
 
       # Test high and above (should include critical and high, exclude medium)
-      results = NoirPassiveScan.detect_with_severity("test_file.txt", file_content, rules, logger, "high")
+      results = NoirPassiveScan.detect("test_file.txt", file_content, NoirPassiveScan.filter_rules_by_severity(rules, "high"), logger)
       results.size.should eq(2)
       severities = results.map(&.info.severity)
       severities.should contain("critical")
@@ -482,7 +482,7 @@ describe NoirPassiveScan do
       file_content = "This is a critical issue, a medium concern, and a low priority item."
 
       # Test medium and above (should include critical and medium, exclude low)
-      results = NoirPassiveScan.detect_with_severity("test_file.txt", file_content, rules, logger, "medium")
+      results = NoirPassiveScan.detect("test_file.txt", file_content, NoirPassiveScan.filter_rules_by_severity(rules, "medium"), logger)
       results.size.should eq(2)
       severities = results.map(&.info.severity)
       severities.should contain("critical")
@@ -537,7 +537,7 @@ describe NoirPassiveScan do
       file_content = "This is a critical issue and a low priority item."
 
       # Test low and above (should include all)
-      results = NoirPassiveScan.detect_with_severity("test_file.txt", file_content, rules, logger, "low")
+      results = NoirPassiveScan.detect("test_file.txt", file_content, NoirPassiveScan.filter_rules_by_severity(rules, "low"), logger)
       results.size.should eq(2)
       severities = results.map(&.info.severity)
       severities.should contain("critical")

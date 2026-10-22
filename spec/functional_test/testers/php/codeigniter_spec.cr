@@ -30,6 +30,10 @@ expected_endpoints = [
   Endpoint.new("/articles/update/{id}", "POST", [Param.new("id", "", "path")]),
   Endpoint.new("/articles/remove/{id}", "GET", [Param.new("id", "", "path")]),
   Endpoint.new("/articles/delete/{id}", "POST", [Param.new("id", "", "path")]),
+  # resource()/presenter() honour only/except
+  Endpoint.new("/tags", "GET"),
+  Endpoint.new("/tags/{id}", "GET", [Param.new("id", "", "path")]),
+  Endpoint.new("/albums", "GET"),
   Endpoint.new("/admin/dashboard", "GET"),
   Endpoint.new("/admin/users", "GET"),
   Endpoint.new("/admin/settings/profile", "GET"),
@@ -37,9 +41,10 @@ expected_endpoints = [
   Endpoint.new("/api/items", "POST"),
   Endpoint.new("/tenant/{num}/billing", "GET", [Param.new("num", "", "path")]),
   Endpoint.new("/debug", "GET"),
+  Endpoint.new("/typed/ping", "GET"),
 ]
 
 FunctionalTester.new("fixtures/php/codeigniter/", {
   :techs     => 2,  # Detection still sees php_codeigniter and php_pure
-  :endpoints => 38, # Analysis suppresses redundant php_pure file endpoints
+  :endpoints => 42, # Analysis suppresses redundant php_pure file endpoints
 }, expected_endpoints).perform_tests

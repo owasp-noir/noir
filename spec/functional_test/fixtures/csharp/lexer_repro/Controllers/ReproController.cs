@@ -26,5 +26,22 @@ namespace Demo.Controllers
         {
             return Ok(Compute(expr, limit));
         }
+
+        // BUG 3: a '{' char literal inside an interpolation hole must not desync method braces
+        [HttpGet("interp/{id}")]
+        public IActionResult Interp([FromRoute] int id)
+        {
+            var tag = $"{Chars['{']}";
+            SecretHelperCall(id);
+            AuditLog.Write("interp");
+            return Ok(SerializeOrder(tag));
+        }
+
+        [HttpPost("interp")]
+        public IActionResult InterpCreate([FromBody] string name)
+        {
+            var order = orderService.Create(name);
+            return Created("", SerializeOrder(order));
+        }
     }
 }

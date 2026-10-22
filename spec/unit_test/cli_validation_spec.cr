@@ -19,6 +19,19 @@ describe Noir::CliValidation do
     end
   end
 
+  it "names an empty base path rather than reporting a blank one as missing" do
+    # `noir scan "$TARGET"` with `TARGET` unset. The entry is present, so
+    # the "No path to scan was given" branch above doesn't fire, and the
+    # existence check printed `Base path does not exist: ` — a message with
+    # nothing after the colon.
+    options = create_test_options
+    options["base"] = YAML::Any.new([YAML::Any.new("")])
+
+    expect_raises(Noir::CliValidation::Error, /Base path is empty/) do
+      Noir::CliValidation.validate_base_paths!(options)
+    end
+  end
+
   it "rejects invalid output formats" do
     options = create_test_options
     options["format"] = YAML::Any.new("madeup")
@@ -59,7 +72,18 @@ describe Noir::CliValidation do
     options = create_test_options
     options["use_taggers"] = YAML::Any.new("hunt,madeup")
 
-    expect_raises(Noir::CliValidation::Error, /Unknown tagger/) do
+    # Point at the v1 list command — `noir scan --list-taggers` is rejected
+    # by the scan parser (legacy rewrite only applies at the top level).
+    expect_raises(Noir::CliValidation::Error, /Unknown tagger.*noir list taggers/) do
+      Noir::CliValidation.validate_tagger_names!(options)
+    end
+  end
+
+  it "rejects a --use-taggers value that names no tagger" do
+    options = create_test_options
+    options["use_taggers"] = YAML::Any.new(", ")
+
+    expect_raises(Noir::CliValidation::Error, /--use-taggers: ", " names no tagger/) do
       Noir::CliValidation.validate_tagger_names!(options)
     end
   end
@@ -81,7 +105,7 @@ describe Noir::CliValidation do
 
     it "rejects directories passed as --config-file" do
       options = create_test_options
-      options["config_file"] = YAML::Any.new("/tmp")
+      options["config_file"] = YAML::Any.new(Dir.tempdir)
       expect_raises(Noir::CliValidation::Error, /is not a file/) do
         Noir::CliValidation.validate_config_file!(options)
       end
@@ -182,6 +206,64 @@ describe Noir::CliValidation do
         Noir::CliValidation.validate_ai_provider_pair!(options)
       end
     end
+
+    it "accepts presets in any case and absolute http(s) URLs" do
+      ["OpenAI", "openrouter", "anthropic", "Gemini", "http://localhost:8000/v1", "HTTPS://gw.example/openai/v1"].each do |provider|
+        options = create_test_options
+        options["ai_provider"] = YAML::Any.new(provider)
+        options["ai_model"] = YAML::Any.new("m")
+        Noir::CliValidation.validate_ai_provider_pair!(options)
+      end
+    end
+
+    it "rejects a provider that is neither a preset nor an http(s) URL" do
+      ["claude", "google", "openai.com", "ftp://host/v1", "localhost:8000"].each do |provider|
+        options = create_test_options
+        options["ai_provider"] = YAML::Any.new(provider)
+        options["ai_model"] = YAML::Any.new("m")
+        expect_raises(Noir::CliValidation::Error, /is not a known provider/) do
+          Noir::CliValidation.validate_ai_provider_pair!(options)
+        end
+      end
+    end
+
+    it "suggests the nearest preset for a typo" do
+      options = create_test_options
+      options["ai_provider"] = YAML::Any.new("opneai")
+      options["ai_model"] = YAML::Any.new("m")
+      expect_raises(Noir::CliValidation::Error, /Did you mean 'openai'/) do
+        Noir::CliValidation.validate_ai_provider_pair!(options)
+      end
+    end
+  end
+
+  describe "validate_ai_sampling!" do
+    it "accepts unset, in-range and integer values" do
+      options = create_test_options
+      Noir::CliValidation.validate_ai_sampling!(options)
+      options["ai_temperature"] = YAML::Any.new("0")
+      options["ai_seed"] = YAML::Any.new("42")
+      Noir::CliValidation.validate_ai_sampling!(options)
+    end
+
+    it "rejects an out-of-range temperature and a non-integer seed" do
+      options = create_test_options
+      options["ai_temperature"] = YAML::Any.new("hot")
+      expect_raises(Noir::CliValidation::Error, /--ai-temperature/) { Noir::CliValidation.validate_ai_sampling!(options) }
+      options["ai_temperature"] = YAML::Any.new("2.5")
+      expect_raises(Noir::CliValidation::Error, /--ai-temperature/) { Noir::CliValidation.validate_ai_sampling!(options) }
+      # The Anthropic Messages API stops at 1.
+      options["ai_temperature"] = YAML::Any.new("1.5")
+      Noir::CliValidation.validate_ai_sampling!(options)
+      options["ai_provider"] = YAML::Any.new("anthropic")
+      expect_raises(Noir::CliValidation::Error, /from 0 to 1\./) { Noir::CliValidation.validate_ai_sampling!(options) }
+      options["ai_temperature"] = YAML::Any.new("")
+      options["ai_seed"] = YAML::Any.new("1.5")
+      expect_raises(Noir::CliValidation::Error, /--ai-seed/) { Noir::CliValidation.validate_ai_sampling!(options) }
+      options["ai_seed"] = YAML::Any.new("")
+      options["ai_scope"] = YAML::Any.new("some")
+      expect_raises(Noir::CliValidation::Error, /--ai-scope/) { Noir::CliValidation.validate_ai_sampling!(options) }
+    end
   end
 
   describe "validate_passive_scan_paths!" do
@@ -219,14 +301,14 @@ describe Noir::CliValidation do
 
     it "accepts an existing directory" do
       options = create_test_options
-      options["passive_scan_path"] = YAML::Any.new([YAML::Any.new("/tmp")])
+      options["passive_scan_path"] = YAML::Any.new([YAML::Any.new(Dir.tempdir)])
       Noir::CliValidation.validate_passive_scan_paths!(options)
     end
 
     it "flags the first invalid entry when multiple paths are passed" do
       options = create_test_options
       options["passive_scan_path"] = YAML::Any.new([
-        YAML::Any.new("/tmp"),
+        YAML::Any.new(Dir.tempdir),
         YAML::Any.new("/tmp/noir-no-such-dir-#{Random.rand(1_000_000)}"),
       ])
       expect_raises(Noir::CliValidation::Error, /does not exist/) do
@@ -294,6 +376,167 @@ describe Noir::CliValidation do
       options["exclude_techs"] = YAML::Any.new("")
       options["techs"] = YAML::Any.new("")
       Noir::CliValidation.validate_tech_names!(options)
+    end
+
+    # A value that is nothing but separators or whitespace names no tech,
+    # and every name in it is "valid" only because the list is empty after
+    # stripping. `--only-techs ,` then cleared the detector list and the
+    # scan reported zero endpoints with exit 0 — under --no-log, silently.
+    it "rejects a value that names no technology at all" do
+      {",", " ", ",,", " , "}.each do |value|
+        options = create_test_options
+        options["only_techs"] = YAML::Any.new(value)
+        expect_raises(Noir::CliValidation::Error, /names no technology/) do
+          Noir::CliValidation.validate_tech_names!(options)
+        end
+      end
+    end
+
+    it "still accepts a trailing comma next to a real name" do
+      options = create_test_options
+      options["only_techs"] = YAML::Any.new("flask,")
+      Noir::CliValidation.validate_tech_names!(options)
+    end
+  end
+
+  # `--passive-scan-severity` is validated by its flag handler in options.cr,
+  # but the identical `passive_scan_severity:` config key reached
+  # `PassiveScanSeverity` untouched — and `meets_threshold?` returns true when
+  # the threshold is unknown. So a config-file typo didn't loosen the filter
+  # by a level, it removed it: the user's intended filter became no filter,
+  # silently. Both sources now pass through this one gate.
+  describe "passive_scan_severity" do
+    it "rejects an unknown severity" do
+      options = create_test_options
+      options["passive_scan_severity"] = YAML::Any.new("bogus")
+
+      expect_raises(Noir::CliValidation::Error, /Invalid passive scan severity "bogus"/) do
+        Noir::CliValidation.validate_passive_scan_severity!(options)
+      end
+    end
+
+    it "rejects an empty severity" do
+      # `passive_scan_severity:` with no value parses to nil -> "", which is
+      # just as unknown to PassiveScanSeverity as a typo is.
+      options = create_test_options
+      options["passive_scan_severity"] = YAML::Any.new("")
+
+      expect_raises(Noir::CliValidation::Error, /Invalid passive scan severity/) do
+        Noir::CliValidation.validate_passive_scan_severity!(options)
+      end
+    end
+
+    it "accepts every documented level" do
+      %w[critical high medium low].each do |level|
+        options = create_test_options
+        options["passive_scan_severity"] = YAML::Any.new(level)
+        Noir::CliValidation.validate_passive_scan_severity!(options)
+        options["passive_scan_severity"].to_s.should eq(level)
+      end
+    end
+
+    it "normalizes case, matching what the CLI flag stores" do
+      options = create_test_options
+      options["passive_scan_severity"] = YAML::Any.new("HIGH")
+      Noir::CliValidation.validate_passive_scan_severity!(options)
+      options["passive_scan_severity"].to_s.should eq("high")
+    end
+  end
+
+  # `--ai-max-token` / `--ai-agent-max-steps` are bounded by
+  # `positive_int_or_die!` on the CLI side; their config twins had no bound at
+  # all. ConfigInitializer coerces the value to an Int, this checks the range.
+  describe "ai integer options" do
+    it "rejects a negative or Int32-overflowing request budget" do
+      options = create_test_options
+      options["ai_max_requests"] = YAML::Any.new(-1)
+      expect_raises(Noir::CliValidation::Error, /Invalid --ai-max-requests '-1'/) do
+        Noir::CliValidation.validate_ai_integer_options!(options)
+      end
+
+      options["ai_max_requests"] = YAML::Any.new(3_000_000_000_i64)
+      expect_raises(Noir::CliValidation::Error, /at most 2147483647/) do
+        Noir::CliValidation.validate_ai_integer_options!(options)
+      end
+    end
+
+    it "rejects a zero agent step budget" do
+      options = create_test_options
+      options["ai_agent_max_steps"] = YAML::Any.new(0)
+
+      expect_raises(Noir::CliValidation::Error, /Invalid --ai-agent-max-steps '0'/) do
+        Noir::CliValidation.validate_ai_integer_options!(options)
+      end
+    end
+
+    it "rejects a negative token budget" do
+      options = create_test_options
+      options["ai_max_token"] = YAML::Any.new(-1)
+
+      expect_raises(Noir::CliValidation::Error, /Invalid --ai-max-token '-1'/) do
+        Noir::CliValidation.validate_ai_integer_options!(options)
+      end
+    end
+
+    it "accepts ai_max_token 0, the shipped default meaning \"provider/model default\"" do
+      # `--ai-max-token 0` is rejected on the CLI, but 0 is what
+      # default_options and the generated template both carry, so the config
+      # path must keep accepting it.
+      options = create_test_options
+      Noir::CliValidation.validate_ai_integer_options!(options)
+      options["ai_max_token"].as_i.should eq(0)
+    end
+
+    it "rejects a non-numeric value that survived coercion" do
+      options = create_test_options
+      options["ai_max_token"] = YAML::Any.new("abc")
+
+      expect_raises(Noir::CliValidation::Error, /Invalid --ai-max-token "abc"/) do
+        Noir::CliValidation.validate_ai_integer_options!(options)
+      end
+    end
+  end
+
+  describe "validate_fail_on!" do
+    it "accepts known categories when a diff is configured" do
+      options = create_test_options
+      options["fail_on"] = YAML::Any.new("added, Auth-Removed")
+      options["diff_ref"] = YAML::Any.new("main")
+
+      Noir::CliValidation.validate_fail_on!(options)
+    end
+
+    it "rejects an unknown category and lists the valid ones" do
+      options = create_test_options
+      options["fail_on"] = YAML::Any.new("added,new")
+      options["diff"] = YAML::Any.new("/tmp/old")
+
+      expect_raises(Noir::CliValidation::Error, /Unknown --fail-on value\(s\): new\. Valid: added, removed, changed, auth-removed/) do
+        Noir::CliValidation.validate_fail_on!(options)
+      end
+    end
+
+    it "rejects --fail-on without a diff, where it could never fire" do
+      options = create_test_options
+      options["fail_on"] = YAML::Any.new("added")
+
+      expect_raises(Noir::CliValidation::Error, /needs a diff/) do
+        Noir::CliValidation.validate_fail_on!(options)
+      end
+    end
+
+    it "rejects a value that names no category instead of leaving the scan ungated" do
+      options = create_test_options
+      options["fail_on"] = YAML::Any.new(" , ,")
+      options["diff_ref"] = YAML::Any.new("main")
+
+      expect_raises(Noir::CliValidation::Error, /--fail-on: " , ," names no category/) do
+        Noir::CliValidation.validate_fail_on!(options)
+      end
+    end
+
+    it "does nothing when --fail-on is unset" do
+      Noir::CliValidation.validate_fail_on!(create_test_options)
     end
   end
 end

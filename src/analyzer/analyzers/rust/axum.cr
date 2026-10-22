@@ -11,6 +11,15 @@ module Analyzer::Rust
   # shares the parsed tree instead of re-scanning the file with
   # regexes and a body-text wrapper.
   class Axum < RustEngine
+    analyzer_for "rust_axum"
+
+    # Only files inside a crate that depends on `axum`. See
+    # `RustEngine#crate_dependencies` — without this every Rust analyzer
+    # sees every `.rs` file in the scan.
+    protected def crate_dependencies : Array(String)
+      ["axum"]
+    end
+
     alias UtoipaScopedKey = Tuple(String, String, String)
     alias UtoipaNestEdge = Tuple(UtoipaScopedKey, String)
     alias NestScopedKey = Tuple(String, String, String)
@@ -18,12 +27,17 @@ module Analyzer::Rust
     alias HandlerContext = NamedTuple(params: Array(Param), callees: Array(Noir::RustCalleeExtractor::Entry))
     alias ByteRange = Tuple(Int32, Int32)
 
+    # Precompiled union for build_cross_nest_index's per-file evidence gate,
+    # so it costs a single PCRE2 match instead of three naive substring
+    # scans.
+    CROSS_NEST_EVIDENCE_RE = Regex.union(".nest(", ".nest_api_service(", ".merge(")
+
     # Verbs accepted as the inner handler call (`get(...)`, `post(...)`,
     # …). Anything outside this set is treated as `GET` to match the
     # legacy fallback the regex analyzer used. `any` covers
     # `axum::routing::any(handler)` — a verb-agnostic registration
     # commonly used for WebSocket upgrades and reverse-proxy fallbacks.
-    HTTP_VERBS = Set{"get", "post", "put", "delete", "patch", "head", "options", "any"}
+    HTTP_VERBS = Set{"get", "post", "put", "delete", "patch", "head", "options", "any", "query"}
 
     # Method emitted for service-shaped registrations (`route_service`,
     # `nest_service`, `fallback_service`). Services aren't bound to a
@@ -70,7 +84,7 @@ module Analyzer::Rust
       # `#[cfg(test)] mod tests { ... }` blocks, which a path filter
       # alone can't tell apart.
       source = read_file_content(path)
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
 
       # `#[cfg(test)] mod tests { ... let app = Router::new().route(...); }`
       # is the canonical place doctests-as-unit-tests register routes in
@@ -116,14 +130,14 @@ module Analyzer::Rust
           next unless route
 
           path_str, handlers = route
-          path_str = join_paths(prefix, path_str) unless prefix.empty?
+          path_str = nest_join(prefix, path_str) unless prefix.empty?
           handlers.each do |raw_verb, handler_name|
             # `axum::routing::any(handler)` and service mounts emit
             # the verb "ANY" — fan out into the canonical seven so
             # SARIF / Postman / OpenAPI consumers see real HTTP
             # methods rather than a non-HTTP "ANY" string.
             RustEngine.fan_out_verbs(raw_verb).each do |verb|
-              details = Details.new(PathInfo.new(path, Noir::TreeSitter.node_start_row(node) + 1))
+              details = Details.new(PathInfo.new(path, call_line(node)))
               endpoint = Endpoint.new(path_str, verb, details)
               extract_path_params(path_str, endpoint)
 
@@ -165,10 +179,10 @@ module Analyzer::Rust
             next unless route
 
             path_str, handlers = route
-            path_str = join_paths(active_prefix, path_str) unless active_prefix.empty?
+            path_str = nest_join(active_prefix, path_str) unless active_prefix.empty?
             handlers.each do |raw_verb, handler_name|
               RustEngine.fan_out_verbs(raw_verb).each do |verb|
-                details = Details.new(PathInfo.new(path, Noir::TreeSitter.node_start_row(node) + 1))
+                details = Details.new(PathInfo.new(path, call_line(node)))
                 endpoint = Endpoint.new(path_str, verb, details)
                 extract_path_params(path_str, endpoint)
 
@@ -220,10 +234,10 @@ module Analyzer::Rust
     }
 
     BUILDER_ROUTE_EMIT_NAMES = Set{
-      "get", "post", "put", "delete", "patch", "head", "options", "any",
+      "get", "post", "put", "delete", "patch", "head", "options", "any", "query",
       "unauthenticated_get", "unauthenticated_post", "unauthenticated_put",
       "unauthenticated_delete", "unauthenticated_patch", "unauthenticated_head",
-      "unauthenticated_options", "unauthenticated_any",
+      "unauthenticated_options", "unauthenticated_any", "unauthenticated_query",
     }
 
     private def router_emit?(call : LibTreeSitter::TSNode, source : String) : Bool
@@ -263,6 +277,10 @@ module Analyzer::Rust
     # applying `.nest("/api", Router::new().route(...))` prefixes to
     # inline nested routers instead of emitting those inner routes at
     # the root.
+    #
+    # Driven by an explicit stack, not recursion: one frame per chained
+    # call overflowed the fiber stack on a few thousand `.route()` calls.
+    # Work is pushed in reverse so it pops in the old recursive order.
     private def walk_router_builders(node : LibTreeSitter::TSNode,
                                      source : String,
                                      prefix : String,
@@ -271,61 +289,87 @@ module Analyzer::Rust
                                      let_router_builders : Hash(String, LibTreeSitter::TSNode),
                                      skip_ranges : Array(ByteRange) = [] of ByteRange,
                                      &block : LibTreeSitter::TSNode, String ->)
-      return if prefix.empty? && node_inside_byte_ranges?(node, skip_ranges)
-
-      if prefix.empty? && Noir::TreeSitter.node_type(node) == "function_item"
-        if name = function_name(node, source)
-          return if mounted_router_names.includes?(name)
-        end
-      end
-
-      if Noir::TreeSitter.node_type(node) == "call_expression"
-        return if RustEngine.inside_test_region?(node, test_regions)
-
-        # `.route`, `.route_service`, `.nest_service`, and
-        # `.fallback` / `.fallback_service` all register endpoints;
-        # `extract_route` knows how to read each shape and returns
-        # `nil` for anything else. Treating them uniformly here keeps
-        # the receiver-chain walk single-pass.
-        if router_emit?(node, source)
-          block.call(node, prefix)
-          walk_receiver_chain(node, source, prefix, test_regions, mounted_router_names, let_router_builders, skip_ranges, &block)
-          return
+      # Let initializers entered through a `.nest(.., name)` and not yet
+      # finished; their `leaving` marker pops once the subtree is done.
+      resolving = Set(Int32).new
+      stack = [{node, prefix, skip_ranges, nil.as(Int32?), false}]
+      while item = stack.pop?
+        node, prefix, skip_ranges, binding, leaving = item
+        if binding
+          if leaving
+            resolving.delete(binding)
+            next
+          end
+          resolving.add(binding)
+          stack << {node, prefix, skip_ranges, binding, true}
         end
 
-        if nest = extract_nest_call(node, source)
-          nest_prefix, nested_router = nest
-          resolved_router = resolve_router_argument(nested_router, source, let_router_builders)
-          walk_receiver_chain(node, source, prefix, test_regions, mounted_router_names, let_router_builders, skip_ranges, &block)
-          walk_router_builders(resolved_router, source, join_paths(prefix, nest_prefix), test_regions, mounted_router_names, let_router_builders, &block)
-          return
+        next if prefix.empty? && node_inside_byte_ranges?(node, skip_ranges)
+
+        if prefix.empty? && Noir::TreeSitter.node_type(node) == "function_item"
+          if name = function_name(node, source)
+            next if mounted_router_names.includes?(name)
+          end
         end
 
-        if merge_arg = extract_merge_call(node, source)
-          walk_receiver_chain(node, source, prefix, test_regions, mounted_router_names, let_router_builders, skip_ranges, &block)
-          walk_router_builders(merge_arg, source, prefix, test_regions, mounted_router_names, let_router_builders, skip_ranges, &block)
-          return
-        end
-      end
+        if Noir::TreeSitter.node_type(node) == "call_expression"
+          next if RustEngine.inside_test_region?(node, test_regions)
+          receiver = chain_receiver(node)
 
-      Noir::TreeSitter.each_named_child(node) do |child|
-        walk_router_builders(child, source, prefix, test_regions, mounted_router_names, let_router_builders, skip_ranges, &block)
+          # `.route`, `.route_service`, `.nest_service`, and
+          # `.fallback` / `.fallback_service` all register endpoints;
+          # `extract_route` knows how to read each shape and returns
+          # `nil` for anything else. Treating them uniformly here keeps
+          # the receiver-chain walk single-pass.
+          if router_emit?(node, source)
+            block.call(node, prefix)
+            stack << {receiver, prefix, skip_ranges, nil, false} if receiver
+            next
+          end
+
+          if nest = extract_nest_call(node, source)
+            nest_prefix, nested_router = nest
+            resolved_router = resolve_router_argument(nested_router, source, let_router_builders)
+            resolved_byte = LibTreeSitter.ts_node_start_byte(resolved_router).to_i
+            # A let initializer reached by name is entered at most once per
+            # path: `api` nesting `admin` nesting `api` is a binding cycle.
+            nested_binding = resolved_byte == LibTreeSitter.ts_node_start_byte(nested_router).to_i ? nil : resolved_byte
+            unless nested_binding && resolving.includes?(nested_binding)
+              stack << {resolved_router, nest_join(prefix, nest_prefix), [] of ByteRange, nested_binding, false}
+            end
+            stack << {receiver, prefix, skip_ranges, nil, false} if receiver
+            next
+          end
+
+          if merge_arg = extract_merge_call(node, source)
+            stack << {merge_arg, prefix, skip_ranges, nil, false}
+            stack << {receiver, prefix, skip_ranges, nil, false} if receiver
+            next
+          end
+        end
+
+        push_named_children_reversed(stack, node) { |child| {child, prefix, skip_ranges, nil.as(Int32?), false} }
       end
     end
 
-    private def walk_receiver_chain(call : LibTreeSitter::TSNode,
-                                    source : String,
-                                    prefix : String,
-                                    test_regions : Array(Tuple(Int32, Int32)),
-                                    mounted_router_names : Set(String),
-                                    let_router_builders : Hash(String, LibTreeSitter::TSNode),
-                                    skip_ranges : Array(ByteRange),
-                                    &block : LibTreeSitter::TSNode, String ->)
+    # `recv` of a method call `recv.name(..)`, or nil for any other node.
+    private def chain_receiver(call : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
       function = Noir::TreeSitter.field(call, "function")
       return unless function && Noir::TreeSitter.node_type(function) == "field_expression"
-      receiver = Noir::TreeSitter.field(function, "value")
-      return unless receiver
-      walk_router_builders(receiver, source, prefix, test_regions, mounted_router_names, let_router_builders, skip_ranges, &block)
+      Noir::TreeSitter.field(function, "value")
+    end
+
+    # Push one work item per named child of `node` so the first child pops
+    # first.
+    private def push_named_children_reversed(stack : Array(T), node : LibTreeSitter::TSNode, & : LibTreeSitter::TSNode -> T) forall T
+      mark = stack.size
+      Noir::TreeSitter.each_named_child(node) { |child| stack << yield child }
+      i, j = mark, stack.size - 1
+      while i < j
+        stack.swap(i, j)
+        i += 1
+        j -= 1
+      end
     end
 
     # `.nest("/p", router)` and aide's `.nest_api_service("/p", router)`
@@ -338,7 +382,7 @@ module Analyzer::Rust
       return unless name && NEST_NAMES.includes?(name)
       args = named_arguments(call)
       return unless args.size >= 2
-      prefix = string_literal_text(args[0], source)
+      prefix = string_literal_content(args[0], source)
       return unless prefix
       {prefix, args[1]}
     end
@@ -406,6 +450,8 @@ module Analyzer::Rust
       prefixes
     end
 
+    # Explicit-stack walk for the same reason as `walk_router_builders`;
+    # items are pushed in reverse so they pop in the old recursive order.
     private def collect_nested_router_prefixes(node : LibTreeSitter::TSNode,
                                                source : String,
                                                test_regions : Array(Tuple(Int32, Int32)),
@@ -413,55 +459,57 @@ module Analyzer::Rust
                                                skip_function_names : Set(String),
                                                let_router_builders : Hash(String, LibTreeSitter::TSNode),
                                                prefixes : Hash(String, Array(String)))
-      if Noir::TreeSitter.node_type(node) == "function_item"
-        if name = function_name(node, source)
-          return if skip_function_names.includes?(name)
+      resolving = Set(Int32).new
+      stack = [{node, active_prefix, nil.as(Int32?), false}]
+      while item = stack.pop?
+        node, active_prefix, binding, leaving = item
+        if binding
+          if leaving
+            resolving.delete(binding)
+            next
+          end
+          resolving.add(binding)
+          stack << {node, active_prefix, binding, true}
         end
-      end
 
-      if Noir::TreeSitter.node_type(node) == "call_expression"
-        return if RustEngine.inside_test_region?(node, test_regions)
+        if Noir::TreeSitter.node_type(node) == "function_item"
+          if name = function_name(node, source)
+            next if skip_function_names.includes?(name)
+          end
+        end
 
-        if nest = extract_nest_call(node, source)
-          nest_prefix, nested_router = nest
-          mounted_prefix = join_paths(active_prefix, nest_prefix)
-          resolved_router = resolve_router_argument(nested_router, source, let_router_builders)
+        if Noir::TreeSitter.node_type(node) == "call_expression"
+          next if RustEngine.inside_test_region?(node, test_regions)
+          receiver = chain_receiver(node)
 
-          if router_name = local_router_function_call_name(resolved_router, source)
-            entries = prefixes[router_name] ||= [] of String
-            entries << mounted_prefix unless entries.includes?(mounted_prefix)
-          else
-            collect_nested_router_prefixes(resolved_router, source, test_regions, mounted_prefix, skip_function_names, let_router_builders, prefixes)
+          if nest = extract_nest_call(node, source)
+            nest_prefix, nested_router = nest
+            mounted_prefix = nest_join(active_prefix, nest_prefix)
+            resolved_router = resolve_router_argument(nested_router, source, let_router_builders)
+            stack << {receiver, active_prefix, nil, false} if receiver
+
+            if router_name = local_router_function_call_name(resolved_router, source)
+              entries = prefixes[router_name] ||= [] of String
+              entries << mounted_prefix unless entries.includes?(mounted_prefix)
+            else
+              resolved_byte = LibTreeSitter.ts_node_start_byte(resolved_router).to_i
+              nested_binding = resolved_byte == LibTreeSitter.ts_node_start_byte(nested_router).to_i ? nil : resolved_byte
+              unless nested_binding && resolving.includes?(nested_binding)
+                stack << {resolved_router, mounted_prefix, nested_binding, false}
+              end
+            end
+            next
           end
 
-          walk_receiver_chain_for_mounts(node, source, active_prefix, test_regions, skip_function_names, let_router_builders, prefixes)
-          return
+          if merge_arg = extract_merge_call(node, source)
+            stack << {receiver, active_prefix, nil, false} if receiver
+            stack << {merge_arg, active_prefix, nil, false}
+            next
+          end
         end
 
-        if merge_arg = extract_merge_call(node, source)
-          collect_nested_router_prefixes(merge_arg, source, test_regions, active_prefix, skip_function_names, let_router_builders, prefixes)
-          walk_receiver_chain_for_mounts(node, source, active_prefix, test_regions, skip_function_names, let_router_builders, prefixes)
-          return
-        end
+        push_named_children_reversed(stack, node) { |child| {child, active_prefix, nil.as(Int32?), false} }
       end
-
-      Noir::TreeSitter.each_named_child(node) do |child|
-        collect_nested_router_prefixes(child, source, test_regions, active_prefix, skip_function_names, let_router_builders, prefixes)
-      end
-    end
-
-    private def walk_receiver_chain_for_mounts(call : LibTreeSitter::TSNode,
-                                               source : String,
-                                               active_prefix : String,
-                                               test_regions : Array(Tuple(Int32, Int32)),
-                                               skip_function_names : Set(String),
-                                               let_router_builders : Hash(String, LibTreeSitter::TSNode),
-                                               prefixes : Hash(String, Array(String)))
-      function = Noir::TreeSitter.field(call, "function")
-      return unless function && Noir::TreeSitter.node_type(function) == "field_expression"
-      receiver = Noir::TreeSitter.field(function, "value")
-      return unless receiver
-      collect_nested_router_prefixes(receiver, source, test_regions, active_prefix, skip_function_names, let_router_builders, prefixes)
     end
 
     private def local_router_function_call_name(node : LibTreeSitter::TSNode, source : String) : String?
@@ -491,8 +539,9 @@ module Analyzer::Rust
     end
 
     private def route_builder_chain?(node : LibTreeSitter::TSNode, source : String) : Bool
-      case Noir::TreeSitter.node_type(node)
-      when "call_expression"
+      # Iterative: a long `.get(..).post(..)` chain would overflow a
+      # recursive descent.
+      while Noir::TreeSitter.node_type(node) == "call_expression"
         return true if route_builder_constructor_call?(node, source)
 
         fn_node = Noir::TreeSitter.field(node, "function")
@@ -501,20 +550,22 @@ module Analyzer::Rust
         field = Noir::TreeSitter.field(fn_node, "field")
         receiver = Noir::TreeSitter.field(fn_node, "value")
         return false unless field && receiver
+        return false unless BUILDER_ROUTE_EMIT_NAMES.includes?(Noir::TreeSitter.node_text(field, source))
 
-        field_name = Noir::TreeSitter.node_text(field, source)
-        BUILDER_ROUTE_EMIT_NAMES.includes?(field_name) && route_builder_chain?(receiver, source)
-      else
-        false
+        node = receiver
       end
+      false
     end
 
     private def route_builder_constructor_call?(call : LibTreeSitter::TSNode, source : String) : Bool
       fn_node = Noir::TreeSitter.field(call, "function")
-      return false unless fn_node
+      # A method call's function spans its whole receiver chain; reading
+      # that text at every link of a long chain is quadratic, and it can't
+      # end in `RouteBuilder::new` anyway.
+      return false unless fn_node && Noir::TreeSitter.node_type(fn_node) != "field_expression"
 
       text = Noir::TreeSitter.node_text(fn_node, source)
-      !!text.match(/(?:^|::)[A-Za-z_]\w*(?:RouteBuilder|RouterBuilder)::new$/)
+      !!text.match(/(?:^|::)(?:[A-Za-z_]\w*)?(?:RouteBuilder|RouterBuilder)::new$/)
     end
 
     # Returns `{path, [{http_method, handler_name?}, ...]}` for a valid
@@ -542,7 +593,7 @@ module Analyzer::Rust
         return unless args
         named = named_children(args)
         return if named.size < 2
-        path = string_literal_text(named[0], source)
+        path = string_literal_content(named[0], source)
         return unless path
         {path, decode_handler(named[1], source)}
       when "route_service"
@@ -550,7 +601,7 @@ module Analyzer::Rust
         return unless args
         named = named_children(args)
         return if named.size < 1
-        path = string_literal_text(named[0], source)
+        path = string_literal_content(named[0], source)
         return unless path
         {path, [{SERVICE_METHOD, nil.as(String?)}]}
       when "nest_service"
@@ -558,9 +609,9 @@ module Analyzer::Rust
         return unless args
         named = named_children(args)
         return if named.size < 1
-        prefix = string_literal_text(named[0], source)
+        prefix = string_literal_content(named[0], source)
         return unless prefix
-        {join_paths(prefix, "/*"), [{SERVICE_METHOD, nil.as(String?)}]}
+        {nest_join(prefix, "/*"), [{SERVICE_METHOD, nil.as(String?)}]}
       when "fallback", "fallback_service"
         args = Noir::TreeSitter.field(call, "arguments")
         return unless args
@@ -584,7 +635,7 @@ module Analyzer::Rust
       named = named_arguments(call)
       return if named.size < 2
 
-      path = string_literal_text(named[0], source)
+      path = string_literal_content(named[0], source)
       return unless path
 
       handler = callable_text(named[1], source)
@@ -614,21 +665,37 @@ module Analyzer::Rust
         break unless fn_node
         case Noir::TreeSitter.node_type(fn_node)
         when "identifier", "scoped_identifier"
-          # Innermost: `get(handler)` or aide's `get_with(handler, op)`.
-          verb = normalize_method_verb(Noir::TreeSitter.node_text(fn_node, source).split("::").last)
-          if verb
-            handlers.unshift({verb, first_callable_argument(cursor, source)})
+          # Innermost: `get(handler)`, `query(handler)`, `on(MethodFilter::QUERY, handler)`, or aide's `get_with(handler, op)`.
+          call_name = Noir::TreeSitter.node_text(fn_node, source).split("::").last
+          if on_method_filter_call?(call_name)
+            verbs, handler_name = extract_on_call(cursor, source)
+            verbs.reverse_each do |verb|
+              handlers.unshift({verb, handler_name})
+            end
+          else
+            verb = normalize_method_verb(call_name)
+            if verb
+              handlers.unshift({verb, first_callable_argument(cursor, source)})
+            end
           end
           break
         when "field_expression"
-          # Chained: `<inner>.post(...)` / `.post_with(...)`. Field is
+          # Chained: `<inner>.post(...)` / `.post_with(...)` / `.on(...)`. Field is
           # the verb. Non-verb layers (`.layer(...)`, `.route_layer(...)`)
           # are transparent.
           field = Noir::TreeSitter.field(fn_node, "field")
           if field
-            verb = normalize_method_verb(Noir::TreeSitter.node_text(field, source))
-            if verb
-              handlers.unshift({verb, first_callable_argument(cursor, source)})
+            field_name = Noir::TreeSitter.node_text(field, source)
+            if on_method_filter_call?(field_name)
+              verbs, handler_name = extract_on_call(cursor, source)
+              verbs.reverse_each do |verb|
+                handlers.unshift({verb, handler_name})
+              end
+            else
+              verb = normalize_method_verb(field_name)
+              if verb
+                handlers.unshift({verb, first_callable_argument(cursor, source)})
+              end
             end
           end
           inner = Noir::TreeSitter.field(fn_node, "value")
@@ -643,20 +710,91 @@ module Analyzer::Rust
       handlers
     end
 
+    private def on_method_filter_call?(name : String) : Bool
+      verb = name.downcase
+      verb == "on" || verb == "on_service" || verb == "on_with" || verb == "on_service_with"
+    end
+
+    private def extract_on_call(call : LibTreeSitter::TSNode, source : String) : Tuple(Array(String), String?)
+      args = named_arguments(call)
+      return {["GET"], nil.as(String?)} if args.empty?
+
+      verbs = extract_method_filter_verbs(args[0], source)
+      verbs = ["GET"] if verbs.empty?
+
+      handler_name = args.size > 1 ? callable_text(args[1], source) : nil
+      {verbs, handler_name}
+    end
+
+    private def extract_method_filter_verbs(node : LibTreeSitter::TSNode, source : String) : Array(String)
+      verbs = [] of String
+      collect_method_filter_verbs(node, source, verbs)
+      verbs.uniq!
+      verbs
+    end
+
+    private def collect_method_filter_verbs(node : LibTreeSitter::TSNode, source : String, verbs : Array(String))
+      # Explicit stack (children pushed in reverse): a long
+      # `GET.or(POST).or(..)` / `GET | POST | ..` filter would overflow a
+      # recursive descent.
+      stack = [node]
+      while node = stack.pop?
+        case Noir::TreeSitter.node_type(node)
+        when "parenthesized_expression"
+          push_named_children_reversed(stack, node) { |child| child }
+        when "binary_expression"
+          right = Noir::TreeSitter.field(node, "right")
+          left = Noir::TreeSitter.field(node, "left")
+          stack << right if right
+          stack << left if left
+        when "call_expression"
+          fn_node = Noir::TreeSitter.field(node, "function")
+          if fn_node
+            case Noir::TreeSitter.node_type(fn_node)
+            when "field_expression"
+              field = Noir::TreeSitter.field(fn_node, "field")
+              value = Noir::TreeSitter.field(fn_node, "value")
+              field_name = field ? Noir::TreeSitter.node_text(field, source) : ""
+              if field_name == "or" || field_name == "union"
+                named_arguments(node).reverse_each { |arg| stack << arg }
+                stack << value if value
+              end
+            when "scoped_identifier", "identifier"
+              fn_text = Noir::TreeSitter.node_text(fn_node, source)
+              if fn_text.ends_with?("::all") || fn_text == "all"
+                verbs << "ANY"
+              end
+            end
+          end
+        when "scoped_identifier", "identifier"
+          text = Noir::TreeSitter.node_text(node, source)
+          leaf = text.split("::").last
+          case leaf.upcase
+          when "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "TRACE", "QUERY"
+            verbs << leaf.upcase
+          when "ALL"
+            verbs << "ANY"
+          end
+        end
+      end
+    end
+
     # Map a method-router constructor name to its canonical HTTP verb,
     # or `nil` if it isn't one. Handles plain axum verbs (`get`, `post`,
-    # … `any`) and aide's operation-annotated `*_with` variants
-    # (`get_with`, `post_with`, …). Returns the upcased verb.
+    # … `any`, `query`) and aide's operation-annotated `*_with` variants
+    # (`get_with`, `post_with`, …) and `*_service` variants (`query_service`, …).
+    # Returns the upcased verb.
     private def normalize_method_verb(name : String) : String?
       verb = name.downcase
       verb = verb[0...-"_with".size] if verb.ends_with?("_with")
+      verb = verb[0...-"_service".size] if verb.ends_with?("_service")
       HTTP_VERBS.includes?(verb) ? verb.upcase : nil
     end
 
     private def first_callable_argument(call : LibTreeSitter::TSNode, source : String) : String?
       args = Noir::TreeSitter.field(call, "arguments")
       return unless args
-      Noir::TreeSitter.each_named_child(args) do |child|
+      Noir::TreeSitter.each_named_arg(args) do |child|
         if text = callable_text(child, source)
           return text
         end
@@ -682,11 +820,11 @@ module Analyzer::Rust
 
     private def named_children(node : LibTreeSitter::TSNode) : Array(LibTreeSitter::TSNode)
       named = [] of LibTreeSitter::TSNode
-      Noir::TreeSitter.each_named_child(node) { |c| named << c }
+      Noir::TreeSitter.each_named_arg(node) { |c| named << c }
       named
     end
 
-    private def join_paths(prefix : String, path : String) : String
+    private def nest_join(prefix : String, path : String) : String
       "#{prefix.rstrip('/')}/#{path.lstrip('/')}"
     end
 
@@ -736,7 +874,21 @@ module Analyzer::Rust
       endpoint.push_param(Param.new("query", "", "query")) if extractor_param?(text, "Query")
       endpoint.push_param(Param.new("body", "", "json")) if extractor_param?(text, "Json")
       endpoint.push_param(Param.new("form", "", "form")) if extractor_param?(text, "Form")
+      # `TypedHeader<Authorization<Bearer>>` / `TypedHeader<headers::UserAgent>`:
+      # the `headers` crate type names its header (`UserAgent` → `User-Agent`).
+      if m = text.match(TYPED_HEADER_RE)
+        name = TYPED_HEADER_NAMES[m[1]]? || m[1].gsub(/(?<=[a-z0-9])(?=[A-Z])/, "-")
+        endpoint.push_param(Param.new(name, "", "header"))
+      end
     end
+
+    TYPED_HEADER_RE    = /TypedHeader\s*<\s*(?:[A-Za-z_]\w*::)*([A-Z]\w*)/
+    TYPED_HEADER_NAMES = {
+      "ETag"                => "ETag",
+      "Te"                  => "TE",
+      "SecWebsocketKey"     => "Sec-WebSocket-Key",
+      "SecWebsocketVersion" => "Sec-WebSocket-Version",
+    }
 
     # Precompiled per extractor type; interpolated regex literals here would
     # be recompiled on every function parameter.
@@ -800,33 +952,6 @@ module Analyzer::Rust
     private def call_function_text(call : LibTreeSitter::TSNode, source : String) : String?
       function = Noir::TreeSitter.field(call, "function")
       function ? Noir::TreeSitter.node_text(function, source) : nil
-    end
-
-    private def first_string_literal_text(node : LibTreeSitter::TSNode?, source : String) : String?
-      return unless node
-      return string_literal_text(node, source) if Noir::TreeSitter.node_type(node) == "string_literal"
-
-      Noir::TreeSitter.each_named_child(node) do |child|
-        if text = first_string_literal_text(child, source)
-          return text
-        end
-      end
-      nil
-    end
-
-    private def string_literal_text(node : LibTreeSitter::TSNode, source : String) : String?
-      return unless Noir::TreeSitter.node_type(node) == "string_literal"
-      # tree-sitter-rust splits a literal with escapes into multiple children
-      # ("/a\tb" -> string_content "/a", escape_sequence "\t", string_content "b").
-      # Concatenate every segment instead of keeping only the last one.
-      parts = [] of String
-      Noir::TreeSitter.each_named_child(node) do |child|
-        case Noir::TreeSitter.node_type(child)
-        when "string_content", "escape_sequence"
-          parts << Noir::TreeSitter.node_text(child, source)
-        end
-      end
-      parts.empty? ? nil : parts.join
     end
 
     private def build_router_function_index(root : LibTreeSitter::TSNode, source : String) : Hash(String, LibTreeSitter::TSNode)
@@ -1005,51 +1130,14 @@ module Analyzer::Rust
       context
     end
 
-    private def candidate_module_paths(current_path : String, module_parts : Array(String)) : Array(String)
-      return [] of String if module_parts.empty?
-
-      base_dir, parts = module_base_dir(current_path, module_parts)
-      return [] of String if parts.empty?
-
-      module_path = parts.join("/")
-      [
-        File.join(base_dir, "#{module_path}.rs"),
-        File.join(base_dir, module_path, "mod.rs"),
-      ]
-    end
-
-    private def module_base_dir(current_path : String, module_parts : Array(String)) : Tuple(String, Array(String))
-      first = module_parts.first
-      rest = module_parts[1..]? || [] of String
-
-      case first
-      when "crate"
-        {crate_src_dir(current_path), rest}
-      when "self"
-        {current_module_dir(current_path), rest}
-      when "super"
-        {File.dirname(current_module_dir(current_path)), rest}
-      else
-        {current_module_dir(current_path), module_parts}
-      end
-    end
-
-    private def current_module_dir(current_path : String) : String
-      File.dirname(current_path)
-    end
-
-    private def crate_src_dir(current_path : String) : String
-      marker = "/src/"
-      if idx = current_path.rindex(marker)
-        current_path[0, idx + marker.size - 1]
-      else
-        File.dirname(current_path)
-      end
-    end
-
     # ── utoipa-axum #[utoipa::path] support ──────────────────────────
 
     UTOIPA_VERBS = Set{"get", "post", "put", "delete", "patch", "head", "options", "trace"}
+
+    # Precompiled union for build_utoipa_prefix_index's per-file evidence
+    # gate, so it costs a single PCRE2 match instead of two naive substring
+    # scans.
+    UTOIPA_INDEX_EVIDENCE_RE = Regex.union("OpenApiRouter", ".routes(")
 
     # Emit an endpoint for every `#[utoipa::path(method, path = "/x")]`
     # handler in the file, composed with the OpenApiRouter nest prefix the
@@ -1060,7 +1148,7 @@ module Analyzer::Rust
                                          handler_context_cache : Hash(String, HandlerContext),
                                          endpoints : Array(Endpoint))
       file_mod = primary_module(path)
-      base = configured_base_for(path)
+      base = crate_scope_for(path)
       each_attribute_pair(root) do |attr_item, function|
         next if RustEngine.inside_test_region?(attr_item, test_regions)
         route = extract_utoipa_attr(attr_item, source)
@@ -1081,7 +1169,7 @@ module Analyzer::Rust
           elsif root_path
             p # `path = "/"` registers at the nest root, no trailing slash
           else
-            join_paths(p, attr_path)
+            nest_join(p, attr_path)
           end
         end
         attr_row = Noir::TreeSitter.node_start_row(attr_item) + 1
@@ -1154,50 +1242,34 @@ module Analyzer::Rust
     # small function graph and propagates prefixes through `.merge(child)` and
     # nested `.nest("/child", child)` edges.
     private def build_cross_nest_index : Hash(NestScopedKey, Array(String))
-      direct = Hash(NestScopedKey, Array(String)).new
       edges = Hash(NestScopedKey, Array(NestEdge)).new
 
       all_files.each do |fpath|
-        next if File.directory?(fpath)
         next unless File.exists?(fpath) && File.extname(fpath) == ".rs"
-        next if RustEngine.test_path?(fpath)
+        next if RustEngine.test_path?(base_relative_path(fpath))
         src = read_file_content(fpath)
-        next unless src.includes?(".nest(") || src.includes?(".nest_api_service(") || src.includes?(".merge(")
-        base = configured_base_for(fpath)
+        next unless src.matches?(CROSS_NEST_EVIDENCE_RE)
+        base = crate_scope_for(fpath)
         begin
           test_regions = RustEngine.collect_cfg_test_regions(src)
           Noir::TreeSitter.parse_rust(src) do |root|
             let_calls = build_let_call_index(root, src)
             collect_cross_router_edges(root, src, base, primary_module(fpath), test_regions, let_calls, edges)
-            walk(root) do |node|
-              next unless Noir::TreeSitter.node_type(node) == "call_expression"
-              next if RustEngine.inside_test_region?(node, test_regions)
-              name = field_call_name(node, src)
-              next unless name && NEST_NAMES.includes?(name)
-              args = named_arguments(node)
-              next unless args.size >= 2
-              prefix = string_literal_text(args[0], src)
-              next unless prefix
-              call = resolve_router_call(args[1], src, let_calls)
-              next unless call
-              mod, leaf = scoped_module_leaf(call, src)
-              next unless mod && leaf
-              key = {base, mod, leaf}
-              bucket = (direct[key] ||= [] of String)
-              bucket << prefix unless bucket.includes?(prefix)
-            end
           end
         rescue e
           logger.debug "axum cross-nest index error #{fpath}: #{e}"
         end
       end
 
+      # Seed only from routers nobody nests or merges: a `.nest("/users", …)`
+      # inside `api_router()` is not a root mount when `main` nests
+      # `api_router()` under `/api/v1`, so seeding it directly emitted a
+      # phantom prefix-less `/users/...` copy of every route.
+      nested = Set(NestScopedKey).new
+      edges.each_value { |children| children.each { |child, _| nested.add(child) } }
       index = Hash(NestScopedKey, Array(String)).new
-      direct.each do |key, prefixes|
-        prefixes.each do |prefix|
-          add_cross_prefix(index, key, prefix)
-          propagate_cross_prefix(key, prefix, edges, index, Set(NestScopedKey).new)
-        end
+      edges.each_key do |parent|
+        propagate_cross_prefix(parent, "", edges, index, Set(NestScopedKey).new) unless nested.includes?(parent)
       end
       index
     end
@@ -1236,7 +1308,7 @@ module Analyzer::Rust
             next unless NEST_NAMES.includes?(field)
             args = named_arguments(call)
             next unless args.size >= 2
-            prefix = string_literal_text(args[0], source)
+            prefix = string_literal_content(args[0], source)
             next unless prefix
             child = resolve_router_call(args[1], source, let_calls)
             next unless child
@@ -1270,7 +1342,13 @@ module Analyzer::Rust
       stack.add(parent)
       if children = edges[parent]?
         children.each do |child, child_prefix|
-          composed = child_prefix.empty? ? prefix : join_paths(prefix, child_prefix)
+          composed = if child_prefix.empty?
+                       prefix
+                     elsif prefix.empty?
+                       child_prefix
+                     else
+                       nest_join(prefix, child_prefix)
+                     end
           add_cross_prefix(index, child, composed)
           propagate_cross_prefix(child, composed, edges, index, stack)
         end
@@ -1281,6 +1359,7 @@ module Analyzer::Rust
     private def add_cross_prefix(index : Hash(NestScopedKey, Array(String)),
                                  key : NestScopedKey,
                                  prefix : String)
+      return if prefix.empty?
       bucket = (index[key] ||= [] of String)
       bucket << prefix unless bucket.includes?(prefix)
     end
@@ -1291,7 +1370,7 @@ module Analyzer::Rust
       result = Hash(String, Array(String)).new
       idx = @cross_nest_prefix
       return result if idx.nil? || idx.empty?
-      base = configured_base_for(path)
+      base = crate_scope_for(path)
       mod = primary_module(path)
       idx.each do |key, prefixes|
         kbase, kmod, kleaf = key
@@ -1337,7 +1416,13 @@ module Analyzer::Rust
                                         let_calls : Hash(String, LibTreeSitter::TSNode)) : LibTreeSitter::TSNode
       return arg unless Noir::TreeSitter.node_type(arg) == "identifier"
 
-      let_calls[Noir::TreeSitter.node_text(arg, source)]? || arg
+      resolved = let_calls[Noir::TreeSitter.node_text(arg, source)]?
+      return arg unless resolved
+      # `let router = Router::new().nest("/api", router)`: a let initializer
+      # can't name its own binding, so this `router` is the shadowed one.
+      arg_byte = LibTreeSitter.ts_node_start_byte(arg)
+      return arg if arg_byte >= LibTreeSitter.ts_node_start_byte(resolved) && arg_byte < LibTreeSitter.ts_node_end_byte(resolved)
+      resolved
     end
 
     private def node_byte_range(node : LibTreeSitter::TSNode) : ByteRange
@@ -1357,16 +1442,19 @@ module Analyzer::Rust
     private def innermost_router_call(call : LibTreeSitter::TSNode, source : String) : LibTreeSitter::TSNode?
       return unless Noir::TreeSitter.node_type(call) == "call_expression"
 
-      fn = Noir::TreeSitter.field(call, "function")
-      return call unless fn
+      # Iterative: a long receiver chain would overflow a recursive descent.
+      loop do
+        fn = Noir::TreeSitter.field(call, "function")
+        return call unless fn
 
-      fn = unwrap_generic_function(fn)
-      return call unless Noir::TreeSitter.node_type(fn) == "field_expression"
+        fn = unwrap_generic_function(fn)
+        return call unless Noir::TreeSitter.node_type(fn) == "field_expression"
 
-      receiver = Noir::TreeSitter.field(fn, "value")
-      return call unless receiver && Noir::TreeSitter.node_type(receiver) == "call_expression"
+        receiver = Noir::TreeSitter.field(fn, "value")
+        return call unless receiver && Noir::TreeSitter.node_type(receiver) == "call_expression"
 
-      innermost_router_call(receiver, source) || receiver
+        call = receiver
+      end
     end
 
     private def unwrap_generic_function(node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode
@@ -1421,12 +1509,11 @@ module Analyzer::Rust
       fn_routes = Hash(UtoipaScopedKey, Array(Tuple(String, String?))).new
 
       all_files.each do |fpath|
-        next if File.directory?(fpath)
         next unless File.exists?(fpath) && File.extname(fpath) == ".rs"
-        next if RustEngine.test_path?(fpath)
-        base = configured_base_for(fpath)
+        next if RustEngine.test_path?(base_relative_path(fpath))
+        base = crate_scope_for(fpath)
         src = read_file_content(fpath)
-        next unless src.includes?("OpenApiRouter") || src.includes?(".routes(")
+        next unless src.matches?(UTOIPA_INDEX_EVIDENCE_RE)
         file_mod = primary_module(fpath)
         begin
           test_regions = RustEngine.collect_cfg_test_regions(src)
@@ -1477,9 +1564,9 @@ module Analyzer::Rust
             args = Noir::TreeSitter.field(c, "arguments")
             next unless args
             named = [] of LibTreeSitter::TSNode
-            Noir::TreeSitter.each_named_child(args) { |a| named << a }
+            Noir::TreeSitter.each_named_arg(args) { |a| named << a }
             next if named.size < 2
-            prefix = string_literal_text(named[0], source)
+            prefix = string_literal_content(named[0], source)
             next unless prefix
             child_key = nest_child_key(named[1], source, base, file_mod)
             next unless child_key
@@ -1561,27 +1648,6 @@ module Analyzer::Rust
       p.starts_with?("/") ? p : "/#{p}"
     end
 
-    private def primary_module(path : String) : String
-      base = File.basename(path, ".rs")
-      dir = File.dirname(path)
-      case base
-      when "mod"
-        File.basename(dir)
-      when "lib", "main"
-        parent = File.basename(dir)
-        parent == "src" ? File.basename(File.dirname(dir)) : parent
-      else
-        base
-      end
-    end
-
-    private def find_named_child(node : LibTreeSitter::TSNode, type : String) : LibTreeSitter::TSNode?
-      Noir::TreeSitter.each_named_child(node) do |child|
-        return child if Noir::TreeSitter.node_type(child) == type
-      end
-      nil
-    end
-
     # Walk `node`'s children pairing each `attribute_item` with the
     # `function_item` it decorates (skipping doc comments / other attrs).
     private def each_attribute_pair(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode, LibTreeSitter::TSNode ->)
@@ -1603,13 +1669,6 @@ module Analyzer::Rust
           end
         end
         each_attribute_pair(child, &block)
-      end
-    end
-
-    private def walk(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
-      block.call(node)
-      Noir::TreeSitter.each_named_child(node) do |child|
-        walk(child, &block)
       end
     end
   end

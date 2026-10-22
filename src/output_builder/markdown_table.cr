@@ -1,33 +1,36 @@
 require "../models/output_builder"
 require "../models/endpoint"
+require "./markdown_cell"
 
+@[Noir::OutputFormat(name: "markdown-table", description: "Markdown table", order: 60, structured: true)]
 class OutputBuilderMarkdownTable < OutputBuilder
+  include OutputBuilderMarkdownCell
+
   def print(endpoints : Array(Endpoint))
     ob_puts "| Endpoint | Protocol | Params |"
     ob_puts "| -------- | -------- | ------ |"
 
     endpoints.each do |endpoint|
-      if !endpoint.params.nil?
-        params_text = ""
-        endpoint.params.each do |param|
-          name = sanitize_markdown_cell(param.name)
-          type = sanitize_markdown_cell(param.param_type)
-          params_text += "`#{name} (#{type})` "
-        end
-        ob_puts "| #{sanitize_markdown_cell(endpoint.method)} #{sanitize_markdown_cell(endpoint.url)} | #{sanitize_markdown_cell(endpoint.protocol)} | #{params_text} |"
-      else
-        ob_puts "| #{sanitize_markdown_cell(endpoint.method)} #{sanitize_markdown_cell(endpoint.url)} | #{sanitize_markdown_cell(endpoint.protocol)} | - |"
-      end
-    end
-  end
+      # `params` is a non-nilable Array, so the `-` placeholder used to sit
+      # behind an `unless params.nil?` that could never be false: a param-less
+      # endpoint rendered an empty cell instead. Branch on `empty?`, which is
+      # the condition that was meant.
+      params_text = if endpoint.params.empty?
+                      "-"
+                    else
+                      String.build do |cell|
+                        endpoint.params.each do |param|
+                          content = "#{sanitize_code_span_cell(param.name)} (#{sanitize_code_span_cell(param.param_type)})"
+                          cell << markdown_code_span(content) << ' '
+                        end
+                      end
+                    end
 
-  private def sanitize_markdown_cell(content : String) : String
-    content.to_s
-      .gsub('\\', "\\\\") # Escape backslashes first
-      .gsub('|', "\\|")   # Escape pipes
-      .gsub('<', "&lt;")  # Escape HTML start tag
-      .gsub('>', "&gt;")  # Escape HTML end tag
-      .gsub("\r", "")     # Remove carriage returns
-      .gsub("\n", " ")    # Replace newlines with space
+      # A code span, like the diff report's endpoint column: nothing in a
+      # route (`[x](…)`, `*`, `_`) can render as Markdown inside one, and the
+      # route reads exactly as written.
+      endpoint_cell = markdown_code_span(sanitize_code_span_cell("#{endpoint.method} #{endpoint.url}"))
+      ob_puts "| #{endpoint_cell} | #{sanitize_text_cell(endpoint.protocol)} | #{params_text} |"
+    end
   end
 end

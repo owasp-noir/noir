@@ -3,20 +3,25 @@ require "../../../miniparsers/swift_callee_extractor"
 
 module Analyzer::Swift
   class Vapor < SwiftEngine
-    # Maximum number of lines to look ahead for function parameters
-    LOOKAHEAD_LIMIT = 20
+    analyzer_for "swift_vapor"
 
     # Patterns for route definitions in Vapor:
     # app.get("path") { ... }
     # app.post("path", "segment") { ... }
     # routes.get("path", ":param") { ... }
-    ROUTE_PATTERN    = /([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\.(get|post|put|delete|patch)\s*\(/
+    # users.get { ... }   (trailing closure, no parens: the receiver's own path)
+    ROUTE_PATTERN    = /([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\.(get|post|put|delete|patch)\s*([({])/
     ON_ROUTE_PATTERN = /([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\.on\s*\(/
     # The base may be a dotted receiver (`app.routes.grouped(...)`), an implicit
     # `self` (bare `grouped(...)`), or a single identifier (`router.grouped(...)`).
-    GROUP_ASSIGN_PATTERN       = /\b(?:let|var)\s+([A-Za-z_]\w*)\s*=\s*(?:([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\.)?grouped\s*\(/
-    GROUP_CLOSURE_PATTERN      = /([A-Za-z_]\w*)\.group(?:ed)?\s*\(/
-    FUNCTION_SIGNATURE_PATTERN = /\bfunc\s+([A-Za-z_]\w*)\s*\(/
+    GROUP_ASSIGN_PATTERN  = /\b(?:let|var)\s+([A-Za-z_]\w*)\s*=\s*(?:([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\.)?grouped\s*\(/
+    GROUP_CLOSURE_PATTERN = /([A-Za-z_]\w*)\.group(?:ed)?\s*\(/
+    # `app.grouped("a").grouped("b")` — a group call chained onto the previous
+    # one; `app.grouped("a").get("b")` — a route verb called straight on a
+    # group expression.
+    CHAINED_GROUP_PATTERN = /^\s*\.group(?:ed)?\s*\(/
+    INLINE_GROUP_PATTERN  = /([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\.grouped\s*\(/
+    INLINE_VERB_PATTERN   = /^\s*\.(?:(?:get|post|put|delete|patch)\s*[({]|on\s*\()/
 
     # A function parameter (or binding) typed as a Vapor router:
     # `func routes(_ app: Application)`, `func boot(routes: RoutesBuilder)`,
@@ -32,20 +37,46 @@ module Analyzer::Swift
     # is router-like.
     ROUTER_EXTENSION_PATTERN = /\bextension\s+(?:RoutesBuilder|Router)\b/
 
+    # Gate for `register_router_params`. All three patterns it runs require
+    # one of these three words, so a line without any of them cannot
+    # contribute a receiver and does not need to be matched at all.
+    #
+    # That pattern opens with an unanchored `([A-Za-z_]\w*)`, so PCRE2 tries
+    # it at every offset of the subject and backtracks the greedy `\w*` on
+    # each one — quadratic in the line length. Up to roughly half a megabyte
+    # the JIT absorbs it; past that the JIT stack overflows, PCRE2 falls back
+    # to the interpreter, and the cost becomes visible all at once: a
+    # 600 KB single-line `.swift` file (generated code, a vendored bundle)
+    # took 75 s in this one `scan` where 300 KB took milliseconds.
+    #
+    # A literal union is a plain memchr-class search with no backtracking, and
+    # since the full pattern requires one of these three words the gate cannot
+    # change what is found.
+    ROUTER_TYPE_RE = Regex.union("RoutesBuilder", "Router", "Application")
+
+    # `route_definition?` runs on every scanned line (route detection, param
+    # lookahead, body-boundary checks). A verb may take a trailing closure
+    # with no parens (`app.get { ... }`). The pattern opens with a literal
+    # `.`, so PCRE2 only tries offsets holding one.
+    ROUTE_CALL_RE = /\.(?:(?:get|post|put|delete|patch)\s*[({]|on\s*\()/
+
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
-      lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      lines = read_file_content(path).lines
+      include_callee = callees_needed?
       handler_bodies = named_handler_bodies(lines)
+      # Comments (including multi-line `/* */`) and `"""` bodies blanked;
+      # string literals kept so route paths are still readable.
+      code_lines = strip_code_lines(lines, keep_strings: true)
+      stripped_lines = nil.as(Array(String)?)
       prefix_by_receiver = {} of String => String
       group_prefix_stack = [] of Tuple(String, Int32)
       brace_depth = 0
 
       # Seed the router-receiver set so route detection is receiver-aware.
-      register_router_params(lines, prefix_by_receiver)
+      register_router_params(code_lines, prefix_by_receiver)
 
-      lines.each_with_index do |line, index|
-        stripped_line = code_line(line)
+      code_lines.each_with_index do |stripped_line, index|
         register_group_assignment(stripped_line, prefix_by_receiver)
         register_group_closure(stripped_line, prefix_by_receiver, group_prefix_stack, brace_depth)
 
@@ -56,15 +87,20 @@ module Analyzer::Swift
         end
 
         begin
-          receiver, method, route_args = route
-          route_path = join_paths(prefix_for_receiver(receiver, prefix_by_receiver), parse_route_path(route_args))
+          receiver, method, route_args, inline_prefix = route
+          group_prefix = normalized_route_join(prefix_for_receiver(receiver, prefix_by_receiver), inline_prefix)
+          route_path = normalized_route_join(group_prefix, parse_route_path(route_args))
 
           details = Details.new(PathInfo.new(path, index + 1))
           endpoint = Endpoint.new(route_path, method, details)
 
           extract_path_params(route_path, endpoint)
-          extract_function_params(lines, index + 1, endpoint)
-          extract_named_handler_params(lines[index], handler_bodies, endpoint)
+          # A `use:` handler's params come from its own body; scanning the
+          # lines after the route would read unrelated functions.
+          unless extract_named_handler_params(lines[index], handler_bodies, endpoint)
+            stripped_lines ||= strip_code_lines(lines)
+            extract_function_params(lines, stripped_lines, index, endpoint)
+          end
           attach_route_callees(lines, index, path, endpoint, handler_bodies) if include_callee
 
           endpoints << endpoint
@@ -107,55 +143,9 @@ module Analyzer::Swift
       path
     end
 
-    # Extract path parameters from the route pattern (e.g., :id, :userID)
-    def extract_path_params(route : String, endpoint : Endpoint)
-      route.scan(/:(\w+)/) do |match|
-        param_name = match[1]
-        endpoint.push_param(Param.new(param_name, "", "path"))
-      end
-    end
-
-    # Extract parameters from function body
-    def extract_function_params(lines : Array(String), start_index : Int32, endpoint : Endpoint)
-      in_function = false
-      brace_count = 0
-      seen_opening_brace = false
-
-      existing_path_params = Set(String).new
-      endpoint.params.each do |p|
-        existing_path_params.add(p.name) if p.param_type == "path"
-      end
-
-      (start_index...[start_index + LOOKAHEAD_LIMIT, lines.size].min).each do |i|
-        line = lines[i]
-
-        if line.includes?(" in ")
-          in_function = true
-        end
-
-        brace_count += line.count('{')
-        if brace_count > 0
-          seen_opening_brace = true
-        end
-        brace_count -= line.count('}')
-
-        extract_params_from_line(line, endpoint, existing_path_params)
-
-        if in_function && seen_opening_brace && brace_count == 0 && i > start_index
-          break
-        end
-
-        if i > start_index && route_definition?(line)
-          break
-        end
-      end
-    end
-
     # Check if a line contains a route definition
     private def route_definition?(line : String) : Bool
-      line.includes?(".get(") || line.includes?(".post(") ||
-        line.includes?(".put(") || line.includes?(".delete(") ||
-        line.includes?(".patch(") || line.includes?(".on(")
+      line.matches?(ROUTE_CALL_RE)
     end
 
     # Check if a line is a route definition but not a parameter access
@@ -226,8 +216,22 @@ module Analyzer::Swift
       {body_lines.join("\n"), route_index + 1}
     end
 
-    private def route_parts(line : String, prefix_by_receiver : Hash(String, String)) : Tuple(String, String, String)?
+    # The last element is the prefix of a group expression the verb was called
+    # on directly (`app.grouped("a").get("b")`), "" otherwise.
+    private def route_parts(line : String, prefix_by_receiver : Hash(String, String)) : Tuple(String, String, String, String)?
       return unless route_definition_line?(line)
+
+      inline_prefix = ""
+      if group = line.match(INLINE_GROUP_PATTERN)
+        if chain = chain_prefix(line, "", group.end(0) || 0)
+          rest = line[(chain[1] + 1)..]? || ""
+          if rest.matches?(INLINE_VERB_PATTERN)
+            # Re-read the line as if the verb were called on the base receiver.
+            line = "#{line[0...(group.begin(0) || 0)]}#{group[1]}#{rest.lstrip}"
+            inline_prefix = chain[0]
+          end
+        end
+      end
 
       if match = line.match(ON_ROUTE_PATTERN)
         return unless router_like?(match[1], prefix_by_receiver)
@@ -236,19 +240,21 @@ module Analyzer::Swift
         return unless args
 
         route_args = args[0]
-        method_match = route_args.match(/^\s*\.(GET|POST|PUT|DELETE|PATCH)\s*,(.*)$/)
+        method_match = route_args.match(/^\s*\.(GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD)\s*,(.*)$/)
         return unless method_match
 
-        return {match[1], method_match[1], method_match[2]}
+        return {match[1], method_match[1], method_match[2], inline_prefix}
       end
 
       if match = line.match(ROUTE_PATTERN)
         return unless router_like?(match[1], prefix_by_receiver)
+        # `users.get { req in ... }` takes no path arguments.
+        return {match[1], match[2].upcase, "", inline_prefix} if match[3] == "{"
 
         args = call_arguments(line, match.end(0) || 0)
         return unless args
 
-        return {match[1], match[2].upcase, args[0]}
+        return {match[1], match[2].upcase, args[0], inline_prefix}
       end
 
       nil
@@ -257,8 +263,16 @@ module Analyzer::Swift
     # A `.get`/`.post`/... call counts as a route only when its receiver is a
     # known router: a tracked `.grouped(...)` variable, a closure-group var,
     # or a `RoutesBuilder`/`Router`/`Application`-typed parameter/binding.
+    #
+    # Only the receiver's last segment counts, so a service hanging off a
+    # router (`app.client.post(url)`, `app.cache.get(k)`, `app.redis.get(k)`)
+    # is not a route. `app.routes` is the one member that is still a router:
+    # `Application#routes` is a `RoutesBuilder`.
     private def router_like?(receiver : String, prefix_by_receiver : Hash(String, String)) : Bool
-      receiver.split('.').any? { |part| prefix_by_receiver.has_key?(part) }
+      parts = receiver.split('.')
+      return true if prefix_by_receiver.has_key?(parts.last)
+
+      parts.size > 1 && parts.last == "routes" && prefix_by_receiver.has_key?(parts[-2])
     end
 
     # File-wide pre-pass: register every router-typed parameter/binding so the
@@ -267,9 +281,10 @@ module Analyzer::Swift
     # and `self` inside a `RoutesBuilder`/`Router` extension. (`.grouped(...)`
     # variables — qualified or implicit-`self` — are tracked separately by
     # `register_group_assignment`.)
-    private def register_router_params(lines : Array(String), prefix_by_receiver : Hash(String, String))
-      lines.each do |line|
-        stripped = code_line(line)
+    private def register_router_params(code_lines : Array(String), prefix_by_receiver : Hash(String, String))
+      code_lines.each do |stripped|
+        next unless stripped.matches?(ROUTER_TYPE_RE)
+
         stripped.scan(ROUTER_PARAM_PATTERN) do |match|
           prefix_by_receiver[match[1]] ||= ""
         end
@@ -288,11 +303,30 @@ module Analyzer::Swift
       # `base` is absent for an implicit-`self` `grouped(...)` (a RoutesBuilder
       # extension): the new group then inherits the empty root prefix.
       base_prefix = (base = match[2]?) ? prefix_for_receiver(base, prefix_by_receiver) : ""
-      args = call_arguments(line, match.end(0) || 0)
+      chain = chain_prefix(line, base_prefix, match.end(0) || 0)
+      return unless chain
+
+      prefix_by_receiver[variable] = chain[0]
+    end
+
+    # Accumulates the prefix of a `.grouped(...)`/`.group(...)` call and every
+    # group call chained onto it. `args_start` is just past the first call's
+    # `(`. Returns the joined prefix and the index of the last call's `)`.
+    private def chain_prefix(line : String, base_prefix : String, args_start : Int32) : Tuple(String, Int32)?
+      args = call_arguments(line, args_start)
       return unless args
 
-      prefix = parse_route_path(args[0])
-      prefix_by_receiver[variable] = join_paths(base_prefix, prefix)
+      prefix = normalized_route_join(base_prefix, parse_route_path(args[0]))
+      close = args[1]
+      while (rest = line[(close + 1)..]?) && (next_call = rest.match(CHAINED_GROUP_PATTERN))
+        more = call_arguments(line, close + 1 + (next_call.end(0) || 0))
+        break unless more
+
+        prefix = normalized_route_join(prefix, parse_route_path(more[0]))
+        close = more[1]
+      end
+
+      {prefix, close}
     end
 
     private def register_group_closure(line : String,
@@ -303,52 +337,16 @@ module Analyzer::Swift
       return unless match
 
       base = match[1]
-      args = call_arguments(line, match.end(0) || 0)
-      return unless args
+      chain = chain_prefix(line, prefix_for_receiver(base, prefix_by_receiver), match.end(0) || 0)
+      return unless chain
 
-      after_call = line[(args[1] + 1)..]? || ""
+      after_call = line[(chain[1] + 1)..]? || ""
       closure_match = after_call.match(/^\s*\{\s*([A-Za-z_]\w*)\s+in/)
       return unless closure_match
 
       variable = closure_match[1]
-      prefix_by_receiver[variable] = join_paths(prefix_for_receiver(base, prefix_by_receiver), parse_route_path(args[0]))
+      prefix_by_receiver[variable] = chain[0]
       group_prefix_stack << {variable, brace_depth + 1}
-    end
-
-    private def call_arguments(line : String, args_start : Int32) : Tuple(String, Int32)?
-      depth = 1
-      in_string = false
-      escaped = false
-      quote = '"'
-      index = args_start
-
-      while index < line.size
-        char = line[index]
-
-        if in_string
-          if escaped
-            escaped = false
-          elsif char == '\\'
-            escaped = true
-          elsif char == quote
-            in_string = false
-          end
-        elsif char == '"' || char == '\''
-          in_string = true
-          quote = char
-        elsif char == '('
-          depth += 1
-        elsif char == ')'
-          depth -= 1
-          if depth == 0
-            return {line[args_start...index], index}
-          end
-        end
-
-        index += 1
-      end
-
-      nil
     end
 
     private def update_group_depth(line : String,
@@ -366,66 +364,14 @@ module Analyzer::Swift
       depth
     end
 
-    private def prefix_for_receiver(receiver : String, prefix_by_receiver : Hash(String, String)) : String
-      receiver.split('.').reverse_each do |part|
-        if prefix = prefix_by_receiver[part]?
-          return prefix
-        end
-      end
-
-      ""
-    end
-
-    private def join_paths(prefix : String, path : String) : String
-      return normalize_path(path) if prefix.empty? || prefix == "/"
-      return normalize_path(prefix) if path.empty? || path == "/"
-
-      "#{normalize_path(prefix).rstrip("/")}/#{path.lstrip("/")}"
-    end
-
-    private def normalize_path(path : String) : String
-      normalized = path.empty? ? "/" : path
-      normalized = "/#{normalized}" unless normalized.starts_with?("/")
-      normalized.gsub(%r{/+}, "/")
-    end
-
-    private def code_line(line : String) : String
-      # String-aware: only truncate at a `//` OUTSIDE a string literal, so a path
-      # like "api//v2" or a "https://..." redirect arg isn't cut (which made
-      # call_arguments fail and silently drop the route / group prefix).
-      in_string = false
-      escaped = false
-      quote = '"'
-      index = 0
-      while index < line.size
-        char = line[index]
-        if in_string
-          if escaped
-            escaped = false
-          elsif char == '\\'
-            escaped = true
-          elsif char == quote
-            in_string = false
-          end
-        elsif char == '"' || char == '\''
-          in_string = true
-          quote = char
-        elsif char == '/' && line[index + 1]? == '/'
-          return line[0...index]
-        end
-        index += 1
-      end
-      line
-    end
-
     private def extract_named_handler_params(route_line : String,
                                              handler_bodies : Hash(String, Tuple(String, Int32)),
-                                             endpoint : Endpoint)
+                                             endpoint : Endpoint) : Bool
       handler_name = route_handler_name(route_line)
-      return unless handler_name
+      return false unless handler_name
 
       body = handler_bodies[handler_name]?
-      return unless body
+      return true unless body
 
       existing_path_params = Set(String).new
       endpoint.params.each do |p|
@@ -435,6 +381,7 @@ module Analyzer::Swift
       body[0].each_line do |line|
         extract_params_from_line(line, endpoint, existing_path_params)
       end
+      true
     end
 
     private def extract_params_from_line(line : String, endpoint : Endpoint, existing_path_params : Set(String))
@@ -495,104 +442,12 @@ module Analyzer::Swift
 
     private def route_handler_name(route_line : String) : String?
       stripped, _, _ = Noir::SwiftCalleeExtractor.strip_non_code_with_state(route_line, 0, false)
-      if match = stripped.match(/\buse:\s*([A-Za-z_]\w*)/)
-        return match[1]
+      # `self.create` / `TodoController.index` name the method `create` / `index`.
+      if match = stripped.match(/\buse:\s*(?:self\.)?([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)/)
+        return match[1].split('.').last
       end
 
       nil
-    end
-
-    private def named_handler_bodies(lines : Array(String)) : Hash(String, Tuple(String, Int32))
-      bodies = {} of String => Tuple(String, Int32)
-      block_comment_depth = 0
-      in_multiline_string = false
-
-      lines.each_with_index do |line, index|
-        stripped, block_comment_depth, in_multiline_string = Noir::SwiftCalleeExtractor.strip_non_code_with_state(
-          line,
-          block_comment_depth,
-          in_multiline_string
-        )
-        match = stripped.match(FUNCTION_SIGNATURE_PATTERN)
-        next unless match
-
-        handler_name = match[1]
-        next if bodies.has_key?(handler_name)
-
-        opening = stripped.index('{')
-        if opening
-          bodies[handler_name] = body_after_opening_brace(lines, index, opening)
-          next
-        end
-
-        if location = next_opening_brace(lines, index + 1, block_comment_depth, in_multiline_string)
-          opening_index, opening_brace = location
-          bodies[handler_name] = body_after_opening_brace(lines, opening_index, opening_brace)
-        end
-      end
-
-      bodies
-    end
-
-    private def next_opening_brace(lines : Array(String),
-                                   start_index : Int32,
-                                   block_comment_depth : Int32,
-                                   in_multiline_string : Bool) : Tuple(Int32, Int32)?
-      (start_index...[start_index + LOOKAHEAD_LIMIT, lines.size].min).each do |index|
-        stripped, block_comment_depth, in_multiline_string = Noir::SwiftCalleeExtractor.strip_non_code_with_state(
-          lines[index],
-          block_comment_depth,
-          in_multiline_string
-        )
-        if opening = stripped.index('{')
-          return {index, opening}
-        end
-
-        break if stripped.match(FUNCTION_SIGNATURE_PATTERN)
-      end
-
-      nil
-    end
-
-    private def body_after_opening_brace(lines : Array(String), opening_index : Int32, opening_brace : Int32) : Tuple(String, Int32)
-      route_line = lines[opening_index]
-      first_fragment = route_line[(opening_brace + 1)..]? || ""
-      clean_fragment, block_comment_depth, in_multiline_string = Noir::SwiftCalleeExtractor.strip_non_code_with_state(first_fragment, 0, false)
-      body_lines = [] of String
-      brace_count = 1 + clean_fragment.count('{') - clean_fragment.count('}')
-
-      if brace_count <= 0
-        closing_brace = clean_fragment.rindex('}')
-        first_fragment = first_fragment[0...closing_brace] if closing_brace
-        return {first_fragment, opening_index + 1}
-      end
-
-      body_lines << first_fragment
-      index = opening_index + 1
-
-      while index < lines.size && brace_count > 0
-        line = lines[index]
-        stripped, block_comment_depth, in_multiline_string = Noir::SwiftCalleeExtractor.strip_non_code_with_state(
-          line,
-          block_comment_depth,
-          in_multiline_string
-        )
-        next_brace_count = brace_count + stripped.count('{') - stripped.count('}')
-
-        if next_brace_count <= 0
-          if line.strip != "}"
-            closing_brace = stripped.rindex('}')
-            body_lines << (closing_brace ? line[0...closing_brace] : line)
-          end
-          break
-        end
-
-        body_lines << line
-        brace_count = next_brace_count
-        index += 1
-      end
-
-      {body_lines.join("\n"), opening_index + 1}
     end
   end
 end

@@ -33,6 +33,20 @@ expected_endpoints = [
   Endpoint.new("/admin/notify", "POST", [
     Param.new("subject", "", "form"),
   ]),
+  # Two registrations on one line, and a leading-dot group chain.
+  Endpoint.new("/api/reports/daily", "GET"),
+  Endpoint.new("/api/reports/weekly", "GET"),
+  Endpoint.new("/archive/latest", "GET"),
+  # `class DirectorsModule : CarterModule` with `: base("/directors")` — every
+  # route in the module hangs off the constructor base path.
+  Endpoint.new("/directors", "GET"),
+  Endpoint.new("/directors", "PUT", [
+    Param.new("person", "", "json"),
+  ]),
+  Endpoint.new("/directors/qs", "GET", [
+    Param.new("name", "", "query"),
+    Param.new("numbers", "", "query"),
+  ]),
 ]
 
 tester = FunctionalTester.new("fixtures/csharp/carter/", {
@@ -41,9 +55,21 @@ tester = FunctionalTester.new("fixtures/csharp/carter/", {
 
 tester.perform_tests
 
-describe "Carter analyzer edge cases" do
+describe "Carter analyzer edge cases", tags: "functional" do
   it "does not surface routes from /test/ fixtures" do
     tester.app.endpoints.any?(&.url.includes?("test-only")).should be_false
+  end
+
+  it "claims CarterModule-derived modules instead of leaving them to the minimal-API analyzer" do
+    directors = tester.app.endpoints.find { |e| e.url == "/directors" && e.method == "GET" }
+    directors.should_not be_nil
+    directors.as(Endpoint).details.technology.should eq "cs_carter"
+    # The un-prefixed route the minimal-API analyzer used to emit.
+    tester.app.endpoints.any? { |e| e.url == "/qs" }.should be_false
+  end
+
+  it "ignores a commented-out route registration" do
+    tester.app.endpoints.any?(&.url.includes?("commented-out")).should be_false
   end
 
   it "marks Carter modules with the cs_carter technology" do

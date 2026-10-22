@@ -2,6 +2,16 @@ require "../../engines/crystal_engine"
 
 module Analyzer::Crystal
   class Amber < CrystalEngine
+    analyzer_for "crystal_amber"
+
+    # Only files inside a project whose `shard.yml` depends on `amber`.
+    # See `CrystalEngine#shard_dependencies` — `get "/path"` is the same
+    # line in Kemal, Grip and Amber, so the manifest is what tells the
+    # frameworks apart.
+    protected def shard_dependencies : Array(String)
+      ["amber"]
+    end
+
     # `routes :web, "/admin" do … end` — the optional second argument is a
     # path scope that prefixes every route declared inside the block.
     ROUTES_SCOPE_PATTERN = /^(\s*)routes\s+:\w+(?:\s*,\s*["']([^"']*)["'])?\s+do\b/
@@ -9,6 +19,11 @@ module Analyzer::Crystal
     NAMESPACE_PATTERN = /^(\s*)namespace\s+["']([^"']*)["']\s+do\b/
     # `resources "/posts", PostController[, only: …][, except: …]`.
     RESOURCES_PATTERN = /^\s*resources\s+["']([^"']+)["']\s*,\s*([A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)\s*(.*)$/
+    # `serve_static false` / `serve_static(false)` — checked on every source
+    # line, so the two fixed OR-ed `String#includes?` substring scans are
+    # precompiled into a single regex union (one PCRE2 JIT scan per line
+    # instead of two naive substring scans).
+    SERVE_STATIC_DISABLED_RE = Regex.union("serve_static false", "serve_static(false)")
 
     # Amber's `resources` macro expands to the seven RESTful routes below
     # (update is registered for both PUT and PATCH). `resource` (singular)
@@ -30,29 +45,40 @@ module Analyzer::Crystal
 
     def analyze
       super
-      collect_public_dir_endpoints
+      collect_public_dir_endpoints(@public_folders, @static_disabled_bases)
       @result
     end
 
+    # `get "/path"` is the same line in Amber, Kemal and Grip — the DSLs are
+    # indistinguishable one line at a time, and this analyzer is handed every
+    # `.cr` file in the scan. Without a file-level gate it read Kemal's, Grip's
+    # and Lucky's routes as Amber ones (22 phantom endpoints across the Crystal
+    # fixture tree), and swallowed their `public_folder` declarations on the
+    # way through.
+    #
+    # A file that declares Amber routes belongs to an Amber app, so it names
+    # the framework: `require "amber"` in the fixtures and in an app's entry
+    # point, `Amber::Server.configure` in a real `config/routes.cr`, or the
+    # `routes :web do` pipeline block, which is Amber's DSL and nobody else's.
+    AMBER_MARKER_RE = /require\s+"amber"|Amber::|^\s*routes\s+:\w+/m
+
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
-      lines = [] of String
       file_base = configured_base_for(path)
 
-      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        file.each_line do |line|
-          lines << line
-        end
-      end
-      lines = mask_crystal_heredocs(lines)
+      content = read_file_content(path)
+      return endpoints unless content.matches?(AMBER_MARKER_RE)
 
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      lines = mask_crystal_heredocs(content.lines)
+
+      include_callee = callees_needed?
       actions = include_callee ? collect_controller_actions(lines, path) : Hash(String, Array(Noir::CrystalCalleeExtractor::Entry)).new
       last_endpoint = Endpoint.new("", "")
 
       # Stack of `{prefix, indent}` for open `routes "/scope"`/`namespace`
       # blocks. The path scope is the concatenation of every open prefix.
       scope_stack = [] of NamedTuple(prefix: String, indent: Int32)
+      param_lines = crystal_param_lines(lines)
 
       lines.each_with_index do |line, index|
         stripped = Noir::CrystalCalleeExtractor.strip_comment(line)
@@ -98,14 +124,14 @@ module Analyzer::Crystal
           last_endpoint = endpoint
         end
 
-        param = line_to_param(line)
+        param = line_to_param(param_lines[index])
         unless param.name.empty?
           unless last_endpoint.method.empty?
             last_endpoint.push_param(param)
           end
         end
 
-        if line.includes?("serve_static false") || line.includes?("serve_static(false)")
+        if line.matches?(SERVE_STATIC_DISABLED_RE)
           @static_disabled_bases << file_base
         end
 
@@ -245,51 +271,21 @@ module Analyzer::Crystal
       "#{controller}##{action}"
     end
 
-    private def collect_public_dir_endpoints
-      # Process public folder files
-      base_paths.each do |base|
-        next if @static_disabled_bases.includes?(base)
-        get_public_files(base).each do |file|
-          # Extract the path after "/public/" regardless of depth
-          if file =~ /\/public\/(.*)/
-            relative_path = $1
-            @result << Endpoint.new("/#{relative_path}", "GET")
-          end
-        end
-      end
-
-      # Process other public folders
-      @public_folders.each do |base, folder|
-        next if @static_disabled_bases.includes?(base)
-        get_public_dir_files(base, folder).each do |file|
-          # Extract relative path from the custom folder
-          if folder.includes?("/")
-            # For absolute paths or paths with directories
-            folder_path = folder.ends_with?("/") ? folder : "#{folder}/"
-            if file.starts_with?(folder_path)
-              relative_path = file.sub(folder_path, "")
-              @result << Endpoint.new("/#{relative_path}", "GET")
-            else
-              # Try to find the folder component in the path
-              folder_name = folder.split("/").last
-              if file =~ /\/#{folder_name}\/(.*)/
-                relative_path = $1
-                @result << Endpoint.new("/#{relative_path}", "GET")
-              end
-            end
-          elsif file =~ /\/#{folder}\/(.*)/
-            # For simple folder names (no slashes)
-            relative_path = $1
-            @result << Endpoint.new("/#{relative_path}", "GET")
-          end
-        end
-      end
-    rescue e
-      logger.debug e
-    end
+    # Amber prefers `verb "/path", Controller, :action`. One combined
+    # PCRE2 scan replaces the previous 8 sequential controller-form
+    # scans; on miss, the shared simple-route helper covers the
+    # controller-less fallback (another single scan). Was 16 unguarded
+    # `.scan` calls per source line.
+    CONTROLLER_ROUTE_RE = /(?:^|[^.\w])(get|post|put|delete|patch|head|options|ws)\s*(?:\(\s*)?['"](.+?)['"]\s*,\s*\w+,\s*:\w+/
 
     def line_to_param(content : String) : Param
       content = Noir::CrystalCalleeExtractor.strip_comment(content)
+
+      # Most source lines never touch params; bail before the includes?/split
+      # chain when none of the Amber accessor prefixes appear.
+      return Param.new("", "", "") unless content.includes?("params") ||
+                                          content.includes?("request.") ||
+                                          content.includes?("context.request")
 
       # Amber uses params object for accessing parameters
       if content.includes? "params["
@@ -338,112 +334,22 @@ module Analyzer::Crystal
 
     def line_to_endpoint(content : String) : Endpoint
       content = Noir::CrystalCalleeExtractor.strip_comment(content)
+      return Endpoint.new("", "") unless content.includes?('"') || content.includes?("'")
 
-      # Amber route definitions with controller and action
-      content.scan(/(?:^|[^.\w])get\s*(?:\(\s*)?['"](.+?)['"]\s*,\s*\w+,\s*:(\w+)/) do |match|
-        if match.size > 1
-          return Endpoint.new(normalize_crystal_interpolation(match[1]), "GET")
-        end
-      end
-
-      content.scan(/(?:^|[^.\w])post\s*(?:\(\s*)?['"](.+?)['"]\s*,\s*\w+,\s*:(\w+)/) do |match|
-        if match.size > 1
-          return Endpoint.new(normalize_crystal_interpolation(match[1]), "POST")
-        end
-      end
-
-      content.scan(/(?:^|[^.\w])put\s*(?:\(\s*)?['"](.+?)['"]\s*,\s*\w+,\s*:(\w+)/) do |match|
-        if match.size > 1
-          return Endpoint.new(normalize_crystal_interpolation(match[1]), "PUT")
-        end
-      end
-
-      content.scan(/(?:^|[^.\w])delete\s*(?:\(\s*)?['"](.+?)['"]\s*,\s*\w+,\s*:(\w+)/) do |match|
-        if match.size > 1
-          return Endpoint.new(normalize_crystal_interpolation(match[1]), "DELETE")
-        end
-      end
-
-      content.scan(/(?:^|[^.\w])patch\s*(?:\(\s*)?['"](.+?)['"]\s*,\s*\w+,\s*:(\w+)/) do |match|
-        if match.size > 1
-          return Endpoint.new(normalize_crystal_interpolation(match[1]), "PATCH")
-        end
-      end
-
-      content.scan(/(?:^|[^.\w])head\s*(?:\(\s*)?['"](.+?)['"]\s*,\s*\w+,\s*:(\w+)/) do |match|
-        if match.size > 1
-          return Endpoint.new(normalize_crystal_interpolation(match[1]), "HEAD")
-        end
-      end
-
-      content.scan(/(?:^|[^.\w])options\s*(?:\(\s*)?['"](.+?)['"]\s*,\s*\w+,\s*:(\w+)/) do |match|
-        if match.size > 1
-          return Endpoint.new(normalize_crystal_interpolation(match[1]), "OPTIONS")
-        end
-      end
-
-      # WebSocket support in Amber
-      content.scan(/(?:^|[^.\w])ws\s*(?:\(\s*)?['"](.+?)['"]\s*,\s*\w+,\s*:(\w+)/) do |match|
-        if match.size > 1
-          endpoint = Endpoint.new(normalize_crystal_interpolation(match[1]), "GET")
+      # Controller-action form first (Amber's primary DSL).
+      if match = content.match(CONTROLLER_ROUTE_RE)
+        verb = match[1]
+        path = normalize_crystal_interpolation(match[2])
+        if verb == "ws"
+          endpoint = Endpoint.new(path, "GET")
           endpoint.protocol = "ws"
           return endpoint
         end
+        return Endpoint.new(path, verb.upcase)
       end
 
-      # Also support simple route definitions without controller (fallback)
-      content.scan(/(?:^|[^.\w])get\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
-        if match.size > 1
-          return Endpoint.new(normalize_crystal_interpolation(match[1]), "GET")
-        end
-      end
-
-      content.scan(/(?:^|[^.\w])post\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
-        if match.size > 1
-          return Endpoint.new(normalize_crystal_interpolation(match[1]), "POST")
-        end
-      end
-
-      content.scan(/(?:^|[^.\w])put\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
-        if match.size > 1
-          return Endpoint.new(normalize_crystal_interpolation(match[1]), "PUT")
-        end
-      end
-
-      content.scan(/(?:^|[^.\w])delete\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
-        if match.size > 1
-          return Endpoint.new(normalize_crystal_interpolation(match[1]), "DELETE")
-        end
-      end
-
-      content.scan(/(?:^|[^.\w])patch\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
-        if match.size > 1
-          return Endpoint.new(normalize_crystal_interpolation(match[1]), "PATCH")
-        end
-      end
-
-      content.scan(/(?:^|[^.\w])head\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
-        if match.size > 1
-          return Endpoint.new(normalize_crystal_interpolation(match[1]), "HEAD")
-        end
-      end
-
-      content.scan(/(?:^|[^.\w])options\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
-        if match.size > 1
-          return Endpoint.new(normalize_crystal_interpolation(match[1]), "OPTIONS")
-        end
-      end
-
-      # WebSocket support in Amber
-      content.scan(/(?:^|[^.\w])ws\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
-        if match.size > 1
-          endpoint = Endpoint.new(normalize_crystal_interpolation(match[1]), "GET")
-          endpoint.protocol = "ws"
-          return endpoint
-        end
-      end
-
-      Endpoint.new("", "")
+      # Simple `verb "/path"` fallback (shared engine helper).
+      match_crystal_simple_route(content)
     end
   end
 end

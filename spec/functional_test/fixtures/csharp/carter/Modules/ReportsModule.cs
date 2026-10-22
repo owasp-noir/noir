@@ -35,6 +35,10 @@ namespace CarterDemo.Modules
                 var subject = context.Request.Form["subject"];
                 await context.Response.WriteAsync(subject);
             });
+
+            group.MapGet("/daily", () => "d"); group.MapGet("/weekly", () => "w");
+            app.MapGroup("/archive")
+               .MapGet("/latest", () => "l");
         }
     }
 }

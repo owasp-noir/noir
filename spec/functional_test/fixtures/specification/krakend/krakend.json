@@ -1,0 +1,24 @@
+{
+  "$schema": "https://www.krakend.io/schema/v2.7/krakend.json",
+  "version": 3,
+  "name": "shop gateway",
+  "port": 8080,
+  "endpoints": [
+    {
+      "endpoint": "/v1/products/{id}",
+      "input_query_strings": [ "fields" ],
+      "input_headers": [ "Authorization", "X-Request-Id" ],
+      "backend": [
+        { "host": [ "http://catalog:8000" ], "url_pattern": "/products/{id}" }
+      ]
+    },
+    {
+      "endpoint": "/v1/orders",
+      "method": "POST",
+      "input_headers": [ "*" ],
+      "backend": [
+        { "host": [ "http://orders:8000" ], "url_pattern": "/orders" }
+      ]
+    }
+  ]
+}

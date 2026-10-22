@@ -49,9 +49,14 @@ expected_endpoints = [
     Param.new("id", "", "path"),
     Param.new("authorization", "", "header"),
   ]),
+
+  # api/ is served under /api (from api/status.get.ts)
+  Endpoint.new("/api/status", "GET", [
+    Param.new("verbose", "", "query"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/javascript/nitro/", {
-  :techs     => 2,
+  :techs     => 1,
   :endpoints => expected_endpoints.size,
 }, expected_endpoints).perform_tests

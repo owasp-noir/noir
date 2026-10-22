@@ -1,7 +1,11 @@
 require "../ext/tree_sitter/tree_sitter"
 require "../models/endpoint"
 require "../models/code_locator"
+require "./extraction_result_cache"
 require "./import_graph"
+require "./kotlin_source_mask"
+require "../utils/text_file"
+require "../utils/jvm_literal"
 
 module Noir
   # Tree-sitter-backed parameter extractor for Kotlin Spring.
@@ -90,10 +94,39 @@ module Noir
       getter null_validation_groups : Array(String)
       getter? server_managed : Bool
       getter validation_annotations : Array(String)
+      # True when `init_value` came from a `string_literal` node and was
+      # therefore already decoded (quotes stripped) on the way in.
+      getter? init_string_literal : Bool
+      # Wire name in a JSON body: `@JsonProperty("display_name")`, else `name`.
+      getter json_name : String
 
       def initialize(@name, @access_modifier, @has_setter, @init_value,
                      @null_validation_groups = [] of String, @server_managed = false,
-                     @validation_annotations = [] of String)
+                     @validation_annotations = [] of String,
+                     @init_string_literal = false,
+                     json_name : String? = nil)
+        @json_name = json_name || @name
+      end
+
+      # Jackson renames apply to JSON bodies only.
+      def name_for(format : String) : String
+        format == "json" ? @json_name : @name
+      end
+
+      # The request-ready value of this field's initializer, or "" when the
+      # initializer is an expression with no literal form.
+      #
+      # `init_value` cannot be handed to `Noir::JvmLiteral.value_of` directly,
+      # because Kotlin's collector stores mixed shapes: a `string_literal` is
+      # decoded (`= "untitled"` -> `untitled`) while every other initializer
+      # keeps its raw source (`= LocalDateTime.now()`). A decoded string is
+      # indistinguishable from a bare identifier once stored, so running the
+      # literal check over it erased every string default in a Kotlin DTO.
+      # The flag is what tells the two apart. Java's collector keeps raw text
+      # throughout, which is why its call site passes `init_value` straight in.
+      def literal_default : String
+        return @init_value if @init_string_literal
+        Noir::JvmLiteral.value_of(@init_value)
       end
 
       def null_for_any_group?(groups : Array(String)) : Bool
@@ -143,14 +176,6 @@ module Noir
     # bindable fields and are skipped. Drives the DTO index's cross-file
     # inheritance merge so a command object that extends a base class
     # inherits its bindable fields.
-    def extract_class_supertypes(source : String) : Hash(String, String)
-      results = Hash(String, String).new
-      Noir::TreeSitter.parse_kotlin(source) do |root|
-        results = extract_class_supertypes_from(root, source)
-      end
-      results
-    end
-
     def extract_class_supertypes_from(root : LibTreeSitter::TSNode, source : String) : Hash(String, String)
       results = Hash(String, String).new
       walk_class_containers(root) do |decl|
@@ -198,24 +223,6 @@ module Noir
     # combined parameter list in the order the legacy analyzer
     # emitted them: formal-parameter sweep first, constraint sweep
     # appended.
-    def extract_method_parameters(source : String,
-                                  class_name : String,
-                                  method_name : String,
-                                  verb : String,
-                                  parameter_format : String?,
-                                  class_fields : Hash(String, Array(FieldInfo)),
-                                  string_constants = Hash(String, String).new,
-                                  local_string_constants = Hash(String, String).new) : Array(Param)
-      params = [] of Param
-      Noir::TreeSitter.parse_kotlin(source) do |root|
-        params = extract_method_parameters_from(
-          root, source, class_name, method_name, verb, parameter_format, class_fields,
-          string_constants, local_string_constants
-        )
-      end
-      params
-    end
-
     def extract_method_parameters_from(root : LibTreeSitter::TSNode,
                                        source : String,
                                        class_name : String,
@@ -246,13 +253,25 @@ module Noir
       params
     end
 
+    # Just the `params=` / `headers=` constraints: the conditions that pick
+    # this handler among others mapped to the same method + path.
+    def extract_route_conditions_from_method(method : LibTreeSitter::TSNode,
+                                             source : String,
+                                             verb : String,
+                                             string_constants = Hash(String, String).new,
+                                             local_string_constants = Hash(String, String).new) : Array(Param)
+      conditions = [] of Param
+      append_constraint_params(method, source, verb, conditions, string_constants, local_string_constants)
+      conditions
+    end
+
     def extract_server_request_parameters_from_method(method : LibTreeSitter::TSNode,
                                                       source : String,
                                                       verb : String,
                                                       parameter_format : String?,
                                                       class_fields : Hash(String, Array(FieldInfo))) : Array(Param)
       params = [] of Param
-      body = Noir::TreeSitter.node_text(method, source)
+      body = Noir::KotlinSourceMask.code_only(Noir::TreeSitter.node_text(method, source))
       request_names = server_request_parameter_names(body)
       return params if request_names.empty?
 
@@ -281,14 +300,6 @@ module Noir
 
     # Read `consumes = ["..."]` / `consumes = arrayOf("...")` off the
     # method's mapping annotation. Returns "form" / "json" / nil.
-    def extract_consumes(source : String, class_name : String, method_name : String) : String?
-      result : String? = nil
-      Noir::TreeSitter.parse_kotlin(source) do |root|
-        result = extract_consumes_from(root, source, class_name, method_name)
-      end
-      result
-    end
-
     def extract_consumes_from(root : LibTreeSitter::TSNode, source : String, class_name : String, method_name : String) : String?
       method = find_function(root, source, class_name, method_name)
       return unless method
@@ -382,7 +393,10 @@ module Noir
           next unless Noir::TreeSitter.node_type(member) == "function_declaration"
           method_name = function_name(member, source)
           next if method_name.empty?
-          result["#{class_name}##{method_name}"] ||= member
+          key = "#{class_name}##{method_name}"
+          # Overloads after the first keep their own `Class#name@row` entry.
+          key = "#{key}@#{Noir::TreeSitter.node_start_row(member)}" if result.has_key?(key)
+          result[key] = member
         end
       end
       index_orphan_functions_from(root, source, result)
@@ -414,10 +428,11 @@ module Noir
             collect_orphan_function_nodes(child, source, class_name, result)
           end
           orphan_class = nil
-        when "annotation"
+        when "annotation", "line_comment", "multiline_comment"
           # Constructor annotations may be parsed as a sibling between
           # the no-body class_declaration and the call_expression that
-          # carries the class body. Keep the orphan class context alive.
+          # carries the class body (and so may a comment). Keep the orphan
+          # class context alive, as `walk_classes` does.
         when "call_expression"
           if class_name = orphan_class
             collect_orphan_function_nodes(child, source, class_name, result)
@@ -597,22 +612,25 @@ module Noir
     # Returns `{kind, key_or_empty, value_node_or_nil}`.
     private def classify_value_argument(arg : LibTreeSitter::TSNode, source : String) : Tuple(Symbol, String, LibTreeSitter::TSNode?)
       key = ""
+      key_node : LibTreeSitter::TSNode? = nil
       value : LibTreeSitter::TSNode? = nil
-      named = false
       Noir::TreeSitter.each_named_child(arg) do |child|
         case Noir::TreeSitter.node_type(child)
         when "simple_identifier"
-          if named
+          if key_node
             value = child
           else
             key = Noir::TreeSitter.node_text(child, source)
-            named = true
+            key_node = child
           end
         else
           value = child if value.nil?
         end
       end
-      {named ? :keyword : :positional, key, value}
+      # A lone identifier is a positional constant (`@RequestHeader(TOKEN_HDR)`),
+      # not a key with its value missing.
+      return {:positional, "", key_node} if key_node && value.nil?
+      {key_node ? :keyword : :positional, key, value}
     end
 
     # Collect every literal string value reachable from `node`,
@@ -643,8 +661,9 @@ module Noir
         text = decode_string_literal(node, source)
         sink << text unless text.empty?
       when "simple_identifier", "navigation_expression"
-        text = resolve_string_or_const(node, source, string_constants, local_string_constants)
-        sink << text unless text.empty?
+        if text = resolve_string_or_const(node, source, string_constants, local_string_constants)
+          sink << text unless text.empty?
+        end
       when "collection_literal"
         Noir::TreeSitter.each_named_child(node) do |elem|
           collect_string_values(elem, source, sink, string_constants, local_string_constants)
@@ -670,7 +689,7 @@ module Noir
       buf = String.build do |io|
         Noir::TreeSitter.each_named_child(node) do |child|
           if Noir::TreeSitter.node_type(child) == "string_content"
-            io << Noir::TreeSitter.node_text(child, source)
+            io << Noir::TreeSitter.kotlin_string_content(child, node, source)
           end
         end
       end
@@ -690,12 +709,14 @@ module Noir
           next unless Noir::TreeSitter.node_type(param) == "class_parameter"
           name = ""
           init = ""
+          init_string = false
           Noir::TreeSitter.each_named_child(param) do |child|
             case Noir::TreeSitter.node_type(child)
             when "simple_identifier"
               name = Noir::TreeSitter.node_text(child, source) if name.empty?
             when "string_literal"
               init = decode_string_literal(child, source)
+              init_string = true
             when "user_type", "nullable_type", "binding_pattern_kind",
                  "modifiers", "parameter_modifiers", "annotation"
               # type / val|var marker / property annotations — not a
@@ -711,7 +732,8 @@ module Noir
           next if name.empty?
           fields << FieldInfo.new(
             name, "public", true, init, null_validation_groups(param, source),
-            server_managed_field?(param, source, name, init, class_name, class_text), validation_annotations(param, source)
+            server_managed_field?(param, source, name, init, class_name, class_text), validation_annotations(param, source),
+            init_string, json_property_name(param, source)
           )
         end
       end
@@ -738,6 +760,7 @@ module Noir
             next if property_has_accessor?(member)
             name = ""
             init = ""
+            init_string = false
             Noir::TreeSitter.each_named_child(member) do |child|
               case Noir::TreeSitter.node_type(child)
               when "variable_declaration"
@@ -750,13 +773,17 @@ module Noir
               when "simple_identifier"
                 name = Noir::TreeSitter.node_text(child, source) if name.empty?
               when "string_literal"
-                init = decode_string_literal(child, source) if init.empty?
+                if init.empty?
+                  init = decode_string_literal(child, source)
+                  init_string = true
+                end
               end
             end
             next if name.empty?
             fields << FieldInfo.new(
               name, "public", true, init, null_validation_groups(member, source),
-              server_managed_field?(member, source, name, init, class_name, class_text), validation_annotations(member, source)
+              server_managed_field?(member, source, name, init, class_name, class_text), validation_annotations(member, source),
+              init_string, json_property_name(member, source)
             )
             last_prop_name = name
           else
@@ -768,13 +795,29 @@ module Noir
       fields
     end
 
-    # True when a `property_declaration` carries a custom getter/setter —
-    # i.e. a computed property with no backing field, which must not be
-    # treated as a bindable request field.
+    # `@JsonProperty("wire")`, including use-site targets (`@field:` /
+    # `@get:` / `@param:`) and the `value = "wire"` form.
+    JSON_PROPERTY_RE = /@(?:\w+:)?(?:\w+\.)*JsonProperty\s*\(\s*(?:value\s*=\s*)?"([^"]+)"/
+
+    private def json_property_name(decl : LibTreeSitter::TSNode, source : String) : String?
+      Noir::TreeSitter.each_named_child(decl) do |child|
+        case Noir::TreeSitter.node_type(child)
+        when "modifiers", "parameter_modifiers", "annotation"
+          if match = Noir::TreeSitter.node_text(child, source).match(JSON_PROPERTY_RE)
+            return match[1]
+          end
+        end
+      end
+      nil
+    end
+
+    # True when a `property_declaration` carries a custom getter/setter or
+    # a delegate (`by lazy { ... }`) — i.e. a computed property with no
+    # backing field, which must not be treated as a bindable request field.
     private def property_has_accessor?(member : LibTreeSitter::TSNode) : Bool
       Noir::TreeSitter.each_named_child(member) do |child|
         ty = Noir::TreeSitter.node_type(child)
-        return true if ty == "getter" || ty == "setter" || ty == "property_accessor"
+        return true if ty == "getter" || ty == "setter" || ty == "property_accessor" || ty == "property_delegate"
       end
       false
     end
@@ -815,11 +858,16 @@ module Noir
                                       class_text : String) : Bool
       text = Noir::TreeSitter.node_text(node, source)
       return true if text.match(/@(?:field:|get:|set:)?(?:[A-Za-z_][A-Za-z0-9_]*\.)*(?:Id|GeneratedValue|CreatedDate|LastModifiedDate|ReadOnlyProperty|JsonIgnore)\b/)
-      return true if nullable_default_id_field?(name, text, init)
+      return true if nullable_default_id_field?(name, text, init) && class_text.matches?(PERSISTED_TYPE_RE)
       return true if nullable_validated_dto_id_field?(name, text, class_name, class_text)
 
       audit_field?(name) && (init == "null" || !!text.match(/=\s*null\b/))
     end
+
+    # Spring Data JDBC/R2DBC/Mongo take a property named `id` as the
+    # identifier without `@Id`, but only on a persisted type. On a plain
+    # request DTO or query filter, `val id: Long? = null` is client input.
+    PERSISTED_TYPE_RE = /@(?:[A-Za-z_][A-Za-z0-9_]*\.)*(?:Table|Entity|Document|Node)\b/
 
     private def nullable_default_id_field?(name : String, text : String, init : String) : Bool
       name == "id" && (init == "null" || !!text.match(/=\s*null\b/)) &&
@@ -883,7 +931,7 @@ module Noir
           pending_modifiers = child
         when "parameter"
           current_format = emit_param_for(
-            child, pending_modifiers, source, verb, current_format, class_fields, params,
+            child, pending_modifiers, source, verb, current_format, parameter_format, class_fields, params,
             string_constants, local_string_constants
           )
           pending_modifiers = nil
@@ -906,6 +954,7 @@ module Noir
                                source : String,
                                verb : String,
                                parameter_format : String?,
+                               method_format : String?,
                                class_fields : Hash(String, Array(FieldInfo)),
                                sink : Array(Param),
                                string_constants : Hash(String, String),
@@ -970,14 +1019,20 @@ module Noir
       return parameter_format if ann_kind.nil? && injected_param
 
       effective_format = parameter_format
+      # A carried-over "header"/"cookie" describes how the *previous*
+      # parameter was bound, not this un-annotated one — recompute the
+      # verb default below instead of mislabeling it.
+      if ann_kind.nil? && (effective_format == "header" || effective_format == "cookie")
+        effective_format = nil
+      end
       case ann_kind
       when :body
         # @RequestBody is JSON unless an explicit `consumes` already pinned
-        # the format (e.g. form-urlencoded). The POST verb default is
-        # applied per-parameter below, NOT pre-seeded into parameter_format,
-        # so a @RequestBody on a POST still resolves to json rather than
-        # being dragged along as form.
-        effective_format = request_body_format(effective_format)
+        # the format (e.g. form-urlencoded). Only the method-level format
+        # counts: the carry-over from a preceding @RequestParam/@RequestHeader/
+        # @CookieValue or un-annotated POST argument says nothing about the
+        # body's media type.
+        effective_format = method_format || "json"
       when :query
         effective_format = "query"
       when :header
@@ -1007,12 +1062,14 @@ module Noir
           next unless Noir::TreeSitter.node_type(arg) == "value_argument"
           kind, key, value = classify_value_argument(arg, source)
           next unless value
-          if kind == :positional
-            parameter_name = resolve_string_or_const(value, source, string_constants, local_string_constants)
+          if kind == :positional || key == "value" || key == "name"
+            # An unresolved constant names nothing on the wire; keep the
+            # argument name rather than emitting the identifier text.
+            if resolved = resolve_string_or_const(value, source, string_constants, local_string_constants)
+              parameter_name = resolved
+            end
           else
             case key
-            when "value", "name"
-              parameter_name = resolve_string_or_const(value, source, string_constants, local_string_constants)
             when "defaultValue"
               if Noir::TreeSitter.node_type(value) == "string_literal"
                 default_value = decode_string_literal(value, source)
@@ -1041,9 +1098,20 @@ module Noir
             next if field.server_managed?
             next if field.null_for_any_group?(validation_groups)
             next unless json_body || field.access_modifier == "public" || field.has_setter?
-            expanded_default = default_value || field.init_value
+            # `default_value` is an annotation-supplied value
+            # (`@RequestParam(defaultValue = "all")`) and is already literal.
+            # A field initialiser only becomes a value when it is one —
+            # `var addedAt: LocalDateTime = LocalDateTime.now()` was
+            # publishing `{"addedAt":"LocalDateTime.now()"}`. See
+            # `FieldInfo#literal_default` for why `init_value` alone is not
+            # enough to decide that.
+            expanded_default = default_value || field.literal_default
             sink << param_from_field(field, expanded_default, effective_format)
           end
+        elsif ann_kind == :body
+          # A body that is no known DTO (`List<Long>`, `ByteArray`, a
+          # library type) is still one request input.
+          sink << Param.new(parameter_name, default_value || "", effective_format)
         end
       end
 
@@ -1052,15 +1120,8 @@ module Noir
       # `@RequestParam`'s query format). A `@RequestBody`'s json is NOT a
       # method-wide default, though — propagating it would drag a sibling
       # command object into json, so a body param leaves the carry
-      # untouched (returns the incoming consumes-derived format).
+      # untouched (returns the incoming carry-over).
       ann_kind == :body ? parameter_format : effective_format
-    end
-
-    private def request_body_format(parameter_format : String?) : String
-      return "json" if parameter_format.nil?
-      return "json" if {"query", "header", "cookie"}.includes?(parameter_format)
-
-      parameter_format
     end
 
     # True when `type_name` is a scalar Spring binds from a single
@@ -1147,7 +1208,11 @@ module Noir
       if fields = class_fields[type_name]?
         fields.each do |field|
           next if field.server_managed?
-          push_unique_param(params, param_from_field(field, field.init_value, format))
+          # `literal_default`, not `init_value`: this inferred-body path
+          # (`req.awaitBody<Post>()`) fed the raw initialiser straight into
+          # `Param#value`, so it published `{"addedAt":"LocalDateTime.now()"}`
+          # while the annotated `@RequestBody` path above did not.
+          push_unique_param(params, param_from_field(field, field.literal_default, format))
         end
       elsif simple_bindable_param?(type_name)
         push_unique_param(params, Param.new("body", "", format))
@@ -1155,7 +1220,7 @@ module Noir
     end
 
     private def param_from_field(field : FieldInfo, value : String, param_type : String) : Param
-      param = Param.new(field.name, value, param_type)
+      param = Param.new(field.name_for(param_type), value, param_type)
       unless field.validation_annotations.empty?
         param.add_tag(Tag.new(
           "input-validation",
@@ -1205,20 +1270,22 @@ module Noir
     end
 
     # `value = "x"` literal, local/shared Kotlin constants, or
-    # `value = HttpHeaders.X_FOO` constants.
+    # `value = HttpHeaders.X_FOO` constants. Nil for a constant that
+    # resolves to nothing — its identifier text is not a wire name.
     private def resolve_string_or_const(value : LibTreeSitter::TSNode,
                                         source : String,
                                         string_constants : Hash(String, String),
-                                        local_string_constants : Hash(String, String)) : String
+                                        local_string_constants : Hash(String, String)) : String?
       case Noir::TreeSitter.node_type(value)
       when "string_literal"
         decode_string_literal(value, source)
       when "simple_identifier"
         name = Noir::TreeSitter.node_text(value, source)
-        local_string_constants[name]? || string_constants[name]? || name
+        local_string_constants[name]? || string_constants[name]?
       when "navigation_expression"
         text = Noir::TreeSitter.node_text(value, source)
-        local_string_constants[text]? || string_constants[text]? || normalise_http_header_constant(text)
+        local_string_constants[text]? || string_constants[text]? ||
+          (normalise_http_header_constant(text) if text.starts_with?("HttpHeaders."))
       else
         Noir::TreeSitter.node_text(value, source)
       end
@@ -1262,13 +1329,16 @@ module Noir
           # one format (mirrors the legacy `||=` quirk).
           format = QUERY_VERB_PARAMS.includes?(verb.upcase) ? "query" : "form"
           string_values_in(value, source, string_constants, local_string_constants).each do |raw|
-            name, default = split_constraint(raw)
-            next if name.empty?
+            next unless pair = split_constraint(raw)
+            name, default = pair
+            # Already bound by a `@RequestParam` of the same name.
+            next if name.empty? || sink.any? { |param| param.name == name }
             sink << Param.new(name, default, format)
           end
         when "headers"
           string_values_in(value, source, string_constants, local_string_constants).each do |raw|
-            name, default = split_constraint(raw)
+            next unless pair = split_constraint(raw)
+            name, default = pair
             next if name.empty?
             sink << Param.new(name, default, "header")
           end
@@ -1276,13 +1346,15 @@ module Noir
       end
     end
 
-    # `"name=value"` → `{"name", "value"}`. `"name"` (no `=`) →
-    # `{"name", ""}`. Trims leading `!` (Spring negation marker).
-    private def split_constraint(raw : String) : Tuple(String, String)
-      str = raw.starts_with?("!") ? raw[1..] : raw
-      idx = str.index('=')
-      return {str, ""} if idx.nil?
-      {str[0, idx], str[(idx + 1)..]}
+    # `"name=value"` → `{"name", "value"}`. `"name"` and `"name!=value"`
+    # → `{"name", ""}`. A negated `"!name"` demands the input's absence,
+    # so it names nothing to send: nil (matches the Java extractor).
+    private def split_constraint(raw : String) : Tuple(String, String)?
+      return if raw.starts_with?('!')
+      idx = raw.index('=')
+      return {raw, ""} if idx.nil?
+      return {raw[0, idx - 1], ""} if idx > 0 && raw[idx - 1] == '!'
+      {raw[0, idx], raw[(idx + 1)..]}
     end
   end
 
@@ -1303,6 +1375,11 @@ module Noir
     # cross-file inheritance merge below (mirrors TreeSitterJavaDtoIndex).
     @@shared_super_cache = Hash(String, Hash(String, String)).new
     @@shared_cache_mutex = Mutex.new
+
+    # Path-keyed, so it must not survive into a second scan in the same
+    # process. See the twin registration in `TreeSitterJavaDtoIndex` for the
+    # failure this prevents.
+    Noir::ExtractionResultCache.register_clearer { clear_cache! }
 
     # Backstop against pathological supertype graphs — far above any real
     # DTO hierarchy depth/fan-out.
@@ -1382,13 +1459,13 @@ module Noir
         @@shared_super_cache[file] ||= supertypes
         {@@shared_cache[file], @@shared_super_cache[file]}
       end
-    rescue File::NotFoundError
+    rescue IO::Error
       {Index.new, Hash(String, String).new}
     end
 
     private def file_body(file : String) : String
       CodeLocator.instance.content_for(file) ||
-        File.read(file, encoding: "utf-8", invalid: :skip)
+        Noir::TextFile.read(file)
     end
 
     private def absorb!(result : Index,
@@ -1485,7 +1562,7 @@ module Noir
         imports = TreeSitterKotlinParameterExtractor.extract_imports_from(root, body)
       end
       {package_name, imports}
-    rescue File::NotFoundError
+    rescue IO::Error
       {"", [] of Noir::ImportGraph::ImportRef}
     end
 

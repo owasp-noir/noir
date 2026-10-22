@@ -9,6 +9,37 @@ module Noir
   {% end %}
 end
 
+# Drives one fixture through a real scan and asserts the endpoints it produced.
+#
+# ## Registration is side-effect free
+#
+# `test_detect` / `test_analyze` used to call `@app.detect` / `@app.analyze` in
+# the method body — at spec *collection* time — and register `it` blocks that
+# only asserted over the already-computed result. Two consequences, both
+# measured:
+#
+#   * `--dry-run`, which executes no example bodies, still cost ~6.9s, and
+#     `--example zzz_no_match` reported `0 examples` and still cost ~6.8s. No
+#     filter could skip the scans, so there was no way to run one analyzer's
+#     tester without running all 576.
+#   * far worse: Crystal's runner is installed via `at_exit` and skips itself
+#     when the process is already exiting on an error (`spec/dsl.cr:186`). A
+#     single analyzer raising during collection therefore reported
+#     `0 examples, 0 failures` and named nothing — 22k examples silently
+#     replaced by a blank screen, which is exactly the failure a contributor
+#     (or an agent) hits on a branch that broke one analyzer.
+#
+# The scan is now lazy: examples are registered from `@expected_endpoints`,
+# which is known at collection time, and the first example to run triggers the
+# scan. A raise surfaces as a normal failing example and every other tester
+# still reports.
+#
+# ## The exception is memoized too
+#
+# `@scan_error` matters as much as `@scanned`. Marking the scan "done" and
+# leaving a half-populated `@app` behind would turn one real error into one real
+# error plus ~40 "expected endpoint not found" red herrings. Re-raising the
+# stored exception makes every example in the tester name the actual cause.
 class FunctionalTester
   # expected_count's symbols are:
   # :techs
@@ -17,6 +48,8 @@ class FunctionalTester
   @expected_endpoints : Array(Endpoint)
   @app : NoirRunner
   @path : String
+  @scanned = false
+  @scan_error : Exception? = nil
 
   def initialize(@path, expected_count, expected_endpoints, option_overrides : Hash(String, YAML::Any)? = nil)
     config_init = ConfigInitializer.new
@@ -40,13 +73,81 @@ class FunctionalTester
     @app = NoirRunner.new noir_options
   end
 
-  def test_detect
-    @app.detect
-    if @expected_count.has_key?(:techs)
-      it "test detect using count check [#{@path}]" do
-        @app.techs.size.should eq @expected_count[:techs]
-      end
+  # Runs the scan once, on first use from inside an example.
+  #
+  # `CodeLocator` is a process-wide singleton, so it is reset here rather than
+  # at registration: whichever tester runs first must not inherit the previous
+  # one's file map. Crystal's spec runner is single-threaded, so no two
+  # `ensure_scanned` calls interleave.
+  private def ensure_scanned
+    if error = @scan_error
+      raise error
     end
+    return if @scanned
+
+    begin
+      CodeLocator.instance.clear_all
+      @app.detect
+      @app.analyze
+    rescue e
+      @scan_error = e
+      raise e
+    ensure
+      @scanned = true
+    end
+  end
+
+  # The scanned runner. Reading it runs the scan; see `url=` for the pre-scan
+  # configuration path, which must not.
+  def app
+    ensure_scanned
+    @app
+  end
+
+  def endpoints : Array(Endpoint)
+    app.endpoints
+  end
+
+  # Pre-scan configuration. Writes straight to `@app.options` — going through
+  # `app` would run the scan and *then* change an option it had already read.
+  #
+  # The guard is the point: silently configuring a scan that already happened is
+  # how a tester ends up asserting against a stale result.
+  def url=(url)
+    raise "FunctionalTester[#{@path}]: options changed after the scan already ran" if @scanned
+    @app.options["url"] = YAML::Any.new(url)
+  end
+
+  # An expected endpoint's actual counterpart. "Not found" is an assertion
+  # failure inside the example rather than a branch taken while registering
+  # examples.
+  #
+  # Every example in the endpoint's group calls through here, so one absent
+  # endpoint still fails once per detail the tester declared, all of them with
+  # the same greppable `MISSING ENDPOINT [...]` line naming the tester and the
+  # endpoint. Registering examples for details that are not asserted anywhere
+  # else is what this trades away: the group carries one presence example plus
+  # the examples for the protocol, params, values and callees the tester
+  # actually declared, and nothing that only restates the lookup key.
+  private def actual_endpoint(expected : Endpoint) : Endpoint
+    key = "#{expected.method}::#{expected.url}"
+    endpoints.find { |e| e.method == expected.method && e.url == expected.url } ||
+      fail("MISSING ENDPOINT [#{key}] in tester: #{@path}")
+  end
+
+  private def actual_params(expected : Endpoint, name : String) : Array(Param)
+    found = actual_endpoint(expected).params.select { |param| param.name == name }
+    if found.empty?
+      key = "#{expected.method}::#{expected.url}"
+      fail("MISSING PARAM [#{name}] on [#{key}] in tester: #{@path}")
+    end
+    found
+  end
+
+  private def actual_callee(expected : Endpoint, name : String) : Callee
+    key = "#{expected.method}::#{expected.url}"
+    actual_endpoint(expected).callees.find { |callee| callee.name == name } ||
+      fail("MISSING CALLEE [#{name}] on [#{key}] in tester: #{@path}")
   end
 
   def find_endpoint(key)
@@ -59,99 +160,110 @@ class FunctionalTester
     nil
   end
 
-  def find_param(param_name)
-    if @expected_endpoints.params.size > 0
-      @expected_endpoints.params.each do |param|
-        if param.name.to_s == param_name.to_s
-          return param
-        end
-      end
-    end
+  # Everything this class registers carries the `functional` tag, and so does
+  # every hand-written `describe` in a tester file (see
+  # `spec/unit_test/functional_tag_coverage_spec.cr`, which fails if one does
+  # not). The whole suite lives in one binary now, so the tag is what lets
+  # `bin/noir_spec --tag functional` and `bin/noir_spec --tag '~functional'`
+  # split it into two processes that run in parallel. Crystal merges a parent's
+  # tags into its children (`Spec::Item#all_tags`), so tagging the `describe`
+  # below covers the examples inside it.
+  def test_detect
+    return unless @expected_count.has_key?(:techs)
 
-    nil
+    it "test detect using count check [#{@path}]", tags: "functional" do
+      app.techs.size.should eq @expected_count[:techs]
+    end
   end
 
   def test_analyze
-    @app.analyze
     if @expected_count.has_key?(:endpoints)
-      it "test analyze using count check [#{@path}]" do
-        @app.endpoints.size.should eq @expected_count[:endpoints]
+      it "test analyze using count check [#{@path}]", tags: "functional" do
+        endpoints.size.should eq @expected_count[:endpoints]
       end
     end
 
-    if @expected_endpoints.size > 0
-      @expected_endpoints.each do |expected|
-        key = expected.method.to_s + "::" + expected.url.to_s
-        actual = @app.endpoints.find { |e| e.method == expected.method && e.url == expected.url }
-        if actual.nil?
-          it "expected endpoint [#{key}] not found in tester: #{@path}" do
-            false.should be_true
+    @expected_endpoints.each do |expected|
+      key = expected.method.to_s + "::" + expected.url.to_s
+
+      describe "endpoint check [#{key}]", tags: "functional" do
+        # `actual_endpoint` looks the endpoint up *by* method and url, so
+        # asserting those two back is a tautology: the only way either could
+        # fail was the `MISSING ENDPOINT` path, which every other example in
+        # this group takes as well. Two examples per endpoint said nothing that
+        # this one does not.
+        it "is detected [K: #{key}]" do
+          actual_endpoint(expected)
+        end
+
+        if expected.protocol != "http"
+          it "check - protocol [K: #{key}]" do
+            actual_endpoint(expected).protocol.should eq expected.protocol
           end
-        else
-          describe "endpoint check [#{key}]" do
-            it "check - url [K: #{key}]" do
-              actual.url.should eq expected.url
-            end
+        end
 
-            it "check - method [K: #{key}]" do
-              actual.method.should eq expected.method
-            end
-
-            if expected.protocol != "http"
-              it "check - protocol [K: #{key}]" do
-                actual.protocol.should eq expected.protocol
+        if expected.params.size > 0
+          describe "check - params" do
+            expected.params.each do |param|
+              # No separate name check, for the same reason: `actual_params`
+              # selects by name and fails with `MISSING PARAM` when nothing
+              # matches, so the param_type example below already forces the
+              # param to be present under the expected name.
+              it "check '#{param.name}' param_type '#{param.param_type}'" do
+                actual_params(expected, param.name)
+                  .any? { |found| found.param_type == param.param_type }
+                  .should be_true
               end
-            end
 
-            if expected.params.size > 0
-              describe "check - params" do
-                expected.params.each do |param|
-                  found_params = actual.params.select { |found_p| found_p.name == param.name }
-                  if found_params.size == 0
-                    it "param '#{param.name}' not found for [#{key}] in tester: #{@path}" do
-                      false.should be_true
-                    end
-                  else
-                    it "check '#{param.name}' name " do
-                      param.name.should eq found_params[0].name
-                    end
-                    it "check '#{param.name}' param_type '#{param.param_type}'" do
-                      (found_params.any? { |found_p| found_p.param_type == param.param_type }).should be_true
-                    end
-                  end
+              # `value` was never asserted at all, which is how a tester could
+              # declare `Param.new("version", "null", "query")` and go green
+              # while the emitted request really was `?version=null`. `value`
+              # is what the curl / httpie / PowerShell builders put on the
+              # wire and what the OAS builders publish as an `enum`, so a
+              # wrong one is a wrong request, not cosmetics.
+              #
+              # Only a declared (non-empty) value is checked, because `""` is
+              # this harness's established "not asserted" placeholder — most
+              # testers spell it for params whose value is derived and long
+              # (a GraphQL operation document, a JSON-RPC envelope). The other
+              # half of the hole — an analyzer leaking source text into a
+              # param the tester left blank — is covered precisely, and much
+              # faster, by the unit specs for `PythonEngine#return_literal_value`
+              # and `Noir::JvmLiteral.value_of`.
+              if !param.value.empty?
+                it "check '#{param.name}' value '#{param.value}'" do
+                  actual_params(expected, param.name)
+                    .select { |found| found.param_type == param.param_type }
+                    .map(&.value)
+                    .should contain param.value
                 end
               end
             end
+          end
+        end
 
-            if expected.callees.size > 0
-              describe "check - callees" do
-                expected.callees.each do |callee|
-                  found = actual.callees.find { |c| c.name == callee.name }
-                  if found.nil?
-                    it "callee '#{callee.name}' not found for [#{key}] in tester: #{@path}" do
-                      false.should be_true
-                    end
-                  else
-                    it "check '#{callee.name}' name" do
-                      callee.name.should eq found.name
-                    end
-                    # Only compare the line when the spec author set one;
-                    # most specs only care about names, but Pyramid-style
-                    # cases need to verify def-line threading.
-                    if expected_line = callee.line
-                      it "check '#{callee.name}' line #{expected_line}" do
-                        found.line.should eq expected_line
-                      end
-                    end
-                    if expected_path = callee.path
-                      it "check '#{callee.name}' path #{expected_path}" do
-                        actual_path = found.path
-                        actual_path.should_not be_nil
-                        if actual_path
-                          File.expand_path(actual_path).should eq File.expand_path(expected_path)
-                        end
-                      end
-                    end
+        if expected.callees.size > 0
+          describe "check - callees" do
+            expected.callees.each do |callee|
+              it "check '#{callee.name}' name" do
+                actual_callee(expected, callee.name).name.should eq callee.name
+              end
+
+              # Only compare the line when the spec author set one; most specs
+              # only care about names, but Pyramid-style cases need to verify
+              # def-line threading.
+              if expected_line = callee.line
+                it "check '#{callee.name}' line #{expected_line}" do
+                  actual_callee(expected, callee.name).line.should eq expected_line
+                end
+              end
+
+              if expected_path = callee.path
+                it "check '#{callee.name}' path #{expected_path}" do
+                  actual_path = actual_callee(expected, callee.name).path
+                  actual_path.should_not be_nil
+                  if actual_path
+                    File.expand_path(actual_path).should eq File.expand_path(expected_path)
                   end
                 end
               end
@@ -163,18 +275,7 @@ class FunctionalTester
   end
 
   def perform_tests
-    # Describe block removed from here
-    locator = CodeLocator.instance
-    locator.clear_all
     test_detect
     test_analyze
-  end
-
-  def app
-    @app
-  end
-
-  def url=(url)
-    @app.options["url"] = YAML::Any.new(url)
   end
 end

@@ -23,8 +23,25 @@ describe "Detect ZAP Sites Tree" do
       YAML
 
     locator = CodeLocator.instance
-    locator.clear "zap-sites-tree"
+    locator.clear Noir::LocatorKeys::ZAP_SITES_TREE
     instance.detect("sites.yaml", content)
-    locator.all("zap-sites-tree").should eq(["sites.yaml"])
+    locator.all(Noir::LocatorKeys::ZAP_SITES_TREE).should eq(["sites.yaml"])
+  end
+
+  it "rejects yaml without the Sites marker" do
+    content = <<-YAML
+      - node: something-else
+        children: []
+      YAML
+
+    instance.detect("tree.yml", content).should be_false
+  end
+
+  it "rejects marker-bearing yaml with a different shape" do
+    instance.detect("notes.yml", "note: Sites are mentioned here only").should be_false
+  end
+
+  it "rejects invalid yaml that carries the marker" do
+    instance.detect("broken.yml", "- node: Sites\n  children: [broken").should be_false
   end
 end

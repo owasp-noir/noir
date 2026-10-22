@@ -26,6 +26,12 @@ def app_post():
     """Test app-level POST shortcut"""
     return jsonify({'method': 'POST'})
 
+@app.query('/app-query')
+def app_query():
+    """Test app-level QUERY shortcut (RFC 10008)"""
+    filter_expr = request.json.get('filter')
+    return jsonify({'method': 'QUERY', 'filter': filter_expr})
+
 @bp.get('/bp-get')
 def bp_get():
     """Test blueprint GET shortcut"""
@@ -51,6 +57,12 @@ def bp_patch():
 def bp_delete():
     """Test blueprint DELETE shortcut"""
     return jsonify({'method': 'DELETE'})
+
+@bp.query('/bp-query')
+def bp_query():
+    """Test blueprint QUERY shortcut (RFC 10008)"""
+    term = request.args.get('term')
+    return jsonify({'method': 'QUERY', 'term': term})
 
 # MethodView class-based views
 class UserAPI(MethodView):
@@ -103,6 +115,20 @@ class AsyncAPI(MethodView):
         """Async POST method"""
         title = request.json.get('title')
         return jsonify({'title': title})
+
+class SearchAPI(MethodView):
+    """MethodView exercising QUERY dispatch (RFC 10008) alongside GET"""
+
+    def get(self):
+        """GET method - simple keyword search"""
+        keyword = request.args.get('keyword')
+        return jsonify({'keyword': keyword})
+
+    def query(self):
+        """QUERY method - structured search body, dispatched like get/post
+        via MethodView's getattr(self, request.method.lower()) lookup"""
+        criteria = request.json.get('criteria')
+        return jsonify({'criteria': criteria})
 
 class ReportView(View):
     """Pluggable View using dispatch_request and class-level methods"""
@@ -159,8 +185,20 @@ bp.add_url_rule('/items', view_func=item_view, methods=['GET', 'POST'])
 async_view = AsyncAPI.as_view('async_api')
 bp.add_url_rule('/async', view_func=async_view, methods=['GET', 'POST'])
 
+# MethodView with an explicit QUERY method (RFC 10008), dispatched the
+# same way as get/post via MethodView.dispatch_request's getattr lookup
+search_view = SearchAPI.as_view('search_api')
+bp.add_url_rule('/search-view', view_func=search_view, methods=['GET', 'QUERY'])
+
 # add_url_rule without explicit methods (should infer from class)
 bp.add_url_rule('/items-inferred', view_func=ItemAPI.as_view('item_inferred'))
+
+# add_url_rule without explicit methods on a QUERY-carrying MethodView:
+# Flask/Werkzeug's `http_method_funcs` (which MethodView.as_view uses to
+# auto-compute `cls.methods` when none is given) includes 'query' as of
+# pallets/flask#6065, so this must infer GET + QUERY from the class body,
+# same as the explicit-methods registration above.
+bp.add_url_rule('/search-view-inferred', view_func=SearchAPI.as_view('search_api_inferred'))
 
 # flask.views.View uses dispatch_request with class-level methods
 bp.add_url_rule('/reports-view', view_func=ReportView.as_view('reports_view'))

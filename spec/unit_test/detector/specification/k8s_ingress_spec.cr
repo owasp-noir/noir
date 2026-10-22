@@ -22,10 +22,10 @@ describe "Detect Kubernetes Ingress manifests" do
 
   it "detects networking.k8s.io Ingress YAML" do
     locator = CodeLocator.instance
-    locator.clear "k8s-ingress-spec"
+    locator.clear Noir::LocatorKeys::K8S_INGRESS_SPEC
 
     instance.detect("manifests/ingress.yaml", ingress).should be_true
-    locator.all("k8s-ingress-spec").should eq ["manifests/ingress.yaml"]
+    locator.all(Noir::LocatorKeys::K8S_INGRESS_SPEC).should eq ["manifests/ingress.yaml"]
   end
 
   it "rejects non-Ingress YAML" do
@@ -65,7 +65,7 @@ describe "Detect Kubernetes Ingress manifests" do
 
   it "detects templated Helm Ingress manifests" do
     locator = CodeLocator.instance
-    locator.clear "k8s-ingress-spec"
+    locator.clear Noir::LocatorKeys::K8S_INGRESS_SPEC
 
     src = <<-YAML
       {{- if .Values.ingress.enabled }}
@@ -84,7 +84,7 @@ describe "Detect Kubernetes Ingress manifests" do
       YAML
 
     instance.detect("templates/ingress.yaml", src).should be_true
-    locator.all("k8s-ingress-spec").should eq ["templates/ingress.yaml"]
+    locator.all(Noir::LocatorKeys::K8S_INGRESS_SPEC).should eq ["templates/ingress.yaml"]
   end
 
   it "detects legacy extensions v1beta1 Ingress manifests" do

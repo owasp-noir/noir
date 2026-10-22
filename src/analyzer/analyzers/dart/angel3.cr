@@ -31,6 +31,8 @@ module Analyzer::Dart
   # `chain([...]).<verb>(...)` form where the verb is called directly on a
   # `chain(...)` result rather than a bound router variable.
   class Angel3 < Analyzer
+    analyzer_for "dart_angel3"
+
     HTTP_METHOD_MAP = {
       "get"     => "GET",
       "post"    => "POST",
@@ -40,8 +42,6 @@ module Analyzer::Dart
       "head"    => "HEAD",
       "options" => "OPTIONS",
     }
-
-    ALL_VERBS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
 
     # A `group('/prefix', (router) { ... })` block: its composed prefix,
     # the child-router parameter name, and the char range of its closure
@@ -56,7 +56,7 @@ module Analyzer::Dart
     CALL_REGEX = /(?<![\w$.])([A-Za-z_]\w*)\s*\.\s*([a-zA-Z]+)\s*\(/
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       result = [] of Endpoint
       mutex = Mutex.new
 
@@ -95,12 +95,13 @@ module Analyzer::Dart
     end
 
     private def scan_file(content : String, path : String, include_callee : Bool) : Array(Endpoint)
-      cleaned = Helper.strip_comments(content)
+      cleaned = Noir::CComments.strip(content)
       groups = collect_groups(cleaned)
       top_vars = angel_router_vars(cleaned)
       group_params = groups.map(&.[:param]).to_set
       return [] of Endpoint if top_vars.empty? && groups.empty?
 
+      lines = Helper::LineIndex.new(content)
       endpoints = [] of Endpoint
       seen = Set({String, String}).new
 
@@ -116,10 +117,10 @@ module Analyzer::Dart
         next if prefix.nil?
 
         open_paren = (m.end(0) || 0) - 1
-        close_paren = find_matching_paren(cleaned, open_paren)
+        close_paren = Helper.find_matching_paren(cleaned, open_paren)
         next unless close_paren
 
-        handle_call(method, cleaned, open_paren, close_paren, prefix, content, path, include_callee, endpoints, seen)
+        handle_call(method, cleaned, open_paren, close_paren, prefix, content, lines, path, include_callee, endpoints, seen)
       end
 
       endpoints
@@ -177,9 +178,9 @@ module Analyzer::Dart
         call = m.begin(0)
         open_paren = (m.end(0) || 0) - 1
         next unless call
-        close_paren = find_matching_paren(cleaned, open_paren)
+        close_paren = Helper.find_matching_paren(cleaned, open_paren)
         next unless close_paren
-        args = split_top_level_args(cleaned[(open_paren + 1)...close_paren])
+        args = Helper.split_top_level_args(cleaned[(open_paren + 1)...close_paren])
         next if args.size < 2
 
         literal = Helper.extract_string_literal(args[0])
@@ -187,7 +188,7 @@ module Analyzer::Dart
         param = closure_param(args[1])
         next unless param
 
-        comma = first_top_level_comma(cleaned, open_paren + 1, close_paren)
+        comma = Helper.first_top_level_comma(cleaned, open_paren + 1, close_paren)
         next unless comma
         raw << {own: normalize_path(literal), param: param, range_start: comma + 1, range_end: close_paren, call: call}
       end
@@ -207,7 +208,7 @@ module Analyzer::Dart
         break unless visited.add?(current[:call])
         parent = enclosing_group(current, raw)
         break unless parent
-        prefix = join_path(parent[:own], prefix)
+        prefix = mount_join(parent[:own], prefix)
         current = parent
       end
       prefix
@@ -247,55 +248,32 @@ module Analyzer::Dart
                             close_paren : Int32,
                             prefix : String,
                             content : String,
+                            lines : Helper::LineIndex,
                             path : String,
                             include_callee : Bool,
                             endpoints : Array(Endpoint),
                             seen : Set({String, String}))
       return if open_paren >= close_paren
-      args = split_top_level_args(source[(open_paren + 1)...close_paren])
+      args = Helper.split_top_level_args(source[(open_paren + 1)...close_paren])
       return if args.size < 2
 
       literal = Helper.extract_string_literal(args[0])
       return unless literal
 
-      url = join_path(prefix, normalize_path(literal))
-      line = line_for_offset(content, open_paren)
+      url = mount_join(prefix, normalize_path(literal))
+      line = lines.line_for(open_paren)
 
       callees = [] of Noir::DartCalleeExtractor::Entry
       if include_callee
-        comma = first_top_level_comma(source, open_paren + 1, close_paren)
-        callees = handler_callees(args[1], content, comma + 1, path, line) if comma
+        comma = Helper.first_top_level_comma(source, open_paren + 1, close_paren)
+        callees = Helper.handler_callees(args[1], content, comma + 1, path, line) if comma
       end
 
-      verbs = method == "all" ? ALL_VERBS : [HTTP_METHOD_MAP[method]]
+      verbs = method == "all" ? ANY_ROUTE_HTTP_METHODS : [HTTP_METHOD_MAP[method]]
       verbs.each do |verb|
         next unless seen.add?({verb, url})
-        endpoints << build_endpoint(url, verb, path, line, callees)
+        endpoints << Helper.build_endpoint(url, verb, path, line, callees)
       end
-    end
-
-    HANDLER_REFERENCE_REGEX = /\A[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\z/
-
-    private def handler_callees(handler_arg : String,
-                                content : String,
-                                handler_start : Int32,
-                                path : String,
-                                line : Int32) : Array(Noir::DartCalleeExtractor::Entry)
-      stripped = handler_arg.strip
-
-      unless stripped.starts_with?('(')
-        return [] of Noir::DartCalleeExtractor::Entry unless stripped.matches?(HANDLER_REFERENCE_REGEX)
-        return [{stripped, path, line}] of Noir::DartCalleeExtractor::Entry
-      end
-
-      start_b = content.char_index_to_byte_index(handler_start)
-      return [] of Noir::DartCalleeExtractor::Entry unless start_b
-      body_info = Noir::DartCalleeExtractor.extract_body_after(content, start_b)
-      return [] of Noir::DartCalleeExtractor::Entry unless body_info
-
-      body, body_start, _ = body_info
-      start_line = Noir::DartCalleeExtractor.line_number_for(content, body_start)
-      Noir::DartCalleeExtractor.callees_for_body(body, path, start_line)
     end
 
     # Ensure a leading slash and translate Express-style `:id` captures
@@ -305,170 +283,12 @@ module Analyzer::Dart
       base.gsub(/:([A-Za-z_]\w*)\??/) { "{#{$~[1]}}" }
     end
 
-    private def join_path(prefix : String, sub : String) : String
+    private def mount_join(prefix : String, sub : String) : String
       return sub if prefix.empty?
       left = prefix.rchop('/')
       right = sub.starts_with?('/') ? sub : "/#{sub}"
       result = "#{left}#{right}"
       result.empty? ? "/" : result
-    end
-
-    private def build_endpoint(url : String,
-                               verb : String,
-                               path : String,
-                               line : Int32,
-                               callees : Array(Noir::DartCalleeExtractor::Entry)) : Endpoint
-      endpoint = Endpoint.new(url, verb)
-      endpoint.details = Details.new(PathInfo.new(path, line))
-      url.scan(/\{(\w+)\}/) do |match|
-        endpoint.push_param(Param.new(match[1], "", "path"))
-      end
-      Noir::DartCalleeExtractor.attach_to(endpoint, callees)
-      endpoint
-    end
-
-    # ---------- source-string utilities ----------
-
-    private def find_matching_paren(text : String, open_idx : Int32) : Int32?
-      depth = 0
-      i = open_idx
-      in_string = false
-      string_quote = '\0'
-
-      while i < text.size
-        c = text[i]
-        if in_string
-          if c == '\\' && i + 1 < text.size
-            i += 2
-            next
-          end
-          in_string = false if c == string_quote
-          i += 1
-          next
-        end
-
-        case c
-        when '"', '\''
-          in_string = true
-          string_quote = c
-        when '('
-          depth += 1
-        when ')'
-          depth -= 1
-          return i if depth == 0
-        else
-          # ignore
-        end
-        i += 1
-      end
-
-      nil
-    end
-
-    private def first_top_level_comma(text : String, start : Int32, limit : Int32) : Int32?
-      depth = 0
-      i = start
-      in_string = false
-      string_quote = '\0'
-
-      while i < limit
-        c = text[i]
-        if in_string
-          if c == '\\' && i + 1 < text.size
-            i += 2
-            next
-          end
-          in_string = false if c == string_quote
-          i += 1
-          next
-        end
-
-        case c
-        when '"', '\''
-          in_string = true
-          string_quote = c
-        when '(', '{', '['
-          depth += 1
-        when ')', '}', ']'
-          depth -= 1 if depth > 0
-        when ','
-          return i if depth == 0
-        else
-          # ignore
-        end
-        i += 1
-      end
-
-      nil
-    end
-
-    private def split_top_level_args(text : String) : Array(String)
-      result = [] of String
-      depth_paren = 0
-      depth_brace = 0
-      depth_bracket = 0
-      depth_angle = 0
-      start = 0
-      i = 0
-      in_string = false
-      string_quote = '\0'
-
-      while i < text.size
-        c = text[i]
-        if in_string
-          if c == '\\' && i + 1 < text.size
-            i += 2
-            next
-          end
-          in_string = false if c == string_quote
-          i += 1
-          next
-        end
-
-        case c
-        when '"', '\''
-          in_string = true
-          string_quote = c
-        when '('
-          depth_paren += 1
-        when ')'
-          depth_paren -= 1 if depth_paren > 0
-        when '{'
-          depth_brace += 1
-        when '}'
-          depth_brace -= 1 if depth_brace > 0
-        when '['
-          depth_bracket += 1
-        when ']'
-          depth_bracket -= 1 if depth_bracket > 0
-        when '<'
-          depth_angle += 1
-        when '>'
-          depth_angle -= 1 if depth_angle > 0
-        when ','
-          if depth_paren == 0 && depth_brace == 0 && depth_bracket == 0 && depth_angle == 0
-            result << text[start...i]
-            start = i + 1
-          end
-        else
-          # ignore
-        end
-        i += 1
-      end
-      result << text[start..] if start <= text.size
-      result
-    end
-
-    private def line_for_offset(content : String, offset : Int32) : Int32
-      return 1 if offset <= 0
-      limit = offset > content.size ? content.size : offset
-      count = 1
-      i = 0
-      while i < limit
-        count += 1 if content[i] == '\n'
-        i += 1
-      end
-      count
     end
   end
 end

@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-Integrate Noir with [OpenAI](https://openai.com) to leverage language models like GPT-5.5 for advanced code analysis and endpoint detection.
+Connect Noir to [OpenAI](https://openai.com) and use models like GPT-5.5 for LLM-based code analysis and endpoint detection.
 
 ## Setup
 
@@ -15,14 +15,10 @@ Integrate Noir with [OpenAI](https://openai.com) to leverage language models lik
 
 ## Usage
 
-Run Noir with OpenAI:
-
 ```bash
 noir scan ./spec/functional_test/fixtures/hahwul \
      --ai-provider=openai \
      --ai-model=gpt-5.5 \
      --ai-key=sk-...
 ```
-
-OpenAI enables natural language endpoint descriptions, security vulnerability identification, and code quality suggestions.
 

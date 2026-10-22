@@ -23,10 +23,20 @@ build:
 build-release:
     shards build --release --no-debug --production
 
-# Update shards.nix.
+# Regenerate shards.nix from shard.lock (run after changing dependencies).
 [group('build')]
 nix-update:
     nix-shell -p crystal2nix --run crystal2nix
+
+# Verify shards.nix still pins exactly what shard.lock resolves.
+[group('build')]
+nix-check:
+    crystal run scripts/check_shards_nix.cr
+
+# Build the Nix package the way `nix profile add github:owasp-noir/noir` does.
+[group('build')]
+nix-build:
+    nix build .#default --print-build-logs
 
 # Clean build artifacts (tree-sitter objects, bin/, lib/).
 [group('build')]
@@ -41,7 +51,7 @@ clean:
 docs-serve:
     hwaro serve -i docs --base-url="http://localhost:3000"
 
-# Generate supported technology docs from techs.cr.
+# Generate supported technology docs and headline counts from the techs catalog.
 [group('documents')]
 docs-supported:
     crystal run scripts/generate_supported_docs.cr
@@ -49,6 +59,16 @@ docs-supported:
 # Generate supported docs and serve the site.
 [group('documents')]
 docs-serve-supported: docs-supported docs-serve
+
+# Regenerate the CLI screenshots in the docs (needs a release binary).
+[group('documents')]
+docs-capture: build-release
+    docs/tools/cli-capture/capture.sh
+
+# Regenerate the README / overview hero image (needs Chrome + ImageMagick).
+[group('documents')]
+docs-hero: build-release
+    docs/tools/readme-hero/build.sh
 
 # Check for missing i18n documentation files.
 [group('documents')]
@@ -60,23 +80,84 @@ docs-i18n-check:
 docs-dependencies:
     brew install hahwul/hwaro/hwaro
 
+# The Ameba shard ships source only, so running it means compiling it: about
+# two minutes here and 126s of CI's 155s lint job. Build it once and the
+# recipes below use the binary instead. CI caches the same binary keyed on
+# shard.lock.
+#
+# Build the pinned Ameba linter into bin/ameba.
+[group('development')]
+ameba-build:
+    mkdir -p bin
+    crystal build lib/ameba/bin/ameba.cr -o bin/ameba
+
 # Auto-format code and fix lint issues.
 [group('development')]
 fix:
+    #!/usr/bin/env bash
+    set -euo pipefail
     crystal tool format
-    lib/ameba/bin/ameba.cr --fix
+    if [ -x bin/ameba ]; then ./bin/ameba --fix; else lib/ameba/bin/ameba.cr --fix; fi
 
 # Check code format and lint without changes.
 [group('development')]
 check:
+    #!/usr/bin/env bash
+    set -euo pipefail
     crystal tool format --check
-    lib/ameba/bin/ameba.cr
+    if [ -x bin/ameba ]; then ./bin/ameba; else lib/ameba/bin/ameba.cr; fi
 
-# Run all tests.
+# Compiling src/ is nearly the whole cost of a spec run, and that cost does not
+# grow when both suites go into one program: unit alone compiles in ~20s and
+# unit+functional together compiles in the same ~20s. Building once gives a
+# binary that runs all 20,807 examples in 17.5s on 0.3GB, so re-running in
+# randomized order or under a filter costs nothing more.
+#
+# Build the whole suite as one binary at bin/noir_spec.
 [group('development')]
-test:
-    crystal spec spec/unit_test
-    crystal spec spec/functional_test
+spec-build:
+    mkdir -p bin
+    crystal build spec/suite.cr -o bin/noir_spec
+
+# The run is single-threaded and takes only ~0.3GB, so splitting it on the
+# `functional` tag turns ~18s of examples into ~10s of wall time (the unit half
+# is the slower of the two, at 9.7s). Each half writes to its own log, because
+# two spec runners sharing a terminal interleave their progress dots and their
+# failure reports.
+#
+# Run all tests, as two parallel processes.
+[group('development')]
+test: spec-build
+    #!/usr/bin/env bash
+    set -uo pipefail
+    logs=$(mktemp -d)
+    trap 'rm -rf "$logs"' EXIT
+    ./bin/noir_spec --tag '~functional' > "$logs/unit.log" 2>&1 & unit_pid=$!
+    ./bin/noir_spec --tag functional > "$logs/functional.log" 2>&1 & functional_pid=$!
+    failed=0
+    wait $unit_pid || failed=1
+    wait $functional_pid || failed=1
+    for half in unit functional; do
+      echo "--- $half half ---"
+      cat "$logs/$half.log"
+    done
+    exit $failed
+
+# A randomized example order is how an accidental order dependency between
+# examples surfaces. Deliberately one process over the whole suite rather than
+# the tagged halves, so it can also catch a unit example that depends on a
+# functional one, or the reverse. The seed is printed at the end; reproduce it
+# with `just test-seed <seed>`.
+#
+# Re-run the built suite in a randomized example order.
+[group('development')]
+test-random: spec-build
+    ./bin/noir_spec --order random
+
+# Re-run the suite in one specific order: `just test-seed 12345`.
+[group('development')]
+test-seed SEED: spec-build
+    ./bin/noir_spec --order {{SEED}}
 
 # Run unit tests only.
 [group('development')]
@@ -88,10 +169,21 @@ test-unit:
 test-func:
     crystal spec spec/functional_test
 
-# Run uncovered tests only (not included in CI).
+# The fastest feedback loop while working on a single analyzer: ~8.5s, against
+# ~21s for a full `just test` (a ~12s build plus a ~10s parallel run). Almost
+# all of the 8.5s is compiling src/, not running the test (the run itself is
+# ~0.06s), so narrowing further buys nothing. Once bin/noir_spec is built,
+# though, `./bin/noir_spec -e hono` is cheaper still: it skips the compiler.
+#
+# Run one functional tester, e.g. `just test-func-one javascript/hono`.
 [group('development')]
-test-uncovered:
-    crystal spec spec/uncovered_test
+test-func-one TESTER:
+    crystal spec spec/functional_test/testers/{{TESTER}}_spec.cr
+
+# Run every functional tester for one language: `just test-func-lang python`.
+[group('development')]
+test-func-lang LANG:
+    crystal spec spec/functional_test/testers/{{LANG}}
 
 # Check version consistency across all files.
 [group('development')]
@@ -103,10 +195,24 @@ version-check:
 version-update VERSION="":
     @if [ -z "{{VERSION}}" ]; then crystal run scripts/version_update.cr; else crystal run scripts/version_update.cr -- {{VERSION}}; fi
 
+# The release workflow does this automatically; run it by hand to backfill an
+# older tag or retry a failed run. Extra flags are passed through, so
+# `just www-release v1.3.1 --dry-run` previews the edit without pushing.
+#
+# Add a release to the OWASP project page version list (prints the PR link).
+[group('development')]
+www-release VERSION *ARGS:
+    scripts/update_www_release.sh {{VERSION}} {{ARGS}}
+
 # Run benchmarks to compare global and local noir binaries on a large mock codebase.
 [group('development')]
 benchmark: build-release
     crystal run scripts/benchmark.cr
+
+# Score `noir trace` on access-log triage against pinned OSS apps (clones into tmp/agent_bench).
+[group('development')]
+agent-bench: build-release
+    crystal run scripts/agent_bench.cr
 
 # Run full benchmarks with multiple analysis flags (--include=path,techs,callee --ai-context -T).
 [group('development')]

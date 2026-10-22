@@ -1,0 +1,7 @@
+[package]
+name = "getoptsdemo"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+getopts = "0.2"

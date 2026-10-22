@@ -35,5 +35,28 @@ func main() {
 		w.WriteHeader(201)
 	})
 
+	// Go 1.22 pattern for HTTP QUERY (RFC 10008)
+	mux.HandleFunc("QUERY /search", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query().Get("q")
+		fmt.Fprintf(w, "query %s", q)
+	})
+
+	// Pre-1.22 manual dispatch on r.Method switch
+	http.HandleFunc("/query-manual", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case "QUERY":
+			filter := r.URL.Query().Get("filter")
+			fmt.Fprintf(w, "query %s", filter)
+		}
+	})
+
+	// A sub-router mounted on the default mux: its routes are reported on
+	// their own; the mount is not a route answering every method at /v2/.
+	api := http.NewServeMux()
+	api.HandleFunc("GET /v2/ping", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("pong"))
+	})
+	http.Handle("/v2/", api)
+
 	http.ListenAndServe(":8080", mux)
 }

@@ -10,7 +10,16 @@ module Analyzer::Go
   # a `Body` field for request bodies). That makes extraction
   # unusually precise compared to other Go routers.
   class Huma < GoEngine
+    analyzer_for "go_huma"
+
     IMPORT_MARKER = "github.com/danielgtaylor/huma"
+
+    # One precompiled matcher instead of a `String#includes?` scan per
+    # `.go` file: `includes?` runs Rabin-Karp over the whole buffer and
+    # the marker is absent in the overwhelming majority of files in a
+    # polyglot repo, so every one of them pays the full scan. See
+    # `Analyzer#content_matches?`.
+    IMPORT_MARKER_RE = Regex.union(IMPORT_MARKER)
 
     # Tags we lift from Input struct fields onto endpoint params.
     PARAM_TAG_KINDS = {
@@ -58,14 +67,13 @@ module Analyzer::Go
       file_contents_cache = Hash(String, String).new
 
       get_files_by_extension(".go").each do |scan_path|
-        next if File.directory?(scan_path)
-        next if GoEngine.go_test_file?(scan_path)
+        next if GoEngine.go_test_file?(base_relative_path(scan_path))
         begin
           dir = File.dirname(scan_path)
           package_files[dir] ||= [] of String
           package_files[dir] << scan_path
           file_contents_cache[scan_path] = read_file_content(scan_path)
-        rescue File::NotFoundError
+        rescue IO::Error
           # skip
         end
       end
@@ -80,47 +88,23 @@ module Analyzer::Go
         end
       end
 
-      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
-      begin
-        mutex = Mutex.new
-        WaitGroup.wait do |wg|
-          # Producer — tracked by the WaitGroup
-          wg.spawn do
-            get_files_by_extension(".go").each { |file| channel.send(file) }
-            channel.close
-          end
+      mutex = Mutex.new
+      parallel_analyze(get_files_by_extension(".go")) do |path|
+        next if GoEngine.go_test_file?(base_relative_path(path))
+        next unless File.exists?(path)
 
-          @options["concurrency"].to_s.to_i.times do
-            wg.spawn do
-              loop do
-                begin
-                  path = channel.receive?
-                  break if path.nil?
-                  next if File.directory?(path)
-                  next if GoEngine.go_test_file?(path)
-                  next unless File.exists?(path)
+        content = file_contents_cache[path]? || read_file_content(path)
+        next unless content_matches?(content, IMPORT_MARKER_RE)
 
-                  content = file_contents_cache[path]? || read_file_content(path)
-                  next unless content.includes?(IMPORT_MARKER)
+        dir = File.dirname(path)
+        structs = package_structs[dir]? || Hash(String, Array(StructField)).new
 
-                  dir = File.dirname(path)
-                  structs = package_structs[dir]? || Hash(String, Array(StructField)).new
+        endpoints = extract_huma_endpoints(content, path, structs)
+        next if endpoints.empty?
 
-                  endpoints = extract_huma_endpoints(content, path, structs)
-                  next if endpoints.empty?
-
-                  mutex.synchronize do
-                    endpoints.each { |ep| result << ep }
-                  end
-                rescue File::NotFoundError
-                  logger.debug "File not found: #{path}"
-                end
-              end
-            end
-          end
+        mutex.synchronize do
+          endpoints.each { |ep| result << ep }
         end
-      rescue e
-        logger.debug e
       end
 
       result
@@ -153,7 +137,7 @@ module Analyzer::Go
             # huma.Get(api, "/path", handler) — path@1, handler@2.
             method = sugar_verb
             arg_index = 0
-            Noir::TreeSitter.each_named_child(args) do |arg|
+            Noir::TreeSitter.each_named_arg(args) do |arg|
               case arg_index
               when 1 then route_path = decode_string_value(arg, source) || ""
               when 2 then handler_node = arg
@@ -165,7 +149,7 @@ module Analyzer::Go
             # Operation literal@1, handler@2.
             op_node : LibTreeSitter::TSNode? = nil
             arg_index = 0
-            Noir::TreeSitter.each_named_child(args) do |arg|
+            Noir::TreeSitter.each_named_arg(args) do |arg|
               case arg_index
               when 1 then op_node = arg
               when 2 then handler_node = arg
@@ -284,6 +268,7 @@ module Analyzer::Go
       "http.MethodOptions" => "OPTIONS",
       "http.MethodConnect" => "CONNECT",
       "http.MethodTrace"   => "TRACE",
+      "http.MethodQuery"   => "QUERY",
     }
 
     # Pulls the Input struct name out of the handler function literal.

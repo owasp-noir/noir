@@ -20,6 +20,8 @@ expected_endpoints = [
   ]),
   Endpoint.new("/api/v1/migration", "GET"),
   Endpoint.new("/api/v1/update", "PUT"),
+  # group.ALL folds to GET in the gf analyzer
+  Endpoint.new("/api/health", "GET"),
   Endpoint.new("/mixed/get", "GET"),
   Endpoint.new("/mixed/post", "POST", [
     Param.new("field1", "", "form"),

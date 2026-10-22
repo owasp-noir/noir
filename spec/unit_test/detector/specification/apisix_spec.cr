@@ -45,9 +45,9 @@ describe "Detect APISIX route config" do
       YAML
 
     locator = CodeLocator.instance
-    locator.clear "apisix-yaml"
+    locator.clear Noir::LocatorKeys::APISIX_YAML
     instance.detect("config/apisix.yaml", content)
-    locator.all("apisix-yaml").should eq(["config/apisix.yaml"])
+    locator.all(Noir::LocatorKeys::APISIX_YAML).should eq(["config/apisix.yaml"])
   end
 
   it "registers APISIX json files in CodeLocator" do
@@ -64,9 +64,9 @@ describe "Detect APISIX route config" do
       JSON
 
     locator = CodeLocator.instance
-    locator.clear "apisix-json"
+    locator.clear Noir::LocatorKeys::APISIX_JSON
     instance.detect("config/routes.json", content)
-    locator.all("apisix-json").should eq(["config/routes.json"])
+    locator.all(Noir::LocatorKeys::APISIX_JSON).should eq(["config/routes.json"])
   end
 
   it "rejects generic routes yaml without APISIX-specific keys" do
@@ -88,5 +88,18 @@ describe "Detect APISIX route config" do
       JSON
 
     instance.detect("openapi.json", content).should be_false
+  end
+
+  it "rejects OpenAPI-ish content whose markers only appear as substrings" do
+    # "security" contains "uri" as a bare substring; the word-bounded guard
+    # must not let a large spec like this reach the full JSON parse.
+    content = <<-JSON
+      {
+        "swagger": "2.0",
+        "paths": {"/routes": {"get": {"security": [], "plugins-doc": true}}}
+      }
+      JSON
+
+    instance.detect("swagger.json", content).should be_false
   end
 end

@@ -1,5 +1,6 @@
 require "xml"
 require "../../../models/analyzer"
+require "../../../utils/xml_comments"
 
 module Analyzer::Mobile
   # Parses AndroidManifest.xml to surface mobile app entry points:
@@ -24,11 +25,13 @@ module Analyzer::Mobile
   # gradle manifest placeholders (`${applicationId}`, custom
   # `manifestPlaceholders`) against the nearest build.gradle(.kts).
   class Android < Analyzer
+    analyzer_for "android"
+
     LAUNCHER_ACTION = "android.intent.action.MAIN"
 
     def analyze
       locator = CodeLocator.instance
-      manifests = locator.all("android-manifest")
+      manifests = locator.all(Noir::LocatorKeys::ANDROID_MANIFEST)
       return @result unless manifests.is_a?(Array(String))
 
       manifests.each do |path|
@@ -46,7 +49,7 @@ module Analyzer::Mobile
     end
 
     private def parse_manifest(content : String, path : String)
-      doc = XML.parse(content)
+      doc = Noir::XmlComments.parse(content)
       manifest = find_child(doc, "manifest")
       return unless manifest
 
@@ -103,14 +106,18 @@ module Analyzer::Mobile
         # always declares a MAIN filter, so it never lands here.
         if exported
           emit_explicit_component_endpoint(component_name, handler_name, component_tag,
-            package, attr(component, "permission"), path, seen_urls)
+            package, resolve(attr(component, "permission"), strings, placeholders), path, seen_urls)
         end
         return
       end
 
       filters.each do |filter|
-        actions = collect_names(filter, "action")
-        categories = collect_names(filter, "category")
+        # Actions and categories are templated from gradle just as often as
+        # URIs are (termux declares `${TERMUX_PACKAGE_NAME}.RUN_COMMAND`), so
+        # resolve them through the same placeholder map instead of reporting
+        # the raw `${...}` in metadata.
+        actions = collect_names(filter, "action", placeholders)
+        categories = collect_names(filter, "category", placeholders)
         data_nodes = [] of XML::Node
         each_child(filter, "data") { |d| data_nodes << d }
         auto_verify = bool_attr(filter, "autoVerify")
@@ -118,12 +125,24 @@ module Analyzer::Mobile
         if !data_nodes.empty?
           # Deep-link / app-link URI(s) — the primary entry points. The
           # handling component rides along as metadata["via"].
+          #
+          # `android:exported="false"` makes the component unreachable by an
+          # intent from another app, so its filter never fires from outside
+          # and the URI is not an entry point (WordPress-Android declares
+          # `wordpress://jetpack-connection` on a non-exported activity it
+          # only ever starts itself). Only an *explicit* `false` suppresses:
+          # a filter-bearing component with the attribute absent defaults to
+          # exported below targetSdk 31, and above it the build fails, so
+          # absent means "old manifest, exported".
+          next if attr(component, "exported") == "false"
           emit_filter_endpoints(data_nodes, actions, categories, package, strings,
             placeholders, path, auto_verify, handler_name, seen_urls)
-        elsif exported
+        elsif attr(component, "exported") != "false"
           # Exported component with an action but no <data>: an IPC surface
           # reachable by explicit/implicit intent. The launcher (MAIN) is
-          # an app start, not a remote surface, so it's excluded.
+          # an app start, not a remote surface, so it's excluded. Same
+          # exported rule as the <data> branch: absent means a pre-31
+          # manifest, where a filter-bearing component is exported.
           ipc_actions = actions.reject { |a| a == LAUNCHER_ACTION }
           unless ipc_actions.empty?
             emit_intent_endpoint(component_name, ipc_actions, categories,
@@ -146,6 +165,18 @@ module Analyzer::Mobile
     # row), never a remotely reachable deep link — so they are suppressed
     # regardless of host (including a bare `*` wildcard host).
     LOCAL_SCHEMES = Set{"file", "content"}
+
+    # Schemes that only ever appear as the data qualifier of a *protected
+    # system broadcast*, never as an addressable URI. `package:` is the
+    # canonical one: `<data android:scheme="package"/>` pairs with
+    # `ACTION_PACKAGE_ADDED` / `PACKAGE_FULLY_REMOVED` / … so the receiver can
+    # read the affected package name out of `intent.data`. Those actions can
+    # only be broadcast by the system, and `package:` is opaque anyway, so
+    # rendering it produced a bare, meaningless `package://` endpoint
+    # (WordPress-Android's `JetpackAppUninstallReceiver`). The receiver's own
+    # IPC surface is still reported through the `intent://` path when it is
+    # exported with a non-system action.
+    SYSTEM_BROADCAST_SCHEMES = Set{"package"}
 
     # Opaque (authority-less) schemes: `mailto:foo@bar`, `tel:123`, `geo:…`.
     # They take no `//host` part, so the URL is rendered as `scheme:` rather
@@ -175,24 +206,30 @@ module Analyzer::Mobile
                                       package : String, strings : Hash(String, String),
                                       placeholders : Hash(String, String), path : String,
                                       auto_verify : Bool, via : String, seen_urls : Set(String))
-      schemes = [] of String
-      hosts = [] of String
-      paths = [] of String
+      # Insertion-ordered sets: `Array#includes?` dedup was O(n^2) on a
+      # filter with thousands of `<data>` elements.
+      schemes = Set(String).new
+      hosts = Set(String).new
+      paths = Set(String).new
       has_mime_type = false
 
       data_nodes.each do |data|
         has_mime_type = true unless attr(data, "mimeType").nil?
         if scheme = resolve(attr(data, "scheme"), strings, placeholders)
-          schemes << scheme unless scheme.empty? || schemes.includes?(scheme)
+          schemes << scheme unless scheme.empty?
         end
         if host = resolve(attr(data, "host"), strings, placeholders)
           # A bare `*` host matches any authority — it carries no specific
           # target, so treat it as host-less (`scheme://*` == `scheme://`).
           # A wildcard *subdomain* (`*.example.com`) is kept as-is.
-          hosts << host unless host.empty? || host == "*" || hosts.includes?(host)
+          # Android pairs `port` with the host of the same <data> element (a
+          # port with no host is ignored), so it is part of the authority.
+          port = resolve(attr(data, "port"), strings, placeholders)
+          host = "#{host}:#{port}" if port && !port.empty? && !host.empty? && host != "*"
+          hosts << host unless host.empty? || host == "*"
         end
         norm = normalize_path(data, strings, placeholders)
-        paths << norm unless norm.empty? || paths.includes?(norm)
+        paths << norm unless norm.empty?
       end
       return if schemes.empty?
 
@@ -213,37 +250,45 @@ module Analyzer::Mobile
     # Cross-products the scheme/host/path sets of one filter into
     # (scheme, host, path) triples, applying the host-less generic-scheme
     # suppression and the per-filter cap.
-    private def data_filter_combos(schemes : Array(String), hosts : Array(String),
-                                   paths : Array(String), has_mime_type : Bool) : Array({String, String, String})
+    private def data_filter_combos(schemes : Set(String), hosts : Set(String),
+                                   paths : Set(String), has_mime_type : Bool) : Array({String, String, String})
       combos = [] of {String, String, String}
-      effective_paths = paths.empty? ? [""] : paths
+      effective_paths = paths.empty? ? [""] : paths.to_a
 
-      schemes.each do |scheme|
-        # Local-content schemes never describe a remote deep link.
-        next if LOCAL_SCHEMES.includes?(scheme)
-        if hosts.empty?
-          # Host-less: keep only custom schemes. A generic scheme with no
-          # host — and any scheme in a content-type (mimeType) filter — is a
-          # file/content qualifier, not a remotely reachable deep link.
-          next if has_mime_type || GENERIC_SCHEMES.includes?(scheme)
-          combos << {scheme, "", ""}
-        else
-          hosts.each do |host|
+      eligible = schemes.reject do |scheme|
+        # Local-content and system-broadcast schemes never describe a
+        # remotely addressable deep link. Host-less: keep only custom
+        # schemes. A generic scheme with no host — and any scheme in a
+        # content-type (mimeType) filter — is a file/content qualifier, not
+        # a remotely reachable deep link.
+        LOCAL_SCHEMES.includes?(scheme) || SYSTEM_BROADCAST_SCHEMES.includes?(scheme) ||
+          (hosts.empty? && (has_mime_type || GENERIC_SCHEMES.includes?(scheme)))
+      end
+      # A host-less filter yields bare `scheme://` (paths need an authority).
+      host_list = hosts.empty? ? [""] : hosts.to_a
+      effective_paths = [""] if hosts.empty?
+
+      # Size the product before building it: a filter with thousands of
+      # hosts and paths must not materialise millions of triples first.
+      total = eligible.size.to_i64 * host_list.size * effective_paths.size
+      if total <= MAX_FILTER_COMBOS
+        eligible.each do |scheme|
+          host_list.each do |host|
             effective_paths.each { |norm_path| combos << {scheme, host, norm_path} }
           end
         end
+        return combos
       end
-
-      return combos if combos.size <= MAX_FILTER_COMBOS
 
       # Over the cap: drop path granularity (scheme × host), then truncate.
-      @logger.debug "Capping intent-filter deep links (#{combos.size} combinations) at #{MAX_FILTER_COMBOS}"
-      collapsed = [] of {String, String, String}
-      seen = Set(String).new
-      combos.each do |scheme, host, _|
-        collapsed << {scheme, host, ""} if seen.add?("#{scheme}://#{host}")
+      @logger.debug "Capping intent-filter deep links (#{total} combinations) at #{MAX_FILTER_COMBOS}"
+      eligible.each do |scheme|
+        host_list.each do |host|
+          return combos if combos.size >= MAX_FILTER_COMBOS
+          combos << {scheme, host, ""}
+        end
       end
-      collapsed.first(MAX_FILTER_COMBOS)
+      combos
     end
 
     # Emits an android-intent endpoint for an exported, data-less component,
@@ -328,9 +373,9 @@ module Analyzer::Mobile
       # covers both unless a more specific one overrides it. All are recorded,
       # not suppressed — the protection level (and so whether another app can
       # actually hold the permission) is the reviewer's call.
-      add_permission(metadata, "permission", attr(provider, "permission"))
-      add_permission(metadata, "read_permission", attr(provider, "readPermission"))
-      add_permission(metadata, "write_permission", attr(provider, "writePermission"))
+      add_permission(metadata, "permission", resolve(attr(provider, "permission"), strings, placeholders))
+      add_permission(metadata, "read_permission", resolve(attr(provider, "readPermission"), strings, placeholders))
+      add_permission(metadata, "write_permission", resolve(attr(provider, "writePermission"), strings, placeholders))
       metadata["grant_uri_permissions"] = "true" if provider_grants_uri?(provider)
       # `<path-permission>` children apply per-path overrides — frequently an
       # unprotected sub-path of an otherwise guarded provider. Flag their
@@ -396,9 +441,13 @@ module Analyzer::Mobile
       nav_dir = File.join(File.dirname(manifest_path), "res", "navigation")
       return unless Dir.exists?(nav_dir)
 
-      Dir.glob(File.join(nav_dir, "*.xml")).sort.each do |nav_path|
+      glob_under(nav_dir, "*.xml").sort.each do |nav_path|
+        # The walk is its own, so `--exclude-path` has to be applied here:
+        # the detector's filter only covers files that reach an analyzer
+        # through `CodeLocator`.
+        next if excluded_path?(nav_path)
         begin
-          doc = XML.parse(read_file_content(nav_path))
+          doc = Noir::XmlComments.parse(read_file_content(nav_path))
           root = find_child(doc, "navigation")
           next unless root
           walk_navigation(root, "", package, strings, placeholders, nav_path, seen_urls)
@@ -524,6 +573,13 @@ module Analyzer::Mobile
     # `manifestPlaceholders["key"] = "value"` / `manifestPlaceholders.put("key", "value")` (kts).
     PLACEHOLDER_INDEX_RE = /manifestPlaceholders\s*\[\s*["'](\w+)["']\s*\]\s*=\s*["']([^"']*)["']/
     PLACEHOLDER_PUT_RE   = /manifestPlaceholders\s*\.\s*put\s*\(\s*["'](\w+)["']\s*,\s*["']([^"']*)["']\s*\)/
+    # `manifestPlaceholders.key = "value"` — groovy property-access form on
+    # the placeholder map. Termux declares its whole package name this way
+    # (`manifestPlaceholders.TERMUX_PACKAGE_NAME = "com.termux"`), and without
+    # it every `${TERMUX_PACKAGE_NAME}` authority stayed unresolved in the
+    # emitted `content://` URL. `\.put` is excluded so the call form above
+    # can't be read as a property named `put`.
+    PLACEHOLDER_PROPERTY_RE = /manifestPlaceholders\s*\.\s*(?!put\b)([A-Za-z_]\w*)\s*=\s*["']([^"']*)["']/
 
     private def load_gradle(manifest_path : String) : GradleConfig
       gradle_path = find_gradle_file(manifest_path)
@@ -541,7 +597,7 @@ module Analyzer::Mobile
     # vs `app/src/main/AndroidManifest.xml`); the nearest one wins so a
     # root-project script can't shadow the module's applicationId.
     private def find_gradle_file(manifest_path : String) : String?
-      dir = File.dirname(File.expand_path(manifest_path))
+      dir = File.dirname(Noir::PathScope.expand(manifest_path))
       4.times do
         {"build.gradle", "build.gradle.kts"}.each do |name|
           candidate = File.join(dir, name)
@@ -576,7 +632,7 @@ module Analyzer::Mobile
           placeholders[pair[1]] = pair[2] unless placeholders.has_key?(pair[1])
         end
       end
-      {PLACEHOLDER_INDEX_RE, PLACEHOLDER_PUT_RE}.each do |re|
+      {PLACEHOLDER_INDEX_RE, PLACEHOLDER_PUT_RE, PLACEHOLDER_PROPERTY_RE}.each do |re|
         content.scan(re) do |m|
           placeholders[m[1]] = m[2] unless placeholders.has_key?(m[1])
         end
@@ -627,12 +683,13 @@ module Analyzer::Mobile
     end
 
     private def resolve_buildsrc_constant(def_re : Regex, gradle_path : String) : String?
-      dir = File.dirname(File.expand_path(gradle_path))
+      dir = File.dirname(Noir::PathScope.expand(gradle_path))
       BUILDSRC_SEARCH_DEPTH.times do
         buildsrc = File.join(dir, "buildSrc")
         if Dir.exists?(buildsrc)
           {"*.kt", "*.kts", "*.gradle"}.each do |pattern|
-            Dir.glob(File.join(buildsrc, "**", pattern)).sort.each do |src|
+            glob_under(buildsrc, "**/#{pattern}").sort.each do |src|
+              next if excluded_path?(src)
               begin
                 if m = read_file_content(src).match(def_re)
                   return m[1]
@@ -703,8 +760,14 @@ module Analyzer::Mobile
       path.gsub(/(?<!\$)\{([^}]+)\}/, ":\\1")
     end
 
+    # Per-endpoint gate, evaluated for every emitted deep-link/provider URL.
+    # `String#matches?` (PCRE2 JIT) replaces three OR-ed `String#includes?`
+    # scans with a single pass; `Regex.union` auto-escapes each literal, so
+    # it is provably equivalent to the OR-of-substrings it replaces.
+    UNRESOLVED_URL_RE = Regex.union("@string/", "@{", "${")
+
     private def mark_unresolved(endpoint : Endpoint, url : String)
-      return unless url.includes?("@string/") || url.includes?("@{") || url.includes?("${")
+      return unless url.matches?(UNRESOLVED_URL_RE)
       endpoint.add_tag(Tag.new("unresolved", "Contains an unresolved manifest reference", "android"))
     end
 
@@ -731,9 +794,10 @@ module Analyzer::Mobile
       values_dir = File.join(File.dirname(manifest_path), "res", "values")
       return strings unless Dir.exists?(values_dir)
 
-      Dir.glob(File.join(values_dir, "*.xml")).sort.each do |path|
+      glob_under(values_dir, "*.xml").sort.each do |path|
+        next if excluded_path?(path)
         begin
-          doc = XML.parse(read_file_content(path))
+          doc = Noir::XmlComments.parse(read_file_content(path))
           next unless resources = find_child(doc, "resources")
           each_child(resources, "string") do |node|
             name = attr(node, "name")
@@ -747,11 +811,12 @@ module Analyzer::Mobile
       strings
     end
 
-    private def collect_names(parent : XML::Node, tag : String) : Array(String)
+    private def collect_names(parent : XML::Node, tag : String,
+                              placeholders : Hash(String, String)) : Array(String)
       names = [] of String
       each_child(parent, tag) do |node|
         if name = attr(node, "name")
-          names << name
+          names << substitute(name, placeholders)
         end
       end
       names

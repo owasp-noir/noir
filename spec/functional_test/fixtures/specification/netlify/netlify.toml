@@ -1,0 +1,17 @@
+[build]
+  publish = "dist"
+
+[[redirects]]
+  from = "/toml-api/*"
+  to = "/.netlify/functions/:splat"
+  status = 200
+
+# Context overrides are just as reachable once that context is deployed.
+[[context.production.redirects]]
+  from = "/prod-only"
+  to = "/x"
+  status = 301
+
+[[edge_functions]]
+  path = "/edge/*"
+  function = "hello"

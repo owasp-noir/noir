@@ -58,6 +58,72 @@ describe Analyzer::Python::PythonEngine do
     callees[0].line.should eq(2)
   end
 
+  it "keeps a function body running past a comment that starts at column 0" do
+    harness = PythonEngineSpecHarness.new(create_test_options)
+    source = <<-PY
+      def handler():
+          early = request.args.get("early")
+      # commented-out code, flush against the left margin
+          late = request.args.get("late")
+          return late
+      PY
+
+    block = harness.parse_code_block(source)
+
+    block.should_not be_nil
+    block.not_nil!.should contain("early")
+    block.not_nil!.should contain("late")
+  end
+
+  it "still ends a function body at the next column-0 statement" do
+    harness = PythonEngineSpecHarness.new(create_test_options)
+    source = <<-PY
+      def handler():
+          inside = request.args.get("inside")
+      outside = request.args.get("outside")
+      PY
+
+    block = harness.parse_code_block(source)
+
+    block.should_not be_nil
+    block.not_nil!.should contain("inside")
+    block.not_nil!.should_not contain("outside")
+  end
+
+  it "closes a string that ends in an escaped backslash" do
+    harness = PythonEngineSpecHarness.new(create_test_options)
+    source = <<-PY
+      def handler():
+          root = "C:\\\\"
+          inside = request.args.get("inside")
+      outside = request.args.get("outside")
+      PY
+
+    block = harness.parse_code_block(source)
+
+    block.should_not be_nil
+    block.not_nil!.should contain("inside")
+    # The escaped backslash used to leave the string open for the rest of the
+    # file, so every following line was kept "because a quote is still open".
+    block.not_nil!.should_not contain("outside")
+  end
+
+  it "still treats a genuinely escaped quote as part of the string" do
+    harness = PythonEngineSpecHarness.new(create_test_options)
+    source = <<-PY
+      def handler():
+          msg = 'it\\'s # not a comment'
+          inside = request.args.get("inside")
+      outside = request.args.get("outside")
+      PY
+
+    block = harness.parse_code_block(source)
+
+    block.should_not be_nil
+    block.not_nil!.should contain("inside")
+    block.not_nil!.should_not contain("outside")
+  end
+
   it "skips multi-line route decorators when locating the decorated function" do
     harness = PythonEngineSpecHarness.new(create_test_options)
     lines = [
@@ -71,5 +137,87 @@ describe Analyzer::Python::PythonEngine do
     ]
 
     harness.def_line_after(lines, 0).should eq(5)
+  end
+
+  it "does not let a paren in a trailing comment keep a call open" do
+    harness = PythonEngineSpecHarness.new(create_test_options)
+    lines = ["@get(\"/a\")  # old (remove", "async def a(qa: str):", "    pass"]
+    harness.join_until_python_call_closes(lines, 0, lines[0]).should eq(lines[0])
+    harness.def_line_after(lines, 0).should eq(1)
+
+    # `#` inside a string, single-line or triple-quoted, is not a comment.
+    lines = ["@get(\"/#(\",", "  description=\"\"\"", "  Returns things (see issue #12)", "  \"\"\", x=1)", "def b():"]
+    harness.join_until_python_call_closes(lines, 0, lines[0]).should eq(lines[0..3].join(' '))
+    harness.def_line_after(lines, 0).should eq(4)
+  end
+
+  it "drops comments from the lines it joins" do
+    harness = PythonEngineSpecHarness.new(create_test_options)
+    lines = ["app.add_api_route(  # v2 (beta", "    \"/items\",  # list", "    list_items,", ")"]
+    harness.join_until_python_call_closes(lines, 0, lines[0]).should eq("app.add_api_route(       \"/items\",       list_items, )")
+  end
+
+  it "folds wrapped calls and subscripts onto their opening line" do
+    harness = PythonEngineSpecHarness.new(create_test_options)
+    lines = [
+      "    a = request.args.get(  # long (call",
+      "        \"q\"",
+      "    )",
+      "    b = request.form[",
+      "        \"f\"",
+      "    ]",
+      "    \"\"\"see (docs\"\"\"",
+      "    c = f(x",
+      "          and y)",
+      "    # d = request.args.get(",
+      "    #     \"commented\")",
+    ]
+    harness.fold_python_continuations(lines).should eq([
+      "    a = request.args.get(\"q\")", "", "",
+      "    b = request.form[\"f\"]", "", "",
+      lines[6],
+      "    c = f(x and y)", "",
+      "    ", "    ",
+    ])
+  end
+
+  it "cuts lines that close on their own at their comment" do
+    harness = PythonEngineSpecHarness.new(create_test_options)
+    lines = [
+      "    # request.args.get(\"commented\")",
+      "    x = request.args.get(\"real\")  # request.args.get(\"trailing\")",
+      "    y = \"#not-a-comment\"",
+      "    \"\"\"doc",
+      "    # inside a docstring",
+      "    \"\"\"",
+    ]
+    harness.fold_python_continuations(lines).should eq([
+      "    ",
+      "    x = request.args.get(\"real\")  ",
+      lines[2], lines[3], lines[4], lines[5],
+    ])
+  end
+
+  it "leaves a long call unfolded but folds the wrapped read inside it" do
+    harness = PythonEngineSpecHarness.new(create_test_options)
+    args = Array.new(Noir::CallFold::MAX_CONTINUATION_LINES) { |i| "    a#{i}=1," }
+    lines = ["return jsonify("] + args + ["    q=request.args.get(", "        \"q\"", "    ),", ")"]
+    folded = harness.fold_python_continuations(lines)
+    folded[0].should eq(lines[0])
+    folded.should contain("    q=request.args.get(\"q\"),")
+    folded.size.should eq(lines.size)
+  end
+
+  it "parses a long non-ASCII parameter default in linear time" do
+    harness = PythonEngineSpecHarness.new(create_test_options)
+    default = "가" * 60_000
+    lines = ["def x(a: str = \"#{default}\", b: int = 1):", "    return {}"]
+
+    started = Time.instant
+    definition = harness.parse_function_def(lines, 0).not_nil!
+    (Time.instant - started).should be < 2.seconds
+
+    definition.params.map(&.name).should eq(["a", "b"])
+    definition.params[0].default.should eq("\"#{default}\"")
   end
 end

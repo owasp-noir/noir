@@ -1,0 +1,13 @@
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: x
+spec:
+  hosts: ["x"]
+  http:
+  - match:
+    - uri:
+        regex: "^/istio/[0-9]+$"
+    route:
+    - destination:
+        host: y

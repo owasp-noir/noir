@@ -75,6 +75,33 @@ describe Noir::TreeSitterJvmLambdaDslExtractor do
     ])
   end
 
+  it "skips comments in call arguments and before the lambda body" do
+    source = <<-JAVA
+      import io.javalin.Javalin;
+      import static io.javalin.apibuilder.ApiBuilder.*;
+
+      public class Application {
+          void register(Javalin app) {
+              app.routes(() -> {
+                  path("/items", () -> {
+                      get(/* list */ ctx -> ctx.result(""));
+                      post("/new", ctx -> // create
+                      {
+                          String trace = ctx.header(/* name */ "X-Trace");
+                      });
+                  });
+              });
+          }
+      }
+      JAVA
+
+    routes = Noir::TreeSitterJvmLambdaDslExtractor.extract_routes(source, config)
+    routes.map { |r| {r.verb, r.path, r.header_params} }.should eq([
+      {"GET", "/items", [] of String},
+      {"POST", "/items/new", ["X-Trace"]},
+    ])
+  end
+
   it "expands Javalin CrudHandler registrations" do
     source = <<-JAVA
       package com.example;

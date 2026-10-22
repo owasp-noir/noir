@@ -1,6 +1,7 @@
 require "../../models/tagger"
 require "../../models/endpoint"
 
+@[Noir::TaggerFor(key: "hunt", name: "HuntParam Tagger", desc: "Identifies common parameters vulnerable to certain vulnerability classes", order: 10)]
 class HuntParamTagger < Tagger
   PATH_ALLOWED_TAGS     = Set{"idor", "file-inclusion"}
   BODY_LIKE_PARAM_TYPES = Set{"json", "form", "body"}
@@ -41,30 +42,23 @@ class HuntParamTagger < Tagger
     },
   }
 
-  def initialize(options : Hash(String, YAML::Any))
-    super
-    @name = "hunt"
-  end
+  private def check_endpoint(endpoint : Endpoint)
+    # HUNT word lists model HTTP parameter vulnerabilities (SSRF via a
+    # `port` query param, debug toggles, ...). A CLI command's flags,
+    # positional arguments and env reads are not HTTP inputs — `--port`
+    # is where the tool listens, not a request it sends — so tagging
+    # them only produces noise. Mobile deep-link params stay: their
+    # query params are attacker-supplied URL inputs like any other.
+    return if endpoint.cli?
 
-  def perform(endpoints : Array(Endpoint))
-    endpoints.each do |endpoint|
-      # HUNT word lists model HTTP parameter vulnerabilities (SSRF via a
-      # `port` query param, debug toggles, ...). A CLI command's flags,
-      # positional arguments and env reads are not HTTP inputs — `--port`
-      # is where the tool listens, not a request it sends — so tagging
-      # them only produces noise. Mobile deep-link params stay: their
-      # query params are attacker-supplied URL inputs like any other.
-      next if endpoint.cli?
-
-      endpoint.params.each do |param|
-        TAG_DEFINITIONS.each do |k, v|
-          next if param.param_type == "path" && !PATH_ALLOWED_TAGS.includes?(k)
-          next if skip_idor_body_heuristic?(k, param)
-          if tag_matches_param_name?(k, v["words"].as(Array(String)), param)
-            next if param.tags.any? { |existing| existing.name == k && existing.tagger == "Hunt" }
-            tag = Tag.new(k, v["description"].to_s, "Hunt")
-            param.add_tag(tag)
-          end
+    endpoint.params.each do |param|
+      TAG_DEFINITIONS.each do |k, v|
+        next if param.param_type == "path" && !PATH_ALLOWED_TAGS.includes?(k)
+        next if skip_idor_body_heuristic?(k, param)
+        if tag_matches_param_name?(k, v["words"].as(Array(String)), param)
+          next if param.tags.any? { |existing| existing.name == k && existing.tagger == "Hunt" }
+          tag = Tag.new(k, v["description"].to_s, "Hunt")
+          param.add_tag(tag)
         end
       end
     end
@@ -107,8 +101,7 @@ class HuntParamTagger < Tagger
   # ["redirect", "url"], `file_path` -> ["file", "path"]).
   private def name_tokens(name : String) : Array(String)
     name.gsub(/([a-z0-9])([A-Z])/, "\\1_\\2")
-      .split(/[^A-Za-z0-9]+/)
-      .reject(&.empty?)
+      .split(/[^A-Za-z0-9]+/, remove_empty: true)
       .map(&.downcase)
   end
 

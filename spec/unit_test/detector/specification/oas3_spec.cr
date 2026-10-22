@@ -16,6 +16,11 @@ describe "Detect OAS 3.0 Docs" do
 
     instance.detect("docs.json", content).should be_true
   end
+  it "json format with a number beyond Int64" do
+    content = %({"openapi": "3.0.0", "info": {"x-max": 18446744073709551615}})
+    instance.detect("big.json", content).should be_true
+  end
+
   it "yaml format" do
     content = <<-YAML
       openapi: 3.0.0
@@ -35,8 +40,8 @@ describe "Detect OAS 3.0 Docs" do
       JSON
 
     locator = CodeLocator.instance
-    locator.clear "oas3-json"
+    locator.clear Noir::LocatorKeys::OAS3_JSON
     instance.detect("docs.json", content)
-    locator.all("oas3-json").should eq(["docs.json"])
+    locator.all(Noir::LocatorKeys::OAS3_JSON).should eq(["docs.json"])
   end
 end

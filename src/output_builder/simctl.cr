@@ -12,6 +12,7 @@ require "./mobile_launch"
 # domain associations. iOS has no intent/provider analog, so every emitted
 # command is a single `openurl`. Skips are reported per category as a warning
 # to STDERR, so the command list on STDOUT stays pipe-clean.
+@[Noir::OutputFormat(name: "simctl", description: "simctl commands for iOS entry points", order: 130)]
 class OutputBuilderSimctl < OutputBuilder
   include MobileLaunch
 

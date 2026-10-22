@@ -97,6 +97,9 @@ describe "OutputBuilderOas3" do
     callees[1]["line"].as_i.should eq(13)
     get_op["x-noir-ai-context"]["guards"].as_a.size.should eq(1)
     get_op["x-noir-ai-context"]["guards"][0]["source"].as_s.should eq("express_auth")
+    # Empty buckets must be omitted (#2787) — `"sinks":[]` looks confirmed-none.
+    get_op["x-noir-ai-context"].as_h.has_key?("sinks").should be_false
+    get_op["x-noir-ai-context"].as_h.has_key?("signals").should be_false
 
     # Check POST endpoint with JSON body
     post_json_op = paths["/pets"]["post"]
@@ -155,7 +158,11 @@ describe "OutputBuilderOas3" do
 
     unsupported = Endpoint.new("/jobs", "SUBSCRIBE")
 
-    builder.print([typed_path, optional_path, mixed_body, unsupported])
+    constrained = Endpoint.new("/repos/{sha:[a-f0-9]{7,64}}/{type:issues}", "GET")
+    constrained.push_param(Param.new("sha", "", "path"))
+    constrained.push_param(Param.new("type", "", "path"))
+
+    builder.print([typed_path, optional_path, mixed_body, unsupported, constrained])
     spec = JSON.parse(builder.io.to_s)
     paths = spec["paths"]
 
@@ -176,7 +183,362 @@ describe "OutputBuilderOas3" do
     content.has_key?("application/json").should be_true
     content.has_key?("application/x-www-form-urlencoded").should be_true
 
+    paths["/repos/{sha}/{type}"]["get"]["parameters"].as_a.map(&.["name"].as_s).should eq(["sha", "type"])
+
     paths["/jobs"].as_h.has_key?("subscribe").should be_false
     paths["/jobs"]["x-noir-unsupported-methods"].as_a.should contain(JSON::Any.new("SUBSCRIBE"))
+  end
+
+  it "moves path parameters with no template expression into an extension" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+      "url"     => YAML::Any.new(""),
+    }
+    builder = OutputBuilderOas3.new(options)
+    builder.io = IO::Memory.new
+
+    # The optimizer substituted a concrete value for the placeholder, so `id`
+    # has nowhere to bind — `in: path` here fails every OAS validator.
+    concrete = Endpoint.new("/posts/1", "GET")
+    concrete.push_param(Param.new("id", "", "path"))
+    concrete.push_param(Param.new("draft", "", "query"))
+
+    # Sanic-style `<name:type>`, resolved by the endpoint's own path param.
+    typed = Endpoint.new("/reports/<report_id:int>", "GET")
+    typed.push_param(Param.new("report_id", "", "path"))
+
+    builder.print([concrete, typed])
+    paths = JSON.parse(builder.io.to_s)["paths"]
+
+    operation = paths["/posts/1"]["get"]
+    operation["parameters"].as_a.map { |p| {p["in"].as_s, p["name"].as_s} }.should eq([{"query", "draft"}])
+    operation["x-noir-unmapped-path-params"].as_a.should eq([JSON::Any.new("id")])
+
+    paths.as_h.has_key?("/reports/{report_id}").should be_true
+    typed_params = paths["/reports/{report_id}"]["get"]["parameters"].as_a
+    typed_params.map { |p| {p["in"].as_s, p["name"].as_s} }.should eq([{"path", "report_id"}])
+  end
+
+  it "emits a QUERY endpoint as a real `query` operation on an OpenAPI 3.2 document" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+      "url"     => YAML::Any.new(""),
+    }
+    builder = OutputBuilderOas3.new(options)
+    builder.io = IO::Memory.new
+
+    get_endpoint = Endpoint.new("/pets", "GET")
+
+    query_endpoint = Endpoint.new("/products/search", "QUERY")
+    query_endpoint.push_param(Param.new("q", "widget", "form"))
+
+    builder.print([get_endpoint, query_endpoint])
+    spec = JSON.parse(builder.io.to_s)
+
+    # OpenAPI 3.2 added `query` to the Path Item Object, so the verb keeps
+    # its own operation key instead of degrading to the unsupported-methods
+    # extension. A single `query` operation anywhere in the document forces
+    # the whole document onto 3.2 — a "get"+"query" mix under a declared
+    # 3.0.3 would be invalid, since 3.0.3 has no `query` key at all.
+    spec["openapi"].as_s.should eq("3.2.0")
+
+    paths = spec["paths"]
+    paths["/pets"].as_h.keys.should contain("get")
+
+    query_path_item = paths["/products/search"]
+    query_path_item.as_h.keys.should_not contain("x-noir-unsupported-methods")
+    query_path_item.as_h.keys.should_not contain("get")
+
+    query_operation = query_path_item["query"]
+    query_operation["requestBody"]["content"]["application/x-www-form-urlencoded"]["schema"]["properties"].as_h.keys.should eq(["q"])
+  end
+
+  it "keeps the base path out of the document server url" do
+    # `-u` is prepended to every endpoint URL by the optimizer, so the route
+    # already carries the base path. Declaring it in `servers[0].url` too
+    # resolved every operation to `<base><base><path>`; `-f curl` — the same
+    # run, the same endpoint — never did.
+    cases = [
+      {"", "http://localhost", "/users"},
+      {"https://h", "https://h", "/users"},
+      {"https://h/v2", "https://h", "/v2/users"},
+      {"https://h:8443/v2", "https://h:8443", "/v2/users"},
+    ]
+
+    cases.each do |(target, server, path_key)|
+      options = {
+        "debug"   => YAML::Any.new(false),
+        "verbose" => YAML::Any.new(false),
+        "color"   => YAML::Any.new(false),
+        "nolog"   => YAML::Any.new(false),
+        "output"  => YAML::Any.new(""),
+        "url"     => YAML::Any.new(target),
+      }
+      builder = OutputBuilderOas3.new(options)
+      builder.io = IO::Memory.new
+
+      # What the optimizer hands the builder once `-u` is applied.
+      builder.print([Endpoint.new("#{target}/users", "GET")])
+      spec = JSON.parse(builder.io.to_s)
+
+      spec["servers"][0]["url"].as_s.should eq(server)
+      spec["paths"].as_h.keys.should eq([path_key])
+
+      # An absolute route also carries a per-operation `servers` override,
+      # which is the authority alone — the document-level entry has to agree
+      # with it or the two disagree about where the base path lives.
+      operation_servers = spec["paths"][path_key]["get"].as_h["servers"]?
+      operation_servers.try(&.[0]["url"].as_s).should eq(server) unless target.empty?
+    end
+  end
+
+  it "merges two routes that differ only in placeholder name" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+      "url"     => YAML::Any.new(""),
+    }
+    builder = OutputBuilderOas3.new(options)
+    builder.io = IO::Memory.new
+
+    # Both OAS 2.0 and OAS 3.x say two templated paths with the same
+    # hierarchy but different variable names are identical and MUST NOT both
+    # appear, so `openapi-spec-validator` rejected the whole document.
+    show = Endpoint.new("/users/:id", "GET")
+    show.push_param(Param.new("id", "", "path"))
+    show.push_param(Param.new("fields", "", "query"))
+
+    destroy = Endpoint.new("/users/:userId", "DELETE")
+    destroy.push_param(Param.new("userId", "", "path"))
+
+    # Same method on the same shape is a real conflict: merge, don't drop.
+    alternate = Endpoint.new("/users/:userId", "GET")
+    alternate.push_param(Param.new("userId", "", "path"))
+    alternate.push_param(Param.new("expand", "", "query"))
+
+    builder.print([show, destroy, alternate])
+    paths = JSON.parse(builder.io.to_s)["paths"]
+
+    paths.as_h.keys.should eq(["/users/{id}"])
+    paths["/users/{id}"]["x-noir-path-variants"].as_a
+      .should eq([JSON::Any.new("/users/{userId}")])
+
+    get_params = paths["/users/{id}"]["get"]["parameters"].as_a
+      .map { |p| {p["in"].as_s, p["name"].as_s} }
+    get_params.should contain({"path", "id"})
+    get_params.should contain({"query", "fields"})
+    get_params.should contain({"query", "expand"})
+    get_params.count { |location, _| location == "path" }.should eq(1)
+
+    delete_params = paths["/users/{id}"]["delete"]["parameters"].as_a
+    delete_params.map { |p| {p["in"].as_s, p["name"].as_s} }.should eq([{"path", "id"}])
+  end
+
+  it "unions the request body of operations merged onto one path and method" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+      "url"     => YAML::Any.new(""),
+    }
+    builder = OutputBuilderOas3.new(options)
+    builder.io = IO::Memory.new
+
+    # Noir addresses many GraphQL resolvers on one path with a `#fragment`;
+    # they collapse onto one `POST /graphql`, and keeping only the first
+    # media-type entry dropped every later resolver's input fields.
+    query = Endpoint.new("/graphql#Query.user", "POST")
+    query.push_param(Param.new("id", "", "json"))
+
+    mutation = Endpoint.new("/graphql#Mutation.createUser", "POST")
+    mutation.push_param(Param.new("name", "", "json"))
+    mutation.push_param(Param.new("email", "", "json"))
+
+    upload = Endpoint.new("/graphql#Mutation.upload", "POST")
+    upload.push_param(Param.new("file", "", "form"))
+
+    builder.print([query, mutation, upload])
+    operation = JSON.parse(builder.io.to_s)["paths"]["/graphql"]["post"]
+
+    content = operation["requestBody"]["content"]
+    content["application/json"]["schema"]["properties"].as_h.keys.sort!
+      .should eq(["email", "id", "name"])
+    content["application/x-www-form-urlencoded"]["schema"]["properties"].as_h.keys
+      .should eq(["file"])
+    operation["x-noir-operations"].as_a.map(&.as_s)
+      .should eq(["Query.user", "Mutation.createUser", "Mutation.upload"])
+  end
+
+  it "keeps the operation of a verb the spec cannot express" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+      "url"     => YAML::Any.new(""),
+    }
+    builder = OutputBuilderOas3.new(options)
+    builder.io = IO::Memory.new
+
+    # AsyncAPI channels arrive as PUBLISH/SUBSCRIBE endpoints. Recording only
+    # the verb threw the parameters, request body and callees away with it.
+    publish = Endpoint.new("/user/signedup", "PUBLISH")
+    publish.push_param(Param.new("userId", "", "json"))
+    publish.push_param(Param.new("trace", "", "header"))
+    publish.push_callee(Callee.new("SignupHandler.call", "app/handlers.rb", 7))
+
+    subscribe = Endpoint.new("/user/signedup", "SUBSCRIBE")
+    subscribe.push_param(Param.new("displayName", "", "json"))
+
+    builder.print([publish, subscribe])
+    path_item = JSON.parse(builder.io.to_s)["paths"]["/user/signedup"]
+
+    path_item["x-noir-unsupported-methods"].as_a
+      .should eq([JSON::Any.new("PUBLISH"), JSON::Any.new("SUBSCRIBE")])
+
+    operations = path_item["x-noir-unsupported-operations"]
+    operations["PUBLISH"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+      .as_h.keys.should eq(["userId"])
+    operations["PUBLISH"]["parameters"].as_a
+      .map { |p| {p["in"].as_s, p["name"].as_s} }.should eq([{"header", "trace"}])
+    operations["PUBLISH"]["x-noir-callees"][0]["name"].as_s.should eq("SignupHandler.call")
+
+    # Each verb keeps its own operation rather than the last one winning.
+    operations["SUBSCRIBE"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+      .as_h.keys.should eq(["displayName"])
+  end
+
+  it "declares a templated path's parameters on the Path Item when every verb is unsupported" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+      "url"     => YAML::Any.new(""),
+    }
+    builder = OutputBuilderOas3.new(options)
+    builder.io = IO::Memory.new
+
+    # A STOMP `SEND` route. Its whole operation lands under
+    # `x-noir-unsupported-operations`, an extension no validator reads
+    # parameters out of, so without the Path Item copy `{roomId}` is a
+    # template expression with nothing declaring it — an invalid document.
+    send = Endpoint.new("/app/chat/send/{roomId}", "SEND")
+    send.push_param(Param.new("roomId", "", "path"))
+    send.push_param(Param.new("text", "", "json"))
+
+    builder.print([send])
+    path_item = JSON.parse(builder.io.to_s)["paths"]["/app/chat/send/{roomId}"]
+
+    path_item["parameters"].as_a
+      .map { |p| {p["in"].as_s, p["name"].as_s, p["required"].as_bool} }
+      .should eq([{"path", "roomId", true}])
+  end
+  it "puts file params in multipart/form-data instead of query" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+      "url"     => YAML::Any.new(""),
+    }
+    builder = OutputBuilderOas3.new(options)
+    builder.io = IO::Memory.new
+
+    # PHP `$_FILES["avatar"]` arrives as param_type `file`. The default branch
+    # used to emit `in: query`, while `-f postman` already treated it as a
+    # formdata file — the OpenAPI document disagreed with every other format.
+    upload = Endpoint.new("/php/modern.php", "POST")
+    upload.push_param(Param.new("name", "", "form"))
+    upload.push_param(Param.new("avatar", "", "file"))
+    upload.push_param(Param.new("AUTHORIZATION", "", "header"))
+
+    builder.print([upload])
+    operation = JSON.parse(builder.io.to_s)["paths"]["/php/modern.php"]["post"]
+
+    content = operation["requestBody"]["content"].as_h
+    content.has_key?("multipart/form-data").should be_true
+    content.has_key?("application/x-www-form-urlencoded").should be_false
+
+    props = content["multipart/form-data"]["schema"]["properties"].as_h
+    props.keys.sort!.should eq(["avatar", "name"])
+    props["avatar"]["format"].as_s.should eq("binary")
+
+    # Still not a query parameter.
+    operation["parameters"].as_a
+      .none? { |p| p["name"].as_s == "avatar" }.should be_true
+    operation["parameters"].as_a
+      .map { |p| {p["in"].as_s, p["name"].as_s} }.should eq([{"header", "AUTHORIZATION"}])
+  end
+
+  it "puts xml body params in application/xml requestBody instead of query" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+      "url"     => YAML::Any.new(""),
+    }
+    builder = OutputBuilderOas3.new(options)
+    builder.io = IO::Memory.new
+
+    # Play `request.body.asXml` / Tapir `xmlBody` arrive as param_type `xml`
+    # with name `body`. The default branch used to emit `in: query`.
+    xml_ep = Endpoint.new("/xml", "POST")
+    xml_ep.push_param(Param.new("body", "", "xml"))
+
+    builder.print([xml_ep])
+    operation = JSON.parse(builder.io.to_s)["paths"]["/xml"]["post"]
+
+    content = operation["requestBody"]["content"].as_h
+    content.has_key?("application/xml").should be_true
+    props = content["application/xml"]["schema"]["properties"].as_h
+    props.keys.should eq(["body"])
+
+    operation["parameters"].as_a
+      .none? { |p| p["name"].as_s == "body" }.should be_true
+  end
+
+  it "renders an operation with thousands of parameters in linear time" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+      "url"     => YAML::Any.new(""),
+    }
+    builder = OutputBuilderOas3.new(options)
+    builder.io = IO::Memory.new
+
+    n = 20_000
+    params = Array.new(n) { |i| Param.new("p#{i}", "", "query") }
+    params << Param.new("p0", "", "query") # a repeat still folds into one
+    endpoint = Endpoint.new("/big", "GET", params)
+
+    # A scan of the operation's parameters per append took ~45s here.
+    elapsed = Time.measure { builder.print([endpoint]) }
+    elapsed.should be < 5.seconds
+
+    names = JSON.parse(builder.io.to_s)["paths"]["/big"]["get"]["parameters"].as_a.map(&.["name"].as_s)
+    names.size.should eq(n)
+    names.first(2).should eq(["p0", "p1"])
   end
 end

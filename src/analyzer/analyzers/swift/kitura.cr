@@ -3,8 +3,7 @@ require "../../../miniparsers/swift_callee_extractor"
 
 module Analyzer::Swift
   class Kitura < SwiftEngine
-    # Maximum number of lines to look ahead for function parameters
-    LOOKAHEAD_LIMIT = 20
+    analyzer_for "swift_kitura"
 
     # Patterns for route definitions in Kitura:
     # router.get("path") { ... }
@@ -12,7 +11,6 @@ module Analyzer::Swift
     # router.all("/path") { ... }
     ROUTE_PATTERN              = /(\w+)\.(get|post|put|delete|patch|all)\(([^)]+)\)/
     ROUTE_BODY_LOOKAHEAD_LIMIT = LOOKAHEAD_LIMIT
-    FUNCTION_SIGNATURE_PATTERN = /\bfunc\s+([A-Za-z_]\w*)\s*\(/
 
     # `let router = Router()` / `func boot(router: Router)` — the receivers a
     # Kitura route is registered on. Tracking them makes detection
@@ -22,14 +20,25 @@ module Analyzer::Swift
     ROUTER_ASSIGN_PATTERN = /\b(?:let|var)\s+([A-Za-z_]\w*)\s*=\s*Router\s*[(<]/
     ROUTER_PARAM_PATTERN  = /([A-Za-z_]\w*)\s*:\s*Router\b/
 
+    # `route_definition?` runs on every scanned line (route detection, param
+    # lookahead, body-boundary checks). One precompiled `Regex.union` scan
+    # (PCRE2 JIT) replaces six naive `String#includes?` char scans; union
+    # auto-escapes each literal so it is provably equivalent to the
+    # OR-of-substrings it replaces.
+    ROUTE_CALL_RE = Regex.union(".get(", ".post(", ".put(", ".delete(", ".patch(", ".all(")
+
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
-      lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      lines = read_file_content(path).lines
+      include_callee = callees_needed?
       handler_bodies = named_handler_bodies(lines)
-      router_receivers = collect_router_receivers(lines)
+      # Comments (including multi-line `/* */`) and `"""` bodies blanked;
+      # string literals kept so route paths are still readable.
+      code_lines = strip_code_lines(lines, keep_strings: true)
+      stripped_lines = nil.as(Array(String)?)
+      router_receivers = collect_router_receivers(code_lines)
 
-      lines.each_with_index do |line, index|
+      code_lines.each_with_index do |line, index|
         next unless route_definition_line?(line)
         match = line.match(ROUTE_PATTERN)
         next unless match
@@ -46,8 +55,12 @@ module Analyzer::Swift
           endpoint = Endpoint.new(route_path, method, details)
 
           extract_path_params(route_path, endpoint)
-          extract_function_params(lines, index + 1, endpoint)
-          extract_named_handler_params(lines[index], handler_bodies, endpoint)
+          # A `handler:` route's params come from that function's body;
+          # scanning the lines after the route would read unrelated code.
+          unless extract_named_handler_params(lines[index], handler_bodies, endpoint)
+            stripped_lines ||= strip_code_lines(lines)
+            extract_function_params(lines, stripped_lines, index, endpoint)
+          end
           attach_route_callees(lines, index, path, endpoint, handler_bodies) if include_callee
 
           endpoints << endpoint
@@ -75,55 +88,9 @@ module Analyzer::Swift
       "/"
     end
 
-    # Extract path parameters from the route pattern (e.g., :id, :userID)
-    def extract_path_params(route : String, endpoint : Endpoint)
-      route.scan(/:(\w+)/) do |match|
-        param_name = match[1]
-        endpoint.push_param(Param.new(param_name, "", "path"))
-      end
-    end
-
-    # Extract parameters from function body
-    def extract_function_params(lines : Array(String), start_index : Int32, endpoint : Endpoint)
-      in_function = false
-      brace_count = 0
-      seen_opening_brace = false
-
-      existing_path_params = Set(String).new
-      endpoint.params.each do |p|
-        existing_path_params.add(p.name) if p.param_type == "path"
-      end
-
-      (start_index...[start_index + LOOKAHEAD_LIMIT, lines.size].min).each do |i|
-        line = lines[i]
-
-        if line.match(/\bin\b/)
-          in_function = true
-        end
-
-        brace_count += line.count('{')
-        if brace_count > 0
-          seen_opening_brace = true
-        end
-        brace_count -= line.count('}')
-
-        extract_params_from_line(line, endpoint, existing_path_params)
-
-        if in_function && seen_opening_brace && brace_count == 0 && i > start_index
-          break
-        end
-
-        if i > start_index && route_definition?(line)
-          break
-        end
-      end
-    end
-
     # Check if a line contains a route definition
     private def route_definition?(line : String) : Bool
-      (line.includes?(".get(") || line.includes?(".post(") ||
-        line.includes?(".put(") || line.includes?(".delete(") ||
-        line.includes?(".patch(") || line.includes?(".all("))
+      line.matches?(ROUTE_CALL_RE)
     end
 
     # Check if a line is a route definition but not a parameter access
@@ -195,62 +162,11 @@ module Analyzer::Swift
       handler_bodies[handler_name]? || {"", route_index + 2}
     end
 
-    private def named_handler_bodies(lines : Array(String)) : Hash(String, Tuple(String, Int32))
-      bodies = {} of String => Tuple(String, Int32)
-      block_comment_depth = 0
-      in_multiline_string = false
-
-      lines.each_with_index do |line, index|
-        stripped, block_comment_depth, in_multiline_string = Noir::SwiftCalleeExtractor.strip_non_code_with_state(
-          line,
-          block_comment_depth,
-          in_multiline_string
-        )
-        match = stripped.match(FUNCTION_SIGNATURE_PATTERN)
-        next unless match
-
-        handler_name = match[1]
-        next if bodies.has_key?(handler_name)
-
-        opening = stripped.index('{')
-        if opening
-          bodies[handler_name] = body_after_opening_brace(lines, index, opening)
-          next
-        end
-
-        if location = next_opening_brace(lines, index + 1, block_comment_depth, in_multiline_string)
-          opening_index, opening_brace = location
-          bodies[handler_name] = body_after_opening_brace(lines, opening_index, opening_brace)
-        end
-      end
-
-      bodies
-    end
-
-    private def next_opening_brace(lines : Array(String),
-                                   start_index : Int32,
-                                   block_comment_depth : Int32,
-                                   in_multiline_string : Bool) : Tuple(Int32, Int32)?
-      (start_index...[start_index + LOOKAHEAD_LIMIT, lines.size].min).each do |index|
-        stripped, block_comment_depth, in_multiline_string = Noir::SwiftCalleeExtractor.strip_non_code_with_state(
-          lines[index],
-          block_comment_depth,
-          in_multiline_string
-        )
-        if opening = stripped.index('{')
-          return {index, opening}
-        end
-
-        break if stripped.match(FUNCTION_SIGNATURE_PATTERN)
-      end
-
-      nil
-    end
-
     private def route_handler_name(route_line : String) : String?
       stripped, _, _ = Noir::SwiftCalleeExtractor.strip_non_code_with_state(route_line, 0, false)
-      if match = stripped.match(/handler:\s*([A-Za-z_]\w*)/)
-        return match[1]
+      # `self.create` / `TodoController.index` name the method `create` / `index`.
+      if match = stripped.match(/\bhandler:\s*(?:self\.)?([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)/)
+        return match[1].split('.').last
       end
 
       nil
@@ -258,12 +174,12 @@ module Analyzer::Swift
 
     private def extract_named_handler_params(route_line : String,
                                              handler_bodies : Hash(String, Tuple(String, Int32)),
-                                             endpoint : Endpoint)
+                                             endpoint : Endpoint) : Bool
       handler_name = route_handler_name(route_line)
-      return unless handler_name
+      return false unless handler_name
 
       body = handler_bodies[handler_name]?
-      return unless body
+      return true unless body
 
       existing_path_params = Set(String).new
       endpoint.params.each do |p|
@@ -273,6 +189,7 @@ module Analyzer::Swift
       body[0].each_line do |line|
         extract_params_from_line(line, endpoint, existing_path_params)
       end
+      true
     end
 
     private def extract_params_from_line(line : String, endpoint : Endpoint, existing_path_params : Set(String))
@@ -319,55 +236,6 @@ module Analyzer::Swift
           end
         end
       end
-    end
-
-    private def body_after_opening_brace(lines : Array(String), opening_index : Int32, opening_brace : Int32) : Tuple(String, Int32)
-      opening_line = lines[opening_index]
-      first_fragment = opening_line[(opening_brace + 1)..]? || ""
-      clean_fragment, block_comment_depth, in_multiline_string = Noir::SwiftCalleeExtractor.strip_non_code_with_state(first_fragment, 0, false)
-      body_lines = [] of String
-      brace_count = 1 + clean_fragment.count('{') - clean_fragment.count('}')
-
-      if brace_count <= 0
-        closing_brace = clean_fragment.rindex('}')
-        first_fragment = first_fragment[0...closing_brace] if closing_brace
-        return {first_fragment, opening_index + 1}
-      end
-
-      body_lines << first_fragment
-      index = opening_index + 1
-
-      while index < lines.size && brace_count > 0
-        line = lines[index]
-        stripped, block_comment_depth, in_multiline_string = Noir::SwiftCalleeExtractor.strip_non_code_with_state(
-          line,
-          block_comment_depth,
-          in_multiline_string
-        )
-        opens = stripped.count('{')
-        closes = stripped.count('}')
-        next_brace_count = brace_count + opens - closes
-
-        if next_brace_count <= 0
-          if line.strip != "}"
-            closing_brace = stripped.rindex('}')
-            body_lines << (closing_brace ? line[0...closing_brace] : line)
-          end
-          break
-        end
-
-        body_lines << line
-        brace_count = next_brace_count
-
-        index += 1
-      end
-
-      {body_lines.join("\n"), opening_index + 1}
-    end
-
-    private def structural_opening_brace(line : String) : Int32?
-      stripped, _, _ = Noir::SwiftCalleeExtractor.strip_non_code_with_state(line, 0, false)
-      stripped.index('{')
     end
   end
 end

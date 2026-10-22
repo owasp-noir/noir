@@ -53,5 +53,12 @@ namespace MyApp.Controllers
         {
             return View();
         }
+
+        // GET: /rooted/ping (`~/` ignores the RoutePrefix)
+        [Route("~/rooted/ping")]
+        public ActionResult Ping()
+        {
+            return View();
+        }
     }
 }

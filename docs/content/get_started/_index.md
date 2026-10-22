@@ -1,19 +1,23 @@
 +++
 title = "Getting Started"
-description = "This section provides everything you need to get started with OWASP Noir, from installation to your first scan."
+description = "Everything you need to start with OWASP Noir, from installation to your first scan."
 weight = 1
 sort_by = "weight"
 
+
+[cascade]
+toc = true
+
 +++
 
-Get up and running with Noir in three steps. By the end, you'll have scanned your first codebase and discovered its API endpoints.
+Three short pages take you from "what is this?" to the endpoint list of your first scan.
 
 | Step | Page | What You'll Do |
 |------|------|----------------|
-| 1 | **[What is Noir?](overview/)** | Understand what Noir does and why you need it |
+| 1 | **[What is Noir?](overview/)** | Learn what Noir does and who uses it |
 | 2 | **[Install Noir](installation/)** | Install Noir on your system |
 | 3 | **[Your First Scan](running/)** | Run a scan and explore the results |
 
-Ready? Start with **[What is Noir?](overview/)**
+Start with **[What is Noir?](overview/)**
 
 Upgrading from v0? See **[Migrating from v0 to v1](migrate_v0_to_v1/)** for the rename map, behavior changes, and the single explicit break.

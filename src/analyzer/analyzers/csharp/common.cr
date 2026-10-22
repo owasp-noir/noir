@@ -1,7 +1,11 @@
 require "../../../miniparsers/csharp_callee_extractor"
 require "../../../minilexers/csharp_lexer"
+require "../../../utils/top_level_split"
 
 module Analyzer::CSharp::Common
+  # Longest method signature `build_signature` reads.
+  MAX_SIGNATURE_LINES = 256
+
   # Standard .NET test-source conventions:
   #
   #   * `/test/` and `/tests/` parent directories — Microsoft's
@@ -10,19 +14,122 @@ module Analyzer::CSharp::Common
   #     (smaller solutions).
   #   * `/testassets/` — aspnetcore's helper-controller convention
   #     for spinning up a real server inside the test harness.
-  #   * `Tests.cs` / `Test.cs` filename — xUnit / NUnit / MSTest
-  #     suffix convention.
+  #   * `Tests.cs` / `Test.cs` filename (`.vb` alike) — xUnit / NUnit /
+  #     MSTest suffix convention.
   #
   # dotnet/aspnetcore alone parks ~3,600 phantom endpoints under
   # `src/Mvc/test/...` and similar trees. Production code never
   # adopts any of these.
-  def self.csharp_test_path?(path : String) : Bool
-    return true if path.includes?("/test/")
-    return true if path.includes?("/tests/")
-    return true if path.includes?("/testassets/")
-    base = File.basename(path)
-    return true if base.ends_with?("Tests.cs")
-    base.ends_with?("Test.cs")
+  # Takes the scan-base-relative path (`Analyzer#base_relative_path`),
+  # never the absolute one. The conventions describe a location inside
+  # the solution, so on an absolute path a `test/` directory above the
+  # scan base suppressed the whole project.
+  def self.csharp_test_path?(relative_path : String) : Bool
+    return true if relative_path.includes?("/test/")
+    return true if relative_path.includes?("/tests/")
+    return true if relative_path.includes?("/testassets/")
+    File.basename(relative_path).matches?(/Tests?\.(?:cs|vb)\z/)
+  end
+
+  # ASP.NET Core and classic ASP.NET MVC 5 spell a controller almost
+  # identically — `public class UserController : Controller` with `[HttpGet]`
+  # action attributes — and both analyzers are handed every `.cs` file in the
+  # scan. In a solution holding both (a migration in progress, the shape noir
+  # gets pointed at) each read the other's controllers: 35 phantom
+  # `cs_aspnet_core_mvc` endpoints out of the classic fixture, 6 the other way,
+  # several with the wrong route template applied on the way out.
+  #
+  # The namespaces are unmistakable and mutually exclusive — a type can only
+  # come from one of them — so each analyzer skips a file that names the
+  # other's. Nothing positive is required, so a helper file that names neither
+  # is still analyzed by both, exactly as before.
+  ASPNET_CORE_NAMESPACE_RE      = /\bMicrosoft\.AspNetCore\b/
+  ASPNET_FRAMEWORK_NAMESPACE_RE = /\bSystem\.Web\.(?:Mvc|Http|Routing)\b/
+
+  def self.aspnet_core_source?(content : String) : Bool
+    content.matches?(ASPNET_CORE_NAMESPACE_RE)
+  end
+
+  def self.aspnet_framework_source?(content : String) : Bool
+    content.matches?(ASPNET_FRAMEWORK_NAMESPACE_RE)
+  end
+
+  # A Carter module is either `class X : ICarterModule` or
+  # `class X : CarterModule` — the latter being Carter's abstract base, which
+  # adds a constructor base path (`: base("/directors")`) and the request
+  # filters. Both shapes own their `AddRoutes` body, so the Carter analyzer
+  # claims them and the minimal-API analyzer skips them.
+  #
+  # `\bCarterModule\b` alone does not match inside `ICarterModule` (`I` and `C`
+  # are both word characters), hence the explicit optional `I`.
+  CARTER_MODULE_RE = /\bI?CarterModule\b/
+
+  def self.carter_module_source?(content : String) : Bool
+    content.matches?(CARTER_MODULE_RE)
+  end
+
+  # Directories that own a `.csproj`, longest first. A .NET *project* is the
+  # unit that owns a routing table: `MapControllerRoute` in one project's
+  # `Program.cs` says nothing about a controller compiled into a sibling
+  # project, even though both sit under one configured scan base.
+  def self.project_roots(csproj_paths : Array(String)) : Array(String)
+    roots = csproj_paths.map { |path| File.dirname(path) }
+    roots.uniq!
+    roots.sort_by! { |dir| -dir.size }
+    roots
+  end
+
+  # The longest project root containing `path`, or nil when the file sits
+  # outside every discovered project (no `.csproj` in the scan at all, the
+  # shape most fixtures and single-file samples have).
+  def self.project_root_for(path : String, roots : Array(String)) : String?
+    roots.find do |root|
+      path == root || path.starts_with?("#{root}/")
+    end
+  end
+
+  # A public auto-property (`public string Name { get; set; }`), its name in
+  # group 1 — how request DTOs declare their bindable fields.
+  AUTO_PROPERTY_RE = /public\s+(?:required\s+|virtual\s+|override\s+|static\s+|readonly\s+)*[\w\?<>\[\],\s\.]+?\s+(\w+)\s*\{\s*get;/
+
+  # `[FromRoute(Name = "organizationId")] Guid sponsoringOrgId` binds the
+  # *route* value `organizationId`; the C# identifier is only the local name.
+  # Reporting the identifier invents a parameter the client cannot send and
+  # hides the one it must.
+  EXPLICIT_BINDING_NAME_RE = /\[From(?:Query|Route|Body|Header|Form|Cookie)\s*\(\s*(?:[A-Za-z]+\s*(?:=|:)\s*)?@?"([^"]+)"/
+
+  def self.explicit_binding_name(param_def : String) : String?
+    EXPLICIT_BINDING_NAME_RE.match(param_def).try(&.[1])
+  end
+
+  BINDING_ATTRIBUTES = {
+    "FromQuery"         => "query",
+    "FromRoute"         => "path",
+    "FromBody"          => "json",
+    "FromHeader"        => "header",
+    "FromForm"          => "form",
+    "FromServices"      => "service",
+    "FromKeyedServices" => "service",
+  }
+
+  # The request source a `[FromX]` attribute binds a parameter from.
+  def self.binding_attribute_type(param_def : String) : String?
+    BINDING_ATTRIBUTES.each do |attr, param_type|
+      return param_type if param_def.includes?("[#{attr}")
+    end
+    nil
+  end
+
+  # Strips a route-template placeholder down to its bare parameter name:
+  # `{id:int}` → `id`, `{slug?}` → `slug`, `{*catchAll}` → `catchAll`,
+  # `{id=5}` → `id` (a default value), `{**slug:regex(a=b)}` → `slug`.
+  #
+  # The `=default` form was previously kept verbatim, so a template like
+  # `/items/{id=5}` emitted a parameter literally named `id=5`.
+  def self.route_placeholder_name(raw : String) : String
+    name = raw.split(':').first
+    name = name.split('=').first
+    name.strip.lstrip('*').rstrip('?')
   end
 
   # `IFormFile`/`IFormFileCollection`/`IFormCollection` are interfaces but
@@ -43,9 +150,16 @@ module Analyzer::CSharp::Common
   # common domain/entity names (e.g. `Client`, `Provider`, `Factory`) are
   # left out so request DTOs aren't dropped by mistake. Interface-typed
   # DI is caught separately by the `I<Pascal>` rule.
+  #
+  # `Handler` and `DataSource` joined the list after a minimal-API sweep:
+  # Bitwarden injects `AccessRequestEndpointsHandler handler` straight into its
+  # handler delegates and Carter's sample injects `EndpointDataSource`, both of
+  # which surfaced as query parameters. Neither suffix names a request DTO in
+  # practice. `Db` is the DbContext naming of Microsoft's own minimal-API
+  # samples (`TodoDb : DbContext`, injected as `TodoDb db`).
   SERVICE_TYPE_SUFFIXES = %w[
     Repository Service Services Manager Mediator Mapper Accessor
-    Dispatcher Publisher DbContext Context Logger
+    Dispatcher Publisher DbContext Context Logger Handler DataSource Db
   ]
 
   # Heuristic for whether a parameter's *type* names a dependency-injected
@@ -81,81 +195,28 @@ module Analyzer::CSharp::Common
     # every remaining line). Bail out instead of indexing out of bounds.
     return {"", start_index} if start_index < 0 || start_index >= lines.size
 
-    signature = lines[start_index]
     start_mask = masked[start_index]?
     paren_count = start_mask ? start_mask.count('(') - start_mask.count(')') : 0
     index = start_index + 1
 
-    while paren_count > 0 && index < lines.size
-      signature += " " + lines[index]
+    # Parens still open after MAX_SIGNATURE_LINES never balance: without the
+    # cap every declaration below an unbalanced one re-read the rest of the file.
+    limit = Math.min(lines.size, start_index + MAX_SIGNATURE_LINES)
+    while paren_count > 0 && index < limit
       if m = masked[index]?
         paren_count += m.count('(') - m.count(')')
       end
       index += 1
     end
 
-    {signature, index - 1}
+    {lines[start_index...index].join(' '), index - 1}
   end
 
   protected def split_csharp_parameters(param_list : String) : Array(String)
-    params = [] of String
-    current = String::Builder.new
-    generic_depth = 0
-    paren_depth = 0
-    bracket_depth = 0
-    brace_depth = 0
-    in_string = false
-    escaped = false
-
-    param_list.each_char do |char|
-      # Inside a string literal commas/brackets are data, not structure —
-      # e.g. a route literal `"/a,b"` or a `new[] { "GET", "POST" }` arg.
-      if in_string
-        current << char
-        if escaped
-          escaped = false
-        elsif char == '\\'
-          escaped = true
-        elsif char == '"'
-          in_string = false
-        end
-        next
-      end
-
-      case char
-      when '"'
-        in_string = true
-      when '<'
-        generic_depth += 1
-      when '>'
-        generic_depth -= 1 if generic_depth > 0
-      when '('
-        paren_depth += 1
-      when ')'
-        paren_depth -= 1 if paren_depth > 0
-      when '['
-        bracket_depth += 1
-      when ']'
-        bracket_depth -= 1 if bracket_depth > 0
-      when '{'
-        brace_depth += 1
-      when '}'
-        brace_depth -= 1 if brace_depth > 0
-      when ','
-        if generic_depth == 0 && paren_depth == 0 && bracket_depth == 0 && brace_depth == 0
-          params << current.to_s.strip
-          current = String::Builder.new
-          next
-        end
-      end
-
-      current << char
-    end
-
-    tail = current.to_s.strip
-    params << tail unless tail.empty?
-    params
+    Noir::TopLevelSplit.split(param_list, ',', Noir::TopLevelSplit::Rules::CSHARP_PARAMS)
   end
+
+  PARAM_LIST_CLAUSES = Set{"where", "As", "Handles", "Implements"}
 
   # Returns the substring inside the first balanced parameter-list parens of
   # a method signature. Unlike a greedy `\((.*)\)`, this stops at the matching
@@ -166,20 +227,49 @@ module Analyzer::CSharp::Common
     # default value doesn't unbalance the parameter-list bounds. The masked
     # twin is character-aligned with `signature`, so the slice indices apply.
     masked = Noir::CSharpLexer.new(signature).masked
-    open = masked.index('(')
-    return unless open
-
-    depth = 0
-    i = open
-    while i < masked.size
-      case masked[i]
-      when '('
-        depth += 1
-      when ')'
-        depth -= 1
-        return signature[(open + 1)...i] if depth == 0
+    # Skip leading `[Attr(...)]` groups sharing the line with the method
+    # (`[HttpGet("b")] public IActionResult B(int k)`), so the attribute's
+    # own parens aren't taken for the parameter list.
+    start = 0
+    loop do
+      while start < masked.size && masked[start].whitespace?
+        start += 1
       end
-      i += 1
+      break unless masked[start]? == '['
+      depth = 0
+      while start < masked.size
+        depth += 1 if masked[start] == '['
+        depth -= 1 if masked[start] == ']'
+        start += 1
+        break if depth == 0
+      end
+    end
+    # A `(...)` group followed by more of the declaration (a name, `>`, `,`,
+    # `?`, `[`) is a tuple type, not the parameter list: `static (A, B)
+    # Post(Cmd c)`, `Task<(IResult, E)> Ship(...)`. C# `where` and VB
+    # `As` / `Handles` / `Implements` follow a real parameter list.
+    open = masked.index('(', start)
+    while open
+      depth = 0
+      close = (open...masked.size).find do |i|
+        depth += 1 if masked[i] == '('
+        depth -= 1 if masked[i] == ')'
+        depth == 0
+      end
+      return unless close
+      k = close + 1
+      while masked[k]?.try(&.whitespace?)
+        k += 1
+      end
+      after = masked[k]?
+      word_end = k
+      while masked[word_end]?.try { |c| c.alphanumeric? || c == '_' }
+        word_end += 1
+      end
+      clause = PARAM_LIST_CLAUSES.includes?(masked[k...word_end].join)
+      type = after && (after.alphanumeric? || after.in?('_', '>', ',', '?', '[')) && !clause
+      return signature[(open + 1)...close] unless type
+      open = masked.index('(', close + 1)
     end
     nil
   end

@@ -1,25 +1,10 @@
 require "../../engines/python_engine"
+require "./python_helper"
+require "../../../utils/text_file"
 
 module Analyzer::Python
   class Tornado < PythonEngine
-    # Reference: https://tornadoweb.org/en/stable/web.html
-    # Reference: https://tornadoweb.org/en/stable/httputil.html#tornado.httputil.HTTPServerRequest
-    REQUEST_PARAM_FIELDS = {
-      "arguments"      => {["GET"], "query"},
-      "body_arguments" => {["POST", "PUT", "PATCH", "DELETE"], "form"},
-      "files"          => {["POST", "PUT", "PATCH", "DELETE"], "form"},
-      "body"           => {["POST", "PUT", "PATCH", "DELETE"], "body"},
-      "headers"        => {nil, "header"},
-      "cookies"        => {nil, "cookie"},
-    }
-
-    REQUEST_PARAM_TYPES = {
-      "query"  => nil,
-      "form"   => ["POST", "PUT", "PATCH", "DELETE"],
-      "body"   => ["POST", "PUT", "PATCH", "DELETE"],
-      "cookie" => nil,
-      "header" => nil,
-    }
+    analyzer_for "python_tornado"
 
     CLASS_DEF_REGEX = /^class\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*[\(:]/
 
@@ -31,6 +16,8 @@ module Analyzer::Python
     HANDLER_LIST_RE = /^(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=\[/
 
     @file_content_cache = Hash(::String, ::String).new
+    @file_lines_cache = Hash(::String, Array(::String)).new
+    @class_line_cache = Hash(::String, Hash(::String, Int32)).new
     @routes = Hash(::String, Array(Tuple(Int32, ::String, ::String, ::String))).new
     @import_modules_cache = Hash(::String, Hash(::String, Tuple(::String, Int32))).new
 
@@ -42,69 +29,68 @@ module Analyzer::Python
       # Iterate through all Python files in all base paths. Pulls from
       # the detector-built file_map so subtree pruning and --exclude-path
       # apply to this pass too.
-      python_files = get_files_by_extension(".py")
+      python_files = python_source_files
       base_paths.each do |current_base_path|
         python_files.each do |path|
           next unless path_under_root?(path, current_base_path)
-          next if path.includes?("/site-packages/")
-          next if python_test_path?(path)
           @logger.debug "Analyzing #{path}"
 
-          File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-            lines = file.each_line.to_a
-            next unless lines.any?(&.includes?("tornado"))
-            api_instances = Hash(::String, ::String).new
-            path_api_instances[path] = api_instances
+          # Goes through this analyzer's own `memoized_file_content` (see
+          # below), which delegates to the base `read_file_content` and so
+          # prefers the detector-cached content over a fresh disk read.
+          lines = memoized_file_content(path).lines
+          next unless lines.any?(&.includes?("tornado"))
+          api_instances = Hash(::String, ::String).new
+          path_api_instances[path] = api_instances
 
-            # Tornado's own source documents routing with
-            # `.. code-block:: python` examples inside module/class
-            # docstrings — routing.py literally shows
-            # `Application([(r"/app1/handler", Handler)])`. Those are not
-            # real routes. Flag every line that begins inside a
-            # triple-quoted string so the route-detection entry points
-            # below skip them.
-            docstring_line = compute_docstring_line_flags(lines)
+          # Tornado's own source documents routing with
+          # `.. code-block:: python` examples inside module/class
+          # docstrings — routing.py literally shows
+          # `Application([(r"/app1/handler", Handler)])`. Those are not
+          # real routes. Flag every line that begins inside a
+          # triple-quoted string so the route-detection entry points
+          # below skip them.
+          docstring_line = Helper.docstring_line_flags(lines)
 
-            lines.each_with_index do |line, line_index|
-              next if docstring_line[line_index]
-              line = line.gsub(" ", "") # remove spaces for easier regex matching
+          lines.each_with_index do |line, line_index|
+            next if docstring_line[line_index]
+            line = line.gsub(" ", "") # remove spaces for easier regex matching
 
-              # Identify Tornado Application instance assignments
-              app_match = line.includes?("Application(") ? line.match(APP_INSTANCE_RE) : nil
-              if app_match
-                app_instance_name = app_match[1]
-                api_instances[app_instance_name] ||= ""
-                tornado_app_instances[app_instance_name] ||= ""
-              end
+            # Identify Tornado Application instance assignments
+            app_match = line.includes?("Application(") ? line.match(APP_INSTANCE_RE) : nil
+            if app_match
+              app_instance_name = app_match[1]
+              api_instances[app_instance_name] ||= ""
+              tornado_app_instances[app_instance_name] ||= ""
+            end
 
-              # Look for URL routing patterns in tornado.web.Application
-              # Pattern: [(r"/path", HandlerClass), ...]
-              if line.includes?("Application(") || line.includes?("Application([")
-                # Extract URL patterns from this and following lines
-                extract_url_patterns_from_application(lines, line_index, path, api_instances)
-              end
+            # Look for URL routing patterns in tornado.web.Application
+            # Pattern: [(r"/path", HandlerClass), ...]
+            if line.includes?("Application(") || line.includes?("Application([")
+              # Extract URL patterns from this and following lines
+              extract_url_patterns_from_application(lines, line_index, path, api_instances)
+            end
 
-              # Tornado apps commonly attach routes after Application()
-              # construction via app.add_handlers(host_pattern, handlers).
-              if line.includes?(".add_handlers(")
-                extract_url_patterns_from_add_handlers(lines, line_index, path)
-              end
+            # Tornado apps commonly attach routes after Application()
+            # construction via app.add_handlers(host_pattern, handlers).
+            if line.includes?(".add_handlers(")
+              extract_url_patterns_from_add_handlers(lines, line_index, path)
+            end
 
-              # Module-level handler lists registered from ELSEWHERE.
-              # Large Tornado apps (jupyterhub, jupyter-server, the
-              # tornado demos) define routes as a top-level
-              # `default_handlers = [(r"/api/x", XHandler), ...]` /
-              # `handlers = [...]` / `url_patterns = [...]` and aggregate
-              # the list in a different module, so there's no local
-              # `Application(...)` to anchor on — the entire API was
-              # missed (jupyterhub: 66 handler tuples → 0). Detect the
-              # assignment by its conventional name and extract its
-              # tuples directly; the handler-class gate in
-              # `extract_routes_from_lines` keeps non-route lists out.
-              list_match = line.includes?("=[") ? line.match(HANDLER_LIST_RE) : nil
-              if list_match && tornado_handler_list_name?(list_match[1])
-                extract_routes_from_lines(lines, line_index, path)
-              end
+            # Module-level handler lists registered from ELSEWHERE.
+            # Large Tornado apps (jupyterhub, jupyter-server, the
+            # tornado demos) define routes as a top-level
+            # `default_handlers = [(r"/api/x", XHandler), ...]` /
+            # `handlers = [...]` / `url_patterns = [...]` and aggregate
+            # the list in a different module, so there's no local
+            # `Application(...)` to anchor on — the entire API was
+            # missed (jupyterhub: 66 handler tuples → 0). Detect the
+            # assignment by its conventional name and extract its
+            # tuples directly; the handler-class gate in
+            # `extract_routes_from_lines` keeps non-route lists out.
+            list_match = line.includes?("=[") ? line.match(HANDLER_LIST_RE) : nil
+            if list_match && tornado_handler_list_name?(list_match[1])
+              extract_routes_from_lines(lines, line_index, path)
             end
           end
         end
@@ -116,7 +102,8 @@ module Analyzer::Python
       path_api_instances.each do |path, _|
         @routes[path]?.try &.each do |route_info|
           line_index, _, route_path, handler_class = route_info
-          endpoints = extract_endpoints_from_handler(path, route_path, handler_class)
+          # Tornado routes are regexes; `^` / `$` are anchors, not path text.
+          endpoints = extract_endpoints_from_handler(path, Noir::URLPath.strip_regex_anchors(route_path), handler_class)
           endpoints.each do |endpoint|
             details = Details.new(PathInfo.new(path, line_index + 1))
             endpoint.details = details
@@ -126,52 +113,6 @@ module Analyzer::Python
       end
 
       result
-    end
-
-    # For each line, whether its first character sits inside a
-    # triple-quoted string (i.e. a docstring opened on an earlier line).
-    # A single linear scan tracks the open/close `"""`/`'''` delimiters at
-    # file scope; single-line strings and `#` comments are skipped so a
-    # stray `"""` inside them doesn't flip the state.
-    private def compute_docstring_line_flags(lines : Array(::String)) : Array(Bool)
-      flags = Array(Bool).new(lines.size, false)
-      in_triple = false
-      triple_char = '\0'
-      lines.each_with_index do |line, idx|
-        flags[idx] = in_triple
-        i = 0
-        size = line.size
-        while i < size
-          c = line[i]
-          if in_triple
-            if c == triple_char && i + 2 < size && line[i + 1] == triple_char && line[i + 2] == triple_char
-              in_triple = false
-              i += 3
-              next
-            end
-            i += 1
-          elsif c == '#'
-            break # comment runs to end of line
-          elsif c == '"' || c == '\''
-            if i + 2 < size && line[i + 1] == c && line[i + 2] == c
-              in_triple = true
-              triple_char = c
-              i += 3
-              next
-            end
-            # Single-line string: skip to its (unescaped) closing quote.
-            i += 1
-            while i < size
-              break if line[i] == c && line[i - 1] != '\\'
-              i += 1
-            end
-            i += 1
-          else
-            i += 1
-          end
-        end
-      end
-      flags
     end
 
     private def join_multiline_call(lines : Array(::String), start_index : Int32) : ::String
@@ -185,11 +126,16 @@ module Analyzer::Python
       i = start_index
       while i < lines.size
         line = lines[i].strip
+        # `String#[]` walks from the start on every call for non-ASCII
+        # content (Crystal strings aren't fixed-width), so indexing it
+        # inside this while loop was O(n^2) per line. `chars` is an
+        # Array(Char) with O(1) random access; values are unchanged.
+        chars = line.chars
         line_idx = 0
-        while line_idx < line.size
-          c = line[line_idx]
+        while line_idx < chars.size
+          c = chars[line_idx]
           if in_triple_string
-            if line_idx + 2 < line.size && c == triple_string_char && line[line_idx + 1] == triple_string_char && line[line_idx + 2] == triple_string_char
+            if line_idx + 2 < chars.size && c == triple_string_char && chars[line_idx + 1] == triple_string_char && chars[line_idx + 2] == triple_string_char
               in_triple_string = false
               line_idx += 3
               next
@@ -197,7 +143,7 @@ module Analyzer::Python
             line_idx += 1
             next
           elsif in_string
-            if c == string_char && (line_idx == 0 || line[line_idx - 1] != '\\')
+            if c == string_char && (line_idx == 0 || chars[line_idx - 1] != '\\')
               in_string = false
             end
             line_idx += 1
@@ -205,7 +151,7 @@ module Analyzer::Python
           elsif c == '#'
             break
           elsif c == '"' || c == '\''
-            if line_idx + 2 < line.size && line[line_idx + 1] == c && line[line_idx + 2] == c
+            if line_idx + 2 < chars.size && chars[line_idx + 1] == c && chars[line_idx + 2] == c
               in_triple_string = true
               triple_string_char = c
               line_idx += 3
@@ -311,17 +257,21 @@ module Analyzer::Python
         line = lines[i].strip
         block_pieces << line
 
-        # Track bracket depth, skipping characters inside string literals and comments
+        # Track bracket depth, skipping characters inside string literals and comments.
+        # `String#[]` walks from the start on every call for non-ASCII
+        # content, so indexing `line` directly inside this while loop was
+        # O(n^2) per line; `chars` gives O(1) random access instead.
         in_comment = false
+        chars = line.chars
         line_index = 0
-        while line_index < line.size
-          c = line[line_index]
+        while line_index < chars.size
+          c = chars[line_index]
 
           if in_comment
             line_index += 1
             next
           elsif in_triple_string
-            if line_index + 2 < line.size && c == triple_string_char && line[line_index + 1] == triple_string_char && line[line_index + 2] == triple_string_char
+            if line_index + 2 < chars.size && c == triple_string_char && chars[line_index + 1] == triple_string_char && chars[line_index + 2] == triple_string_char
               in_triple_string = false
               line_index += 3
               next
@@ -329,7 +279,7 @@ module Analyzer::Python
             line_index += 1
             next
           elsif in_string
-            if c == string_char && (line_index == 0 || line[line_index - 1] != '\\')
+            if c == string_char && (line_index == 0 || chars[line_index - 1] != '\\')
               in_string = false
             end
             line_index += 1
@@ -338,7 +288,7 @@ module Analyzer::Python
             if c == '#'
               in_comment = true
             elsif c == '"' || c == '\''
-              if line_index + 2 < line.size && line[line_index + 1] == c && line[line_index + 2] == c
+              if line_index + 2 < chars.size && chars[line_index + 1] == c && chars[line_index + 2] == c
                 in_triple_string = true
                 triple_string_char = c
                 line_index += 3
@@ -500,11 +450,15 @@ module Analyzer::Python
 
     private def extract_endpoints_from_class_in_file(file_path : ::String, route_path : ::String, handler_class : ::String, endpoints : Array(Endpoint)) : Bool
       lines = read_file_lines(file_path)
+      # Nothing before the class's first definition line matters, so start
+      # there instead of re-walking the file for every route.
+      return false unless start = class_line_index(file_path, lines)[handler_class]?
 
       class_found = false
       class_is_websocket = false
       class_indent = 0
-      lines.each_with_index do |line, line_index|
+      (start...lines.size).each do |line_index|
+        line = lines[line_index]
         stripped = line.strip
         if (m = stripped.match(CLASS_DEF_REGEX)) && m[1] == handler_class && !class_found
           class_found = true
@@ -531,15 +485,23 @@ module Analyzer::Python
               line_index,
               file_path,
               definition_base_path: base_path_for(file_path),
-              source: read_file_content(file_path),
+              source: memoized_file_content(file_path),
             )
           end
 
           endpoints << endpoint
         end
 
-        # Look for HTTP method handlers (both sync and async)
-        HTTP_METHODS.each do |http_method|
+        # Look for HTTP method handlers (both sync and async). Uses
+        # `HTTP_METHODS_EXCLUDING_QUERY` (see `PythonEngine`): Tornado's
+        # `RequestHandler._execute` rejects any verb outside its
+        # `SUPPORTED_METHODS` class attribute before dispatch, and that
+        # tuple does not include `query` upstream — unlike Flask's duck-typed
+        # `getattr(self, request.method.lower())` dispatch, a
+        # `def query(self):` method is genuinely inert unless a handler
+        # manually widens `SUPPORTED_METHODS`, so matching it here would
+        # report a phantom route.
+        HTTP_METHODS_EXCLUDING_QUERY.each do |http_method|
           if stripped.starts_with?("def #{http_method}(") || stripped.starts_with?("async def #{http_method}(")
             params = extract_path_params_from_method_signature(stripped, route_path)
             extract_params_from_method(lines, line_index, file_path).each do |param|
@@ -561,7 +523,7 @@ module Analyzer::Python
                 line_index,
                 file_path,
                 definition_base_path: base_path_for(file_path),
-                source: read_file_content(file_path),
+                source: memoized_file_content(file_path),
               )
             end
 
@@ -631,7 +593,7 @@ module Analyzer::Python
 
     private def resolve_imports(file_path : ::String) : Hash(::String, Tuple(::String, Int32))
       @import_modules_cache[file_path] ||= begin
-        content = read_file_content(file_path)
+        content = memoized_file_content(file_path)
         find_imported_modules(base_path_for(file_path), file_path, content)
       end
     end
@@ -643,14 +605,43 @@ module Analyzer::Python
     end
 
     private def read_file_lines(file_path : ::String) : Array(::String)
-      content = read_file_content(file_path)
-      content.split("\n")
+      @file_lines_cache[file_path] ||= memoized_file_content(file_path).split("\n")
     end
 
-    private def read_file_content(file_path : ::String) : ::String
+    # First line each class is defined on, per file.
+    private def class_line_index(file_path : ::String, lines : Array(::String)) : Hash(::String, Int32)
+      @class_line_cache[file_path] ||= begin
+        index = Hash(::String, Int32).new
+        lines.each_with_index do |line, line_index|
+          next unless line.includes?("class")
+          if m = line.strip.match(CLASS_DEF_REGEX)
+            index.put_if_absent(m[1]) { line_index }
+          end
+        end
+        index
+      end
+    end
+
+    # Per-analyzer memo over `Analyzer#read_file_content`.
+    #
+    # This used to be named `read_file_content`, which *shadowed* the base
+    # method of that name — a private override with a different signature,
+    # an added memo and an added `IO::Error` rescue. Nothing failed, because
+    # the base never calls it internally; the cost was a silent fork of the
+    # read semantics that only grep could find. It also hand-rolled the base
+    # method's body (`content_for(path) || TextFile.read(path)`), so a change
+    # to the cache-miss path would have missed this copy.
+    #
+    # The memo is still worth keeping: this analyzer resolves imported
+    # modules and re-reads the same handler files across several passes,
+    # and the locator's content cache can miss (budget exhausted), which
+    # would otherwise be a repeated disk read.
+    #
+    # Guarded by `spec/unit_test/analyzer/layering_boundary_spec.cr`.
+    private def memoized_file_content(file_path : ::String) : ::String
       return @file_content_cache[file_path] if @file_content_cache.has_key?(file_path)
       content = begin
-        CodeLocator.instance.content_for(file_path) || File.read(file_path, encoding: "utf-8", invalid: :skip)
+        read_file_content(file_path)
       rescue e : IO::Error
         @logger.debug "Failed to read file: #{file_path} (#{e.message})"
         ""
@@ -680,30 +671,34 @@ module Analyzer::Python
           end
         end
 
-        # Extract Tornado parameter patterns
-        extract_tornado_params(stripped, params)
-
         i += 1
+      end
+
+      # Extract Tornado parameter patterns, with wrapped calls folded.
+      fold_python_continuations(lines[method_line_index + 1...i]).each do |body_line|
+        extract_tornado_params(body_line.strip, params)
       end
 
       params
     end
 
     private def extract_tornado_params(line : ::String, params : Array(Param))
-      # self.get_argument("param_name")
-      if match = line.match /self\.get_argument\(["']([^"']+)["']/
+      # Query args: self.get_argument / get_arguments (multi-value) and the
+      # query-scoped self.get_query_argument / get_query_arguments variants.
+      if match = line.match /self\.get_(?:query_)?arguments?\(["']([^"']+)["']/
         param_name = match[1]
         params << Param.new(param_name, "", "query")
       end
 
-      # self.get_body_argument("param_name")
-      if match = line.match /self\.get_body_argument\(["']([^"']+)["']/
+      # Form args: self.get_body_argument / get_body_arguments (multi-value).
+      if match = line.match /self\.get_body_arguments?\(["']([^"']+)["']/
         param_name = match[1]
         params << Param.new(param_name, "", "form")
       end
 
-      # self.get_cookie("cookie_name")
-      if match = line.match /self\.get_cookie\(["']([^"']+)["']/
+      # Cookies: self.get_cookie and the signed variants
+      # self.get_secure_cookie / get_signed_cookie (renamed in Tornado 6.3).
+      if match = line.match /self\.get_(?:secure_|signed_)?cookie\(["']([^"']+)["']/
         param_name = match[1]
         params << Param.new(param_name, "", "cookie")
       end
@@ -712,12 +707,6 @@ module Analyzer::Python
       if match = line.match /self\.request\.headers\.get\(["']([^"']+)["']/
         param_name = match[1]
         params << Param.new(param_name, "", "header")
-      end
-
-      # self.get_arguments("param_name") — plural form for multi-value query params
-      if match = line.match /self\.get_arguments\(["']([^"']+)["']/
-        param_name = match[1]
-        params << Param.new(param_name, "", "query")
       end
 
       # JSON body parsing: tornado.escape.json_decode or json.loads

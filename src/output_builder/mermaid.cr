@@ -2,12 +2,18 @@ require "../models/output_builder"
 require "../models/endpoint"
 require "../models/passive_scan"
 
+@[Noir::OutputFormat(name: "mermaid", description: "Mermaid diagram", order: 220, structured: true)]
 class OutputBuilderMermaid < OutputBuilder
-  def print(endpoints : Array(Endpoint))
-    build_mindmap(endpoints)
-  end
+  # CLI inputs get a plural label; the bucket key is the singular param type.
+  CLI_PARAM_LABELS = {"flag" => "flags", "argument" => "arguments", "env" => "env"}
 
-  def print(endpoints : Array(Endpoint), passive_results : Array(PassiveScanResult))
+  # Buckets `output_tree` renders explicitly, under a label of their own.
+  RENDERED_BUCKETS = Set{"header", "cookie", "query", "json", "form", "path"}
+
+  # Deepest path-segment level the mindmap nests to (see `build_path_tree`).
+  MAX_DEPTH = 64
+
+  def print(endpoints : Array(Endpoint), passive_results : Array(PassiveScanResult) = [] of PassiveScanResult)
     build_mindmap(endpoints, passive_results)
   end
 
@@ -34,7 +40,7 @@ class OutputBuilderMermaid < OutputBuilder
       finding_indent = "  " * (indent + 1)
       location = "#{result.file_path}:#{result.line_number}"
       label = "#{result.id} [#{result.info.severity}] #{location}"
-      ob_puts "#{finding_indent}#{sanitize_segment(label)}"
+      ob_puts "#{finding_indent}#{sanitize_label(label)}"
     end
   end
 
@@ -58,6 +64,10 @@ class OutputBuilderMermaid < OutputBuilder
       # group it as cli -> tool -> serve instead of leaving the scheme as
       # a mangled `cli_` segment.
       path = path.sub("cli://", "cli/") if endpoint.cli?
+      # A realtime event surface (`ws://chatHub/SendMessage`) is not an HTTP
+      # path: group it as ws -> chatHub -> SendMessage instead of leaving the
+      # scheme as a mangled `ws_` segment.
+      path = path.sub("wss://", "wss/").sub("ws://", "ws/") if endpoint.realtime?
       # Remove query parameters if any
       if path.includes?("?")
         path = path.split("?")[0]
@@ -69,11 +79,18 @@ class OutputBuilderMermaid < OutputBuilder
       end
       # Split path into segments
       segments = path.split("/").reject(&.empty?)
+      # A mindmap nests by indentation, so a route 10000 segments deep made
+      # `output_tree` recurse 10000 times (stack overflow) and printed
+      # ~50MB of leading spaces. Past MAX_DEPTH the rest of the route is one
+      # node; no real route comes near it.
+      if segments.size > MAX_DEPTH
+        segments = segments[0, MAX_DEPTH - 1] << segments[(MAX_DEPTH - 1)..].join("/")
+      end
       # Navigate/create tree structure
       current_node = root
       segments.each do |segment|
-        # Sanitize segment for Mermaid compatibility
-        sanitized_segment = sanitize_segment(segment)
+        # Sanitize segment for Mermaid compatibility (path-param aware)
+        sanitized_segment = sanitize_path_segment(segment)
         if !current_node.children.has_key?(sanitized_segment)
           current_node.children[sanitized_segment] = TreeNode.new
         end
@@ -85,85 +102,102 @@ class OutputBuilderMermaid < OutputBuilder
     root
   end
 
-  private def sanitize_segment(segment : String) : String
-    # Handle path parameters (e.g., {user_id} -> param_user_id)
-    if segment.match(/^{.*}$/)
-      # Remove curly braces and prefix with 'param_'
-      sanitized = "param_#{segment.gsub(/[{}\s]/, "")}"
-    else
-      # Replace invalid characters with underscore
-      sanitized = segment.gsub(/[^a-zA-Z0-9_]/, "_")
-      # If starts with a number, prepend 'path_'
-      if sanitized =~ /^\d/
-        sanitized = "path_#{sanitized}"
-      end
-    end
-    # Ensure non-empty and unique
+  # General-purpose Mermaid mindmap label sanitizer for free-text node
+  # labels (header / cookie / parameter names, passive findings). Mermaid
+  # treats (), [], {} as node-shape syntax, so anything outside Unicode
+  # letters/digits/underscore is collapsed to `_`. \p{L}\p{N} keeps CJK /
+  # accented text intact — an ASCII-only class turned `사용자` into `___`,
+  # destroying the label.
+  private def sanitize_label(text : String) : String
+    sanitized = text.gsub(/[^\p{L}\p{N}_]/, "_")
+    # Mindmap node ids can't lead with a digit.
+    sanitized = "path_#{sanitized}" if sanitized =~ /^\d/
+    # Ensure non-empty.
     sanitized.empty? ? "unnamed" : sanitized
+  end
+
+  # Sanitize a single URL path segment. Path parameters are spelled many
+  # ways across frameworks — `{id}` (OpenAPI), `:id` (Sinatra / Rails /
+  # Express), `*path` (named splat) and a bare `*` (splat / wildcard).
+  # Normalize every form to a `param_<name>` node so the mindmap marks the
+  # segment as a path parameter consistently, instead of leaking `:id` as
+  # `_id` and `*` as `_`, which erased that meaning entirely.
+  private def sanitize_path_segment(segment : String) : String
+    if md = segment.match(/^\{(.+)\}$/) || segment.match(/^:(.+)$/) || segment.match(/^\*(.+)$/)
+      return "param_#{sanitize_label(md[1])}"
+    end
+    return "param_wildcard" if segment == "*"
+    sanitize_label(segment)
+  end
+
+  # Render one parameter group (headers / cookies / query / body / path or
+  # a CLI bucket) as a labeled sub-node followed by its sorted members.
+  # A no-op for empty buckets so absent locations don't clutter the map.
+  private def render_param_group(bucket : Hash(String, String), label : String, indent : Int32)
+    return if bucket.empty?
+
+    group_indent = "  " * (indent + 1)
+    ob_puts "#{group_indent}#{label}"
+    item_indent = "  " * (indent + 2)
+    bucket.keys.sort!.each do |name|
+      ob_puts "#{item_indent}#{sanitize_label(name)}"
+    end
   end
 
   private def output_tree(node : TreeNode, indent : Int32)
     # Output endpoints for this node
     node.endpoints.each do |endpoint|
       indent_str = "  " * indent
-      # Use only the HTTP method as the endpoint label, add [websocket] if applicable.
-      # The protocol field is "ws" everywhere else in the codebase
-      # (analyzers, common output, websocket tagger).
+      # Label the node with the HTTP method, tagging websockets. The
+      # protocol field is "ws" everywhere else in the codebase (analyzers,
+      # common output, websocket tagger). NB: the tag is a bare ` websocket`
+      # word, NOT `[websocket]` — in a mindmap `[...]` is node-shape syntax,
+      # so `GET [websocket]` renders as a square node showing only
+      # "websocket" with the method silently dropped.
       endpoint_label = endpoint.method
-      endpoint_label += " [websocket]" if endpoint.protocol == "ws"
+      endpoint_label += " websocket" if endpoint.protocol == "ws"
       ob_puts "#{indent_str}#{endpoint_label}"
 
-      # Get parameters grouped by type
+      # Group parameters by their real request location. Each location is
+      # attack-surface-distinct, so it gets its own group instead of being
+      # flattened into one "body" bucket — the old merge also silently
+      # overwrote same-named params across locations (a `token` query param
+      # and a `token` json field collapsed into a single node).
       params_hash = endpoint.params_to_hash
 
-      # Output headers
-      unless params_hash["header"].empty?
-        headers_indent = "  " * (indent + 1)
-        ob_puts "#{headers_indent}headers"
-        params_hash["header"].keys.sort!.each do |header|
-          header_indent = "  " * (indent + 2)
-          ob_puts "#{header_indent}#{sanitize_segment(header)}"
-        end
-      end
+      render_param_group(params_hash["header"], "headers", indent)
+      render_param_group(params_hash["cookie"], "cookies", indent)
+      render_param_group(params_hash["query"], "query", indent)
 
-      # Output cookies
-      unless params_hash["cookie"].empty?
-        cookies_indent = "  " * (indent + 1)
-        ob_puts "#{cookies_indent}cookies"
-        params_hash["cookie"].keys.sort!.each do |cookie|
-          cookie_indent = "  " * (indent + 2)
-          ob_puts "#{cookie_indent}#{sanitize_segment(cookie)}"
-        end
-      end
-
-      # Output body parameters (json, form, query, path)
+      # `body` covers both JSON and form payloads: both are request-body
+      # namespaces and (unlike query vs body) a request never carries both.
       body_params = {} of String => String
-      ["json", "form", "query", "path"].each do |param_type|
-        params_hash[param_type].each do |key, value|
-          body_params[key] = value
-        end
-      end
-      unless body_params.empty?
-        body_indent = "  " * (indent + 1)
-        ob_puts "#{body_indent}body"
-        body_params.keys.sort!.each do |param|
-          param_indent = "  " * (indent + 2)
-          ob_puts "#{param_indent}#{sanitize_segment(param)}"
-        end
-      end
+      params_hash["json"].each { |key, value| body_params[key] = value }
+      params_hash["form"].each { |key, value| body_params[key] = value }
+      render_param_group(body_params, "body", indent)
+
+      # Path params get their own group. The tree already shows each path
+      # parameter as a `param_*` segment (its position in the URL); this
+      # group names the params the endpoint reads, which is complementary.
+      render_param_group(params_hash["path"], "path", indent)
 
       # CLI inputs (protocol "cli") live outside the six canonical HTTP
       # buckets — render flags / positional arguments / env reads as their
       # own groups so they aren't silently dropped from the mindmap.
-      {"flag" => "flags", "argument" => "arguments", "env" => "env"}.each do |param_type, label|
+      CLI_PARAM_LABELS.each do |param_type, label|
         bucket = params_hash[param_type]?
-        next if bucket.nil? || bucket.empty?
-        group_indent = "  " * (indent + 1)
-        ob_puts "#{group_indent}#{label}"
-        bucket.keys.sort!.each do |name|
-          item_indent = "  " * (indent + 2)
-          ob_puts "#{item_indent}#{sanitize_segment(name)}"
-        end
+        render_param_group(bucket, label, indent) unless bucket.nil?
+      end
+
+      # Anything left is still a named input the endpoint reads: a multipart
+      # `file` field, an `xml` request body, an Android intent `extra`. The
+      # fixed list above covered nine of the fourteen param types analyzers
+      # actually emit, so the rest were dropped from the map while every
+      # other format showed them. Render the remaining buckets by name so a
+      # new param type is never silently lost here again.
+      params_hash.each do |param_type, bucket|
+        next if RENDERED_BUCKETS.includes?(param_type) || CLI_PARAM_LABELS.has_key?(param_type)
+        render_param_group(bucket, sanitize_label(param_type), indent)
       end
     end
 

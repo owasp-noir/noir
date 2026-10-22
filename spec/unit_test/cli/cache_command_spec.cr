@@ -13,7 +13,6 @@ private def with_isolated_cache_dir(&)
   ENV["NOIR_HOME"] = tmp
   ENV.delete("NOIR_CACHE_DISABLE")
   begin
-    LLM::Cache.enable
     yield tmp
   ensure
     if prev_home
@@ -45,16 +44,56 @@ describe Noir::CLI::CacheCommand do
       parsed.rest.should be_empty
     end
 
-    it "collects extra positionals into rest in order" do
-      parsed = Noir::CLI::CacheCommand.parse_argv(["purge", "7", "ignored"])
+    it "collects positionals into rest in order" do
+      parsed = Noir::CLI::CacheCommand.parse_argv(["purge", "7"])
       parsed.action.should eq("purge")
-      parsed.rest.should eq(["7", "ignored"])
+      parsed.rest.should eq(["7"])
+      parsed.error.should be_nil
     end
 
     it "sets help on -h / --help anywhere in argv" do
       Noir::CLI::CacheCommand.parse_argv(["-h"]).help.should be_true
       Noir::CLI::CacheCommand.parse_argv(["--help"]).help.should be_true
       Noir::CLI::CacheCommand.parse_argv(["purge", "--help"]).help.should be_true
+    end
+
+    # An unknown flag used to be filed as a positional and then dropped, so
+    # `noir cache clear --dry-run` performed a real, irreversible wipe while
+    # reading like a rehearsal.
+    it "rejects an unknown option instead of silently dropping it" do
+      parsed = Noir::CLI::CacheCommand.parse_argv(["clear", "--dry-run"])
+      parsed.error.should eq("Unknown option: --dry-run. Run `noir cache --help`.")
+    end
+
+    it "rejects surplus positionals past the action's arity" do
+      Noir::CLI::CacheCommand.parse_argv(["info", "clear"]).error
+        .should eq("Unexpected argument: clear. Usage: noir cache info")
+      Noir::CLI::CacheCommand.parse_argv(["purge", "7", "999"]).error
+        .should eq("Unexpected argument: 999. Usage: noir cache purge <days>")
+      Noir::CLI::CacheCommand.parse_argv(["purge", "7", "999", "junk"]).error
+        .should eq("Unexpected arguments: 999, junk. Usage: noir cache purge <days>")
+    end
+
+    # An unrecognized action must reach the "Unknown cache action" branch in
+    # `run` rather than being masked by an arity complaint about its
+    # trailing arguments.
+    it "leaves an unknown action to the action check, not the arity check" do
+      Noir::CLI::CacheCommand.parse_argv(["bogus", "extra"]).error.should be_nil
+    end
+
+    # `-5` is a value the user meant for <days>, not a flag; it must reach
+    # `parse_days` so the error names the real problem.
+    it "treats a bare negative number as a positional, not an option" do
+      parsed = Noir::CLI::CacheCommand.parse_argv(["purge", "-5"])
+      parsed.rest.should eq(["-5"])
+      parsed.error.should be_nil
+      Noir::CLI::CacheCommand.parse_days("-5").should be_nil
+    end
+
+    it "accepts the router's global flags without treating them as the action" do
+      parsed = Noir::CLI::CacheCommand.parse_argv(["--no-color", "info", "--no-spinner"])
+      parsed.action.should eq("info")
+      parsed.error.should be_nil
     end
   end
 
@@ -206,6 +245,42 @@ describe Noir::CLI::CacheCommand do
         Noir::CLI::CacheCommand.print_info(io)
         io.to_s.should contain("disabled via NOIR_CACHE_DISABLE")
       end
+    end
+  end
+
+  describe ".format_bytes" do
+    it "prints raw bytes below 1 KiB" do
+      Noir::CLI::CacheCommand.format_bytes(0_i64).should eq("0 B")
+      Noir::CLI::CacheCommand.format_bytes(1023_i64).should eq("1023 B")
+    end
+
+    it "scales into KB / MB / GB" do
+      Noir::CLI::CacheCommand.format_bytes(1024_i64).should eq("1.0 KB")
+      Noir::CLI::CacheCommand.format_bytes(1500_i64).should eq("1.5 KB")
+      Noir::CLI::CacheCommand.format_bytes(1048576_i64).should eq("1.0 MB")
+      Noir::CLI::CacheCommand.format_bytes(1073741824_i64).should eq("1.0 GB")
+    end
+
+    it "rolls over to the next unit at a rounding boundary instead of printing 1024.0" do
+      # 1 MiB - 1 byte rounds to 1024.0 KB in one decimal; it must
+      # display as 1.0 MB, not 1024.0 KB. Same one level up for GB.
+      Noir::CLI::CacheCommand.format_bytes(1048575_i64).should eq("1.0 MB")
+      Noir::CLI::CacheCommand.format_bytes(1073741823_i64).should eq("1.0 GB")
+    end
+  end
+
+  describe ".format_age" do
+    it "renders sub-minute / minute / hour / day granularity" do
+      Noir::CLI::CacheCommand.format_age(Time.utc - 5.seconds).should eq("5s")
+      Noir::CLI::CacheCommand.format_age(Time.utc - 3.minutes).should eq("3m")
+      Noir::CLI::CacheCommand.format_age(Time.utc - 2.hours).should eq("2h")
+      Noir::CLI::CacheCommand.format_age(Time.utc - 4.days).should eq("4d")
+    end
+
+    it "clamps a future-dated entry to 0s instead of a negative age" do
+      # Clock skew / NTP jump / manual touch can leave a cache mtime in
+      # the future. The display must not read "-3599s".
+      Noir::CLI::CacheCommand.format_age(Time.utc + 1.hour).should eq("0s")
     end
   end
 

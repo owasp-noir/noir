@@ -6,6 +6,7 @@ require "../../models/endpoint"
 # expose the full API surface (every route, parameter, and model) and
 # are very frequently reachable without authentication, so they are a
 # high-value recon target and an information-disclosure risk.
+@[Noir::TaggerFor(key: "api_docs", name: "API Docs Tagger", desc: "Identifies API documentation/schema endpoints (Swagger, OpenAPI, GraphiQL, ReDoc, WSDL)", order: 160)]
 class ApiDocsTagger < Tagger
   # Matched against slash/dot-delimited segments (hyphens and
   # underscores kept inside a segment) so `/swagger-ui.html`,
@@ -32,30 +33,23 @@ class ApiDocsTagger < Tagger
   # source used `-`, `_`, or no separator at all.
   DOC_SEGMENTS_NORMALIZED = DOC_SEGMENTS.map(&.gsub(/[-_]/, "")).to_set
 
-  def initialize(options : Hash(String, YAML::Any))
-    super
-    @name = "api_docs"
-  end
+  private def check_endpoint(endpoint : Endpoint)
+    segments = doc_segments(endpoint.url)
+    check = segments.any? { |seg| DOC_SEGMENTS_NORMALIZED.includes?(seg.gsub(/[-_]/, "")) } ||
+            api_schema?(segments)
 
-  def perform(endpoints : Array(Endpoint))
-    endpoints.each do |endpoint|
-      segments = doc_segments(endpoint.url)
-      check = segments.any? { |seg| DOC_SEGMENTS_NORMALIZED.includes?(seg.gsub(/[-_]/, "")) } ||
-              api_schema?(segments)
-
-      if check
-        tag = Tag.new(
-          "api_docs",
-          "API documentation / schema endpoint (Swagger, OpenAPI, GraphiQL, ReDoc, WSDL); exposes the full API surface and is frequently reachable without authentication — review for unauthenticated exposure and information disclosure.",
-          "ApiDocs"
-        )
-        endpoint.add_tag(tag)
-      end
+    if check
+      tag = Tag.new(
+        "api_docs",
+        "API documentation / schema endpoint (Swagger, OpenAPI, GraphiQL, ReDoc, WSDL); exposes the full API surface and is frequently reachable without authentication — review for unauthenticated exposure and information disclosure.",
+        "ApiDocs"
+      )
+      endpoint.add_tag(tag)
     end
   end
 
   private def doc_segments(url : String) : Array(String)
-    url.downcase.split(/[\/.]+/).reject(&.empty?)
+    url.downcase.split(/[\/.]+/, remove_empty: true)
   end
 
   # `schema` is too generic to match on its own (GraphQL `/schema`,

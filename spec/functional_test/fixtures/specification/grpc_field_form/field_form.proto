@@ -1,0 +1,54 @@
+syntax = "proto3";
+
+package field.v1;
+
+import "google/api/annotations.proto";
+
+message WidgetRequest {
+  string widget_id = 1;
+  string name = 2;
+  string note = 3;
+}
+
+message WidgetResponse {
+  string widget_id = 1;
+}
+
+service WidgetService {
+  // Plain field form: one statement carries the whole route.
+  rpc GetWidget(WidgetRequest) returns (WidgetResponse) {
+    option (google.api.http).get = "/v1/widgets/{widget_id}";
+  }
+
+  // Field form spread over several statements: verb, body and two repeated
+  // additional_bindings, all assembled into a single HttpRule.
+  rpc UpdateWidget(WidgetRequest) returns (WidgetResponse) {
+    option (google.api.http).put = "/v1/widgets/{widget_id}";
+    option (google.api.http).body = "*";
+    option (google.api.http).additional_bindings = {
+      patch: "/v1/widgets/{widget_id}"
+      body: "*"
+    };
+    option (google.api.http).additional_bindings = {
+      patch: "/v2/widgets/{widget_id}"
+      body: "*"
+    };
+  }
+
+  // Field form of the custom pattern: a non-standard verb split across two
+  // statements. The verb has to be one the optimizer allow-lists, or it is
+  // downgraded to GET before it reaches the report.
+  rpc InspectWidget(WidgetRequest) returns (WidgetResponse) {
+    option (google.api.http).custom.kind = "OPTIONS";
+    option (google.api.http).custom.path = "/v1/widgets/{widget_id}/inspect";
+  }
+
+  // A named body field: every other message field becomes a query param.
+  rpc RenameWidget(WidgetRequest) returns (WidgetResponse) {
+    option (google.api.http).post = "/v1/widgets/{widget_id}/rename";
+    option (google.api.http).body = "name";
+  }
+
+  // No annotation: still a pure gRPC endpoint.
+  rpc WatchWidget(WidgetRequest) returns (stream WidgetResponse);
+}

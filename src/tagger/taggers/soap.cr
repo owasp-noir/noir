@@ -5,6 +5,7 @@ require "../../models/endpoint"
 # specific review (XXE, SOAP-action spoofing, WS-Security handling) that
 # differs from a typical REST/JSON route, so calling them out helps a
 # reviewer pick the right lens.
+@[Noir::TaggerFor(key: "soap", name: "SOAP Tagger", desc: "Identifies SOAP endpoints", order: 40)]
 class SoapTagger < Tagger
   # Request headers that mark a SOAP call. `SOAPAction` is mandatory in
   # SOAP 1.1; `Content-Type: application/soap+xml` is the SOAP 1.2 marker.
@@ -16,19 +17,12 @@ class SoapTagger < Tagger
   # (e.g. a `/products/soap` store listing).
   URL_MARKERS = ["?wsdl", ".wsdl", ".asmx"]
 
-  def initialize(options : Hash(String, YAML::Any))
-    super
-    @name = "soap"
-  end
+  private def check_endpoint(endpoint : Endpoint)
+    check = soap_header?(endpoint) || soap_url?(endpoint.url)
 
-  def perform(endpoints : Array(Endpoint))
-    endpoints.each do |endpoint|
-      check = soap_header?(endpoint) || soap_url?(endpoint.url)
-
-      if check
-        tag = Tag.new("soap", "SOAP endpoint for XML-based web service communication, supporting structured information exchanges across network applications.", "SOAP")
-        endpoint.add_tag(tag)
-      end
+    if check
+      tag = Tag.new("soap", "SOAP endpoint for XML-based web service communication, supporting structured information exchanges across network applications.", "SOAP")
+      endpoint.add_tag(tag)
     end
   end
 

@@ -20,7 +20,7 @@ tester = FunctionalTester.new("fixtures/java/jsp_servlet_multi_base/", {
 
 tester.perform_tests
 
-describe "JSP servlet multi-base scoping" do
+describe "JSP servlet multi-base scoping", tags: "functional" do
   it "keeps servlet params inside the web.xml base path" do
     service_a = tester.app.endpoints.find! { |endpoint| endpoint.method == "GET" && endpoint.url == "/a-servlet" }
     service_a.params.map(&.name).sort!.should eq(["a"])

@@ -1,0 +1,4 @@
+.gitignore
+README.md
+api/openapi.yaml
+src/main/java/org/example/api/PetsApi.java

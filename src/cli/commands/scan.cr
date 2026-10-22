@@ -6,9 +6,12 @@ require "../../options"
 require "../../cli_validation"
 require "../../banner"
 require "../../models/noir"
+require "../../utils/git_snapshot"
+require "../../diff_gate"
 require "../../techs/techs"
 require "../../llm/cache"
 require "../../llm/prompt_overrides"
+require "../../utils/redact"
 
 # `noir scan [paths...] [flags]`
 #
@@ -25,22 +28,31 @@ module Noir::CLI::ScanCommand
   # rather than a bare magic number.
   WARNING_COLOR = Colorize::Color256.new(208)
 
-  # Output formats whose downstream consumers (jq, SARIF parsers,
-  # CI report uploaders) treat empty stdout as a hard error. When a
-  # scan finds no endpoints, we still emit a valid empty document
-  # for these formats — `{"endpoints":[],"passive_results":[]}` for
-  # json, the matching shape for the others. Plain / human-oriented
-  # formats stay silent because there's nothing meaningful to render.
-  STRUCTURED_OUTPUT_FORMATS = Set{"json", "yaml", "jsonl", "toml", "sarif"}
-
   def self.run(argv : Array(String))
-    # Stage ARGV through OptionParser (positional path discovery happens
-    # inside `run_options_parser`). Dup `argv` upfront because callers
-    # commonly pass ARGV itself, which we are about to clear. The v0
-    # deliver/probe flag tokens (`--send-req`, `--use-matchers`, etc.)
-    # are rewritten to their v1 equivalents *before* the parser runs,
-    # so the LEGACY surface never appears in `scan -h` and the parser
-    # itself only needs to know about one set of names.
+    noir_options, args_copy = parse_options(argv)
+    prepare!(noir_options, args_copy)
+
+    if noir_options["nolog"] == false
+      Noir::Banner.print
+    end
+
+    run_scan(noir_options)
+  end
+
+  # Stage ARGV through OptionParser (positional path discovery happens
+  # inside `run_options_parser`). Dup `argv` upfront because callers
+  # commonly pass ARGV itself, which we are about to clear. The v0
+  # deliver/probe flag tokens (`--send-req`, `--use-matchers`, etc.)
+  # are rewritten to their v1 equivalents *before* the parser runs,
+  # so the LEGACY surface never appears in `scan -h` and the parser
+  # itself only needs to know about one set of names.
+  #
+  # Returns the translated argv alongside the options: it, not the hash, is
+  # what says which settings the user typed on this command line — by the
+  # time the parser returns, a config-file value and a CLI flag are the same
+  # entry in the same hash. The query verbs (`trace`/`reach`/`query`) share
+  # this and `prepare!` so they accept every scan flag with scan's semantics.
+  def self.parse_options(argv : Array(String)) : {Hash(String, YAML::Any), Array(String)}
     args_copy = Noir::CLI::Legacy.translate_flag_aliases(argv.dup)
     saved = ARGV.dup
     begin
@@ -52,22 +64,55 @@ module Noir::CLI::ScanCommand
       ARGV.clear
       ARGV.concat(saved)
     end
-
-    execute(noir_options)
+    {noir_options, args_copy}
   end
 
-  private def self.execute(noir_options : Hash(String, YAML::Any))
+  # Long-flag tokens present on the command line, with `--flag=value`
+  # reduced to `--flag`. The only question asked of it is "did the user
+  # type this flag?", which is why the values are dropped.
+  def self.cli_flag_names(argv : Array(String)) : Set(String)
+    names = Set(String).new
+    argv.each do |arg|
+      next unless arg.starts_with?("-")
+      names << (arg.index('=') ? arg.split("=", 2)[0] : arg)
+    end
+    names
+  end
+
+  # Normalizes and validates parsed options in place; dies on the first
+  # problem. Everything a scan checks before it starts, minus the banner.
+  def self.prepare!(noir_options : Hash(String, YAML::Any), argv : Array(String))
+    cli_flags = cli_flag_names(argv)
+
     apply_cache_flags(noir_options)
     apply_prompt_overrides(noir_options)
     normalize_url!(noir_options)
-    validate_url_dependent_flags(noir_options)
+    normalize_probe_via!(noir_options)
+    validate_url_dependent_flags(noir_options, cli_flags)
+    validate_exclude_path!(noir_options, argv)
+    validate_blank_tech_flags!(argv)
     validate_options!(noir_options)
+  end
 
-    if noir_options["nolog"] == false
-      banner()
+  # Detect + analyze with no report, no diff and no exit: the endpoint list
+  # the query verbs filter. Deliver flags (`--probe`, `--export-*`) still run
+  # inside `analyze`, exactly as on a scan.
+  def self.collect(noir_options : Hash(String, YAML::Any)) : NoirRunner
+    app = NoirRunner.new noir_options
+    app.logger.loading "Detecting technologies in the base directory." do
+      app.detect
     end
-
-    run_scan(noir_options)
+    if app.techs.empty?
+      app.logger.warning "No technologies detected."
+    else
+      exclude_techs = NoirTechs.resolve_tech_list(app.options["exclude_techs"].to_s).to_set
+      app.techs = app.techs.reject { |tech| exclude_techs.includes?(tech) }
+    end
+    app.logger.loading "Starting code analysis." do
+      app.analyze
+    end
+    report_coverage_gaps(app.logger, app.analyzer_failures, "")
+    app
   end
 
   private def self.apply_cache_flags(noir_options : Hash(String, YAML::Any))
@@ -77,9 +122,17 @@ module Noir::CLI::ScanCommand
 
     begin
       outcome = LLM::Cache.clear
-      msg = "CACHE: Cleared #{outcome.deleted} entries."
-      msg += " (#{outcome.failed} failed)" if outcome.failed > 0
-      STDERR.puts msg
+      # Suppress the status line under --no-log ("Show only results"):
+      # every other scan log line respects it, and this one would
+      # otherwise leak into a result stream a script expects to be
+      # clean. The clear itself still happens — only the message is
+      # gated. The runner's logger isn't built yet at this point, so
+      # gate on the raw option rather than routing through it.
+      unless noir_options["nolog"] == true
+        msg = "CACHE: Cleared #{outcome.deleted} entries."
+        msg += " (#{outcome.failed} failed)" if outcome.failed > 0
+        STDERR.puts msg
+      end
     rescue
       # Cache may not be initialized yet; best-effort clear.
     end
@@ -121,13 +174,33 @@ module Noir::CLI::ScanCommand
       Noir::CLI.die("-u/--url must use http:// or https:// (got '#{url}').")
     end
 
+    # Validate an explicit port at parse time. A non-numeric port
+    # (`-u http://host:por`) otherwise survives until the first probe and
+    # crashes deep in the socket layer with an opaque error.
+    begin
+      parsed = URI.parse(url)
+
+      if host_problem = host_error(parsed.host)
+        Noir::CLI.die("-u/--url #{host_problem} in #{url.inspect}. Expected a base URL like http://localhost:3000.")
+      end
+
+      if port = parsed.port
+        unless (1..65535).includes?(port)
+          Noir::CLI.die("-u/--url port #{port} is out of range (1-65535) in '#{url}'.")
+        end
+      end
+    rescue ex : URI::Error
+      Noir::CLI.die("-u/--url has an invalid port in '#{url}' (#{ex.message}). The port must be numeric, e.g. http://host:8080.")
+    end
+
     # Strip `?query` and `#fragment` from the base URL — they're
     # only valid at the end of a URL, so concatenating an endpoint
     # path after them produces a malformed URL
     # (`http://x?foo=bar/sign`). The user almost never meant to put
     # them on the base; warn and drop them.
-    if (q = url.index('?')) || (f = url.index('#'))
-      cut = [q, f].compact.min
+    # Both indexes up front: `||` would skip the `#` lookup whenever a `?`
+    # exists, so `/#frag?x=1` cut at the later `?` and kept `#frag`.
+    if cut = [url.index('?'), url.index('#')].compact.min?
       stripped = url[0...cut]
       dropped = url[cut..]
       STDERR.puts "WARNING: -u/--url should be a base URL — query string / fragment '#{dropped}' would corrupt the per-endpoint URL. Stripping.".colorize(WARNING_COLOR)
@@ -135,42 +208,289 @@ module Noir::CLI::ScanCommand
     end
   end
 
-  private def self.validate_url_dependent_flags(noir_options : Hash(String, YAML::Any))
+  # Why `-u` needs an authority, not just a scheme: it is the *base* URL
+  # every discovered path is appended to. `URI.parse` is happy without a
+  # host — `-u http://` parses with an empty one — and the concatenation
+  # then promotes the first discovered path segment to the authority, so
+  # `/a` becomes `http://a`. With `--probe` or `--status-codes` that
+  # fires real HTTP requests at a host the user never named.
+  #
+  # Whitespace and control characters are rejected for the same reason
+  # `normalize_probe_via!` rejects a missing host: `-u "not a url"` and
+  # `-u $'http://a\nb/'` are accepted today and baked into every endpoint
+  # of the JSON/OAS/Postman output as an unusable URL.
+  #
+  # Returns nil when the host is usable, otherwise the reason (phrased to
+  # slot into the `-u/--url <reason> in <url>` message).
+  def self.host_error(host : String?) : String?
+    return "has no host" if host.nil? || host.empty?
+    if host.each_char.any? { |c| c.whitespace? || c.control? }
+      return "has whitespace or control characters in the host"
+    end
+    nil
+  end
+
+  # `--probe-via` is handed to Crest as a `p_addr` / `p_port` pair, and
+  # Crest's `set_proxy!` does `return unless p_addr && p_port` — so any
+  # value that doesn't yield BOTH a host and a port made it drop the proxy
+  # and send the probe *directly to the target instead*, with no error.
+  # That is worse than a plain misconfiguration: `SendWithProxy` also
+  # forces an insecure TLS context (correct when talking to an
+  # intercepting proxy's own cert), so the fall-through shipped
+  # `--probe-header` credentials to the real target with certificate
+  # verification off, while the user believed the traffic was sitting in
+  # Burp.
+  #
+  # Two shapes hit it, both of them things users actually type:
+  #   `--probe-via 127.0.0.1:8080`   → URI#host is nil (curl -x accepts this)
+  #   `--probe-via http://burp.local` → URI#port is nil
+  private def self.normalize_probe_via!(noir_options : Hash(String, YAML::Any))
+    probe_via = noir_options["probe_via"]?.try(&.to_s) || ""
+    return if probe_via.empty?
+
+    # Bare `host:port` is the form `curl -x` and the `HTTP_PROXY` env var
+    # take, so accept it rather than rejecting a reasonable habit. An HTTP
+    # proxy is the only thing this flag ever points at, hence http://.
+    unless probe_via.includes?("://")
+      probe_via = "http://#{probe_via}"
+      noir_options["probe_via"] = YAML::Any.new(probe_via)
+    end
+
+    lowered = probe_via.downcase
+    unless lowered.starts_with?("http://") || lowered.starts_with?("https://")
+      Noir::CLI.die("--probe-via must use http:// or https:// (got '#{probe_via}').")
+    end
+
+    begin
+      parsed = URI.parse(probe_via)
+    rescue ex : URI::Error
+      Noir::CLI.die("--probe-via is not a valid proxy URL: '#{probe_via}' (#{ex.message}).")
+    end
+
+    host = parsed.host
+    if host.nil? || host.empty?
+      Noir::CLI.die("--probe-via has no host in '#{probe_via}'. Expected proxy_host:port, e.g. --probe-via http://127.0.0.1:8080.")
+    end
+
+    # The port is required, not defaulted. Guessing would silently pick
+    # the wrong peer: 8080 (Burp/ZAP's default) and 80 (the scheme
+    # default) are both plausible readings of `http://burp.local`, and
+    # picking either one for the user is how the original bug felt from
+    # the outside — traffic going somewhere they didn't ask for.
+    port = parsed.port
+    if port.nil?
+      Noir::CLI.die("--probe-via needs an explicit proxy port in '#{probe_via}' — otherwise probes would silently bypass the proxy and hit the target directly. Burp/ZAP default to 8080, e.g. --probe-via #{parsed.scheme}://#{host}:8080.")
+    end
+
+    unless (1..65535).includes?(port)
+      Noir::CLI.die("--probe-via port #{port} is out of range (1-65535) in '#{probe_via}'.")
+    end
+  end
+
+  # A url-dependent setting the user did NOT type on this command line
+  # came from the config file, which cannot know whether this particular
+  # run has a target URL. Aborting on it bricked every URL-less scan for
+  # anyone with `status_codes:`/`probe:` in their config — a documented
+  # key the generated template lists — and blamed a flag they never
+  # typed. A CLI flag stays a hard usage error; a config value is
+  # downgraded to a warning and switched off for this run.
+  private def self.require_url_or_disable!(noir_options : Hash(String, YAML::Any),
+                                           cli_flags : Set(String),
+                                           flag : String,
+                                           key : String,
+                                           example : String,
+                                           disabled : YAML::Any)
+    if cli_flags.includes?(flag)
+      Noir::CLI.die("#{flag} needs a target URL. Pass it with -u/--url, e.g. `#{example}`.")
+    end
+
+    STDERR.puts "WARNING: config key `#{key}` (#{flag}) needs a target URL; none was given, so it is disabled for this scan. Pass one with -u/--url, or drop `#{key}` from the config file.".colorize(WARNING_COLOR)
+    noir_options[key] = disabled
+  end
+
+  private def self.validate_url_dependent_flags(noir_options : Hash(String, YAML::Any),
+                                                cli_flags : Set(String))
     url = noir_options["url"].to_s
 
-    if noir_options["status_codes"] == true && url.empty?
-      Noir::CLI.die("--status-codes needs a target URL. Pass it with -u/--url, e.g. `noir scan ./app --status-codes -u http://localhost:3000`.")
+    if url.empty?
+      if noir_options["status_codes"] == true
+        require_url_or_disable!(noir_options, cli_flags,
+          flag: "--status-codes", key: "status_codes",
+          example: "noir scan ./app --status-codes -u http://localhost:3000",
+          disabled: YAML::Any.new(false))
+      end
+
+      # `--probe` and `--probe-via` both fire HTTP requests against
+      # `endpoint.url`, which is just the discovered path (e.g. `/sign`)
+      # until `-u/--url` prepends a base. Without `-u` the request URL is
+      # malformed and Crest raises — but the SendReq / SendWithProxy
+      # delivery loops catch + log to debug level only, so the user sees
+      # the normal JSON output with zero requests sent and no warning.
+      # Fail early instead.
+      if noir_options["probe"]? == YAML::Any.new(true)
+        require_url_or_disable!(noir_options, cli_flags,
+          flag: "--probe", key: "probe",
+          example: "noir scan ./app --probe -u http://localhost:3000",
+          disabled: YAML::Any.new(false))
+      end
+
+      probe_via = noir_options["probe_via"]?.try(&.to_s) || ""
+      unless probe_via.empty?
+        require_url_or_disable!(noir_options, cli_flags,
+          flag: "--probe-via", key: "probe_via",
+          example: "noir scan ./app --probe-via #{probe_via} -u http://localhost:3000",
+          disabled: YAML::Any.new(""))
+      end
+
+      unless noir_options["exclude_codes"].to_s.empty?
+        require_url_or_disable!(noir_options, cli_flags,
+          flag: "--exclude-codes", key: "exclude_codes",
+          example: "noir scan ./app --exclude-codes 404,500 -u http://localhost:3000",
+          disabled: YAML::Any.new(""))
+      end
     end
 
-    # `--probe` and `--probe-via` both fire HTTP requests against
-    # `endpoint.url`, which is just the discovered path (e.g. `/sign`)
-    # until `-u/--url` prepends a base. Without `-u` the request URL is
-    # malformed and Crest raises — but the SendReq / SendWithProxy
-    # delivery loops catch + log to debug level only, so the user sees
-    # the normal JSON output with zero requests sent and no warning.
-    # Fail early instead.
-    if noir_options["probe"]? == YAML::Any.new(true) && url.empty?
-      Noir::CLI.die("--probe needs a target URL. Pass it with -u/--url, e.g. `noir scan ./app --probe -u http://localhost:3000`.")
-    end
-
-    probe_via = noir_options["probe_via"]?.try(&.to_s) || ""
-    if !probe_via.empty? && url.empty?
-      Noir::CLI.die("--probe-via needs a target URL. Pass it with -u/--url, e.g. `noir scan ./app --probe-via #{probe_via} -u http://localhost:3000`.")
-    end
-
+    # Runs whether or not a URL was given: a malformed value is a typo
+    # worth reporting even on the config-sourced path above (which leaves
+    # the key empty, so this loop then has nothing to check).
     exclude_codes = noir_options["exclude_codes"].to_s
     return if exclude_codes.empty?
 
-    if url.empty?
-      Noir::CLI.die("--exclude-codes needs a target URL. Pass it with -u/--url, e.g. `noir scan ./app --exclude-codes 404,500 -u http://localhost:3000`.")
+    exclude_codes.split(",").each do |code|
+      code.strip.to_i
+    rescue
+      Noir::CLI.die("--exclude-codes only accepts comma-separated numbers; got '#{code}'.")
+    end
+  end
+
+  # `--exclude-path` patterns are only interpreted deep inside the
+  # detector's file walk, so a malformed one either aborts the scan
+  # halfway (an unterminated `[`, which at least reports itself) or
+  # silently matches nothing — `'*.{rb'`, `'{'`, `''` and `'  '` were all
+  # accepted and excluded exactly zero files, which from the outside is
+  # indistinguishable from an exclusion that worked. Validate the whole
+  # list at parse time instead, before a single file is read.
+  private def self.validate_exclude_path!(noir_options : Hash(String, YAML::Any),
+                                          argv : Array(String))
+    if blank_flag_value?(argv, ["--exclude-path"])
+      Noir::CLI.die("--exclude-path needs a glob pattern; the value given is empty.")
     end
 
-    exclude_codes.split(",").each do |code|
-      begin
-        code.strip.to_i
-      rescue
-        Noir::CLI.die("--exclude-codes only accepts comma-separated numbers; got '#{code}'.")
+    raw = noir_options["exclude_path"]?.try(&.to_s) || ""
+    return if raw.empty?
+
+    raw.split(",").each do |entry|
+      # Normalized exactly the way `Noir::ExcludePath` normalizes it, so
+      # what is validated is what will run.
+      pattern = entry.strip.gsub('\\', '/')
+      if pattern.empty?
+        Noir::CLI.die("--exclude-path contains a blank pattern in #{raw.inspect}; every comma-separated entry must be a glob.")
       end
+
+      if problem = glob_error(pattern)
+        Noir::CLI.die("--exclude-path contains an invalid glob pattern (#{problem}): #{pattern.inspect}.")
+      end
+    end
+  end
+
+  # Every spelling of each tech-selection flag. They all store a
+  # comma-separated string whose "never passed" value is `""` — the same
+  # string `--flag ''` produces, and the same one the generated config
+  # template ships — so the blank case can only be read off argv.
+  #
+  # `--only-techs ''` was the sharpest of these: it asked to *restrict* the
+  # scan and silently widened it back to everything, which is what a CI job
+  # doing `--only-techs "$TECHS"` gets when `$TECHS` is unset.
+  TECH_FLAG_SPELLINGS = {
+    "-t/--techs"      => ["-t", "--techs"],
+    "--only-techs"    => ["--only-techs"],
+    "--exclude-techs" => ["--exclude-techs"],
+  }
+
+  # True when any spelling in `names` appears on the command line carrying a
+  # value that is empty or whitespace only. The `--flag=value` form is only
+  # recognised for long spellings: `-t=x` is a value of `"=x"` to
+  # OptionParser, not an empty one.
+  private def self.blank_flag_value?(argv : Array(String), names : Array(String)) : Bool
+    argv.each_with_index do |arg, i|
+      if names.includes?(arg)
+        value = argv[i + 1]?
+        # A missing value is OptionParser's error to report, not ours.
+        return true if value && value.strip.empty?
+      else
+        names.each do |name|
+          next unless name.starts_with?("--") && arg.starts_with?("#{name}=")
+          return true if arg.split("=", 2)[1].strip.empty?
+        end
+      end
+    end
+    false
+  end
+
+  # `-t`, `--only-techs` and `--exclude-techs` given a value that names no
+  # tech at all. `CliValidation.validate_tech_names!` rejects a *wrong*
+  # name; this rejects no name, which the options hash cannot tell apart
+  # from the flag never being typed.
+  private def self.validate_blank_tech_flags!(argv : Array(String))
+    TECH_FLAG_SPELLINGS.each do |flag, names|
+      next unless blank_flag_value?(argv, names)
+      Noir::CLI.die("#{flag} needs at least one tech name; the value given is empty. " \
+                    "List supported names with `noir list techs`.")
+    end
+  end
+
+  # Returns nil for a usable glob, otherwise the reason it is broken.
+  #
+  # Both malformations are found by walking the pattern rather than by
+  # asking `File.match?`. Crystal's matcher is lazy: it only raises
+  # `BadPatternError` for an unterminated `[` once it actually *reaches*
+  # that `[`, and it stops at the first literal that does not match the
+  # subject. Probing with one fixed string therefore reported an
+  # unterminated character set for `a[b` (whose `a` happens to be a prefix
+  # of nothing in particular) and passed `z[b` — the identical
+  # malformation — straight through, where it then excluded nothing and
+  # matched no file loudly enough to raise either. Which of the two a user
+  # got depended on the first character of their pattern.
+  #
+  # Brace groups have the same problem in the other direction: `*.{rb` is
+  # accepted by the matcher and then never matches anything.
+  #
+  # Inside a character class a brace is an ordinary character, and the
+  # first character of a class is a literal member — `[]]` is the class
+  # containing `]`, exactly as Crystal's matcher reads it.
+  def self.glob_error(pattern : String) : String?
+    depth = 0
+    in_class = false
+    class_first = false
+    pattern.each_char do |char|
+      if in_class
+        if class_first
+          # `^` marks the class negated and does not consume the
+          # literal-member slot, so `[^]]` is still a valid class.
+          class_first = false unless char == '^'
+          next
+        end
+        in_class = false if char == ']'
+      elsif char == '['
+        in_class = true
+        class_first = true
+      elsif char == '{'
+        depth += 1
+      elsif char == '}'
+        depth -= 1
+        return "unmatched `}`" if depth < 0
+      end
+    end
+    return "unterminated `{` group" if depth > 0
+    return "unterminated character set" if in_class
+
+    # Backstop for anything the walk above does not model (brace nesting
+    # deeper than Crystal's ten levels, say).
+    begin
+      File.match?(pattern, "noir")
+      nil
+    rescue ex : File::BadPatternError
+      ex.message || "invalid pattern"
     end
   end
 
@@ -190,39 +510,132 @@ module Noir::CLI::ScanCommand
     !options["ai_model"].to_s.empty? || provider.downcase.starts_with?("acp:")
   end
 
+  # Names everything the scan did not cover — an analyzer that raised, files
+  # it could not read or parse, a directory the walk could not list, an
+  # export that never landed, a passive rule set that loaded nothing — so a
+  # degraded scan says so instead of reporting what survived as the whole
+  # story. Laid out like the detected-techs list above it (`├──` / `└──`),
+  # because it answers the same question: which parts of the scan actually
+  # processed what.
+  private def self.report_coverage_gaps(logger : NoirLogger,
+                                        failures : Array(AnalyzerFailure),
+                                        scope : String)
+    return if failures.empty?
+
+    plural = failures.size == 1 ? "gap" : "gaps"
+    logger.warning "#{failures.size} coverage #{plural} reported#{scope}; results may be incomplete."
+    failures.each_with_index do |failure, index|
+      prefix = index < failures.size - 1 ? "├──" : "└──"
+      logger.sub "#{prefix} #{failure.tech}: #{failure.message}"
+    end
+  end
+
+  # Exit code for a scan that produced its report.
+  #
+  # Exit 2 rather than 1 so a CI gate can tell "scan ran, coverage
+  # incomplete" from the usage/validation errors that already exit 1.
+  #
+  # `degraded` used to read `!app.analyzer_failures.empty?` when that list
+  # held tech-level analyzer failures and nothing else, so `--strict` — whose
+  # documented contract is "exit 2 if any analyzer failed *or skipped a
+  # file*" — reported green on a scan that lost a whole subtree to an
+  # unlistable directory, dropped every symlinked package, exported nothing,
+  # or ran zero passive rules. Every one of those now feeds the same list, so
+  # the test is unchanged and finally means what it says.
+  def self.scan_exit_code(app : NoirRunner, app_diff : NoirRunner?) : Int32
+    degraded = !app.analyzer_failures.empty?
+    if diff_app = app_diff
+      degraded ||= !diff_app.analyzer_failures.empty?
+    end
+
+    degraded && any_to_bool(app.options["strict"]?) ? 2 : 0
+  end
+
+  # Where the old side of a diff scan lives: the base paths to scan, the flag
+  # that named them (for messages), and — for `--diff-ref` — the scratch
+  # checkout that has to be deleted afterwards. `nil` bases means no diff.
+  private def self.resolve_diff_side(noir_options : Hash(String, YAML::Any), logger) : {Array(String)?, String, Noir::GitSnapshot::Snapshot?}
+    diff_path = noir_options["diff"].to_s
+    diff_ref = noir_options["diff_ref"]?.to_s
+
+    if !diff_path.empty? && !diff_ref.empty?
+      Noir::CLI.die("--diff-path and --diff-ref both name the old side of the diff; pass one.")
+    end
+
+    unless diff_ref.empty?
+      snapshot = begin
+        Noir::GitSnapshot.materialize(diff_ref, noir_options["base"].as_a.map(&.to_s))
+      rescue e : Noir::GitSnapshot::Error
+        Noir::CLI.die(e.message || "--diff-ref could not check out #{diff_ref}")
+      end
+      # `exit` does not unwind `ensure` blocks, and run_scan exits from
+      # several places, so the cleanup is tied to the process instead.
+      # ponytail: at_exit does not run when SIGINT/SIGTERM/SIGKILL end the
+      # process, so the checkout leaks then (its `noir-diff-ref-` prefix
+      # keeps it findable). Signal traps are no fix: their fiber starves
+      # behind CPU-bound analysis and Ctrl+C stops working. Upgrade path is
+      # an out-of-process reaper, e.g. a child
+      # `sh -c 'trap "" INT HUP TERM; cat >/dev/null; rm -rf "$0"' <root>`
+      # fed by a pipe only noir holds.
+      at_exit { FileUtils.rm_rf(snapshot.root) }
+      logger.info "Checked out #{diff_ref} (#{snapshot.commit[0, 12]}) as the old side of the diff."
+      return {snapshot.bases, "--diff-ref #{diff_ref}", snapshot}
+    end
+
+    return {nil, "", nil} if diff_path.empty?
+
+    # Validate the diff target exists — without this, a misspelled
+    # `--diff-path` silently treats every current endpoint as
+    # "added" (because the missing directory analyzes to zero
+    # endpoints), which is indistinguishable from "we made huge
+    # changes" in CI diff pipelines.
+    unless File.exists?(diff_path)
+      Noir::CLI.die("--diff-path does not exist: #{diff_path}")
+    end
+    unless File.directory?(diff_path)
+      Noir::CLI.die("--diff-path is not a directory: #{diff_path}")
+    end
+    {[diff_path], "--diff-path", nil}
+  end
+
   private def self.run_scan(noir_options : Hash(String, YAML::Any))
+    fail_on = Noir::DiffGate.parse(noir_options["fail_on"]?.to_s)
+    needs_auth_tags = Noir::DiffGate.needs_taggers?(fail_on) && !any_to_bool(noir_options["all_taggers"]?)
+    use_taggers = noir_options["use_taggers"]?.to_s
+    implied_taggers = needs_auth_tags && use_taggers.empty?
+    # `--use-taggers hunt --fail-on auth-removed` picked taggers, but none
+    # that emits the auth tag, so the gate could never fire — and in CI that
+    # reads exactly like a pull request that removed no auth.
+    implied_auth_taggers = needs_auth_tags && !use_taggers.empty? && !NoirTaggers.auth_tagging?(use_taggers)
+    # Set before either runner is built: both read the tagger options at
+    # construction, and the old side needs its auth tags as much as the new.
+    noir_options["all_taggers"] = YAML::Any.new(true) if implied_taggers
+    if implied_auth_taggers
+      noir_options["use_taggers"] = YAML::Any.new(([use_taggers] + NoirTaggers::AUTH_ENTRIES.map(&.key)).join(","))
+    end
+
     app = NoirRunner.new noir_options
     start_time = Time.instant
+    app.logger.info "Running all taggers because --fail-on auth-removed reads the auth tags." if implied_taggers
+    app.logger.info "Adding the auth taggers because --fail-on auth-removed reads the auth tags." if implied_auth_taggers
 
     app.logger.debug("Start Debug mode")
     app.logger.debug("Noir version: #{Noir::VERSION}")
     app.logger.debug("Noir options from arguments:")
     noir_options.each do |k, v|
-      app.logger.debug_sub("#{k}: #{v}")
+      app.logger.debug_sub("#{k}: #{Noir::Redact.option(k, v)}")
     end
 
     app.logger.debug "Initialized Options:"
     app.options.each do |k, v|
-      app.logger.debug_sub "#{k}: #{v}"
+      app.logger.debug_sub "#{k}: #{Noir::Redact.option(k, v)}"
     end
 
     app_diff = nil
-    unless noir_options["diff"].to_s.empty?
-      diff_path = noir_options["diff"].to_s
-      # Validate the diff target exists — without this, a misspelled
-      # `--diff-path` silently treats every current endpoint as
-      # "added" (because the missing directory analyzes to zero
-      # endpoints), which is indistinguishable from "we made huge
-      # changes" in CI diff pipelines.
-      unless File.exists?(diff_path)
-        Noir::CLI.die("--diff-path does not exist: #{diff_path}")
-      end
-      unless File.directory?(diff_path)
-        Noir::CLI.die("--diff-path is not a directory: #{diff_path}")
-      end
-
+    diff_bases, diff_label, snapshot = resolve_diff_side(noir_options, app.logger)
+    if bases = diff_bases
       diff_options = noir_options.dup
-      diff_options["base"] = YAML::Any.new([YAML::Any.new(diff_path)])
+      diff_options["base"] = YAML::Any.new(bases.map { |b| YAML::Any.new(b) })
       # `noir_options.dup` already carries over the parent's `nolog`
       # setting, so --no-log applies to both scans uniformly.
       # The previous shape force-set nolog=false for the diff side,
@@ -243,6 +656,11 @@ module Noir::CLI::ScanCommand
       diff_options["probe_via"] = YAML::Any.new("")
       diff_options["export_es"] = YAML::Any.new("")
       diff_options["export_webhook"] = YAML::Any.new("")
+      # The status-code probe is a probe too, and `--exclude-codes` on the
+      # old side dropped every removed endpoint (they 404 now) before the
+      # diff could name it.
+      diff_options["status_codes"] = YAML::Any.new(false)
+      diff_options["exclude_codes"] = YAML::Any.new("")
 
       app_diff = NoirRunner.new diff_options
       app.logger.info "Running Noir with Diff mode."
@@ -258,39 +676,64 @@ module Noir::CLI::ScanCommand
       app.logger.warning "No technologies detected."
       app.logger.sub "➔ If you know the technology, use the -t flag to specify it."
       app.logger.sub "➔ Browse the supported tech list with `noir list techs`."
-      if !app.options["url"].to_s.empty?
-        app.logger.info "Falling back to file-based analysis because -u was set."
+      if FileAnalyzer.new(app.options).hooks_count > 0
+        # Asks the analyzer that will actually run instead of re-deriving
+        # its activation rule here. `-u` is still what switches the file
+        # hooks on, but it is no longer sufficient: `--only-techs`
+        # restricts the scan to technologies these hooks are not among, and
+        # announcing a fallback that then produces nothing is how a
+        # CLI-side copy of an analyzer's rule goes wrong. The previous copy
+        # went wrong in the other direction — it gated the whole file
+        # analyzer on `-u`, so a code base whose only surface was a
+        # `.graphql` operation document reported zero endpoints.
+        app.logger.info "Falling back to file-based analysis."
       elsif ai_provider_active?(app.options)
         app.logger.info "Falling back to AI-based analysis because --ai-provider was set."
+      elsif app_diff
+        # Nothing to analyze on this side is itself a diff result: a change
+        # that deletes every route leaves no framework to detect. Stopping
+        # here skipped the diff, so every removed endpoint went unreported
+        # and `--fail-on removed` passed the change that removed them all.
+        app.logger.info "Continuing so the diff can report what the old side had."
       elsif app.passive_results.size > 0
         app.logger.info "Noir found #{app.passive_results.size} passive results."
+        # The detection walk still ran, so it can still have lost a subtree
+        # — and this branch returns without ever reaching the `--strict`
+        # check at the bottom of the method.
+        report_coverage_gaps(app.logger, app.analyzer_failures, "")
         app.report
-        exit(0)
+        exit(scan_exit_code(app, app_diff))
       else
-        # Structured output formats need a valid empty document on
-        # stdout even when no endpoints were discovered — downstream
-        # `jq` / SARIF parsers / CI report uploaders treat zero bytes
-        # as a hard error. Plain text formats stay silent because
-        # there's nothing meaningful to render.
-        if STRUCTURED_OUTPUT_FORMATS.includes?(app.options["format"].to_s)
+        # Structured formats still get a report call on an empty scan, so
+        # downstream consumers receive a valid empty document rather than
+        # nothing. Which formats those are is declared on the builder
+        # (`structured: true`) — see `Noir::OutputFormats::STRUCTURED_NAMES`.
+        report_coverage_gaps(app.logger, app.analyzer_failures, "")
+        if Noir::OutputFormats.structured?(app.options["format"].to_s)
           app.report
         end
-        exit(0)
+        # "No technologies detected" is exactly the shape an unlistable or
+        # unreadable base directory produces, so this is the branch where a
+        # silent loss is most likely and least visible.
+        exit(scan_exit_code(app, app_diff))
       end
     else
       app.logger.success "Detected #{app.techs.size} technologies."
 
-      exclude_techs = app.options["exclude_techs"].to_s.split(",")
+      # Alias-resolved once, then matched by identity. `--exclude-techs`
+      # used to ask `similar_to_tech(entry).includes?(tech)`, a substring
+      # test that also dropped every tech whose name is a prefix of the
+      # excluded one — `--exclude-techs python_django_ninja` took
+      # `python_django` with it. See `NoirTechs.resolve_tech_list`.
+      exclude_techs = NoirTechs.resolve_tech_list(app.options["exclude_techs"].to_s).to_set
       app.techs.each_with_index do |tech, index|
-        is_excluded = exclude_techs.any? { |t| NoirTechs.similar_to_tech(t).includes?(tech) }
+        is_excluded = exclude_techs.includes?(tech)
         prefix = index < app.techs.size - 1 ? "├──" : "└──"
         status = is_excluded ? " (skip)" : ""
         app.logger.sub "#{prefix} #{tech}#{status}"
       end
 
-      app.techs = app.techs.reject do |tech|
-        exclude_techs.any? { |t| NoirTechs.similar_to_tech(t).includes?(tech) }
-      end
+      app.techs = app.techs.reject { |tech| exclude_techs.includes?(tech) }
       analysis_message = "Starting code analysis based on the detected technologies."
     end
 
@@ -298,6 +741,7 @@ module Noir::CLI::ScanCommand
       app.analyze
     end
     app.logger.success "Identified #{app.endpoints.size} endpoints in total."
+    report_coverage_gaps(app.logger, app.analyzer_failures, "")
 
     elapsed = Time.instant - start_time
     app.logger.info "Scan completed in #{(elapsed.total_milliseconds / 1000.0).round(4)} s."
@@ -307,13 +751,58 @@ module Noir::CLI::ScanCommand
       app.report
     else
       app.logger.info "Diffing base and diff codebases."
+      # Kept even though `LocatorKeys.reset` now runs at the top of each
+      # phase: this is a real codebase boundary, and `clear_all` is the only
+      # thing that also drops `Process`-lifetime slots a library caller
+      # declared. It does not reset `scan_base_paths` — `NoirRunner#detect`
+      # re-publishes those before anything walks a file, which is why the
+      # first codebase's roots have never been observable here.
       locator = CodeLocator.instance
       locator.clear_all
       app_diff.detect
       app_diff.analyze
+      if snap = snapshot
+        # The old side was scanned out of a scratch checkout that is deleted
+        # on exit, so a removed endpoint's `code_paths` would point at a
+        # directory that no longer exists. Report them under the base the
+        # user actually passed, which is where that file lived at REF.
+        app_diff.endpoints = snap.relocate(app_diff.endpoints, noir_options["base"].as_a.map(&.to_s))
+      end
+      # The diff is computed against the old codebase's endpoint list, so an
+      # analyzer that died over there turns unscanned routes into phantom
+      # "added" entries. Named separately from the base scan's failures —
+      # the two scans have different code, and only one of them is the one
+      # the user is about to act on.
+      report_coverage_gaps(app.logger, app_diff.analyzer_failures, " in the #{diff_label} codebase")
 
       app.logger.info "Generating Diff Report."
-      app.diff_report(app_diff)
+      diff_result = app.diff_report(app_diff)
     end
+
+    LLM::HttpTransport.usage_summary(LLM::Cache.hits).try { |line| app.logger.info line }
+
+    # After the report, never before: a degraded scan still has results, and
+    # the point of `--strict` is to flag them, not to withhold them.
+    code = scan_exit_code(app, app_diff)
+    exit(code) if code != 0
+
+    # Checked after `--strict`: an incomplete scan is the more fundamental
+    # failure, and its findings are the ones that cannot be trusted.
+    if diff_result && !fail_on.empty?
+      counts = OutputBuilderDiff.gate_counts(diff_result)
+      fired = Noir::DiffGate.fired(fail_on, counts)
+      unless fired.empty?
+        # STDERR, not the logger: `--no-log` is the CI shape, and the reason
+        # a job went red must not be the one line it hides.
+        summary = fired.join(", ") { |category| "#{counts[category]} #{category}" }
+        STDERR.puts "noir: --fail-on matched: #{summary}"
+        exit(Noir::DiffGate::EXIT_CODE)
+      end
+    end
+  rescue e : Noir::InvalidExcludePathError
+    # Raised from the detector's file walk once a malformed --exclude-path
+    # glob is actually reached. Without this the process printed a raw
+    # Crystal backtrace from a dead fiber and still exited 0.
+    Noir::CLI.die(e.message || "--exclude-path contains an invalid glob pattern.")
   end
 end

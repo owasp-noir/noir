@@ -1,9 +1,13 @@
 require "../../../utils/utils.cr"
 require "../../../models/analyzer"
+require "../../engines/java_engine"
 require "xml"
+require "../../../utils/xml_comments"
 
 module Analyzer::Java
   class Jsp < Analyzer
+    analyzer_for "java_jsp"
+
     alias ServletClassKey = Tuple(String, String)
 
     # Crystal recompiles an interpolated regex literal on every evaluation
@@ -24,74 +28,48 @@ module Analyzer::Java
     # The request-access matchers interpolate a discovered receiver name, so
     # they can't be hoisted — memoize them per receiver instead of rebuilding
     # four regexes for every handler body.
-    @servlet_param_regexes = Hash(String, Tuple(Regex, Regex, Regex, Regex)).new
+    @servlet_param_regexes = Hash(String, Tuple(Regex, Regex, Regex)).new
 
     def analyze
       servlet_methods = collect_servlet_methods
 
-      # Source Analysis
-      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
+      # Source Analysis — driven by the shared pool on `Analyzer`. See the
+      # note in `java/armeria.cr`: the inlined pool this replaces closed the
+      # channel outside an `ensure` and caught only `IO::Error`, so a
+      # non-IO failure in a worker killed the worker and left the producer
+      # parked on a full channel for the rest of the process's life.
+      scan_files(all_files) do |path|
+        next if JavaEngine.test_path?(base_relative_path(path))
 
-      begin
-        WaitGroup.wait do |wg|
-          # Producer — tracked by the WaitGroup
-          wg.spawn do
-            all_files.each { |file| channel.send(file) }
-            channel.close
+        relative_path = get_relative_path(configured_base_for(path), path)
+
+        if File.exists?(path) && File.extname(path) == ".jsp"
+          next if web_inf_jsp?(relative_path)
+
+          content = read_file_content(path)
+          params_query = extract_params(content)
+          details = Details.new(PathInfo.new(path))
+          result << Endpoint.new(jsp_request_path(relative_path), "GET", params_query, details)
+          extract_form_endpoints(content, details).each do |endpoint|
+            result << endpoint
           end
-
-          @options["concurrency"].to_s.to_i.times do
-            wg.spawn do
-              loop do
-                begin
-                  path = channel.receive?
-                  break if path.nil?
-                  next if File.directory?(path)
-
-                  relative_path = get_relative_path(configured_base_for(path), path)
-
-                  if File.exists?(path) && File.extname(path) == ".jsp"
-                    next if web_inf_jsp?(relative_path)
-
-                    File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-                      content = file.gets_to_end
-                      params_query = extract_params(content)
-                      details = Details.new(PathInfo.new(path))
-                      result << Endpoint.new(jsp_request_path(relative_path), "GET", params_query, details)
-                      extract_form_endpoints(content, details).each do |endpoint|
-                        result << endpoint
-                      end
-                    end
-                  elsif File.exists?(path) && File.extname(path) == ".java"
-                    content = read_file_content(path)
-                    details = Details.new(PathInfo.new(path))
-                    extract_web_servlet_endpoints(content, details).each do |endpoint|
-                      result << endpoint
-                    end
-                  elsif File.exists?(path) && File.basename(path) == "web.xml"
-                    content = read_file_content(path)
-                    details = Details.new(PathInfo.new(path))
-                    extract_web_xml_endpoints(content, servlet_methods, details, configured_base_for(path)).each do |endpoint|
-                      result << endpoint
-                    end
-                  end
-                rescue File::NotFoundError
-                  logger.debug "File not found: #{path}"
-                end
-              end
-            end
+        elsif File.exists?(path) && File.extname(path) == ".java"
+          content = read_file_content(path)
+          details = Details.new(PathInfo.new(path))
+          extract_web_servlet_endpoints(content, details).each do |endpoint|
+            result << endpoint
+          end
+        elsif File.exists?(path) && File.basename(path) == "web.xml"
+          content = read_file_content(path)
+          details = Details.new(PathInfo.new(path))
+          extract_web_xml_endpoints(content, servlet_methods, details, configured_base_for(path)).each do |endpoint|
+            result << endpoint
           end
         end
-      rescue e
-        logger.debug e
       end
       Fiber.yield
 
       result
-    end
-
-    def allow_patterns
-      ["request.getParameter", "request.getAttribute", "request.getHeader", "request.getCookies", "${param.", "${param[", "${paramValues.", "${cookie.", "@WebServlet", "<servlet-mapping>"]
     end
 
     private def collect_servlet_methods : Hash(ServletClassKey, Hash(String, Array(Param)))
@@ -103,18 +81,30 @@ module Analyzer::Java
         content = read_file_content(path)
         next unless servlet_source?(content)
 
-        methods = extract_servlet_http_methods(content)
-        next if methods.empty?
+        base_path = configured_base_for(path)
+        package_name = java_package_name(content)
 
-        if class_name = java_class_name(content)
-          base_path = configured_base_for(path)
+        # One .java file can declare multiple HttpServlet subclasses (each
+        # mapped separately via web.xml). Scope method extraction to each
+        # class body so later classes are not dropped or given the first
+        # class's params.
+        content.scan(/\bclass\s+([A-Za-z_][A-Za-z0-9_]*)\b[^{]*\bextends\s+HttpServlet\b/) do |match|
+          class_name = match[1]
+          class_end = match.end(0) || 0
+          brace_index = content.index('{', class_end)
+          next unless brace_index
+
+          class_body = extract_balanced_block(content, brace_index)
+          methods = extract_servlet_http_methods(class_body)
+          next if methods.empty?
+
           servlet_methods[{base_path, class_name}] = methods
-          if package_name = java_package_name(content)
+          if package_name
             servlet_methods[{base_path, "#{package_name}.#{class_name}"}] = methods
           end
         end
-      rescue File::NotFoundError
-        logger.debug "File not found: #{path}"
+      rescue e : IO::Error
+        logger.debug "Skipping #{path}: #{e.message}"
       end
 
       servlet_methods
@@ -152,7 +142,13 @@ module Analyzer::Java
         add_param(params, match[1], "header")
       end
 
-      add_param(params, "", "cookie") if content.match(/request\s*\.\s*getCookies\s*\(/)
+      # No `getCookies()` param: it hands back the whole cookie jar without
+      # naming anything, so there is no name to report. Emitting a param
+      # with an empty name pushed that hole straight into the output —
+      # `curl --cookie '='`, an empty `└──` node in plain, and a
+      # `{"name": "", "in": "cookie"}` entry that makes the OAS document
+      # invalid (`name` is required and must be non-empty). Named reads
+      # (`${cookie.x}`, `${cookie["x"]}`) are still collected below.
 
       content.scan(/\$\{\s*param(?:Values)?\.([A-Za-z_][A-Za-z0-9_-]*)/) do |match|
         add_param(params, match[1], "query")
@@ -197,11 +193,20 @@ module Analyzer::Java
       endpoints = [] of Endpoint
       return endpoints unless content.includes?("@WebServlet")
 
-      methods = extract_servlet_http_methods(content)
-      return endpoints if methods.empty?
-
-      content_without_comments(content).scan(/@WebServlet\s*(?:\((.*?)\))?\s*(?:public\s+|protected\s+|private\s+)?(?:final\s+|abstract\s+)?class\s+\w+/m) do |match|
+      # Work on comment-stripped content so match offsets align with the
+      # class-body slice we feed to extract_servlet_http_methods. Multiple
+      # @WebServlet classes in one file each get their own method/params set.
+      cleaned = JavaEngine.strip_comments(content)
+      cleaned.scan(/@WebServlet\s*(?:\((.*?)\))?\s*(?:public\s+|protected\s+|private\s+)?(?:final\s+|abstract\s+)?class\s+\w+/m) do |match|
         annotation_body = match[1]? || ""
+        class_end = match.end(0) || 0
+        brace_index = cleaned.index('{', class_end)
+        next unless brace_index
+
+        class_body = extract_balanced_block(cleaned, brace_index)
+        methods = extract_servlet_http_methods(class_body)
+        next if methods.empty?
+
         extract_servlet_url_patterns(annotation_body).each do |pattern|
           methods.each do |method, params|
             add_endpoint(endpoints, pattern, method, params, details)
@@ -217,7 +222,7 @@ module Analyzer::Java
                                           details : Details,
                                           base_path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
-      doc = XML.parse(content)
+      doc = Noir::XmlComments.parse(content)
       servlet_classes = Hash(String, String).new
       jsp_servlets = Set(String).new
 
@@ -262,6 +267,40 @@ module Analyzer::Java
         end
       end
 
+      # Root welcome-file alias: a request to `/` is served by the first
+      # matching root-level welcome JSP. Only handle simple filenames (no
+      # path separators) so we do not invent per-directory `/sub/` aliases.
+      welcome_files = doc.xpath_nodes("//*[local-name()='welcome-file-list']/*[local-name()='welcome-file']")
+        .map(&.content.strip)
+        .reject(&.empty?)
+
+      welcome_files.each do |welcome_file|
+        next if welcome_file.includes?("/") || welcome_file.includes?("\\")
+        next unless welcome_file.ends_with?(".jsp")
+
+        expected_path = "/#{welcome_file}"
+        matched = false
+
+        all_files.each do |jsp_path|
+          next unless File.extname(jsp_path) == ".jsp"
+          next unless configured_base_for(jsp_path) == base_path
+
+          relative_path = get_relative_path(base_path, jsp_path)
+          next if web_inf_jsp?(relative_path)
+          next unless jsp_request_path(relative_path) == expected_path
+
+          jsp_content = read_file_content(jsp_path)
+          params = extract_params(jsp_content)
+          add_endpoint(endpoints, "/", "GET", params, details)
+          matched = true
+          break
+        rescue e : IO::Error
+          logger.debug "Skipping #{jsp_path}: #{e.message}"
+        end
+
+        break if matched
+      end
+
       endpoints
     rescue XML::Error
       [] of Endpoint
@@ -283,12 +322,13 @@ module Analyzer::Java
         content = read_file_content(path)
         methods = extract_servlet_http_methods(content)
         return methods unless methods.empty?
-      rescue File::NotFoundError
-        logger.debug "File not found: #{path}"
+      rescue e : IO::Error
+        logger.debug "Skipping #{path}: #{e.message}"
       end
     end
 
     private def extract_servlet_http_methods(content : String) : Hash(String, Array(Param))
+      content = JavaEngine.strip_comments(content)
       methods = Hash(String, Array(Param)).new
 
       SERVLET_DO_METHOD_PATTERNS.each do |method, pattern|
@@ -315,12 +355,13 @@ module Analyzer::Java
       request_param_type = method == "GET" ? "query" : "form"
 
       request_receivers.each do |receiver|
-        parameter_re, attribute_re, header_re, cookie_re = @servlet_param_regexes[receiver] ||= begin
+        # No `getCookies()` regex here for the same reason as the JSP path
+        # above: the call names no cookie, so there is nothing to report.
+        parameter_re, attribute_re, header_re = @servlet_param_regexes[receiver] ||= begin
           receiver_pattern = Regex.escape(receiver)
           {/#{receiver_pattern}\s*\.\s*get(?:Parameter|ParameterValues)\s*\(\s*["']([^"']+)["']\s*\)/,
            /#{receiver_pattern}\s*\.\s*getAttribute\s*\(\s*["']([^"']+)["']\s*\)/,
-           /#{receiver_pattern}\s*\.\s*getHeaders?\s*\(\s*["']([^"']+)["']\s*\)/,
-           /#{receiver_pattern}\s*\.\s*getCookies\s*\(/}
+           /#{receiver_pattern}\s*\.\s*getHeaders?\s*\(\s*["']([^"']+)["']\s*\)/}
         end
 
         content.scan(parameter_re) do |match|
@@ -335,8 +376,6 @@ module Analyzer::Java
         content.scan(header_re) do |match|
           add_param(params, match[1], "header")
         end
-
-        add_param(params, "", "cookie") if content.match(cookie_re)
       end
 
       params
@@ -402,15 +441,17 @@ module Analyzer::Java
       action
     end
 
-    private def servlet_source?(content : String) : Bool
-      content.includes?("@WebServlet") ||
-        (content.includes?("HttpServlet") && !!content.match(/\bextends\s+HttpServlet\b/))
-    end
+    # Neither branch can hold without one of these two literals, so the
+    # union is an exact pre-gate — and it replaces two `String#includes?`
+    # scans of every `.java` file in the tree with one precompiled pass.
+    SERVLET_MARKERS_RE = Regex.union("@WebServlet", "HttpServlet")
+    AT_WEBSERVLET_RE   = Regex.union("@WebServlet")
+    HTTPSERVLET_RE     = Regex.union("HttpServlet")
 
-    private def java_class_name(content : String) : String?
-      if match = content.match(/\bclass\s+([A-Za-z_][A-Za-z0-9_]*)/)
-        match[1]
-      end
+    private def servlet_source?(content : String) : Bool
+      return false unless content_matches?(content, SERVLET_MARKERS_RE)
+      content_matches?(content, AT_WEBSERVLET_RE) ||
+        (content_matches?(content, HTTPSERVLET_RE) && !!content.match(/\bextends\s+HttpServlet\b/))
     end
 
     private def java_package_name(content : String) : String?
@@ -419,26 +460,23 @@ module Analyzer::Java
       end
     end
 
-    private def content_without_comments(content : String) : String
-      content
-        .gsub(/\/\*.*?\*\//m, "")
-        .gsub(/\/\/.*$/, "")
-    end
-
     private def extract_balanced_block(content : String, open_index : Int32) : String
+      # Scan by CHARACTER via `each_char_with_index`, not a manual
+      # `while i < content.size; content[i]` loop: this walks a whole
+      # servlet handler body, and Crystal's String#[] is O(n) per access on
+      # non-ASCII content, making the old indexed loop O(n^2) in the worst
+      # case. One forward pass here keeps it O(n) regardless of encoding.
       depth = 0
-      i = open_index
 
-      while i < content.size
-        case content[i]
+      content.each_char_with_index do |char, i|
+        next if i < open_index
+        case char
         when '{'
           depth += 1
         when '}'
           depth -= 1
           return content[open_index..i] if depth == 0
         end
-
-        i += 1
       end
 
       content[open_index..]

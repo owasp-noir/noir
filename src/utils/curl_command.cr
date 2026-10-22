@@ -1,0 +1,134 @@
+require "./control_chars"
+
+# Shared curl command construction used by the curl output builder and the
+# HTML report's copy-as-curl feature.
+module CurlCommand
+  # Line breaks become `\r`/`\n` text so a command stays on one line, and any
+  # other control character `\xNN` (`ControlChars`), so a route carrying
+  # `\e]8;;…` cannot drive the terminal the command is printed to. Lossy:
+  # control chars become literal `\xNN` text in the command, not the original
+  # bytes (no ANSI-C `$'…'` quoting).
+  def self.shell_quote(str : String) : String
+    "'#{ControlChars.escape(str.gsub("\r", "\\r").gsub("\n", "\\n")).gsub("'", "'\\''")}'"
+  end
+
+  # An endpoint's multipart `(name, value)` text and file fields. No file
+  # fields means the request is not an upload.
+  def self.form_fields(params) : {Array(Tuple(String, String)), Array(Tuple(String, String))}
+    text_fields = [] of Tuple(String, String)
+    file_fields = [] of Tuple(String, String)
+    params.each do |param|
+      case param.request_type
+      when "file"
+        file_fields << {param.name, param.value}
+      when "form"
+        text_fields << {param.name, param.value}
+      end
+    end
+    {text_fields, file_fields}
+  end
+
+  # The curl command for one verb of a baked endpoint: multipart when it has
+  # a file field, `--data-raw` otherwise.
+  #
+  # HEAD goes out bodiless: `-I` refuses to combine with `--data-raw`/`-F`.
+  def self.for_endpoint(method : String, baked, params) : String
+    return build(method, baked[:url], "", "", baked[:header], baked[:cookie]) if method == "HEAD"
+
+    text_fields, file_fields = form_fields(params)
+    if file_fields.empty?
+      build(method, baked[:url], baked[:body], baked[:body_type], baked[:header], baked[:cookie])
+    else
+      build_multipart(method, baked[:url], text_fields, file_fields, baked[:header], baked[:cookie])
+    end
+  end
+
+  def self.build(method : String, url : String, body : String, body_type : String,
+                 headers : Array(String), cookies : Array(String)) : String
+    parts = ["curl"] + method_flags(method) << shell_quote(url)
+
+    unless body.empty?
+      content_type = body_type == "json" ? "application/json" : "application/x-www-form-urlencoded"
+      parts << "--data-raw"
+      parts << shell_quote(body)
+      # A header param naming the type (a HAR capture always carries one) is
+      # the real value, and adding ours sent two. An empty one names nothing,
+      # so ours replaces it instead of riding along as `Content-Type;`.
+      unless content_type_given?(headers)
+        headers = headers.reject { |header| content_type?(header) }
+        parts << "-H"
+        parts << shell_quote("Content-Type: #{content_type}")
+      end
+    end
+
+    append_headers_and_cookies(parts, headers, cookies)
+    parts.join(" ")
+  end
+
+  # Upload endpoints (`param_type: file`) must use `-F` so curl sends
+  # multipart/form-data. `--data-raw` cannot carry a file part, and the
+  # previous builders simply dropped every file field — `POST /modern.php`
+  # printed only `name=` while `-f postman` / OAS kept `avatar`.
+  #
+  # `file_fields` are `(name, path_hint)`; an empty hint uses the field name
+  # as the `@filename` placeholder (same idea as Postman's empty `src`).
+  #
+  # Text fields go out as `--form-string`, which curl sends verbatim. Under
+  # `-F` a value opening with `<` or `@` is read from a local file, and a
+  # `;type=` / `;filename=` suffix is parsed as a part attribute — so a
+  # `--pvalue` payload such as `<script>…` failed with curl error 26, and
+  # `@/etc/passwd` would have uploaded that file. Only the file parts keep
+  # `-F`, because there the `@` is the point.
+  def self.build_multipart(method : String, url : String,
+                           text_fields : Array(Tuple(String, String)),
+                           file_fields : Array(Tuple(String, String)),
+                           headers : Array(String), cookies : Array(String)) : String
+    parts = ["curl"] + method_flags(method) << shell_quote(url)
+
+    text_fields.each do |name, value|
+      parts << "--form-string"
+      parts << shell_quote("#{name}=#{value}")
+    end
+
+    file_fields.each do |name, path_hint|
+      filename = path_hint.empty? ? name : path_hint
+      parts << "-F"
+      parts << shell_quote("#{name}=@#{filename}")
+    end
+
+    # curl sets the multipart Content-Type (with boundary) itself when `-F`
+    # or `--form-string` is used; do not force urlencoded/json here.
+    append_headers_and_cookies(parts, headers, cookies)
+    parts.join(" ")
+  end
+
+  # Whether baked `Name: value` headers carry a non-empty Content-Type.
+  private def self.content_type_given?(headers : Array(String)) : Bool
+    headers.any? { |header| content_type?(header) && !header.partition(": ")[2].empty? }
+  end
+
+  private def self.content_type?(header : String) : Bool
+    header.partition(": ")[0].compare("content-type", case_insensitive: true) == 0
+  end
+
+  # `-X HEAD` makes curl wait for a body the server never sends, hanging
+  # on a keep-alive connection; `-I` is curl's HEAD request.
+  private def self.method_flags(method : String) : Array(String)
+    method == "HEAD" ? ["-I", "-g"] : ["-i", "-g", "-X", shell_quote(method)]
+  end
+
+  private def self.append_headers_and_cookies(parts : Array(String), headers : Array(String), cookies : Array(String))
+    headers.each do |header|
+      # curl drops `-H 'Name: '` (and `Accept: ` removes its default
+      # Accept); `Name;` is its syntax for sending the header empty.
+      name, _, value = header.partition(": ")
+      parts << "-H"
+      parts << shell_quote(value.empty? ? "#{name};" : header)
+    end
+
+    cookies.each do |cookie|
+      parts << "--cookie"
+      parts << shell_quote(cookie)
+    end
+  end
+end

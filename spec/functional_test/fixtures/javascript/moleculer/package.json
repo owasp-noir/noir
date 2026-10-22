@@ -1,0 +1,8 @@
+{
+  "name": "moleculer-demo",
+  "private": true,
+  "dependencies": {
+    "moleculer": "^0.14.33",
+    "moleculer-web": "^0.10.7"
+  }
+}

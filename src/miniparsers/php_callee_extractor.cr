@@ -28,29 +28,49 @@ module Noir::PhpCalleeExtractor
       scan_line(sanitized, file_path, start_line + index, entries)
     end
 
-    dedup_entries(entries)
+    entries.uniq
+  end
+
+  # `content` with `//`, `#` and `/* */` comments blanked, string literals
+  # and `#[Attribute]`s kept, and every line in place.
+  def strip_comments(content : String) : String
+    in_block_comment = false
+    content.split('\n').join('\n') do |line|
+      sanitized, in_block_comment = sanitize_line(line, in_block_comment, keep_strings: true)
+      sanitized
+    end
   end
 
   private def scan_line(line : String, file_path : String, line_number : Int32, entries : Array(Entry))
-    line.scan(CLASS_PROPERTY_CALL_REGEX) do |match|
-      name = normalize_object_call(match[1])
-      next if skip_callee?(name)
+    # All four call patterns require `(` after the callee name. Pure
+    # assignment / property lines cannot produce a callee.
+    return unless line.includes?('(')
 
-      entries << {name, file_path, line_number}
-    end
+    if line.includes?("::") || line.includes?("->")
+      line.scan(CLASS_PROPERTY_CALL_REGEX) do |match|
+        name = normalize_call(match[1])
+        next if skip_callee?(name)
 
-    line.scan(OBJECT_CALL_REGEX) do |match|
-      name = normalize_object_call(match[1])
-      next if skip_callee?(name)
+        entries << {name, file_path, line_number}
+      end
 
-      entries << {name, file_path, line_number}
-    end
+      if line.includes?("->")
+        line.scan(OBJECT_CALL_REGEX) do |match|
+          name = normalize_call(match[1])
+          next if skip_callee?(name)
 
-    line.scan(STATIC_CALL_REGEX) do |match|
-      name = normalize_static_call(match[1])
-      next if skip_callee?(name)
+          entries << {name, file_path, line_number}
+        end
+      end
 
-      entries << {name, file_path, line_number}
+      if line.includes?("::")
+        line.scan(STATIC_CALL_REGEX) do |match|
+          name = normalize_call(match[1])
+          next if skip_callee?(name)
+
+          entries << {name, file_path, line_number}
+        end
+      end
     end
 
     line.scan(BARE_CALL_REGEX) do |match|
@@ -68,11 +88,7 @@ module Noir::PhpCalleeExtractor
     line[0...name_start].match(/\bfunction\s*&?\s*$/) ? true : false
   end
 
-  private def normalize_object_call(name : String) : String
-    name.gsub(/\s+/, "")
-  end
-
-  private def normalize_static_call(name : String) : String
+  private def normalize_call(name : String) : String
     name.gsub(/\s+/, "")
   end
 
@@ -81,11 +97,6 @@ module Noir::PhpCalleeExtractor
     return false if name.includes?("->") || name.includes?("::")
 
     RESERVED.includes?(name.downcase)
-  end
-
-  def strip_comment(line : String) : String
-    sanitized, _ = sanitize_line(line, false)
-    sanitized
   end
 
   # ASCII byte values for the delimiters scanned below. All < 0x80, so a
@@ -97,6 +108,7 @@ module Noir::PhpCalleeExtractor
   private BYTE_BACKSLASH = '\\'.ord.to_u8
   private BYTE_DQUOTE    = '"'.ord.to_u8
   private BYTE_SQUOTE    = '\''.ord.to_u8
+  private BYTE_LBRACKET  = '['.ord.to_u8
   private BYTE_SPACE     = ' '.ord.to_u8
 
   # Blank out string literals and comments so the call-pattern regexes only
@@ -106,7 +118,10 @@ module Noir::PhpCalleeExtractor
   # literal) cost O(n^2). String/comment bytes are replaced with spaces;
   # code bytes (including any multi-byte ones outside strings) are copied
   # verbatim so the result stays valid UTF-8.
-  private def sanitize_line(line : String, in_block_comment : Bool) : Tuple(String, Bool)
+  #
+  # With `keep_strings` only comments are blanked: string bytes are copied
+  # verbatim and a PHP 8 `#[Attribute]` is code, not a `#` comment.
+  private def sanitize_line(line : String, in_block_comment : Bool, keep_strings : Bool = false) : Tuple(String, Bool)
     bytes = line.to_slice
     size = bytes.size
     sanitized = String.build do |io|
@@ -129,7 +144,7 @@ module Noir::PhpCalleeExtractor
             index += 1
           end
         elsif in_string
-          io << ' '
+          keep_strings ? io.write_byte(char) : io << ' '
           if escaped
             escaped = false
           elsif char == BYTE_BACKSLASH
@@ -142,11 +157,12 @@ module Noir::PhpCalleeExtractor
           io << "  "
           in_block_comment = true
           index += 2
-        elsif (char == BYTE_SLASH && next_char == BYTE_SLASH) || char == BYTE_HASH
+        elsif (char == BYTE_SLASH && next_char == BYTE_SLASH) ||
+              (char == BYTE_HASH && !(keep_strings && next_char == BYTE_LBRACKET))
           (size - index).times { io.write_byte(BYTE_SPACE) }
           index = size
         elsif char == BYTE_DQUOTE || char == BYTE_SQUOTE
-          io << ' '
+          keep_strings ? io.write_byte(char) : io << ' '
           in_string = true
           quote = char
           index += 1

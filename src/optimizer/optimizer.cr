@@ -1,6 +1,12 @@
 require "../models/endpoint"
 require "../models/logger"
+require "../techs/techs"
+require "../utils/media_filter"
 require "../utils/*"
+require "./optimizer/graphql"
+require "./optimizer/path_params"
+require "./optimizer/pvalue"
+require "./optimizer/url_shapes"
 
 # Endpoint optimization module that handles endpoint deduplication,
 # URL combination, and path parameter extraction
@@ -8,20 +14,23 @@ class EndpointOptimizer
   # Generic request headers a browser/HTTP client always sends; they carry no
   # endpoint-specific signal, so collection imports that surface them as params
   # are treated as noise during dedup.
-  COLLECTION_NOISE_HEADERS = Set{"user-agent", "accept", "content-type", "host", "origin", "referer", "x-requested-with"}
+  COLLECTION_NOISE_HEADERS = Set{"user-agent", "accept", "content-type", "host", "origin", "referer", "x-requested-with", "cookie"}
+
+  # HTTP API contracts whose operations a code analyzer can report too. An
+  # endpoint only these (and other declarations) produced, in a scan where
+  # code analyzers did report routes, is tagged `spec-only`. gRPC, Thrift,
+  # GraphQL, WSDL and AsyncAPI are left out: no code analyzer emits their
+  # operations in a comparable form, so the tag would be on every one of them.
+  SPEC_ONLY_TECHNOLOGIES = Set{"oas2", "oas3", "openrpc", "raml", "smithy", "typespec"}
+
+  # `:id`, `:id?`, `:id(\d+)`, `*`, `*path`, `{id}`, `<int:id>`, `[id]`.
+  AI_FOLD_PLACEHOLDER_RE = /\A(?::\w.*|\*\w*|\{[^}]*\}|<[^>]*>|\[[^\]]*\])\z/
+  URL_AUTHORITY_RE       = /\A[a-zA-Z][a-zA-Z0-9+.\-]*:\/\/[^\/]*/
 
   @logger : NoirLogger
   @options : Hash(String, YAML::Any)
   @pvalue_rules : Hash(String, Array(PValueRule))
   @source_scope_cache : Hash(String, String)
-
-  private struct PValueRule
-    property key : String?
-    property value : String
-
-    def initialize(@key : String?, @value : String)
-    end
-  end
 
   # A URL that already carries its own scheme + authority
   # (e.g. `https://host/path`). The HAR / OAS detectors emit these, so
@@ -45,6 +54,7 @@ class EndpointOptimizer
   def initialize(@logger : NoirLogger, @options : Hash(String, YAML::Any))
     @pvalue_rules = initialize_pvalue_rules
     @source_scope_cache = Hash(String, String).new
+    @go_program_dirs = Hash(String, Set(String)).new
   end
 
   # Main optimization workflow - calls all optimization steps
@@ -56,151 +66,27 @@ class EndpointOptimizer
     optimized
   end
 
-  # Normalize cross-framework URL shapes the analyzers can't always
-  # resolve without language context. Rewrites a small set of well-
-  # known leaky forms into the canonical `{name}` placeholder so the
-  # downstream `add_path_parameters` pass picks them up as path
-  # params instead of literal noise.
-  #
-  # Covered shapes:
-  #   - `(?P<name>pattern)` — Python `re_path`-style named groups.
-  #     Bleeds through Django's `re_path` route table; rewrite to
-  #     `{name}` and drop the regex body.
-  #   - `${name}` / `${obj.field}` — JS/TS template literals that
-  #     analyzers can't statically resolve (handler files reference
-  #     captured variables, not literal paths). Rewrite to `{name}`
-  #     (or `{field}` for `${obj.field}`) so the AI/output payload
-  #     surfaces it as a path placeholder rather than as a literal
-  #     `${...}` segment.
-  #   - Python regex anchors `^` (leading) and `$`/`\Z` (trailing) —
-  #     `re_path` patterns commonly include these.
-  #   - Python regex backslash-escaped dots `\.` — rewrite to plain
-  #     `.` for the visible URL.
-  #   - Spring `{name:regex}` — strip the inline regex constraint so
-  #     the placeholder is `{name}` regardless of framework dialect.
-  #   - Postman / Express-style `:name` path segments — rewrite to
-  #     `{name}` so collections merge with framework analyzers that
-  #     already emit the canonical placeholder shape.
-  def normalize_url_shapes(endpoints : Array(Endpoint)) : Array(Endpoint)
-    # `Endpoint` is a value-type struct in Crystal, so mutating
-    # through the block-local binding only edits a copy. Rewrite
-    # via array index so the in-place change actually persists.
-    endpoints.each_with_index do |endpoint, idx|
-      # Mobile deep-link URLs are not HTTP route templates: a `${...}`
-      # there is an unresolved gradle manifest placeholder (kept verbatim
-      # and tagged by the Android analyzer), not a JS template literal.
-      next if endpoint.non_http?
-      endpoint.url = normalize_url_shape(endpoint.url)
-      endpoints[idx] = endpoint
-    end
-
-    endpoints
-  end
-
-  private def normalize_url_shape(url : String, normalize_colon_segments : Bool = false) : String
-    return url if url.empty?
-
-    # Skip URLs that look like a verbatim regex literal — Express
-    # accepts `app.get(/^\/api\/(\d+)$/, handler)` and the route
-    # extractor preserves the literal as the URL. The unique signal is
-    # escaped slashes (`\/`).
-    return url if url.includes?("\\/")
-
-    normalized = url
-
-    # Python `re_path` named groups: `(?P<name>...)` → `{name}`.
-    normalized = strip_python_named_groups(normalized)
-
-    # Spring `{name:regex}` path variables — strip the inline regex
-    # constraint so downstream consumers see the canonical placeholder.
-    normalized = normalized.gsub(/\{([A-Za-z_][A-Za-z0-9_]*):[^{}]+\}/) do |_match|
-      "{#{$1}}"
-    end
-
-    # Postman-style full path segments: `/:id` → `/{id}`.
-    # Keep embedded placeholders such as `/profiles/celeb_:USERNAME`
-    # untouched because those are concrete-example strings, not a
-    # segment-level route template.
-    if normalize_colon_segments
-      normalized = normalized.gsub(/(^|\/):([A-Za-z_][A-Za-z0-9_]*)/) do |_match|
-        "#{$1}{#{$2}}"
-      end
-    end
-
-    # JS/TS template-literal interpolations the parser couldn't resolve.
-    normalized = normalized.gsub(/\$\{([^{}]+)\}/) do |_match|
-      expr = $1.to_s
-      tokens = expr.split(/[^A-Za-z0-9_]/).reject(&.empty?)
-      name = tokens.last? || ""
-      name.empty? ? "{var}" : "{#{name}}"
-    end
-
-    # Strip Python regex anchors at the path boundary.
-    normalized = normalized.sub(/^\/\^/, "/")
-    normalized = normalized.sub(/\$$/, "")
-    normalized = normalized.sub(/\\Z$/, "")
-    normalized = normalized.sub(/\/\$$/, "/")
-
-    # Backslash-escaped dots (re_path `r"\.json"`) → literal dot.
-    normalized = normalized.gsub("\\.", ".")
-
-    # Final path double-slash collapse in case the rewrites left an
-    # adjacent pair. Skip absolute URLs entirely; the `//` after the
-    # scheme is structural, not a path separator.
-    normalized = collapse_path_slashes(normalized) unless normalized.matches?(ABSOLUTE_URL_RE)
-
-    normalized
-  end
-
-  # Rewrites every `(?P<name>...)` occurrence in `url` to `{name}`,
-  # consuming the matching `)` even when the inner pattern contains
-  # nested parens. Returns `url` unchanged when no named group is
-  # present.
-  private def strip_python_named_groups(url : String) : String
-    return url unless url.includes?("(?P<")
-
-    result = String::Builder.new
-    i = 0
-    size = url.size
-    while i < size
-      if i + 3 < size && url[i] == '(' && url[i + 1] == '?' && url[i + 2] == 'P' && url[i + 3] == '<'
-        close_name = url.index('>', i + 4)
-        unless close_name
-          result << url[i..]
-          break
-        end
-        name = url[(i + 4)...close_name]
-
-        # Walk to the matching `)` from after the name's `>`.
-        depth = 1
-        j = close_name + 1
-        while j < size && depth > 0
-          ch = url[j]
-          case ch
-          when '\\'
-            j += 2
-            next
-          when '['
-            close_bracket = url.index(']', j + 1) || size
-            j = close_bracket + 1
-            next
-          when '('
-            depth += 1
-          when ')'
-            depth -= 1
-          end
-          j += 1
-        end
-
-        result << "{#{name}}"
-        i = j
-      else
-        result << url[i]
-        i += 1
-      end
-    end
-
-    result.to_s
+  # Stable ordering key: source location first, then technology as a
+  # tiebreak for endpoints that carry no code path (static/public-dir
+  # serving endpoints, spec-derived ones, etc). `url`/`method` alone
+  # cannot break such ties — every endpoint sharing a dedup key already
+  # has the same url and method, by definition — so without `technology`
+  # here, endpoints with an empty code path (a common shape: multiple
+  # frameworks each serving an identically-named asset from their own
+  # public/ dir) all collapse to the same `("", -1, url, method)` key.
+  # `Array#sort_by` is not a stable sort in Crystal, so those ties would
+  # still resolve to "whichever fiber won" — the exact non-determinism
+  # this sort exists to remove — making the winning `technology` flip
+  # between runs on a single machine, not just across machines.
+  private def endpoint_order_key(endpoint : Endpoint) : Tuple(String, Int32, String, String, String)
+    code_path = endpoint.details.code_paths.first?
+    {
+      code_path.try(&.path) || "",
+      code_path.try(&.line) || -1,
+      endpoint.url,
+      endpoint.method,
+      endpoint.details.technology || "",
+    }
   end
 
   # Remove duplicated endpoints and parameters, validate HTTP methods, clean URLs
@@ -210,9 +96,23 @@ class EndpointOptimizer
     final_map = {} of Tuple(String, String, String) => Endpoint
     duplicate_count = 0
     allowed_methods = get_allowed_methods
+    endpoints = fold_ai_into_static(endpoints)
     cross_tech_keys = cross_technology_duplicate_keys(endpoints, allowed_methods)
 
-    endpoints.each do |endpoint|
+    # `parallel_analyze` does not preserve input order: files go to N
+    # workers through a bounded channel, so collection order depends on
+    # the worker count, which is derived from `System.cpu_count`. The
+    # dedup below is first-wins — the first endpoint seen for a key keeps
+    # its `details` and later duplicates only merge params/tags into it —
+    # so without a stable order the reported file:line for a duplicated
+    # route changes with the machine's core count, and JSON/YAML output
+    # diffs between machines for no real reason.
+    #
+    # Sorting on the source location makes "first" mean "earliest in the
+    # codebase, by path then line" instead of "whichever fiber won".
+    ordered_endpoints = endpoints.sort_by { |endpoint| endpoint_order_key(endpoint) }
+
+    ordered_endpoints.each do |endpoint|
       tiny_tmp = endpoint
 
       # Normalize the HTTP method to upper case. This makes the dedup
@@ -231,93 +131,229 @@ class EndpointOptimizer
         tiny_tmp.method = "GET"
       end
 
-      # Remove space in param name
-      if endpoint.params.present?
-        tiny_tmp.params = [] of Param
-        endpoint.params.each do |param|
-          if !param.name.includes? " "
-            param.value = apply_pvalue(param.param_type, param.name, param.value).to_s
-            tiny_tmp.params << param
-          end
-        end
+      # Drop param names that cannot be sent as-is: one containing a space,
+      # and one that is blank. A blank name renders as `--cookie '='` in the
+      # curl builder, an empty `└──` node in plain output and a
+      # `{"name": ""}` entry that makes the OAS document invalid, so an
+      # analyzer that knows a param exists but not what it is called must
+      # not leak that hole into the report.
+      #
+      # Repeats of the same (name, request_type) are collapsed here too,
+      # first-wins. `Endpoint#push_param`, `merge_params` and the graphql
+      # merges dedup on this key, as do `params_to_hash` / `Endpoint#==`.
+      # An analyzer may append straight to `params`, bypassing those checks;
+      # duplicates then reach the report and render as conflicting values for
+      # one field (`-H 'Host: a' -H 'Host: b'`), which is not a request any
+      # server can answer. Deduping here makes the emitted list agree with
+      # what every consumer already computes from it.
+      #
+      # The arrays are always rebuilt, even when empty: an analyzer that
+      # emits one struct per mount prefix (`ep = endpoint`) hands over copies
+      # sharing one `params`/`tags`/`callees` array, and the path-param pass
+      # and the taggers append in place — so a param or an auth tag added to
+      # `/admin/x` showed up on its `/public/x` sibling.
+      tiny_tmp.params = [] of Param
+      tiny_tmp.tags = endpoint.tags.dup
+      tiny_tmp.callees = endpoint.callees.dup
+      seen_params = Set(Tuple(String, String)).new
+      endpoint.params.each do |param|
+        next if param.name.includes?(" ") || param.name.blank?
+        next unless seen_params.add?({param.name, param.request_type})
+        # `request_type`, not `param_type`: the fourteen analyzers that
+        # spell a request body `body` rather than `json` produce params no
+        # `--pvalue json=` (or `--pvalue any=`) rule ever matched, so their
+        # fields stayed empty in every output and in the probe payload.
+        # Every other consumer already dispatches on the canonical bucket.
+        param.value = apply_pvalue(param.request_type, param.name, param.value).to_s
+        tiny_tmp.params << param
       end
 
+      # An endpoint with no URL is not addressable, so it cannot be reported.
+      # But reaching here means an analyzer or a path-composition helper
+      # produced one, which is a bug upstream rather than something to
+      # swallow: `join_trimmed` returning `""` for a root-mounted prefix hid
+      # exactly that for every root-mapped JAX-RS / http4k / Micronaut /
+      # Elysia / AdonisJS route. Debug level so normal runs stay quiet.
+      if tiny_tmp.url.empty?
+        @logger.debug_sub "  - Dropping endpoint with an empty URL: '#{tiny_tmp.method}' (#{tiny_tmp.details.technology || "unknown"})"
+        next
+      end
+
+      # Seed the contributing-technology list with the endpoint's own
+      # analyzer, so the list is complete whether or not a duplicate ever
+      # merges into it.
+      tiny_tmp = record_own_technology(tiny_tmp)
+
       # Duplicate check
-      unless tiny_tmp.url.empty?
-        absolute_url = tiny_tmp.url.matches?(ABSOLUTE_URL_RE)
+      absolute_url = tiny_tmp.url.matches?(ABSOLUTE_URL_RE)
 
-        # Ensure a leading slash for relative URLs. Compare against the
-        # `'/'` char literal — comparing the `Char` returned by `[]` to
-        # the `"/"` string is always true, which would prepend a slash
-        # even to already-rooted URLs (the double-slash collapse below
-        # papered over it). Mobile deep links are exempt: an unresolved
-        # `@string/...://` or `${...}://` scheme isn't a relative path, so
-        # rooting it (`/@string/...`) would corrupt the URL.
-        if !absolute_url && tiny_tmp.url[0] != '/' && !tiny_tmp.non_http?
-          tiny_tmp.url = "/#{tiny_tmp.url}"
+      # Ensure a leading slash for relative URLs. Compare against the
+      # `'/'` char literal — comparing the `Char` returned by `[]` to
+      # the `"/"` string is always true, which would prepend a slash
+      # even to already-rooted URLs (the double-slash collapse below
+      # papered over it). Mobile deep links are exempt: an unresolved
+      # `@string/...://` or `${...}://` scheme isn't a relative path, so
+      # rooting it (`/@string/...`) would corrupt the URL.
+      if !absolute_url && tiny_tmp.url[0] != '/' && !tiny_tmp.non_http?
+        tiny_tmp.url = "/#{tiny_tmp.url}"
+      end
+
+      # Mobile deep-link URLs are kept verbatim: a `${...}` there is an
+      # unresolved gradle manifest placeholder, not a JS template literal
+      # for the shape-normalizer to rewrite.
+      keep_constraints = regex_placeholders?(tiny_tmp)
+      tiny_tmp.url = normalize_url_shape(tiny_tmp.url, keep_constraints: keep_constraints) unless tiny_tmp.non_http?
+      dedup_url = tiny_tmp.non_http? ? tiny_tmp.url : normalize_url_shape(tiny_tmp.url, collection_endpoint?(tiny_tmp), keep_constraints)
+      unified_url = tiny_tmp.non_http? ? dedup_url : unify_path_placeholders(dedup_url)
+      # Placeholder spellings are unified only where another technology
+      # reports the route too (code + spec/collection). Within one analyzer,
+      # `/users/{id}` and `/users/{user}` are kept as it reported them.
+      dedup_url = unified_url if cross_tech_keys.includes?({tiny_tmp.method, unified_url})
+
+      key = {tiny_tmp.method, dedup_url, endpoint_source_scope(tiny_tmp, unified_url, cross_tech_keys) + route_condition_key(tiny_tmp)}
+
+      if final_map.has_key?(key)
+        dup = final_map[key]
+        @logger.debug_sub "  - Found duplicated endpoint: #{tiny_tmp.method} #{tiny_tmp.url}"
+        duplicate_count += 1
+        if dup.internal != tiny_tmp.internal
+          # A Feign / `@HttpExchange` client declares a request the app
+          # sends; it says nothing about the served route at that address, so
+          # only its location and technology ride along.
+          served, client = dup.internal ? {tiny_tmp, dup} : {dup, tiny_tmp}
+          client.details.code_paths.each do |path_info|
+            served.details.add_path(path_info) unless served.details.code_paths.includes?(path_info)
+          end
+          final_map[key] = absorb_technologies(served, client)
+          next
         end
-
-        # Mobile deep-link URLs are kept verbatim: a `${...}` there is an
-        # unresolved gradle manifest placeholder, not a JS template literal
-        # for the shape-normalizer to rewrite.
-        tiny_tmp.url = normalize_url_shape(tiny_tmp.url) unless tiny_tmp.non_http?
-        dedup_url = tiny_tmp.non_http? ? tiny_tmp.url : normalize_url_shape(tiny_tmp.url, collection_endpoint?(tiny_tmp))
-
-        key = {tiny_tmp.method, dedup_url, endpoint_source_scope(tiny_tmp, cross_tech_keys)}
-
-        if final_map.has_key?(key)
-          dup = final_map[key]
-          @logger.debug_sub "  - Found duplicated endpoint: #{tiny_tmp.method} #{tiny_tmp.url}"
-          duplicate_count += 1
-          if graphql_endpoint?(dup) || graphql_endpoint?(tiny_tmp)
-            merge_graphql_params(dup, tiny_tmp)
-          else
-            merge_params(dup, tiny_tmp, source_collection_pair?(dup, tiny_tmp))
-          end
-          tiny_tmp.tags.each { |tag| merge_tag(dup, tag) }
-          tiny_tmp.callees.each do |callee|
-            dup.push_callee(callee)
-          end
-          tiny_tmp.details.code_paths.each do |path_info|
-            dup.details.add_path(path_info) unless dup.details.code_paths.any? { |existing| existing == path_info }
-          end
-          dup = promote_source_context(dup, tiny_tmp)
-          final_map[key] = dup
+        if graphql_endpoint?(dup) || graphql_endpoint?(tiny_tmp)
+          dup = merge_graphql_params(dup, tiny_tmp)
         else
-          final_map[key] = tiny_tmp
+          # The key unifies placeholder spellings, so the duplicate may name
+          # its slots differently (`/items/{item_id}` vs `/items/:itemId`).
+          # The winner's URL is the one reported; the loser's path params
+          # would name slots that URL does not have.
+          merge_params(dup, tiny_tmp, source_collection_pair?(dup, tiny_tmp), skip_path: dup.url != tiny_tmp.url)
         end
+        tiny_tmp.tags.each { |tag| merge_tag(dup, tag) }
+        tiny_tmp.callees.each do |callee|
+          dup.push_callee(callee)
+        end
+        # Decided before the paths merge: once the handler's path is in
+        # `code_paths`, the "every path is a document" check no longer holds.
+        dup = promote_source_context(dup, tiny_tmp)
+        tiny_tmp.details.code_paths.each do |path_info|
+          dup.details.add_path(path_info) unless dup.details.code_paths.any? { |existing| existing == path_info }
+        end
+        dup = promote_scalar_context(dup, tiny_tmp)
+        dup = absorb_technologies(dup, tiny_tmp)
+        dup.handler ||= tiny_tmp.handler
+        final_map[key] = dup
+      else
+        final_map[key] = tiny_tmp
       end
     end
 
     @logger.verbose_sub "➔ Total duplicated endpoints: #{duplicate_count}"
     merged = merge_concrete_example_endpoints(final_map.values)
-    prune_collection_graphql_transport_endpoints(merged)
+    tag_spec_only_endpoints(prune_collection_graphql_transport_endpoints(merged))
   end
 
-  private def merge_params(target : Endpoint, source : Endpoint, drop_collection_noise : Bool = false) : Nil
+  # A repository can carry an API document because it implements it or
+  # because it publishes it for others. When code analyzers ran and none of
+  # them reported a spec operation, say so instead of dropping it.
+  private def tag_spec_only_endpoints(endpoints : Array(Endpoint)) : Array(Endpoint)
+    return endpoints unless endpoints.any? { |endpoint| code_technology_contributed?(endpoint) }
+
+    endpoints.each_with_index do |endpoint, idx|
+      technologies = endpoint.details.technologies
+      next unless technologies.any? { |technology| SPEC_ONLY_TECHNOLOGIES.includes?(technology) }
+      next if code_technology_contributed?(endpoint)
+      endpoint.add_tag(Tag.new("spec-only", "Declared by an API specification; no code analyzer reported this route", "optimizer"))
+      endpoints[idx] = endpoint
+    end
+    endpoints
+  end
+
+  private def code_technology_contributed?(endpoint : Endpoint) : Bool
+    endpoint.details.technologies.any? { |technology| !NoirTechs::DECLARATION_TECHS.includes?(technology) }
+  end
+
+  # An AI endpoint that names a static route under another path-param
+  # spelling (see AI_FOLD_PLACEHOLDER_RE) folds into the static one: its
+  # technology, code path and params stay primary; the AI's non-path params,
+  # code paths in other files and its `ai` technology ride along as evidence.
+  # Only AI-vs-static pairs are compared, so static-vs-static dedup is
+  # unchanged.
+  private def fold_ai_into_static(endpoints : Array(Endpoint)) : Array(Endpoint)
+    ai, static = endpoints.partition { |endpoint| endpoint.details.technology == "ai" }
+    return endpoints if ai.empty? || static.empty?
+
+    static = static.sort_by { |endpoint| endpoint_order_key(endpoint) }
+    index = {} of Tuple(String, String) => Int32
+    static.each_with_index { |endpoint, idx| index[ai_fold_key(endpoint)] ||= idx }
+
+    unmatched = ai.reject do |endpoint|
+      next false unless idx = index[ai_fold_key(endpoint)]?
+      endpoint.params = endpoint.params.reject { |param| param.param_type == "path" }
+      merge_params(static[idx], endpoint)
+      endpoint.details.code_paths.each do |path_info|
+        static[idx].details.add_path(path_info) unless static[idx].details.code_paths.any? { |existing| existing.path == path_info.path }
+      end
+      static[idx] = absorb_technologies(static[idx], endpoint)
+      true
+    end
+    static + unmatched
+  end
+
+  private def ai_fold_key(endpoint : Endpoint) : Tuple(String, String)
+    segments = comparable_path_segments(endpoint.url.sub(URL_AUTHORITY_RE, ""))
+    {endpoint.method.upcase, "/" + segments.map { |seg| seg.matches?(AI_FOLD_PLACEHOLDER_RE) ? "{}" : seg }.join('/')}
+  end
+
+  private def merge_params(target : Endpoint, source : Endpoint, drop_collection_noise : Bool = false, skip_path : Bool = false) : Nil
     source.params.each do |param|
       next if drop_collection_noise && collection_noise_param?(source, param)
+      next if skip_path && param.param_type == "path"
 
-      existing_param = target.params.find { |target_param| target_param.name == param.name && target_param.param_type == param.param_type }
+      existing_param = target.params.find { |target_param| target_param.name == param.name && target_param.request_type == param.request_type }
       target.params << param unless existing_param
     end
   end
 
+  # Folds each concrete collection request (`/users/42`) into the first
+  # templated endpoint (`/users/{id}`) it instantiates.
+  #
+  # Candidate templates are bucketed once by method and segment count — the
+  # only ones `template_matches_concrete_example?` can accept — in endpoint
+  # order, so the first match is the same one a scan of every endpoint found.
+  # That scan re-tested every endpoint per concrete request: O(n²), 13s for
+  # a 4000-request Postman collection. A template is never a concrete source
+  # and a merge keeps its URL, so the buckets stay valid while merging.
   private def merge_concrete_example_endpoints(endpoints : Array(Endpoint)) : Array(Endpoint)
+    templates = Hash(Tuple(String, Int32), Array(Tuple(Int32, Array(String)))).new
+    endpoints.each_with_index do |endpoint, idx|
+      next unless templated_endpoint?(endpoint)
+      segments = comparable_path_segments(endpoint.url)
+      (templates[{endpoint.method, segments.size}] ||= [] of Tuple(Int32, Array(String))) << {idx, segments}
+    end
+    return endpoints if templates.empty?
+
     removed = Set(Int32).new
-
     endpoints.each_with_index do |source, source_idx|
-      next if removed.includes?(source_idx)
       next unless concrete_example_source?(source)
+      concrete_segments = comparable_path_segments(source.url)
+      next unless candidates = templates[{source.method, concrete_segments.size}]?
 
-      endpoints.each_with_index do |target, target_idx|
-        next if source_idx == target_idx || removed.includes?(target_idx)
-        next unless source.method == target.method
-        next unless templated_endpoint?(target)
-        next unless template_matches_concrete_example?(target.url, source.url)
+      candidates.each do |target_idx, template_segments|
+        # A collection `:id` URL is both a source and a template, so two of
+        # them would fold into each other and both vanish; a template that
+        # already folded away is gone too.
+        next if target_idx == source_idx || removed.includes?(target_idx)
+        next unless template_matches_concrete_example?(template_segments, concrete_segments)
 
-        target = merge_endpoint_context(target, source)
-        endpoints[target_idx] = target
+        endpoints[target_idx] = merge_endpoint_context(endpoints[target_idx], source)
         removed << source_idx
         break
       end
@@ -333,7 +369,9 @@ class EndpointOptimizer
   private def concrete_example_source?(endpoint : Endpoint) : Bool
     return false if endpoint.url.empty?
     return false if endpoint.url.matches?(ABSOLUTE_URL_RE)
-    return false if templated_url?(endpoint.url)
+    # Only `{}` disqualifies: a collection's `/users/:userId` is a path
+    # variable the request fills in, so it still folds into a code template.
+    return false if endpoint.url.includes?("{") && endpoint.url.includes?("}")
     return false if graphql_endpoint?(endpoint)
     collection_endpoint?(endpoint)
   end
@@ -346,11 +384,21 @@ class EndpointOptimizer
   end
 
   private def templated_url?(url : String) : Bool
-    url.includes?("{") && url.includes?("}")
+    (url.includes?("{") && url.includes?("}")) || url.matches?(WHOLE_SEGMENT_PLACEHOLDER_RE)
   end
 
   private def collection_endpoint?(endpoint : Endpoint) : Bool
-    {"insomnia", "postman"}.includes?(endpoint.details.technology || "")
+    {"insomnia", "postman", "http_file"}.includes?(endpoint.details.technology || "")
+  end
+
+  private def source_document_endpoint?(endpoint : Endpoint) : Bool
+    technology = endpoint.details.technology || ""
+    return true if NoirTechs::DECLARATION_TECHS.includes?(technology)
+    # A Strapi content-type schema is a `.json` file, but Strapi serves it.
+    return false if NoirTechs::IMPLEMENTATION_TECHS.includes?(technology)
+
+    code_paths = endpoint.details.code_paths
+    !code_paths.empty? && code_paths.all? { |path_info| MediaFilter.spec_document?(path_info.path) }
   end
 
   private def source_collection_pair?(target : Endpoint, source : Endpoint) : Bool
@@ -369,9 +417,7 @@ class EndpointOptimizer
     COLLECTION_NOISE_HEADERS.includes?(param.name.downcase)
   end
 
-  private def template_matches_concrete_example?(template_url : String, concrete_url : String) : Bool
-    template_segments = comparable_path_segments(template_url)
-    concrete_segments = comparable_path_segments(concrete_url)
+  private def template_matches_concrete_example?(template_segments : Array(String), concrete_segments : Array(String)) : Bool
     return false unless template_segments.size == concrete_segments.size
 
     matched_placeholder = false
@@ -394,7 +440,8 @@ class EndpointOptimizer
   end
 
   private def placeholder_segment?(segment : String) : Bool
-    !!segment.match(/\A\{[A-Za-z_][A-Za-z0-9_]*(?::[^{}]+)?\}\z/)
+    # `{id}` / `{id:regex}`, Express/Rails `:id`, Flask `<id>` / `<int:id>`.
+    segment.matches?(/\A(?:\{[A-Za-z_][A-Za-z0-9_]*(?::[^{}]+)?\}|:[A-Za-z_]\w*|<(?:[A-Za-z_]\w*:)?[A-Za-z_]\w*>)\z/)
   end
 
   private def example_path_value?(segment : String) : Bool
@@ -406,55 +453,79 @@ class EndpointOptimizer
 
   private def merge_endpoint_context(target : Endpoint, source : Endpoint) : Endpoint
     if graphql_endpoint?(target) || graphql_endpoint?(source)
-      merge_graphql_params(target, source)
+      target = merge_graphql_params(target, source)
     else
-      merge_params(target, source, source_collection_pair?(target, source))
+      # The template's URL is kept, so the example's path params (a
+      # collection's `:userId` variable) would name slots it does not have.
+      merge_params(target, source, source_collection_pair?(target, source), skip_path: target.url != source.url)
     end
 
     source.tags.each { |tag| merge_tag(target, tag) }
     source.callees.each do |callee|
       target.push_callee(callee)
     end
+    target = promote_source_context(target, source)
     source.details.code_paths.each do |path_info|
       target.details.add_path(path_info) unless target.details.code_paths.any? { |existing| existing == path_info }
     end
-    target = promote_source_context(target, source)
+    target = absorb_technologies(target, source)
 
+    target
+  end
+
+  private def record_own_technology(endpoint : Endpoint) : Endpoint
+    details = endpoint.details
+    details.add_technology(details.technology)
+    endpoint.details = details
+    endpoint
+  end
+
+  # Keep every technology that contributed to a merged endpoint.
+  #
+  # The dedup keeps the winner's `technology` and, until this list existed,
+  # discarded the loser's — so an endpoint declared by both a Go router and
+  # the project's swagger document was reported as Go only, and a consumer
+  # asking "which sources know this route" had to run one scan per
+  # technology to find out. Runs after the promotions above on purpose: a
+  # promotion may have replaced `technology`, and both the old and the new
+  # value belong in the list.
+  #
+  # Returns the endpoint for the same reason `promote_scalar_context` does.
+  private def absorb_technologies(target : Endpoint, source : Endpoint) : Endpoint
+    details = target.details
+    details.add_technology(details.technology)
+    details.add_technology(source.details.technology)
+    source.details.technologies.each { |technology| details.add_technology(technology) }
+    target.details = details
     target
   end
 
   private def merge_tag(target : Endpoint, tag : Tag) : Nil
     return if duplicate_graphql_operation_tag?(target, tag)
 
-    target.add_tag(tag)
-  end
-
-  private def duplicate_graphql_operation_tag?(target : Endpoint, tag : Tag) : Bool
-    return false unless graphql_operation_tag?(tag)
-
-    if existing_index = target.tags.index do |existing|
-         graphql_operation_tag?(existing) &&
-         existing.name == tag.name &&
-         existing.description == tag.description
-       end
-      target.tags[existing_index] = tag if tag.tagger == "graphql_sdl_analyzer"
-      return true
-    end
-
-    false
-  end
-
-  private def graphql_operation_tag?(tag : Tag) : Bool
-    tag.name == "graphql" &&
-      tag.description.matches?(/^(Query|Mutation|Subscription|Schema|Object|Field)\./)
+    # `add_tag` keeps one tag per (name, tagger); a merge keeps every distinct
+    # value, since two Ingress hosts routing one path are both facts.
+    target.tags << tag unless target.tags.includes?(tag)
   end
 
   private def promote_source_context(target : Endpoint, source : Endpoint) : Endpoint
-    return target unless collection_endpoint?(target)
-    return target if collection_endpoint?(source)
+    # Imported collections and specification documents are declarations of an
+    # endpoint, not its executable handler. If one sorts first, make the
+    # implementation the primary context while retaining every contributing
+    # path for reporting and later AI-context scans.
+    return target unless source_document_endpoint?(target)
+    return target if source_document_endpoint?(source)
 
     details = target.details
     details.technology = source.details.technology if source.details.technology
+    # The document's path params name the document's slots; once the URL is
+    # the code's spelling (`/users/:id`, not `/users/:userId`), only the
+    # code's path params describe it. `merge_params` skipped the source's
+    # path params for exactly this mismatch, so take them now.
+    if target.url != source.url
+      target.params.reject! { |param| param.param_type == "path" }
+      source.params.each { |param| target.params << param if param.param_type == "path" }
+    end
     target.url = source.url
 
     promoted = [] of PathInfo
@@ -466,51 +537,66 @@ class EndpointOptimizer
     end
     details.code_paths = promoted
     target.details = details
-    target.params.reject! { |param| collection_noise_header_param?(param) }
+    # Strip the collection's boilerplate headers, but not one the handler
+    # itself reads (`req.headers['origin']`): that one is real input.
+    target.params.reject! do |param|
+      collection_noise_header_param?(param) &&
+        source.params.none? { |own| own.name == param.name && own.request_type == param.request_type }
+    end
     target
   end
 
-  private def prune_collection_graphql_transport_endpoints(endpoints : Array(Endpoint)) : Array(Endpoint)
-    operation_paths = Set(String).new
-    endpoints.each do |endpoint|
-      next unless graphql_operation_endpoint?(endpoint)
-      operation_paths << graphql_transport_path(endpoint.url)
+  # Carry the losing duplicate's scalar fields onto the winner.
+  #
+  # The dedup merges four collections (params, tags, callees, code_paths) and
+  # used to discard everything else the loser knew. Which of two endpoints
+  # with the same `(method, url, scope)` wins is decided by source location,
+  # so the facts below were kept or lost depending on which file happened to
+  # sort first:
+  #
+  # - `protocol`: ~20 analyzers set `ws` on endpoints that also have an
+  #   ordinary HTTP path (`python/fastapi.cr`, `python/starlette.cr`,
+  #   `java/spring.cr`, `elixir/phoenix_channel.cr`, …). `WebsocketTagger`
+  #   keys off exactly this field and the taggers run *after* the optimizer,
+  #   so losing it dropped the `websocket` tag from the report.
+  # - `metadata`: the mobile deep-link facts (action/category/host/package).
+  # - `details.status_code`: recorded by spec/capture-derived analyzers.
+  # - `kind`: Next.js marks server actions here; the plain report prints it.
+  #
+  # `internal` is not carried: a client declaration never merges into a
+  # served route here (see `optimize_endpoints`), so both sides agree on it.
+  #
+  # Returns the endpoint: `Endpoint` is a struct, so these writes land on a
+  # copy unless the caller assigns the result back.
+  private def promote_scalar_context(target : Endpoint, source : Endpoint) : Endpoint
+    target.protocol = source.protocol if target.protocol == "http" && source.protocol != "http"
+    target.metadata = source.metadata if target.metadata.nil?
+    target.kind = source.kind if target.kind.empty?
+
+    if target.details.status_code.nil? && (status_code = source.details.status_code)
+      details = target.details
+      details.status_code = status_code
+      target.details = details
     end
-    return endpoints if operation_paths.empty?
 
-    endpoints.reject do |endpoint|
-      collection_graphql_transport_noise?(endpoint, operation_paths)
-    end
-  end
-
-  private def collection_graphql_transport_noise?(endpoint : Endpoint, operation_paths : Set(String)) : Bool
-    return false unless collection_endpoint?(endpoint)
-    return false unless endpoint.method == "POST"
-    return false unless operation_paths.includes?(graphql_transport_path(endpoint.url))
-    return false if endpoint.url.includes?("#")
-
-    endpoint.params.all? { |param| collection_noise_header_param?(param) }
-  end
-
-  private def graphql_operation_endpoint?(endpoint : Endpoint) : Bool
-    endpoint.url.matches?(/#[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*/)
-  end
-
-  private def graphql_transport_path(url : String) : String
-    url.split('#', 2).first
+    target
   end
 
   private def cross_technology_duplicate_keys(endpoints : Array(Endpoint), allowed_methods : Array(String)) : Set(Tuple(String, String))
     technologies_by_key = Hash(Tuple(String, String), Set(String)).new
+    urls_by_key_technology = Hash(Tuple(String, String, String), Set(String)).new
     framework_scopes_by_key = Hash(Tuple(String, String), Set(String)).new
 
     endpoints.each do |endpoint|
-      url = normalized_dedup_url(endpoint)
-      next if url.empty?
+      shaped_url = normalized_dedup_url(endpoint)
+      next if shaped_url.empty?
+      url = endpoint.non_http? ? shaped_url : unify_path_placeholders(shaped_url)
 
       method = normalized_dedup_method(endpoint.method, allowed_methods)
       key = {method, url}
-      (technologies_by_key[key] ||= Set(String).new) << (endpoint.details.technology || "")
+      technology = endpoint.details.technology || ""
+      (technologies_by_key[key] ||= Set(String).new) << technology
+      (urls_by_key_technology[{method, url, technology}] ||= Set(String).new) << shaped_url
 
       scope = framework_source_scope(endpoint)
       (framework_scopes_by_key[key] ||= Set(String).new) << scope unless scope.empty?
@@ -519,6 +605,10 @@ class EndpointOptimizer
     keys = Set(Tuple(String, String)).new
     technologies_by_key.each do |key, technologies|
       next unless technologies.size > 1
+      # Unifying placeholders must not merge two routes one analyzer reported
+      # apart (`/users/:id` and `/users/:username`, separate handlers): when
+      # any technology spells the key more than one way, keep exact URLs.
+      next if technologies.any? { |technology| urls_by_key_technology[{key[0], key[1], technology}].size > 1 }
       # Neutralizing the scope merges a collection endpoint with the framework
       # one at the same path. But when 2+ distinct build-module scopes share the
       # path, neutralizing would also collapse those distinct multi-module
@@ -546,22 +636,49 @@ class EndpointOptimizer
     absolute_url = normalized.matches?(ABSOLUTE_URL_RE)
     normalized = "/#{normalized}" if !absolute_url && normalized[0] != '/' && !endpoint.non_http?
     return normalized if endpoint.non_http?
-    normalized = normalize_url_shape(normalized, collection_endpoint?(endpoint))
-    normalized
+    normalize_url_shape(normalized, collection_endpoint?(endpoint), regex_placeholders?(endpoint))
   end
 
-  private def endpoint_source_scope(endpoint : Endpoint, cross_tech_keys : Set(Tuple(String, String))) : String
-    return "" if cross_tech_keys.includes?({endpoint.method, endpoint.url})
+  # A whole-segment path placeholder in any framework's spelling: `{id}`,
+  # `:id` (Express/Rails/Postman) or `<id>` / `<int:id>` (Flask/Django).
+  # Constraints were stripped by `normalize_url_shape`, except a regex
+  # router's (`{id:[0-9]+}`, `{sha:[a-f0-9]{7,64}}`), which still unifies
+  # with a spec's `{id}`.
+  WHOLE_SEGMENT_PLACEHOLDER_RE = %r{(?<=/)(?:\{[A-Za-z_]\w*(?::(?:[^{}/]|\{[^{}/]*\})+)?\}|:[A-Za-z_]\w*|<(?:[A-Za-z_]\w*:)?[A-Za-z_]\w*>)(?=[/?#]|\z)}
+
+  # Dedup-key form of a URL: every whole-segment placeholder becomes `{}`, so
+  # one route reported by its code (`/users/:id`) and by a spec or collection
+  # (`/users/{userId}`) is one endpoint. A literal segment (`/users/new`)
+  # stays distinct. Only the key changes; the reported URL keeps its spelling.
+  # Applied only across technologies (see `cross_technology_duplicate_keys`).
+  # ponytail: placeholders differing only by constraint (`{id:[0-9]+}` vs
+  # `{name:[a-z]+}`) also unify, since the key ignores the constraint.
+  private def unify_path_placeholders(url : String) : String
+    url.gsub(WHOLE_SEGMENT_PLACEHOLDER_RE, "{}")
+  end
+
+  private def endpoint_source_scope(endpoint : Endpoint, dedup_url : String, cross_tech_keys : Set(Tuple(String, String))) : String
+    return "" if cross_tech_keys.includes?({endpoint.method, dedup_url})
     framework_source_scope(endpoint)
   end
 
+  # Handlers that share an address but match different request conditions
+  # (Spring `params="ticket"` vs `params="relink"`) are separate endpoints:
+  # unioning them would send every handler's selector in one request.
+  private def route_condition_key(endpoint : Endpoint) : String
+    return "" if endpoint.route_conditions.empty?
+    "|" + endpoint.route_conditions.map { |param| "#{param.param_type}:#{param.name}=#{param.value}" }.sort!.join("&")
+  end
+
   # The build-module scope an endpoint carries on its own merits (ignoring any
-  # cross-technology neutralization). Only scoped framework endpoints get one;
-  # collection / graphql / static endpoints stay unscoped.
+  # cross-technology neutralization). Code endpoints get the project root of
+  # their first path, so two separately deployed apps of a monorepo that serve
+  # the same route stay two endpoints; declarations (specs, collections, infra
+  # config) and graphql / Spring static endpoints stay unscoped.
   private def framework_source_scope(endpoint : Endpoint) : String
-    return "" unless endpoint.details.technology == "kotlin_spring"
+    return "" if NoirTechs::DECLARATION_TECHS.includes?(endpoint.details.technology || "")
     return "" if graphql_endpoint?(endpoint)
-    return "" if kotlin_spring_static_asset?(endpoint)
+    return "" if spring_static_asset?(endpoint)
 
     first_path = endpoint.details.code_paths.first?.try(&.path)
     return "" unless first_path
@@ -569,7 +686,7 @@ class EndpointOptimizer
     source_project_scope(first_path)
   end
 
-  private def kotlin_spring_static_asset?(endpoint : Endpoint) : Bool
+  private def spring_static_asset?(endpoint : Endpoint) : Bool
     return false unless endpoint.method == "GET"
 
     first_path = endpoint.details.code_paths.first?.try(&.path)
@@ -586,13 +703,16 @@ class EndpointOptimizer
 
   private def source_project_scope(path : String) : String
     return "" if path.empty?
-    @source_scope_cache[path] ||= begin
+    start_dir = File.directory?(path) ? path : File.dirname(path)
+    # Keyed by directory: every code endpoint is scoped now, and its files
+    # share far fewer directories than paths.
+    @source_scope_cache[start_dir] ||= begin
       scope = ""
-      dir = File.directory?(path) ? path : File.dirname(path)
+      dir = start_dir
 
       while dir && !dir.empty? && dir != "."
         if PROJECT_MANIFEST_FILES.any? { |manifest| File.exists?(File.join(dir, manifest)) }
-          scope = File.expand_path(dir)
+          scope = Noir::PathScope.expand(dir)
           break
         end
 
@@ -601,394 +721,42 @@ class EndpointOptimizer
         dir = parent
       end
 
+      # One Go module, many programs (gin-gonic/examples, a `cmd/` tree):
+      # each `package main` directory is its own deployable, so `POST
+      # /upload` in two of them must not merge into one row carrying the
+      # first one's path and the other's handler.
+      if path.ends_with?(".go") && !scope.empty? && go_program_dir?(start_dir, scope)
+        scope = Noir::PathScope.expand(start_dir)
+      end
+
       scope
     end
   end
 
-  private def merge_graphql_params(target : Endpoint, source : Endpoint) : Nil
-    target_sdl = graphql_sdl_endpoint?(target)
-    source_sdl = graphql_sdl_endpoint?(source)
-
-    source.params.each do |param|
-      if graphql_doc_param?(param)
-        if existing_index = target.params.index { |target_param| target_param.name == param.name && target_param.param_type == param.param_type }
-          target.params[existing_index] = param if source_sdl && !target_sdl
-        else
-          target.params << param
-        end
-      else
-        existing_param = target.params.find { |target_param| target_param.name == param.name && target_param.param_type == param.param_type }
-        target.params << param unless existing_param
+  # Whether `dir` holds a `package main` and the module at `module_root`
+  # holds more than one such directory. A single-binary module keeps the
+  # module as its scope, whatever directory its routes are declared in.
+  private def go_program_dir?(dir : String, module_root : String) : Bool
+    programs = @go_program_dirs[module_root] ||= begin
+      found = Set(String).new
+      Dir.glob(File.join(module_root, "**", "*.go")) do |file|
+        next if file.ends_with?("_test.go") || file.includes?("/vendor/") || file.includes?("/testdata/")
+        found << File.dirname(file) if go_main_package?(file)
       end
+      found
     end
+    programs.size > 1 && programs.includes?(Noir::PathScope.expand(dir))
+  end
 
-    prune_graphql_argument_params(target) if target_sdl || source_sdl
-
-    if source_sdl && !target_sdl
-      details = target.details
-      details.technology = source.details.technology
-      target.details = details
+  private def go_main_package?(file : String) : Bool
+    File.open(file) do |io|
+      # The package clause follows the license header; 4 KB covers one.
+      buffer = Bytes.new(4096)
+      read = io.read(buffer)
+      String.new(buffer[0, read]).matches?(/^package\s+main\b/m)
     end
-  end
-
-  private def graphql_endpoint?(endpoint : Endpoint) : Bool
-    endpoint.url.includes?("#Query.") ||
-      endpoint.url.includes?("#Mutation.") ||
-      endpoint.url.includes?("#Subscription.")
-  end
-
-  private def graphql_sdl_endpoint?(endpoint : Endpoint) : Bool
-    tech = endpoint.details.technology
-    return true if tech == "graphql_sdl"
-
-    endpoint.tags.any? { |tag| tag.tagger == "graphql_sdl_analyzer" }
-  end
-
-  private def graphql_doc_param?(param : Param) : Bool
-    param.param_type == "json" &&
-      param.name.starts_with?("graphql_") &&
-      param.value.matches?(/\A\s*(?:query|mutation|subscription)\b/)
-  end
-
-  private def prune_graphql_argument_params(endpoint : Endpoint) : Nil
-    return unless endpoint.params.any? { |param| graphql_doc_param?(param) }
-
-    allowed_names = graphql_document_arg_names(endpoint)
-    expanded_input_names = graphql_expanded_input_argument_names(endpoint)
-    endpoint.params.reject! do |param|
-      param.param_type == "json" &&
-        !graphql_doc_param?(param) &&
-        !graphql_input_field_param?(param) &&
-        (!allowed_names.includes?(param.name) || expanded_input_names.includes?(param.name))
-    end
-  end
-
-  private def graphql_input_field_param?(param : Param) : Bool
-    param.tags.any? { |tag| graphql_input_field_tag?(tag) }
-  end
-
-  private def graphql_expanded_input_argument_names(endpoint : Endpoint) : Array(String)
-    names = [] of String
-    endpoint.params.each do |param|
-      param.tags.each do |tag|
-        next unless graphql_input_field_tag?(tag)
-        names << tag.description unless tag.description.empty?
-      end
-    end
-    names.uniq
-  end
-
-  private def graphql_input_field_tag?(tag : Tag) : Bool
-    tag.name == "graphql-input-field" &&
-      {"kotlin_spring_graphql_analyzer", "graphql_sdl_analyzer"}.includes?(tag.tagger)
-  end
-
-  private def graphql_document_arg_names(endpoint : Endpoint) : Array(String)
-    names = [] of String
-    endpoint.params.each do |param|
-      next unless graphql_doc_param?(param)
-      names.concat(graphql_arg_names_from_document(param.value))
-    end
-    names.uniq
-  end
-
-  private def graphql_arg_names_from_document(document : String) : Array(String)
-    match = document.match(/\A\s*(?:query|mutation|subscription)(?:\s+[A-Za-z_][A-Za-z0-9_]*)?\s*\(([^)]*)\)/)
-    return [] of String unless match
-
-    names = [] of String
-    match[1].scan(/\$([A-Za-z_][A-Za-z0-9_]*)\s*:/) do |arg_match|
-      names << arg_match[1]
-    end
-    names
-  end
-
-  # Combine target URL with endpoints
-  def combine_url_and_endpoints(endpoints : Array(Endpoint)) : Array(Endpoint)
-    tmp = [] of Endpoint
-    target_url = @options["url"].to_s
-
-    if target_url.empty?
-      endpoints
-    else
-      @logger.sub "➔ Combining url and endpoints."
-      @logger.debug_sub " + Before size: #{endpoints.size}"
-
-      endpoints.each do |endpoint|
-        tmp_endpoint = endpoint
-
-        # An endpoint that already carries its own scheme + host (HAR /
-        # OAS absolute URLs) is self-contained. Prefixing the target or
-        # collapsing its scheme `//` would corrupt it, so pass it
-        # through untouched. Mobile deep links (incl. ones with an
-        # unresolved `@string/...://` scheme) are app URLs, not paths under
-        # the scanned host, so they are never base-joined either.
-        if tmp_endpoint.url.matches?(ABSOLUTE_URL_RE) || tmp_endpoint.non_http?
-          tmp << tmp_endpoint
-          next
-        end
-
-        # Strip the target only when it is an actual leading prefix.
-        # `gsub` here would also rewrite a target host that merely
-        # appears inside a query value (e.g.
-        # `/proxy?next=https://host/x`), dropping it from the path.
-        if tmp_endpoint.url.starts_with?(target_url)
-          tmp_endpoint.url = tmp_endpoint.url[target_url.size..]
-        end
-
-        tmp_endpoint.url = collapse_path_slashes(tmp_endpoint.url)
-        unless tmp_endpoint.url.empty?
-          if target_url[-1] == '/' && tmp_endpoint.url[0] == '/'
-            tmp_endpoint.url = tmp_endpoint.url[1..]
-          elsif target_url[-1] != '/' && tmp_endpoint.url[0] != '/'
-            tmp_endpoint.url = "/#{tmp_endpoint.url}"
-          end
-        end
-
-        tmp_endpoint.url = target_url + tmp_endpoint.url
-        tmp << tmp_endpoint
-      end
-
-      @logger.debug_sub " + After size: #{tmp.size}"
-      tmp
-    end
-  end
-
-  # Add path parameters by parsing URL patterns
-  def add_path_parameters(endpoints : Array(Endpoint)) : Array(Endpoint)
-    @logger.sub "➔ Adding path parameters by URL."
-    final = [] of Endpoint
-
-    endpoints.each do |endpoint|
-      # CLI command URLs are kept verbatim — a `cli://tool/serve` segment is
-      # not a path-parameter template. Mobile deep links are NOT skipped here:
-      # their `myapp://host/:id` URLs legitimately carry path params that this
-      # pass extracts.
-      if endpoint.cli?
-        final << endpoint
-        next
-      end
-
-      new_endpoint = endpoint
-
-      # `{param}` patterns. A placeholder may sit at a segment boundary
-      # (`/{id}`) or share a segment with literal separators
-      # (`/{slug}_{pk}`, `/{name}.json`, `/{x},{y}`). Scan all brace
-      # placeholders in the URL instead of assuming the preceding
-      # character is `/` or `,`.
-      endpoint.url.scan(/\{([^}]+)\}/).each do |match|
-        raw = match[1]
-        # Strip a leading `*` from catch-all path variables (Spring,
-        # Armeria and ASP.NET all spell the rest-of-path capture as
-        # `{*name}`, e.g. `/files/{*path}`) and any inline regex/type
-        # constraint after `:`. The parameter is named `name`, not
-        # `*name` or `name:regex`.
-        param = raw.split(":")[0].lstrip('*')
-        next unless valid_path_param_name?(param)
-        new_endpoint.url = register_path_param(new_endpoint.url, new_endpoint.params, "{#{raw}}", param)
-      end
-
-      # `/:param` patterns.
-      endpoint.url.scan(/\/:([^\/{}]+)/).each do |match|
-        raw = match[1]
-        # The capture greedily includes any literal suffix that follows
-        # the param within the same segment (e.g. Play's `/:lang.json`
-        # or `/:id.gif`). Path param names are identifiers, so keep only
-        # the leading identifier and drop the extension/format suffix.
-        param = leading_path_param(raw)
-        next unless param
-        new_endpoint.url = register_path_param(new_endpoint.url, new_endpoint.params, ":#{raw}", param)
-      end
-
-      # `<param>` patterns (Django / Marten style).
-      endpoint.url.scan(/<([^>]+)>/).each do |match|
-        raw = match[1]
-        param = angle_bracket_param(raw)
-        # Skip regex fragments. Play declares constrained path params as
-        # `$name<regex>`, so the framework analyzer already recorded
-        # `name`; the `<regex>` body (e.g. `\w{8}`, `[\w-]{2,6}`) is not
-        # a param name.
-        next unless valid_path_param_name?(param)
-        new_endpoint.url = register_path_param(new_endpoint.url, new_endpoint.params, "<#{raw}>", param)
-      end
-
-      # `/*param` patterns (wildcard / glob).
-      endpoint.url.scan(/\/\*([^\/]+)/).each do |match|
-        raw = match[1]
-        # Only named splats are parameters (`/files/*path` -> `path`).
-        # A bare glob like Armeria's `glob:/glob/**` captures `*`, and
-        # a gRPC resource template leaves a trailing `}` — neither is a
-        # real parameter name.
-        next unless valid_path_param_name?(raw)
-        new_endpoint.url = register_path_param(new_endpoint.url, new_endpoint.params, "*#{raw}", raw)
-      end
-
-      reconcile_ruby_path_params(new_endpoint)
-
-      final << new_endpoint
-    end
-
-    final
-  end
-
-  # Substitute a configured path-param value into the URL when one is
-  # set, then record the param (deduped by name). Returns the updated
-  # URL; `params` is mutated in place — it is the endpoint's own array
-  # reference, so the push persists on the caller's struct.
-  private def register_path_param(url : String, params : Array(Param), placeholder : String, name : String) : String
-    value = apply_pvalue("path", name, "")
-    url = url.gsub(placeholder, value) unless value.empty?
-    params << Param.new(name, "", "path") unless path_param_present?(params, name)
-    url
-  end
-
-  # Resolve the param name from a `<...>` capture, handling both Django
-  # `<type:name>` and Marten `<name:type>` ordering. When the first
-  # `:`-segment is a known converter type it's Django ordering; otherwise
-  # the name comes first.
-  private def angle_bracket_param(raw : String) : String
-    parts = raw.split(":")
-    return parts[0] if parts.size <= 1
-    parts[0] =~ /^(int|str|string|slug|uuid|float|bool|path)$/ ? parts[1] : parts[0]
-  end
-
-  # Reconcile path params against same-named query/body params for Ruby
-  # frameworks. Rack/Rails frameworks (Rails, Sinatra, Hanami, Roda,
-  # Grape) merge captured path segments into a single `params` hash, so a
-  # handler that reads `params[:id]` for a `/users/:id` route is reading
-  # the path value — not a separate query/body field. Once the path type
-  # is known, the duplicate non-path entry is redundant. This is NOT done
-  # globally: frameworks with separate path/query/body buckets (Lucky's
-  # typed params, Express `req.params` vs `req.query`) carry both.
-  private def reconcile_ruby_path_params(endpoint : Endpoint) : Nil
-    tech = endpoint.details.technology
-    return unless tech && tech.starts_with?("ruby_")
-
-    path_names = endpoint.params.compact_map { |p| p.param_type == "path" ? p.name : nil }
-    return if path_names.empty?
-
-    path_name_set = path_names.to_set
-    endpoint.params.reject! { |p| p.param_type != "path" && path_name_set.includes?(p.name) }
-  end
-
-  # Collapse accidental duplicate slashes in the *path* only. A query or
-  # fragment may legitimately embed an absolute URL — e.g. an OAuth
-  # callback `/cb?redirect_uri=https://app/x` — whose `//` must survive.
-  # Callers gate this on the URL being relative, so the leading
-  # `scheme://` is never in play here.
-  private def collapse_path_slashes(url : String) : String
-    return url unless url.includes?("//")
-
-    query = url.index('?')
-    fragment = url.index('#')
-    cut = if query && fragment
-            Math.min(query, fragment)
-          else
-            query || fragment
-          end
-
-    return url.gsub_repeatedly("//", "/") unless cut
-    url[0...cut].gsub_repeatedly("//", "/") + url[cut..]
-  end
-
-  # A path param name is a plain identifier; anything else (a regex fragment,
-  # a glob, a type expression) is not a real parameter name.
-  private def valid_path_param_name?(name : String) : Bool
-    !name.empty? && !!name.match(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
-  end
-
-  # A URL cannot carry two path params with the same name, so dedup by name
-  # alone. An exact-struct check is too strict: analyzers that record a type
-  # in the param `value` (e.g. Haskell's Servant/Yesod store `Capture "id" Int`
-  # as `Param("id", "Int", "path")`) would otherwise not match the empty-value
-  # param this pass derives from the URL, producing a duplicate.
-  private def path_param_present?(params : Array(Param), name : String) : Bool
-    params.any? { |param| param.param_type == "path" && param.name == name }
-  end
-
-  # Drop literal suffixes that share the segment with the param (e.g. Play's
-  # `/:lang.json` -> `lang`, Fiber/Express optional markers `/:id?` -> `id`,
-  # and Express regex constraints `/:id(\\d+)` -> `id`). Path param names are
-  # identifiers; anything after the leading identifier describes the segment,
-  # not the parameter name.
-  #
-  # Hyphens are part of the identifier — kebab-case path params are idiomatic
-  # in Clojure (`/:artifact-id`, `/:group-id`) and legal in several other
-  # route DSLs. Excluding `-` truncated `artifact-id` to `artifact`, adding a
-  # phantom param that disagreed with the name the analyzer already recorded.
-  private def leading_path_param(raw : String) : String?
-    match = raw.match(/\A([A-Za-z_][A-Za-z0-9_-]*)/)
-    match ? match[1] : nil
-  end
-
-  # Apply parameter values based on configuration
-  def apply_pvalue(param_type, param_name, param_value) : String
-    if rules = @pvalue_rules[param_type]?
-      rules.each do |rule|
-        if rule.key.nil? || rule.key == param_name
-          return rule.value
-        end
-      end
-    end
-
-    param_value.to_s
-  end
-
-  private def initialize_pvalue_rules : Hash(String, Array(PValueRule))
-    rules = Hash(String, Array(PValueRule)).new
-    param_types = ["query", "json", "form", "header", "cookie", "path"]
-    global_pvalue = @options["set_pvalue"].as_a
-
-    param_types.each do |type|
-      pvalue_target = case type
-                      when "query"  then @options["set_pvalue_query"]
-                      when "json"   then @options["set_pvalue_json"]
-                      when "form"   then @options["set_pvalue_form"]
-                      when "header" then @options["set_pvalue_header"]
-                      when "cookie" then @options["set_pvalue_cookie"]
-                      when "path"   then @options["set_pvalue_path"]
-                      else               YAML::Any.new([] of YAML::Any)
-                      end
-
-      merged_pvalue_target = [] of YAML::Any
-      merged_pvalue_target.concat(pvalue_target.as_a)
-      merged_pvalue_target.concat(global_pvalue)
-
-      rules[type] = parse_rules(merged_pvalue_target)
-    end
-
-    rules
-  end
-
-  private def parse_rules(yaml_rules : Array(YAML::Any)) : Array(PValueRule)
-    parsed_rules = [] of PValueRule
-    yaml_rules.each do |pvalue|
-      pvalue_str = pvalue.to_s
-      key = nil
-      value = pvalue_str
-
-      if pvalue_str.includes?("=") || pvalue_str.includes?(":")
-        first_equal = pvalue_str.index("=")
-        first_colon = pvalue_str.index(":")
-
-        if first_equal && (!first_colon || first_equal < first_colon)
-          split = pvalue_str.split("=", 2)
-          key = split[0]
-          value = split[1]
-        elsif first_colon
-          split = pvalue_str.split(":", 2)
-          key = split[0]
-          value = split[1]
-        end
-      end
-
-      if key == "*"
-        key = nil
-      end
-
-      parsed_rules << PValueRule.new(key, value)
-    end
-    parsed_rules
+  rescue IO::Error
+    false
   end
 
   # Get allowed HTTP methods. AsyncAPI verbs (`PUBLISH`, `SUBSCRIBE`,
@@ -996,7 +764,6 @@ class EndpointOptimizer
   # endpoints alone — DAST consumers route on these, and downgrading
   # them to `GET` would collapse publish + subscribe into one row.
   private def get_allowed_methods : Array(String)
-    ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD", "TRACE", "CONNECT", "QUERY", "ANY",
-     "PUBLISH", "SUBSCRIBE", "SEND", "RECEIVE"]
+    ALLOWED_HTTP_METHODS + SYNTHETIC_ENDPOINT_METHODS
   end
 end

@@ -272,4 +272,98 @@ describe Noir::TreeSitterMicronautExtractor do
       {"GET", "/api/chat/{topic}/{username}", "ws"},
     ])
   end
+
+  it "detects the QUERY verb annotation and CustomHttpMethod QUERY, keeping @QueryValue distinct" do
+    source = <<-JAVA
+      package com.example.api;
+
+      import io.micronaut.http.annotation.Body;
+      import io.micronaut.http.annotation.Controller;
+      import io.micronaut.http.annotation.CustomHttpMethod;
+      import io.micronaut.http.annotation.Get;
+      import io.micronaut.http.annotation.Query;
+      import io.micronaut.http.annotation.QueryValue;
+
+      @Controller("/search")
+      public class SearchController {
+          @Get("/")
+          public String list(@QueryValue(value = "q", defaultValue = "all") String query) {
+              return "";
+          }
+
+          @Query("/")
+          public String search(@Body FilterDto filters) {
+              return "";
+          }
+
+          @CustomHttpMethod(method = "QUERY", value = "/adv")
+          public String advanced(@Body AdvDto dto) {
+              return "";
+          }
+      }
+
+      class FilterDto {
+          private String term;
+          public void setTerm(String term) { this.term = term; }
+      }
+
+      class AdvDto {
+          private String expression;
+          public void setExpression(String expression) { this.expression = expression; }
+      }
+      JAVA
+
+    dto_index = {
+      "FilterDto" => [
+        Noir::TreeSitterJavaParameterExtractor::FieldInfo.new("term", "private", true, ""),
+      ],
+      "AdvDto" => [
+        Noir::TreeSitterJavaParameterExtractor::FieldInfo.new("expression", "private", true, ""),
+      ],
+    } of String => Array(Noir::TreeSitterJavaParameterExtractor::FieldInfo)
+
+    routes = Noir::TreeSitterMicronautExtractor.extract_routes(source, dto_index)
+    routes.map { |r| {r.verb, r.path, r.params} }.should eq([
+      {"GET", "/search/", [
+        Param.new("q", "all", "query"),
+      ]},
+      {"QUERY", "/search/", [
+        Param.new("term", "", "json"),
+      ]},
+      {"QUERY", "/search/adv", [
+        Param.new("expression", "", "json"),
+      ]},
+    ])
+  end
+
+  it "reads implements from the AST so a brace in a class annotation cannot truncate the header" do
+    # `@Produces({MediaType.APPLICATION_JSON})` puts a `{` in the class
+    # node's text before `implements`. The header used to be cut at the
+    # first `{` on the assumption it opened the class body, so the
+    # interface was never seen and every inherited route silently vanished.
+    source = <<-JAVA
+      package com.example.api;
+
+      import io.micronaut.http.annotation.Controller;
+      import io.micronaut.http.annotation.Get;
+      import io.micronaut.http.annotation.Produces;
+      import io.micronaut.http.MediaType;
+
+      public interface CatalogApi {
+          @Get("/catalog/{id}")
+          String show(String id);
+      }
+
+      @Produces({MediaType.APPLICATION_JSON})
+      @Controller("/api")
+      public class CatalogController implements CatalogApi {
+          public String show(String id) { return ""; }
+      }
+      JAVA
+
+    implementations = Noir::TreeSitterMicronautExtractor.extract_controller_interface_implementations(source)
+    implementations.map { |impl| {impl.class_name, impl.interface_names, impl.paths} }.should eq([
+      {"CatalogController", ["CatalogApi"], ["/api"]},
+    ])
+  end
 end

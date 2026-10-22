@@ -24,3 +24,13 @@ FunctionalTester.new("fixtures/rust/salvo_multi_base/", {
   "include_callee" => YAML::Any.new(true),
   "only_techs"     => YAML::Any.new("rust_salvo"),
 }).perform_tests
+
+# The parent of both crates scanned as one base: each crate's mounts must
+# stay with its own handlers (#3121).
+FunctionalTester.new("fixtures/rust/salvo_multi_base/", {
+  :techs     => 1,
+  :endpoints => expected_endpoints.size,
+}, expected_endpoints, {
+  "include_callee" => YAML::Any.new(true),
+  "only_techs"     => YAML::Any.new("rust_salvo"),
+}).perform_tests

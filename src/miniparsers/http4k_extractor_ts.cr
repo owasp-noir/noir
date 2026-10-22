@@ -1,6 +1,8 @@
+require "../utils/url_path"
 require "../ext/tree_sitter/tree_sitter"
 require "../models/endpoint"
 require "./kotlin_callee_extractor"
+require "./kotlin_source_mask"
 
 module Noir
   # Tree-sitter-backed http4k extractor.
@@ -28,7 +30,7 @@ module Noir
   # Recognised:
   #
   #   * Verbs `GET`, `POST`, `PUT`, `DELETE`, `PATCH`, `HEAD`,
-  #     `OPTIONS`, `TRACE`, `CONNECT` — both bare (`GET`) and
+  #     `OPTIONS`, `TRACE`, `CONNECT`, `QUERY` — both bare (`GET`) and
   #     `Method.GET`-qualified.
   #   * Inline lambda handler — scanned for `req.query("name")`,
   #     `req.header("X-Foo")`, `req.form("x")`, `req.bodyString()`
@@ -50,7 +52,7 @@ module Noir
 
     HTTP_VERBS = Set{
       "GET", "POST", "PUT", "DELETE", "PATCH",
-      "HEAD", "OPTIONS", "TRACE", "CONNECT",
+      "HEAD", "OPTIONS", "TRACE", "CONNECT", "QUERY",
     }
 
     struct Route
@@ -107,7 +109,12 @@ module Noir
       current_type = ""
       current_depth = 0
 
-      source.each_line do |line|
+      # Comment-free copy that still carries the literal values. Read the
+      # raw source instead and a commented-out `const val PATH = "/old"`
+      # above the live declaration wins the `||=` below and permanently
+      # shadows it, so every route built from that constant reports a URL
+      # that does not exist while the real one is lost.
+      Noir::KotlinSourceMask.code_only(source).each_line do |line|
         if package_name.empty?
           if match = line.match(/^\s*package\s+([A-Za-z_][A-Za-z0-9_.]*)/)
             package_name = match[1]
@@ -225,7 +232,7 @@ module Noir
 
           path_text = route_path_from(inner_lhs, source, string_constants, local_string_constants)
           return false unless path_text
-          emit_route(verb, join_paths(prefix, path_text), node, rhs, source, routes, include_callees)
+          emit_route(verb, Noir::URLPath.join_trimmed(prefix, path_text), node, rhs, source, routes, include_callees)
           true
         else
           # Bare `VERB to handler` directly inside a `routes(...)` call
@@ -246,7 +253,7 @@ module Noir
 
         path_text = resolve_string_value(lhs, source, string_constants, local_string_constants)
         return false unless path_text
-        new_prefix = join_paths(prefix, path_text)
+        new_prefix = Noir::URLPath.join_trimmed(prefix, path_text)
         walk_routes_args(rhs, source, new_prefix, routes, string_constants, local_string_constants, depth + 1, include_callees, true, contract_routes)
         true
       else
@@ -261,14 +268,14 @@ module Noir
                                      contract_routes : Hash(String, Array(Route)))
       line = Noir::TreeSitter.node_start_row(node)
       contract_description_paths(node, source).each do |path|
-        routes << Route.new("GET", join_paths(prefix, path), line, false, [] of String, [] of String, [] of String, [] of Tuple(String, Int32))
+        routes << Route.new("GET", Noir::URLPath.join_trimmed(prefix, path), line, false, [] of String, [] of String, [] of String, [] of Tuple(String, Int32))
       end
 
       contract_route_references(node, source).each do |name|
         next unless helper_routes = contract_routes[name]?
 
         helper_routes.each do |route|
-          routes << route.with_path(join_paths(prefix, route.path))
+          routes << route.with_path(Noir::URLPath.join_trimmed(prefix, route.path))
         end
       end
     end
@@ -413,7 +420,7 @@ module Noir
       ty = Noir::TreeSitter.node_type(node)
 
       if ty == "call_expression"
-        method = navigation_method_name(first_named_child(node), source)
+        method = navigation_method_name(Noir::TreeSitter.first_named_child(node), source)
         case method
         when "query"
           if value = first_string_argument(node, source)
@@ -508,13 +515,13 @@ module Noir
       # "location", ...)` — is a RESPONSE builder, and matching it would
       # mint a phantom request body/header param (notably a spurious
       # `body:json` on bodyless GET routes).
-      receiver = first_named_child(callee)
+      receiver = Noir::TreeSitter.first_named_child(callee)
       return "" unless receiver && Noir::TreeSitter.node_type(receiver) == "simple_identifier"
       last_navigation_segment(callee, source)
     end
 
     private def call_function_name(call : LibTreeSitter::TSNode, source : String) : String
-      first = first_named_child(call)
+      first = Noir::TreeSitter.first_named_child(call)
       return "" unless first
       Noir::TreeSitter.node_type(first) == "simple_identifier" ? Noir::TreeSitter.node_text(first, source) : ""
     end
@@ -543,18 +550,12 @@ module Noir
       nil
     end
 
-    private def first_named_child(node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
-      count = LibTreeSitter.ts_node_named_child_count(node)
-      return if count == 0
-      LibTreeSitter.ts_node_named_child(node, 0_u32)
-    end
-
     private def decode_string_literal(node : LibTreeSitter::TSNode, source : String) : String
       buf = String.build do |io|
         Noir::TreeSitter.each_named_child(node) do |child|
           case Noir::TreeSitter.node_type(child)
           when "string_content"
-            io << Noir::TreeSitter.node_text(child, source)
+            io << Noir::TreeSitter.kotlin_string_content(child, node, source)
           when "interpolated_identifier", "interpolated_expression"
             io << '{'
             io << Noir::TreeSitter.node_text(child, source).strip
@@ -590,12 +591,6 @@ module Noir
         end
         parts.join
       end
-    end
-
-    private def join_paths(prefix : String, suffix : String) : String
-      return suffix if prefix.empty?
-      return prefix.rstrip('/') if suffix.empty?
-      "#{prefix.rstrip('/')}/#{suffix.lstrip('/')}"
     end
   end
 end

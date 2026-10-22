@@ -10,18 +10,18 @@ private def analyze_netlify(redirects_content : String?, toml_content : String?)
   Dir.mkdir_p(temp_dir)
 
   locator = CodeLocator.instance
-  locator.clear "netlify-redirects"
-  locator.clear "netlify-toml"
+  locator.clear Noir::LocatorKeys::NETLIFY_REDIRECTS
+  locator.clear Noir::LocatorKeys::NETLIFY_TOML
 
   begin
     if redirects_content
       File.write(redirects_path, redirects_content)
-      locator.push "netlify-redirects", redirects_path
+      locator.push Noir::LocatorKeys::NETLIFY_REDIRECTS, redirects_path
     end
 
     if toml_content
       File.write(toml_path, toml_content)
-      locator.push "netlify-toml", toml_path
+      locator.push Noir::LocatorKeys::NETLIFY_TOML, toml_path
     end
 
     options = create_test_options
@@ -63,6 +63,52 @@ describe "Netlify Analyzer" do
 
     endpoints.map(&.url).sort!.should eq ["/api/*", "/users/*"]
     endpoints.all? { |e| e.method == "ANY" }.should be_true
+  end
+
+  it "reads a BOM-prefixed netlify.toml" do
+    endpoints = analyze_netlify(nil, "﻿[[redirects]]\n  from = \"/bom\"\n  to = \"/x\"\n")
+    endpoints.map(&.url).should eq ["/bom"]
+  end
+
+  it "falls back to a line scan when the TOML shard refuses the file" do
+    endpoints = analyze_netlify nil, <<-TOML
+      [dev]
+        port = 0xFF
+
+      [[redirects]]
+        from = "/api/*"
+        to = "/x"
+
+      [[headers]]
+        for = "/*"
+        path = "/not-an-endpoint"
+
+      [[context.production.edge_functions]]
+        path = "/edge/*"
+        function = "hello"
+
+      [[redirects]]
+        from = "/before-quoted"
+
+      [context."deploy-preview".environment]
+        from = "/env-var-named-from"
+
+      [[context."deploy-preview".redirects]]
+        from = "/quoted-ctx"
+      TOML
+
+    endpoints.map(&.url).should eq ["/api/*", "/edge/*", "/before-quoted", "/quoted-ctx"]
+  end
+
+  it "skips a redirects entry that is not a table and keeps its siblings" do
+    endpoints = analyze_netlify nil, <<-TOML
+      redirects = ["x"]
+
+      [[edge_functions]]
+        path = "/edge"
+      TOML
+
+    endpoints.map(&.url).should eq ["/edge"]
   end
 
   it "combines routes from both files" do

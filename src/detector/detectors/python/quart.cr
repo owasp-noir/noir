@@ -2,8 +2,14 @@ require "../../../models/detector"
 
 module Detector::Python
   class Quart < Detector
+    detector_for "python_quart", extensions: %w[.py]
+
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".py")
+      # Necessary condition for every pattern below, which all spell
+      # `quart` literally: a memchr scan is far cheaper than the anchored
+      # import regexes, and a file without the word cannot match them.
+      return false unless file_contents.includes?("quart")
 
       # Accept any `from quart import ...` or `import quart` shape.
       # `quart_*` packages (e.g. `quart_cors`) are deliberately allowed
@@ -14,14 +20,6 @@ module Detector::Python
       has_import = file_contents.match(/(^|\n)\s*import\s+quart(\s|,|$)/)
 
       !!(has_from_import || has_import)
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".py")
-    end
-
-    def set_name
-      @name = "python_quart"
     end
   end
 end

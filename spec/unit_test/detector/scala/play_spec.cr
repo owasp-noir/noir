@@ -9,8 +9,8 @@ describe "Detect Scala Play" do
     instance.detect("routes", "GET /users controllers.Users.list(page: Option[Int])").should be_true
   end
 
-  it "routes.conf file with Scala-style route definitions (optional param)" do
-    instance.detect("routes.conf", "POST /users/:id controllers.Users.update(id: Long, name: String ?= \"default\")").should be_true
+  it "routes.conf file with Scala-style route definitions (Option type)" do
+    instance.detect("routes.conf", "POST /users/:id controllers.Users.update(id: Long, name: Option[String] ?= None)").should be_true
   end
 
   it "scala file with play.api.mvc import" do
@@ -39,5 +39,19 @@ describe "Detect Scala Play" do
 
   it "routes file without route definitions" do
     instance.detect("routes", "# Just comments").should be_false
+  end
+
+  it "applicable? admits routes and routes.conf" do
+    instance.applicable?("conf/routes").should be_true
+    instance.applicable?("conf/admin.routes").should be_true
+    instance.applicable?("conf/routes.conf").should be_true
+    instance.applicable?("routes").should be_true
+    instance.applicable?("build.sbt").should be_true
+    instance.applicable?("app/controllers/HomeController.scala").should be_true
+    instance.applicable?("app/controllers/HomeController.java").should be_false
+  end
+
+  it "routes file with only ?= default parameter without Option is not detected as Scala" do
+    instance.detect("conf/routes", "GET /clients controllers.Clients.list(page: Int ?= 1, label: String ?= \"new,hot\")").should be_false
   end
 end

@@ -36,7 +36,7 @@ FunctionalTester.new("fixtures/javascript/sveltekit/", {
   :endpoints => expected_endpoints.size,
 }, expected_endpoints).perform_tests
 
-describe "SvelteKit route source attribution" do
+describe "SvelteKit route source attribution", tags: "functional" do
   before_each do
     CodeLocator.instance.clear_all
   end

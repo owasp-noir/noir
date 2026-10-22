@@ -2,20 +2,10 @@ require "../../../models/detector"
 
 module Detector::Python
   class Litestar < Detector
+    detector_for "python_litestar", extensions: %w[.py]
+
     def detect(filename : String, file_contents : String) : Bool
-      if (filename.ends_with? ".py") && (file_contents.includes?("from litestar") || file_contents.includes?("import litestar"))
-        true
-      else
-        false
-      end
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".py")
-    end
-
-    def set_name
-      @name = "python_litestar"
+      (filename.ends_with? ".py") && (file_contents.includes?("from litestar") || file_contents.includes?("import litestar"))
     end
   end
 end

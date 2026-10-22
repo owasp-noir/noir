@@ -2,18 +2,12 @@ require "../../../models/detector"
 
 module Detector::Crystal
   class Amber < Detector
+    detector_for "crystal_amber", extensions: %w[.cr], basenames: %w[shard.yml shard.lock]
+
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.includes?("shard.yml")
 
       file_contents.includes?("amberframework/amber")
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".cr") || File.basename(filename) == "shard.yml" || File.basename(filename) == "shard.lock"
-    end
-
-    def set_name
-      @name = "crystal_amber"
     end
   end
 end

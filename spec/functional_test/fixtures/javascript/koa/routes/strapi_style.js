@@ -9,7 +9,7 @@ module.exports = (strapi) => {
     return [
         {
             method: 'GET',
-            path: '/strapi/items',
+            path: /* list */ '/strapi/items',
             handler: 'item.find',
         },
         {

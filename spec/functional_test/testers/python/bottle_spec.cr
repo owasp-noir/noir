@@ -52,6 +52,12 @@ expected_endpoints = [
   Endpoint.new("/health", "GET", [
     Param.new("probe", "", "query"),
   ]),
+  # paths.py: path lists and a positional route(path, method, callback).
+  Endpoint.new("/multi/a", "GET"),
+  Endpoint.new("/multi/b", "GET"),
+  Endpoint.new("/bare/a", "POST"),
+  Endpoint.new("/bare/b", "POST"),
+  Endpoint.new("/positional", "DELETE"),
 ]
 
 FunctionalTester.new("fixtures/python/bottle/", {

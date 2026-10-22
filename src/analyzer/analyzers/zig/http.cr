@@ -6,6 +6,8 @@ module Analyzer::Zig
   # branch on `request.head.target` and `request.head.method` after
   # `receiveHead()`, then call `request.respond(...)` or a handler function.
   class Http < Analyzer
+    analyzer_for "zig_http"
+
     TARGET_ASSIGN_RE = /(?:const|var)\s+([A-Za-z_]\w*)\s*(?::\s*[^=;]+)?=\s*([A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*)*)\s*;/
 
     TARGET_EQL_RE      = /std\s*\.\s*mem\s*\.\s*eql\s*\(\s*u8\s*,\s*([A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*)*)\s*,\s*"((?:[^"\\]|\\.)*)"\s*\)/
@@ -19,6 +21,16 @@ module Analyzer::Zig
     TARGET_PRONG_RE    = /"((?:[^"\\]|\\.)*)"\s*=>/
     IF_RE              = /(?:^|[^A-Za-z0-9_])if\s*\(/
 
+    # Whole-file detection gate, evaluated once per `.zig` file. `String#matches?`
+    # (PCRE2 JIT) is faster than the naive `String#includes?` char scan, and
+    # `STD_IMPORT_RE` folds the two-way OR into a single scan. Each matcher is
+    # equivalent to the literal substring test it replaces.
+    STD_HTTP_SERVER_RE = /std\.http\.Server/
+    STD_IMPORT_RE      = Regex.union("@import(\"std\")", "std.http")
+    RECEIVE_HEAD_RE    = /\.receiveHead\(/
+    HEAD_TARGET_RE     = /\.head\.target/
+    RESPOND_RE         = /\.respond\(/
+
     alias IfBlock = NamedTuple(cond_start: Int32, cond_end: Int32, body_open: Int32, body_close: Int32)
     alias MethodContext = NamedTuple(method: String, body_open: Int32, body_close: Int32)
     alias RouteHit = NamedTuple(url: String, offset: Int32)
@@ -29,7 +41,7 @@ module Analyzer::Zig
 
       all_files.each do |path|
         next unless path.ends_with?(".zig")
-        next if Noir::ZigCalleeExtractor.vendored_framework_path?(path)
+        next if Noir::ZigCalleeExtractor.vendored_framework_path?(base_relative_path(path))
         content = read_file_content(path)
         next unless std_http_server_file?(content)
         process_file(path, content, include_callee)
@@ -39,19 +51,21 @@ module Analyzer::Zig
     end
 
     private def std_http_server_file?(content : String) : Bool
-      return true if content.includes?("std.http.Server")
+      return true if content.matches?(STD_HTTP_SERVER_RE)
 
-      has_std = content.includes?("@import(\"std\")") || content.includes?("std.http")
-      has_server_flow = content.includes?(".receiveHead(") && content.includes?(".head.target")
-      has_response = content.includes?(".respond(")
+      has_std = content.matches?(STD_IMPORT_RE)
+      has_server_flow = content.matches?(RECEIVE_HEAD_RE) && content.matches?(HEAD_TARGET_RE)
+      has_response = content.matches?(RESPOND_RE)
 
       has_std && has_server_flow && has_response
     end
 
     private def process_file(path : String, content : String, include_callee : Bool)
-      text = Noir::ZigCalleeExtractor.strip_comments(content)
-      stripped = Noir::ZigCalleeExtractor.strip_non_code(content)
-      chars = stripped.chars
+      prepared = Noir::ZigCalleeExtractor.prepare(content)
+      text = prepared[:comments]
+      stripped = prepared[:non_code]
+      chars = prepared[:non_code_chars]
+      text_chars = text.chars
       test_blocks = Noir::ZigCalleeExtractor.test_block_ranges(stripped)
       target_vars = aliases_for(text, ".head.target")
       method_vars = aliases_for(text, ".head.method")
@@ -71,10 +85,10 @@ module Analyzer::Zig
         next if seen.includes?(key)
         seen << key
 
-        emit_range(path, text, chars, hit[:offset], hit[:url], method, branch[:body_open] + 1, branch[:body_close], include_callee)
+        emit_range(path, text, text_chars, chars, hit[:offset], hit[:url], method, branch[:body_open] + 1, branch[:body_close], include_callee)
       end
 
-      collect_target_switch_routes(text, stripped, chars, target_vars).each do |route|
+      collect_target_switch_routes(text, text_chars, stripped, chars, target_vars).each do |route|
         offset = route[:offset]
         next if Noir::ZigCalleeExtractor.in_test_block?(offset, test_blocks)
         route_method_contexts = method_contexts.select do |context|
@@ -87,7 +101,7 @@ module Analyzer::Zig
           next if seen.includes?(key)
           seen << key
 
-          emit_range(path, text, chars, offset, route[:url], method, route[:body_start], route[:body_end], include_callee)
+          emit_range(path, text, text_chars, chars, offset, route[:url], method, route[:body_start], route[:body_end], include_callee)
         else
           route_method_contexts.each do |context|
             method = context[:method]
@@ -95,7 +109,7 @@ module Analyzer::Zig
             next if seen.includes?(key)
             seen << key
 
-            emit_range(path, text, chars, offset, route[:url], method, context[:body_open] + 1, context[:body_close], include_callee)
+            emit_range(path, text, text_chars, chars, offset, route[:url], method, context[:body_open] + 1, context[:body_close], include_callee)
           end
         end
       end
@@ -146,7 +160,7 @@ module Analyzer::Zig
       hits
     end
 
-    private def collect_target_switch_routes(text : String, stripped : String, chars : Array(Char), target_vars : Set(String)) : Array(RouteBlock)
+    private def collect_target_switch_routes(text : String, text_chars : Array(Char), stripped : String, chars : Array(Char), target_vars : Set(String)) : Array(RouteBlock)
       routes = [] of RouteBlock
 
       stripped.scan(SWITCH_RE) do |m|
@@ -156,7 +170,7 @@ module Analyzer::Zig
         switch_close = Noir::ZigCalleeExtractor.find_matching(chars, switch_open, '{', '}')
         next if switch_close.nil?
 
-        switch_body = slice(text.chars, switch_open + 1, switch_close)
+        switch_body = slice(text_chars, switch_open + 1, switch_close)
         switch_body.scan(TARGET_PRONG_RE) do |pm|
           url = unescape_string(pm[1])
           next unless url.starts_with?("/")
@@ -268,8 +282,8 @@ module Analyzer::Zig
       end
     end
 
-    private def emit_range(path : String, text : String, chars : Array(Char), offset : Int32, url : String, method : String, body_start : Int32, body_end : Int32, include_callee : Bool)
-      line = Noir::ZigCalleeExtractor.line_at(text.chars, offset)
+    private def emit_range(path : String, text : String, text_chars : Array(Char), chars : Array(Char), offset : Int32, url : String, method : String, body_start : Int32, body_end : Int32, include_callee : Bool)
+      line = Noir::ZigCalleeExtractor.line_at(text, offset)
       endpoint = Endpoint.new(url, method, extract_path_params(url), Details.new(PathInfo.new(path, line)))
 
       if include_callee
@@ -356,11 +370,7 @@ module Analyzer::Zig
     end
 
     private def extract_path_params(url : String) : Array(Param)
-      params = [] of Param
-      url.scan(/:([A-Za-z_]\w*)/) do |m|
-        params << Param.new(m[1], "", "path")
-      end
-      params
+      url.scan(/:([A-Za-z_]\w*)/).map { |m| Param.new(m[1], "", "path") }
     end
 
     private def unescape_string(value : String) : String

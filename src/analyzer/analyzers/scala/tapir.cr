@@ -2,6 +2,8 @@ require "../../engines/scala_engine"
 
 module Analyzer::Scala
   class Tapir < ScalaEngine
+    analyzer_for "scala_tapir"
+
     HTTP_METHODS = %w[get post put delete patch head options connect trace]
 
     # Crystal recompiles an interpolated regex literal on every evaluation
@@ -52,7 +54,7 @@ module Analyzer::Scala
     )
 
     def analyze_file(path : String) : Array(Endpoint)
-      content = File.read(path)
+      content = read_file_content(path)
       extract_routes_from_content(path, content)
     end
 
@@ -84,7 +86,7 @@ module Analyzer::Scala
         (n = chain.name) && (seen << n)
         segments, params = resolve_chain(chain.text, defs, consts, cache, seen)
         endpoint.url = segments.empty? ? "/" : "/" + segments.join("/")
-        params.each { |p| add_param(endpoint, p.name, p.value, p.param_type) }
+        params.each { |p| endpoint.push_param(Param.new(p.name, p.value, p.param_type)) }
         endpoints << endpoint
       end
 
@@ -225,18 +227,24 @@ module Analyzer::Scala
     # lets a literal inside `("a" / b)` stay a path segment while one inside
     # `.example("a")` is rejected.
     private def call_paren_depths(s : String) : Array(Int32)
-      depths = Array(Int32).new(s.size, 0)
+      # Crystal's `String#[](i)` walks the string from byte 0 on every call
+      # once it holds any multi-byte UTF-8 char (no cached char->byte index),
+      # so a `while i < s.size; c = s[i]; ...` scan is O(n) per char, i.e.
+      # O(n^2) overall on non-ASCII `.in(...)` blocks. Materialize once and
+      # index the array instead -- same char offsets, O(1) access.
+      chars = s.chars
+      depths = Array(Int32).new(chars.size, 0)
       call_depth = 0
       stack = [] of Bool
       in_str = false
       prev_sig = '\0'
       i = 0
-      while i < s.size
+      while i < chars.size
         depths[i] = call_depth
-        c = s[i]
+        c = chars[i]
         if in_str
           if c == '\\'
-            depths[i + 1] = call_depth if i + 1 < s.size
+            depths[i + 1] = call_depth if i + 1 < chars.size
             i += 2
             next
           elsif c == '"'
@@ -299,16 +307,19 @@ module Analyzer::Scala
     end
 
     private def balanced_paren_content(s : String, open_idx : Int32) : Tuple(String, Int32)?
+      # Same non-ASCII O(n^2) risk as `call_paren_depths` above -- index a
+      # materialized char array instead of re-slicing `s` at each position.
+      chars = s.chars
       depth = 0
       i = open_idx
       content_start = open_idx + 1
-      while i < s.size
-        c = s[i]
+      while i < chars.size
+        c = chars[i]
         if c == '('
           depth += 1
         elsif c == ')'
           depth -= 1
-          return {s[content_start...i], i} if depth == 0
+          return {chars[content_start...i].join, i} if depth == 0
         end
         i += 1
       end
@@ -330,17 +341,17 @@ module Analyzer::Scala
         elsif m["path_type"]?
           name = m["path_name"]? || default_path_name(segments)
           segments << "{#{name}}"
-          collect_param(params, name, "", "path")
+          collect_param(params, name, "path")
         elsif q = m["query_name"]?
-          collect_param(params, q, m["query_type"]? || "", "query")
+          collect_param(params, q, "query")
         elsif q = m["queries_name"]?
-          collect_param(params, q, m["queries_type"]? || "", "query")
+          collect_param(params, q, "query")
         elsif h = m["header_name"]?
-          collect_param(params, h, m["header_type"]? || "", "header")
+          collect_param(params, h, "header")
         elsif h = m["header_name2"]?
-          collect_param(params, h, "", "header")
+          collect_param(params, h, "header")
         elsif c = m["cookie_name"]?
-          collect_param(params, c, m["cookie_type"]? || "", "cookie")
+          collect_param(params, c, "cookie")
         elsif body = m["body"]?
           inner = m["body_type"]? || ""
           param_type = case body
@@ -351,14 +362,26 @@ module Analyzer::Scala
                        else
                          "body"
                        end
-          collect_param(params, "body", inner, param_type)
+          # The body's value carries its DTO name (`jsonBody[Book]` ->
+          # `{"body":"Book"}`), matching what javalin/ktor/akka/http4s/
+          # zio-http/helidon already emit for a body param.
+          collect_param(params, "body", param_type, inner)
         end
       end
     end
 
-    private def collect_param(params : Array(Param), name : String, type_value : String, param_type : String)
+    # Query / header / cookie / path inputs record no value. Tapir declares
+    # each one's Scala *type* (`query[Option[Int]]("limit")`), and that used
+    # to be stored in `Param#value` — but `value` is the request value every
+    # HTTP-shaped consumer sends: the curl builder emitted `?limit=Option[Int]`
+    # and the OAS builders promoted it to an `enum` entry on the parameter.
+    # `Param` has no declared-type field to put a scalar type in, so it is
+    # dropped rather than published as a value it is not. A `body` param is
+    # the documented exception: its value names the DTO, which is the
+    # convention every other JVM analyzer already follows.
+    private def collect_param(params : Array(Param), name : String, param_type : String, value : String = "")
       return if params.any? { |p| p.name == name && p.param_type == param_type }
-      params << Param.new(name, type_value, param_type)
+      params << Param.new(name, value, param_type)
     end
 
     # Replace top-level identifier references to known path/param constants with
@@ -368,18 +391,24 @@ module Analyzer::Scala
     private def substitute_consts(args : String, consts : Hash(String, String)) : String
       io = String::Builder.new
       i = 0
-      size = args.size
+      # Crystal's `String#[](i)` walks the string from byte 0 on every call
+      # once it holds any multi-byte UTF-8 char (no cached char->byte index),
+      # so a `while i < size; c = args[i]; ...` scan is O(n) per char, i.e.
+      # O(n^2) overall on non-ASCII `.in(...)` blocks. Materialize once and
+      # index the array instead -- same char offsets, O(1) access.
+      chars = args.chars
+      size = chars.size
       call_depth = 0
       bracket_depth = 0
       stack = [] of Bool
       in_str = false
       prev_sig = '\0'
       while i < size
-        c = args[i]
+        c = chars[i]
         if in_str
           io << c
           if c == '\\' && i + 1 < size
-            io << args[i + 1]
+            io << chars[i + 1]
             i += 2
             next
           elsif c == '"'
@@ -423,15 +452,15 @@ module Analyzer::Scala
         else
           if c.ascii_letter? || c == '_'
             start = i
-            while i < size && (args[i].ascii_alphanumeric? || args[i] == '_')
+            while i < size && (chars[i].ascii_alphanumeric? || chars[i] == '_')
               i += 1
             end
-            ident = args[start...i]
+            ident = chars[start...i].join
             j = i
-            while j < size && args[j].ascii_whitespace?
+            while j < size && chars[j].ascii_whitespace?
               j += 1
             end
-            following = j < size ? args[j] : '\0'
+            following = j < size ? chars[j] : '\0'
             if call_depth == 0 && bracket_depth == 0 && prev_sig != '.' &&
                following != '(' && following != '.' && (sub = consts[ident]?)
               io << sub
@@ -447,13 +476,6 @@ module Analyzer::Scala
         end
       end
       io.to_s
-    end
-
-    private def add_param(endpoint : Endpoint, name : String, type_value : String, param_type : String)
-      existing = endpoint.params.find { |p| p.name == name && p.param_type == param_type }
-      return if existing
-
-      endpoint.push_param(Param.new(name, type_value, param_type))
     end
 
     private def default_path_name(segments : Array(String)) : String

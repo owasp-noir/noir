@@ -5,29 +5,48 @@ require "json"
 require "yaml"
 
 class OutputBuilderPassiveScan < OutputBuilder
-  def print(passive_results : Array(PassiveScanResult), logger : NoirLogger, is_color : Bool)
+  # Findings go out through `ob_puts`, like every other builder's report
+  # content, rather than straight to the logger. Three things follow from
+  # that, and none of them held before:
+  #   * `-o` finally receives the findings. `noir scan . -P -o report.txt`
+  #     wrote the endpoint list to the file and left the secrets on stdout
+  #     only, so the saved report was missing the part `-P` was run for.
+  #   * The file copy is plain text, and so is a redirected stdout. The
+  #     `is_color` this used to be handed came from `NoirRunner`, which
+  #     reads the `color` option with no terminal check because that same
+  #     flag also colors stderr progress logs; `@is_color` here is the
+  #     TTY-aware one, so `-P > findings.txt` no longer gets ANSI codes.
+  #   * A closed downstream pipe (`| head`) stops the stdout writes but lets
+  #     the `-o` file finish, instead of `exit(0)`-ing mid-report.
+  def print(passive_results : Array(PassiveScanResult))
     passive_results.each do |result|
-      logger.puts "[#{severity_color(result.info.severity, is_color)}][#{result.id.colorize(:light_blue).toggle(is_color)}][#{result.category.colorize(:light_yellow).toggle(is_color)}] #{result.info.name.colorize(:light_green).toggle(is_color)}"
-      logger.sub "├── extract: #{result.extract}"
-      logger.sub "└── file: #{result.file_path}:#{result.line_number}"
-      logger.puts ""
+      # The extract and the file path come from the scanned repo, and the
+      # rule text from a rule directory that need not be Noir's own; all of
+      # it is escaped the way the endpoint report above it is.
+      severity = severity_color(escape_control_chars(result.info.severity))
+      id = escape_control_chars(result.id).colorize(:light_blue).toggle(@is_color)
+      category = escape_control_chars(result.category).colorize(:light_yellow).toggle(@is_color)
+      name = escape_control_chars(result.info.name).colorize(:light_green).toggle(@is_color)
+
+      ob_puts "[#{severity}][#{id}][#{category}] #{name}"
+      # Indented to match `NoirLogger#sub`. These two lines are part of
+      # the finding — the extract, and the file:line that says where the
+      # secret is — not progress logging, so they share the report stream.
+      ob_puts "  ├── extract: #{escape_control_chars(result.extract)}"
+      ob_puts "  └── file: #{escape_control_chars(result.file_path)}:#{result.line_number}"
+      ob_puts ""
     end
   end
 
-  def severity_color(severity : String, is_color : Bool = true) : String
-    case severity
-    when "critical"
-      severity.colorize(:red).toggle(is_color).to_s
-    when "high"
-      severity.colorize(:light_red).toggle(is_color).to_s
-    when "medium"
-      severity.colorize(:yellow).toggle(is_color).to_s
-    when "low"
-      severity.colorize(:light_yellow).toggle(is_color).to_s
-    when "info"
-      severity.colorize(:light_blue).toggle(is_color).to_s
-    else
-      severity.colorize(:white).toggle(is_color).to_s
-    end
+  SEVERITY_COLORS = {
+    "critical" => :red,
+    "high"     => :light_red,
+    "medium"   => :yellow,
+    "low"      => :light_yellow,
+    "info"     => :light_blue,
+  }
+
+  def severity_color(severity : String) : String
+    severity.colorize(SEVERITY_COLORS.fetch(severity, :white)).toggle(@is_color).to_s
   end
 end

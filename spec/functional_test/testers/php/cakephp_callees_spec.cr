@@ -17,17 +17,17 @@ article_add = Endpoint.new("/articles", "POST").tap do |ep|
   ep.push_callee(Callee.new("ArticleService::create", line: 16))
 end
 
-photos_index = Endpoint.new("/Photos", "GET").tap do |ep|
+photos_index = Endpoint.new("/photos", "GET").tap do |ep|
   ep.push_callee(Callee.new("PhotoService::list", line: 9))
   ep.push_callee(Callee.new("$this->jsonList", line: 10))
 end
 
-photos_add = Endpoint.new("/Photos", "POST").tap do |ep|
+photos_add = Endpoint.new("/photos", "POST").tap do |ep|
   ep.push_callee(Callee.new("PhotoPayload::fromRequest", line: 15))
   ep.push_callee(Callee.new("PhotoService::create", line: 16))
 end
 
-photos_view = Endpoint.new("/Photos/{id}", "GET", [
+photos_view = Endpoint.new("/photos/{id}", "GET", [
   Param.new("id", "", "path"),
 ]).tap do |ep|
   ep.push_callee(Callee.new("PhotoService::find", line: 21))
@@ -39,19 +39,19 @@ photos_edit_callees = [
   Callee.new("PhotoService::update", line: 28),
 ]
 
-photos_edit_put = Endpoint.new("/Photos/{id}", "PUT", [
+photos_edit_put = Endpoint.new("/photos/{id}", "PUT", [
   Param.new("id", "", "path"),
 ]).tap do |ep|
   photos_edit_callees.each { |callee| ep.push_callee(callee) }
 end
 
-photos_edit_patch = Endpoint.new("/Photos/{id}", "PATCH", [
+photos_edit_patch = Endpoint.new("/photos/{id}", "PATCH", [
   Param.new("id", "", "path"),
 ]).tap do |ep|
   photos_edit_callees.each { |callee| ep.push_callee(callee) }
 end
 
-photos_delete = Endpoint.new("/Photos/{id}", "DELETE", [
+photos_delete = Endpoint.new("/photos/{id}", "DELETE", [
   Param.new("id", "", "path"),
 ]).tap do |ep|
   ep.push_callee(Callee.new("PhotoService::delete", line: 33))
@@ -84,7 +84,7 @@ tester = FunctionalTester.new("fixtures/php/cakephp_callees/", {
 })
 tester.perform_tests
 
-describe "CakePHP callee extraction" do
+describe "CakePHP callee extraction", tags: "functional" do
   it "keeps unsupported route targets callee-empty" do
     legacy_endpoint = tester.app.endpoints.find { |e| e.method == "GET" && e.url == "/legacy" }
     computed_endpoint = tester.app.endpoints.find { |e| e.method == "GET" && e.url == "/computed" }

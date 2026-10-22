@@ -1,29 +1,18 @@
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 require "uri"
 
 module Analyzer::Specification
-  class ZapSitesTree < Analyzer
+  class ZapSitesTree < SpecificationEngine
+    analyzer_for "zap_sites_tree"
+
     def analyze
-      locator = CodeLocator.instance
-      sites_trees = locator.all("zap-sites-tree")
+      each_spec_file_with_details(Noir::LocatorKeys::ZAP_SITES_TREE) do |sites_tree, details|
+        content = read_file_content(sites_tree)
+        yaml_obj = YAML.parse(content)
 
-      if sites_trees.is_a?(Array(String))
-        sites_trees.each do |sites_tree|
-          if File.exists?(sites_tree)
-            details = Details.new(PathInfo.new(sites_tree))
-            content = File.read(sites_tree, encoding: "utf-8", invalid: :skip)
-            yaml_obj = YAML.parse(content)
-
-            begin
-              children = yaml_obj.as_a
-              children.each do |child|
-                process_node(child, details)
-              end
-            rescue e
-              @logger.debug "Exception of #{sites_tree}/paths"
-              @logger.debug_sub e
-            end
-          end
+        children = yaml_obj.as_a
+        children.each do |child|
+          process_node(child, details)
         end
       end
 
@@ -42,20 +31,35 @@ module Analyzer::Specification
         method = node["method"].as_s?.try(&.upcase) || "GET"
 
         if !path.empty?
-          uri = URI.parse(path)
-          params = [] of Param
-          if data = node["data"]?.try(&.as_s?)
-            begin
-              data.split("&").each do |param|
-                param_name = param.split("=")[0]
-                params << Param.new(param_name.to_s, "", "form")
-              end
-            rescue e
-              logger.debug "Failed to parse ZAP query params for #{path}: #{e}"
-            end
-          end
+          uri = if path.matches?(ABSOLUTE_SERVER_URL)
+                  parse_absolute_url(path)
+                else
+                  begin
+                    URI.parse(path)
+                  rescue e
+                    logger.debug "Failed to parse ZAP site URL '#{path}': #{e}"
+                    nil
+                  end
+                end
 
-          @result << Endpoint.new(uri.path, method, params, details)
+          if uri
+            params = [] of Param
+
+            # A ZAP sites tree stores the URL a node was reached with, query
+            # string included. Only `uri.path` was kept, so every query
+            # parameter ZAP had already discovered was thrown away — the node
+            # for `/search?q=noir&page=2` produced a bare `/search` with no
+            # params at all.
+            if query = uri.query
+              add_named_params(query, "query", params)
+            end
+
+            if data = node["data"]?.try(&.as_s?)
+              add_named_params(data, "form", params)
+            end
+
+            @result << Endpoint.new(uri.path, method, params, details)
+          end
         end
       end
 
@@ -63,6 +67,17 @@ module Analyzer::Specification
         children.each do |child|
           process_node(child, details)
         end
+      end
+    end
+
+    # Splits an `a=1&b=2` payload into named params of `param_type`, skipping
+    # blanks and repeats.
+    private def add_named_params(payload : String, param_type : String, params : Array(Param))
+      payload.split('&').each do |pair|
+        name = pair.split('=', 2).first.strip
+        next if name.empty?
+        next if params.any? { |existing| existing.name == name && existing.param_type == param_type }
+        params << Param.new(name, "", param_type)
       end
     end
   end

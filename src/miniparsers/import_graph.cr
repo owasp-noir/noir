@@ -1,3 +1,9 @@
+require "../utils/text_file"
+require "../utils/path_scope"
+require "../utils/utils"
+require "./extraction_result_cache"
+require "../models/code_locator"
+
 module Noir
   # Shared file-level import-graph traversal for cross-file route /
   # DTO resolution.
@@ -23,6 +29,32 @@ module Noir
   module ImportGraph
     @@sibling_source_roots_cache = Hash(String, Array(String)).new
     @@sibling_source_roots_mutex = Mutex.new
+    @@scanned_package_roots : Hash(String, Array(Tuple(String, String, String?)))? = nil
+    @@scanned_package_roots_mutex = Mutex.new
+
+    IMPORT_RESOLUTION_MAX_ENTRIES = 262_144
+    PACKAGE_SIBLINGS_MAX_ENTRIES  =  32_768
+
+    @@import_resolution_cache = Hash(String, Array(String)).new
+    @@import_resolution_mutex = Mutex.new
+
+    @@package_siblings_cache = Hash(String, Array(String)).new
+    @@package_siblings_mutex = Mutex.new
+
+    DIRECTORY_MAX_ENTRIES = 262_144
+
+    @@directory_cache = Hash(String, Bool).new
+    @@directory_mutex = Mutex.new
+
+    # Filesystem-derived memos must not survive into a second scan of a
+    # different tree in the same process (`--diff`, library use).
+    Noir::ExtractionResultCache.register_clearer do
+      @@sibling_source_roots_mutex.synchronize { @@sibling_source_roots_cache.clear }
+      @@scanned_package_roots_mutex.synchronize { @@scanned_package_roots = nil }
+      @@import_resolution_mutex.synchronize { @@import_resolution_cache.clear }
+      @@package_siblings_mutex.synchronize { @@package_siblings_cache.clear }
+      @@directory_mutex.synchronize { @@directory_cache.clear }
+    end
 
     # An import declaration extracted from a source file.
     #
@@ -66,7 +98,7 @@ module Noir
       visit.call(path)
 
       package_dir = File.dirname(path)
-      safe_glob("#{package_dir}/*.#{extension}") do |sibling|
+      package_siblings(package_dir, extension).each do |sibling|
         next if sibling == path
         visit.call(sibling)
       end
@@ -74,28 +106,126 @@ module Noir
       return if package_name.empty?
       source_root = source_root_for(path, package_name)
       return unless source_root
-      sibling_roots = sibling_source_roots(source_root)
 
       imports.each do |imp|
-        relative = imp.path.gsub(".", "/")
-        if imp.wildcard?
-          ([source_root] + sibling_roots).each do |root|
-            dir = File.join(root, relative)
-            next unless Dir.exists?(dir)
-            safe_glob("#{dir}/*.#{extension}") { |match| visit.call(match) }
-          end
-        else
-          file = File.join(source_root, "#{relative}.#{extension}")
-          if File.exists?(file)
-            visit.call(file)
-          else
-            sibling_roots.each do |root|
-              sibling_file = File.join(root, "#{relative}.#{extension}")
-              visit.call(sibling_file) if File.exists?(sibling_file)
-            end
+        resolve_import(source_root, imp, extension).each { |file| visit.call(file) }
+      end
+    end
+
+    # Files an import declaration resolves to, under `source_root` and
+    # its sibling module roots.
+    #
+    # Memoized. The resolution is a pure function of
+    # `(source_root, import, extension)` — `sibling_source_roots` is
+    # itself derived from `source_root` — while the inputs repeat
+    # heavily: every controller in a module imports the same JDK and
+    # framework classes, and each one used to re-probe
+    # `1 + sibling_roots.size` paths per import. On `spring-boot`
+    # (386 `src/main/java` roots) that was ~500k `access(2)` calls,
+    # a quarter of the whole `java_spring` analyzer.
+    private def self.resolve_import(source_root : String,
+                                    imp : ImportRef,
+                                    extension : String) : Array(String)
+      relative = imp.path.gsub(".", "/")
+      kind = imp.wildcard? ? "wildcard" : "single"
+      cache_key = "#{kind} #{extension} #{source_root} #{relative}"
+      @@import_resolution_mutex.synchronize do
+        if cached = @@import_resolution_cache[cache_key]?
+          return cached
+        end
+      end
+
+      sibling_roots = sibling_source_roots(source_root)
+      last_sep = relative.rindex('/')
+      relative_dir = last_sep ? relative[0, last_sep] : ""
+      local_roots = [source_root] + sibling_roots
+      resolved = [] of String
+      if imp.wildcard?
+        local_roots.each { |root| resolved.concat(files_in(root, relative, extension)) }
+        if resolved.empty?
+          registered_package_roots(source_root, relative).each { |root| resolved.concat(files_in(root, relative, extension)) }
+        end
+      else
+        # `File.exists?(root/pkg/Name.ext)` can only be true when
+        # `root/pkg` is a directory, and the package directory is shared
+        # by every class in that package — so the memoised directory test
+        # collapses a whole package's worth of misses into one `stat`.
+        # A JDK import like `java.util.List` otherwise probed every one of
+        # spring-boot's sibling module roots, per importing file.
+        resolved = class_files_in([source_root], relative, relative_dir, extension)
+        resolved = class_files_in(sibling_roots, relative, relative_dir, extension) if resolved.empty?
+        wider_roots = [] of String
+        if resolved.empty?
+          wider_roots = registered_package_roots(source_root, relative_dir)
+          resolved = class_files_in(wider_roots, relative, relative_dir, extension)
+        end
+        # Kotlin files may be named anything and hold many top-level
+        # classes (`dto/Requests.kt` declaring `FeedRequest`), so a miss on
+        # `pkg/Name.kt` falls back to the package's files, as `pkg.*` would.
+        if resolved.empty? && extension == "kt" && !relative_dir.empty?
+          local_roots.each { |root| resolved.concat(files_in(root, relative_dir, extension)) }
+          if resolved.empty?
+            wider_roots.each { |root| resolved.concat(files_in(root, relative_dir, extension)) }
           end
         end
       end
+
+      @@import_resolution_mutex.synchronize do
+        Noir::ExtractionResultCache.store_capped(@@import_resolution_cache, cache_key, resolved, IMPORT_RESOLUTION_MAX_ENTRIES)
+      end
+    end
+
+    private def self.class_files_in(roots : Array(String), relative : String,
+                                    relative_dir : String, extension : String) : Array(String)
+      found = [] of String
+      roots.each do |root|
+        next unless directory?(File.join(root, relative_dir))
+        file = File.join(root, "#{relative}.#{extension}")
+        found << file if File.exists?(file)
+      end
+      found
+    end
+
+    private def self.files_in(root : String, package_dir : String, extension : String) : Array(String)
+      dir = File.join(root, package_dir)
+      directory?(dir) ? package_siblings(dir, extension) : [] of String
+    end
+
+    # Same-package siblings for one directory. Every file in a package
+    # asks the identical question, so one `Dir.glob` per directory
+    # replaces one per file.
+    private def self.package_siblings(package_dir : String, extension : String) : Array(String)
+      cache_key = "#{extension} #{package_dir}"
+      @@package_siblings_mutex.synchronize do
+        if cached = @@package_siblings_cache[cache_key]?
+          return cached
+        end
+      end
+
+      siblings = [] of String
+      safe_glob(package_dir, "*.#{extension}") { |sibling| siblings << sibling }
+
+      @@package_siblings_mutex.synchronize do
+        Noir::ExtractionResultCache.store_capped(@@package_siblings_cache, cache_key, siblings, PACKAGE_SIBLINGS_MAX_ENTRIES)
+      end
+    end
+
+    # Memoised `Dir.exists?`. See the call site for why the directory
+    # test is an exact short-circuit for the file test.
+    private def self.directory?(path : String) : Bool
+      @@directory_mutex.synchronize do
+        if cached = @@directory_cache[path]?
+          return cached
+        end
+      end
+      exists = Dir.exists?(path)
+      @@directory_mutex.synchronize do
+        if @@directory_cache.size >= DIRECTORY_MAX_ENTRIES
+          @@directory_cache.clear
+        end
+        @@directory_cache[path] = exists
+      end
+      exists
     end
 
     # Infer the source root by stripping the package path from the
@@ -120,7 +250,7 @@ module Noir
     # misses under the current `src/main/{java,kotlin}` root, search
     # sibling module roots with the same source-set language.
     private def self.sibling_source_roots(source_root : String) : Array(String)
-      expanded = File.expand_path(source_root)
+      expanded = Noir::PathScope.expand(source_root)
       @@sibling_source_roots_mutex.synchronize do
         if cached = @@sibling_source_roots_cache[expanded]?
           return cached
@@ -128,15 +258,15 @@ module Noir
       end
 
       roots = [] of String
-      segments = expanded.split(File::SEPARATOR)
+      segments = expanded.split('/')
       if segments.size >= 4
         lang = segments[-1]
         if (lang == "java" || lang == "kotlin") && segments[-2] == "main" && segments[-3] == "src"
-          module_root = segments[0, segments.size - 3].join(File::SEPARATOR)
+          module_root = segments[0, segments.size - 3].join('/')
           workspace_root = File.dirname(module_root)
-          safe_glob(File.join(workspace_root, "*", "src", "main", lang)) do |candidate|
+          safe_glob(workspace_root, "*/src/main/#{lang}") do |candidate|
             next unless Dir.exists?(candidate)
-            candidate_expanded = File.expand_path(candidate)
+            candidate_expanded = Noir::PathScope.expand(candidate)
             roots << candidate if candidate_expanded != expanded
           end
         end
@@ -148,10 +278,58 @@ module Noir
       roots
     end
 
-    # `Dir.glob` raises on unreadable entries in some edge cases;
-    # swallow those so one bad sibling doesn't sink the whole walk.
-    private def self.safe_glob(pattern : String, &block : String ->) : Nil
-      Dir.glob(pattern) { |p| block.call(p) }
+    # Monorepos keep shared modules at other depths than the direct
+    # siblings (`shared/` next to `apps/portal`). Consulted only after the
+    # local roots miss: the registered `src/main/{lang}` roots under the
+    # same `-b` base that actually hold `package_dir`, an index lookup
+    # rather than a probe of every module root.
+    private def self.registered_package_roots(source_root : String, package_dir : String) : Array(String)
+      lang = File.basename(source_root)
+      entries = scanned_package_roots["#{lang}:#{package_dir}"]?
+      return [] of String unless entries
+      expanded = Noir::PathScope.expand(source_root)
+      base = Noir::PathScope.longest_base(expanded, CodeLocator.instance.scan_base_paths)
+      return [] of String unless base
+      entries.compact_map { |root, root_expanded, root_base| root if root_base == base && root_expanded != expanded }
+    end
+
+    # `"{lang}:{package dir}" => [{root as registered, expanded, owning -b base}]`
+    # for every scanned file under a `src/main/{java,kotlin}` root, built
+    # once from the file registry. The registered spelling keeps resolved
+    # files on the content cache's keys.
+    private def self.scanned_package_roots : Hash(String, Array(Tuple(String, String, String?)))
+      @@scanned_package_roots_mutex.synchronize do
+        @@scanned_package_roots ||= begin
+          bases = CodeLocator.instance.scan_base_paths
+          root_info = Hash(String, Tuple(String, String, String?)).new
+          index = Hash(String, Array(Tuple(String, String, String?))).new
+          {".java", ".kt"}.each do |ext|
+            CodeLocator.instance.files_by_extension(ext).each do |file|
+              {"java", "kotlin"}.each do |lang|
+                marker = "/src/main/#{lang}/"
+                next unless idx = file.index(marker)
+                rest = file[(idx + marker.size)..]
+                next unless slash = rest.rindex('/')
+                root = file[0, idx + marker.size - 1]
+                info = root_info[root] ||= begin
+                  expanded = Noir::PathScope.expand(root)
+                  {root, expanded, Noir::PathScope.longest_base(expanded, bases)}
+                end
+                entries = index["#{lang}:#{rest[0, slash]}"] ||= [] of Tuple(String, String, String?)
+                entries << info unless entries.includes?(info)
+              end
+            end
+          end
+          index
+        end
+      end
+    end
+
+    # `glob_under(dir, pattern)`, block form. `Dir.glob` raises on
+    # unreadable entries in some edge cases; swallow those so one bad
+    # sibling doesn't sink the whole walk.
+    private def self.safe_glob(dir : String, pattern : String, &block : String ->) : Nil
+      glob_under(dir, pattern).each { |p| block.call(p) }
     rescue
     end
 
@@ -205,10 +383,24 @@ module Noir
                                      import_specifier : String,
                                      extensions : Array(String) = JS_RESOLVE_EXTENSIONS,
                                      boundary : String? = nil) : String?
+      resolved = resolve_relative_candidate(from_file, import_specifier, extensions, boundary)
+      return unless resolved
+      return resolved unless boundary
+      # Second gate, on the real path this time — see `under_boundary?`.
+      # Runs once per successfully resolved import (not per candidate
+      # extension), so it costs a pair of `realpath` calls on a path that
+      # already paid for several `File.exists?` probes.
+      real_under_boundary?(resolved, boundary) ? resolved : nil
+    end
+
+    private def self.resolve_relative_candidate(from_file : String,
+                                                import_specifier : String,
+                                                extensions : Array(String),
+                                                boundary : String?) : String?
       return unless import_specifier.starts_with?("./") || import_specifier.starts_with?("../")
 
       base_dir = File.dirname(from_file)
-      combined = File.expand_path(File.join(base_dir, import_specifier))
+      combined = Noir::PathScope.expand(File.join(base_dir, import_specifier))
 
       # Boundary check — drop the resolution before any disk I/O so
       # we don't even fingerprint files outside the scan root.
@@ -258,13 +450,17 @@ module Noir
     # the comparison works even when callers hand over a relative
     # `./project` form.
     #
-    # The check is purely lexical — symlinks aren't followed. A
-    # `<boundary>/foo -> /etc` symlink could still leak; defense in
-    # depth on top of this would call `File.realpath` after a
-    # successful `File.exists?` and compare the realpath. Skipped
-    # for now because the symlink scenario requires both an
-    # attacker-controlled checkout and pre-existing symlinks on the
-    # scanner's disk pointing at sensitive paths.
+    # The check is purely lexical — symlinks aren't followed, so
+    # `<boundary>/foo -> /etc/passwd` passes it. That is not a
+    # pre-existing-symlink-on-the-scanner's-disk scenario as once assumed:
+    # git tracks symlinks, absolute target and all, so the hostile checkout
+    # brings its own. Followed outside the boundary, the target gets parsed
+    # as source and can surface in `code_paths` or a passive-scan extract.
+    #
+    # This stays as the cheap first gate — it rejects `../../etc/passwd`
+    # before any disk I/O, which is what the caller wants — and
+    # `real_under_boundary?` re-checks the resolved path once the disk has
+    # confirmed it exists.
     private def self.under_boundary?(combined : String, boundary : String) : Bool
       # `File.expand_path` does NOT strip a trailing separator in Crystal, so
       # a caller passing `-b project/` would yield `boundary_abs` ending in
@@ -272,8 +468,20 @@ module Noir
       # path starts with — every import would be (wrongly) rejected as
       # out-of-boundary. Chomp the trailing separator so the check is robust
       # to both `project` and `project/` forms.
-      boundary_abs = File.expand_path(boundary).chomp(File::SEPARATOR)
-      combined == boundary_abs || combined.starts_with?(boundary_abs + File::SEPARATOR)
+      boundary_abs = Noir::PathScope.expand(boundary).chomp('/')
+      combined == boundary_abs || combined.starts_with?(boundary_abs + "/")
+    end
+
+    # Containment of the symlink-resolved path. Both sides are resolved, so a
+    # boundary that is itself reached through a link (`/tmp` -> `/private/tmp`
+    # on macOS) still matches its own contents. An unresolvable path — a
+    # dangling link, a directory we can't traverse — is treated as outside.
+    private def self.real_under_boundary?(resolved : String, boundary : String) : Bool
+      real_path = File.realpath(resolved)
+      real_boundary = File.realpath(boundary).chomp(File::SEPARATOR)
+      real_path == real_boundary || real_path.starts_with?(real_boundary + File::SEPARATOR)
+    rescue File::Error
+      false
     end
   end
 end
@@ -317,19 +525,108 @@ module Noir::ImportGraph::Python
   # `app_base_path` anchors the dotted path for absolute imports;
   # `file_path`'s directory anchors relative imports. Pass
   # `content` when the caller already has the file in hand to
-  # skip the second `File.read`.
+  # skip the second disk read.
   def self.find_imported_modules(app_base_path : String,
                                  file_path : String,
                                  content : String? = nil) : Hash(String, Tuple(String, Int32))
-    content = File.read(file_path, encoding: "utf-8", invalid: :skip) if content.nil?
+    content = Noir::TextFile.read(file_path) if content.nil?
 
     file_base_path = file_path
     file_base_path = File.dirname(file_path) if file_path.ends_with? ".py"
 
     import_map = Hash(String, Tuple(String, Int32)).new
-    offset = 0
-    content.each_line do |line|
+    each_import_statement(content) do |from_import, names|
+      add_python_imports(import_map, app_base_path, file_base_path, from_import, names)
+    end
+    import_map
+  end
+
+  # Map each name an import binds to `{declaring file, original name}`.
+  # `from pkg.mod import bp as users_bp` keys `users_bp` to
+  # `{pkg/mod.py, "bp"}`, so a caller can find the object where it was
+  # declared, under the name it was declared with. A name that binds a
+  # module (`from . import views`, `import shop.urls`) maps to that
+  # module's file (`__init__.py` for a package) with an empty original
+  # name; a plain `import a.b` is keyed on the whole dotted `a.b`.
+  def self.find_imported_symbols(app_base_path : String,
+                                 file_path : String,
+                                 content : String? = nil) : Hash(String, Tuple(String, String))
+    content = Noir::TextFile.read(file_path) if content.nil?
+    file_dir = file_path.ends_with?(".py") ? File.dirname(file_path) : file_path
+
+    symbols = Hash(String, Tuple(String, String)).new
+    each_import_statement(content) do |from_import, names|
       package_path = app_base_path
+      module_dotted = from_import
+      if from_import.starts_with?(".")
+        dots = from_import.size - from_import.lstrip('.').size
+        package_path = file_dir
+        (dots - 1).times { package_path = File.dirname(package_path) }
+        module_dotted = from_import[dots..]
+      end
+
+      names.split(",").each do |spec|
+        name, _, alias_name = spec.strip.partition(/\s+as\s+/)
+        next if name.empty? || name == "*"
+        local = alias_name.empty? ? name : alias_name.strip
+        if from_import.empty?
+          file = resolve_module_file(package_path, name)
+          symbols[local] = {file, ""} if file
+        elsif file = resolve_module_file(package_path, module_dotted.empty? ? name : "#{module_dotted}.#{name}")
+          symbols[local] = {file, ""}
+        elsif file = resolve_module_file(package_path, module_dotted)
+          symbols[local] = {file, name}
+        end
+      end
+    end
+    symbols
+  end
+
+  # The `.py` file a dotted module path names under `package_path`: the
+  # leaf module, or the package's `__init__.py`. An empty path names the
+  # `package_path` package itself.
+  private def self.resolve_module_file(package_path : String, dotted : String) : String?
+    dir = package_path
+    segments = dotted.empty? ? [] of String : dotted.split(".")
+    segments.each_with_index do |segment, index|
+      candidate = File.join(dir, segment)
+      if index == segments.size - 1 && File.file?("#{candidate}.py")
+        return "#{candidate}.py"
+      elsif File.directory?(candidate)
+        dir = candidate
+      else
+        return
+      end
+    end
+    init = File.join(dir, "__init__.py")
+    File.file?(init) ? init : nil
+  end
+
+  # Yield every `import` / `from … import …` statement as `{from part,
+  # comma-separated names}` (the from part is empty for a plain
+  # `import`). Indented imports count too: an app factory routinely
+  # imports its blueprints inside `create_app()`.
+  private def self.each_import_statement(content : String, &) : Nil
+    # A parenthesised import still waiting for its `)`: the `from` part
+    # and the names collected so far. Collected per line with comments
+    # cut first, so neither a `(`/`)` in a `#` comment nor a CRLF
+    # terminator can shift where the name list starts or stops.
+    open_from : String? = nil
+    open_names = String::Builder.new
+    content.each_line do |raw_line|
+      if from = open_from
+        code = strip_import_comment(raw_line)
+        if close = code.index(')')
+          open_names << code[0, close]
+          yield from, open_names.to_s
+          open_from = nil
+        else
+          open_names << code << '\n'
+        end
+        next
+      end
+
+      line = raw_line.lstrip
       from_import = ""
       imports = ""
 
@@ -347,57 +644,64 @@ module Noir::ImportGraph::Python
       end
 
       unless imports.empty?
-        round_bracket_index = line.index('(')
-        unless round_bracket_index.nil?
-          # Parse `import (\n a,\n b,\n c)` pattern — track
-          # bytes from the opening `(` to the matching `)`.
-          index = offset + round_bracket_index + 1
-          # Single index() call instead of an O(n^2) per-char walk over the
-          # remaining file (String#[](Int) is O(n) on multi-byte content).
-          index = content.index(')', index) || content.size
-          imports = content[(offset + round_bracket_index + 1)..(index - 1)].strip
-        end
-
-        # Drop inline comments (`from x import y  # noqa: F401`,
-        # `from . import (\n a,  # used by Z\n b)`). Left in place the
-        # `#…` text became part of the last imported name/alias and
-        # corrupted resolution. Stripping per-line (up to the newline)
-        # keeps the multi-line parenthesised form intact; import
-        # statements never carry a legitimate `#` outside a comment.
-        imports = imports.gsub(/#[^\n]*/, "")
-
-        # `..` resolves to file's parent dir; `.` to file's dir.
-        if from_import.starts_with?("..")
-          package_path = File.join(file_base_path, "..")
-          from_import = from_import[2..]
-        elsif from_import.starts_with?(".")
-          package_path = file_base_path
-          from_import = from_import[1..]
-        end
-
-        imports.split(",").each do |import|
-          import = import.strip
-          if import.starts_with?("..")
-            package_path = File.join(file_base_path, "..")
-          elsif import.starts_with?(".")
-            package_path = file_base_path
+        code = strip_import_comment(imports)
+        if open = code.index('(')
+          rest = code[(open + 1)..]
+          if close = rest.index(')')
+            yield from_import, rest[0, close]
+          else
+            open_from = from_import
+            open_names = String::Builder.new
+            open_names << rest << '\n'
           end
-
-          dotted_as_names = import
-          dotted_as_names = "#{from_import}.#{import}" unless from_import.empty?
-
-          import_package_map = find_imported_package(package_path, dotted_as_names)
-          next if import_package_map.empty?
-          import_package_map.each do |name, filepath, package_type|
-            import_map[name] = {filepath, package_type}
-          end
+        else
+          yield from_import, code
         end
       end
+    end
+  end
 
-      offset += line.size + 1
+  # `line` up to its first `#`. Import statements carry no string
+  # literals, so the first `#` always starts a comment.
+  private def self.strip_import_comment(line : String) : String
+    (hash = line.index('#')) ? line[0, hash] : line
+  end
+
+  # Resolve the comma-separated names of one import statement into
+  # `import_map`. `from_import` is the dotted module after `from`
+  # (empty for a plain `import`).
+  private def self.add_python_imports(import_map : Hash(String, Tuple(String, Int32)),
+                                      app_base_path : String,
+                                      file_base_path : String,
+                                      from_import : String,
+                                      imports : String) : Nil
+    package_path = app_base_path
+    # `..` resolves to file's parent dir; `.` to file's dir.
+    if from_import.starts_with?("..")
+      package_path = File.join(file_base_path, "..")
+      from_import = from_import[2..]
+    elsif from_import.starts_with?(".")
+      package_path = file_base_path
+      from_import = from_import[1..]
     end
 
-    import_map
+    imports.split(",").each do |import|
+      import = import.strip
+      if import.starts_with?("..")
+        package_path = File.join(file_base_path, "..")
+      elsif import.starts_with?(".")
+        package_path = file_base_path
+      end
+
+      dotted_as_names = import
+      dotted_as_names = "#{from_import}.#{import}" unless from_import.empty?
+
+      import_package_map = find_imported_package(package_path, dotted_as_names)
+      next if import_package_map.empty?
+      import_package_map.each do |name, filepath, package_type|
+        import_map[name] = {filepath, package_type}
+      end
+    end
   end
 
   # Resolve a dotted Python identifier (`a.b.c` or
@@ -456,10 +760,10 @@ module Noir::ImportGraph::Python
 
         package_type = File.exists?(File.join(package_path, "#{import}.py")) ? PackageType::FILE : PackageType::CODE
 
-        if !alias_name.nil?
-          package_map << {alias_name, py_path, package_type}
-        else
+        if alias_name.nil?
           package_map << {import, py_path, package_type}
+        else
+          package_map << {alias_name, py_path, package_type}
         end
       end
     end

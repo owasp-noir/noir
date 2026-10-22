@@ -3,6 +3,16 @@ require "../../../utils/url_path"
 
 module Analyzer::Crystal
   class Marten < CrystalEngine
+    analyzer_for "crystal_marten"
+
+    # Only files inside a project whose `shard.yml` depends on `marten`.
+    # See `CrystalEngine#shard_dependencies` — `get "/path"` is the same
+    # line in Kemal, Grip and Amber, so the manifest is what tells the
+    # frameworks apart.
+    protected def shard_dependencies : Array(String)
+      ["marten"]
+    end
+
     alias HandlerActionKey = Tuple(String, String, String)
     @handler_callees = Hash(HandlerActionKey, Array(Noir::CrystalCalleeExtractor::Entry)).new
 
@@ -29,17 +39,20 @@ module Analyzer::Crystal
       # the sub-routes bare and the mount line as a junk endpoint.
       main_maps = [] of MartenRouteMap
       named_maps = Hash(String, MartenRouteMap).new
-      mutex = Mutex.new
 
-      parallel_file_scan do |path|
+      # Merged in file order, not worker-completion order: two apps that
+      # declare the same map name leave the later file's map in place, so the
+      # order decides which wins (see `ordered_file_scan`).
+      per_file = ordered_file_scan do |path|
         local_main = [] of MartenRouteMap
         local_named = Hash(String, MartenRouteMap).new
         parse_route_maps_in_file(read_source_lines(path), path, local_main, local_named)
         next if local_main.empty? && local_named.empty?
-        mutex.synchronize do
-          main_maps.concat(local_main)
-          local_named.each { |fqn, map| named_maps[fqn] = map }
-        end
+        {local_main, local_named}
+      end
+      per_file.each do |local_main, local_named|
+        main_maps.concat(local_main)
+        local_named.each { |fqn, map| named_maps[fqn] = map }
       end
 
       emit_maps(main_maps, named_maps)
@@ -194,20 +207,8 @@ module Analyzer::Crystal
       @result << endpoint
     end
 
-    private def collect_public_dir_endpoints
-      each_public_file do |file|
-        # Extract the path after "/public/" regardless of depth
-        if file =~ /\/public\/(.*)/
-          relative_path = $1
-          @result << Endpoint.new("/#{relative_path}", "GET")
-        end
-      end
-    rescue e
-      logger.debug e
-    end
-
     private def include_callee? : Bool
-      any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      callees_needed?
     end
 
     private def read_source_lines(path : String) : Array(String)
@@ -218,7 +219,6 @@ module Analyzer::Crystal
       actions = Hash(HandlerActionKey, Array(Noir::CrystalCalleeExtractor::Entry)).new
 
       get_files_by_extension(".cr").each do |path|
-        next if File.directory?(path)
         next unless File.exists?(path)
         next if crystal_dependency_path?(path)
 

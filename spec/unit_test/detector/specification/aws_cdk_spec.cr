@@ -14,10 +14,10 @@ describe "Detect AWS CDK source" do
       TS
 
     locator = CodeLocator.instance
-    locator.clear "aws-cdk-spec"
+    locator.clear Noir::LocatorKeys::AWS_CDK_SPEC
 
     instance.detect("lib/stack.ts", src).should be_true
-    locator.all("aws-cdk-spec").should eq ["lib/stack.ts"]
+    locator.all(Noir::LocatorKeys::AWS_CDK_SPEC).should eq ["lib/stack.ts"]
   end
 
   it "detects Python CDK source" do

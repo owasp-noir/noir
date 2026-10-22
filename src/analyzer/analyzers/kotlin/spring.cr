@@ -2,25 +2,26 @@ require "../../../models/analyzer"
 require "../../../miniparsers/kotlin_route_extractor_ts"
 require "../../../miniparsers/kotlin_parameter_extractor_ts"
 require "../../../miniparsers/kotlin_callee_extractor"
+require "../../engines/java_engine"
 require "../../engines/kotlin_engine"
 require "../../../utils/utils.cr"
+require "../../../utils/path_scope"
+require "../../../utils/url_path"
+require "../../../utils/jvm_literal"
 
 module Analyzer::Kotlin
   class Spring < Analyzer
+    analyzer_for "kotlin_spring"
+
+    include Analyzer::Java::JavaEngine
+
     KOTLIN_EXTENSION = "kt"
     alias SpringRoute = Noir::TreeSitterKotlinRouteExtractor::Route
 
-    private struct SpringPathConfig
-      getter servlet_context_path : String
-      getter webflux_base_path : String
-
-      def initialize(@servlet_context_path = "", @webflux_base_path = "")
-      end
-
-      def web_base_path : String
-        @webflux_base_path.empty? ? @servlet_context_path : @webflux_base_path
-      end
-    end
+    # Constructor-injected receiver types by (file, class): each lookup
+    # walks the whole tree, and every handler in a controller asks for
+    # the same class.
+    @injected_receiver_types = Hash(Tuple(String, String), Hash(String, String)).new
 
     SPRING_FRAMEWORK_CALLEE_NAMES = Set{
       "ok", "created", "accepted", "noContent", "notFound", "badRequest",
@@ -53,6 +54,19 @@ module Analyzer::Kotlin
       "Mono.",
       "Flux.",
     ]
+
+    # File-classification gates: several `String#includes?` calls OR-ed
+    # over the same buffer, replaced with a single precompiled
+    # `Regex.union` scan (PCRE2 JIT, auto-escapes each literal). Each of
+    # these runs once (sometimes twice) per Kotlin file in the scan.
+    SPRING_MAPPING_ANNOTATION_RE = Regex.union(
+      "@RequestMapping", "@GetMapping", "@PostMapping", "@PutMapping", "@DeleteMapping", "@PatchMapping"
+    )
+    STOMP_ROUTE_MARKER_RE       = Regex.union("addEndpoint", "@MessageMapping", "@SubscribeMapping")
+    GRAPHQL_ROUTE_MARKER_RE     = Regex.union("@QueryMapping", "@MutationMapping", "@SubscriptionMapping", "@SchemaMapping")
+    FUNCTIONAL_ROUTER_MARKER_RE = Regex.union("coRouter", "router {")
+    CONTROLLER_ANNOTATION_RE    = Regex.union("RestController", "Controller")
+    CLASS_OR_OBJECT_RE          = Regex.union("class", "object")
 
     private struct SpringInterfaceRouteEntry
       getter route : SpringRoute
@@ -149,12 +163,10 @@ module Analyzer::Kotlin
       end
       local_string_constants = Hash(String, Hash(String, String)).new
       dto_builder = Noir::TreeSitterKotlinDtoIndex.new
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       functional_router_seen = false
 
-      all_file_list = all_files()
-      file_list = spring_kotlin_files(all_file_list)
-      src_dirs = spring_src_dirs(all_file_list)
+      file_list = spring_kotlin_files(all_files())
       path_configs = path_configs_for(file_list)
       file_list.each do |path|
         content = read_file_content(path)
@@ -175,6 +187,14 @@ module Analyzer::Kotlin
       string_constants_by_base.each do |base, constants|
         string_constants_by_base[base] = Noir::TreeSitterKotlinRouteExtractor.expand_constant_interpolations(constants)
       end
+      # Each file's own map is consulted first, so it needs the cross-file
+      # values too: `const val ITEM = "$BASE/item"` with `BASE` declared in
+      # another file is still `$BASE/item` there.
+      local_string_constants = local_string_constants.to_h do |path, constants|
+        {path, Noir::TreeSitterKotlinRouteExtractor.expand_constant_interpolations(
+          constants, string_constants_by_base[configured_base_for(path)]
+        )}
+      end
 
       # Cross-module indexes (interface inheritance, STOMP destinations)
       # legitimately span build modules, so they resolve against the merged
@@ -185,13 +205,14 @@ module Analyzer::Kotlin
       stomp_prefixes = stomp_application_prefixes_for(file_list, string_constants, local_string_constants)
       graphql_paths = graphql_paths_for(file_list, path_configs)
 
-      src_dirs.each do |path|
-        process_directory(path, path_configs)
+      path_configs.each do |root, config|
+        @result.concat(spring_provided_endpoints(root, spring_config_values_for(root), config.web_base_path))
       end
 
       file_list.each do |path|
         project_root = project_root_for(path)
         base_constants = string_constants_by_base[configured_base_for(path)]? || Hash(String, String).new
+        @result.concat(spring_security_endpoints(path, (path_configs[project_root]? || SpringPathConfig.new).web_base_path))
         process_kotlin_file(
           path, dto_builder, path_configs, base_constants, local_string_constants[path]?,
           interface_route_index, method_index, stomp_prefixes[project_root]? || [""], graphql_paths[project_root]? || "/graphql"
@@ -217,119 +238,9 @@ module Analyzer::Kotlin
 
     private def spring_kotlin_files(files : Array(String)) : Array(String)
       files.select do |path|
-        File.exists?(path) &&
-          path.ends_with?(".#{KOTLIN_EXTENSION}") &&
-          !KotlinEngine.test_path?(path) &&
-          !spring_ignored_path?(path)
-      end
-    end
-
-    private def spring_src_dirs(files : Array(String)) : Array(String)
-      dirs = Set(String).new
-      files.each do |path|
-        next if spring_ignored_path?(path)
-        index = path.index("/src/")
-        next unless index
-        dirs << path[0, index + 4]
-      end
-      dirs.to_a
-    end
-
-    private def spring_ignored_path?(path : String) : Bool
-      path.includes?("/.git/") ||
-        path.includes?("/.gradle/") ||
-        path.includes?("/build/") ||
-        path.includes?("/out/") ||
-        path.includes?("/target/") ||
-        path.includes?("/node_modules/")
-    end
-
-    # Read Spring Webflux base-path + static-locations from
-    # `application.yml` / `application.properties` so route paths
-    # inherit them and static asset directories show up as GET routes.
-    private def process_directory(path : String, path_configs : Hash(String, SpringPathConfig))
-      return unless path.ends_with?("/src")
-
-      static_locations = [] of String
-      project_root = path[0, path.size - 4]
-      web_base_path = (path_configs[project_root]? || SpringPathConfig.new).web_base_path
-
-      application_yml_path = File.join(path, "main/resources/application.yml")
-      if File.exists?(application_yml_path)
-        begin
-          config = YAML.parse(File.read(application_yml_path))
-          spring = config["spring"]
-          if spring
-            resources = spring["resources"] || spring["web"]
-            if resources
-              if resources["resources"]
-                resources = resources["resources"]
-              end
-              static_locations_yaml = resources["static-locations"]
-              if static_locations_yaml
-                if static_locations_yaml.as_a?
-                  static_locations_yaml.as_a.each do |loc|
-                    static_locations << loc.as_s
-                  end
-                elsif static_locations_yaml.as_s?
-                  static_locations_yaml.as_s.split(",").each do |loc|
-                    static_locations << loc.strip
-                  end
-                end
-              end
-            end
-          end
-        rescue
-          # Handle parsing errors if necessary
-        end
-      end
-
-      application_properties_path = File.join(path, "main/resources/application.properties")
-      if File.exists?(application_properties_path)
-        begin
-          properties = File.read(application_properties_path)
-          static_locs = properties.match(/spring(\.web)?\.resources\.static-locations\s*=\s*(.*)/)
-          if static_locs
-            static_locs[2].split(",").each do |loc|
-              static_locations << loc.strip
-            end
-          end
-        rescue
-          # Handle parsing errors if necessary
-        end
-      end
-
-      if static_locations.empty?
-        static_locations = ["classpath:/META-INF/resources/", "classpath:/resources/", "classpath:/static/", "classpath:/public/"]
-      end
-
-      process_static_locations(path, static_locations, web_base_path)
-    end
-
-    private def process_static_locations(src_path : String, static_locations : Array(String), webflux_base_path : String)
-      static_locations.each do |location|
-        if location.starts_with?("classpath:")
-          resource_path = location.sub("classpath:", "").strip
-          full_resource_path = File.join(src_path, "main/resources", resource_path)
-          if Dir.exists?(full_resource_path)
-            Dir.glob("#{escape_glob_path(full_resource_path)}/**/*") do |file|
-              next if File.directory?(file)
-              relative_path = file.sub(full_resource_path, "")
-              full_url = join_path(webflux_base_path, relative_path)
-              @result << Endpoint.new(full_url, "GET", Details.new(PathInfo.new(file)))
-            end
-          end
-        elsif location.starts_with?("file:")
-          file_path = location.sub("file:", "").strip
-          if Dir.exists?(file_path)
-            Dir.glob("#{escape_glob_path(file_path)}/**/*") do |file|
-              next if File.directory?(file)
-              relative_path = file.sub(file_path, "")
-              full_url = join_path(webflux_base_path, relative_path)
-              @result << Endpoint.new(full_url, "GET", Details.new(PathInfo.new(file)))
-            end
-          end
-        end
+        path.ends_with?(".#{KOTLIN_EXTENSION}") &&
+          File.exists?(path) &&
+          !KotlinEngine.test_path?(base_relative_path(path))
       end
     end
 
@@ -339,14 +250,12 @@ module Analyzer::Kotlin
       index = SpringInterfaceRouteIndex.new
 
       file_list.each do |path|
-        next unless File.exists?(path) && path.ends_with?(".#{KOTLIN_EXTENSION}")
-        next if KotlinEngine.test_path?(path)
+        next unless path.ends_with?(".#{KOTLIN_EXTENSION}") && File.exists?(path)
+        next if KotlinEngine.test_path?(base_relative_path(path))
 
         content = read_file_content(path)
         next unless content.includes?("interface")
-        next unless content.includes?("@RequestMapping") || content.includes?("@GetMapping") ||
-                    content.includes?("@PostMapping") || content.includes?("@PutMapping") ||
-                    content.includes?("@DeleteMapping") || content.includes?("@PatchMapping")
+        next unless content.matches?(SPRING_MAPPING_ANNOTATION_RE)
 
         Noir::TreeSitter.parse_kotlin(content) do |root|
           package_name = Noir::TreeSitterKotlinParameterExtractor.extract_package_name_from(root, content)
@@ -369,11 +278,11 @@ module Analyzer::Kotlin
       index = SpringMethodIndex.new
 
       file_list.each do |path|
-        next unless File.exists?(path) && path.ends_with?(".#{KOTLIN_EXTENSION}")
-        next if KotlinEngine.test_path?(path)
+        next unless path.ends_with?(".#{KOTLIN_EXTENSION}") && File.exists?(path)
+        next if KotlinEngine.test_path?(base_relative_path(path))
 
         content = read_file_content(path)
-        next unless content.includes?("fun") && (content.includes?("class") || content.includes?("object"))
+        next unless content.includes?("fun") && content.matches?(CLASS_OR_OBJECT_RE)
 
         Noir::TreeSitter.parse_kotlin(content) do |root|
           package_name = Noir::TreeSitterKotlinParameterExtractor.extract_package_name_from(root, content)
@@ -386,7 +295,7 @@ module Analyzer::Kotlin
             next unless parts.size == 2
             class_name = parts[0]
             method_name = parts[1]
-            next if class_name.empty? || method_name.empty?
+            next if class_name.empty? || method_name.empty? || method_name.includes?('@')
 
             supertype_fqcns = supertypes_by_class[class_name]? || [] of String
             supertype_names = supertype_fqcns.map(&.split('.').last)
@@ -481,20 +390,6 @@ module Analyzer::Kotlin
       routes
     end
 
-    private def add_interface_routes(target : Array(SpringInterfaceRouteEntry),
-                                     seen : Set(String),
-                                     routes : Array(SpringInterfaceRouteEntry)?)
-      return unless routes
-
-      routes.each do |entry|
-        route = entry.route
-        key = "#{entry.path}:#{route.class_name}:#{route.method_name}:#{route.verb}:#{route.path}"
-        next if seen.includes?(key)
-        seen << key
-        target << entry
-      end
-    end
-
     private def visible_method_entries(index : SpringMethodIndex,
                                        package_name : String,
                                        imports : Array(Noir::ImportGraph::ImportRef),
@@ -543,20 +438,15 @@ module Analyzer::Kotlin
     end
 
     private def stomp_route_file?(content : String) : Bool
-      content.includes?("addEndpoint") ||
-        content.includes?("@MessageMapping") ||
-        content.includes?("@SubscribeMapping")
+      content.matches?(STOMP_ROUTE_MARKER_RE)
     end
 
     private def graphql_route_file?(content : String) : Bool
-      content.includes?("@QueryMapping") ||
-        content.includes?("@MutationMapping") ||
-        content.includes?("@SubscriptionMapping") ||
-        content.includes?("@SchemaMapping")
+      content.matches?(GRAPHQL_ROUTE_MARKER_RE)
     end
 
     private def kotlin_functional_router_file?(content : String) : Bool
-      content.includes?("coRouter") || content.includes?("router {")
+      content.matches?(FUNCTIONAL_ROUTER_MARKER_RE)
     end
 
     private def kotlin_spring_route_candidate_file?(content : String) : Bool
@@ -569,12 +459,7 @@ module Analyzer::Kotlin
     end
 
     private def kotlin_spring_mapping_route_file?(content : String) : Bool
-      content.includes?("@RequestMapping") ||
-        content.includes?("@GetMapping") ||
-        content.includes?("@PostMapping") ||
-        content.includes?("@PutMapping") ||
-        content.includes?("@DeleteMapping") ||
-        content.includes?("@PatchMapping")
+      content.matches?(SPRING_MAPPING_ANNOTATION_RE)
     end
 
     private def spring_gateway_route_file?(content : String) : Bool
@@ -582,7 +467,7 @@ module Analyzer::Kotlin
     end
 
     private def spring_controller_interface_candidate_file?(content : String) : Bool
-      content.includes?("RestController") || content.includes?("Controller")
+      content.matches?(CONTROLLER_ANNOTATION_RE)
     end
 
     private def stomp_application_prefixes_for(file_list : Array(String),
@@ -591,8 +476,8 @@ module Analyzer::Kotlin
       prefixes = Hash(String, Array(String)).new
 
       file_list.each do |path|
-        next unless File.exists?(path) && path.ends_with?(".#{KOTLIN_EXTENSION}")
-        next if KotlinEngine.test_path?(path)
+        next unless path.ends_with?(".#{KOTLIN_EXTENSION}") && File.exists?(path)
+        next if KotlinEngine.test_path?(base_relative_path(path))
 
         content = read_file_content(path)
         next unless content.includes?("setApplicationDestinationPrefixes")
@@ -616,8 +501,8 @@ module Analyzer::Kotlin
       project_roots = Set(String).new
 
       file_list.each do |path|
-        next unless File.exists?(path) && path.ends_with?(".#{KOTLIN_EXTENSION}")
-        next if KotlinEngine.test_path?(path)
+        next unless path.ends_with?(".#{KOTLIN_EXTENSION}") && File.exists?(path)
+        next if KotlinEngine.test_path?(base_relative_path(path))
         project_roots << project_root_for(path)
       end
 
@@ -647,31 +532,8 @@ module Analyzer::Kotlin
       )
     end
 
-    private def resource_dirs_for(project_root : String) : Array(String)
-      [
-        File.join(project_root, "src/main/resources"),
-        File.join(project_root, "resources"),
-        project_root,
-      ].uniq
-    end
-
-    private def read_properties(path : String) : Hash(String, String)
-      values = Hash(String, String).new
-      File.each_line(path) do |line|
-        stripped = line.strip
-        next if stripped.empty? || stripped.starts_with?("#") || stripped.starts_with?("!")
-
-        if separator = stripped.index(/[=:]/)
-          key = stripped[...separator].strip
-          value = stripped[(separator + 1)..].strip
-          values[key] = value unless key.empty?
-        end
-      end
-      values
-    end
-
     private def merge_yaml_path_config(values : Hash(String, String), path : String)
-      document = YAML.parse(File.read(path))
+      document = YAML.parse(read_file_content(path))
       if value = yaml_string_value(document, "server", "servlet", "context-path")
         values["server.servlet.context-path"] = value
       end
@@ -692,27 +554,19 @@ module Analyzer::Kotlin
       nil
     end
 
-    private def normalize_optional_path(path : String?) : String
-      return "" unless path
-
-      trimmed = path.strip
-      return "" if trimmed.empty? || trimmed == "/"
-      trimmed.starts_with?("/") ? trimmed : "/#{trimmed}"
-    end
-
     private def graphql_paths_for(file_list : Array(String), path_configs : Hash(String, SpringPathConfig)) : Hash(String, String)
       paths = Hash(String, String).new
       roots = Set(String).new
       file_list.each do |path|
-        next unless File.exists?(path) && path.ends_with?(".#{KOTLIN_EXTENSION}")
-        next if KotlinEngine.test_path?(path)
+        next unless path.ends_with?(".#{KOTLIN_EXTENSION}") && File.exists?(path)
+        next if KotlinEngine.test_path?(base_relative_path(path))
         roots << project_root_for(path)
       end
 
       roots.each do |root|
         graphql_path = graphql_path_from_resources(root) || "/graphql"
         path_config = path_configs[root]? || SpringPathConfig.new
-        paths[root] = join_paths(path_config.web_base_path, graphql_path)
+        paths[root] = Noir::URLPath.join_rooted(path_config.web_base_path, graphql_path)
       end
 
       paths
@@ -722,7 +576,7 @@ module Analyzer::Kotlin
       properties_path = File.join(root, "src/main/resources/application.properties")
       if File.exists?(properties_path)
         begin
-          File.read(properties_path).each_line do |line|
+          read_file_content(properties_path).each_line do |line|
             if match = line.match(/^\s*spring\.graphql\.path\s*=\s*(\S+)/)
               return normalize_graphql_path(match[1])
             end
@@ -736,7 +590,7 @@ module Analyzer::Kotlin
       [yml_path, yaml_path].each do |path|
         next unless File.exists?(path)
         begin
-          config = YAML.parse(File.read(path))
+          config = YAML.parse(read_file_content(path))
           spring = config["spring"]
           next unless spring
           graphql = spring["graphql"]
@@ -797,7 +651,7 @@ module Analyzer::Kotlin
     private def graphql_input_field_param(field : Noir::TreeSitterKotlinParameterExtractor::FieldInfo,
                                           argument_name : String) : Param
       name = argument_name == "input" ? field.name : "#{argument_name}.#{field.name}"
-      param = Param.new(name, field.init_value, "json")
+      param = Param.new(name, field.literal_default, "json")
       param.add_tag(Tag.new("graphql-input-field", argument_name, "kotlin_spring_graphql_analyzer"))
       param
     end
@@ -831,7 +685,7 @@ module Analyzer::Kotlin
                                     method_index : SpringMethodIndex,
                                     stomp_application_prefixes : Array(String),
                                     graphql_path : String)
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       content = read_file_content(path)
       return unless kotlin_spring_route_candidate_file?(content)
 
@@ -876,12 +730,12 @@ module Analyzer::Kotlin
 
         dto_index = dto_builder.build_for_with_root(path, content, root)
         method_nodes = Noir::TreeSitterKotlinParameterExtractor.index_functions_from(root, content)
+        file_callees = Noir::KotlinCalleeExtractor::FileCallees.new(root, content, path)
 
         stomp_routes.each do |route|
-          route_path = route.verb == "GET" ? join_paths(webflux_base_path, route.path) : route.path
+          route_path = route.verb == "GET" ? Noir::URLPath.join_rooted(webflux_base_path, route.path) : route.path
           line = route.line + 1
-          key = "#{route.class_name}##{route.method_name}"
-          method = method_nodes[key]?
+          method = route_method_node(method_nodes, route.class_name, route.method_name, route.line)
           parameters =
             if method
               Noir::TreeSitterKotlinParameterExtractor.extract_method_parameters_from_method(
@@ -900,7 +754,7 @@ module Analyzer::Kotlin
           if include_callee && !(route.class_name.empty? || route.method_name.empty?)
             before_callee_count = endpoint.callees.size
             attach_method_callees(
-              endpoint, root, content, path, route.class_name, route.method_name, line, method_nodes,
+              endpoint, file_callees, route.class_name, route.method_name, line, method_nodes,
               method_index, package_name, imports
             )
             if endpoint.callees.size == before_callee_count
@@ -922,13 +776,13 @@ module Analyzer::Kotlin
           endpoint.protocol = "ws" if route.root_kind == "Subscription"
           endpoint.add_tag(Tag.new("graphql", "#{route.root_kind}.#{route.field_name}", "kotlin_spring_graphql_analyzer"))
           endpoint.add_tag(Tag.new("graphql-root", route.root_kind, "kotlin_spring_graphql_analyzer"))
-          method = method_nodes["#{route.class_name}##{route.method_name}"]?
+          method = route_method_node(method_nodes, route.class_name, route.method_name, route.line)
           attach_method_security_tags(endpoint, method, content)
 
           if include_callee && !(route.class_name.empty? || route.method_name.empty?)
             before_callee_count = endpoint.callees.size
             attach_method_callees(
-              endpoint, root, content, path, route.class_name, route.method_name, line, method_nodes,
+              endpoint, file_callees, route.class_name, route.method_name, line, method_nodes,
               method_index, package_name, imports
             )
             if endpoint.callees.size == before_callee_count
@@ -946,20 +800,20 @@ module Analyzer::Kotlin
         # `params=` constraint expansion matches across both routes
         # (mirrors the legacy `||=` quirk: first verb wins).
         first_verb = Hash(String, String).new
-        routes.each do |route|
-          key = "#{route.class_name}##{route.method_name}"
-          first_verb[key] ||= route.verb
+        model_attribute_functions = nil.as(Hash(String, Array(String))?)
+        route_methods = routes.map { |route| route_method_node(method_nodes, route.class_name, route.method_name, route.line) }
+        routes.each_with_index do |route, idx|
+          first_verb[route_verb_key(route, route_methods[idx])] ||= route.verb
         end
 
-        routes.each do |route|
-          key = "#{route.class_name}##{route.method_name}"
-          format_verb = first_verb[key]? || route.verb
+        routes.each_with_index do |route, idx|
+          method = route_methods[idx]
+          format_verb = first_verb[route_verb_key(route, method)]? || route.verb
 
           # Pass only the `consumes`-derived format (nil when absent). The
           # verb default (POST → form, others → query) is applied
           # per-parameter inside the extractor so an explicit @RequestBody
           # on a POST resolves to json instead of being dragged to form.
-          method = method_nodes[key]?
           parameter_format =
             if method
               Noir::TreeSitterKotlinParameterExtractor.extract_consumes_from_method(method, content)
@@ -988,17 +842,17 @@ module Analyzer::Kotlin
             )
           end
 
-          # Drop the trailing `/` on webflux_base_path when the route
-          # path already starts with one, so the join doesn't produce
-          # `//`.
           base_path = webflux_base_path
-          if base_path.ends_with?("/") && route.path.starts_with?("/")
-            base_path = base_path[..-2]
-          end
 
           line = route.line + 1
           details = Details.new(PathInfo.new(path, line))
-          endpoint = Endpoint.new(join_paths(base_path, route.path), route.verb, parameters, details)
+          endpoint = Endpoint.new(Noir::URLPath.join_rooted(base_path, route.path), route.verb, parameters, details)
+          endpoint.handler = jvm_route_handler(route, path)
+          if method
+            endpoint.route_conditions = Noir::TreeSitterKotlinParameterExtractor.extract_route_conditions_from_method(
+              method, content, format_verb, string_constants, local_string_constants || Hash(String, String).new
+            )
+          end
           attach_method_security_tags(endpoint, method, content)
 
           # Functional router method references can point at a handler
@@ -1025,12 +879,23 @@ module Analyzer::Kotlin
           if include_callee && !(route.class_name.empty? || route.method_name.empty?)
             before_callee_count = endpoint.callees.size
             attach_method_callees(
-              endpoint, root, content, path, route.class_name, route.method_name, line, method_nodes,
+              endpoint, file_callees, route.class_name, route.method_name, line, method_nodes,
               method_index, package_name, imports
             )
             if !route.handler_reference && endpoint.callees.size == before_callee_count
               handler_line = method ? Noir::TreeSitter.node_start_row(method) + 1 : line
               push_spring_callee(endpoint, "#{route.class_name}.#{route.method_name}", path, handler_line)
+            end
+            # `@ModelAttribute` functions run before every handler of their
+            # controller, so their callees (the lookup a handler then edits)
+            # belong to every route of the class.
+            model_attribute_functions ||= model_attribute_functions_by_class(method_nodes, content)
+            model_attribute_functions[route.class_name]?.try &.each do |function_name|
+              next if function_name == route.method_name
+              attach_method_callees(
+                endpoint, file_callees, route.class_name, function_name, nil, method_nodes,
+                method_index, package_name, imports
+              )
             end
           end
           attach_cross_file_handler_details(
@@ -1062,7 +927,7 @@ module Analyzer::Kotlin
 
             pairs.each do |implementation, entry|
               entry_route = entry.route
-              inherited_path = join_paths(implementation.path, entry_route.path)
+              inherited_path = Noir::URLPath.join_rooted(implementation.path, entry_route.path)
 
               parameter_format = Noir::TreeSitterKotlinParameterExtractor.extract_consumes_from(
                 interface_root, interface_source, entry_route.class_name, entry_route.method_name
@@ -1080,12 +945,17 @@ module Analyzer::Kotlin
 
               details = Details.new(PathInfo.new(entry.path, entry_route.line + 1))
               details.add_path(PathInfo.new(path, implementation.line + 1))
-              endpoint = Endpoint.new(join_paths(base_path, inherited_path), entry_route.verb, parameters, details)
-              attach_method_security_tags(endpoint, method_nodes["#{implementation.class_name}##{entry_route.method_name}"]?, content)
+              endpoint = Endpoint.new(Noir::URLPath.join_rooted(base_path, inherited_path), entry_route.verb, parameters, details)
+              impl_function = method_nodes["#{implementation.class_name}##{entry_route.method_name}"]?
+              attach_method_security_tags(endpoint, impl_function, content)
+              # The body lives on the `override fun`, not the interface function.
+              if impl_function && (impl_row = Noir::TreeSitterKotlinRouteExtractor.function_name_row(impl_function))
+                endpoint.handler = Handler.new("#{implementation.class_name}.#{entry_route.method_name}", path, impl_row + 1)
+              end
 
               if include_callee && !(implementation.class_name.empty? || entry_route.method_name.empty?)
                 attach_method_callees(
-                  endpoint, root, content, path, implementation.class_name, entry_route.method_name, nil, method_nodes,
+                  endpoint, file_callees, implementation.class_name, entry_route.method_name, nil, method_nodes,
                   method_index, package_name, imports
                 )
               end
@@ -1095,6 +965,46 @@ module Analyzer::Kotlin
           end
         end
       end
+    end
+
+    # Names of the `@ModelAttribute` functions of every class in the file:
+    # Spring runs them before each handler of that class.
+    private def model_attribute_functions_by_class(method_nodes : Hash(String, LibTreeSitter::TSNode),
+                                                   content : String) : Hash(String, Array(String))
+      by_class = Hash(String, Array(String)).new
+      method_nodes.each do |key, node|
+        next unless Noir::TreeSitterKotlinRouteExtractor.annotated?(node, content, "ModelAttribute")
+        class_name, _, function_name = key.partition('#')
+        function_name = function_name.partition('@')[0]
+        functions = by_class[class_name] ||= [] of String
+        functions << function_name unless functions.includes?(function_name)
+      end
+      by_class
+    end
+
+    # The function a route's annotation sits on. Overloads share
+    # `Class#name`, so when the first one's span does not hold the
+    # annotation line, take the `Class#name@row` overload that does.
+    private def route_method_node(method_nodes : Hash(String, LibTreeSitter::TSNode),
+                                  class_name : String, method_name : String, line : Int32) : LibTreeSitter::TSNode?
+      key = "#{class_name}##{method_name}"
+      method = method_nodes[key]?
+      return method if method.nil? || node_spans_line?(method, line)
+      prefix = "#{key}@"
+      method_nodes.each do |name, node|
+        return node if name.starts_with?(prefix) && node_spans_line?(node, line)
+      end
+      method
+    end
+
+    private def node_spans_line?(node : LibTreeSitter::TSNode, line : Int32) : Bool
+      Noir::TreeSitter.node_start_row(node) <= line <= Noir::TreeSitter.node_end_row(node)
+    end
+
+    # Pins the `params=` format per handler function, not per name.
+    private def route_verb_key(route, method : LibTreeSitter::TSNode?) : String
+      row = method ? Noir::TreeSitter.node_start_row(method) : -1
+      "#{route.class_name}##{route.method_name}@#{row}"
     end
 
     private def attach_method_security_tags(endpoint : Endpoint, method : LibTreeSitter::TSNode?, source : String)
@@ -1156,7 +1066,7 @@ module Analyzer::Kotlin
         if include_callee
           handler_imports = Noir::TreeSitterKotlinParameterExtractor.extract_imports_from(handler_root, entry.source)
           attach_method_callees(
-            endpoint, handler_root, entry.source, entry.path, entry.class_name, entry.method_name, entry.line, method_nodes,
+            endpoint, Noir::KotlinCalleeExtractor::FileCallees.new(handler_root, entry.source, entry.path), entry.class_name, entry.method_name, entry.line, method_nodes,
             method_index, entry.package_name, handler_imports
           )
         end
@@ -1166,9 +1076,7 @@ module Analyzer::Kotlin
     end
 
     private def attach_method_callees(endpoint : Endpoint,
-                                      root : LibTreeSitter::TSNode,
-                                      source : String,
-                                      path : String,
+                                      file_callees : Noir::KotlinCalleeExtractor::FileCallees,
                                       class_name : String,
                                       method_name : String,
                                       route_line : Int32?,
@@ -1178,9 +1086,7 @@ module Analyzer::Kotlin
                                       imports : Array(Noir::ImportGraph::ImportRef) = [] of Noir::ImportGraph::ImportRef,
                                       expansion_depth : Int32 = 0,
                                       expansion_seen : Set(String)? = nil)
-      direct_entries = Noir::KotlinCalleeExtractor.callees_in_method(
-        root, source, path, class_name, method_name, route_line
-      )
+      direct_entries = file_callees.callees_in_method(class_name, method_name, route_line)
       expansion_entries = [] of Tuple(String, String, Int32)
       direct_entries.each do |entry|
         name, callee_path, callee_line = entry
@@ -1198,10 +1104,8 @@ module Analyzer::Kotlin
         next unless helper_node
 
         helper_line = Noir::TreeSitter.node_start_row(helper_node) + 1
-        add_code_path_once(endpoint, path, helper_line)
-        Noir::KotlinCalleeExtractor.callees_in_method(
-          root, source, path, class_name, helper_name, helper_line
-        ).each do |helper_entry|
+        add_code_path_once(endpoint, file_callees.file_path, helper_line)
+        file_callees.callees_in_method(class_name, helper_name, helper_line).each do |helper_entry|
           name, callee_path, callee_line = helper_entry
           push_spring_callee(endpoint, name, callee_path, callee_line)
           expansion_entries << helper_entry
@@ -1209,7 +1113,7 @@ module Analyzer::Kotlin
       end
 
       expand_injected_receiver_callees(
-        endpoint, method_index, package_name, imports, root, source, class_name, expansion_entries,
+        endpoint, method_index, package_name, imports, file_callees, class_name, expansion_entries,
         expansion_depth, expansion_seen || Set(String).new
       )
     end
@@ -1218,8 +1122,7 @@ module Analyzer::Kotlin
                                                  method_index : SpringMethodIndex?,
                                                  package_name : String,
                                                  imports : Array(Noir::ImportGraph::ImportRef),
-                                                 root : LibTreeSitter::TSNode,
-                                                 source : String,
+                                                 file_callees : Noir::KotlinCalleeExtractor::FileCallees,
                                                  class_name : String,
                                                  entries : Array(Tuple(String, String, Int32)),
                                                  expansion_depth : Int32,
@@ -1227,7 +1130,8 @@ module Analyzer::Kotlin
       return unless method_index
       return if expansion_depth >= 2
 
-      receiver_types = constructor_injected_receiver_types(root, source, class_name)
+      receiver_types = @injected_receiver_types[{file_callees.file_path, class_name}] ||=
+        constructor_injected_receiver_types(file_callees.root, file_callees.source, class_name)
       return if receiver_types.empty?
 
       entries.each do |entry|
@@ -1252,7 +1156,7 @@ module Analyzer::Kotlin
           resolved_imports = Noir::TreeSitterKotlinParameterExtractor.extract_imports_from(resolved_root, resolved.source)
           resolved_method_nodes = Noir::TreeSitterKotlinParameterExtractor.index_functions_from(resolved_root, resolved.source)
           attach_method_callees(
-            endpoint, resolved_root, resolved.source, resolved.path, resolved.class_name, resolved.method_name,
+            endpoint, Noir::KotlinCalleeExtractor::FileCallees.new(resolved_root, resolved.source, resolved.path), resolved.class_name, resolved.method_name,
             resolved.line, resolved_method_nodes, method_index, resolved.package_name, resolved_imports,
             expansion_depth + 1, expansion_seen
           )
@@ -1631,13 +1535,7 @@ module Analyzer::Kotlin
     end
 
     private def project_root_for(path : String) : String
-      ["/src/main/kotlin/", "/src/"].each do |marker|
-        if index = path.index(marker)
-          return path[...index]
-        end
-      end
-
-      File.dirname(path)
+      Noir::PathScope.marker_root(path, configured_base_for(path), {"/src/main/kotlin/", "/src/"}) || File.dirname(path)
     end
   end
 end

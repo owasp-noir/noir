@@ -88,5 +88,11 @@ func main() {
 		fmt.Fprintf(w, "profile view")
 	}).Methods(http.MethodGet, http.MethodHead)
 
+	// BuildOnly routes never match real requests (URL reverse templates
+	// only). Must not be emitted as live endpoints.
+	r.Path("/articles/{category}/{id}").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "article")
+	}).Name("article").BuildOnly()
+
 	http.ListenAndServe(":8080", r)
 }

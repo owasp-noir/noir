@@ -1,7 +1,9 @@
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 
 module Analyzer::Specification
-  class AwsCloudformation < Analyzer
+  class AwsCloudformation < SpecificationEngine
+    analyzer_for "aws_cloudformation"
+
     METHOD_ANY            = "ANY"
     SAM_FUNCTION_TYPE     = "AWS::Serverless::Function"
     APIGW_RESOURCE_TYPE   = "AWS::ApiGateway::Resource"
@@ -11,24 +13,13 @@ module Analyzer::Specification
     record ApigwResource, name : String, path_part : String, parent : String?
 
     def analyze
-      spec_files = CodeLocator.instance.all("aws-cloudformation-spec")
-      return @result unless spec_files.is_a?(Array(String))
-
-      spec_files.each do |path|
-        next unless File.exists?(path)
-
-        details = Details.new(PathInfo.new(path))
+      each_spec_file_with_details(Noir::LocatorKeys::AWS_CLOUDFORMATION_SPEC) do |path, details|
         content = read_file_content(path)
-        begin
-          resources = parse_resources(path, content)
-          next if resources.empty?
+        resources = parse_resources(path, content)
+        next if resources.empty?
 
-          process_sam(resources, details)
-          process_cloudformation(resources, details)
-        rescue e
-          @logger.debug "Exception processing #{path}"
-          @logger.debug_sub e
-        end
+        process_sam(resources, details)
+        process_cloudformation(resources, details)
       end
 
       @result
@@ -38,9 +29,9 @@ module Analyzer::Specification
 
     private def parse_resources(path : String, content : String) : ResourceMap
       doc = if path.ends_with?(".json")
-              JSON.parse(content)
+              parse_json_lenient(content)
             else
-              JSON.parse(YAML.parse(content).to_json)
+              parse_json_lenient(YAML.parse(content).to_json)
             end
 
       resources = doc["Resources"]?.try(&.as_h?)
@@ -75,6 +66,11 @@ module Analyzer::Specification
           path = props["Path"]?.try(&.as_s?)
           method = props["Method"]?.try(&.as_s?)
           next if path.nil? || path.empty?
+          # `$default` (and the WebSocket `$connect` / `$disconnect` keys) are
+          # API Gateway route selectors, not paths — `/$default` is a URL no
+          # client ever requests. SAM writes them with and without the leading
+          # slash. The Terraform analyzer already drops the same keys.
+          next if path.lchop('/').starts_with?('$')
 
           resolved_method = (method.nil? || method.empty?) ? METHOD_ANY : method.upcase
           kind = event_type == "HttpApi" ? "httpapi" : "rest"

@@ -1,6 +1,7 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 
+@[Noir::TaggerFor(key: "scala_auth", name: "Scala Auth Tagger", desc: "Identifies Play/Akka/Scalatra authentication patterns", order: 230)]
 class ScalaAuthTagger < FrameworkTagger
   # Play Framework auth patterns
   PLAY_AUTH_PATTERNS = [
@@ -33,28 +34,14 @@ class ScalaAuthTagger < FrameworkTagger
     {/userOption/, "Scalatra userOption check"},
   ]
 
-  def initialize(options : Hash(String, YAML::Any))
-    super
-    @name = "scala_auth"
-  end
-
   def self.target_techs : Array(String)
     ["scala_play", "scala_akka", "scala_scalatra", "java_play"]
   end
 
-  def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
-    endpoints.each do |endpoint|
-      check_endpoint(endpoint)
-    end
-    endpoints
-  end
-
   private def check_endpoint(endpoint : Endpoint)
     endpoint.details.code_paths.each do |path_info|
-      content = read_file(path_info.path)
-      next if content.nil?
-
-      lines = content.split("\n")
+      lines = read_file_lines(path_info.path)
+      next if lines.nil?
       line_num = path_info.line
       next if line_num.nil?
       # Skip stale/out-of-range line refs: a line beyond the content we
@@ -78,16 +65,34 @@ class ScalaAuthTagger < FrameworkTagger
     end
   end
 
+  # The route's own block plus the few lines above it (annotations, a
+  # wrapping action), never reaching into a neighbouring route's block.
   private def check_auth_patterns(lines : Array(String), line_idx : Int32) : String?
-    start_idx = [line_idx - 5, 0].max
-    end_idx = [line_idx + 10, lines.size - 1].min
-
     all_patterns = PLAY_AUTH_PATTERNS + SCALATRA_AUTH_PATTERNS
-    (start_idx..end_idx).each do |idx|
+
+    # Upward, stopping at the end of the previous block.
+    idx = line_idx - 1
+    while idx >= 0 && idx >= line_idx - 5
       current = lines[idx]
+      break if current.strip.ends_with?('}')
       all_patterns.each do |pattern, desc|
         return desc if current.matches?(pattern)
       end
+      idx -= 1
+    end
+
+    # Downward, through the brace that closes the route's block.
+    end_idx = [line_idx + 10, lines.size - 1].min
+    depth = 0
+    opened = false
+    (line_idx..end_idx).each do |i|
+      current = lines[i]
+      all_patterns.each do |pattern, desc|
+        return desc if current.matches?(pattern)
+      end
+      depth += current.count('{') - current.count('}')
+      opened ||= current.includes?('{')
+      break if opened && depth <= 0
     end
 
     nil
@@ -95,17 +100,33 @@ class ScalaAuthTagger < FrameworkTagger
 
   private def check_enclosing_auth(lines : Array(String), line_idx : Int32) : String?
     # Walk backwards for Akka HTTP auth directives wrapping this route
+    # Only a line that opens a block still open at the route encloses it.
+    # A balanced sibling (`authorize(x) { … }` in the object above) does
+    # not: counting `<= 0` let it through once the route's own openers
+    # were subtracted.
     idx = line_idx - 1
-    brace_depth = 0
+    balance = 0
 
     while idx >= 0 && idx >= line_idx - 20
       current = lines[idx]
-      stripped = current.strip
+      # Right to left, so `} ~ authenticateBasic(…) {` (closes a sibling,
+      # opens the enclosing block) still reads as an opener.
+      opens = false
+      current.reverse.each_char do |char|
+        if char == '}'
+          balance += 1
+        elsif char == '{'
+          balance -= 1
+          opens = true if balance < 0
+        end
+      end
 
-      brace_depth += current.count('}') - current.count('{')
-
-      AKKA_AUTH_PATTERNS.each do |pattern, desc|
-        return desc if stripped.matches?(pattern) && brace_depth <= 0
+      if opens
+        stripped = current.strip
+        AKKA_AUTH_PATTERNS.each do |pattern, desc|
+          return desc if stripped.matches?(pattern)
+        end
+        balance = 0
       end
 
       idx -= 1

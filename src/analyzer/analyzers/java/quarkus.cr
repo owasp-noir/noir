@@ -2,8 +2,10 @@ require "../../../models/analyzer"
 require "../../engines/java_engine"
 require "../../../miniparsers/java_callee_extractor"
 require "../../../miniparsers/jaxrs_extractor_ts"
-require "../../../miniparsers/import_graph"
+require "../../../miniparsers/kotlin_route_extractor_ts"
 require "yaml"
+require "../../../utils/url_path"
+require "../../../utils/top_level_split"
 
 module Analyzer::Java
   # Quarkus is JAX-RS-flavoured, so this analyzer just drives the
@@ -15,8 +17,12 @@ module Analyzer::Java
   # `@RestCookie` shorthand annotations alongside the standard
   # JAX-RS names, so no Quarkus-specific tree walking is needed.
   class Quarkus < Analyzer
-    JAVA_EXTENSION  = "java"
-    QUARKUS_MARKERS = ["io.quarkus", "quarkus.io"]
+    analyzer_for "java_quarkus"
+
+    include JavaEngine
+
+    QUARKUS_MARKERS   = ["io.quarkus", "quarkus.io"]
+    QUARKUS_MANIFESTS = Set{"pom.xml", "build.gradle", "build.gradle.kts"}
     alias ApplicationBaseKey = Tuple(String, String)
 
     private struct QuarkusPathConfig
@@ -29,10 +35,12 @@ module Analyzer::Java
     end
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       dto_builder = Noir::TreeSitterJavaDtoIndex.new
       bean_cache = Hash(String, Hash(String, Array(Param))).new
       source_cache = Hash(String, String).new
+      custom_verb_cache = Hash(String, Hash(String, String)).new
+      kotlin_dto_builder = Noir::TreeSitterKotlinDtoIndex.new
 
       file_list = all_files()
       path_configs = path_configs_for(file_list)
@@ -48,13 +56,18 @@ module Analyzer::Java
       end
 
       file_list.each do |path|
-        next if JavaEngine.test_path?(path)
+        next unless jvm_source?(path)
+        next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
-        next unless path.ends_with?(".#{JAVA_EXTENSION}")
         next unless quarkus_roots.includes?(project_root_for(path))
 
         content = read_file_content(path)
         next unless quarkus_route_source?(content)
+
+        if path.ends_with?(".kt")
+          analyze_kotlin_file(path, content, kotlin_dto_builder, path_configs, application_base_paths, include_callee)
+          next
+        end
 
         Noir::TreeSitter.parse_java(content) do |root|
           package_name = Noir::TreeSitterJavaParameterExtractor.extract_package_name_from(root, content)
@@ -66,6 +79,8 @@ module Analyzer::Java
             Noir::TreeSitterJaxRsExtractor.extract_bean_fields_from(root, content))
           subresource_sources = subresource_sources_for(path, content, package_name, source_cache, imports,
             Noir::TreeSitterJaxRsExtractor.extract_class_names_from(root, content))
+          custom_verb_annotations = custom_verb_index_for(path, content, package_name, custom_verb_cache, imports,
+            Noir::TreeSitterJaxRsExtractor.extract_custom_verb_annotations_from(root, content))
           application_base_path = application_base_path_for(path, package_name, application_base_paths)
           configured_base_path = configured_base_path_for(path, path_configs, application_base_path)
 
@@ -73,15 +88,10 @@ module Analyzer::Java
             @result << endpoint
           end
 
-          Noir::TreeSitterJaxRsExtractor.extract_routes_from(root, content, dto_index, bean_index, subresource_sources, include_callees: include_callee).each do |route|
-            line = route.line + 1
-            details = Details.new(PathInfo.new(route.file_path || path, line))
-            endpoint = Endpoint.new(join_paths(configured_base_path, route.path), route.verb, route.params, details)
-            endpoint.protocol = route.protocol
-            route.callees.each do |name, callee_line|
-              endpoint.push_callee(Callee.new(name, path: route.file_path || path, line: callee_line))
-            end
-            @result << endpoint
+          Noir::TreeSitterJaxRsExtractor.extract_routes_from(root, content, dto_index, bean_index, subresource_sources,
+            custom_verb_annotations: custom_verb_annotations, include_callees: include_callee,
+            project_constants: java_project_constants(path)).each do |route|
+            @result << jvm_route_endpoint(route, Noir::URLPath.join_trimmed(configured_base_path, route.path), route.file_path || path)
           end
         end
       end
@@ -90,16 +100,42 @@ module Analyzer::Java
       @result
     end
 
+    private def analyze_kotlin_file(path : String,
+                                    content : String,
+                                    dto_builder : Noir::TreeSitterKotlinDtoIndex,
+                                    path_configs : Hash(String, QuarkusPathConfig),
+                                    application_base_paths : Hash(ApplicationBaseKey, String),
+                                    include_callee : Bool)
+      extract_reactive_route_endpoints(content, path, path_configs, include_callee).each do |endpoint|
+        @result << endpoint
+      end
+
+      Noir::TreeSitter.parse_kotlin(content) do |root|
+        package_name = Noir::TreeSitterKotlinParameterExtractor.extract_package_name_from(root, content)
+        dto_index = dto_builder.build_for_with_root(path, content, root)
+        application_base_path = application_base_path_for(path, package_name, application_base_paths)
+        configured_base_path = configured_base_path_for(path, path_configs, application_base_path)
+
+        Noir::TreeSitterKotlinRouteExtractor.extract_jaxrs_routes_from(root, content, dto_index, include_callees: include_callee).each do |route|
+          @result << jvm_route_endpoint(route, Noir::URLPath.join_trimmed(configured_base_path, route.path), path)
+        end
+      end
+    end
+
     private def quarkus_project_roots_for(file_list : Array(String)) : Set(String)
       roots = Set(String).new
 
       file_list.each do |path|
-        next if JavaEngine.test_path?(path)
+        # The starter's resources import only `jakarta.ws.rs`; Quarkus
+        # shows up solely in the build manifest that sits at the root.
+        manifest = QUARKUS_MANIFESTS.includes?(File.basename(path))
+        next unless manifest || jvm_source?(path)
+        next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
-        next unless path.ends_with?(".#{JAVA_EXTENSION}")
 
         content = read_file_content(path)
-        roots << project_root_for(path) if QUARKUS_MARKERS.any? { |marker| content.includes?(marker) }
+        next unless QUARKUS_MARKERS.any? { |marker| content.includes?(marker) }
+        roots << (manifest ? File.dirname(path) : project_root_for(path))
       end
 
       roots
@@ -109,14 +145,19 @@ module Analyzer::Java
       base_paths = Hash(ApplicationBaseKey, String).new
 
       file_list.each do |path|
-        next if JavaEngine.test_path?(path)
+        next unless jvm_source?(path)
+        next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
-        next unless path.ends_with?(".#{JAVA_EXTENSION}")
         next unless quarkus_roots.includes?(project_root_for(path))
 
         content = read_file_content(path)
         next unless content.includes?("ApplicationPath")
         next unless jaxrs_source?(content)
+
+        if path.ends_with?(".kt")
+          add_kotlin_application_path(path, content, base_paths)
+          next
+        end
 
         Noir::TreeSitter.parse_java(content) do |root|
           package_name = Noir::TreeSitterJavaParameterExtractor.extract_package_name_from(root, content)
@@ -125,7 +166,7 @@ module Analyzer::Java
           key = {project_root, package_name}
           next if base_paths.has_key?(key)
 
-          if base_path = Noir::TreeSitterJaxRsExtractor.extract_application_path_from(root, content)
+          if base_path = Noir::TreeSitterJaxRsExtractor.extract_application_path_from(root, content, java_project_constants(path))
             base_paths[key] = base_path
           end
         end
@@ -134,34 +175,21 @@ module Analyzer::Java
       base_paths
     end
 
+    # `quarkus_route_source?`/`jaxrs_source?` gate per-file tree-sitter
+    # parses; one precompiled `Regex.union` scan (PCRE2 JIT, auto-escapes
+    # each literal) each replaces the chained `String#includes?` passes
+    # over the same buffer.
+    JAXRS_SOURCE_RE         = Regex.union("jakarta.ws.rs", "javax.ws.rs")
+    QUARKUS_ROUTE_SOURCE_RE = Regex.union(
+      "jakarta.ws.rs", "javax.ws.rs", "org.jboss.resteasy.reactive", "io.quarkus.vertx.web.Route"
+    )
+
     private def quarkus_route_source?(content : String) : Bool
-      jaxrs_source?(content) ||
-        content.includes?("org.jboss.resteasy.reactive") ||
-        content.includes?("io.quarkus.vertx.web.Route")
+      content.matches?(QUARKUS_ROUTE_SOURCE_RE)
     end
 
     private def jaxrs_source?(content : String) : Bool
-      content.includes?("jakarta.ws.rs") || content.includes?("javax.ws.rs")
-    end
-
-    private def application_base_path_for(path : String,
-                                          package_name : String,
-                                          base_paths : Hash(ApplicationBaseKey, String)) : String
-      project_root = project_root_for(path)
-      keys = base_paths.keys.select { |key| key[0] == project_root }
-      keys.sort_by!(&.[1].size)
-      keys.reverse_each do |key|
-        base_package = key[1]
-        next unless package_name == base_package || package_name.starts_with?("#{base_package}.")
-        return base_paths[key]
-      end
-      ""
-    end
-
-    private def join_paths(prefix : String, suffix : String) : String
-      return suffix if prefix.empty?
-      return prefix.rstrip('/') if suffix.empty?
-      "#{prefix.rstrip('/')}/#{suffix.lstrip('/')}"
+      content.matches?(JAXRS_SOURCE_RE)
     end
 
     private def path_configs_for(file_list : Array(String)) : Hash(String, QuarkusPathConfig)
@@ -169,9 +197,9 @@ module Analyzer::Java
       project_roots = Set(String).new
 
       file_list.each do |path|
-        next if JavaEngine.test_path?(path)
+        next unless jvm_source?(path)
+        next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
-        next unless path.ends_with?(".#{JAVA_EXTENSION}")
         project_roots << project_root_for(path)
       end
 
@@ -201,21 +229,6 @@ module Analyzer::Java
       )
     end
 
-    private def read_properties(path : String) : Hash(String, String)
-      values = Hash(String, String).new
-      File.each_line(path) do |line|
-        stripped = line.strip
-        next if stripped.empty? || stripped.starts_with?("#") || stripped.starts_with?("!")
-
-        if separator = stripped.index(/[=:]/)
-          key = stripped[...separator].strip
-          value = stripped[(separator + 1)..].strip
-          values[key] = value unless key.empty?
-        end
-      end
-      values
-    end
-
     private def merge_yaml_path_config(values : Hash(String, String), path : String)
       if value = yaml_string_value(path, "quarkus", "http", "root-path")
         values["quarkus.http.root-path"] = value
@@ -232,7 +245,7 @@ module Analyzer::Java
     end
 
     private def yaml_string_value(path : String, *keys : String) : String?
-      value = YAML.parse(File.read(path))
+      value = YAML.parse(read_file_content(path))
       keys.each do |key|
         value = value[key]
       end
@@ -246,25 +259,7 @@ module Analyzer::Java
                                          application_base_path : String) : String
       config = configs[project_root_for(path)]? || QuarkusPathConfig.new
       rest_base = application_base_path.empty? ? config.rest_path : application_base_path
-      join_paths(config.http_root_path, rest_base)
-    end
-
-    private def project_root_for(path : String) : String
-      ["/src/main/java/", "/src/"].each do |marker|
-        if index = path.index(marker)
-          return path[...index]
-        end
-      end
-
-      configured_base_for(path)
-    end
-
-    private def normalize_optional_path(path : String?) : String
-      return "" unless path
-
-      trimmed = path.strip
-      return "" if trimmed.empty? || trimmed == "/"
-      trimmed.starts_with?("/") ? trimmed : "/#{trimmed}"
+      Noir::URLPath.join_trimmed(config.http_root_path, rest_base)
     end
 
     private def extract_static_resource_endpoints(project_root : String, config : QuarkusPathConfig) : Array(Endpoint)
@@ -272,20 +267,26 @@ module Analyzer::Java
       resources_root = File.join(project_root, "src/main/resources/META-INF/resources")
       return endpoints unless Dir.exists?(resources_root)
 
-      Dir.glob(File.join(resources_root, "**", "*")).sort.each do |file|
+      # `Dir.glob` rather than a `file_map` lookup: the endpoint set is
+      # "every file Quarkus serves out of META-INF/resources", including
+      # the images and fonts the media filter keeps out of the index. That
+      # also means `--exclude-path` never reached this walk, so it is
+      # applied per file here.
+      glob_under(resources_root, "**/*").sort.each do |file|
         next if File.directory?(file)
+        next if excluded_path?(file)
 
         relative_path = file[resources_root.size..].lstrip('/')
         next if relative_path.empty?
 
         details = Details.new(PathInfo.new(file))
-        endpoint_path = join_paths(config.http_root_path, "/#{relative_path}")
+        endpoint_path = Noir::URLPath.join_trimmed(config.http_root_path, "/#{relative_path}")
         endpoints << Endpoint.new(endpoint_path, "GET", details)
 
         if File.basename(relative_path) == config.static_index_page
           directory = File.dirname(relative_path)
           directory_path = directory == "." ? "/" : "/#{directory}/"
-          index_endpoint_path = join_paths(config.http_root_path, directory_path)
+          index_endpoint_path = Noir::URLPath.join_trimmed(config.http_root_path, directory_path)
           next if endpoints.any? { |endpoint| endpoint.url == index_endpoint_path && endpoint.method == "GET" }
 
           endpoints << Endpoint.new(index_endpoint_path, "GET", details)
@@ -321,23 +322,29 @@ module Analyzer::Java
       return endpoints unless content.includes?("io.quarkus.vertx.web.Route")
 
       http_root_path = (configs[project_root_for(path)]? || QuarkusPathConfig.new).http_root_path
-      route_bases = reactive_route_bases(content)
       method_callees = include_callee ? reactive_route_method_callees(content, path) : [] of ReactiveMethodCallees
+      # The text scans below run on a comment-blanked copy (same char
+      # offsets), so `@Route(...) // note` still reaches its method and a
+      # commented-out `// @Route` is not a route. Callee spans stay on the
+      # raw text they were parsed from. Kotlin needs its own mask: the C
+      # stripper reads the `/*` in `"${"/*"}"` as a comment opener.
+      visible = path.ends_with?(".kt") ? Noir::KotlinSourceMask.code_only(content) : JavaEngine.strip_comments(content)
+      route_bases = reactive_route_bases(visible)
 
-      content.scan(/@Route\b\s*(?:\((.*?)\))?/m) do |match|
-        offset = match.begin(0) || 0
-        body = match[1]? || ""
+      each_reactive_route_annotation(visible) do |offset, end_offset, body|
         next if reactive_failure_route?(body)
 
-        method_name = route_method_name_after(content, match.end(0) || offset)
+        method_name = route_method_name_after(visible, end_offset)
         next if method_name.empty?
 
         route_path = reactive_route_path(body, method_name)
+        next if route_path.nil?
+
         base_path = route_bases.find { |base| offset >= base.start_offset && offset <= base.end_offset }.try(&.path) || ""
-        endpoint_path = join_paths(http_root_path, join_paths(base_path, route_path))
-        line = content[0...offset].count('\n') + 1
+        endpoint_path = Noir::URLPath.join_trimmed(http_root_path, Noir::URLPath.join_trimmed(base_path, route_path))
+        line = line_number_for_index(visible, offset)
         details = Details.new(PathInfo.new(path, line))
-        params = reactive_route_params(content, match.end(0) || offset, endpoint_path)
+        params = reactive_route_params(visible, end_offset, endpoint_path)
 
         reactive_route_methods(body).each do |method|
           next if endpoints.any? { |endpoint| endpoint.url == endpoint_path && endpoint.method == method }
@@ -353,24 +360,67 @@ module Analyzer::Java
       endpoints
     end
 
+    # Locate each `@Route` annotation with a delimiter-balanced argument
+    # scan so values containing `)` (common in `regex=` capture groups)
+    # do not truncate the body. Skips `@RouteBase` via a word-boundary
+    # check after the `@Route` prefix.
+    private def each_reactive_route_annotation(content : String, & : Int32, Int32, String ->)
+      offset = 0
+      while idx = content.index("@Route", offset)
+        name_end = idx + 6 # length of "@Route"
+        if name_end < content.size && (content[name_end].alphanumeric? || content[name_end] == '_')
+          # Longer annotation name (`@RouteBase`, `@RouteFilter`, …).
+          offset = name_end
+        else
+          cursor = name_end
+          while cursor < content.size && content[cursor].ascii_whitespace?
+            cursor += 1
+          end
+
+          if cursor < content.size && content[cursor] == '('
+            if close_idx = JavaEngine.find_matching_delimiter(content, cursor, '(', ')')
+              end_offset = close_idx + 1
+              yield idx, end_offset, content[(cursor + 1)...close_idx]
+              offset = end_offset
+            else
+              # Unbalanced `(` — skip past it without yielding.
+              offset = cursor + 1
+            end
+          else
+            # Bare `@Route` with no argument list.
+            yield idx, cursor, ""
+            offset = cursor
+          end
+        end
+      end
+    end
+
     private def reactive_route_method_callees(content : String, path : String) : Array(ReactiveMethodCallees)
       result = [] of ReactiveMethodCallees
+      if path.ends_with?(".kt")
+        Noir::TreeSitterKotlinRouteExtractor.extract_function_callee_spans(content, path).each do |(start_byte, end_byte, entries)|
+          result << ReactiveMethodCallees.new(start_byte, end_byte, reactive_callees(entries))
+        end
+        return result
+      end
+
       Noir::TreeSitter.parse_java(content) do |root|
         walk_method_declarations(root) do |method|
           body = Noir::TreeSitter.field(method, "body")
           next unless body
 
-          callees = Noir::JavaCalleeExtractor.callees_in_body(body, content, path).map do |(name, callee_path, callee_line)|
-            Callee.new(name, path: callee_path, line: callee_line)
-          end
           result << ReactiveMethodCallees.new(
             LibTreeSitter.ts_node_start_byte(method).to_i,
             LibTreeSitter.ts_node_end_byte(method).to_i,
-            callees
+            reactive_callees(Noir::JavaCalleeExtractor.callees_in_body(body, content, path))
           )
         end
       end
       result
+    end
+
+    private def reactive_callees(entries : Array(Tuple(String, String, Int32))) : Array(Callee)
+      entries.map { |(name, callee_path, callee_line)| Callee.new(name, path: callee_path, line: callee_line) }
     end
 
     private def reactive_method_callees_for(method_callees : Array(ReactiveMethodCallees),
@@ -405,19 +455,35 @@ module Analyzer::Java
         class_offset = match.end(0) || start_offset
         open_idx = content.index('{', class_offset)
         next unless open_idx
-        close_idx = find_matching_delimiter(content, open_idx, '{', '}') || open_idx
+        close_idx = JavaEngine.find_matching_delimiter(content, open_idx, '{', '}') || open_idx
         base_path = reactive_annotation_path(match[1]? || "") || ""
         bases << ReactiveRouteBase.new(start_offset, close_idx, normalize_route_path(base_path))
       end
       bases
     end
 
-    private def reactive_route_path(annotation_body : String, method_name : String) : String
+    # Resolve the route path for a `@Route` annotation. Explicit
+    # `path=`/`value=` wins. When only `regex=` is set, Quarkus
+    # registers via `routeWithRegex` and never derives a method-name
+    # path — surface the regex pattern itself (or nil if unreadable)
+    # rather than inventing a literal path. With neither path nor
+    # regex, fall back to Quarkus's dashify of the method name.
+    private def reactive_route_path(annotation_body : String, method_name : String) : String?
       if path = reactive_annotation_path(annotation_body)
         return normalize_route_path(path)
       end
 
-      normalize_route_path(method_name)
+      if regex = reactive_annotation_regex(annotation_body)
+        # Surface the pattern as-is (may start with escapes like `\/…`,
+        # not a filesystem-style path that needs a leading `/`).
+        return regex
+      end
+
+      # Bare `regex=` with an unreadable value must not fall through
+      # to the method-name path — Quarkus never registers that path.
+      return if annotation_body.match(/\bregex\s*=/)
+
+      normalize_route_path(dashify(method_name))
     end
 
     private def reactive_annotation_path(annotation_body : String) : String?
@@ -428,6 +494,29 @@ module Analyzer::Java
 
       if match = body.match(/(?:path|value)\s*=\s*(["'][^"']+["'])/m)
         string_literal_value(match[1])
+      end
+    end
+
+    private def reactive_annotation_regex(annotation_body : String) : String?
+      if match = annotation_body.match(/\bregex\s*=\s*(["'][^"']+["'])/m)
+        string_literal_value(match[1])
+      end
+    end
+
+    # Quarkus `ReactiveRoutesProcessor.dashify`: insert '-' before any
+    # interior (not first/last) uppercase char and lower-case every
+    # char. `getItemList` → `get-item-list`.
+    private def dashify(name : String) : String
+      return name if name.empty?
+
+      String.build do |io|
+        last = name.size - 1
+        name.each_char_with_index do |char, index|
+          if index > 0 && index < last && char.ascii_uppercase?
+            io << '-'
+          end
+          io << char.downcase
+        end
       end
     end
 
@@ -484,55 +573,41 @@ module Analyzer::Java
     private def route_method_signature_after(content : String, offset : Int32) : String
       open_idx = content.index('(', offset)
       return "" unless open_idx
-      close_idx = find_matching_delimiter(content, open_idx, '(', ')')
+      close_idx = JavaEngine.find_matching_delimiter(content, open_idx, '(', ')')
       return "" unless close_idx
 
       content[(open_idx + 1)...close_idx]
     end
 
+    # `Rules::JAVA` plus `Nest::Angle`, on the same shared depth counter. Not
+    # the shared `Rules::JAVA` preset: this splitter runs on a JAX-RS resource
+    # method's parameter list, where `Map<String, List<Integer>>` is one
+    # parameter and must not break in two. The cost is that a `<` used as a
+    # comparison — `f(a < b, c)` — raises the depth and swallows the comma,
+    # which cannot happen in a parameter list. File-local because quarkus is
+    # the only splitter with exactly this combination; wicket also counts
+    # angles but takes only `"` as a quote.
+    SPLIT_ARGS_RULES = Noir::TopLevelSplit::Rules.new(
+      nest: Noir::TopLevelSplit::Nest::Paren | Noir::TopLevelSplit::Nest::Bracket |
+            Noir::TopLevelSplit::Nest::Brace | Noir::TopLevelSplit::Nest::Angle,
+      quotes: "\"'",
+      escape: Noir::TopLevelSplit::Escape::InQuotes,
+      strip: true,
+      empties: Noir::TopLevelSplit::Empties::DropTrailing,
+      per_kind: false,
+      clamp: true,
+    )
+
     private def split_top_level_args(source : String) : Array(String)
-      args = [] of String
-      start = 0
-      depth = 0
-      in_string = false
-      quote = '\0'
-      escape = false
-
-      source.each_char_with_index do |char, index|
-        if in_string
-          if escape
-            escape = false
-          elsif char == '\\'
-            escape = true
-          elsif char == quote
-            in_string = false
-          end
-          next
-        end
-
-        case char
-        when '"', '\''
-          in_string = true
-          quote = char
-        when '(', '[', '{', '<'
-          depth += 1
-        when ')', ']', '}', '>'
-          depth -= 1 if depth > 0
-        when ','
-          next unless depth == 0
-
-          args << source[start...index].strip
-          start = index + 1
-        end
-      end
-
-      tail = source[start..]?.to_s.strip
-      args << tail unless tail.empty?
-      args
+      Noir::TopLevelSplit.split(source, ',', SPLIT_ARGS_RULES)
     end
 
     private def parameter_variable_name(arg : String) : String
-      cleaned = arg.gsub(/@\w+(?:\([^)]*\))?/, " ").strip
+      cleaned = arg.gsub(/@[\w:]+(?:\([^)]*\))?/, " ").strip
+      # Kotlin declares `name: Type`; a Java parameter never has a `:`.
+      if colon = cleaned.index(':')
+        return cleaned[...colon].strip.split.last? || ""
+      end
       if match = cleaned.match(/([A-Za-z_][A-Za-z0-9_]*)\s*(?:=[^=]*)?\z/)
         match[1]
       else
@@ -576,97 +651,5 @@ module Analyzer::Java
     end
 
     HTTP_METHOD_NAMES = Set{"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "TRACE"}
-
-    private def find_matching_delimiter(code : String,
-                                        open_idx : Int32,
-                                        open_char : Char,
-                                        close_char : Char) : Int32?
-      # Scan by CHARACTER (not byte): open_idx is a char index from String#index
-      # and callers char-slice with / range-compare the returned index. A byte
-      # scan corrupts both on multi-byte UTF-8. ASCII-identical.
-      depth = 1
-      in_string = false
-      quote = '\0'
-      escape = false
-
-      code.each_char_with_index do |ch, i|
-        next if i <= open_idx
-        if in_string
-          if escape
-            escape = false
-          elsif ch == '\\'
-            escape = true
-          elsif ch == quote
-            in_string = false
-          end
-        else
-          if ch == '"' || ch == '\''
-            in_string = true
-            quote = ch
-          elsif ch == open_char
-            depth += 1
-          elsif ch == close_char
-            depth -= 1
-          end
-        end
-        return i if depth == 0
-      end
-
-      nil
-    end
-
-    private def bean_index_for(path : String,
-                               content : String,
-                               package_name : String,
-                               cache : Hash(String, Hash(String, Array(Param))),
-                               imports : Array(Noir::ImportGraph::ImportRef)? = nil,
-                               current_file_beans : Hash(String, Array(Param))? = nil) : Hash(String, Array(Param))
-      result = Hash(String, Array(Param)).new
-      resolved_imports = imports || Noir::TreeSitterJavaParameterExtractor.extract_imports(content)
-
-      Noir::ImportGraph.related_files(path, package_name, resolved_imports, JAVA_EXTENSION) do |file|
-        beans = cache[file] ||= begin
-          if file == path && current_file_beans
-            current_file_beans
-          else
-            body = file == path ? content : read_file_content(file)
-            Noir::TreeSitterJaxRsExtractor.extract_bean_fields(body)
-          end
-        rescue File::NotFoundError
-          {} of String => Array(Param)
-        end
-
-        beans.each { |name, params| result[name] ||= params }
-      end
-
-      result
-    end
-
-    private def subresource_sources_for(path : String,
-                                        content : String,
-                                        package_name : String,
-                                        cache : Hash(String, String),
-                                        imports : Array(Noir::ImportGraph::ImportRef)? = nil,
-                                        current_file_class_names : Array(String)? = nil) : Hash(String, Noir::TreeSitterJaxRsExtractor::SourceEntry)
-      result = Hash(String, Noir::TreeSitterJaxRsExtractor::SourceEntry).new
-      resolved_imports = imports || Noir::TreeSitterJavaParameterExtractor.extract_imports(content)
-
-      Noir::ImportGraph.related_files(path, package_name, resolved_imports, JAVA_EXTENSION) do |file|
-        body = cache[file] ||= begin
-          file == path ? content : read_file_content(file)
-        rescue File::NotFoundError
-          ""
-        end
-        next if body.empty?
-        next unless body.includes?("jakarta.ws.rs") || body.includes?("javax.ws.rs")
-
-        class_names = file == path && current_file_class_names ? current_file_class_names : Noir::TreeSitterJaxRsExtractor.extract_class_names(body)
-        class_names.each do |name|
-          result[name] ||= {file, body}
-        end
-      end
-
-      result
-    end
   end
 end

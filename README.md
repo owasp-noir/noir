@@ -8,20 +8,23 @@
 </div>
 
 <p align="center">
-<a href="https://github.com/owasp-noir/noir/blob/main/CONTRIBUTING.md">
-<img src="https://img.shields.io/badge/CONTRIBUTIONS-WELCOME-000000?style=for-the-badge&labelColor=black"></a>
 <a href="https://github.com/owasp-noir/noir/releases">
 <img src="https://img.shields.io/github/v/release/owasp-noir/noir?style=for-the-badge&color=black&labelColor=black&logo=web"></a>
 <a href="https://crystal-lang.org">
 <img src="https://img.shields.io/badge/Crystal-000000?style=for-the-badge&logo=crystal&logoColor=white"></a>
-<a href="https://owasp.org/www-project-noir/">
+<a href="https://owasp.org/projects/noir">
 <img src="https://img.shields.io/badge/OWASP-000000?style=for-the-badge&logo=owasp&logoColor=white"></a>
+<a href="https://www.bestpractices.dev/projects/14203">
+<img src="https://img.shields.io/badge/OpenSSF-Best%20Practices-000000?style=for-the-badge&labelColor=black"></a>
+<a href="https://github.com/owasp-noir/noir/blob/main/.github/CONTRIBUTING.md">
+<img src="https://img.shields.io/badge/CONTRIBUTIONS-WELCOME-000000?style=for-the-badge&labelColor=black"></a>
 </p>
 
 <p align="center">
   <a href="https://owasp-noir.github.io/noir/">Documentation</a> •
   <a href="https://owasp-noir.github.io/noir/get_started/installation/">Installation</a> •
   <a href="#usage">Usage</a> •
+  <a href="https://owasp-noir.github.io/noir/usage/github_action/">Github Action</a> •
   <a href="#contributing">Contributing</a> •
   <a href="./CHANGELOG.md">Changelog</a>
 </p>
@@ -32,14 +35,14 @@ The inventory feeds three audiences:
 
 - **Human reviewers.** Security engineers and code auditors get a focused list of attacker-reachable entrypoints — paths, parameters, source files, tags — instead of skimming the whole repo.
 - **AI auditors.** LLM-based SAST agents get the same focused list, plus per-endpoint review context (`--include callee` for 1-hop callees, `--ai-context` for guards, sinks, validators, and signals).
-- **DAST tools.** ZAP, Burp Suite, and Caido get a real route list to scan, including paths they would never have reached by crawling.
+- **DAST tools.** ZAP, Burp Suite, Caido and Gori get a real route list to scan, including paths they would never have reached by crawling.
 
 ## What Noir does
 
-- **Endpoint extraction.** Static analysis across [50+ frameworks](https://owasp-noir.github.io/noir/usage/supported/language_and_frameworks/). Returns endpoints, parameters, headers, cookies, and the source files they came from.
+- **Endpoint extraction.** Static analysis across [261 frameworks](https://owasp-noir.github.io/noir/usage/supported/language_and_frameworks/). Returns endpoints, parameters, headers, cookies, and the source files they came from.
 - **LLM fallback.** Hand unsupported frameworks (or one-off custom routing) to OpenAI / Ollama / etc. when static rules don't apply.
 - **Output for the next stage.** JSON, YAML, OpenAPI, SARIF, cURL, Postman, HTML — whichever format the next tool in the pipeline reads.
-- **DAST integration.** Pipe directly into ZAP, Burp Suite, or Caido as a proxy target, or export OpenAPI for them to import.
+- **DAST integration.** Pipe directly into ZAP, Burp Suite, Caido or Gori as a proxy target, or export OpenAPI for them to import.
 - **AI SAST context.** The endpoint inventory (and, with `--include callee`, the 1-hop functions each handler invokes) is the focused context an LLM auditor needs to find attacker-reachable bugs. `--ai-context` goes further and attaches aggregated review context per endpoint — guards, callees, sinks, validators, and signals — so the LLM doesn't have to rediscover them.
 - **CI/CD.** GitHub Action, SARIF output, exit codes — fits the pipeline you already have.
 
@@ -51,7 +54,7 @@ noir -h
 
 Example
 ```bash
-noir -b <source_dir>
+noir scan <source_dir>
 ```
 
 If you use it with Github Action, please refer to this [document](/github-action) .
@@ -69,14 +72,14 @@ From here:
 - Broaden language and framework coverage; keep accuracy honest with per-framework fixtures.
 - Lean harder on LLMs for the cases static analysis can't reach.
 - Enrich the per-endpoint review context (guards, callees, sinks, validators, signals) so human reviewers and AI auditors share the same focused view of each handler.
-- Keep DAST integration first-class — OpenAPI, proxy targets, and direct hand-offs to ZAP / Burp / Caido.
+- Keep DAST integration first-class — OpenAPI, proxy targets, and direct hand-offs to ZAP / Burp / Caido / Gori.
 
 ## OWASP Project
 
 OWASP Noir joined the OWASP Foundation in **June 2024**.
 
-- Official project page: [https://owasp.org/www-project-noir/](https://owasp.org/www-project-noir/)
-- OWASP Nest: [https://nest.owasp.org/organizations/owasp-noir](https://nest.owasp.org/organizations/owasp-noir)
+- Official project page: [https://owasp.org/projects/noir](https://owasp.org/projects/noir)
+- OWASP Nest: [https://nest.owasp.org/projects/noir](https://nest.owasp.org/projects/noir)
 
 ## News & Updates
 
@@ -90,14 +93,18 @@ OWASP Noir joined the OWASP Foundation in **June 2024**.
 * November 2023: Moved the Noir repository to the noir-cr GitHub organization.
 * August 2023: Started as [@hahwul](https://github.com/hahwul)'s personal project.
 
+## Core Team
+
+[![](./docs/static/CORETEAM.svg)](https://owasp-noir.github.io/noir/resources/contact/)
+
 ## Contributing
 
 Noir is an open-source project made with ❤️.
-If you would like to contribute, please check [CONTRIBUTING.md](./CONTRIBUTING.md) and submit a Pull Request.
+If you would like to contribute, please check [CONTRIBUTING.md](./.github/CONTRIBUTING.md) and submit a Pull Request.
 
 [![](./docs/static/CONTRIBUTORS.svg)](https://github.com/owasp-noir/noir/graphs/contributors)
 
 ## Mascot
 
-| ![](docs/static/images/mascot/hak-hi.webp "Hak") | Our mascot is Hak (학), a crane symbolizing elegance and precision in spotting hidden flaws. In Korean, "학" means "crane," representing a sharp ally who dives deep to uncover vulnerabilities and attack surfaces in your code. <br><br> For more artwork and resources related to Hak, check out [noir-artwork repository](https://github.com/owasp-noir/noir-artwork).|
+| ![](docs/static/images/mascot/hak-wave.webp "Hak") | Our mascot is Hak (학), a crane symbolizing elegance and precision in spotting hidden flaws. In Korean, "학" means "crane," representing a sharp ally who dives deep to uncover vulnerabilities and attack surfaces in your code. <br><br> For more artwork and resources related to Hak, check out [noir-artwork repository](https://github.com/owasp-noir/noir-artwork).|
 | -------------- | -------------- |

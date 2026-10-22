@@ -1,23 +1,64 @@
 require "../../../src/utils/home"
 
-describe "get_home test" do
+describe "Noir::Home.path test" do
   it "returns NOIR_HOME environment variable if set" do
     ENV["NOIR_HOME"] = "/custom/noir/home"
-    get_home.should eq("/custom/noir/home")
+    Noir::Home.path.should eq("/custom/noir/home")
     ENV.delete("NOIR_HOME")
+  end
+
+  it "treats an exported-but-empty NOIR_HOME the same as unset" do
+    # `NOIR_HOME=""` (an unfilled container env template, a shell bug) used
+    # to resolve rules/config/cache to a *relative* `passive_rules` under the
+    # cwd. It must fall back to the OS default instead.
+    prev = ENV["NOIR_HOME"]?
+    ENV["NOIR_HOME"] = ""
+    begin
+      {% unless flag?(:windows) %}
+        Noir::Home.path.should eq("#{ENV["HOME"]}/.config/noir")
+      {% end %}
+      Noir::Home.path.should_not eq("")
+    ensure
+      if prev
+        ENV["NOIR_HOME"] = prev
+      else
+        ENV.delete("NOIR_HOME")
+      end
+    end
   end
 
   it "returns default config directory on Windows" do
     {% if flag?(:windows) %}
       ENV.delete("NOIR_HOME")
-      get_home.should eq("#{ENV["APPDATA"]}\\noir")
+      Noir::Home.path.should eq("#{ENV["APPDATA"]}\\noir")
     {% end %}
   end
 
   it "returns default config directory on non-Windows" do
     {% unless flag?(:windows) %}
       ENV.delete("NOIR_HOME")
-      get_home.should eq("#{ENV["HOME"]}/.config/noir")
+      Noir::Home.path.should eq("#{ENV["HOME"]}/.config/noir")
     {% end %}
+  end
+
+  # Env vars set outside a shell (Docker ENV, systemd Environment=) never
+  # get the shell's tilde expansion, so a literal "~/noir" must be
+  # expanded here or it resolves to a bogus "./~/noir" under the cwd.
+  it "expands a leading ~ in NOIR_HOME" do
+    saved = ENV["NOIR_HOME"]?
+    ENV["NOIR_HOME"] = "~/some-noir-home"
+    begin
+      result = Noir::Home.path
+      result.starts_with?('~').should be_false
+      {% unless flag?(:windows) %}
+        result.should eq("#{ENV["HOME"]}/some-noir-home")
+      {% end %}
+    ensure
+      if s = saved
+        ENV["NOIR_HOME"] = s
+      else
+        ENV.delete("NOIR_HOME")
+      end
+    end
   end
 end

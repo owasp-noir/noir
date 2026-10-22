@@ -17,7 +17,7 @@ from django.views.generic.edit import DeleteView
 from django.views.generic.list import ListView
 from haystack.views import SearchView
 from rest_framework import mixins, viewsets
-from rest_framework.decorators import action
+from rest_framework.decorators import action, api_view
 from rest_framework.generics import RetrieveUpdateAPIView
 from rest_framework.views import APIView
 from rest_framework.viewsets import ReadOnlyModelViewSet
@@ -342,6 +342,13 @@ class FeedbackView(View):
         message = request.POST.get('message')
         return HttpResponse(message)
 
+    def query(self, params):
+        # A helper that builds a filtered queryset, NOT an HTTP handler —
+        # Django's View.http_method_names (unlike Flask's duck-typed
+        # dispatch) never includes 'query', so this name collision must
+        # not produce a phantom QUERY endpoint.
+        return Article.objects.filter(**params)
+
 
 class EsSearchView(SearchView):
     def get_context(self):
@@ -452,6 +459,16 @@ def require_methods_view(request):
     # Restricted to exactly GET + POST by the decorator; the non-route
     # @csrf_exempt above it must not defeat the decorator-stack walk.
     return "ok"
+
+@api_view(['POST'])
+def api_view_post(request):
+    # @api_view pins the verb set: POST only, no implicit GET.
+    return HttpResponse(request.data.get('title'))
+
+@api_view(['GET'])
+def api_view_get(request):
+    # Body accessor on a GET-only view must not widen to POST/PUT/PATCH.
+    return HttpResponse(request.data.get('q'))
 
 class WidgetDeleteView(DeleteView):
     # Django's generic DeleteView serves GET (confirm) + POST (delete),

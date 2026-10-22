@@ -6,8 +6,8 @@ private def analyze_ingress(content : String)
   path = File.tempname("ingress", ".yaml")
   File.write(path, content)
   locator = CodeLocator.instance
-  locator.clear "k8s-ingress-spec"
-  locator.push "k8s-ingress-spec", path
+  locator.clear Noir::LocatorKeys::K8S_INGRESS_SPEC
+  locator.push Noir::LocatorKeys::K8S_INGRESS_SPEC, path
 
   options = create_test_options
   analyzer = Analyzer::Specification::K8sIngress.new options
@@ -39,6 +39,7 @@ describe "Kubernetes Ingress Analyzer" do
       YAML
 
     endpoints.map(&.url).sort!.should eq ["/v1/users", "/v1/users/.*"]
+    endpoints.sort_by(&.url).map(&.details.code_paths.first.line).should eq [10, 12]
     endpoints.each do |e|
       e.method.should eq "GET"
       tag_descriptions(e, "ingress-host").should eq ["api.example.com"]

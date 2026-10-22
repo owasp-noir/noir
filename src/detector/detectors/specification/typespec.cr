@@ -3,6 +3,9 @@ require "../../../models/code_locator"
 
 module Detector::Specification
   class TypeSpec < Detector
+    # Registers TypeSpec spec paths in `CodeLocator`.
+    detector_for "typespec", extensions: %w[.tsp], idempotent: false
+
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".tsp")
       # `.tsp` is unambiguous on its own, but the issue spec also calls out a
@@ -17,21 +20,8 @@ module Detector::Specification
            file_contents.includes?("@delete")
       return false unless ok
 
-      CodeLocator.instance.push("typespec-spec", filename)
+      CodeLocator.instance.push(Noir::LocatorKeys::TYPESPEC_SPEC, filename)
       true
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".tsp")
-    end
-
-    def set_name
-      @name = "typespec"
-    end
-
-    # Registers TypeSpec spec paths in `CodeLocator`.
-    def idempotent? : Bool
-      false
     end
   end
 end

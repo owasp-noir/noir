@@ -3,6 +3,14 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
+    # A demo run of the composite action against a checked-in fixture. It can
+    # only change behaviour when the action wiring, the entrypoint, or the
+    # fixture it scans changes — not on every push to main.
+    paths:
+      - .github/workflows/example-noir-action.yml
+      - action.yml
+      - github-action/**
+      - spec/functional_test/fixtures/crystal/**
 
 jobs:
   noir-analysis:
@@ -21,9 +29,16 @@ jobs:
           passive_scan: "true"
           include_path: "true"
 
+      # Pass the outputs through env vars, never inline them into the shell
+      # script. `endpoints` is JSON derived from the *scanned code*, so on an
+      # untrusted PR a crafted value could otherwise break out of the quotes
+      # and inject shell commands into the runner.
       - name: Display results
+        env:
+          NOIR_ENDPOINTS: ${{ steps.noir.outputs.endpoints }}
+          NOIR_PASSIVE: ${{ steps.noir.outputs.passive_results }}
         run: |
           echo "Endpoints found:"
-          echo '${{ steps.noir.outputs.endpoints }}' | jq .
+          echo "$NOIR_ENDPOINTS" | jq .
           echo "Passive scan results:"
-          echo '${{ steps.noir.outputs.passive_results }}' | jq .
+          echo "$NOIR_PASSIVE" | jq .

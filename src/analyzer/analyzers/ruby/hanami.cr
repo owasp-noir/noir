@@ -2,6 +2,8 @@ require "../../engines/ruby_engine"
 
 module Analyzer::Ruby
   class Hanami < RubyEngine
+    analyzer_for "ruby_hanami"
+
     HANAMI_HTTP_VERBS = HTTP_VERBS + ["trace"]
 
     # Crystal recompiles an interpolated regex literal on every evaluation
@@ -21,13 +23,14 @@ module Analyzer::Ruby
     record RouteEndpoint, endpoint : Endpoint, target : String?
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       framework_roots = discover_framework_roots("config/routes.rb")
       framework_roots = base_paths if framework_roots.empty?
 
       framework_roots.each do |framework_root|
         path = "#{framework_root}/config/routes.rb"
         next unless File.exists?(path)
+        next if rails_router_file?(path)
 
         parse_routes_file(path, framework_root, include_callee)
       end
@@ -35,59 +38,68 @@ module Analyzer::Ruby
       @result
     end
 
+    # `config/routes.rb` is the anchor for Hanami and for Rails alike, so in a
+    # repo holding both, Hanami parsed Rails' route table as its own DSL — 44
+    # phantom endpoints out of one Rails fixture, several with the Rails
+    # `resources` shorthand half-expanded.
+    #
+    # The exclusion is stated as "not Rails" rather than "looks like Hanami" on
+    # purpose: a Hanami 1 `apps/<app>/config/routes.rb` is a bare route DSL
+    # with no `Hanami::` reference anywhere in it, so requiring a positive
+    # marker would drop real routes. `Rails.application.routes.draw` is never
+    # Hanami.
+
     private def parse_routes_file(path : String, framework_root : String, include_callee : Bool)
       stack = [] of RouteFrame
 
-      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        hanami_logical_lines(file).each do |line, index|
-          if closes_block?(line)
-            stack.pop unless stack.empty?
-            next
-          end
+      hanami_logical_lines(ruby_source(path)).each do |line, index|
+        if closes_block?(line)
+          stack.pop unless stack.empty?
+          next
+        end
 
-          opens_block = opens_route_block?(line)
-          details = Details.new(PathInfo.new(path, index + 1))
+        opens_block = opens_route_block?(line)
+        details = Details.new(PathInfo.new(path, index + 1))
 
-          if mounted = mount_endpoint(line, stack, details)
-            @result << mounted
-            next
-          end
+        if mounted = mount_endpoint(line, stack, details)
+          @result << mounted
+          next
+        end
 
-          if neutral_block?(line)
-            stack << RouteFrame.new if opens_block
-            next
-          end
+        if neutral_block?(line)
+          stack << RouteFrame.new if opens_block
+          next
+        end
 
-          if frame = slice_frame(line)
-            stack << frame if opens_block
-            next
-          end
+        if frame = slice_frame(line)
+          stack << frame if opens_block
+          next
+        end
 
-          if frame = prefix_frame(line, ["namespace", "scope"])
-            stack << frame if opens_block
-            next
-          end
+        if frame = prefix_frame(line, ["namespace", "scope"])
+          stack << frame if opens_block
+          next
+        end
 
-          if resource = resource_call(line)
-            routes, nested_frame = expand_resource(resource, stack, details)
-            routes.each { |route| attach_action_context(route.endpoint, route.target, framework_root, stack, include_callee) }
-            @result.concat(routes.map(&.endpoint))
-            stack << nested_frame if opens_block
-            next
-          end
+        if resource = resource_call(line)
+          routes, nested_frame = expand_resource(resource, stack, details)
+          routes.each { |route| attach_action_context(route.endpoint, route.target, framework_root, stack, include_callee) }
+          @result.concat(routes.map(&.endpoint))
+          stack << nested_frame if opens_block
+          next
+        end
 
-          if route = root_endpoint(line, stack, details)
-            attach_action_context(route.endpoint, route.target, framework_root, stack, include_callee)
-            @result << route.endpoint
-            stack << RouteFrame.new if opens_block
-            next
-          end
+        if route = root_endpoint(line, stack, details)
+          attach_action_context(route.endpoint, route.target, framework_root, stack, include_callee)
+          @result << route.endpoint
+          stack << RouteFrame.new if opens_block
+          next
+        end
 
-          if route = verb_endpoint(line, stack, details)
-            attach_action_context(route.endpoint, route.target, framework_root, stack, include_callee)
-            @result << route.endpoint
-            stack << RouteFrame.new if opens_block
-          end
+        if route = verb_endpoint(line, stack, details)
+          attach_action_context(route.endpoint, route.target, framework_root, stack, include_callee)
+          @result << route.endpoint
+          stack << RouteFrame.new if opens_block
         end
       end
     end
@@ -101,12 +113,12 @@ module Analyzer::Ruby
     # never opened and all of the route's params/callees are dropped.
     # Returns {logical_line, first_line_index} pairs; comments are stripped
     # and strings preserved, mirroring the per-line parse.
-    private def hanami_logical_lines(file) : Array(Tuple(String, Int32))
+    private def hanami_logical_lines(content : String) : Array(Tuple(String, Int32))
       result = [] of Tuple(String, Int32)
       buffer = ""
       buffer_index = 0
 
-      file.each_line.with_index do |raw_line, index|
+      content.each_line.with_index do |raw_line, index|
         line = Noir::RubyCalleeExtractor.strip_comment(raw_line, preserve_strings: true).strip
         next if line.empty?
 
@@ -133,23 +145,13 @@ module Analyzer::Ruby
       return unless call = route_call(line, ["mount"])
       return unless m = call.match(/\bat:\s*['"]([^'"]+)['"]/)
 
-      Endpoint.new(join_paths(current_path_prefix(stack), m[1]), "GET", details)
-    end
-
-    def extract_action_path(content : String, framework_root : String = @base_path) : String
-      target = extract_action_target(content)
-      return "" unless target
-
-      find_action_path(target, framework_root, nil)
+      Endpoint.new(absolute_segment_join(current_path_prefix(stack), m[1]), "GET", details)
     end
 
     def scan_action_file(endpoint : Endpoint, action_path : String, include_callee : Bool = false)
       return unless File.exists?(action_path)
 
-      lines = [] of String
-      File.open(action_path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        lines = file.each_line.to_a
-      end
+      lines = ruby_source(action_path).each_line.to_a
 
       scan_action_params(endpoint, lines)
       attach_handle_callees(endpoint, action_path, lines) if include_callee
@@ -166,7 +168,7 @@ module Analyzer::Ruby
     private def root_endpoint(line : String, stack : Array(RouteFrame), details : Details) : RouteEndpoint?
       return unless line.match(/^root(?:\s|\(|\{|$)/)
 
-      endpoint = Endpoint.new(join_paths(current_path_prefix(stack), "/"), "GET", details)
+      endpoint = Endpoint.new(absolute_segment_join(current_path_prefix(stack), "/"), "GET", details)
       RouteEndpoint.new(endpoint, extract_action_target(line))
     end
 
@@ -176,7 +178,7 @@ module Analyzer::Ruby
         next if line.size > verb.size && (line[verb.size].alphanumeric? || line[verb.size] == '_')
 
         if m = line.match(verb_pattern)
-          endpoint = Endpoint.new(join_paths(current_path_prefix(stack), normalize_route_path(m[1])), verb.upcase, details)
+          endpoint = Endpoint.new(absolute_segment_join(current_path_prefix(stack), normalize_route_path(m[1])), verb.upcase, details)
           return RouteEndpoint.new(endpoint, extract_action_target(m[2]))
         end
       end
@@ -249,12 +251,12 @@ module Analyzer::Ruby
       resource_routes(resource[:kind], resource_name, singular).each do |action, method, path_suffix|
         next unless actions.includes?(action)
 
-        endpoint = Endpoint.new(join_paths(current_path_prefix(stack), path_suffix), method, details.dup)
+        endpoint = Endpoint.new(absolute_segment_join(current_path_prefix(stack), path_suffix), method, details.dup)
         routes << RouteEndpoint.new(endpoint, join_action_parts(action_prefix, action))
       end
 
       nested_path = if resource[:kind] == "resources"
-                      join_paths(resource_name, ":#{singular}_id")
+                      absolute_segment_join(resource_name, ":#{singular}_id")
                     else
                       resource_name
                     end
@@ -348,7 +350,7 @@ module Analyzer::Ruby
 
     private def current_path_prefix(stack : Array(RouteFrame)) : String
       parts = stack.map(&.path).reject(&.empty?)
-      join_paths(parts)
+      absolute_segment_join(parts)
     end
 
     private def current_slice(stack : Array(RouteFrame)) : String?
@@ -364,13 +366,13 @@ module Analyzer::Ruby
       join_action_parts(parts)
     end
 
-    private def join_paths(parts : Array(String)) : String
+    private def absolute_segment_join(parts : Array(String)) : String
       normalized = parts.flat_map(&.split('/')).reject(&.empty?)
       normalized.empty? ? "/" : "/#{normalized.join("/")}"
     end
 
-    private def join_paths(prefix : String, suffix : String) : String
-      join_paths([prefix, suffix])
+    private def absolute_segment_join(prefix : String, suffix : String) : String
+      absolute_segment_join([prefix, suffix])
     end
 
     private def normalize_route_path(path : String) : String
@@ -404,18 +406,20 @@ module Analyzer::Ruby
       action = normalize_action_target(target)
       candidates = [] of String
 
+      # A slice's routes resolve inside that slice only; falling back to the
+      # app's same-named action handed the slice route the app's params.
       if slice
         candidates << "#{framework_root}/slices/#{slice}/actions/#{action}.rb"
         candidates << "#{framework_root}/slices/#{slice}/lib/actions/#{action}.rb"
         candidates << "#{framework_root}/slices/#{slice}/controllers/#{action}.rb"
         candidates << "#{framework_root}/apps/#{slice}/controllers/#{action}.rb"
+      else
+        candidates << "#{framework_root}/app/actions/#{action}.rb"
+        candidates << "#{framework_root}/app/controllers/#{action}.rb"
+        candidates << "#{framework_root}/actions/#{action}.rb"
+        candidates << "#{framework_root}/controllers/#{action}.rb"
+        candidates << "#{framework_root}/lib/actions/#{action}.rb"
       end
-
-      candidates << "#{framework_root}/app/actions/#{action}.rb"
-      candidates << "#{framework_root}/app/controllers/#{action}.rb"
-      candidates << "#{framework_root}/actions/#{action}.rb"
-      candidates << "#{framework_root}/controllers/#{action}.rb"
-      candidates << "#{framework_root}/lib/actions/#{action}.rb"
 
       candidates.find { |path| File.exists?(path) } || ""
     end
@@ -439,7 +443,7 @@ module Analyzer::Ruby
         end
 
         if params_depth > 0
-          if closes_ruby_block?(stripped)
+          if ruby_closes_block?(stripped)
             params_depth -= 1
             next if params_depth == 0
           else
@@ -456,51 +460,30 @@ module Analyzer::Ruby
           # Match required(:name) or optional(:name) with any validation method
           line.scan(/(?:required|optional)\(:([\w]+)\)/) do |match|
             if match.size > 1
-              param_name = match[1]
-              # Determine if it's JSON or form based on content type
-              param_type = "json"
-              endpoint.push_param(Param.new(param_name, "", param_type))
+              # Declared params arrive in the query string on a bodyless verb.
+              param_type = endpoint.method.in?("GET", "HEAD", "DELETE") ? "query" : "json"
+              endpoint.push_param(Param.new(match[1], "", param_type))
             end
           end
         end
 
-        # Extract query parameters from request.params[:name]
-        line.scan(/request\.params\[:([\w]+)\]/) do |match|
-          if match.size > 1
-            param_name = match[1]
-            endpoint.push_param(Param.new(param_name, "", "query"))
-          end
+        # Extract query parameters from request.params[:name] / ["name"]; a
+        # read of a param the `params do` block already declared is that
+        # same param, not a second one.
+        line.scan(/request\.params\[(?::(\w+)|['"](\w+)['"])\]/) do |match|
+          param_name = match[1]? || match[2]
+          next if endpoint.params.any?(&.name.==(param_name))
+          endpoint.push_param(Param.new(param_name, "", "query"))
         end
 
-        # Extract query parameters from request.params["name"]
-        line.scan(/request\.params\[['"](\w+)['"]\]/) do |match|
-          if match.size > 1
-            param_name = match[1]
-            endpoint.push_param(Param.new(param_name, "", "query"))
-          end
-        end
-
-        # Extract query parameters from params[:name] (without request prefix)
-        # Use word boundary to avoid matching params inside method names or identifiers
-        # Avoid matching inside params do blocks
+        # Extract query parameters from params[:name] / ["name"] (without
+        # request prefix). Word boundary avoids matching inside identifiers;
+        # skipped inside `params do` blocks.
         unless in_params_block
-          line.scan(/(?<!\.)\bparams\[:([\w]+)\]/) do |match|
-            if match.size > 1
-              param_name = match[1]
-              endpoint.push_param(Param.new(param_name, "", "query"))
-            end
-          end
-        end
-
-        # Extract query parameters from params["name"] (without request prefix)
-        # Use word boundary to avoid matching params inside method names or identifiers
-        # Avoid matching inside params do blocks
-        unless in_params_block
-          line.scan(/(?<!\.)\bparams\[['"](\w+)['"]\]/) do |match|
-            if match.size > 1
-              param_name = match[1]
-              endpoint.push_param(Param.new(param_name, "", "query"))
-            end
+          line.scan(/(?<!\.)\bparams\[(?::(\w+)|['"](\w+)['"])\]/) do |match|
+            param_name = match[1]? || match[2]
+            next if endpoint.params.any?(&.name.==(param_name))
+            endpoint.push_param(Param.new(param_name, "", "query"))
           end
         end
 
@@ -520,13 +503,8 @@ module Analyzer::Ruby
           end
         end
 
-        # Extract environment headers from request.env['HTTP_*']
-        line.scan(/request\.env\[['"]HTTP_(.+?)['"]\]/) do |match|
-          if match.size > 1
-            # Convert HTTP_USER_AGENT to User-Agent format
-            header_name = match[1].split('_').map(&.capitalize).join('-')
-            endpoint.push_param(Param.new(header_name, "", "header"))
-          end
+        each_rack_env_header(line) do |header_name|
+          endpoint.push_param(Param.new(header_name, "", "header"))
         end
       end
     end
@@ -567,7 +545,7 @@ module Analyzer::Ruby
               raw_body_line = lines[index]
               body_line = Noir::RubyCalleeExtractor.strip_comment(raw_body_line).strip
 
-              if closes_ruby_block?(body_line)
+              if ruby_closes_block?(body_line)
                 depth -= 1
                 break if depth == 0
                 body_lines << raw_body_line
@@ -619,10 +597,6 @@ module Analyzer::Ruby
       end
 
       {tail.empty? ? nil : tail, false}
-    end
-
-    private def closes_ruby_block?(line : String) : Bool
-      !!line.match(/^end\b/)
     end
   end
 end

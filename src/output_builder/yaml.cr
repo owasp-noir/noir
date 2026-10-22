@@ -1,14 +1,11 @@
 require "../models/output_builder"
 require "../models/endpoint"
 
+@[Noir::OutputFormat(name: "yaml", description: "YAML", order: 20, structured: true)]
 class OutputBuilderYaml < OutputBuilder
-  def print(endpoints : Array(Endpoint))
-    message = {"endpoints" => endpoints, "passive_results" => [] of PassiveScanResult}.to_yaml
-    ob_puts message
-  end
-
-  def print(endpoints : Array(Endpoint), passive_results : Array(PassiveScanResult))
-    message = {"endpoints" => endpoints, "passive_results" => passive_results}.to_yaml
+  def print(endpoints : Array(Endpoint), passive_results : Array(PassiveScanResult) = [] of PassiveScanResult)
+    # Always emitted, empty included — see the note in `json.cr`.
+    message = report_document(endpoints, passive_results).to_yaml
     ob_puts message
   end
 end

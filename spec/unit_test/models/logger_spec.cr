@@ -77,16 +77,6 @@ describe "NoirLogger" do
   end
 
   describe "output methods" do
-    it "supports puts" do
-      logger = NoirLogger.new(debug: false, verbose: false, colorize: false, no_log: false)
-      logger.puts("test message")
-    end
-
-    it "supports puts_sub" do
-      logger = NoirLogger.new(debug: false, verbose: false, colorize: false, no_log: false)
-      logger.puts_sub("sub message")
-    end
-
     it "supports sub" do
       logger = NoirLogger.new(debug: false, verbose: false, colorize: false, no_log: false)
       logger.sub("sub message")
@@ -139,6 +129,31 @@ describe "NoirLogger" do
     end
   end
 
+  describe ".broken_pipe?" do
+    it "recognizes a POSIX EPIPE" do
+      ex = IO::Error.from_os_error("broken", Errno::EPIPE)
+      NoirLogger.broken_pipe?(ex).should be_true
+    end
+
+    it "rejects an unrelated POSIX errno" do
+      ex = IO::Error.from_os_error("no space", Errno::ENOSPC)
+      NoirLogger.broken_pipe?(ex).should be_false
+    end
+
+    it "recognizes Windows' broken-pipe error codes via WinError#to_errno" do
+      ex = IO::Error.from_os_error("broken", WinError::ERROR_BROKEN_PIPE)
+      NoirLogger.broken_pipe?(ex).should be_true
+
+      ex = IO::Error.from_os_error("no data", WinError::ERROR_NO_DATA)
+      NoirLogger.broken_pipe?(ex).should be_true
+    end
+
+    it "rejects an unrelated WinError" do
+      ex = IO::Error.from_os_error("denied", WinError::ERROR_ACCESS_DENIED)
+      NoirLogger.broken_pipe?(ex).should be_false
+    end
+  end
+
   describe "LogLevel enum" do
     it "has all expected levels" do
       NoirLogger::LogLevel::DEBUG.should_not be_nil
@@ -147,7 +162,6 @@ describe "NoirLogger" do
       NoirLogger::LogLevel::SUCCESS.should_not be_nil
       NoirLogger::LogLevel::WARNING.should_not be_nil
       NoirLogger::LogLevel::ERROR.should_not be_nil
-      NoirLogger::LogLevel::FATAL.should_not be_nil
       NoirLogger::LogLevel::HEADING.should_not be_nil
     end
   end

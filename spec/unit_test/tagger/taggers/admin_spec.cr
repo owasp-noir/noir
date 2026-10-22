@@ -108,6 +108,20 @@ describe "AdminTagger" do
       endpoint.tags.size.should eq(0)
     end
 
+    it "treats QUERY as read-only for the weak privilege param heuristic" do
+      tagger = AdminTagger.new(default_tagger_options)
+
+      # QUERY is safe + idempotent (RFC 10008), so a weak privilege param
+      # here stays below the threshold exactly as it does on a GET.
+      endpoint = Endpoint.new("/api/roles", "QUERY", [
+        Param.new("privilege", "read", "form"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(0)
+    end
+
     it "does not tag a benign path that merely contains the substring" do
       tagger = AdminTagger.new(default_tagger_options)
 

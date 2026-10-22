@@ -1,6 +1,6 @@
 require "../../func_spec.cr"
 
-describe "--ai-context on ASP.NET auth fixtures" do
+describe "--ai-context on ASP.NET auth fixtures", tags: "functional" do
   fixture_path = "fixtures/csharp/aspnet_auth/"
   controller_suffix = "spec/functional_test/fixtures/csharp/aspnet_auth/Controllers/PostsController.cs"
 

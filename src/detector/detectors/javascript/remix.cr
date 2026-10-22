@@ -2,6 +2,17 @@ require "../../../models/detector"
 
 module Detector::Javascript
   class Remix < Detector
+    detector_for "js_remix",
+      extensions: %w[.js .mjs .cjs .jsx .ts .tsx],
+      basenames: %w[package.json]
+
+    # Remix v2's own packages. The `@remix-run/` scope alone is not a Remix
+    # app: React Router and Remix 3 publish utilities under it
+    # (`@remix-run/node-fetch-server`, `@remix-run/router`), and React
+    # Router v7 apps that pull one in read as Remix.
+    PACKAGE_MARKER = /@remix-run\/(?:dev|react|node|serve|server-runtime|cloudflare|cloudflare-pages|cloudflare-workers|deno|express|architect)(?![\w-])/
+    VITE_MARKER    = /@remix-run\/dev/
+
     def detect(filename : String, file_contents : String) : Bool
       base = File.basename(filename)
 
@@ -14,14 +25,14 @@ module Detector::Javascript
         return true
       end
 
-      if base == "package.json" && file_contents.includes?("@remix-run/")
+      if base == "package.json" && content_matches?(file_contents, PACKAGE_MARKER)
         return true
       end
 
       # `vite.config.*` carrying `@remix-run/dev` confirms a
       # Remix 2 / Vite project even when package.json is far away.
       if (base.starts_with?("vite.config.") || base.starts_with?("remix.")) &&
-         file_contents.includes?("@remix-run/dev")
+         content_matches?(file_contents, VITE_MARKER)
         return true
       end
 
@@ -30,19 +41,11 @@ module Detector::Javascript
       if (filename.ends_with?(".ts") || filename.ends_with?(".tsx") ||
          filename.ends_with?(".js") || filename.ends_with?(".jsx") ||
          filename.ends_with?(".mjs")) &&
-         file_contents.includes?("@remix-run/")
+         content_matches?(file_contents, PACKAGE_MARKER)
         return true
       end
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".js") || filename.ends_with?(".mjs") || filename.ends_with?(".cjs") || filename.ends_with?(".jsx") || filename.ends_with?(".ts") || filename.ends_with?(".tsx") || File.basename(filename) == "package.json"
-    end
-
-    def set_name
-      @name = "js_remix"
     end
   end
 end

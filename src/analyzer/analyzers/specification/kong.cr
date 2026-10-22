@@ -1,22 +1,13 @@
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 
 module Analyzer::Specification
-  class Kong < Analyzer
+  class Kong < SpecificationEngine
+    analyzer_for "kong"
+
     def analyze
-      spec_files = CodeLocator.instance.all("kong-spec")
-      return @result unless spec_files.is_a?(Array(String))
-
-      spec_files.each do |path|
-        next unless File.exists?(path)
-
-        details = Details.new(PathInfo.new(path))
-        content = File.read(path, encoding: "utf-8", invalid: :skip)
-        begin
-          process_doc(YAML.parse(content), details)
-        rescue e
-          @logger.debug "Exception processing #{path}"
-          @logger.debug_sub e
-        end
+      each_spec_file_with_details(Noir::LocatorKeys::KONG_SPEC) do |path, details|
+        content = read_file_content(path)
+        process_doc(YAML.parse(content), details)
       end
 
       @result
@@ -85,9 +76,15 @@ module Analyzer::Specification
       paths.each do |path|
         # We currently model Kong route path mode as regex (`~...`) vs non-regex.
         # Non-regex routes (including exact `=...`) are tagged as `prefix`.
-        path_type = path.starts_with?("~") ? "regex" : "prefix"
+        regex = path.starts_with?("~")
+        path_type = regex ? "regex" : "prefix"
+        pattern_route = regex && Noir::URLPath.regex_route?(path.lchop('~'))
+        # In Kong 3.x the leading `~` is the marker that selects regex mode, not
+        # a path segment; leaving it in produced URLs like `/~/status/\d+`.
+        path = Noir::URLPath.strip_regex_anchors(path.lchop('~')) if regex
         methods.each do |method|
           endpoint = Endpoint.new(path, method, details)
+          endpoint.kind = "regex" if pattern_route
           endpoint.add_tag(Tag.new("kong-path-type", path_type, "kong_analyzer"))
           hosts.each { |host| endpoint.add_tag(Tag.new("kong-host", host, "kong_analyzer")) }
           endpoint.add_tag(Tag.new("kong-upstream", upstream, "kong_analyzer")) unless upstream.empty?

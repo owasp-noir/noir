@@ -2,6 +2,10 @@ require "../../../models/detector"
 
 module Detector::Php
   class Symfony < Detector
+    detector_for "php_symfony",
+      extensions: %w[.php .phtml],
+      basenames: %w[composer.json composer.lock]
+
     def detect(filename : String, file_contents : String) : Bool
       # Check for composer.json with Symfony dependencies
       if filename.ends_with?("composer.json") && file_contents.includes?("symfony/")
@@ -18,7 +22,7 @@ module Detector::Php
       end
 
       # Check for Symfony namespaces in PHP files (real imports only)
-      if filename.ends_with?(".php") && file_contents.match(/(?:^|\n|<\?php\s+)\s*use\s+Symfony\\[^;\n]*;/)
+      if Noir::FileExtension.fold(filename).ends_with?(".php") && file_contents.match(/(?:^|\n|<\?php\s)[ \t]*use\s+Symfony\\[^;\n]*;/)
         return true
       end
 
@@ -30,14 +34,6 @@ module Detector::Php
       end
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".php") || filename.ends_with?(".phtml") || File.basename(filename) == "composer.json" || File.basename(filename) == "composer.lock"
-    end
-
-    def set_name
-      @name = "php_symfony"
     end
   end
 end

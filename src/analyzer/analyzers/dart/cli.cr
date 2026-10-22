@@ -1,10 +1,15 @@
 require "../../../models/analyzer"
+require "../../engines/cli_endpoint_support"
 
 module Analyzer::Dart
   # Surfaces the command-line attack surface of Dart programs as `cli://`
   # endpoints: the args package (ArgParser / CommandRunner) plus
   # main(List<String>) argv and Platform.environment. Line-scan, merged by URL.
   class Cli < Analyzer
+    analyzer_for "dart_cli"
+
+    include CliEndpointSupport
+
     ARGPARSER_VAR  = /(\w+)\s*=\s*ArgParser\s*\(/
     SUBCOMMAND_VAR = /(\w+)\s*=\s*\w+\s*\.\s*addCommand\s*\(\s*['"]([^'"]+)['"]/
     ADD_COMMAND    = /\.addCommand\s*\(\s*['"]([^'"]+)['"]/
@@ -17,10 +22,14 @@ module Analyzer::Dart
     MARKERS = /package:args\/|package:dcli\/|\bArgParser\s*\(|\bCommandRunner\b|\bextends\s+Command\b|main\s*\(\s*List<String>/
     WEB_RE  = /package:shelf\/|package:dart_frog|package:angel3|package:alfred|\bHttpServer\.bind\b/
 
+    # Per-path test-file gate. A precompiled `Regex.union` (PCRE2 JIT)
+    # replaces the two OR-ed `String#includes?` scans it used to run —
+    # provably equivalent since union auto-escapes each literal.
+    TEST_PATH_RE = Regex.union("/test/", "_test.")
+
     def analyze
       endpoints = {} of String => Endpoint
       get_files_by_extension(".dart").each do |path|
-        next if File.directory?(path)
         next if cli_test_path?(path)
         next unless File.exists?(path)
         begin
@@ -34,7 +43,7 @@ module Analyzer::Dart
           next
         end
       end
-      endpoints.each_value { |ep| @result << ep }
+      @result.concat(cli_endpoints(endpoints))
       @result
     end
 
@@ -81,24 +90,18 @@ module Analyzer::Dart
     private def cli_binary_name(path : String) : String
       stem = File.basename(path, ".dart")
       if stem == "main" || stem == "cli" || stem == "app"
-        parent = File.basename(File.dirname(path))
-        return parent unless parent.empty?
+        if name = cli_directory_binary_name(path)
+          return name
+        end
       end
       stem
     end
 
     private def cli_test_path?(path : String) : Bool
-      lower = path.downcase
-      lower.includes?("/test/") || lower.includes?("_test.")
-    end
-
-    private def fetch_endpoint(endpoints : Hash(String, Endpoint), url : String,
-                               path : String, line_no : Int32) : Endpoint
-      endpoints[url] ||= begin
-        ep = Endpoint.new(url, "CLI", Details.new(PathInfo.new(path, line_no)))
-        ep.protocol = "cli"
-        ep
-      end
+      # Scan-base-relative, never absolute: a `test/` directory ABOVE the
+      # scan base is not this project's test tree.
+      lower = base_relative_path(path).downcase
+      lower.matches?(TEST_PATH_RE)
     end
   end
 end

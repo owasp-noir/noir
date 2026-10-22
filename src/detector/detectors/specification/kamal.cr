@@ -3,26 +3,31 @@ require "../../../models/code_locator"
 
 module Detector::Specification
   class Kamal < Detector
+    # Registers each Kamal config path in `CodeLocator`.
+    # Memo safety: `applicable?` consults the path
+    # (/.kamal/ and /config/deploy gates), not just the basename.
+    detector_for "kamal", idempotent: false, path_sensitive: true
+
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
       return false unless kamal_markers?(file_contents)
       return false unless kamal_config?(file_contents)
 
-      CodeLocator.instance.push("kamal-spec", filename)
+      CodeLocator.instance.push(Noir::LocatorKeys::KAMAL_SPEC, filename)
       true
     end
 
     def applicable?(filename : String) : Bool
-      filename.ends_with?(".yaml") || filename.ends_with?(".yml")
-    end
+      return false unless filename.ends_with?(".yaml") || filename.ends_with?(".yml")
 
-    def set_name
-      @name = "kamal"
-    end
-
-    # Registers each Kamal config path in `CodeLocator`.
-    def idempotent? : Bool
-      false
+      # Kamal deploy files are almost always named *deploy*.yml (or live
+      # under `.kamal/`). Matching every YAML in a monorepo made this
+      # non-idempotent detector re-parse CI/K8s/Compose files on every
+      # path for zero signal.
+      base = File.basename(filename).downcase
+      return true if base.includes?("deploy") || base.includes?("kamal")
+      path = filename.gsub('\\', '/')
+      path.includes?("/.kamal/") || path.includes?("/config/deploy")
     end
 
     # Cheap substring pre-check ahead of the (relatively costly) YAML

@@ -1,8 +1,11 @@
 require "../../../models/analyzer"
 require "../../../miniparsers/cpp_callee_extractor"
+require "../../engines/c_engine"
 
 module Analyzer::Cpp
   class Crow < Analyzer
+    analyzer_for "cpp_crow"
+
     CPP_EXTENSIONS = [".cpp", ".cc", ".cxx", ".h", ".hpp", ".hxx"]
     # CROW_ROUTE(app, "/path") — the app identifier and route literal.
     ROUTE_REGEX = /CROW_ROUTE\s*\(\s*[A-Za-z_][A-Za-z0-9_]*\s*,\s*"([^"]*)"\s*\)/
@@ -32,16 +35,20 @@ module Analyzer::Cpp
     COOKIE_GET  = /\bget_cookie\s*\(\s*"([^"]+)"/
     BODY_ACCESS = /\b(req|request)\s*\.\s*body\b/
 
+    # Precompiled union for the per-file evidence gate in analyze_file, so it
+    # costs a single PCRE2 match instead of up to four naive substring scans.
+    EVIDENCE_RE = Regex.union("CROW_ROUTE", "CROW_BP_ROUTE", "CROW_WEBSOCKET_ROUTE", "route_dynamic")
+
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
 
       begin
         locator = CodeLocator.instance
         files = CPP_EXTENSIONS.flat_map { |ext| locator.files_by_extension(ext) }
 
         parallel_analyze(files) do |path|
-          next if File.directory?(path)
           next unless File.exists?(path)
+          next if CEngine.test_path?(base_relative_path(path))
           analyze_file(path, include_callee)
         end
       rescue e
@@ -53,8 +60,7 @@ module Analyzer::Cpp
 
     private def analyze_file(path : String, include_callee : Bool)
       source = read_file_content(path)
-      return unless source.includes?("CROW_ROUTE") || source.includes?("CROW_BP_ROUTE") ||
-                    source.includes?("CROW_WEBSOCKET_ROUTE") || source.includes?("route_dynamic")
+      return unless source.matches?(EVIDENCE_RE)
 
       # Blank comments so commented-out routes (e.g. inside `/* ... */`) and
       # documentation snippets are not picked up as real endpoints.
@@ -64,7 +70,10 @@ module Analyzer::Cpp
       bp_prefixes = source.includes?("CROW_BP_ROUTE") ? blueprint_prefixes(source) : nil
 
       lines.each_with_index do |line, index|
-        next if line.lstrip.starts_with?("//")
+        next unless line.includes?("CROW_ROUTE") ||
+                    line.includes?("CROW_BP_ROUTE") ||
+                    line.includes?("route_dynamic") ||
+                    line.includes?("CROW_WEBSOCKET_ROUTE")
 
         websocket = false
         if bp_match = line.match(BP_ROUTE_REGEX)
@@ -122,7 +131,7 @@ module Analyzer::Cpp
 
         methods.uniq.each do |method|
           endpoint = Endpoint.new(normalized_path, method, path_params.dup, details)
-          route_params.each { |param| push_unique(endpoint, param) }
+          route_params.each { |param| endpoint.push_param(param) }
           Noir::CppCalleeExtractor.attach_to(endpoint, route_callees) if include_callee
           result << endpoint
         end
@@ -164,9 +173,11 @@ module Analyzer::Cpp
 
     private def line_start_offsets(source : String) : Array(Int32)
       offsets = [0]
+      ptr = source.to_unsafe
+      bytesize = source.bytesize
       index = 0
-      while index < source.bytesize
-        offsets << index + 1 if source.byte_at(index) == '\n'.ord
+      while index < bytesize
+        offsets << index + 1 if ptr[index] == 10
         index += 1
       end
       offsets
@@ -276,11 +287,6 @@ module Analyzer::Cpp
         params << Param.new("body", "", "json")
       end
       params
-    end
-
-    private def push_unique(endpoint : Endpoint, param : Param)
-      return if endpoint.params.any? { |p| p.name == param.name && p.param_type == param.param_type }
-      endpoint.push_param(param)
     end
   end
 end

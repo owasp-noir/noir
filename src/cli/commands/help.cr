@@ -1,5 +1,6 @@
 require "colorize"
 require "../common"
+require "../catalog"
 require "../../banner"
 
 # `noir help [command]`
@@ -8,63 +9,29 @@ require "../../banner"
 # what `noir` with no arguments and `noir -h` resolve to.
 # `noir help scan` (etc.) defers to the matching command's help.
 module Noir::CLI::HelpCommand
-  # Commands recognised by `noir help <cmd>`. Kept here (rather than
-  # via KNOWN_COMMANDS) because each entry maps to a specific help
-  # printer, and adding a new subcommand needs a deliberate edit to
-  # both routes.
-  KNOWN_HELP_TARGETS = %w[scan list cache config rules completion version help]
-
-  # Returns a routing symbol so the spec layer can verify dispatch
-  # without invoking the downstream command's help printer (which in
-  # `scan`'s case re-runs the whole OptionParser).
-  enum Route
-    TopLevel
-    Scan
-    List
-    Cache
-    Config
-    Rules
-    Completion
-    Version
-    Help
-    Unknown
-  end
-
-  def self.route_for(argv : Array(String)) : Route
-    return Route::TopLevel if argv.empty?
-
-    case argv.first
-    when "scan"       then Route::Scan
-    when "list"       then Route::List
-    when "cache"      then Route::Cache
-    when "config"     then Route::Config
-    when "rules"      then Route::Rules
-    when "completion" then Route::Completion
-    when "version"    then Route::Version
-    when "help"       then Route::Help
-    else
-      Route::Unknown
-    end
-  end
-
+  # Every verb in `Catalog::NAMES` needs a branch here; the catalog spec
+  # runs `noir help <verb>` for each one, so a missing branch fails there
+  # instead of becoming a verb that quietly has no help page.
   def self.run(argv : Array(String))
-    case route_for(argv)
-    in Route::TopLevel   then print_top_level
-    in Route::Scan       then ScanCommand.run(["--help"])
-    in Route::List       then ListCommand.print_help
-    in Route::Cache      then CacheCommand.print_help
-    in Route::Config     then ConfigCommand.print_help
-    in Route::Rules      then RulesCommand.print_help
-    in Route::Completion then CompletionCommand.print_help
-    in Route::Version    then VersionCommand.print_help
-    in Route::Help       then print_top_level
-    in Route::Unknown
+    case argv.first?
+    when nil, "help", "-h", "--help" then print_top_level
+    when "scan"                      then ScanCommand.run(["--help"])
+    when "trace"                     then TraceCommand.print_help
+    when "reach"                     then ReachCommand.print_help
+    when "query"                     then QueryCommand.print_help
+    when "list"                      then ListCommand.print_help
+    when "cache"                     then CacheCommand.print_help
+    when "config"                    then ConfigCommand.print_help
+    when "rules"                     then RulesCommand.print_help
+    when "completion"                then CompletionCommand.print_help
+    when "version"                   then VersionCommand.print_help
+    else
       Noir::CLI.die("Unknown command: #{argv.first}\nRun `noir help` to see available commands.")
     end
   end
 
   def self.print_top_level(io : IO = STDOUT, banner_io : IO = STDERR)
-    banner(banner_io)
+    Noir::Banner.print(banner_io)
 
     cyan = ->(s : String) { Noir::CLI.name(s) }
     green = ->(s : String) { Noir::CLI.section(s) }
@@ -75,22 +42,32 @@ module Noir::CLI::HelpCommand
         noir [flags]                       # v0-compatible: routes to `noir scan`
 
       #{green.call("COMMANDS:")}
-        #{cyan.call("scan")} [PATHS...]                   Discover endpoints in one or more codebases
-        #{cyan.call("list")} techs | taggers | formats    Enumerate built-in catalogs
-        #{cyan.call("cache")} info | clear | purge        Manage the on-disk LLM response cache
-        #{cyan.call("config")} show | edit | init | path  Manage the user-level YAML configuration
-        #{cyan.call("rules")} list | update | path        Manage the passive-scan rules repository
-        #{cyan.call("completion")} <shell>                Generate shell completion (zsh, bash, fish, elvish)
-        #{cyan.call("version")} [--verbose]               Print version (or full build details)
-        #{cyan.call("help")} [command]                    Show this overview or a command's help
+      #{command_lines(cyan)}
 
       #{green.call("GLOBAL FLAGS:")}
-        --no-color     Strip ANSI color from every command's output (NO_COLOR env also works)
-        --no-spinner   Disable loading spinner animations while keeping normal logs
-        -v, --version  Print the noir version and exit (alias for `noir version`)
-        -h, --help     Show this overview, or, after a verb, that command's help
+        --no-color        Strip ANSI color from every command's output (NO_COLOR env also works)
+        --no-spinner      Disable loading spinner animations while keeping normal logs
+        -v, -V, --version Print the noir version and exit; after a verb, use `noir version`
+                          (a subcommand's own -v is its own — e.g. `noir rules update -v`)
+        -h, --help        Show this overview, or, after a verb, that command's help
 
       Run `noir help <command>` (or `noir <command> -h`) for command-specific flags.
       HELP
+  end
+
+  # The COMMANDS block, laid out from the catalog. The description column is
+  # aligned on the widest `verb args` pair, so a new subcommand doesn't need
+  # the whole block re-padded by hand — nor does it need to be added here at
+  # all.
+  private def self.command_lines(cyan : Proc(String, String)) : String
+    commands = Noir::CLI::Catalog::COMMANDS
+    width = commands.max_of { |command| "#{command.name} #{command.usage_args}".size }
+
+    commands.map do |command|
+      # Padding is measured on the uncolored text: the ANSI escapes around
+      # the verb are zero-width on screen but count toward String#size.
+      padding = " " * (width - "#{command.name} #{command.usage_args}".size)
+      "  #{cyan.call(command.name)} #{command.usage_args}#{padding}  #{command.summary}"
+    end.join("\n")
   end
 end

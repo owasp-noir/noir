@@ -7,6 +7,8 @@ module Analyzer::CSharp
   # Url/RawUrl at runtime. This analyzer therefore extracts endpoints from
   # conservative request method + path guards in HttpListener handler code.
   class HttpListener < Analyzer
+    analyzer_for "cs_httplistener"
+
     include Common
 
     HTTP_METHODS = Set{
@@ -16,6 +18,24 @@ module Analyzer::CSharp
 
     METHOD_LITERAL_RE = /@?"([A-Za-z]+)"/
     STRING_LITERAL_RE = /@?"([^"]*)"/
+
+    # The collection name at each `collection_aliases` call site is always
+    # one of these three fixed HttpListener request surfaces, so precompile
+    # each alias-assignment matcher once at load time instead of rebuilding
+    # an interpolated regex literal (a full PCRE2 JIT compile) per source
+    # line of every scanned block.
+    COLLECTION_ALIAS_ASSIGNMENT_PATTERNS = ["QueryString", "Headers", "Cookies"].to_h do |name|
+      {name, /\b(?:var|NameValueCollection|CookieCollection)\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*[^;]*\b#{name}\b/}
+    end
+
+    # `method_signal?`/`path_signal?` re-check every discovered alias
+    # against every source line, and `extract_indexer_params`/
+    # `extract_getter_params` re-check every alias against every emitted
+    # endpoint's block — memoize each alias's compiled boundary regex so a
+    # repeat lookup reuses the same instance instead of recompiling it.
+    @word_boundary_regex_memo = Hash(String, Regex).new
+    @indexer_param_regex_memo = Hash(String, Regex).new
+    @getter_param_regex_memo = Hash(String, Regex).new
 
     private class BranchContext
       property depth : Int32
@@ -43,7 +63,7 @@ module Analyzer::CSharp
 
       get_files_by_extension(".cs").each do |file|
         next unless File.exists?(file)
-        next if Common.csharp_test_path?(file)
+        next if Common.csharp_test_path?(base_relative_path(file))
 
         content = read_file_content(file)
         next unless httplistener_related_source?(content)
@@ -54,21 +74,23 @@ module Analyzer::CSharp
       @result
     end
 
+    # One JIT-compiled union in place of up to five Rabin-Karp passes over the
+    # whole file — the gate runs on every `.cs` file in the scan.
+    LISTENER_MARKER_RE = /HttpListener/
+    PATH_MARKER_RE     = /AbsolutePath|LocalPath|PathAndQuery|RawUrl/
+
     private def httplistener_related_source?(content : String) : Bool
-      return true if content.includes?("HttpListener")
-      content.includes?("HttpMethod") &&
-        (content.includes?("AbsolutePath") || content.includes?("LocalPath") ||
-          content.includes?("PathAndQuery") || content.includes?("RawUrl"))
+      return true if content_matches?(content, LISTENER_MARKER_RE)
+      content.includes?("HttpMethod") && content_matches?(content, PATH_MARKER_RE)
     end
 
     private def analyze_file(file : String, content : String, include_callee : Bool)
-      # Lex once: `tokens` locates comment spans (to strip comments while keeping
-      # string literals for text extraction) and `masked_lines` blanks
-      # strings/comments/chars for structural brace counting. Both views come
-      # from the same scan, so we avoid lexing the source twice.
+      # Lex once: `code_lines` strips comments while keeping string literals
+      # for text extraction, and `masked_lines` blanks strings/comments/chars
+      # for structural brace counting. Both views come from the same scan, so
+      # we avoid lexing the source twice.
       lexer = Noir::CSharpLexer.new(content)
-      clean_source = strip_comments_preserving_strings(content, lexer)
-      clean_lines = clean_source.lines
+      clean_lines = lexer.code_lines
       masked_lines = lexer.masked_lines
       method_vars, path_vars = extract_request_aliases(clean_lines)
 
@@ -180,18 +202,6 @@ module Analyzer::CSharp
       logger.debug "csharp httplistener: failed to analyze #{file}: #{e.message}"
     end
 
-    private def strip_comments_preserving_strings(source : String, lexer : Noir::CSharpLexer) : String
-      chars = source.chars
-      lexer.tokens.each do |token|
-        next unless token.kind == :comment
-
-        (token.start...token.end).each do |idx|
-          chars[idx] = chars[idx] == '\n' ? '\n' : ' '
-        end
-      end
-      chars.join
-    end
-
     private def extract_request_aliases(lines : Array(String)) : Tuple(Array(String), Array(String))
       method_vars = [] of String
       path_vars = [] of String
@@ -230,15 +240,19 @@ module Analyzer::CSharp
         text.includes?("RawUrl")
     end
 
+    private def word_boundary_regex(name : String) : Regex
+      @word_boundary_regex_memo[name] ||= /\b#{Regex.escape(name)}\b/
+    end
+
     private def method_signal?(text : String, method_vars : Array(String)) : Bool
       return true if text.includes?("HttpMethod")
-      method_vars.any? { |var| text.matches?(/\b#{Regex.escape(var)}\b/) }
+      method_vars.any? { |var| text.matches?(word_boundary_regex(var)) }
     end
 
     private def path_signal?(text : String, path_vars : Array(String)) : Bool
       return true if path_expression?(text)
       return true if text.includes?(".Url")
-      path_vars.any? { |var| text.matches?(/\b#{Regex.escape(var)}\b/) }
+      path_vars.any? { |var| text.matches?(word_boundary_regex(var)) }
     end
 
     private def extract_methods(line : String, method_vars : Array(String)) : Array(String)
@@ -385,11 +399,29 @@ module Analyzer::CSharp
       merge_endpoint(endpoint)
     end
 
+    # `@result` spans the whole scan, so the endpoint this folds into may
+    # well have been emitted by a different file: two services under one
+    # scan base that both answer `GET /health` land on the same entry.
+    # Folding their params and callees together is fine — the optimizer
+    # would union those anyway — but the second file's `code_path` used to
+    # be dropped on the floor, and because the fold happens here the
+    # optimizer never saw it either. The report then named one of the two
+    # files that serve the route and silently omitted the other. Carry the
+    # code paths across too.
+    #
+    # `Endpoint` and `Details` are structs, so `existing` is a copy; the
+    # merge lands because `params`, `callees` and `code_paths` are all
+    # Arrays, and an Array is a reference the copy shares with the entry in
+    # `@result`.
     private def merge_endpoint(endpoint : Endpoint)
       existing = @result.find { |candidate| candidate.url == endpoint.url && candidate.method == endpoint.method }
       if existing
         endpoint.params.each { |param| existing.push_param(param) }
         endpoint.callees.each { |callee| existing.push_callee(callee) }
+        endpoint.details.code_paths.each do |code_path|
+          next if existing.details.code_paths.any? { |seen| seen == code_path }
+          existing.details.add_path(code_path)
+        end
       else
         @result << endpoint
       end
@@ -489,20 +521,29 @@ module Analyzer::CSharp
 
     private def collection_aliases(block : String, collection_name : String) : Array(String)
       aliases = [collection_name]
+      pattern = COLLECTION_ALIAS_ASSIGNMENT_PATTERNS[collection_name]? ||
+                /\b(?:var|NameValueCollection|CookieCollection)\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*[^;]*\b#{collection_name}\b/
       block.each_line do |line|
         next unless line.includes?(collection_name)
 
-        if match = line.match(/\b(?:var|NameValueCollection|CookieCollection)\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*[^;]*\b#{collection_name}\b/)
+        if match = line.match(pattern)
           aliases << match[1] unless aliases.includes?(match[1])
         end
       end
       aliases
     end
 
+    private def indexer_param_regex(var : String) : Regex
+      @indexer_param_regex_memo[var] ||= /\b#{Regex.escape(var)}\s*\[\s*@?"([^"]+)"/
+    end
+
+    private def getter_param_regex(var : String) : Regex
+      @getter_param_regex_memo[var] ||= /\b#{Regex.escape(var)}\s*\.\s*(?:Get|GetValues|GetFirst)\s*\(\s*@?"([^"]+)"/
+    end
+
     private def extract_indexer_params(block : String, vars : Array(String), param_type : String, params : Array(Param))
       vars.each do |var|
-        escaped = Regex.escape(var)
-        block.scan(/\b#{escaped}\s*\[\s*@?"([^"]+)"/) do |match|
+        block.scan(indexer_param_regex(var)) do |match|
           name = match[1].strip
           params << Param.new(name, "", param_type) unless name.empty?
         end
@@ -511,8 +552,7 @@ module Analyzer::CSharp
 
     private def extract_getter_params(block : String, vars : Array(String), param_type : String, params : Array(Param))
       vars.each do |var|
-        escaped = Regex.escape(var)
-        block.scan(/\b#{escaped}\s*\.\s*(?:Get|GetValues|GetFirst)\s*\(\s*@?"([^"]+)"/) do |match|
+        block.scan(getter_param_regex(var)) do |match|
           name = match[1].strip
           params << Param.new(name, "", param_type) unless name.empty?
         end

@@ -48,6 +48,11 @@ expected_endpoints = [
     Param.new("dryRun", "", "query"),
   ]),
   Endpoint.new("/platform/reactive/status", "GET"),
+  # A comment after or below the annotation must not detach it from its method.
+  Endpoint.new("/platform/reactive/health", "GET", [
+    Param.new("verbose", "", "query"),
+  ]),
+  Endpoint.new("/platform/reactive/ready", "GET"),
 ]
 
 FunctionalTester.new("fixtures/java/quarkus/", {

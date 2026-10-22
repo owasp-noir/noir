@@ -6,8 +6,8 @@ private def analyze_serverless(content : String, ext = ".yml")
   path = File.tempname("serverless", ext)
   File.write(path, content)
   locator = CodeLocator.instance
-  locator.clear "serverless-framework-spec"
-  locator.push "serverless-framework-spec", path
+  locator.clear Noir::LocatorKeys::SERVERLESS_FRAMEWORK_SPEC
+  locator.push Noir::LocatorKeys::SERVERLESS_FRAMEWORK_SPEC, path
 
   options = create_test_options
   analyzer = Analyzer::Specification::ServerlessFramework.new options

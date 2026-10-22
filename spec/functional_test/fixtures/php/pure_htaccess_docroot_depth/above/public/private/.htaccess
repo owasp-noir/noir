@@ -1,0 +1,2 @@
+# Below the document root: this directory is turned away.
+Deny from all

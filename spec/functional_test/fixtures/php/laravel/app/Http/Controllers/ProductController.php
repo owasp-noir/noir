@@ -33,6 +33,7 @@ class ProductController extends BaseController
      */
     public function store(Request $request)
     {
+        $this->validate($request, ['sku' => 'required', 'price' => 'numeric']);
         return response()->json(['message' => 'Product created']);
     }
 

@@ -1,6 +1,6 @@
 require "../../func_spec.cr"
 
-describe "--ai-context on Laravel auth fixtures" do
+describe "--ai-context on Laravel auth fixtures", tags: "functional" do
   fixture_path = "fixtures/php/laravel_auth/"
   routes_suffix = "spec/functional_test/fixtures/php/laravel_auth/routes/web.php"
 

@@ -14,4 +14,15 @@ api.example.com {
         reverse_proxy api:8000
     }
     redir /old /new permanent
+
+    # Matcher-less forms. None of these names a route: the first argument is a
+    # response body, a redirect destination or the block's opening brace.
+    respond "Hello, world!"
+    redir https://www.example.com{uri} permanent
+    handle {
+        respond 404
+    }
+    route {
+        file_server
+    }
 }

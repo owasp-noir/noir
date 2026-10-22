@@ -1,25 +1,49 @@
 require "base64"
 require "../../../models/analyzer"
 require "../../../models/endpoint"
+require "../../../utils/file_url_scanner"
 
-FileAnalyzer.add_hook(->(path : String, url : String) : Array(Endpoint) {
+# Reports URLs hidden in base64-encoded literals whose decoded form sits on
+# the `-u/--url` origin, under its path.
+#
+# Attributed to `file_base64` rather than to the language of the file it was
+# found in: an endpoint recovered from an encoded blob is a different kind of
+# finding from a route the code declares, and the report should say so. See
+# `FileAnalyzer::Hook` for why this name is not in the tech catalog.
+FileAnalyzer.add_hook(tech: "file_base64", func: ->(path : String, url : String) : Array(Endpoint) {
   results = [] of Endpoint
+  # Parsed on the first candidate only: most files carry no URL literal.
+  base = nil
 
   begin
-    File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-      file.each_line.with_index do |line, index|
-        # Check base64 encoded strings
-        base64_match = line.match(/([A-Za-z0-9+\/]{20,}={0,2})/)
-        if base64_match
-          decoded = Base64.decode_string(base64_match[1])
-          url_match = decoded.match(/(https?:\/\/[^\s"]+)/)
-          if url_match
-            parsed_url = URI.parse(url_match[1])
-            if parsed_url.to_s.includes? url
-              details = Details.new(PathInfo.new(path, index + 1))
-              results << Endpoint.new(parsed_url.path, "GET", details)
-            end
+    Noir::FileUrlScanner.each_line(path) do |line, index|
+      next if Noir::FileUrlScanner.binary_line?(line)
+
+      # Every token on the line is tried, not just the first: a line
+      # carrying an unrelated base64 blob before the encoded URL used to
+      # hide it. And a token that is not valid base64 raises out of
+      # `decode_string` — that exception used to escape the per-file rescue
+      # and silently abandon every remaining line of the file.
+      line.scan(Noir::FileUrlScanner::BASE64_TOKEN_RE) do |token|
+        decoded = begin
+          Base64.decode_string(token[0])
+        rescue
+          next
+        end
+
+        Noir::FileUrlScanner.each_url(decoded) do |candidate|
+          parsed_url = begin
+            URI.parse(candidate)
+          rescue
+            nil
           end
+          next if parsed_url.nil?
+          base ||= Noir::FileUrlScanner::BaseUrl.parse(url)
+          endpoint_path = Noir::FileUrlScanner.path_under_base(parsed_url, base)
+          next if endpoint_path.nil?
+
+          details = Details.new(PathInfo.new(path, index + 1))
+          results << Endpoint.new(endpoint_path, "GET", details)
         end
       end
     end

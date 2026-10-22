@@ -8,11 +8,11 @@ prev_page_label = "Install Noir"
 
 +++
 
-{% mascot(mood="walk") %}
-Noir is installed. Let's take it for a spin! Point it at a project, see what it finds, and learn how to shape the output.
+{% mascot(mood="run") %}
+Noir is installed. Point it at a project and see what it finds.
 {% end %}
 
-This page runs through a first scan end to end — pointing Noir at a project, reading what it reports, and shaping the output for your workflow. Each step builds on the one before it, so it's worth following in order the first time through.
+Each step builds on the one before, so follow them in order the first time.
 
 ## Run a Scan
 
@@ -28,9 +28,11 @@ Or if you're already inside the project:
 noir scan .
 ```
 
-![](./running.png)
+<img src="./scan.svg" alt="A terminal running noir scan with passive scanning and taggers enabled: five endpoints found with their parameters and tags, plus a critical private-key finding." width="639" height="1258" loading="lazy" decoding="async">
 
 Noir reads the source files, detects which frameworks are in use, and prints every endpoint it finds: methods, paths, parameters, headers, and cookies.
+
+The screenshot also passes `-P` (passive scan for secrets) and `-T` (all taggers), both listed in the [Quick Reference](#quick-reference) below. Without them you get the endpoints only, with no tags or findings.
 
 > **v0 compatibility:** the v0 form `noir -b ./app` still works
 > without changes. The router falls back to `scan` for any
@@ -38,7 +40,7 @@ Noir reads the source files, detects which frameworks are in use, and prints eve
 
 ## Check What Was Detected
 
-Curious which technologies Noir picked up? Add `--include techs` to see them alongside the results:
+To see which technologies Noir detected, add `--include techs`:
 
 ```bash
 noir scan . --include techs
@@ -54,19 +56,19 @@ If your framework isn't listed, you can still use [AI-powered analysis](@/get_st
 
 ## Try Different Output Formats
 
-The default output is a human-readable table. Depending on your workflow, you might want something else:
+The default output is plain text for reading in a terminal. Use `-f` to get something a script or another tool can read:
 
 ```bash
 # Machine-readable JSON for scripting and pipelines
 noir scan . -f json
 
-# YAML for easy reading and config-friendly workflows
+# YAML
 noir scan . -f yaml
 
-# OpenAPI spec, useful for generating API docs or feeding into tools
+# OpenAPI 3.0 spec for API tools and scanners
 noir scan . -f oas3
 
-# cURL commands you can run immediately against a live target
+# cURL commands against a live target
 noir scan . -f curl -u https://your-target.com
 ```
 
@@ -74,17 +76,15 @@ See all available formats with `noir list formats`, or in the [Output Formats](@
 
 ## Save Results to a File
 
-Instead of printing to the terminal, write the output to a file with `-o`:
+Save the output to a file with `-o`. The report still prints to the terminal as well:
 
 ```bash
 noir scan . -f json -o results.json
 ```
 
-This is useful for diffing results between scans, feeding into CI pipelines, or sharing with your team.
-
 ## Trace Endpoints Back to Source
 
-Want to know exactly where an endpoint was defined? Add `--include path` to show source file locations:
+To show the source file and line behind each endpoint, add `--include path`:
 
 ```bash
 noir scan . --include path
@@ -93,18 +93,18 @@ noir scan . --include path
 Combine multiple enrichments with one flag:
 
 ```bash
-noir scan . --include path,techs -f json -o results.json
+noir scan . --include path,techs
 ```
 
 ## Focus Your Scan
 
-Large monorepos may contain many frameworks. You can narrow the scan to what matters:
+In a monorepo with many frameworks, narrow the scan:
 
 ```bash
 # Run only the Rails and Django detectors (skip everything else)
 noir scan . --only-techs rails,django
 
-# Force-tag the project with these techs without running their detectors
+# Also run the Rails and Django analyzers (in addition to whatever auto-detection finds)
 noir scan . --techs rails,django
 
 # Scan everything except Express
@@ -114,7 +114,7 @@ noir scan . --exclude-techs express
 noir scan . --exclude-path "*_test.go,vendor/*,**/node_modules/**"
 ```
 
-`--only-techs` and `--techs` look similar but do different things: `--only-techs` filters the detector list (faster scan, only those detectors run), while `--techs` adds techs to the result without running detection (useful when you already know the stack and want to skip discovery).
+`--only-techs` and `--techs` look similar but do different things. `--only-techs` limits which detectors run, so the scan is faster and only those techs can be found. `--techs` *adds* techs on top of auto-detection, so their analyzers run even if detection missed them. Use both for "only these techs, and run them even if they weren't detected".
 
 ## Enrich the Output
 
@@ -125,12 +125,22 @@ noir scan . --exclude-path "*_test.go,vendor/*,**/node_modules/**"
 # Attach 1-hop handler callees (function/method calls inside the route body)
 noir scan . --include callee
 
-# Attach an AI-review-ready context (guards, callees, sinks, validators, signals)
+# Attach an AI-review-ready context (guards, callees, sources, sinks, validators, signals)
 noir scan . --ai-context
 
 # Narrow the AI context to a few categories
 noir scan . --ai-context guards,sinks
 ```
+
+Filtering keeps related evidence together. When you select `signals`, each
+signal keeps the buckets it was derived from (for example, an `ssrf` signal
+keeps its `sinks` and `sources`). When you select only other buckets, Noir
+keeps just the signals that depend on them, plus those signals' own evidence,
+so `guards,sinks` can also print `sources`. The `priority_review` roll-up
+appears only when you select `signals`.
+
+`--ai-context` also turns on `--include callee` and all taggers (or only the
+ones you chose with `--use-taggers`), because the context is built from them. Expect `callees` and `tags` in the output as well.
 
 See [Callee Coverage](@/usage/supported/callee_coverage/index.md) and [AI Context](@/usage/supported/ai_context_coverage/index.md) for the data shape and per-framework support.
 
@@ -142,32 +152,53 @@ See [Callee Coverage](@/usage/supported/callee_coverage/index.md) and [AI Contex
 | `-b <path>`           | Same as positional; v0-compatible |
 | `-f <format>`         | Output format (json, yaml, oas3, curl, etc.) |
 | `-o <file>`           | Write output to a file |
-| `-u <url>`            | Base URL for cURL/HTTPie output |
+| `-u <url>`            | Base URL prepended to paths; required for `--status-codes`, `--probe`, and `--probe-via` |
 | `--include LIST`      | Enrich plain output with `path`, `techs`, `callee` (comma-separated) |
-| `--ai-context [LIST]` | Attach AI review context (`guards`, `sinks`, `validators`, `signals`, `callee`) |
+| `--ai-context [LIST]` | Attach AI review context (`guards`, `callee`, `sources`, `sinks`, `validators`, `signals`; or `all`) |
 | `--pvalue TYPE=VAL`   | Fill parameter values in output (TYPE: any / header / cookie / query / form / json / path) |
 | `--only-techs`        | Run only these tech detectors (skip the rest) |
-| `--techs`             | Force-tag these techs without running their detectors |
-| `--exclude-techs`     | Skip these frameworks |
-| `--exclude-path`      | Skip files matching a comma-separated glob list |
+| `-t, --techs`         | Add these techs to the analyzer set (in addition to auto-detected ones) |
+| `--exclude-techs`     | Drop these techs from the results after detection |
+| `--exclude-path`      | Skip files matching a comma-separated glob list. A pattern with `/` matches the path from the scan base, one without matches a file or directory name; a matched directory skips everything under it |
 | `--status-codes`      | Probe each endpoint and attach the observed HTTP status code |
 | `--exclude-codes`     | Drop endpoints whose probed status matches (comma-separated; pairs with `--status-codes`) |
+| `-P, --passive-scan`  | Enable passive security scan |
+| `-T, --use-all-taggers` | Activate all taggers |
+| `--probe`             | Fire HTTP requests at discovered endpoints (needs `-u`) |
+| `--probe-via <url>`   | Route probes through this proxy URL |
+| `--probe-header VAL`  | Add a header to each probe (repeatable) |
+| `--tls-skip-verify`   | Skip TLS certificate verification for probe/export/webhook (insecure) |
+| `--use-taggers LIST`  | Activate specific taggers (comma-separated; see `noir list taggers`) |
+| `--export-es <url>`   | Index endpoints in Elasticsearch |
+| `--export-opensearch <url>` | Index endpoints in OpenSearch (same wire shape as `--export-es`) |
+| `--export-webhook <url>` | POST the endpoint catalog as JSON to a webhook |
+| `--ai-provider`        | AI provider prefix or full URL (see [AI Power](@/get_started/ai_power/index.md)) |
+| `--ai-model NAME`     | AI model name |
+| `--ai-key KEY`        | AI API key (prefer `NOIR_AI_KEY` or `--ai-key-file PATH`: argv is visible in the process list) |
+| `--diff-path <path>`  | Old code path for [Diff Mode](@/usage/more_features/diff/index.md) |
+| `--diff-ref <ref>`    | Git revision to diff against (e.g. `main`, `HEAD~1`; see [Diff Mode](@/usage/more_features/diff/index.md)) |
+| `--fail-on <list>`    | Exit `3` when the diff has any of `added`, `removed`, `changed`, `auth-removed` |
+| `--passive-scan-severity LVL` | Min passive-scan severity (`critical`, `high`, `medium`, or `low`; default `high`) |
+| `-d, --debug`         | Enable debug messages |
 | `--config-file <path>`| Load default options from a YAML config file |
-| `--concurrency <N>`   | Worker count (default: CPU cores) |
+| `--concurrency <N>`   | Worker count (default: CPU count, clamped to 4–32; or set `NOIR_CONCURRENCY`) |
 | `--cache-disable`     | Disable the LLM response cache for this run |
 | `--cache-clear`       | Clear the LLM response cache before running |
-| `--verbose`           | Detailed logging |
-| `--no-log`            | Suppress all logs |
+| `--strict`            | Exit with code 2 if any analyzer failed or skipped a file (the scan still reports its results) |
+| `--verbose`           | Verbose logs; also turns on `--include path` and `--use-all-taggers` |
+| `--no-log`            | Suppress logs and show only the results |
 | `--no-color`          | Disable ANSI colors in plain output |
+| `--no-spinner`        | Disable loading spinner animations |
 
 For build details (Crystal / LLVM / target), run `noir version --verbose`. Run `noir help` for the top-level overview or `noir help <command>` for any command's full flag list.
 
 ---
 
-You've completed the Getting Started guide! Here's what to explore next:
+That's the end of Getting Started. Where to go next:
 
 - **[CLI Commands](@/usage/cli_commands/_index.md)**: The full v1 subcommand reference (scan, list, cache, config, rules, and so on)
 - **[Configurations](@/usage/configurations/configuration_file/index.md)**: Set default options so you don't repeat flags every time
-- **[Output Formats](@/usage/output_formats/_index.md)**: Dive deeper into all output formats
+- **[Output Formats](@/usage/output_formats/_index.md)**: Every output format in detail
+- **[Diff Mode](@/usage/more_features/diff/index.md)**: Compare the attack surface against a path or git revision, and gate CI with `--fail-on`
 - **[Passive Scan](@/usage/passive_scan/_index.md)**: Scan for security issues like hardcoded secrets and misconfigurations
 - **[AI Power](@/get_started/ai_power/index.md)**: Use AI to detect endpoints in unsupported frameworks

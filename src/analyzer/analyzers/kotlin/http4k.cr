@@ -4,16 +4,18 @@ require "../../engines/kotlin_engine"
 
 module Analyzer::Kotlin
   class Http4k < Analyzer
+    analyzer_for "kotlin_http4k"
+
     KOTLIN_EXTENSION = "kt"
     HTTP4K_MARKER    = "org.http4k"
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       file_list = all_files()
       kotlin_files = file_list.select do |path|
-        File.exists?(path) &&
-          path.ends_with?(".#{KOTLIN_EXTENSION}") &&
-          !KotlinEngine.test_path?(path)
+        path.ends_with?(".#{KOTLIN_EXTENSION}") &&
+          File.exists?(path) &&
+          !KotlinEngine.test_path?(base_relative_path(path))
       end
       file_contents = Hash(String, String).new
       string_constants_by_base = Hash(String, Hash(String, String)).new do |hash, key|

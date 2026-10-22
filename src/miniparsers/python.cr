@@ -1,6 +1,7 @@
 require "../ext/tree_sitter/tree_sitter"
 require "../utils/parser_limit"
 require "./import_graph"
+require "../utils/text_file"
 
 # Python source-file parser used by the Flask analyzer to resolve
 # routing-relevant globals (Blueprint / Namespace / Api instances)
@@ -55,7 +56,9 @@ class PythonParser
     @own_globals = Hash(String, GlobalVariables).new
     @basedir = File.dirname(@path)
     while !@basedir.empty? && File.exists?(@basedir + "/__init__.py")
-      @basedir = File.dirname(@basedir)
+      parent = File.dirname(@basedir)
+      break if parent == @basedir # relative "." (and "/") are fixed points of dirname
+      @basedir = parent
     end
 
     @depth = depth
@@ -120,7 +123,7 @@ class PythonParser
         type ||= "str"
         value = decode_string(child, source)
       when "call"
-        callee = first_named_child(child)
+        callee = Noir::TreeSitter.first_named_child(child)
         type ||= callee_name(callee, source) if callee
         value = Noir::TreeSitter.node_text(child, source)
       else
@@ -163,12 +166,6 @@ class PythonParser
       end
     end
     buf
-  end
-
-  private def first_named_child(node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
-    count = LibTreeSitter.ts_node_named_child_count(node)
-    return if count == 0
-    LibTreeSitter.ts_node_named_child(node, 0_u32)
   end
 
   # ---- imports + recursive merge ----------------------------------
@@ -401,7 +398,7 @@ class PythonParser
   private def get_or_create_parser(pyfile : String) : PythonParser?
     return @parsers[pyfile] if @parsers.has_key?(pyfile)
 
-    content = File.read(pyfile, encoding: "utf-8", invalid: :skip)
+    content = Noir::TextFile.read(pyfile)
     sub = PythonParser.new(pyfile, content, @parsers, @visited.dup, depth: @depth + 1)
     @parsers[pyfile] = sub
     sub

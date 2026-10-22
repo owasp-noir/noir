@@ -2,34 +2,50 @@ require "../../engines/crystal_engine"
 
 module Analyzer::Crystal
   class Grip < CrystalEngine
-    # Crystal recompiles an interpolated regex literal on every evaluation
-    # (a full PCRE2 JIT compile). The verb set is fixed, so precompile the
-    # per-verb route matchers once at load time.
-    VERB_ROUTE_PATTERNS = %w[get post put patch delete options head].map do |method|
-      {method, /(?:^|[^.\w])#{method}\s+['"](.+?)['"]/}
+    analyzer_for "crystal_grip"
+
+    # Only files inside a project whose `shard.yml` depends on `grip`.
+    # See `CrystalEngine#shard_dependencies` — `get "/path"` is the same
+    # line in Kemal, Grip and Amber, so the manifest is what tells the
+    # frameworks apart.
+    protected def shard_dependencies : Array(String)
+      ["grip"]
     end
+
+    # One combined PCRE2 scan replaces the previous 7 sequential per-verb
+    # matchers. Grip requires whitespace after the verb (`get "/x"`, not
+    # `get("/x")`) — the `\s+` keeps that shape, so `input "/x"` still
+    # cannot be read as `put "/x"`.
+    GRIP_ROUTE_RE = /(?:^|[^.\w])(get|post|put|patch|delete|options|head)\s+['"](.+?)['"]/
+
+    SCOPE_OPEN_RE = /^(\s*)scope\s+['"](.+?)['"].*\bdo\b/
+    SCOPE_END_RE  = /^(\s*)end\b/
+    WS_ROUTE_RE   = /(?:^|[^.\w])ws\s+['"](.+?)['"]/
 
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
-      lines = [] of String
 
-      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        file.each_line do |line|
-          lines << line
-        end
-      end
-      lines = mask_crystal_heredocs(lines)
+      lines = mask_crystal_heredocs(read_file_content(path).lines)
 
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       actions = include_callee ? collect_controller_actions(lines, path) : Hash(String, Array(Noir::CrystalCalleeExtractor::Entry)).new
       last_endpoint = Endpoint.new("", "")
       scope_stack = [] of NamedTuple(prefix: String, indent: Int32)
+      param_lines = crystal_param_lines(lines)
 
-      lines.each_with_index do |line, index|
+      lines.each_with_index do |raw_line, index|
+        # Grip was the one Crystal analyzer matching routes on raw source:
+        # a comment like `# TODO: add a delete "/users/:id" route` parsed as
+        # a live route, and `context.fetch_query_params["x"]` written in a
+        # comment became a real param. Every sibling analyzer (kemal, amber,
+        # lucky, marten, http) strips first — and this file already did so
+        # for callee collection below, just not here. `strip_comment` keeps
+        # leading whitespace, so the scope-indentation match still lines up.
+        line = Noir::CrystalCalleeExtractor.strip_comment(raw_line)
         details = Details.new(PathInfo.new(path, index + 1))
 
         # Open a scope block, recording its indentation.
-        if scope_match = line.match(/^(\s*)scope\s+['"](.+?)['"].*\bdo\b/)
+        if line.includes?("scope") && (scope_match = line.match(SCOPE_OPEN_RE))
           scope_stack << {prefix: scope_match[2], indent: scope_match[1].size}
           next
         end
@@ -38,7 +54,7 @@ module Analyzer::Crystal
         # indentation of the `scope ... do` that opened it; inner if/case/def/do
         # `end`s sit at a deeper indent and must not pop the scope.
         unless scope_stack.empty?
-          if end_match = line.match(/^(\s*)end\b/)
+          if line.includes?("end") && (end_match = line.match(SCOPE_END_RE))
             if end_match[1].size == scope_stack.last[:indent]
               scope_stack.pop
               next
@@ -58,7 +74,7 @@ module Analyzer::Crystal
         end
 
         # Parse parameters
-        param = line_to_param(line)
+        param = line_to_param(param_lines[index])
         unless param.name.empty?
           unless last_endpoint.method.empty?
             last_endpoint.push_param(param)
@@ -184,7 +200,10 @@ module Analyzer::Crystal
     end
 
     def line_to_param(content : String) : Param
-      # Grip context parameter parsing
+      # Grip context parameter parsing. Most lines never touch
+      # `context.fetch_*`; bail before the six includes? probes.
+      return Param.new("", "", "") unless content.includes?("context.fetch_")
+
       if content.includes?("context.fetch_path_params")
         # Extract parameter name from context.fetch_path_params["param_name"]
         if match = content.match(/context\.fetch_path_params\["(.+?)"\]/)
@@ -232,34 +251,32 @@ module Analyzer::Crystal
     end
 
     def line_to_endpoint(content : String, scopes : Array(String)) : Endpoint
+      # Quote gate first — no string literal means no route path.
+      return Endpoint.new("", "") unless content.includes?('"') || content.includes?("'")
+
       scope_prefix = scopes.join("")
 
       # Match HTTP method calls: get "/path", Controller
-      VERB_ROUTE_PATTERNS.each do |method, route_pattern|
-        if content.includes?("#{method} ") && content.includes?("\"")
-          # Require a token boundary so `input "/x"` isn't read as `put "/x"`.
-          if match = content.match(route_pattern)
-            path = normalize_crystal_interpolation(match[1])
-            full_path = scope_prefix + path
-            return Endpoint.new(full_path, method.upcase)
-          end
-        end
+      if match = content.match(GRIP_ROUTE_RE)
+        path = normalize_crystal_interpolation(match[2])
+        full_path = scope_prefix + path
+        return Endpoint.new(full_path, match[1].upcase)
       end
 
       Endpoint.new("", "")
     end
 
     def line_to_websocket(content : String, scopes : Array(String)) : Endpoint
+      return Endpoint.new("", "") unless content.includes?("ws") && (content.includes?('"') || content.includes?("'"))
+
       scope_prefix = scopes.join("")
 
-      if content.includes?("ws ") && content.includes?("\"")
-        if match = content.match(/(?:^|[^.\w])ws\s+['"](.+?)['"]/)
-          path = normalize_crystal_interpolation(match[1])
-          full_path = scope_prefix + path
-          endpoint = Endpoint.new(full_path, "GET")
-          endpoint.protocol = "ws"
-          return endpoint
-        end
+      if match = content.match(WS_ROUTE_RE)
+        path = normalize_crystal_interpolation(match[1])
+        full_path = scope_prefix + path
+        endpoint = Endpoint.new(full_path, "GET")
+        endpoint.protocol = "ws"
+        return endpoint
       end
 
       Endpoint.new("", "")

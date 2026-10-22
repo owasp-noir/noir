@@ -5,13 +5,16 @@ require "../../../models/code_locator"
 
 module Detector::Specification
   class Apisix < Detector
+    # Registers every APISIX route config path in `CodeLocator`.
+    detector_for "apisix", extensions: %w[.json .yaml .yml], idempotent: false
+
     def detect(filename : String, file_contents : String) : Bool
       if filename.ends_with?(".json")
         return false unless apisix_candidate?(file_contents)
 
-        data = JSON.parse(file_contents)
+        data = parse_json_lenient(file_contents)
         if apisix_routes_json?(data)
-          CodeLocator.instance.push("apisix-json", filename)
+          CodeLocator.instance.push(Noir::LocatorKeys::APISIX_JSON, filename)
           return true
         end
       elsif filename.ends_with?(".yaml") || filename.ends_with?(".yml")
@@ -19,26 +22,13 @@ module Detector::Specification
 
         data = YAML.parse(file_contents)
         if apisix_routes_yaml?(data)
-          CodeLocator.instance.push("apisix-yaml", filename)
+          CodeLocator.instance.push(Noir::LocatorKeys::APISIX_YAML, filename)
           return true
         end
       end
 
       false
     rescue
-      false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".json") || filename.ends_with?(".yaml") || filename.ends_with?(".yml")
-    end
-
-    def set_name
-      @name = "apisix"
-    end
-
-    # Registers every APISIX route config path in `CodeLocator`.
-    def idempotent? : Bool
       false
     end
 
@@ -89,10 +79,21 @@ module Detector::Specification
       !!(text && !text.empty?)
     end
 
+    # Word-bounded guard markers. The accepted shapes require actual
+    # `routes` / `uri`(`uris`) / `upstream_id` or `plugins` keys, which
+    # always appear word-bounded in the raw document (`"uri":` / `uri:`),
+    # so `\b` keeps the guard a necessary condition while no longer
+    # tripping on substrings — the bare `includes?("uri")` matched
+    # "security" and made large OpenAPI JSON specs pay a full redundant
+    # parse here on every scan (this detector is non-idempotent).
+    ROUTES_MARKER  = /\broutes\b/
+    URI_MARKER     = /\buris?\b/
+    PAYLOAD_MARKER = /\bupstream_id\b|\bplugins\b/
+
     private def apisix_candidate?(content : String) : Bool
-      content.includes?("routes") &&
-        (content.includes?("uri") || content.includes?("uris")) &&
-        (content.includes?("upstream_id") || content.includes?("plugins"))
+      content_matches?(content, ROUTES_MARKER) &&
+        content_matches?(content, URI_MARKER) &&
+        content_matches?(content, PAYLOAD_MARKER)
     end
   end
 end

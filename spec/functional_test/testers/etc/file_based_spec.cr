@@ -41,20 +41,54 @@ expected_endpoints = [
   Endpoint.new("https://www.hahwul.com/tag/security/", "GET"),
   Endpoint.new("https://www.hahwul.com/tag/crystal/", "GET"),
   Endpoint.new("https://www.hahwul.com/tag/zap/", "GET"),
-  Endpoint.new("https://www.hahwul.com/form_http", "POST", [Param.new("X-API-Key", "1234", "header"), Param.new("a", "1234", "form")]),
+  Endpoint.new("https://www.hahwul.com/form_http", "POST", [Param.new("X-API-Key", "", "header"), Param.new("a", "1234", "form")]),
   Endpoint.new("https://www.hahwul.com/json_http", "POST", [Param.new("name", "test", "json"), Param.new("data", "abcd", "json")]),
-  Endpoint.new("https://www.hahwul.com/query_http", "GET", [Param.new("q", "1234", "query"), Param.new("Authorization", "abcd", "header")]),
+  Endpoint.new("https://www.hahwul.com/query_http", "GET", [Param.new("q", "1234", "query"), Param.new("Authorization", "", "header")]),
   Endpoint.new("https://www.hahwul.com/multiple_http1", "GET"),
   Endpoint.new("https://www.hahwul.com/multiple_http2", "GET"),
   Endpoint.new("https://www.hahwul.com/graphql", "POST", [
     Param.new("graphql_operation_query_GetUserData", "{\"query\":\"GetUserData\"}", "json"),
   ]),
+  # prose.md — a URL literal carries the surrounding prose/markup with it
+  # unless it is trimmed: `](url)` drops the closing paren, `<url>` and
+  # `<link>url</link>` stop at the angle bracket, and a sentence-final `.`
+  # is not part of the URL.
+  Endpoint.new("https://www.hahwul.com/changelog/", "GET"),
+  Endpoint.new("https://www.hahwul.com/feed.xml", "GET"),
+  Endpoint.new("https://www.hahwul.com/sitemap", "GET"),
+  # Both URLs on one line are reported, not only the first.
+  Endpoint.new("https://www.hahwul.com/first", "GET"),
+  Endpoint.new("https://www.hahwul.com/second", "GET"),
+  # base64_mixed.txt — an undecodable base64-shaped token earlier in the
+  # file must not abandon the rest of it.
+  Endpoint.new("https://www.hahwul.com/hidden", "GET"),
 ]
 
 tester = FunctionalTester.new("fixtures/etc/file_based/", {
-  :techs => 0,
-  # Adjusted count: original 12 + 1 new unique GraphQL endpoint (POST /graphql)
-  :endpoints => expected_endpoints.size, # This will now be 13 if original was 12
+  :techs     => 2, # http_file (the `.http` request files) + graphql_operation (sample.graphql)
+  :endpoints => expected_endpoints.size,
 }, expected_endpoints)
 
-tester.app.options["url"] = YAML::Any.new("https://www.hahwul.com")
+# Pre-scan configuration, so it must not go through `tester.app` — reading that
+# runs the scan. `url=` writes the option and guards against being called after
+# the scan already happened.
+tester.url = "https://www.hahwul.com"
+
+# The url-matching FileAnalyzer hooks only run with `-u`, which is set on the
+# runner above — so the assertions have to be kicked off after it, not by the
+# constructor.
+tester.perform_tests
+
+# A `-u` that carries a path. Literals under it come out once, not as
+# `/api/api/users` (the hooks used to report the full path, and the optimizer
+# prefixed `-u` on top). The base itself, a look-alike host and a sibling path
+# that only shares the `/api` prefix are not endpoints under the target.
+base_path_tester = FunctionalTester.new("fixtures/etc/file_based_base_path/", {
+  :techs     => 0,
+  :endpoints => 2,
+}, [
+  Endpoint.new("https://www.hahwul.com/api/users", "GET"),
+  Endpoint.new("https://www.hahwul.com/api/encoded", "GET"),
+])
+base_path_tester.url = "https://www.hahwul.com/api"
+base_path_tester.perform_tests

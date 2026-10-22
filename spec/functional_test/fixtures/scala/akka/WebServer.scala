@@ -32,7 +32,7 @@ object WebServer {
         },
         path("users" / IntNumber) { userId =>
           get {
-            parameter("filter") { filter =>
+            parameter(/* optional */ "filter") { filter =>
               complete(s"User $userId with filter $filter")
             }
           }

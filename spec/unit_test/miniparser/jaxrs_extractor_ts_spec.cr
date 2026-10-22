@@ -3,6 +3,42 @@ require "../../../src/models/logger"
 require "../../../src/miniparsers/jaxrs_extractor_ts"
 
 describe Noir::TreeSitterJaxRsExtractor do
+  # A root-mounted resource composes `@Path("/")` with a bare `@GET` through
+  # `URLPath.join_trimmed`, which used to trim the prefix down to `""`. The
+  # route reached the optimizer with an empty URL, and `optimize_endpoints`
+  # skips those — so `GET /` disappeared from every output format with no
+  # warning, while its `@POST @Path("/things")` sibling came through fine.
+  it "keeps the root path for a bare verb on a root-mounted resource" do
+    source = <<-JAVA
+      package com.example.api;
+
+      import jakarta.ws.rs.GET;
+      import jakarta.ws.rs.POST;
+      import jakarta.ws.rs.Path;
+      import jakarta.ws.rs.core.Response;
+
+      @Path("/")
+      public class RootResource {
+          @GET
+          public Response index() {
+              return Response.ok().build();
+          }
+
+          @POST
+          @Path("/things")
+          public Response create() {
+              return Response.ok().build();
+          }
+      }
+      JAVA
+
+    routes = Noir::TreeSitterJaxRsExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([
+      {"GET", "/"},
+      {"POST", "/things"},
+    ])
+  end
+
   it "extracts application-level base paths from @ApplicationPath" do
     source = <<-JAVA
       package com.example;
@@ -19,7 +55,7 @@ describe Noir::TreeSitterJaxRsExtractor do
       }
       JAVA
 
-    Noir::TreeSitterJaxRsExtractor.extract_application_path(source).should eq("/rest")
+    Noir::TreeSitter.parse_java(source) { |root| Noir::TreeSitterJaxRsExtractor.extract_application_path_from(root, source) }.should eq("/rest")
   end
 
   it "composes same-file sub-resource locator paths" do
@@ -362,6 +398,173 @@ describe Noir::TreeSitterJaxRsExtractor do
     routes = Noir::TreeSitterJaxRsExtractor.extract_routes(source)
     routes.map { |r| {r.verb, r.path, r.protocol} }.should eq([
       {"GET", "/ws/chat/{roomId}", "ws"},
+    ])
+  end
+
+  it "resolves user-defined @HttpMethod annotations to their declared verb" do
+    source = <<-JAVA
+      package com.example.annotation;
+
+      import java.lang.annotation.ElementType;
+      import java.lang.annotation.Retention;
+      import java.lang.annotation.RetentionPolicy;
+      import java.lang.annotation.Target;
+      import jakarta.ws.rs.HttpMethod;
+
+      @Target(ElementType.METHOD)
+      @Retention(RetentionPolicy.RUNTIME)
+      @HttpMethod("QUERY")
+      public @interface QUERY {
+      }
+
+      @Target(ElementType.METHOD)
+      @Retention(RetentionPolicy.RUNTIME)
+      @HttpMethod("propfind")
+      public @interface PROPFIND {
+      }
+
+      @Target(ElementType.METHOD)
+      @Retention(RetentionPolicy.RUNTIME)
+      public @interface NotAVerb {
+      }
+      JAVA
+
+    Noir::TreeSitterJaxRsExtractor.extract_custom_verb_annotations(source).should eq({
+      "QUERY"    => "QUERY",
+      "PROPFIND" => "PROPFIND",
+    })
+  end
+
+  it "never lets a custom @HttpMethod annotation shadow a built-in verb name" do
+    source = <<-JAVA
+      package com.example.annotation;
+
+      import jakarta.ws.rs.HttpMethod;
+
+      @HttpMethod("POST")
+      public @interface GET {
+      }
+      JAVA
+
+    Noir::TreeSitterJaxRsExtractor.extract_custom_verb_annotations(source).should eq({} of String => String)
+  end
+
+  it "applies a resolved custom verb to a resource method alongside body params, leaving built-ins untouched" do
+    annotation_source = <<-JAVA
+      package com.example.annotation;
+
+      import java.lang.annotation.ElementType;
+      import java.lang.annotation.Retention;
+      import java.lang.annotation.RetentionPolicy;
+      import java.lang.annotation.Target;
+      import jakarta.ws.rs.HttpMethod;
+
+      @Target(ElementType.METHOD)
+      @Retention(RetentionPolicy.RUNTIME)
+      @HttpMethod("QUERY")
+      public @interface QUERY {
+      }
+      JAVA
+
+    source = <<-JAVA
+      package com.example.api;
+
+      import com.example.annotation.QUERY;
+      import jakarta.ws.rs.GET;
+      import jakarta.ws.rs.Path;
+      import jakarta.ws.rs.core.Response;
+
+      @Path("/search")
+      public class SearchResource {
+          @QUERY
+          public Response search(FilterDto filters) {
+              return Response.ok().build();
+          }
+
+          @GET
+          @Path("/status")
+          public Response status() {
+              return Response.ok().build();
+          }
+      }
+      JAVA
+
+    custom_verb_annotations = Noir::TreeSitterJaxRsExtractor.extract_custom_verb_annotations(annotation_source)
+    routes = Noir::TreeSitterJaxRsExtractor.extract_routes(source, custom_verb_annotations: custom_verb_annotations)
+    routes.map { |r| {r.verb, r.path, r.params} }.should eq([
+      {"QUERY", "/search", [
+        Param.new("filters", "FilterDto", "json"),
+      ]},
+      {"GET", "/search/status", [] of Param},
+    ])
+  end
+
+  it "reads implements/extends from the AST so a brace in a class annotation cannot truncate the header" do
+    # `@Produces({MediaType.APPLICATION_JSON})` is the canonical JAX-RS
+    # spelling and puts a `{` in the class node's text before `implements`.
+    # The header used to be cut at the first `{` on the assumption it opened
+    # the class body, so the interface was never seen and every inherited
+    # route silently vanished.
+    source = <<-JAVA
+      package com.example.api;
+
+      import jakarta.ws.rs.GET;
+      import jakarta.ws.rs.POST;
+      import jakarta.ws.rs.Path;
+      import jakarta.ws.rs.PathParam;
+      import jakarta.ws.rs.Produces;
+      import jakarta.ws.rs.core.MediaType;
+      import jakarta.ws.rs.core.Response;
+
+      @Path("/catalog")
+      public interface CatalogApi {
+          @GET
+          @Path("/{id}")
+          Response show(@PathParam("id") String id);
+      }
+
+      @Produces({MediaType.APPLICATION_JSON})
+      @Path("/api")
+      public class CatalogResource implements CatalogApi {
+          public Response show(String id) {
+              return Response.ok().build();
+          }
+      }
+      JAVA
+
+    routes = Noir::TreeSitterJaxRsExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([
+      {"GET", "/api/catalog/{id}"},
+    ])
+  end
+
+  it "reads the superclass from the AST even behind a brace-carrying annotation" do
+    source = <<-JAVA
+      package com.example.api;
+
+      import jakarta.ws.rs.GET;
+      import jakarta.ws.rs.Path;
+      import jakarta.ws.rs.Produces;
+      import jakarta.ws.rs.core.MediaType;
+      import jakarta.ws.rs.core.Response;
+
+      public abstract class BaseResource {
+          @GET
+          @Path("/ping")
+          public Response ping() {
+              return Response.ok().build();
+          }
+      }
+
+      @Produces({MediaType.APPLICATION_JSON})
+      @Path("/api")
+      public class PingResource extends BaseResource {
+      }
+      JAVA
+
+    routes = Noir::TreeSitterJaxRsExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([
+      {"GET", "/api/ping"},
     ])
   end
 end

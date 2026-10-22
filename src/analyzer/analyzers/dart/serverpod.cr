@@ -1,5 +1,6 @@
 require "../../../models/analyzer"
 require "../../../miniparsers/dart_callee_extractor"
+require "../../../utils/top_level_split"
 require "./dart_helper"
 
 module Analyzer::Dart
@@ -16,6 +17,8 @@ module Analyzer::Dart
   # RPCs are visible in the output, with the non-`Session` arguments
   # reported as JSON body params.
   class Serverpod < Analyzer
+    analyzer_for "dart_serverpod"
+
     HTTP_METHOD         = "POST"
     RESERVED_DART_NAMES = %w[if else for while switch case return try catch finally throw new const final var late void await async assert]
     # `Method.<verb>` constants accepted by `Route`'s `methods:` set.
@@ -34,12 +37,11 @@ module Analyzer::Dart
     alias Registration = NamedTuple(base_path: String, class_name: String, path: String)
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       route_classes = {} of RouteClassKey => RouteClass
       registrations = [] of Registration
 
       all_files.each do |path|
-        next if File.directory?(path)
         next unless path.ends_with?(".dart")
         # `test/integration/*_endpoint_test.dart` exercises endpoints but
         # is not itself a server surface.
@@ -80,7 +82,7 @@ module Analyzer::Dart
         next unless body_info
         body, body_start = body_info
 
-        line = line_for_offset(content, match_start)
+        line = line_number_for_index(content, match_start)
         methods = web_route_methods(body)
         callees = include_callee ? web_handler_callees(path, body, body_start, content) : [] of Noir::DartCalleeExtractor::Entry
         route_classes[{base_path, class_name}] = {methods: methods, file: path, line: line, callees: callees}
@@ -88,7 +90,7 @@ module Analyzer::Dart
 
       cleaned.scan(/\baddRoute\s*\(/) do |match|
         open_paren = (match.end(0) || 0) - 1
-        close_paren = find_matching_paren(cleaned, open_paren)
+        close_paren = Helper.find_matching_paren(cleaned, open_paren)
         next unless close_paren
         args = split_top_level_commas(cleaned[(open_paren + 1)...close_paren])
         next if args.size < 2
@@ -135,19 +137,19 @@ module Analyzer::Dart
       m = class_body.match(/\b(?:handleCall|build)\s*\(/)
       return [] of Noir::DartCalleeExtractor::Entry unless m
       open_paren = (m.end(0) || 0) - 1
-      close_paren = find_matching_paren(class_body, open_paren)
+      close_paren = Helper.find_matching_paren(class_body, open_paren)
       return [] of Noir::DartCalleeExtractor::Entry unless close_paren
 
-      # close_paren is a CHAR index (find_matching_paren is char-based); the
+      # close_paren is a CHAR index (Helper.find_matching_paren is char-based); the
       # extractor scans/returns BYTE offsets. Convert at the boundary so the
-      # body slice is correct and line_for_offset (char-based) gets char offsets.
+      # body slice is correct and line_number_for_index (char-based) gets char offsets.
       start_byte = class_body.char_index_to_byte_index(close_paren + 1)
       return [] of Noir::DartCalleeExtractor::Entry unless start_byte
       body_info = Noir::DartCalleeExtractor.extract_body_after(class_body, start_byte)
       return [] of Noir::DartCalleeExtractor::Entry unless body_info
       body, body_start, _ = body_info
       body_start_char = class_body.byte_index_to_char_index(body_start) || 0
-      start_line = line_for_offset(file_content, class_body_start + body_start_char)
+      start_line = line_number_for_index(file_content, class_body_start + body_start_char)
       Noir::DartCalleeExtractor.callees_for_body(body, path, start_line)
     end
 
@@ -178,7 +180,7 @@ module Analyzer::Dart
         next unless body_info
 
         body, body_start = body_info
-        line_number = line_for_offset(content, match_start)
+        line_number = line_number_for_index(content, match_start)
         endpoint_name = endpoint_name_for(class_name)
         process_class_body(path, endpoint_name, body, body_start, content, line_number, include_callee)
       end
@@ -202,12 +204,16 @@ module Analyzer::Dart
       in_string = false
       string_quote = '\0'
       i = 0
+      # `String#[]` re-walks from byte 0 on every call once the source
+      # contains any multi-byte char, turning this scan O(n^2); index a
+      # materialized Array(Char) instead (O(1) per access).
+      chars = body.chars
 
-      while i < body.size
-        c = body[i]
+      while i < chars.size
+        c = chars[i]
 
         if in_string
-          if c == '\\' && i + 1 < body.size
+          if c == '\\' && i + 1 < chars.size
             i += 2
             next
           end
@@ -239,11 +245,11 @@ module Analyzer::Dart
           if rest.match(/\A\s*Session\s+[A-Za-z_][A-Za-z0-9_]*/)
             method_name = method_name_before(body, i)
             if method_name && !method_name.empty? && !method_name.starts_with?("_")
-              close_paren = find_matching_paren(body, i)
+              close_paren = Helper.find_matching_paren(body, i)
               if close_paren
                 params_text = body[(i + 1)...close_paren]
                 params = parse_method_params(params_text)
-                line = line_for_offset(file_content, body_start + i)
+                line = line_number_for_index(file_content, body_start + i)
                 line = fallback_line if line <= 0
                 callees = include_callee ? callees_for_method_body(path, body, body_start, close_paren, file_content) : [] of Noir::DartCalleeExtractor::Entry
                 emit_endpoint(path, endpoint_name, method_name, params, line, callees)
@@ -259,17 +265,21 @@ module Analyzer::Dart
     end
 
     private def method_name_before(body : String, paren_idx : Int32) : String?
+      # `String#[]` re-walks from byte 0 on every call once the source
+      # contains any multi-byte char, turning this backward scan O(n^2);
+      # index a materialized Array(Char) instead (O(1) per access).
+      chars = body.chars
       back = paren_idx - 1
-      while back >= 0 && body[back].whitespace?
+      while back >= 0 && chars[back].whitespace?
         back -= 1
       end
       name_end = back
-      while back >= 0 && (body[back].alphanumeric? || body[back] == '_')
+      while back >= 0 && (chars[back].alphanumeric? || chars[back] == '_')
         back -= 1
       end
       name_start = back + 1
       return if name_start > name_end
-      candidate = body[name_start..name_end]
+      candidate = chars[name_start..name_end].join
       return if candidate.empty?
       return unless candidate[0].lowercase? || candidate[0] == '_'
       return if RESERVED_DART_NAMES.includes?(candidate)
@@ -313,30 +323,29 @@ module Analyzer::Dart
       last
     end
 
+    # Serverpod's argument lists carry Dart generics (`Future<List<Foo>>`) and
+    # call expressions, and nothing else nests: this splitter sees method
+    # signatures, never string literals, so quote handling stays off.
+    #
+    # `Nest::Paren | Nest::Angle` with `per_kind: false` is the whole of the
+    # old body's depth model — one counter incremented by `<` and `(` alike
+    # and decremented by `>` and `)`, with `[]` and `{}` inert. Those are two
+    # orthogonal choices in `Rules` (`nest` picks which characters count,
+    # `per_kind` picks how many counters exist), which is why this reads as a
+    # plain preset despite earlier surveys in this series calling the
+    # combination inexpressible.
+    SPLIT_COMMAS_RULES = Noir::TopLevelSplit::Rules.new(
+      nest: Noir::TopLevelSplit::Nest::Paren | Noir::TopLevelSplit::Nest::Angle,
+      quotes: "",
+      escape: Noir::TopLevelSplit::Escape::None,
+      strip: false,
+      empties: Noir::TopLevelSplit::Empties::Keep,
+      per_kind: false,
+      clamp: true,
+    )
+
     private def split_top_level_commas(text : String) : Array(String)
-      parts = [] of String
-      depth = 0
-      start = 0
-      i = 0
-      while i < text.size
-        c = text[i]
-        case c
-        when '<', '('
-          depth += 1
-        when '>', ')'
-          depth -= 1 if depth > 0
-        when ','
-          if depth == 0
-            parts << text[start...i]
-            start = i + 1
-          end
-        else
-          # ignore
-        end
-        i += 1
-      end
-      parts << text[start..]
-      parts
+      Noir::TopLevelSplit.split(text, ',', SPLIT_COMMAS_RULES)
     end
 
     private def emit_endpoint(path : String,
@@ -365,52 +374,17 @@ module Analyzer::Dart
 
       body, body_start, _ = body_info
       body_start_char = class_body.byte_index_to_char_index(body_start) || 0
-      start_line = line_for_offset(file_content, class_body_start + body_start_char)
+      start_line = line_number_for_index(file_content, class_body_start + body_start_char)
       Noir::DartCalleeExtractor.callees_for_body(body, path, start_line)
     end
 
-    private def find_matching_paren(text : String, open_idx : Int32) : Int32?
-      depth = 0
-      i = open_idx
-      in_string = false
-      string_quote = '\0'
-
-      while i < text.size
-        c = text[i]
-        if in_string
-          if c == '\\' && i + 1 < text.size
-            i += 2
-            next
-          end
-          in_string = false if c == string_quote
-          i += 1
-          next
-        end
-
-        case c
-        when '"', '\''
-          in_string = true
-          string_quote = c
-        when '('
-          depth += 1
-        when ')'
-          depth -= 1
-          return i if depth == 0
-        else
-          # ignore
-        end
-        i += 1
-      end
-
-      nil
-    end
-
     private def extract_braced_block(text : String, start : Int32) : Tuple(String, Int32)?
+      chars = text.chars
       i = start
-      while i < text.size && text[i] != '{'
+      while i < chars.size && chars[i] != '{'
         i += 1
       end
-      return if i >= text.size
+      return if i >= chars.size
 
       body_start = i + 1
       depth = 1
@@ -418,10 +392,10 @@ module Analyzer::Dart
       in_string = false
       string_quote = '\0'
 
-      while i < text.size && depth > 0
-        c = text[i]
+      while i < chars.size && depth > 0
+        c = chars[i]
         if in_string
-          if c == '\\' && i + 1 < text.size
+          if c == '\\' && i + 1 < chars.size
             i += 2
             next
           end
@@ -446,7 +420,7 @@ module Analyzer::Dart
       end
 
       return if depth != 0
-      {text[body_start...i], body_start}
+      {chars[body_start...i].join, body_start}
     end
 
     private def strip_dart_comments(text : String) : String
@@ -519,18 +493,6 @@ module Analyzer::Dart
       end
 
       result.to_s
-    end
-
-    private def line_for_offset(content : String, offset : Int32) : Int32
-      return 1 if offset <= 0
-      limit = offset > content.size ? content.size : offset
-      count = 1
-      i = 0
-      while i < limit
-        count += 1 if content[i] == '\n'
-        i += 1
-      end
-      count
     end
   end
 end

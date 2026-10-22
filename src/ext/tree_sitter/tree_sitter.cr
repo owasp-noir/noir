@@ -11,23 +11,20 @@
 # Upstream versions currently vendored:
 #   tree-sitter-python  v0.23.6
 
+require "../../miniparsers/extraction_result_cache"
+
+class Fiber
+  # Descent depth of the tree-sitter walk on this fiber's stack, see
+  # `Noir::TreeSitter.each_named_child`.
+  property noir_ts_walk_depth = 0
+end
+
 @[Link(ldflags: "`sh #{__DIR__}/build.sh`")]
 lib LibTreeSitter
   # ----- Opaque types -----
   type TSParser = Void*
   type TSTree = Void*
   type TSLanguage = Void*
-  type TSQuery = Void*
-  type TSQueryCursor = Void*
-
-  # ----- Query API error codes (TSQueryError in api.h) -----
-  TS_QUERY_ERROR_NONE      = 0
-  TS_QUERY_ERROR_SYNTAX    = 1
-  TS_QUERY_ERROR_NODE_TYPE = 2
-  TS_QUERY_ERROR_FIELD     = 3
-  TS_QUERY_ERROR_CAPTURE   = 4
-  TS_QUERY_ERROR_STRUCTURE = 5
-  TS_QUERY_ERROR_LANGUAGE  = 6
 
   # ----- Structs exposed by api.h -----
   struct TSPoint
@@ -46,6 +43,8 @@ lib LibTreeSitter
   fun ts_parser_delete(parser : TSParser)
   fun ts_parser_set_language(parser : TSParser, language : TSLanguage) : Bool
   fun ts_parser_parse_string(parser : TSParser, old_tree : TSTree, string : LibC::Char*, length : LibC::UInt) : TSTree
+  fun ts_parser_set_timeout_micros(parser : TSParser, timeout_micros : UInt64)
+  fun ts_parser_reset(parser : TSParser)
 
   # ----- Tree / node -----
   fun ts_tree_delete(tree : TSTree)
@@ -62,44 +61,24 @@ lib LibTreeSitter
   fun ts_node_start_point(node : TSNode) : TSPoint
   fun ts_node_end_point(node : TSNode) : TSPoint
   fun ts_node_is_null(node : TSNode) : Bool
+  fun ts_node_is_named(node : TSNode) : Bool
 
-  # ----- Query API -----
-  struct TSQueryCapture
-    node : TSNode
-    index : LibC::UInt
+  # ----- Tree cursor -----
+  # Visits children in O(1) amortised per step (goto_next_sibling),
+  # versus `ts_node_named_child(node, i)` which re-walks the sibling
+  # list from the start on every call (O(index)). Layout mirrors
+  # `TSTreeCursor` in api.h exactly: {tree, id, context[3]}.
+  struct TSTreeCursor
+    tree : Void*
+    id : Void*
+    context : LibC::UInt[3]
   end
 
-  struct TSQueryMatch
-    id : LibC::UInt
-    pattern_index : UInt16
-    capture_count : UInt16
-    captures : TSQueryCapture*
-  end
-
-  # ----- Query predicates (tree-sitter stores them as metadata; the
-  # caller is responsible for enforcing them when iterating matches.) -----
-  TS_PREDICATE_STEP_DONE    = 0
-  TS_PREDICATE_STEP_CAPTURE = 1
-  TS_PREDICATE_STEP_STRING  = 2
-
-  struct TSQueryPredicateStep
-    type : LibC::Int
-    value_id : LibC::UInt
-  end
-
-  fun ts_query_new(language : TSLanguage, source : LibC::Char*, source_len : LibC::UInt,
-                   error_offset : LibC::UInt*, error_type : LibC::Int*) : TSQuery
-  fun ts_query_delete(query : TSQuery)
-  fun ts_query_pattern_count(query : TSQuery) : LibC::UInt
-  fun ts_query_capture_count(query : TSQuery) : LibC::UInt
-  fun ts_query_capture_name_for_id(query : TSQuery, index : LibC::UInt, length : LibC::UInt*) : LibC::Char*
-  fun ts_query_string_value_for_id(query : TSQuery, index : LibC::UInt, length : LibC::UInt*) : LibC::Char*
-  fun ts_query_predicates_for_pattern(query : TSQuery, pattern_index : LibC::UInt,
-                                      step_count : LibC::UInt*) : TSQueryPredicateStep*
-  fun ts_query_cursor_new : TSQueryCursor
-  fun ts_query_cursor_delete(cursor : TSQueryCursor)
-  fun ts_query_cursor_exec(cursor : TSQueryCursor, query : TSQuery, node : TSNode)
-  fun ts_query_cursor_next_match(cursor : TSQueryCursor, match : TSQueryMatch*) : Bool
+  fun ts_tree_cursor_new(node : TSNode) : TSTreeCursor
+  fun ts_tree_cursor_delete(cursor : TSTreeCursor*)
+  fun ts_tree_cursor_current_node(cursor : TSTreeCursor*) : TSNode
+  fun ts_tree_cursor_goto_first_child(cursor : TSTreeCursor*) : Bool
+  fun ts_tree_cursor_goto_next_sibling(cursor : TSTreeCursor*) : Bool
 
   # ----- Grammars (linked from vendored parser.o) -----
   fun tree_sitter_python : TSLanguage
@@ -173,15 +152,100 @@ module Noir::TreeSitter
     end
   end
 
+  # Wall-clock ceiling for a single `ts_parser_parse_string` call.
+  #
+  # tree-sitter's error recovery is quadratic on badly-malformed input: a
+  # 200 KB single line of unterminated string literals in a `.go` file
+  # spends minutes inside `ts_parser__recover` before returning. Nothing
+  # in noir can interrupt that — the parse is one blocking C call, so the
+  # scan simply stops, with no output and no way to tell which file did
+  # it. Source files are capped at `MediaFilter::MAX_FILE_SIZE` (10 MB) —
+  # the larger `MAX_SPEC_FILE_SIZE` covers only specification documents,
+  # which no vendored grammar parses — and a well-formed file that size
+  # parses in well under a second, so ten
+  # seconds is ~100x headroom over any legitimate input while still
+  # bounding the pathological case.
+  #
+  # On expiry the parse returns null and `parse` raises, which the
+  # per-file rescue in `parallel_analyze` / `scan_files` logs at debug —
+  # one file dropped instead of the whole run.
+  # Writable so a spec can force the expiry path deterministically — a
+  # sub-millisecond ceiling times out on any non-trivial source, where
+  # reproducing a real 10 s timeout would need a pathological fixture and
+  # ten seconds of suite time. Nothing in a scan writes it: the value is
+  # read once per parse and comes from `NOIR_PARSE_TIMEOUT_MS`.
+  class_property parse_timeout_micros : UInt64 = timeout_micros_from_env(ENV["NOIR_PARSE_TIMEOUT_MS"]?)
+
+  # Milliseconds to microseconds, clamped so an absurd value means "effectively
+  # no limit" instead of an OverflowError that aborts every command at startup.
+  def self.timeout_micros_from_env(raw : String?) : UInt64
+    ms = raw.try(&.strip.to_u64?)
+    Math.min(ms && ms > 0 ? ms : 10_000_u64, UInt64::MAX // 1000_u64) * 1000_u64
+  end
+
+  # Sources that already failed to parse, keyed by content fingerprint and
+  # grammar.
+  #
+  # `parse_timeout_micros` bounds ONE `ts_parser_parse_string` call, but a
+  # file is offered to every analyzer of its language, and each one parses it
+  # independently — nine Rust analyzers each burn the full ceiling on the same
+  # unparsable `.rs` file, so a 10 s bound costs 90 s. The verdict is a pure
+  # function of (content, grammar), so remembering it turns that back into one
+  # ceiling per file. A timeout is wall-clock and so not strictly
+  # deterministic; that is the point — re-running a parse we already know
+  # takes longer than the ceiling cannot succeed in less time on the second
+  # try, it can only cost the ceiling again.
+  #
+  # Keyed on content rather than path because `parse` never sees a path, and
+  # content is the better key anyway: the `CodeLocator` cache hands the same
+  # string to sibling analyzers, and two paths holding identical bytes parse
+  # identically.
+  PARSE_FAILURE_MAX_ENTRIES = 4096
+
+  @@parse_failures = Hash(UInt64, Bool).new
+  @@parse_failure_mutex = Mutex.new
+
+  # A second scan in the same process (diff mode, library use) gets a clean
+  # slate, like every other content-keyed memo in the tree.
+  Noir::ExtractionResultCache.register_clearer do
+    @@parse_failure_mutex.synchronize { @@parse_failures.clear }
+  end
+
+  private def self.parse_failure_key(source : String, language : LibTreeSitter::TSLanguage) : UInt64
+    Noir::ExtractionResultCache.source_fingerprint(source) &+
+      language.address &* 0xd6e8feb86659fd93_u64
+  end
+
   # Parses `source` with the given `language` and yields the root
   # `LibTreeSitter::TSNode`. The parser is checked out from a per-language
   # pool and returned when the block exits; the tree is freed in the
   # same `ensure`.
   def self.parse(source : String, language : LibTreeSitter::TSLanguage, &)
+    failure_key = parse_failure_key(source, language)
+    # Checked before `checkout_parser` so a known-bad file does not even
+    # occupy a pool slot the other analyzers are waiting on.
+    if @@parse_failure_mutex.synchronize { @@parse_failures.has_key?(failure_key) }
+      raise "tree-sitter parse skipped: this source already failed to parse with this grammar"
+    end
+
     parser = checkout_parser(language)
     begin
+      timeout = parse_timeout_micros
+      LibTreeSitter.ts_parser_set_timeout_micros(parser, timeout)
       tree = LibTreeSitter.ts_parser_parse_string(parser, Pointer(Void).null.as(LibTreeSitter::TSTree), source.to_unsafe, source.bytesize.to_u32)
-      raise "ts_parser_parse_string returned null" if tree.null?
+      if tree.null?
+        # A halted parser holds the partial parse so the next call can
+        # resume it. We never resume — the parser goes straight back to
+        # the shared pool — so reset it, or the next unrelated file
+        # inherits this one's state.
+        LibTreeSitter.ts_parser_reset(parser)
+        @@parse_failure_mutex.synchronize do
+          Noir::ExtractionResultCache.store_capped(
+            @@parse_failures, failure_key, true, PARSE_FAILURE_MAX_ENTRIES
+          )
+        end
+        raise "ts_parser_parse_string returned null (timed out after #{timeout // 1000}ms, or out of memory)"
+      end
       begin
         yield LibTreeSitter.ts_tree_root_node(tree)
       ensure
@@ -227,19 +291,6 @@ module Noir::TreeSitter
     parse(source, LibTreeSitter.tree_sitter_rust) { |root| yield root }
   end
 
-  # Convenience: returns the root-node s-expression for `source`.
-  def self.python_sexp(source : String) : String
-    parse_python(source) do |root|
-      ptr = LibTreeSitter.ts_node_string(root)
-      begin
-        String.new(ptr)
-      ensure
-        # ts_node_string allocates with malloc; free it.
-        LibC.free(ptr.as(Void*))
-      end
-    end
-  end
-
   # --- Small helpers used by extractors. Kept here so callers don't
   # have to touch LibTreeSitter directly. ---
 
@@ -257,6 +308,32 @@ module Noir::TreeSitter
     LibTreeSitter.ts_node_start_point(node).row.to_i
   end
 
+  # Row of a call's method name. A chained call node starts at the chain
+  # head, so `app\n  .get(...)\n  .post(...)` would put every link on the
+  # `app` line. JS `member_expression.property`, Java
+  # `method_invocation.name` and Kotlin's trailing `navigation_suffix`
+  # name the link (Kotlin wraps `.post("/x") { }` in a second call for the
+  # trailing lambda); any other shape falls back to the call's own row.
+  def self.call_name_row(call : LibTreeSitter::TSNode) : Int32
+    if name = field(call, "name") || field(call, "function").try { |f| field(f, "property") }
+      return node_start_row(name)
+    end
+
+    node = call
+    while callee = first_named_child(node)
+      case node_type(callee)
+      when "navigation_expression"
+        count = LibTreeSitter.ts_node_named_child_count(callee)
+        return node_start_row(LibTreeSitter.ts_node_named_child(callee, count - 1))
+      when "call_expression"
+        node = callee
+      else
+        break
+      end
+    end
+    node_start_row(node)
+  end
+
   def self.node_end_row(node : LibTreeSitter::TSNode) : Int32
     LibTreeSitter.ts_node_end_point(node).row.to_i
   end
@@ -266,295 +343,186 @@ module Noir::TreeSitter
     LibTreeSitter.ts_node_is_null(child) ? nil : child
   end
 
+  # 0-based row of a declaration's `name` field: the signature line, which
+  # sits below however many annotation lines the declaration starts with.
+  def self.name_row(node : LibTreeSitter::TSNode) : Int32?
+    field(node, "name").try { |name| node_start_row(name) }
+  end
+
+  def self.first_named_child(node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
+    return if LibTreeSitter.ts_node_named_child_count(node) == 0
+    LibTreeSitter.ts_node_named_child(node, 0_u32)
+  end
+
+  ESCAPE_SEQUENCE_RE = /\\(?:u\{([0-9A-Fa-f]{1,6})\}|u([0-9A-Fa-f]{4})|x([0-9A-Fa-f]{2})|(.))/m
+
+  # The value of the backslash escapes in `text`: an `escape_sequence` node
+  # (Java/JS), or a Kotlin `string_content`, which keeps its escapes inline.
+  # `\\` → `\`, `\"` → `"`, `\n` → newline, `é` → `é`; any other `\c`
+  # is `c`, as in JavaScript.
+  def self.unescape(text : String) : String
+    return text unless text.includes?('\\')
+    text.gsub(ESCAPE_SEQUENCE_RE) do |seq, match|
+      if hex = match[1]? || match[2]? || match[3]?
+        code = hex.to_i(16)
+        code <= Char::MAX_CODEPOINT && !(0xD800..0xDFFF).includes?(code) ? code.chr.to_s : seq
+      else
+        case char = match[4]
+        when "n" then "\n"
+        when "t" then "\t"
+        when "r" then "\r"
+        else          char
+        end
+      end
+    end
+  end
+
+  # A Kotlin `string_content` child of `literal`, decoded. The grammar keeps
+  # escapes inline in the content; a raw `"""` string has none to decode.
+  def self.kotlin_string_content(content : LibTreeSitter::TSNode, literal : LibTreeSitter::TSNode, source : String) : String
+    text = node_text(content, source)
+    return text if source.byte_slice?(LibTreeSitter.ts_node_start_byte(literal).to_i, 3) == %(""")
+    unescape(text)
+  end
+
+  # A string literal's `string_fragment` and decoded `escape_sequence` text,
+  # or its raw text minus the surrounding double quotes when the grammar
+  # exposes no fragments.
+  def self.decode_string_literal(node : LibTreeSitter::TSNode, source : String) : String
+    buf = String.build do |io|
+      each_named_child(node) do |child|
+        case node_type(child)
+        when "string_fragment" then io << node_text(child, source)
+        when "escape_sequence" then io << unescape(node_text(child, source))
+        end
+      end
+    end
+    return buf unless buf.empty?
+    raw = node_text(node, source)
+    raw.size >= 2 && raw.starts_with?('"') && raw.ends_with?('"') ? raw[1..-2] : raw
+  end
+
+  # Above this many named children, switch from indexed access to a
+  # tree cursor. `ts_node_named_child(node, i)` is O(i) (it re-walks the
+  # sibling list each call), so the indexed loop is O(n^2) in the child
+  # count; a cursor walks each child in O(1) amortised but costs one
+  # allocation to set up. Small nodes stay on the allocation-free
+  # indexed path; wide nodes (large class bodies, `program` roots on big
+  # files) take the cursor and avoid the quadratic. Both paths yield the
+  # exact same named children in the same order.
+  NAMED_CHILD_CURSOR_THRESHOLD = 8
+
+  # The nesting level of `each_named_child` / `descend` frames lives on the
+  # fiber (`Fiber#noir_ts_walk_depth`), not the thread: walks on fibers that
+  # share a thread interleave whenever one suspends mid-walk (a `logger`
+  # write inside a walker block), and their save/restore frames then unwind
+  # out of order. A thread-wide counter is left at a stale value for good,
+  # truncating every later walk on that thread. Per fiber, each stack only
+  # ever sees its own frames, so the save/restore always balances.
+
   # Iterates named children without allocating an array.
+  #
+  # Yields nothing once the walk has descended `MAX_AST_DEPTH` levels.
+  # Practically every extractor in the tree descends by recursing inside
+  # this block, so bounding it here bounds all of them at once: the
+  # alternative is threading a `depth` parameter through ~300 hand-rolled
+  # walkers and remembering to do it in the next one. A source file with
+  # thousands of nested syntactic constructs (`((((...))))`, chained
+  # builders, generated code) otherwise recurses until the fiber stack
+  # runs out, and a stack overflow is a hard abort — it kills the whole
+  # scan, not just the file, and no `rescue` in `parallel_analyze` can
+  # catch it. Walkers that thread their own `depth` against
+  # `MAX_AST_DEPTH` still cut earlier and more precisely; this is the
+  # backstop for the ones that don't.
+  #
+  # The cursor path lives in a separate `@[NoInline]` method on purpose:
+  # these extractors recurse through `each_named_child`'s block, so any
+  # local this method reserves (notably the 32-byte `TSTreeCursor`) is
+  # paid at every recursion level. Keeping the cursor out of this frame
+  # preserves the small original frame for the common narrow-node path,
+  # so legitimate deep input stays well inside the stack (guarded by
+  # spec/unit_test/miniparser/extractor_recursion_depth_spec).
   def self.each_named_child(node : LibTreeSitter::TSNode, &)
     count = LibTreeSitter.ts_node_named_child_count(node)
-    count.times do |i|
-      yield LibTreeSitter.ts_node_named_child(node, i.to_u32)
-    end
-  end
+    return if count == 0
 
-  # Compiled tree-sitter query.
-  #
-  # Queries are S-expression patterns that describe node shapes and
-  # capture nodes by `@name`. They let detectors declare the shape of
-  # a route registration call once instead of hand-walking the AST.
-  #
-  # Example: match every `@<router>.route(...)` decorator in Python
-  # source and capture the router identifier and the path string.
-  #
-  # ```
-  # query = Noir::TreeSitter::Query.new(
-  #   LibTreeSitter.tree_sitter_python,
-  #   <<-SCM
-  #     (decorator
-  #       (call
-  #         function: (attribute
-  #           object: (identifier) @router
-  #           attribute: (identifier) @verb
-  #           (#eq? @verb "route"))
-  #         arguments: (argument_list
-  #           (string (string_content) @path))))
-  #   SCM
-  # )
-  # Noir::TreeSitter.parse_python(source) do |root|
-  #   query.each_match(root) do |match|
-  #     puts "#{Noir::TreeSitter.node_text(match["router"], source)} -> " \
-  #          "#{Noir::TreeSitter.node_text(match["path"], source)}"
-  #   end
-  # end
-  # query.close
-  # ```
-  class Query
-    # Raised when a query pattern fails to compile. The message contains
-    # the byte offset and the tree-sitter error category.
-    class CompileError < Exception
-    end
+    fiber = Fiber.current
+    depth = fiber.noir_ts_walk_depth
+    return if depth >= MAX_AST_DEPTH
+    fiber.noir_ts_walk_depth = depth + 1
 
-    # Opaque handle; exposed as a struct getter only for internal callers
-    # that need to pass the raw pointer to LibTreeSitter functions.
-    @handle : LibTreeSitter::TSQuery
-
-    # Cached capture-id → name map. Queries expose capture names by id
-    # returned through `TSQueryCapture.index`; we resolve them once at
-    # construction time.
-    @capture_names : Array(String)
-
-    # Parsed predicate constraint (`#eq?`, `#match?`, …). Each predicate
-    # scopes a pattern: a match is only surfaced when every predicate
-    # for its pattern evaluates true.
-    private record Predicate, name : String, pattern_index : Int32, args : Array(PredicateArg)
-    # `regex` is a pre-compiled `Regex` when the argument is a literal
-    # pattern on a `#match?` / `#not-match?` predicate. Evaluating many
-    # matches against the same query would otherwise reparse the regex
-    # on every hit.
-    private record PredicateArg, is_capture : Bool, value : String, regex : Regex? = nil
-
-    @predicates_by_pattern : Hash(Int32, Array(Predicate))
-
-    def initialize(language : LibTreeSitter::TSLanguage, source : String)
-      error_offset = 0_u32
-      error_type = 0
-      handle = LibTreeSitter.ts_query_new(
-        language,
-        source.to_unsafe,
-        source.bytesize.to_u32,
-        pointerof(error_offset),
-        pointerof(error_type),
-      )
-      if handle.null?
-        raise CompileError.new(
-          "tree-sitter query failed to compile (code=#{error_type}, byte_offset=#{error_offset})"
-        )
-      end
-      @handle = handle
-
-      # Resolve capture names by id. `ts_query_capture_count` returns how
-      # many distinct `@name` captures appear in the query.
-      cap_count = LibTreeSitter.ts_query_capture_count(@handle)
-      @capture_names = Array(String).new(cap_count.to_i)
-      cap_count.times do |i|
-        length = 0_u32
-        ptr = LibTreeSitter.ts_query_capture_name_for_id(@handle, i.to_u32, pointerof(length))
-        @capture_names << (ptr.null? ? "" : String.new(ptr.to_slice(length.to_i)))
-      end
-
-      @predicates_by_pattern = parse_predicates
-    end
-
-    # Parse predicate steps for every pattern in the query into the
-    # structured `Predicate` form that `match_passes_predicates?` can
-    # walk cheaply per match.
-    private def parse_predicates : Hash(Int32, Array(Predicate))
-      result = Hash(Int32, Array(Predicate)).new
-      pattern_count = LibTreeSitter.ts_query_pattern_count(@handle)
-      pattern_count.times do |pattern_index|
-        step_count = 0_u32
-        steps_ptr = LibTreeSitter.ts_query_predicates_for_pattern(
-          @handle, pattern_index.to_u32, pointerof(step_count)
-        )
-        next if step_count == 0
-        predicates = [] of Predicate
-        current_name = ""
-        current_args = [] of PredicateArg
-        step_count.times do |i|
-          step = steps_ptr[i]
-          case step.type
-          when LibTreeSitter::TS_PREDICATE_STEP_STRING
-            length = 0_u32
-            ptr = LibTreeSitter.ts_query_string_value_for_id(@handle, step.value_id, pointerof(length))
-            text = ptr.null? ? "" : String.new(ptr.to_slice(length.to_i))
-            if current_name.empty?
-              current_name = text
-            else
-              # Eagerly compile the regex when this is the pattern arg
-              # of a `#match?` / `#not-match?` predicate. Capture-valued
-              # patterns (dynamic) can't be pre-compiled and fall back
-              # at evaluation time.
-              regex =
-                if (current_name == "match?" || current_name == "not-match?") && current_args.size == 1
-                  begin
-                    Regex.new(text)
-                  rescue ArgumentError
-                    nil
-                  end
-                end
-              current_args << PredicateArg.new(false, text, regex)
-            end
-          when LibTreeSitter::TS_PREDICATE_STEP_CAPTURE
-            current_args << PredicateArg.new(true, @capture_names[step.value_id.to_i]? || "")
-          when LibTreeSitter::TS_PREDICATE_STEP_DONE
-            unless current_name.empty?
-              predicates << Predicate.new(current_name, pattern_index.to_i, current_args)
-            end
-            current_name = ""
-            current_args = [] of PredicateArg
-          end
+    begin
+      if count <= NAMED_CHILD_CURSOR_THRESHOLD
+        count.times do |i|
+          yield LibTreeSitter.ts_node_named_child(node, i.to_u32)
         end
-        result[pattern_index.to_i] = predicates unless predicates.empty?
-      end
-      result
-    end
-
-    # Resolve the node text a predicate arg refers to. For capture args
-    # we look up the capture on the current match; for string args the
-    # stored literal is used as-is.
-    private def resolve_arg(arg : PredicateArg, match_captures : Hash(String, LibTreeSitter::TSNode), source_text : String) : String?
-      if arg.is_capture
-        if node = match_captures[arg.value]?
-          return Noir::TreeSitter.node_text(node, source_text)
-        end
-        nil
       else
-        arg.value
+        each_named_child_via_cursor(node) { |child| yield child }
       end
-    end
-
-    # Evaluate every predicate on the given pattern against `match_captures`.
-    # Returns false if any predicate fails; unsupported predicate names
-    # are treated as passing (consistent with tree-sitter grep behaviour
-    # for unknown directives).
-    private def match_passes_predicates?(pattern_index : Int32,
-                                         match_captures : Hash(String, LibTreeSitter::TSNode),
-                                         source_text : String) : Bool
-      preds = @predicates_by_pattern[pattern_index]?
-      return true unless preds
-      preds.all? do |pred|
-        case pred.name
-        when "eq?", "not-eq?"
-          next true if pred.args.size < 2
-          lhs = resolve_arg(pred.args[0], match_captures, source_text)
-          rhs = resolve_arg(pred.args[1], match_captures, source_text)
-          equal = lhs == rhs
-          pred.name == "eq?" ? equal : !equal
-        when "match?", "not-match?"
-          next true if pred.args.size < 2
-          text = resolve_arg(pred.args[0], match_captures, source_text)
-          next true if text.nil?
-          pattern_arg = pred.args[1]
-          # Prefer the eagerly-compiled regex cached on the predicate
-          # arg. Falls back to runtime compilation only when the pattern
-          # itself is a capture reference.
-          re = pattern_arg.regex
-          if re.nil?
-            pattern = resolve_arg(pattern_arg, match_captures, source_text)
-            next true if pattern.nil?
-            re =
-              begin
-                Regex.new(pattern)
-              rescue ArgumentError
-                nil
-              end
-            next true if re.nil?
-          end
-          matched = !!(text =~ re)
-          pred.name == "match?" ? matched : !matched
-        when "any-of?", "not-any-of?"
-          text = resolve_arg(pred.args[0], match_captures, source_text)
-          next true if text.nil?
-          # Index-range iteration avoids allocating a slice on every
-          # match the way `pred.args[1..].any?` would.
-          found = (1...pred.args.size).any? do |i|
-            resolve_arg(pred.args[i], match_captures, source_text) == text
-          end
-          pred.name == "any-of?" ? found : !found
-        else
-          true # unknown predicate — let the match through
-        end
-      end
-    end
-
-    # Free the underlying TSQuery. Safe to call multiple times; subsequent
-    # calls are no-ops.
-    def close
-      return if @handle.null?
-      LibTreeSitter.ts_query_delete(@handle)
-      @handle = Pointer(Void).null.as(LibTreeSitter::TSQuery)
-    end
-
-    def finalize
-      close
-    end
-
-    # Runs the query against `node` and yields one `Hash(String, TSNode)`
-    # per match. `source_text` is the string that was parsed to produce
-    # the tree, needed to resolve captured node text when evaluating
-    # predicates like `#eq?` / `#match?`. When a pattern captures the
-    # same name multiple times, the last match wins; use `each_match_raw`
-    # for the full capture list.
-    def each_match(node : LibTreeSitter::TSNode,
-                   source_text : String,
-                   & : Hash(String, LibTreeSitter::TSNode) ->)
-      cursor = LibTreeSitter.ts_query_cursor_new
-      begin
-        LibTreeSitter.ts_query_cursor_exec(cursor, @handle, node)
-        match = uninitialized LibTreeSitter::TSQueryMatch
-        while LibTreeSitter.ts_query_cursor_next_match(cursor, pointerof(match))
-          count = match.capture_count.to_i
-          captures = Hash(String, LibTreeSitter::TSNode).new(initial_capacity: count)
-          count.times do |i|
-            cap = match.captures[i]
-            name = @capture_names[cap.index.to_i]? || ""
-            captures[name] = cap.node
-          end
-          next unless match_passes_predicates?(match.pattern_index.to_i, captures, source_text)
-          yield captures
-        end
-      ensure
-        LibTreeSitter.ts_query_cursor_delete(cursor)
-      end
-    end
-
-    # Lower-level variant: yields `(pattern_index, Array({capture_name, TSNode}))`
-    # so callers can disambiguate multiple captures sharing a name, and
-    # know which pattern in a multi-pattern query matched.
-    def each_match_raw(node : LibTreeSitter::TSNode,
-                       source_text : String,
-                       & : Int32, Array(Tuple(String, LibTreeSitter::TSNode)) ->)
-      cursor = LibTreeSitter.ts_query_cursor_new
-      begin
-        LibTreeSitter.ts_query_cursor_exec(cursor, @handle, node)
-        match = uninitialized LibTreeSitter::TSQueryMatch
-        while LibTreeSitter.ts_query_cursor_next_match(cursor, pointerof(match))
-          count = match.capture_count.to_i
-          caps = Array(Tuple(String, LibTreeSitter::TSNode)).new(count)
-          captures = Hash(String, LibTreeSitter::TSNode).new(initial_capacity: count)
-          count.times do |i|
-            cap = match.captures[i]
-            name = @capture_names[cap.index.to_i]? || ""
-            caps << {name, cap.node}
-            captures[name] = cap.node
-          end
-          next unless match_passes_predicates?(match.pattern_index.to_i, captures, source_text)
-          yield match.pattern_index.to_i, caps
-        end
-      ensure
-        LibTreeSitter.ts_query_cursor_delete(cursor)
-      end
+    ensure
+      fiber.noir_ts_walk_depth = depth
     end
   end
-end
 
-lib LibC
-  fun free(ptr : Void*)
+  # `each_named_child` minus comments. Grammars attach comments as named
+  # extra nodes anywhere, so `f("/a", // note` + newline + `g)` has three
+  # named arguments; readers that index or count arguments must skip them.
+  def self.each_named_arg(node : LibTreeSitter::TSNode, &)
+    each_named_child(node) { |child| yield child unless node_type(child).ends_with?("comment") }
+  end
+
+  # First argument with comments skipped, see `each_named_arg`.
+  def self.first_named_arg(node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
+    each_named_arg(node) { |child| return child }
+    nil
+  end
+
+  # Argument count with comments skipped, see `each_named_arg`.
+  def self.named_arg_count(node : LibTreeSitter::TSNode) : Int32
+    count = 0
+    each_named_arg(node) { count += 1 }
+    count
+  end
+
+  # Runs the block one level deeper on the same budget as
+  # `each_named_child`, or returns nil without running it once that budget
+  # is spent. For recursion that descends through `field(...)` instead —
+  # the callee extractors' `a.b.c` receiver builders recurse once per
+  # chain link, and a generated `x.b.b.b…(1)` chain of 100k links
+  # overflowed the stack and aborted the whole scan.
+  def self.descend(&)
+    fiber = Fiber.current
+    depth = fiber.noir_ts_walk_depth
+    return if depth >= MAX_AST_DEPTH
+    fiber.noir_ts_walk_depth = depth + 1
+    begin
+      yield
+    ensure
+      fiber.noir_ts_walk_depth = depth
+    end
+  end
+
+  # Pre-order walk: yields `node`, then every named descendant. Depth is
+  # bounded by `each_named_child`.
+  def self.walk(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
+    block.call(node)
+    each_named_child(node) do |child|
+      walk(child, &block)
+    end
+  end
+
+  @[NoInline]
+  private def self.each_named_child_via_cursor(node : LibTreeSitter::TSNode, &)
+    cursor = LibTreeSitter.ts_tree_cursor_new(node)
+    begin
+      has_child = LibTreeSitter.ts_tree_cursor_goto_first_child(pointerof(cursor))
+      while has_child
+        child = LibTreeSitter.ts_tree_cursor_current_node(pointerof(cursor))
+        yield child if LibTreeSitter.ts_node_is_named(child)
+        has_child = LibTreeSitter.ts_tree_cursor_goto_next_sibling(pointerof(cursor))
+      end
+    ensure
+      LibTreeSitter.ts_tree_cursor_delete(pointerof(cursor))
+    end
+  end
 end

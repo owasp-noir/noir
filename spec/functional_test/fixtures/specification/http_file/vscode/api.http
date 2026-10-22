@@ -1,0 +1,18 @@
+### Get a user
+GET https://api.example.com/users/{{userId}}?verbose=true
+Authorization: Bearer {{token}}
+
+### Create a user
+POST https://api.example.com/users HTTP/1.1
+Content-Type: application/json
+
+{
+  "name": "noir",
+  "email": "noir@example.com"
+}
+
+### Update a user via form
+PUT https://api.example.com/users/{{userId}}
+Content-Type: application/x-www-form-urlencoded
+
+name=updated&active=true

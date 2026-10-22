@@ -10,9 +10,11 @@ private def extract(source : String,
                     fields : Hash(String, Array(Noir::TreeSitterKotlinParameterExtractor::FieldInfo)) = {} of String => Array(Noir::TreeSitterKotlinParameterExtractor::FieldInfo),
                     string_constants : Hash(String, String) = Hash(String, String).new,
                     local_string_constants : Hash(String, String) = Hash(String, String).new)
-  Noir::TreeSitterKotlinParameterExtractor.extract_method_parameters(
-    source, class_name, method_name, verb, parameter_format, fields, string_constants, local_string_constants
-  )
+  Noir::TreeSitter.parse_kotlin(source) do |root|
+    Noir::TreeSitterKotlinParameterExtractor.extract_method_parameters_from(
+      root, source, class_name, method_name, verb, parameter_format, fields, string_constants, local_string_constants
+    )
+  end
 end
 
 private def extract_server_request(source : String,
@@ -32,7 +34,7 @@ private def extract_server_request(source : String,
 end
 
 describe Noir::TreeSitterKotlinParameterExtractor do
-  describe "#extract_method_parameters" do
+  describe "#extract_method_parameters_from" do
     it "treats @RequestParam as query and respects defaultValue" do
       source = <<-KT
         @RestController
@@ -167,6 +169,24 @@ describe Noir::TreeSitterKotlinParameterExtractor do
       params.map(&.param_type).should eq(["form"])
     end
 
+    it "does not let a preceding param's format leak into @RequestBody or an un-annotated arg" do
+      source = <<-KT
+        class C {
+            @PostMapping("/d")
+            fun d(plain: String, @RequestBody body: String): String = ""
+            @PostMapping("/h")
+            fun h(@RequestHeader("X-T") t: String, @CookieValue("sid") sid: String, plain: String): String = ""
+        }
+        KT
+
+      extract(source, "C", "d", "POST").map { |p| {p.name, p.param_type} }.should eq([
+        {"plain", "form"}, {"body", "json"},
+      ])
+      extract(source, "C", "h", "POST").map { |p| {p.name, p.param_type} }.should eq([
+        {"X-T", "header"}, {"sid", "cookie"}, {"plain", "form"},
+      ])
+    end
+
     it "skips @PathVariable parameters" do
       source = <<-KT
         class C {
@@ -269,6 +289,33 @@ describe Noir::TreeSitterKotlinParameterExtractor do
       ])
     end
 
+    it "names JSON body fields by @JsonProperty" do
+      dto = <<-KT
+        package com.example
+
+        data class CreateAccount(
+            @JsonProperty("account_name") val name: String,
+            @field:JsonProperty(value = "iso_currency") val currency: String = "USD",
+            val note: String? = null,
+        ) {
+            @get:JsonProperty("tag_list")
+            var tags: List<String> = emptyList()
+        }
+        KT
+      handler = <<-KT
+        package com.example
+
+        class C {
+            @PostMapping("/x")
+            fun create(@RequestBody req: CreateAccount): String = ""
+        }
+        KT
+
+      fields = Noir::TreeSitterKotlinParameterExtractor.extract_class_fields(dto)
+      params = extract(handler, "C", "create", "POST", fields: fields)
+      params.map(&.name).should eq(["account_name", "iso_currency", "note", "tag_list"])
+    end
+
     it "skips DTO fields that must be null for the active validation group" do
       dto = <<-KT
         package com.example
@@ -363,15 +410,18 @@ describe Noir::TreeSitterKotlinParameterExtractor do
       ])
     end
 
-    it "treats nullable id fields with null defaults as server-managed" do
+    it "treats nullable id fields with null defaults on persisted types as server-managed" do
       dto = <<-KT
         package com.example
 
+        @Table("posts")
         data class Post(
             val id: String? = null,
             val title: String? = null,
             val content: String? = null
         )
+
+        data class SearchFilter(val id: Long? = null, val species: String? = null)
 
         data class ExplicitClientId(
             val id: Int?,
@@ -393,6 +443,8 @@ describe Noir::TreeSitterKotlinParameterExtractor do
       fields = Noir::TreeSitterKotlinParameterExtractor.extract_class_fields(dto)
       fields["Post"].select(&.server_managed?).map(&.name).should eq(["id"])
       fields["ExplicitClientId"].select(&.server_managed?).map(&.name).should eq([] of String)
+      # A plain request DTO / query filter keeps its client-supplied `id`.
+      fields["SearchFilter"].select(&.server_managed?).map(&.name).should eq([] of String)
 
       post_params = extract(handler, "C", "createPost", "POST", fields: fields)
       post_params.map { |p| {p.name, p.param_type} }.should eq([
@@ -569,14 +621,28 @@ describe Noir::TreeSitterKotlinParameterExtractor do
     it "appends params= constraints with verb-aware dispatch" do
       query_source = <<-KT
         class C {
-            @GetMapping("/x", params = ["api=v1", "!debug"])
+            @GetMapping("/x", params = ["api=v1", "!debug", "mode!=raw"])
             fun get(): String = ""
         }
         KT
+      # `!debug` demands absence, so it is no input; `mode!=raw` still names `mode`.
       query_params = extract(query_source, "C", "get", "GET")
       query_params.map { |p| {p.name, p.value, p.param_type} }.should eq([
         {"api", "v1", "query"},
-        {"debug", "", "query"},
+        {"mode", "", "query"},
+      ])
+
+      bound_source = <<-KT
+        class C {
+            @DeleteMapping("/x", params = ["ownerKey", "label"])
+            fun remove(@RequestParam("ownerKey") ownerKey: String, @RequestParam("label") label: String): String = ""
+        }
+        KT
+      # Already bound by @RequestParam: not re-emitted as form.
+      bound_params = extract(bound_source, "C", "remove", "DELETE")
+      bound_params.map { |p| {p.name, p.param_type} }.should eq([
+        {"ownerKey", "query"},
+        {"label", "query"},
       ])
 
       form_source = <<-KT
@@ -587,6 +653,17 @@ describe Noir::TreeSitterKotlinParameterExtractor do
         KT
       form_params = extract(form_source, "C", "create", "POST")
       form_params.map { |p| {p.name, p.param_type} }.should eq([
+        {"api", "form"},
+      ])
+
+      query_verb_source = <<-KT
+        class C {
+            @RequestMapping("/x", method = [RequestMethod.QUERY], params = ["api=v1"])
+            fun queryMethod(): String = ""
+        }
+        KT
+      query_verb_params = extract(query_verb_source, "C", "queryMethod", "QUERY")
+      query_verb_params.map { |p| {p.name, p.param_type} }.should eq([
         {"api", "form"},
       ])
     end
@@ -683,7 +760,7 @@ describe Noir::TreeSitterKotlinParameterExtractor do
     end
   end
 
-  describe "#extract_consumes" do
+  describe "#extract_consumes_from" do
     it "detects form via the urlencoded literal" do
       source = <<-KT
         class C {
@@ -691,7 +768,7 @@ describe Noir::TreeSitterKotlinParameterExtractor do
             fun create(): String = ""
         }
         KT
-      Noir::TreeSitterKotlinParameterExtractor.extract_consumes(source, "C", "create").should eq("form")
+      Noir::TreeSitter.parse_kotlin(source) { |root| Noir::TreeSitterKotlinParameterExtractor.extract_consumes_from(root, source, "C", "create") }.should eq("form")
     end
 
     it "detects json via APPLICATION_JSON_VALUE constant in arrayOf" do
@@ -701,7 +778,7 @@ describe Noir::TreeSitterKotlinParameterExtractor do
             fun create(): String = ""
         }
         KT
-      Noir::TreeSitterKotlinParameterExtractor.extract_consumes(source, "C", "create").should eq("json")
+      Noir::TreeSitter.parse_kotlin(source) { |root| Noir::TreeSitterKotlinParameterExtractor.extract_consumes_from(root, source, "C", "create") }.should eq("json")
     end
 
     it "returns nil when consumes is absent" do
@@ -711,7 +788,7 @@ describe Noir::TreeSitterKotlinParameterExtractor do
             fun create(): String = ""
         }
         KT
-      Noir::TreeSitterKotlinParameterExtractor.extract_consumes(source, "C", "create").should be_nil
+      Noir::TreeSitter.parse_kotlin(source) { |root| Noir::TreeSitterKotlinParameterExtractor.extract_consumes_from(root, source, "C", "create") }.should be_nil
     end
   end
 
@@ -723,6 +800,41 @@ describe Noir::TreeSitterKotlinParameterExtractor do
       fields = Noir::TreeSitterKotlinParameterExtractor.extract_class_fields(source)
       fields["Article"].map(&.name).should eq(["title", "body"])
       fields["Article"].map(&.init_value).should eq(["", "todo"])
+    end
+
+    # `init_value` stores mixed shapes — a string literal arrives decoded,
+    # every other initializer keeps its raw source — so the two cannot be
+    # told apart after the fact. `literal_default` is what resolves that:
+    # without the flag behind it, running a literal check over the decoded
+    # `untitled` erased every Kotlin string default, while the raw
+    # `LocalDateTime.now()` leaked into `Param#value`.
+    describe "FieldInfo#literal_default" do
+      it "keeps a string default and drops an expression" do
+        source = <<-KT
+          data class Article(
+              var title: String = "untitled",
+              var views: Int = 7,
+              var draft: Boolean = false,
+              var addedAt: LocalDateTime = LocalDateTime.now(),
+              var slug: String = title.toSlug(),
+              var note: String? = null,
+          )
+          KT
+        fields = Noir::TreeSitterKotlinParameterExtractor.extract_class_fields(source)["Article"]
+        fields.map(&.name).should eq(["title", "views", "draft", "addedAt", "slug", "note"])
+        fields.map(&.literal_default).should eq(["untitled", "7", "false", "", "", ""])
+      end
+
+      it "keeps a class-body string default" do
+        source = <<-KT
+          class User {
+              var name: String = "anon"
+              var seenAt: LocalDateTime = LocalDateTime.now()
+          }
+          KT
+        fields = Noir::TreeSitterKotlinParameterExtractor.extract_class_fields(source)["User"]
+        fields.map(&.literal_default).should eq(["anon", ""])
+      end
     end
 
     it "does not leak property annotation tokens into a field's init value" do
@@ -768,7 +880,7 @@ describe Noir::TreeSitterKotlinParameterExtractor do
     end
   end
 
-  describe "#extract_class_supertypes" do
+  describe "#extract_class_supertypes_from" do
     it "maps a class to its superCLASS (constructor-invoked supertype)" do
       source = <<-KT
         open class Person : BaseEntity() {
@@ -778,7 +890,7 @@ describe Noir::TreeSitterKotlinParameterExtractor do
             var address = ""
         }
         KT
-      supers = Noir::TreeSitterKotlinParameterExtractor.extract_class_supertypes(source)
+      supers = Noir::TreeSitter.parse_kotlin(source) { |root| Noir::TreeSitterKotlinParameterExtractor.extract_class_supertypes_from(root, source) }
       supers["Owner"].should eq("Person")
       supers["Person"].should eq("BaseEntity")
     end
@@ -789,7 +901,7 @@ describe Noir::TreeSitterKotlinParameterExtractor do
             var x = ""
         }
         KT
-      Noir::TreeSitterKotlinParameterExtractor.extract_class_supertypes(source).has_key?("Handler").should be_false
+      Noir::TreeSitter.parse_kotlin(source) { |root| Noir::TreeSitterKotlinParameterExtractor.extract_class_supertypes_from(root, source) }.has_key?("Handler").should be_false
     end
   end
 

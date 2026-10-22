@@ -26,12 +26,42 @@ class BudgetService(private val budgetRepository: BudgetRepository) {
         budgetRepository.findAllPreferences()
         budgetRepository.save(id)
         budgetRepository.deleteById(id)
+        budgetRepository.findAllOrders()
+        budgetRepository.findAllInvoices()
+        budgetRepository.findAllPayments()
+        budgetRepository.findAllShipments()
+        budgetRepository.findAllCarts()
+        budgetRepository.findAllCoupons()
+        budgetRepository.findAllReviews()
+        budgetRepository.findAllTickets()
+        budgetRepository.findAllReports()
+        budgetRepository.findAllAlerts()
         return id
     }
 }
 
 class BudgetRepository {
     fun findAllUsers(): List<String> = emptyList()
+
+    fun findAllOrders(): List<String> = emptyList()
+
+    fun findAllInvoices(): List<String> = emptyList()
+
+    fun findAllPayments(): List<String> = emptyList()
+
+    fun findAllShipments(): List<String> = emptyList()
+
+    fun findAllCarts(): List<String> = emptyList()
+
+    fun findAllCoupons(): List<String> = emptyList()
+
+    fun findAllReviews(): List<String> = emptyList()
+
+    fun findAllTickets(): List<String> = emptyList()
+
+    fun findAllReports(): List<String> = emptyList()
+
+    fun findAllAlerts(): List<String> = emptyList()
 
     fun findAllRoles(): List<String> = emptyList()
 

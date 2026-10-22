@@ -92,6 +92,18 @@ def update_record():
     page = request.args['page'] if record['name'] else None
     return jsonify(record)
 
+@app.route('/search', methods=['QUERY'])
+def search_record():
+    # RFC 10008 HTTP QUERY: a safe, idempotent request that carries its
+    # filter criteria in the request body, like POST but read-only.
+    criteria = request.json.get('criteria')
+    return jsonify({'criteria': criteria})
+
+@app.route('/lookup', methods=['GET', 'QUERY'])
+def lookup_record():
+    term = request.args.get('term')
+    return jsonify({'term': term})
+
 @app.route('/')
 def index():
     return render_template('index.html')

@@ -2,12 +2,15 @@ require "../../../models/detector"
 
 module Detector::Java
   class Play < Detector
+    detector_for "java_play", extensions: %w[.java routes routes.conf]
+
     def detect(filename : String, file_contents : String) : Bool
       # Detect Play Framework by Java-specific indicators
       if filename.ends_with?(".java")
-        # Check for Play Framework imports
-        return true if file_contents.includes?("play.mvc.Controller") ||
-                       file_contents.includes?("play.mvc.Result") ||
+        # Check for Play Framework imports. `play.mvc.` covers the official
+        # starter's wildcard `import play.mvc.*;`; only `.java` files reach
+        # here, so Scala Play (`play.api.mvc`) cannot trip it.
+        return true if file_contents.includes?("play.mvc.") ||
                        file_contents.includes?("play.libs.Json") ||
                        file_contents.includes?("play.routing")
       end
@@ -24,16 +27,6 @@ module Detector::Java
       end
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".java") ||
-        filename.ends_with?("routes") ||
-        filename.ends_with?("routes.conf")
-    end
-
-    def set_name
-      @name = "java_play"
     end
   end
 end

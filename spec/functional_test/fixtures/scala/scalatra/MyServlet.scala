@@ -35,7 +35,7 @@ class MyServlet extends ScalatraServlet with JacksonJsonSupport {
   }
 
   get("/search") {
-    val query = params("q")
+    val query = params(/* search */ "q")
     val filter = params("filter")
     s"Search: $query, Filter: $filter"
   }

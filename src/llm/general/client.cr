@@ -2,47 +2,88 @@ require "json"
 require "uri"
 require "http/client"
 require "../response_cleanup"
+require "../http_transport"
+require "../prompt"
+require "../sampling"
 
 module LLM
+  # A request whose prompt is over the model's context window, raised for a
+  # caller that asked to re-split instead of getting "". `limit` is the
+  # window and `used` the prompt's real size, when the provider named them.
+  class ContextOverflow < Exception
+    getter limit : Int32?
+    getter used : Int32?
+
+    def initialize(@limit : Int32? = nil, @used : Int32? = nil)
+      super("prompt exceeds the model's context window#{" (#{@used} > #{@limit} tokens)" if @limit && @used}")
+    end
+  end
+
   # General OpenAI-compatible LLM client
   class General
     @@tools_cache = {} of String => JSON::Any
     @@tools_cache_mutex = Mutex.new
-    MAX_ERROR_SNIPPET_SIZE = 1024
 
-    private def truncate_error_snippet(body : String)
-      body.size > MAX_ERROR_SNIPPET_SIZE ? "#{body[0, MAX_ERROR_SNIPPET_SIZE]}..." : body
+    # `--ai-provider` names that stand for a fixed endpoint. CLI validation
+    # rejects any other bare name, so a typo fails before the scan.
+    PRESETS = {
+      "openai"     => "https://api.openai.com/v1/chat/completions",
+      "ollama"     => "http://localhost:11434/v1/chat/completions",
+      "lmstudio"   => "http://localhost:1234/v1/chat/completions",
+      "xai"        => "https://api.x.ai/v1/chat/completions",
+      "vllm"       => "http://localhost:8000/v1/chat/completions",
+      "azure"      => "https://models.inference.ai.azure.com/chat/completions",
+      "github"     => "https://models.github.ai/inference/chat/completions",
+      "openrouter" => "https://openrouter.ai/api/v1/chat/completions",
+      "gemini"     => "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+      # Served by `LLM::Anthropic`, which speaks the native Messages API.
+      "anthropic" => "https://api.anthropic.com/v1/messages",
+    }
+
+    @api_key : String?
+    @send_temperature : Bool
+    @send_seed = true
+
+    # How much of `response_format` the server accepts, learned from its
+    # 400s and kept for the rest of the run. Ordered: each step only drops.
+    enum ResponseFormat
+      AsAsked
+      JsonObject
+      Omitted
     end
+
+    JSON_OBJECT_FORMAT = JSON.parse(%({"type":"json_object"}))
+
+    @response_format = ResponseFormat::AsAsked
+
+    # A bad key, a missing model, a wrong URL or an unreachable host fails
+    # every request the same way. After this many in a row, before the
+    # provider has answered once, the client stops sending, so a 1000-file
+    # scan does not repeat the same failure 1000 times; the files it skips are
+    # reported as unanalyzed by the caller. Once it has answered, a failure is
+    # an outage or a slow prompt (a read timeout looks the same as a refused
+    # connection here) and every request keeps its own chance.
+    MAX_FATAL_STREAK = 3
+    FATAL_STATUS     = Set{401, 403, 404}
+
+    @fatal_streak = Atomic(Int32).new(0)
+    @answered = false
+
+    # `--ai-stream`: endpoint-extraction requests ask for SSE, so a proxy
+    # that drops idle connections sees bytes while the model generates.
+    class_property? stream = false
 
     def initialize(url : String, model : String, api_key : String?)
       @url = url
-      @api = if url.includes?("://")
-               ensure_chat_completions_path(url)
-             else
-               case url.downcase
-               when "openai"
-                 "https://api.openai.com/v1/chat/completions"
-               when "ollama"
-                 "http://localhost:11434/v1/chat/completions"
-               when "lmstudio"
-                 "http://localhost:1234/v1/chat/completions"
-               when "xai"
-                 "https://api.x.ai/v1/chat/completions"
-               when "vllm"
-                 "http://localhost:8000/v1/chat/completions"
-               when "azure"
-                 "https://models.inference.ai.azure.com/chat/completions"
-               when "github"
-                 "https://models.github.ai/inference/chat/completions"
-               when "openrouter"
-                 "https://openrouter.ai/api/v1/chat/completions"
-               else
-                 url
-               end
-             end
+      @api = url.includes?("://") ? self.class.api_url(url) : PRESETS[url.downcase]? || url
 
       @model = model
-      @api_key = api_key || ENV["NOIR_AI_KEY"]?
+      @send_temperature = self.class.sampling_temperature?(model)
+      # An empty key means "no key given", not "authenticate with an empty
+      # string". Treating it literally suppressed the documented
+      # NOIR_AI_KEY fallback for every caller that passes the config
+      # default through, and put a blank bearer token on the wire.
+      @api_key = api_key.presence || ENV["NOIR_AI_KEY"]?.presence
     end
 
     # Parse provider response into normalized JSON action payload.
@@ -51,48 +92,253 @@ module LLM
     # Otherwise, return cleaned textual content as-is.
     def self.extract_agent_action(response_json : JSON::Any) : String
       message = response_json["choices"][0]["message"]
-      if tool_calls = message["tool_calls"]?
-        first_call = tool_calls.as_a.first?
-        if first_call
-          function = first_call["function"]
-          action = function["name"].as_s
-          arguments_raw = function["arguments"]?.try(&.to_s) || "{}"
-          arguments = parse_tool_arguments(arguments_raw)
-          return build_action_payload(action, arguments)
-        end
+      # `tool_calls: null` is "no tool call", not an error: `as_a` on it
+      # raised and the rescue below turned a usable content reply into "".
+      if first_call = message["tool_calls"]?.try(&.as_a?).try(&.first?)
+        function = first_call["function"]
+        action = function["name"].as_s
+        # Some servers send `arguments` as a JSON object rather than the
+        # spec's string; `to_s` rendered that as a Crystal inspect string.
+        args = function["arguments"]?
+        arguments = if args.nil? || args.raw.nil?
+                      JSON.parse("{}")
+                    elsif text = args.as_s?
+                      parse_tool_arguments(text)
+                    else
+                      args
+                    end
+        return build_action_payload(action, arguments)
       end
 
-      clean_content(message["content"]?.try(&.to_s) || "")
+      LLM.strip_json_fences(message["content"]?.try(&.to_s) || "")
     rescue Exception
       ""
     end
 
+    # Reasoning models answer a non-default `temperature` with HTTP 400:
+    # OpenAI's o-series and GPT-5 family (its `-chat` models excepted), and
+    # Claude from Opus 4.7 / Sonnet 5 / Haiku 5.5 on (Fable and Mythos
+    # included). `post` recovers from that rejection for any model, so this
+    # list only saves the first wasted request for the models it names.
+    FIXED_SAMPLING_MODEL = /\A(?:o\d+(?:-|\z)|gpt-5(?![\w.-]*-chat)|claude-(?:opus-4-[7-9]|(?:opus|sonnet|haiku)-[5-9]|fable|mythos))/
+
+    def self.sampling_temperature?(model : String) : Bool
+      !LLM.model_basename(model).matches?(FIXED_SAMPLING_MODEL)
+    end
+
+    # The 400 for a rejected sampling parameter (`temperature`, or the
+    # `seed` from --ai-seed): OpenAI names it in `param`
+    # (`unsupported_value`), Anthropic in the message. Only the error itself
+    # is read; a gateway that echoes the request would otherwise match on
+    # every 400.
+    def self.temperature_rejected?(rejection : HttpTransport::Rejection) : Bool
+      rejected_for?(rejection, /temperature/i)
+    end
+
+    def self.seed_rejected?(rejection : HttpTransport::Rejection) : Bool
+      rejected_for?(rejection, /\bseed\b/i)
+    end
+
+    # A server that implements only `json_object`, or no structured output
+    # at all, answers every `json_schema` request with a 400 naming it.
+    def self.response_format_rejected?(rejection : HttpTransport::Rejection) : Bool
+      rejected_for?(rejection, /response_format|output_config|json_schema|json_object|structured output/i)
+    end
+
+    # The body field that carries the structured-output request.
+    private def format_key : String
+      "response_format"
+    end
+
+    private def self.rejected_for?(rejection : HttpTransport::Rejection, pattern : Regex) : Bool
+      return false unless rejection.status == 400
+      error = JSON.parse(rejection.body).as_h?.try(&.["error"]?)
+      text = error.try { |e| e.as_h? ? "#{e["param"]?} #{e["message"]?}" : e.to_s } || rejection.body
+      text.matches?(pattern)
+    rescue JSON::ParseException
+      rejection.body.matches?(pattern)
+    end
+
+    CONTEXT_OVERFLOW = /context_length_exceeded|context length|context window|prompt is too long|maximum number of tokens|too many (?:input )?tokens|exceed[s]? the (?:configured )?limit/i
+
+    # How OpenAI, vLLM, Anthropic, Gemini and LM Studio state the window ...
+    CONTEXT_LIMIT = [
+      /maximum context length is (\d+)/i,
+      /> ?(\d+) maximum/i,
+      /maximum number of tokens allowed \((\d+)\)/i,
+      /context length of only (\d+)/i,
+      /limit of (\d+) tokens/i,
+    ]
+
+    # ... and the prompt's real size, which corrects noir's chars/4 estimate.
+    CONTEXT_USED = [
+      /resulted in (\d+) tokens/i,
+      /prompt is too long: (\d+) tokens/i,
+      /input token count \((\d+)\)/i,
+    ]
+
+    # nil when the rejection is not a context overflow. A 413 is one even
+    # with no wording: a reverse proxy's body-size cap answers in HTML.
+    def self.context_overflow(rejection : HttpTransport::Rejection) : ContextOverflow?
+      body = rejection.body
+      return unless rejection.status == 413 || (rejection.status == 400 && body.matches?(CONTEXT_OVERFLOW))
+      ContextOverflow.new(first_number(body, CONTEXT_LIMIT), first_number(body, CONTEXT_USED))
+    end
+
+    private def self.first_number(text : String, patterns : Array(Regex)) : Int32?
+      patterns.each do |re|
+        if (m = text.match(re)) && (n = m[1].to_i?) && n > 0
+          return n
+        end
+      end
+    end
+
+    # Sends a request body, recovering from the rejections a model name
+    # cannot predict: a `temperature` the model refuses is dropped for the
+    # rest of the run and the request resent, and a refused `json_schema`
+    # steps down to `json_object`, then to no `response_format` (the prompt
+    # already asks for JSON only). A prompt over the context window raises
+    # `ContextOverflow` when the caller can re-split it, and is reported like
+    # any other failure when it cannot.
+    private def post(body : Hash, raise_overflow : Bool = false) : String?
+      return if @fatal_streak.get >= MAX_FATAL_STREAK
+
+      key = format_key
+      if body.has_key?(key)
+        case @response_format
+        when .json_object? then body[key] = JSON_OBJECT_FORMAT
+        when .omitted?     then body.delete(key)
+        end
+      end
+
+      result = LLM::HttpTransport.post_json_result(@api, encode(body), request_headers)
+      case result
+      when String
+        @answered = true
+        @fatal_streak.set(0)
+        return result
+      when nil
+        # The transport already reported the connection failure, or the
+        # request was over --ai-max-requests and never sent.
+        count_fatal_failure if LLM::HttpTransport.requests_left?
+        return
+      end
+
+      if @send_temperature && self.class.temperature_rejected?(result)
+        @send_temperature = false
+        return post(body, raise_overflow)
+      end
+
+      if (sent = body[key]?) && self.class.response_format_rejected?(result)
+        # Stepped from what was sent, not from the current setting: requests
+        # in flight concurrently all come back rejected at the old level.
+        # Only `response_format` has a `json_object` step to land on.
+        step = key == "response_format" && sent.to_json.includes?("json_schema") ? ResponseFormat::JsonObject : ResponseFormat::Omitted
+        if step > @response_format
+          @response_format = step
+          STDERR.puts "WARNING: AI provider rejected the #{key}; retrying with #{step.json_object? ? %("json_object") : "none"} for the rest of the run"
+        end
+        return post(body, raise_overflow)
+      end
+
+      if @send_seed && LLM::Sampling.seed && self.class.seed_rejected?(result)
+        @send_seed = false
+        return post(body, raise_overflow)
+      end
+
+      if raise_overflow && (overflow = self.class.context_overflow(result))
+        raise overflow
+      end
+      LLM::HttpTransport.report(result)
+      count_fatal_failure if result.status < 400 || FATAL_STATUS.includes?(result.status)
+      nil
+    end
+
+    private def count_fatal_failure : Nil
+      return if @answered || @fatal_streak.add(1) != MAX_FATAL_STREAK - 1
+      STDERR.puts "WARNING: AI provider failed its first #{MAX_FATAL_STREAK} requests (bad key, unknown model, wrong URL or unreachable host); skipping the remaining AI requests"
+    end
+
     # Make a request with chat-style messages
-    def request_messages(messages : Array(Hash(String, String)), format : String = "json")
+    # `raise_overflow` turns a context-window rejection into
+    # `ContextOverflow` instead of "" (see `post`).
+    def request_messages(messages : Array(Hash(String, String)), format : String = "json", raise_overflow : Bool = false)
       body = {
         "model"           => @model,
         "messages"        => messages,
-        "temperature"     => 0.3,
-        "stream"          => false,
+        "temperature"     => LLM::Sampling.temperature || 0.3,
+        "seed"            => LLM::Sampling.seed,
+        "stream"          => General.stream?,
+        "stream_options"  => {"include_usage" => true},
         "response_format" => format == "json" ? {"type" => "json_object"} : JSON.parse(format),
-      }.to_json
+      }
+      body.delete("stream_options") unless General.stream?
 
-      headers = HTTP::Headers.new
-      headers["Content-Type"] = "application/json"
-      headers["Authorization"] = "Bearer #{@api_key}" if @api_key
+      raw = post(body, raise_overflow)
+      return "" if raw.nil?
 
-      response = HTTP::Client.post(@api, headers: headers, body: body)
-      unless response.success?
-        snippet = truncate_error_snippet(response.body)
-        STDERR.puts "WARNING: AI API error (HTTP #{response.status_code}): #{snippet}"
+      response_json = General.stream? ? self.class.collect_stream(raw) : JSON.parse(raw)
+      return "" if report_api_error(response_json)
+
+      choice = response_json["choices"][0]
+      if refusal = choice["message"]["refusal"]?.try(&.as_s?).presence
+        STDERR.puts "WARNING: AI model refused the request: #{LLM::HttpTransport.truncate_error_snippet(refusal)}"
         return ""
       end
-      response_json = JSON.parse(response.body)
-
-      LLM.strip_json_fences(response_json["choices"][0]["message"]["content"].to_s)
+      content = choice["message"]["content"]?.to_s
+      LLM.unfinished_reply(choice["finish_reason"]?.try(&.as_s?), content).try { |warning| STDERR.puts "WARNING: #{warning}" }
+      LLM.strip_json_fences(content)
+    rescue e : ContextOverflow
+      raise e
     rescue e : Exception
       STDERR.puts "WARNING: AI API error (#{e.message})"
       ""
+    end
+
+    # A streamed reply folded back into the non-streamed shape the callers
+    # read. A body that is not SSE (a server that ignored `stream`, or an
+    # HTML page) is parsed as-is so it fails loudly, and an `error` event is
+    # returned as the whole reply. A stream that ends without a finish
+    # reason was cut off, and says so.
+    def self.collect_stream(raw : String) : JSON::Any
+      return JSON.parse(raw) if raw.lstrip.starts_with?('{') || !raw.includes?("data:")
+
+      content = String::Builder.new
+      refusal = String::Builder.new
+      finish = nil
+      usage = nil
+      each_stream_data(raw) do |data|
+        next if data.empty? || data == "[DONE]"
+        chunk = JSON.parse(data)
+        return chunk unless chunk["error"]?.try(&.raw).nil?
+        usage = chunk["usage"]? unless chunk["usage"]?.try(&.raw).nil?
+        next unless choice = chunk["choices"]?.try(&.as_a?).try(&.first?)
+        delta = choice["delta"]?
+        delta.try(&.["content"]?).try(&.as_s?).try { |text| content << text }
+        delta.try(&.["refusal"]?).try(&.as_s?).try { |text| refusal << text }
+        finish = choice["finish_reason"]?.try(&.as_s?) || finish
+      end
+
+      JSON.parse({
+        "choices" => [{"message" => {"content" => content.to_s, "refusal" => refusal.to_s.presence}, "finish_reason" => finish || "incomplete"}],
+        "usage"   => usage,
+      }.to_json)
+    end
+
+    # Each event's `data:` payload. Events end at a blank line under any of
+    # SSE's three line endings, and an event's `data:` lines join with
+    # newlines; when the joined text is not JSON, the lines are back-to-back
+    # one-line chunks with no blank line between them and stay separate.
+    private def self.each_stream_data(raw : String, &)
+      raw.gsub(/\r\n?/, "\n").split(/\n{2,}/).each do |event|
+        lines = event.split('\n').compact_map { |line| line.lchop("data:").lchop(' ') if line.starts_with?("data:") }
+        joined = lines.join('\n').strip
+        if lines.size > 1 && (JSON.parse(joined) rescue nil)
+          yield joined
+        else
+          lines.each { |line| yield line.strip }
+        end
+      end
     end
 
     # Request next action with provider-native tool-calling.
@@ -102,28 +348,56 @@ module LLM
       body = {
         "model"       => @model,
         "messages"    => messages,
-        "temperature" => 0.0,
+        "temperature" => LLM::Sampling.temperature || 0.0,
+        "seed"        => LLM::Sampling.seed,
         "stream"      => false,
         "tools"       => parsed_tools,
         "tool_choice" => "auto",
-      }.to_json
+      }
 
-      headers = HTTP::Headers.new
-      headers["Content-Type"] = "application/json"
-      headers["Authorization"] = "Bearer #{@api_key}" if @api_key
+      raw = post(body)
+      return "" if raw.nil?
 
-      response = HTTP::Client.post(@api, headers: headers, body: body)
-      unless response.success?
-        snippet = truncate_error_snippet(response.body)
-        STDERR.puts "WARNING: AI API error (HTTP #{response.status_code}): #{snippet}"
-        return ""
-      end
+      response_json = JSON.parse(raw)
+      return "" if report_api_error(response_json)
 
-      response_json = JSON.parse(response.body)
       self.class.extract_agent_action(response_json)
     rescue e : Exception
       STDERR.puts "WARNING: AI API error (#{e.message})"
       ""
+    end
+
+    private def encode(body : Hash) : String
+      body.delete("temperature") unless @send_temperature
+      body.delete("seed") unless @send_seed && LLM::Sampling.seed
+      body.to_json
+    end
+
+    private def request_headers : HTTP::Headers
+      headers = HTTP::Headers.new
+      headers["Content-Type"] = "application/json"
+      # `@api_key` is normalized to nil when absent, so a keyless local
+      # provider (ollama, vLLM, LM Studio) is never sent the blank
+      # `Authorization: Bearer ` header that made it reject the request.
+      if key = @api_key
+        headers["Authorization"] = "Bearer #{key}"
+      end
+      headers
+    end
+
+    # Some gateways answer HTTP 200 with `{"error": {...}}` in the body.
+    # Without this the response just fails the `choices` lookup below and
+    # the caller reports a generic parse error, hiding a message that names
+    # the actual problem (unknown model, quota, bad deployment name).
+    private def report_api_error(response_json : JSON::Any) : Bool
+      error = response_json["error"]?
+      return false if error.nil?
+
+      message = error["message"]?.try(&.as_s?) || error.to_s
+      STDERR.puts "WARNING: AI API returned an error: #{LLM::HttpTransport.truncate_error_snippet(message)}"
+      true
+    rescue Exception
+      false
     end
 
     # Make a simple request with a single prompt
@@ -151,21 +425,23 @@ module LLM
       JSON.parse(%({"raw":#{raw.to_json}}))
     end
 
-    private def self.clean_content(text : String) : String
-      LLM.strip_json_fences(text)
+    # The request URL for a provider given as a URL; `LLM::Anthropic`
+    # resolves it to the Messages endpoint instead.
+    def self.api_url(url : String) : String
+      chat_completions_url(url)
     end
 
-    private def ensure_chat_completions_path(url : String) : String
-      normalized = url.chomp("/")
-      return normalized if normalized.ends_with?("/chat/completions")
-
-      uri = URI.parse(normalized)
-      path = uri.path || ""
-      if path.empty? || path == "/"
-        "#{normalized}/v1/chat/completions"
-      else
-        "#{normalized}/chat/completions"
+    # Decided on the URI path, not the whole string: an Azure-style
+    # `...?api-version=2024-02-01` query used to get `/chat/completions`
+    # appended after it.
+    def self.chat_completions_url(url : String) : String
+      uri = URI.parse(url)
+      path = uri.path.chomp("/")
+      unless path.ends_with?("/chat/completions")
+        path = path.empty? ? "/v1/chat/completions" : "#{path}/chat/completions"
       end
+      uri.path = path
+      uri.to_s
     end
 
     def self.parse_tools_cached(tools : String) : JSON::Any

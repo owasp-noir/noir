@@ -96,6 +96,44 @@ describe "Detect Elixir Plug" do
     instance.detect("lib/router.ex", router_content).should be_true
   end
 
+  it "detects a bare forward mount without any other Plug marker" do
+    router_content = <<-ELIXIR
+      defmodule MyApp.Router do
+        forward "/api", to: MyApp.API
+      end
+      ELIXIR
+
+    instance.detect("lib/router.ex", router_content).should be_true
+  end
+
+  it "detects a forward mount whose `to:` is not the first option" do
+    router_content = <<-ELIXIR
+      defmodule MyApp.Router do
+        forward "/", host: "api.", to: MyApp.API
+      end
+      ELIXIR
+
+    instance.detect("lib/router.ex", router_content).should be_true
+  end
+
+  it "does not detect a context module with a `forward` variable and `do:`" do
+    context_content = <<-ELIXIR
+      defmodule App.Accounts do
+        import Ecto.Query, warn: false
+        alias App.Repo
+
+        def list_users, do: Repo.all(User)
+
+        def forward_invite(user, opts \\\\ []) do
+          forward = Keyword.get(opts, :forward, true)
+          if forward, do: Mailer.deliver(user), else: :skip
+        end
+      end
+      ELIXIR
+
+    instance.detect("lib/accounts.ex", context_content).should be_false
+  end
+
   it "does not detect non-Plug files" do
     non_plug_content = <<-ELIXIR
       defmodule MyApp.Utils do

@@ -105,4 +105,19 @@ class API < Grape::API
       # ...
     end
   end
+
+  post "dollar$" do
+  end
+
+  get "users.json" do
+  end
+
+  get "~me" do
+  end
+
+  get "@me" do
+  end
+
+  get "a+b" do
+  end
 end

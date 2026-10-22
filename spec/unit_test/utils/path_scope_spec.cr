@@ -1,14 +1,98 @@
 require "../../spec_helper"
 require "../../../src/utils/path_scope"
 
+# Yields the current directory and a fresh scratch directory, and restores
+# the working directory afterwards: the pin specs `Dir.cd` so that a lost pin
+# resolves against the wrong directory instead of silently agreeing.
+private def with_scratch_dir(&)
+  original = Dir.current
+  target = File.join(Dir.tempdir, "noir-path-scope-spec-#{Random.new.hex(6)}")
+  Dir.mkdir_p(target)
+  begin
+    yield original, File.realpath(target)
+  ensure
+    Dir.cd(original)
+    Dir.delete(target)
+  end
+end
+
 describe Noir::PathScope do
+  describe ".normalize_base" do
+    # `-b` is echoed verbatim into every reported `code_path`, so three
+    # spellings of the same tree used to produce three different reports.
+    it "pins the normalization table" do
+      {
+        "rem2"     => "rem2",
+        "rem2/"    => "rem2",
+        "rem2///"  => "rem2",
+        "./rem2"   => "rem2",
+        "././rem2" => "rem2",
+        "rem2/./a" => "rem2/a",
+        "a//b//c/" => "a/b/c",
+        "."        => ".",
+        "./"       => ".",
+        ""         => "",
+        ".."       => "..",
+        "../app/"  => "../app",
+        "/"        => "/",
+        "///"      => "/",
+        "/a//b/"   => "/a/b",
+        "/app"     => "/app",
+      }.each do |input, expected|
+        Noir::PathScope.normalize_base(input).should eq(expected)
+      end
+    end
+
+    it "keeps a relative base relative (never expands it)" do
+      normalized = Noir::PathScope.normalize_base("./app///")
+      normalized.should eq("app")
+      normalized.starts_with?("/").should be_false
+    end
+
+    it "is idempotent" do
+      ["rem2///", "./rem2", "/a//b/", "./", "..", "/"].each do |input|
+        once = Noir::PathScope.normalize_base(input)
+        Noir::PathScope.normalize_base(once).should eq(once)
+      end
+    end
+
+    {% if flag?(:windows) %}
+      it "keeps a UNC share's double leading separator on Windows" do
+        {
+          "\\\\server\\share\\project" => "//server/share/project",
+          "//server/share/project/"    => "//server/share/project",
+          "\\\\?\\C:\\long\\path"      => "\\\\?\\C:\\long\\path",
+          "C:\\proj\\"                 => "C:/proj",
+          "C:\\"                       => "C:/",
+        }.each do |input, expected|
+          once = Noir::PathScope.normalize_base(input)
+          once.should eq(expected)
+          Noir::PathScope.normalize_base(once).should eq(once)
+        end
+      end
+    {% end %}
+
+    it "leaves a backslash alone on POSIX" do
+      # Only Windows treats `\\` as a separator; elsewhere it is an
+      # ordinary filename character.
+      {% if flag?(:windows) %}
+        Noir::PathScope.normalize_base("a\\\\b\\\\").should eq("a/b")
+      {% else %}
+        Noir::PathScope.normalize_base("a\\b\\").should eq("a\\b\\")
+      {% end %}
+    end
+  end
+
   describe ".normalize_root" do
+    # `/app` is drive-relative on Windows, so anchor on an absolute root.
+    app = File.join(Dir.tempdir, "app")
+
     it "strips a trailing slash from a normalized root" do
-      Noir::PathScope.normalize_root("/app/").should eq("/app")
+      Noir::PathScope.normalize_root("#{app}/").should eq(app)
     end
 
     it "leaves a root without a trailing slash unchanged" do
-      Noir::PathScope.normalize_root("/app").should eq("/app")
+      Noir::PathScope.normalize_root(app).should eq(app)
     end
   end
 
@@ -42,6 +126,63 @@ describe Noir::PathScope do
     it "does not match a sibling prefix" do
       Noir::PathScope.under_normalized_root?("/app2/x", "/app").should be_false
     end
+
+    it "matches the root itself" do
+      Noir::PathScope.under_normalized_root?("/app", "/app").should be_true
+    end
+
+    it "does not match a path shorter than the root" do
+      Noir::PathScope.under_normalized_root?("/ap", "/app").should be_false
+    end
+
+    it "agrees with the concatenating boundary check it replaced" do
+      roots = ["/app", "/app/sub", "", "/a"]
+      paths = ["/app", "/app/", "/app/x", "/app2", "/ap", "/app/sub/y", "/a", "/ab", "", "/"]
+      roots.each do |root|
+        paths.each do |path|
+          expected = path == root || path.starts_with?(root + File::SEPARATOR)
+          Noir::PathScope.under_normalized_root?(path, root).should eq(expected)
+        end
+      end
+    end
+  end
+
+  describe ".expand" do
+    it "agrees with File.expand_path for absolute and relative paths" do
+      ["/app/./x/../y", "/", "/app/", "rel/./a/../b", ".", "..", "", "a//b/"].each do |path|
+        Noir::PathScope.expand(path).should eq(File.expand_path(path))
+      end
+    end
+
+    it "keeps resolving against the pinned directory after a Dir.cd inside the scope" do
+      with_scratch_dir do |original, target|
+        Noir::PathScope.with_pinned_cwd do
+          Dir.cd(target)
+          Noir::PathScope.expand("x").should eq(File.expand_path("x", original))
+          Noir::PathScope.expand("rel/../b").should eq(File.expand_path("rel/../b", original))
+          app = File.join(Dir.tempdir, "app")
+          Noir::PathScope.expand("#{app}/./x").should eq("#{app}/x")
+        end
+      end
+    end
+
+    it "does not keep the pinned directory after the scope ends" do
+      with_scratch_dir do |_original, target|
+        Noir::PathScope.with_pinned_cwd { Noir::PathScope.expand("x") }
+        Dir.cd(target)
+        Noir::PathScope.expand("x").should eq(File.expand_path("x"))
+      end
+    end
+
+    it "keeps the outer pin through a nested scope" do
+      with_scratch_dir do |original, target|
+        Noir::PathScope.with_pinned_cwd do
+          Noir::PathScope.with_pinned_cwd { }
+          Dir.cd(target)
+          Noir::PathScope.expand("x").should eq(File.expand_path("x", original))
+        end
+      end
+    end
   end
 
   describe ".longest_base" do
@@ -55,6 +196,29 @@ describe Noir::PathScope do
 
     it "returns nil when no base contains the path" do
       Noir::PathScope.longest_base("/other/x", ["/app", "/app/api"]).should be_nil
+    end
+  end
+
+  describe ".marker_root" do
+    it "slices at the first marker below the base" do
+      Noir::PathScope.marker_root("/home/src/app/src/main/java/A.java", "/home/src/app", {"/src/main/java/", "/src/"}).should eq("/home/src/app")
+    end
+
+    it "ignores a marker above the base" do
+      Noir::PathScope.marker_root("/home/src/app/pom.xml", "/home/src/app/", {"/src/"}).should be_nil
+    end
+
+    it "keeps a marker that straddles the end of the base" do
+      Noir::PathScope.marker_root("/w/app/src/main/java/A.java", "/w/app/src", {"/src/main/java/"}).should eq("/w/app")
+      Noir::PathScope.marker_root("/w/app/src/main/java/A.java", "/w/app/src/main/java", {"/src/main/java/"}).should eq("/w/app")
+    end
+
+    it "prefers a marker wholly below the base over a straddling one" do
+      Noir::PathScope.marker_root("/w/src/app/src/A.java", "/w/src", {"/src/"}).should eq("/w/src/app")
+    end
+
+    it "finds a nested module root" do
+      Noir::PathScope.marker_root("/w/src/app/api/src/A.java", "/w/src/app", {"/src/"}).should eq("/w/src/app/api")
     end
   end
 

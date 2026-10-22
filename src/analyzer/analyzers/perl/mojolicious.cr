@@ -1,16 +1,22 @@
 require "../../engines/perl_engine"
+require "./perl_helper"
 require "../../../miniparsers/perl_callee_extractor"
 
 module Analyzer::Perl
   class Mojolicious < PerlEngine
+    analyzer_for "perl_mojolicious"
+
     HTTP_VERBS   = %w[get post put delete patch options head]
     LITE_VERB_RE = /^\s*(get|post|put|patch|delete|del|options|head|websocket)\s+['"]([^'"]+)['"]/
     LITE_ANY_RE  = /^\s*any\s+(?:\[([^\]]+)\]\s*=>\s*)?['"]([^'"]+)['"]/
     # Leaf path may be empty (`$r->get('')`) — a Mojolicious idiom for a
     # route that *is* its receiver's prefix (e.g. `$auth->get('')`), so the
-    # capture is `[^'"]*` rather than `+`. A bare `$x->get(` with no string
-    # argument (a data accessor like `$backend->get($id)`) still never
-    # matches because the leading quote is required.
+    # capture is `[^'"]*` rather than `+`.
+    #
+    # A quoted argument does NOT make the call a route: `$cache->get("ttl")`
+    # and `$self->stash->get("current_user")` are ordinary data accessors and
+    # are the *common* shape, not an exotic one. Every `->verb(...)` match is
+    # therefore additionally gated on `route_receiver?`.
     FULL_VERB_RE  = /->\s*(get|post|put|patch|delete|del|options|head|websocket)\s*\(\s*['"]([^'"]*)['"]/
     FULL_ANY_RE   = /->\s*any\s*\(\s*(?:\[([^\]]+)\]\s*,?\s*=?>?\s*)?['"]([^'"]*)['"]/
     FULL_ROUTE_RE = /->\s*route\s*\(\s*['"]([^'"]*)['"]\s*\)(?:\s*->\s*via\s*\(\s*([^)]+)\))?/
@@ -27,21 +33,52 @@ module Analyzer::Perl
     # them to the sigil form (`:id`, `#id`, `*id`) so URLs read consistently
     # and the path-param scanner picks them up.
     ANGLE_PLACEHOLDER_RE = /<([:#*]?)([A-Za-z_]\w*)(?::[^<>]*)?>/
+    # A receiver chain that names the router itself: `$self->routes->get(…)`,
+    # `$app->routes->any(…)`, `shift->routes->under(…)`.
+    ROUTES_ACCESSOR_RE = /->\s*routes\b/
+    # A receiver chain that is already building a route: `$r->under('/v2')->get(…)`.
+    CHAIN_ROUTE_CALL_RE = /->\s*(?:under|any|route)\s*\(/
+    # The bare `$var` sitting immediately left of the call, with nothing
+    # between it and the `->`: the `$cache` of `$cache->get("ttl")`.
+    TRAILING_VAR_RE = /\$([A-Za-z_]\w*)\s*$/
+    # `$foo->get(` / `$foo->under(` …: `$foo` holds a route with children.
+    NESTED_RECEIVER_RE = /\$([A-Za-z_]\w*)\s*->\s*(?:get|post|put|patch|delete|del|options|head|websocket|any|under|route)\s*\(/
+    # Mojolicious names its route object `$r` (or `$routes`/`$route`/`$router`)
+    # by universal convention, including in helper subs that receive it as an
+    # argument (`sub _api ($r) { $r->get('/x') }`) where no assignment exists
+    # for `build_prefix_maps` to record. Accepted on top of the assignments it
+    # does see.
+    CONVENTIONAL_ROUTE_VARS = Set{"r", "route", "routes", "router"}
+    # The file has to be Mojolicious before any of its `->get(…)` calls can be
+    # a Mojolicious route. `Mojolicious` covers `use Mojolicious`,
+    # `Mojolicious::Lite`, `Mojo::Base 'Mojolicious…'`, and the
+    # Plugin/Controller base classes; `Mojo::Base` covers a controller that
+    # subclasses another one of the app's controllers.
+    MOJO_MARKERS = ["Mojolicious", "Mojo::Base"]
     alias ControllerActionKey = Tuple(String, String)
     alias ControllerCalleeIndex = Hash(ControllerActionKey, Array(Noir::PerlCalleeExtractor::Entry))
 
+    # Only look at files belonging to a project that actually depends on
+    # Mojolicious. In a repo holding a Dancer2 service beside a Mojolicious
+    # one, this keeps this analyzer out of the Dancer2 tree entirely. A
+    # project with no manifest at all is still scanned — see
+    # `PerlEngine#path_under_perl_roots?`.
+    protected def cpan_dependencies : Array(String)
+      ["Mojolicious"]
+    end
+
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       controller_callees = include_callee ? index_controller_callees : ControllerCalleeIndex.new
 
-      parallel_file_scan do |path|
-        result.concat(analyze_file(path, include_callee, controller_callees))
-      end
+      ordered_file_scan do |path|
+        analyze_file(path, include_callee, controller_callees)
+      end.each { |file_endpoints| result.concat(file_endpoints) }
       result
     end
 
     def analyze_file(path : String) : Array(Endpoint)
-      analyze_file(path, any_to_bool(@options["include_callee"]?), ControllerCalleeIndex.new)
+      analyze_file(path, callees_needed?, ControllerCalleeIndex.new)
     end
 
     private def analyze_file(path : String,
@@ -57,12 +94,8 @@ module Analyzer::Perl
       # accounts for ~1100 phantom endpoints).
       return [] of Endpoint if perl_test_path?(path, ext)
 
-      endpoints = [] of Endpoint
-      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        content = file.gets_to_end
-        endpoints.concat(analyze_content(content, path, include_callee, controller_callees))
-      end
-      endpoints
+      content = read_file_content(path)
+      analyze_content(content, path, include_callee, controller_callees)
     end
 
     def analyze_content(content : String,
@@ -70,23 +103,37 @@ module Analyzer::Perl
                         include_callee : Bool = false,
                         controller_callees : ControllerCalleeIndex = ControllerCalleeIndex.new) : Array(Endpoint)
       endpoints = [] of Endpoint
+      # A Mojolicious route is only ever declared inside a Mojolicious file.
+      # Without this the `->verb('literal')` matchers below fire on any Perl
+      # source in the scan, so a Dancer2 app sitting beside a Mojolicious one
+      # had 14 of its lines reported as `perl_mojolicious` endpoints.
+      return endpoints unless mojolicious_file?(content)
+
       raw_lines = content.lines
       sanitized_lines = sanitize_perl_lines(raw_lines)
       offsets = line_offsets(content)
       last_endpoint : Endpoint? = nil
       # Resolve route-prefix variables (`my $api = $r->any('/api')`) up front,
       # joining multi-line `my $x\n  = ...;` assignments so the prefix is known
-      # before the route lines that consume it are visited.
-      var_prefix, path_vars = build_prefix_maps(sanitized_lines)
+      # before the route lines that consume it are visited. The same pass
+      # records which variables hold a route object at all, so `$cache->get(…)`
+      # can be told apart from `$admin->get(…)`.
+      var_prefix, path_vars, route_vars = build_prefix_maps(sanitized_lines)
+      parent_vars = nesting_route_vars(sanitized_lines, route_vars)
 
       sanitized_lines.each_with_index do |line, index|
         stripped = line.strip
         next if stripped.empty? || stripped.starts_with?('#')
 
-        line_endpoints = line_to_endpoints(line, var_prefix, path_vars)
+        line_endpoints = line_to_endpoints(line, var_prefix, path_vars, route_vars)
+        # `my $foo = $r->any('/foo')` that later gets `$foo->get('/bar')`:
+        # a route with children never matches on its own.
+        if !line_endpoints.empty? && (assigned = line.match(ASSIGNMENT_HEAD_RE)) && parent_vars.includes?(assigned[1])
+          line_endpoints.clear
+        end
         line_endpoints.each do |endpoint|
           endpoint.details = Details.new(PathInfo.new(file_path, index + 1))
-          extract_path_params(endpoint).each { |p| push_unique_param(endpoint, p) }
+          extract_path_params(endpoint).each { |p| endpoint.push_param(p) unless p.name.empty? }
           attach_route_callees(endpoint, content, raw_lines[index], offsets[index], controller_callees, configured_base_for(file_path)) if include_callee
           endpoints << endpoint
         end
@@ -103,7 +150,7 @@ module Analyzer::Perl
 
         targets.each do |target|
           extract_params_from_line(line, target.method).each do |param|
-            push_unique_param(target, param)
+            target.push_param(param) unless param.name.empty?
           end
         end
 
@@ -117,11 +164,15 @@ module Analyzer::Perl
       callees = ControllerCalleeIndex.new
 
       all_files.each do |path|
-        next if File.directory?(path)
         ext = File.extname(path)
         next unless ext == ".pl" || ext == ".pm" || ext == ".psgi" || ext == ".t"
-
+        next if perl_test_path?(path, ext)
+        next unless path_under_perl_roots?(path)
+        # Controllers always declare `package …::Controller::…`; skip the
+        # full strip/scan on files that can't contribute action callees.
         content = read_file_content(path)
+        next unless content.includes?("::Controller::") || content.includes?("package")
+
         base_path = configured_base_for(path)
         Noir::PerlCalleeExtractor.controller_action_callees(content, path).each do |key, entries|
           callees[{base_path, key}] ||= entries
@@ -129,6 +180,12 @@ module Analyzer::Perl
       end
 
       callees
+    end
+
+    # True when `content` is Mojolicious source. Cheap substring probes, run
+    # once per file before any of the route regexes.
+    private def mojolicious_file?(content : String) : Bool
+      MOJO_MARKERS.any? { |marker| content.includes?(marker) }
     end
 
     def line_to_endpoints(line : String) : Array(Endpoint)
@@ -142,28 +199,46 @@ module Analyzer::Perl
     def line_to_endpoints(line : String,
                           var_prefix : Hash(String, String),
                           path_vars : Hash(String, String)) : Array(Endpoint)
+      line_to_endpoints(line, var_prefix, path_vars, Set(String).new)
+    end
+
+    def line_to_endpoints(line : String,
+                          var_prefix : Hash(String, String),
+                          path_vars : Hash(String, String),
+                          route_vars : Set(String)) : Array(Endpoint)
       result = [] of Endpoint
 
-      # Mojolicious::Lite: `get '/path' => ...`
-      if m = line.match(LITE_VERB_RE)
-        url = m[2]
-        result << build_endpoint(url, m[1]) unless disallowed_route_url?(url)
-      end
+      # Routes always carry a quoted path (including empty `''`). Most
+      # source lines don't — skip all five PCRE2 scans for them.
+      return result unless line.includes?("'") || line.includes?("\"")
 
-      # Mojolicious::Lite: `any '/path'` or `any [GET => 'POST'] => '/path'`
-      if m = line.match(LITE_ANY_RE)
-        url = m[2]
-        unless disallowed_route_url?(url)
-          methods_str = m[1]?
-          full = normalize_placeholders(url)
-          methods_for_any(methods_str).each do |verb|
-            result << Endpoint.new(full, verb)
+      leading = line.lstrip
+      # Mojolicious::Lite keywords sit at statement start.
+      if lite_route_lead?(leading)
+        # Mojolicious::Lite: `get '/path' => ...`
+        if m = line.match(LITE_VERB_RE)
+          url = m[2]
+          result << build_endpoint(url, m[1]) unless disallowed_route_url?(url)
+        end
+
+        # Mojolicious::Lite: `any '/path'` or `any [GET => 'POST'] => '/path'`
+        if m = line.match(LITE_ANY_RE)
+          url = m[2]
+          unless disallowed_route_url?(url)
+            methods_str = m[1]?
+            full = normalize_placeholders(url)
+            methods_for_any(methods_str).each do |verb|
+              result << Endpoint.new(full, verb)
+            end
           end
         end
       end
 
+      # Full-app DSL always uses `->verb(…)`.
+      return result unless line.includes?("->")
+
       # Full app: `$r->get('/path')` etc.
-      if m = line.match(FULL_VERB_RE)
+      if (m = line.match(FULL_VERB_RE)) && route_receiver?(line, m.begin(0) || 0, route_vars)
         leaf = m[2]
         unless disallowed_route_url?(leaf)
           prefix = compute_chain_prefix(line, m.begin(0) || 0, var_prefix, path_vars)
@@ -176,7 +251,7 @@ module Analyzer::Perl
       end
 
       # Full app: `$r->any(['GET','POST'] => '/path')` or `$r->any('/path')`
-      if m = line.match(FULL_ANY_RE)
+      if (m = line.match(FULL_ANY_RE)) && route_receiver?(line, m.begin(0) || 0, route_vars)
         leaf = m[2]
         unless disallowed_route_url?(leaf)
           methods_str = m[1]?
@@ -189,7 +264,7 @@ module Analyzer::Perl
       end
 
       # Full app: `$r->route('/path')->via('GET')` or `via(qw(GET POST))`
-      if m = line.match(FULL_ROUTE_RE)
+      if (m = line.match(FULL_ROUTE_RE)) && route_receiver?(line, m.begin(0) || 0, route_vars)
         leaf = m[1]
         unless disallowed_route_url?(leaf)
           via_str = m[2]?
@@ -209,6 +284,45 @@ module Analyzer::Perl
       end
 
       result
+    end
+
+    # True when the (already lstripped) line could be a Mojolicious::Lite
+    # route keyword. Avoids running LITE_* regexes on ordinary statements.
+    private def lite_route_lead?(leading : String) : Bool
+      leading.starts_with?("get") || leading.starts_with?("post") ||
+        leading.starts_with?("put") || leading.starts_with?("patch") ||
+        leading.starts_with?("delete") || leading.starts_with?("del") ||
+        leading.starts_with?("options") || leading.starts_with?("head") ||
+        leading.starts_with?("websocket") || leading.starts_with?("any")
+    end
+
+    # True when the receiver of the `->verb(…)` call starting at `call_start`
+    # is a Mojolicious route object rather than an arbitrary expression.
+    #
+    # `FULL_VERB_RE` on its own reads `$cache->get("session_timeout")` and
+    # `$self->stash->get("current_user")` — a `Mojo::Cache` lookup and a stash
+    # accessor — as routes, and a data accessor with a *string* key is the
+    # common shape in a real app, not a corner case.
+    private def route_receiver?(line : String, call_start : Int32, route_vars : Set(String)) : Bool
+      prelude = call_start > 0 ? line[0, call_start] : ""
+
+      # `$self->routes->get(…)` / `$app->routes->any(…)`.
+      return true if prelude.matches?(ROUTES_ACCESSOR_RE)
+      # `$r->under('/v2')->get(…)` — the chain is already building a route.
+      return true if prelude.matches?(CHAIN_ROUTE_CALL_RE)
+      # A continuation line (`$r->under('/api')\n  ->get('/x')`) carries no
+      # receiver at all. Accepting it keeps a real route rather than dropping
+      # it; the false-positive shapes all name their receiver inline.
+      return true if prelude.blank?
+
+      # `$admin->get(…)`: the receiver is a variable, and it has to be one
+      # known — or conventionally named — to hold a route object.
+      if m = prelude.match(TRAILING_VAR_RE)
+        name = m[1]
+        return route_vars.includes?(name) || CONVENTIONAL_ROUTE_VARS.includes?(name)
+      end
+
+      false
     end
 
     # `$ua->get('http://example.com/foo')` is a `Mojo::UserAgent` HTTP
@@ -247,9 +361,28 @@ module Analyzer::Perl
     # string scalar. `my $var` assignments split across lines are stitched
     # back together (up to a small line cap) so chains like
     # `my $api_auth_admin\n  = $api_public->under('/')->...` resolve.
-    private def build_prefix_maps(lines : Array(String)) : Tuple(Hash(String, String), Hash(String, String))
+    #
+    # The third map is the set of variables that hold a route object at all —
+    # `my $r = $self->routes`, `my $admin = $r->any('/admin')` — which is what
+    # tells `$admin->get('/users')` (a route) apart from `$cache->get('ttl')`
+    # (a cache lookup). It is tracked separately from `var_prefix` because a
+    # route object can carry an *empty* prefix (`my $auth = $r->under('')`)
+    # and still be a router.
+    # Route variables that receive child routes (`$foo->get(...)`).
+    private def nesting_route_vars(lines : Array(String), route_vars : Set(String)) : Set(String)
+      parents = Set(String).new
+      return parents if route_vars.empty?
+      lines.each do |line|
+        next unless line.includes?("->")
+        line.scan(NESTED_RECEIVER_RE) { |m| parents << m[1] if route_vars.includes?(m[1]) }
+      end
+      parents
+    end
+
+    private def build_prefix_maps(lines : Array(String)) : Tuple(Hash(String, String), Hash(String, String), Set(String))
       var_prefix = {} of String => String
       path_vars = {} of String => String
+      route_vars = Set(String).new
 
       index = 0
       while index < lines.size
@@ -267,16 +400,17 @@ module Analyzer::Perl
           statement += " " + lines[last].strip
         end
 
-        update_var_prefix(statement, var_prefix, path_vars)
+        update_var_prefix(statement, var_prefix, path_vars, route_vars)
         index = last + 1
       end
 
-      {var_prefix, path_vars}
+      {var_prefix, path_vars, route_vars}
     end
 
     private def update_var_prefix(line : String,
                                   var_prefix : Hash(String, String),
-                                  path_vars : Hash(String, String))
+                                  path_vars : Hash(String, String),
+                                  route_vars : Set(String))
       # `my $p = '/tests/<id:num>';` — a scalar holding a path string that a
       # later `$r->any($p)` uses as a route prefix. Record it so the prefix
       # resolves instead of collapsing to the top level.
@@ -287,6 +421,16 @@ module Analyzer::Perl
       return unless m = line.match(ASSIGNMENT_HEAD_RE)
       var = m[1]
       rhs = m[2]
+
+      # `my $r = $self->routes;`, `my $admin = $r->any('/admin');`,
+      # `my $sub = $admin->under('/x')->to(...)` — anything whose right-hand
+      # side names the router or continues a route chain hands back a route
+      # object. Recorded even when the resulting prefix is empty.
+      if rhs.matches?(ROUTES_ACCESSOR_RE) || rhs.matches?(CHAIN_ROUTE_CALL_RE)
+        route_vars << var
+      elsif (rm = rhs.match(CHAIN_RECEIVER_RE)) && route_vars.includes?(rm[1])
+        route_vars << var
+      end
 
       segments = [] of String
       each_prefix_segment(rhs, path_vars) { |seg| segments << seg }
@@ -414,37 +558,41 @@ module Analyzer::Perl
 
     private def extract_params_from_line(line : String, method : String) : Array(Param)
       params = [] of Param
+      # Param accessors all go through `->…param` / header / cookie.
+      return params unless line.includes?("->")
 
-      line.scan(/->\s*req\s*->\s*query_params\s*->\s*param\s*\(\s*['"]([^'"]+)['"]/) do |m|
-        params << Param.new(m[1], "", "query")
+      if line.includes?("query_params")
+        line.scan(/->\s*req\s*->\s*query_params\s*->\s*param\s*\(\s*['"]([^'"]+)['"]/) do |m|
+          params << Param.new(m[1], "", "query")
+        end
       end
 
-      line.scan(/->\s*req\s*->\s*body_params\s*->\s*param\s*\(\s*['"]([^'"]+)['"]/) do |m|
-        params << Param.new(m[1], "", "form")
+      if line.includes?("body_params")
+        line.scan(/->\s*req\s*->\s*body_params\s*->\s*param\s*\(\s*['"]([^'"]+)['"]/) do |m|
+          params << Param.new(m[1], "", "form")
+        end
       end
 
-      line.scan(/->\s*req\s*->\s*headers\s*->\s*header\s*\(\s*['"]([^'"]+)['"]/) do |m|
-        params << Param.new(m[1], "", "header")
+      if line.includes?("header")
+        line.scan(/->\s*req\s*->\s*headers\s*->\s*header\s*\(\s*['"]([^'"]+)['"]/) do |m|
+          params << Param.new(m[1], "", "header")
+        end
       end
 
-      line.scan(/->\s*(?:req\s*->\s*)?cookie\s*\(\s*['"]([^'"]+)['"]/) do |m|
-        params << Param.new(m[1], "", "cookie")
+      if line.includes?("cookie")
+        line.scan(/->\s*(?:req\s*->\s*)?cookie\s*\(\s*['"]([^'"]+)['"]/) do |m|
+          params << Param.new(m[1], "", "cookie")
+        end
       end
 
-      line.scan(/->\s*param\s*\(\s*['"]([^'"]+)['"]/) do |m|
-        param_type = (method == "GET" || method == "HEAD" || method == "OPTIONS") ? "query" : "form"
-        params << Param.new(m[1], "", param_type)
+      if line.includes?("param")
+        line.scan(/->\s*param\s*\(\s*['"]([^'"]+)['"]/) do |m|
+          param_type = (method == "GET" || method == "HEAD" || method == "OPTIONS") ? "query" : "form"
+          params << Param.new(m[1], "", param_type)
+        end
       end
 
       params
-    end
-
-    private def push_unique_param(endpoint : Endpoint, param : Param)
-      return if param.name.empty?
-      endpoint.params.each do |existing|
-        return if existing.name == param.name && existing.param_type == param.param_type
-      end
-      endpoint.push_param(param)
     end
 
     private def attach_route_callees(endpoint : Endpoint,
@@ -497,16 +645,15 @@ module Analyzer::Perl
 
     private def controller_key(controller : String) : String
       controller.gsub("::", "/").split('/').reject(&.empty?).map do |segment|
-        underscore(segment.gsub("-", "_"))
+        Helper.underscore(segment.gsub("-", "_"))
       end.join("/")
-    end
-
-    private def underscore(name : String) : String
-      name.gsub(/([a-z0-9])([A-Z])/, "\\1_\\2").downcase
     end
 
     private def line_offsets(content : String) : Array(Int32)
       offsets = [0]
+      # Character offsets — `extract_sub_after` / `source.chars` index by
+      # Unicode character, not UTF-8 byte. A byte walk breaks on non-ASCII
+      # POD/comments (real Mojolicious apps hit this constantly).
       content.each_char_with_index do |char, index|
         offsets << index + 1 if char == '\n'
       end

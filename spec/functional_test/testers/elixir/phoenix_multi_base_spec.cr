@@ -24,7 +24,7 @@ tester = FunctionalTester.new("fixtures/elixir/phoenix_multi_base/", {
 
 tester.perform_tests
 
-it "keeps Phoenix controller params scoped to each configured base" do
+it "keeps Phoenix controller params scoped to each configured base", tags: "functional" do
   service_a = tester.app.endpoints.find! { |endpoint| endpoint.method == "GET" && endpoint.url == "/service-a/shared" }
   service_b = tester.app.endpoints.find! { |endpoint| endpoint.method == "GET" && endpoint.url == "/service-b/shared" }
 

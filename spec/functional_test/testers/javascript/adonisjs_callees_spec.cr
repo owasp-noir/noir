@@ -11,7 +11,7 @@ resource.push_callee(Callee.new("ArticlesController.destroy"))
 
 FunctionalTester.new("fixtures/javascript/adonisjs/", {
   :techs     => 1,
-  :endpoints => 22,
+  :endpoints => 23,
 }, [root, create, resource], {
   "include_callee" => YAML::Any.new(true),
 }).perform_tests

@@ -2,6 +2,10 @@ require "../../../models/detector"
 
 module Detector::Php
   class CakePHP < Detector
+    detector_for "php_cakephp",
+      extensions: %w[.php .phtml],
+      basenames: %w[composer.json composer.lock cake]
+
     def detect(filename : String, file_contents : String) : Bool
       # Check for composer.json with CakePHP dependency
       if filename.ends_with?("composer.json") && file_contents.includes?("cakephp/cakephp")
@@ -9,8 +13,10 @@ module Detector::Php
       end
 
       # Check for CakePHP console script
-      if filename.ends_with?("bin/cake") || filename.ends_with?("bin/cake.php")
-        return true
+      if File.basename(filename) == "cake" || File.basename(filename) == "cake.php"
+        if file_contents.includes?("Cake\\Console\\CommandRunner")
+          return true
+        end
       end
 
       # Check for CakePHP config/routes.php
@@ -21,14 +27,6 @@ module Detector::Php
       end
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".php") || filename.ends_with?(".phtml") || File.basename(filename) == "composer.json" || File.basename(filename) == "composer.lock"
-    end
-
-    def set_name
-      @name = "php_cakephp"
     end
   end
 end

@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Put, Delete, Param, Query, Body, Headers, Req, UploadedFile, UseGuards, UseInterceptors, Version } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Param, Query, Body, Headers, Req, UploadedFile, UseGuards, UseInterceptors, Version, QueryMethod } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 
 @Controller('users')
@@ -29,7 +29,20 @@ export class UserController {
   }
 
   @Get('search')
-  search(@Query('name') name: string, @Query('email') email: string) {
+  search(@Query( 'name') name: string, @Query('email') email: string) {
+    return [];
+  }
+}
+
+@Controller('search')
+export class SearchController {
+  @QueryMethod()
+  find(@Body() filters: any) {
+    return [];
+  }
+
+  @QueryMethod('advanced')
+  advanced(@Body() dto: any) {
     return [];
   }
 }
@@ -37,7 +50,7 @@ export class UserController {
 @Controller('protected')
 export class ProtectedController {
   @Get()
-  getProtected(@Headers('authorization') auth: string) {
+  getProtected(@Headers(/* bearer */ 'authorization') auth: string) {
     return {};
   }
 }
@@ -64,3 +77,4 @@ export class AdminController {
     return {};
   }
 }
+

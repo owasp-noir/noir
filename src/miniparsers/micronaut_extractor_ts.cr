@@ -1,8 +1,10 @@
+require "../utils/url_path"
 require "../ext/tree_sitter/tree_sitter"
 require "../models/endpoint"
 require "./java_callee_extractor"
 require "./java_parameter_extractor_ts"
 require "./java_route_extractor_ts"
+require "../utils/jvm_media_type"
 
 module Noir
   # Tree-sitter-backed Micronaut route + parameter extractor.
@@ -15,8 +17,9 @@ module Noir
   #   * Class-level `@ServerWebSocket("/x")` — surfaced as `GET`
   #     with `protocol = "ws"`.
   #   * Verb annotations: `@Get`, `@Post`, `@Put`, `@Delete`,
-  #     `@Patch`, `@Head`, `@Options` from
-  #     `io.micronaut.http.annotation`.
+  #     `@Patch`, `@Head`, `@Options`, `@Query` from
+  #     `io.micronaut.http.annotation`, plus `@CustomHttpMethod(method
+  #     = "...")` for non-standard verbs.
   #   * Path supplied positionally (`@Get("/x")`) or via the
   #     `value` / `uri` / `uris` keyword. Array forms (`uris =
   #     {"/a", "/b"}`) fan out into one route per path.
@@ -48,6 +51,7 @@ module Noir
       "Patch"   => "PATCH",
       "Head"    => "HEAD",
       "Options" => "OPTIONS",
+      "Query"   => "QUERY",
     }
 
     PARAM_ANNOTATION_FORMAT = {
@@ -65,7 +69,19 @@ module Noir
 
     INJECTED_PARAM_TYPES = Set{
       "authentication", "httprequest", "httpheaders", "pageable",
-      "principal", "x509authentication",
+      "principal", "x509authentication", "httpparameters", "cookies",
+      "basicauth",
+    }
+
+    # Single-argument reactive/async/optional wrappers that Micronaut
+    # unwraps transparently when binding `@Body` (and implicit-body)
+    # parameters — e.g. `@Body Mono<Book> book` carries the same
+    # wire-level fields as `@Body Book book`. Resolving through these
+    # lets DTO expansion see the real element type instead of the
+    # wrapper's bare name.
+    REACTIVE_BODY_WRAPPER_TYPES = Set{
+      "mono", "single", "maybe", "flowable", "observable", "flux",
+      "publisher", "completablefuture", "optional",
     }
 
     FORM_FILE_PARAM_TYPES = Set{
@@ -82,8 +98,10 @@ module Noir
       getter params : Array(Param)
       getter callees : Array(Tuple(String, Int32))
       getter protocol : String
+      getter signature_line : Int32? # 0-based line of the method name (the handler), nil for class-level routes
 
-      def initialize(@verb, @path, @class_name, @method_name, @line, @params, @callees, @protocol = "http")
+      def initialize(@verb, @path, @class_name, @method_name, @line, @params, @callees, @protocol = "http",
+                     @signature_line = nil)
       end
     end
 
@@ -92,18 +110,22 @@ module Noir
       getter interface_names : Array(String)
       getter paths : Array(String)
       getter line : Int32
+      # Method name -> 0-based row of its name, for the `@Override` that
+      # handles an interface-declared route.
+      getter method_rows : Hash(String, Int32)
 
-      def initialize(@class_name, @interface_names, @paths, @line)
+      def initialize(@class_name, @interface_names, @paths, @line, @method_rows = {} of String => Int32)
       end
     end
 
     def extract_routes(source : String,
                        dto_index : Hash(String, Array(TreeSitterJavaParameterExtractor::FieldInfo)) = {} of String => Array(TreeSitterJavaParameterExtractor::FieldInfo),
                        *,
-                       include_callees : Bool = false) : Array(Route)
+                       include_callees : Bool = false,
+                       project_constants : Hash(String, String)? = nil) : Array(Route)
       routes = [] of Route
       Noir::TreeSitter.parse_java(source) do |root|
-        constants = TreeSitterJavaRouteExtractor.extract_string_constants_from(root, source)
+        constants = TreeSitterJavaRouteExtractor.extract_string_constants_from(root, source, project_constants)
         walk_classes(root) do |decl|
           collect_class_routes(decl, source, dto_index, routes, include_callees, constants)
         end
@@ -114,10 +136,11 @@ module Noir
     def extract_interface_routes(source : String,
                                  dto_index : Hash(String, Array(TreeSitterJavaParameterExtractor::FieldInfo)) = {} of String => Array(TreeSitterJavaParameterExtractor::FieldInfo),
                                  *,
-                                 include_callees : Bool = false) : Hash(String, Array(Route))
+                                 include_callees : Bool = false,
+                                 project_constants : Hash(String, String)? = nil) : Hash(String, Array(Route))
       routes = Hash(String, Array(Route)).new { |hash, key| hash[key] = [] of Route }
       Noir::TreeSitter.parse_java(source) do |root|
-        routes = extract_interface_routes_from(root, source, dto_index, include_callees: include_callees)
+        routes = extract_interface_routes_from(root, source, dto_index, include_callees: include_callees, project_constants: project_constants)
       end
       routes
     end
@@ -126,8 +149,9 @@ module Noir
                                       source : String,
                                       dto_index : Hash(String, Array(TreeSitterJavaParameterExtractor::FieldInfo)) = {} of String => Array(TreeSitterJavaParameterExtractor::FieldInfo),
                                       *,
-                                      include_callees : Bool = false) : Hash(String, Array(Route))
-      constants = TreeSitterJavaRouteExtractor.extract_string_constants_from(root, source)
+                                      include_callees : Bool = false,
+                                      project_constants : Hash(String, String)? = nil) : Hash(String, Array(Route))
+      constants = TreeSitterJavaRouteExtractor.extract_string_constants_from(root, source, project_constants)
       routes = Hash(String, Array(Route)).new { |hash, key| hash[key] = [] of Route }
       walk_interfaces(root) do |decl|
         collect_interface_routes(decl, source, dto_index, routes, include_callees, constants)
@@ -135,17 +159,19 @@ module Noir
       routes.reject { |_name, interface_routes| interface_routes.empty? }
     end
 
-    def extract_controller_interface_implementations(source : String) : Array(ControllerInterfaceImplementation)
+    def extract_controller_interface_implementations(source : String,
+                                                     project_constants : Hash(String, String)? = nil) : Array(ControllerInterfaceImplementation)
       implementations = [] of ControllerInterfaceImplementation
       Noir::TreeSitter.parse_java(source) do |root|
-        implementations = extract_controller_interface_implementations_from(root, source)
+        implementations = extract_controller_interface_implementations_from(root, source, project_constants)
       end
       implementations
     end
 
     def extract_controller_interface_implementations_from(root : LibTreeSitter::TSNode,
-                                                          source : String) : Array(ControllerInterfaceImplementation)
-      constants = TreeSitterJavaRouteExtractor.extract_string_constants_from(root, source)
+                                                          source : String,
+                                                          project_constants : Hash(String, String)? = nil) : Array(ControllerInterfaceImplementation)
+      constants = TreeSitterJavaRouteExtractor.extract_string_constants_from(root, source, project_constants)
       implementations = [] of ControllerInterfaceImplementation
       walk_controller_interface_implementations(root, source, implementations, constants)
       implementations
@@ -182,7 +208,7 @@ module Noir
           paths = annotation_paths_named(node, "Controller", source, constants, class_name)
           unless paths.empty?
             implementations << ControllerInterfaceImplementation.new(
-              class_name, interface_names, paths, Noir::TreeSitter.node_start_row(node)
+              class_name, interface_names, paths, Noir::TreeSitter.node_start_row(node), method_rows(node, source)
             )
           end
         end
@@ -191,6 +217,18 @@ module Noir
       Noir::TreeSitter.each_named_child(node) do |child|
         walk_controller_interface_implementations(child, source, implementations, constants, depth + 1)
       end
+    end
+
+    # First declaration wins for overloads.
+    private def method_rows(class_decl : LibTreeSitter::TSNode, source : String) : Hash(String, Int32)
+      rows = {} of String => Int32
+      return rows unless body = Noir::TreeSitter.field(class_decl, "body")
+      Noir::TreeSitter.each_named_child(body) do |member|
+        next unless Noir::TreeSitter.node_type(member) == "method_declaration"
+        next unless name_node = Noir::TreeSitter.field(member, "name")
+        rows[Noir::TreeSitter.node_text(name_node, source)] ||= Noir::TreeSitter.node_start_row(name_node)
+      end
+      rows
     end
 
     private def type_identifier_text(decl : LibTreeSitter::TSNode, source : String) : String
@@ -259,6 +297,14 @@ module Noir
             verb_node = ann
             method_args = args
             break
+          elsif ann_name == "CustomHttpMethod"
+            custom_verb = annotation_string_arg(args, source, Set{"method"}, constants, class_name)
+            unless custom_verb.nil? || custom_verb.empty?
+              verb = custom_verb.upcase
+              verb_node = ann
+              method_args = args
+              break
+            end
           end
         end
         next unless verb && verb_node
@@ -275,13 +321,14 @@ module Noir
 
         controller_paths.each do |class_path|
           method_paths.each do |method_path|
-            full_path = join_paths(class_path, method_path)
+            full_path = Noir::URLPath.join_trimmed(class_path, method_path)
             normalized_path = strip_uri_template_query(full_path)
             query_vars = uri_template_query_vars(full_path)
             path_vars = uri_template_path_vars(normalized_path)
             params = collect_method_params(member, source, method_consumes, dto_index, constants, class_name, query_vars.to_set, path_vars.to_set)
             merge_query_template_params(params, unbound_query_template_vars(member, source, query_vars))
-            routes << Route.new(verb, normalized_path, class_name, method_name, line, params, callees)
+            routes << Route.new(verb, normalized_path, class_name, method_name, line, params, callees,
+              signature_line: Noir::TreeSitter.name_row(member))
           end
         end
       end
@@ -315,6 +362,14 @@ module Noir
             verb_node = ann
             method_args = args
             break
+          elsif ann_name == "CustomHttpMethod"
+            custom_verb = annotation_string_arg(args, source, Set{"method"}, constants, interface_name)
+            unless custom_verb.nil? || custom_verb.empty?
+              verb = custom_verb.upcase
+              verb_node = ann
+              method_args = args
+              break
+            end
           end
         end
         next unless verb && verb_node
@@ -331,13 +386,14 @@ module Noir
 
         interface_paths.each do |interface_path|
           method_paths.each do |method_path|
-            full_path = join_paths(interface_path, method_path)
+            full_path = Noir::URLPath.join_trimmed(interface_path, method_path)
             normalized_path = strip_uri_template_query(full_path)
             query_vars = uri_template_query_vars(full_path)
             path_vars = uri_template_path_vars(normalized_path)
             params = collect_method_params(member, source, method_consumes, dto_index, constants, interface_name, query_vars.to_set, path_vars.to_set)
             merge_query_template_params(params, unbound_query_template_vars(member, source, query_vars))
-            routes[interface_name] << Route.new(verb, normalized_path, interface_name, method_name, line, params, callees)
+            routes[interface_name] << Route.new(verb, normalized_path, interface_name, method_name, line, params, callees,
+              signature_line: Noir::TreeSitter.name_row(member))
           end
         end
       end
@@ -450,49 +506,44 @@ module Noir
       found ? [""] : paths
     end
 
+    # Simple names of the `implements` interfaces, read straight from the
+    # tree-sitter `interfaces` field (a `super_interfaces` node wrapping a
+    # `type_list`).
+    #
+    # Reading the field rather than slicing the class node's text at the
+    # first `{` matters: the node text starts at the `modifiers` child, so
+    # a class-level annotation whose arguments contain a brace —
+    # `@Produces({MediaType.APPLICATION_JSON})`, `@Controller` with a
+    # `consumes = {...}` argument — was mistaken for the class body and
+    # cut the header off before `implements` was ever reached, silently
+    # killing interface route inheritance.
     private def implemented_interface_names(class_decl : LibTreeSitter::TSNode, source : String) : Array(String)
-      header = Noir::TreeSitter.node_text(class_decl, source)
-      if body_start = header.index('{')
-        header = header[...body_start]
-      end
+      names = [] of String
+      return names unless interfaces = Noir::TreeSitter.field(class_decl, "interfaces")
 
-      match = header.match(/\bimplements\s+(.+)\z/m)
-      return [] of String unless match
-
-      names = split_top_level_commas(match[1]).compact_map do |raw|
-        type_name = raw.strip
-        next if type_name.empty?
-        type_name = strip_generic_arguments(type_name)
-        type_name = type_name.split(/\s+/).first? || type_name
-        if idx = type_name.rindex('.')
-          type_name[(idx + 1)..]
+      Noir::TreeSitter.each_named_child(interfaces) do |child|
+        if Noir::TreeSitter.node_type(child) == "type_list"
+          Noir::TreeSitter.each_named_child(child) do |type_node|
+            append_simple_type_name(type_node, source, names)
+          end
         else
-          type_name
+          append_simple_type_name(child, source, names)
         end
       end
-      names.uniq!
       names
     end
 
-    private def split_top_level_commas(text : String) : Array(String)
-      parts = [] of String
-      start = 0
-      depth = 0
-      text.each_char_with_index do |char, index|
-        case char
-        when '<'
-          depth += 1
-        when '>'
-          depth -= 1 if depth > 0
-        when ','
-          if depth == 0
-            parts << text[start...index]
-            start = index + 1
-          end
-        end
+    # Appends the simple name of a type node — generics dropped, package
+    # qualifier dropped, any leading `@Annotation` on an `annotated_type`
+    # discarded — skipping empties and duplicates.
+    private def append_simple_type_name(type_node : LibTreeSitter::TSNode, source : String, names : Array(String))
+      name = strip_generic_arguments(Noir::TreeSitter.node_text(type_node, source))
+      name = name.split(/\s+/).last? || name
+      return if name.empty?
+      if idx = name.rindex('.')
+        name = name[(idx + 1)..]
       end
-      parts << text[start..]
-      parts
+      names << name unless name.empty? || names.includes?(name)
     end
 
     private def strip_generic_arguments(text : String) : String
@@ -537,7 +588,7 @@ module Noir
 
       case Noir::TreeSitter.node_type(node)
       when "string_literal"
-        decode_string_literal(node, source)
+        Noir::TreeSitter.decode_string_literal(node, source)
       when "identifier", "field_access", "scoped_identifier"
         resolve_constant_reference(Noir::TreeSitter.node_text(node, source), constants, current_class)
       when "binary_expression"
@@ -598,53 +649,24 @@ module Noir
             end
           end
           next unless keys.includes?(key) && value
-          if format = consumes_format_from_text(Noir::TreeSitter.node_text(value, source))
+          if format = Noir::JvmMediaType.body_format(Noir::TreeSitter.node_text(value, source))
             return format
           end
         end
         return
       end
 
-      consumes_format_from_text(Noir::TreeSitter.node_text(args, source))
-    end
-
-    private def consumes_format_from_text(text : String) : String?
-      if text.includes?("APPLICATION_FORM_URLENCODED") || text.includes?("application/x-www-form-urlencoded")
-        "form"
-      elsif text.includes?("APPLICATION_JSON") || text.includes?("application/json")
-        "json"
-      elsif text.includes?("MULTIPART_FORM_DATA") || text.includes?("multipart/form-data")
-        "form"
-      end
-    end
-
-    private def decode_string_literal(node : LibTreeSitter::TSNode, source : String) : String
-      buf = String.build do |io|
-        Noir::TreeSitter.each_named_child(node) do |child|
-          if Noir::TreeSitter.node_type(child) == "string_fragment"
-            io << Noir::TreeSitter.node_text(child, source)
-          end
-        end
-      end
-      return buf unless buf.empty?
-      raw = Noir::TreeSitter.node_text(node, source)
-      raw.size >= 2 && raw.starts_with?('"') && raw.ends_with?('"') ? raw[1..-2] : raw
+      Noir::JvmMediaType.body_format(Noir::TreeSitter.node_text(args, source))
     end
 
     # Micronaut joins class + method paths with a single `/`. Empty
     # method path → just the class prefix (no trailing slash).
-    private def join_paths(prefix : String, suffix : String) : String
-      return suffix if prefix.empty?
-      return prefix.rstrip('/') if suffix.empty?
-      "#{prefix.rstrip('/')}/#{suffix.lstrip('/')}"
-    end
-
-    private def strip_uri_template_query(path : String) : String
+    def strip_uri_template_query(path : String) : String
       normalized = path.gsub(/\{\?[^}]*\}/, "")
       normalized.empty? ? "/" : normalized
     end
 
-    private def uri_template_query_vars(path : String) : Array(String)
+    def uri_template_query_vars(path : String) : Array(String)
       vars = [] of String
       path.scan(/\{\?([^}]*)\}/) do |match|
         match[1].split(',').each do |raw|
@@ -655,7 +677,7 @@ module Noir
       vars.uniq
     end
 
-    private def uri_template_path_vars(path : String) : Array(String)
+    def uri_template_path_vars(path : String) : Array(String)
       vars = [] of String
       path.scan(/\{([^}?][^}]*)\}/) do |match|
         name = normalize_uri_template_var(match[1])
@@ -673,7 +695,7 @@ module Noir
       name.strip
     end
 
-    private def merge_query_template_params(params : Array(Param), query_vars : Array(String))
+    def merge_query_template_params(params : Array(Param), query_vars : Array(String))
       query_vars.each do |name|
         next if params.any? { |param| param.name == name && param.param_type == "query" }
         params << Param.new(name, "", "query")
@@ -814,7 +836,7 @@ module Noir
       if fields = dto_index[type_name]?
         fields.each do |field|
           next unless field.access_modifier == "public" || field.has_setter?
-          sink << Param.new(field.name, param_value(default_value, field.init_value), format)
+          sink << Param.new(field.name_for(format), param_value(default_value, field.init_value), format)
         end
       else
         fallback.call
@@ -848,11 +870,50 @@ module Noir
     private def leaf_type_name(node : LibTreeSitter::TSNode, source : String) : String
       ty = Noir::TreeSitter.node_type(node)
       return Noir::TreeSitter.node_text(node, source) if ty == "type_identifier"
+
+      if ty == "generic_type"
+        if outer = generic_type_outer_name(node, source)
+          if REACTIVE_BODY_WRAPPER_TYPES.includes?(outer.downcase)
+            if inner = generic_type_first_argument_leaf(node, source)
+              return inner unless inner.empty?
+            end
+          end
+        end
+      end
+
       Noir::TreeSitter.each_named_child(node) do |child|
         leaf = leaf_type_name(child, source)
         return leaf unless leaf.empty?
       end
       ""
+    end
+
+    # The bare type name a `generic_type` node is parameterizing, e.g.
+    # `Mono` in `Mono<Book>` or `Optional` in `java.util.Optional<Book>`.
+    private def generic_type_outer_name(node : LibTreeSitter::TSNode, source : String) : String?
+      Noir::TreeSitter.each_named_child(node) do |child|
+        case Noir::TreeSitter.node_type(child)
+        when "type_identifier"
+          return Noir::TreeSitter.node_text(child, source)
+        when "scoped_type_identifier"
+          return last_segment(Noir::TreeSitter.node_text(child, source))
+        end
+      end
+      nil
+    end
+
+    # The first concrete `type_arguments` entry of a `generic_type`
+    # node, resolved down to its leaf type name (recursing through
+    # further nested wrappers, e.g. `Mono<Optional<Book>>`).
+    private def generic_type_first_argument_leaf(node : LibTreeSitter::TSNode, source : String) : String?
+      Noir::TreeSitter.each_named_child(node) do |child|
+        next unless Noir::TreeSitter.node_type(child) == "type_arguments"
+        Noir::TreeSitter.each_named_child(child) do |arg|
+          leaf = leaf_type_name(arg, source)
+          return leaf unless leaf.empty?
+        end
+      end
+      nil
     end
 
     private def annotation_string_arg(args : LibTreeSitter::TSNode?,
@@ -867,16 +928,28 @@ module Noir
           next unless keys.includes?("value") || keys.includes?("name")
           return resolve_string_value(child, source, constants, current_class)
         elsif child_type == "element_value_pair"
-          key = ""
-          value : LibTreeSitter::TSNode? = nil
-          Noir::TreeSitter.each_named_child(child) do |sub|
-            case Noir::TreeSitter.node_type(sub)
-            when "identifier"
-              key = Noir::TreeSitter.node_text(sub, source) if key.empty?
-            else
-              value = sub if value.nil?
+          # Read the pair through its `key`/`value` fields rather than by
+          # walking named children and calling the first `identifier` the key.
+          # In `@QueryValue(defaultValue = CODE_DEFAULT)` the value is an
+          # `identifier` too, so the walk consumed the key, then skipped the
+          # constant reference as "another identifier" and left `value` nil —
+          # the pair was dropped and the resolved default (`"none"`) never
+          # reached the param.
+          key_node = Noir::TreeSitter.field(child, "key")
+          value = Noir::TreeSitter.field(child, "value")
+          key = key_node ? Noir::TreeSitter.node_text(key_node, source) : ""
+
+          if key.empty? || value.nil?
+            # Grammar without those fields: fall back to positional order —
+            # first named child is the key, second is the value.
+            seen = [] of LibTreeSitter::TSNode
+            Noir::TreeSitter.each_named_child(child) { |sub| seen << sub }
+            if seen.size >= 2
+              key = Noir::TreeSitter.node_text(seen[0], source)
+              value = seen[1]
             end
           end
+
           next unless keys.includes?(key) && value
           value_type = Noir::TreeSitter.node_type(value)
           return resolve_string_value(value, source, constants, current_class) if annotation_string_value_node?(value_type)

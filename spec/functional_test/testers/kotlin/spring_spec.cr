@@ -4,7 +4,7 @@ expected_endpoints = [
   Endpoint.new("/api/article/", "GET"),
   Endpoint.new("/api/article/{slug}", "GET", [Param.new("slug", "", "path")]),
   Endpoint.new("/api/user/", "GET"),
-  Endpoint.new("/api/user/{login}", "GET", [Param.new("login", "", "path"), Param.new("lorem", "ipsum", "cookie")]),
+  Endpoint.new("/api/user/{login}", "GET", [Param.new("login", "", "path"), Param.new("lorem", "lorem", "cookie")]),
   Endpoint.new("/v1", "GET", [Param.new("version", "1", "query")]),
   Endpoint.new("/v2", "GET", [Param.new("version", "2", "query")]),
   Endpoint.new("/version2", "GET", [Param.new("version", "2", "query")]),
@@ -33,6 +33,13 @@ expected_endpoints = [
   Endpoint.new("/mcp", "POST"),
   Endpoint.new("/mcp", "GET"),
   Endpoint.new("/mcp", "DELETE"),
+  # ConstPathControllers.kt: template / `+` constants from RoutePaths.kt,
+  # and a class prefix with a trailing `// comment`.
+  Endpoint.new("/const/paths/template", "GET"),
+  Endpoint.new("/const/paths/concat", "GET"),
+  Endpoint.new("/const/paths/braced", "GET"),
+  Endpoint.new("/const/local/same-file", "GET"),
+  Endpoint.new("/trailing/{id}", "GET", [Param.new("id", "", "path")]),
 ]
 
 FunctionalTester.new("fixtures/kotlin/spring/", {
@@ -40,7 +47,7 @@ FunctionalTester.new("fixtures/kotlin/spring/", {
   :endpoints => expected_endpoints.size,
 }, expected_endpoints).perform_tests
 
-describe "--ai-context on Kotlin Spring security annotations" do
+describe "--ai-context on Kotlin Spring security annotations", tags: "functional" do
   before_each do
     CodeLocator.instance.clear_all
   end

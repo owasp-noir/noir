@@ -37,7 +37,10 @@ expected_endpoints = [
   Endpoint.new("/notify", "HEAD", [Param.new("message", "", "query")]),
   # wildcard + regex routes
   Endpoint.new("/files/*", "GET"),
-  Endpoint.new("/ticket/(?<code>[0-9]+)", "GET", [Param.new("code", "", "path")]),
+  # `get qr{/ticket/(?<code>[0-9]+)}` — the optimizer rewrites the named
+  # capture group to the canonical `{code}` placeholder, so the URL agrees
+  # with the path param the analyzer records.
+  Endpoint.new("/ticket/{code}", "GET", [Param.new("code", "", "path")]),
   # block-scoped prefix (nested)
   Endpoint.new("/api/status", "GET"),
   Endpoint.new("/api/tokens", "POST", [Param.new("scope", "", "form")]),

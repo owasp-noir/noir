@@ -48,7 +48,7 @@ tester = FunctionalTester.new("fixtures/php/lumen_callees/", {
 })
 tester.perform_tests
 
-describe "Lumen callee extraction" do
+describe "Lumen callee extraction", tags: "functional" do
   it "leaves controller string handlers callee-empty until ImportGraph resolves them" do
     reports_endpoint = tester.app.endpoints.find { |e| e.method == "GET" && e.url == "/reports" }
     reports_endpoint.should_not be_nil

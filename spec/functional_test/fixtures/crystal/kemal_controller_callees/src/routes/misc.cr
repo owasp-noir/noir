@@ -8,4 +8,9 @@ module Routes::Misc
     data = env.params.json["user"]
     UserService.create(data)
   end
+
+  def self.search(env)
+    q = env.params.json["q"]?
+    SearchService.run(q)
+  end
 end

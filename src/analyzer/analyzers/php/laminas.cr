@@ -1,57 +1,105 @@
 require "../../engines/php_engine"
+require "../../../utils/top_level_split"
 
 module Analyzer::Php
   class Laminas < PhpEngine
-    HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]
+    analyzer_for "php_laminas"
 
-    private struct PhpArrayEntry
-      getter key, value, array_body
+    # ASCII byte values for the structural characters the byte-level
+    # helpers below scan for. All are < 0x80, so they can never collide
+    # with a UTF-8 multi-byte continuation/lead byte (>= 0x80) — the same
+    # invariant `PhpEngine#find_matching_php_close_brace` relies on to scan
+    # raw bytes safely regardless of the file's encoding content.
+    private BYTE_SPACE     = ' '.ord.to_u8
+    private BYTE_NEWLINE   = '\n'.ord.to_u8
+    private BYTE_STAR      = '*'.ord.to_u8
+    private BYTE_SLASH     = '/'.ord.to_u8
+    private BYTE_HASH      = '#'.ord.to_u8
+    private BYTE_BACKSLASH = '\\'.ord.to_u8
+    private BYTE_DQUOTE    = '"'.ord.to_u8
+    private BYTE_SQUOTE    = '\''.ord.to_u8
+    private BYTE_LBRACKET  = '['.ord.to_u8
+    private BYTE_RBRACKET  = ']'.ord.to_u8
+    private BYTE_LPAREN    = '('.ord.to_u8
+    private BYTE_RPAREN    = ')'.ord.to_u8
+    private BYTE_LBRACE    = '{'.ord.to_u8
+    private BYTE_RBRACE    = '}'.ord.to_u8
+    private BYTE_COMMA     = ','.ord.to_u8
+    private BYTE_EQUAL     = '='.ord.to_u8
+    private BYTE_GT        = '>'.ord.to_u8
 
-      def initialize(@key : String, @value : String?, @array_body : String?)
-      end
+    private def ascii_ws_byte?(byte : UInt8) : Bool
+      byte == 0x20_u8 || byte == 0x09_u8 || byte == 0x0A_u8 ||
+        byte == 0x0B_u8 || byte == 0x0C_u8 || byte == 0x0D_u8
     end
+
+    # `key_pos` / `body_pos` are byte offsets, in the parsed text, of the key
+    # and of the array value's interior (0 when the value is not an array).
+    private record PhpArrayEntry, key : String, value : String?, array_body : String?, key_pos : Int32, body_pos : Int32
 
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       return endpoints unless path.ends_with?(".php")
 
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
 
-      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        content = file.gets_to_end
-        next unless laminas_relevant?(path, content)
-
+      content = read_file_content(path)
+      if laminas_relevant?(path, content)
+        content = php_code(content)
         endpoints.concat(analyze_config_routes(path, content))
         endpoints.concat(analyze_programmatic_routes(path, content, include_callee))
       end
 
-      dedup_endpoints(endpoints)
+      endpoints.uniq { |endpoint| {endpoint.method, endpoint.url} }
     end
 
+    # Precompiled once at load: the three namespace markers used to be
+    # three separate `String#includes?` scans of the whole file ORed
+    # together. Crystal's `String#includes?` is measurably slower than a
+    # single precompiled `Regex#matches?` call, and this runs on every
+    # `.php` file fed into the analyzer during a project-wide scan.
+    NAMESPACE_MARKER_RE = /Laminas\\|Zend\\|Mezzio\\/
+
+    # Every PHP analyzer is fed every `.php` file in the scan, so this gate is
+    # the only thing keeping Laminas off other frameworks' route files.
+    #
+    # There used to be a fourth, catch-all branch: any file containing
+    # `->get('…')` was treated as Laminas. That is not a Laminas signal — it is
+    # a "some PHP code calls a getter with a string" signal, and it matched
+    # `$config->get('db.host')` as readily as a route. In a repo holding more
+    # than one PHP framework it claimed CodeIgniter's `app/Config/Routes.php`,
+    # CakePHP's `config/routes.php` and Lumen's `routes/web.php`, inventing 16
+    # phantom endpoints across the fixture tree alone — several with mangled
+    # paths (`/billing` out of `tenant/(:num)/billing`).
+    #
+    # Nothing is lost by dropping it: a Mezzio/Laminas programmatic route is
+    # registered on a `Mezzio\Application`, and a file that gets hold of one
+    # names `Mezzio\` or `Laminas\` in a `use` statement or a type hint, so the
+    # namespace marker below already covers it.
     private def laminas_relevant?(path : String, content : String) : Bool
       return true if path.includes?("/config/") && (content.includes?("'router'") || content.includes?("\"router\""))
-      return true if content.includes?("Laminas\\") || content.includes?("Zend\\") || content.includes?("Mezzio\\")
-      return true if content.includes?("RouteStackInterface")
-      !!content.match(/->(?:get|post|put|patch|delete|options|head|any|route)\s*\(\s*['"][^'"]+['"]/i)
+      return true if content.matches?(NAMESPACE_MARKER_RE)
+      content.includes?("RouteStackInterface")
     end
 
     private def analyze_config_routes(path : String, content : String) : Array(Endpoint)
       endpoints = [] of Endpoint
-      route_blocks(content).each do |block|
-        endpoints.concat(parse_routes_block(block, "", ["GET"], path))
+      route_blocks(content).each do |block, block_line|
+        endpoints.concat(parse_routes_block(block, block_line, "", ["GET"], path))
       end
       endpoints
     end
 
-    private def route_blocks(content : String) : Array(String)
-      blocks = [] of String
+    # Each `'routes' => [...]` interior with the line it starts on.
+    private def route_blocks(content : String) : Array(Tuple(String, Int32))
+      blocks = [] of Tuple(String, Int32)
       offset = 0
 
       while match = content.match(/['"]routes['"]\s*=>\s*(?:\[|array\s*\()/i, offset)
         open_pos = match[0].ends_with?("[") ? match.end(0) - 1 : match.end(0) - 1
         close_pos = find_matching_delimiter(content, open_pos)
         if close_pos
-          blocks << content[(open_pos + 1)...close_pos]
+          blocks << {content[(open_pos + 1)...close_pos], line_number_for_index(content, open_pos)}
           offset = close_pos + 1
         else
           offset = match.end(0)
@@ -61,14 +109,14 @@ module Analyzer::Php
       blocks
     end
 
-    private def parse_routes_block(block : String, prefix : String, inherited_methods : Array(String), path : String) : Array(Endpoint)
+    private def parse_routes_block(block : String, block_line : Int32, prefix : String, inherited_methods : Array(String), path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
-      details = Details.new(PathInfo.new(path))
 
       parse_top_level_entries(block).each do |route_entry|
         body = route_entry.array_body
         next unless body
 
+        details = Details.new(PathInfo.new(path, line_in(block, block_line, route_entry.key_pos)))
         entry_info = route_entry_info(body)
         methods = entry_info[:methods].empty? ? inherited_methods : entry_info[:methods]
         child_routes = entry_info[:child_routes]
@@ -87,7 +135,9 @@ module Analyzer::Php
         end
 
         if child_routes
-          endpoints.concat(parse_routes_block(child_routes, full_path, methods, path))
+          body_line = line_in(block, block_line, route_entry.body_pos)
+          child_line = line_in(body, body_line, child_routes.body_pos)
+          endpoints.concat(parse_routes_block(child_routes.array_body || "", child_line, full_path, methods, path))
         end
       end
 
@@ -98,7 +148,7 @@ module Analyzer::Php
       route_path: String?,
       methods: Array(String),
       constraints: Hash(String, String),
-      child_routes: String?,
+      child_routes: PhpArrayEntry?,
       hostname: Bool,
       may_terminate: Bool)
       entries = parse_top_level_entries(body)
@@ -126,7 +176,7 @@ module Analyzer::Php
 
       constraints = extract_constraints(options_entries)
       constraints = nested_route_info[:constraints] if constraints.empty? && nested_route_info
-      child_routes = array_entry(entries, "child_routes")
+      child_routes = entries.find { |entry| entry.key == "child_routes" && entry.array_body }
 
       may_terminate = !type_value.downcase.includes?("part")
       if value = raw_entry(entries, "may_terminate")
@@ -145,7 +195,6 @@ module Analyzer::Php
 
     private def analyze_programmatic_routes(path : String, content : String, include_callee : Bool) : Array(Endpoint)
       endpoints = [] of Endpoint
-      details = Details.new(PathInfo.new(path))
       working_content = strip_php_comments(content)
 
       # The path literal must stay on one line and contain no quotes. The
@@ -154,16 +203,13 @@ module Analyzer::Php
       # far-off quote+comma, surfacing multi-line code as a bogus route
       # (e.g. CakePHP controllers in cakesandbox, koel request objects).
       verb_regex = /(\$\w+|\$this->\w+)->(get|post|put|patch|delete|options|head|any)\s*\(\s*(['"])([^'"\r\n]*?)\3\s*,/im
+      offsets = Noir::CharOffsets.new(working_content)
       pos = 0
-      while match = working_content.match(verb_regex, pos)
-        match_text = match[0]
-        match_start = working_content.index(match_text, pos)
-        break unless match_start
-
+      while match = offsets.match(verb_regex, pos)
         route_path = normalize_laminas_route_path(match[4])
-        methods = match[2].downcase == "any" ? HTTP_METHODS : [match[2].upcase]
-        after_args = match_start + match_text.size
-        handler_body, next_pos, body_start_line = extract_handler_body_with_end(working_content, after_args)
+        details = Details.new(PathInfo.new(path, offsets.line(offsets.begin(match))))
+        methods = match[2].downcase == "any" ? ANY_ROUTE_HTTP_METHODS : [match[2].upcase]
+        handler_body, next_pos, body_start_line = extract_handler_body_with_end(offsets, offsets.end(match))
 
         params = extract_laminas_path_params(route_path)
         params.concat(extract_handler_params(handler_body)) if handler_body
@@ -184,27 +230,25 @@ module Analyzer::Php
       # 7-method phantom route (koel request objects).
       route_regex = /(\$\w+|\$this->\w+)->route\s*\(\s*(['"])([^'"\r\n]*?)\2\s*,/im
       pos = 0
-      while match = working_content.match(route_regex, pos)
-        match_text = match[0]
-        match_start = working_content.index(match_text, pos)
-        break unless match_start
-
-        call_open = working_content.index('(', match_start)
+      while match = offsets.match(route_regex, pos)
+        # Byte offsets from here: the `(` is inside the match itself.
+        call_open = working_content.byte_index('('.ord.to_u8, match.byte_begin(0))
         break unless call_open
 
-        call_close = find_matching_delimiter(working_content, call_open)
+        call_close = find_matching_delimiter(working_content.to_slice, call_open)
         if call_close
-          call_content = working_content[(call_open + 1)...call_close]
+          call_content = working_content.byte_slice(call_open + 1, call_close - call_open - 1)
           route_path = normalize_laminas_route_path(match[3])
+          details = Details.new(PathInfo.new(path, offsets.line(offsets.begin(match))))
           methods = extract_methods_from_route_call(call_content)
           params = extract_laminas_path_params(route_path)
 
           methods.each do |method|
             endpoints << Endpoint.new(route_path, method, params, details.dup)
           end
-          pos = call_close + 1
+          pos = offsets.char(call_close) + 1
         else
-          pos = match_start + match_text.size
+          pos = offsets.end(match)
         end
       end
 
@@ -218,25 +262,25 @@ module Analyzer::Php
       attach_php_callees(endpoint, callees)
     end
 
-    private def extract_handler_body_with_end(content : String, pos : Int32) : Tuple(String?, Int32, Int32?)
-      return {nil, pos, nil} unless pos < content.size
+    private def extract_handler_body_with_end(offsets : Noir::CharOffsets, pos : Int32) : Tuple(String?, Int32, Int32?)
+      size = offsets.content.size
+      return {nil, pos, nil} unless pos < size
 
       scan_pos = pos
-      while scan_pos < content.size && content[scan_pos].ascii_whitespace?
+      while offsets.ascii_whitespace?(scan_pos)
         scan_pos += 1
       end
-      return {nil, pos, nil} unless scan_pos < content.size
+      return {nil, pos, nil} unless scan_pos < size
 
-      closure_regex = /\A(?:static\s+)?function\s*\([^)]*\)\s*(?:use\s*\([^)]*\)\s*)?(?::\s*[^{=]+)?\{/i
-      match = content[scan_pos..].match(closure_regex)
+      match = offsets.match(INLINE_CLOSURE_HEAD_RE, scan_pos)
       return {nil, pos, nil} unless match
 
-      brace_pos = scan_pos + match[0].size - 1
-      body_end = find_matching_delimiter(content, brace_pos)
-      return {nil, pos, nil} unless body_end
+      close_byte = find_matching_delimiter(offsets.content.to_slice, match.byte_end(0) - 1)
+      return {nil, pos, nil} unless close_byte
 
-      body_start_line = php_line_number_for_index(content, brace_pos)
-      {content[(brace_pos + 1)...body_end], body_end + 1, body_start_line}
+      brace_pos = offsets.end(match) - 1
+      body_end = offsets.char(close_byte)
+      {offsets.slice(brace_pos + 1, body_end), body_end + 1, offsets.line(brace_pos)}
     end
 
     PARAM_PATTERNS = [
@@ -285,6 +329,16 @@ module Analyzer::Php
       normalize_laminas_route_path(normalized)
     end
 
+    # Regex metacharacters. A Laminas constraint is a validation *pattern*
+    # (`'itemId' => '[0-9]+'`), so it only doubles as a value when it matches
+    # exactly one string — i.e. when it contains none of these.
+    CONSTRAINT_METACHARACTERS = "\\^$.|?*+()[]{}"
+
+    # A constraint carrying no metacharacters (`'format' => 'json'`) matches a
+    # single literal and is a usable value; a real pattern is not. `Param#value`
+    # is what HTTP-shaped consumers send and what the OAS builders publish as
+    # an `enum`, so passing the pattern straight through advertised `[0-9]+`
+    # as a concrete `itemId`.
     private def extract_laminas_path_params(route_path : String, constraints = Hash(String, String).new) : Array(Param)
       params = [] of Param
       seen = Set(String).new
@@ -293,7 +347,11 @@ module Analyzer::Php
         name = match[1]
         next if seen.includes?(name)
 
-        params << Param.new(name, constraints[name]? || "", "path")
+        constraint = constraints[name]?
+        value = constraint && !constraint.empty? &&
+                constraint.each_char.none? { |c| CONSTRAINT_METACHARACTERS.includes?(c) } ? constraint : ""
+
+        params << Param.new(name, value, "path")
         seen.add(name)
       end
 
@@ -329,7 +387,7 @@ module Analyzer::Php
     end
 
     private def extract_http_methods(content : String) : Array(String)
-      return HTTP_METHODS if content.match(/HTTP_METHOD_ANY|METHOD_ANY/i)
+      return ANY_ROUTE_HTTP_METHODS if content.match(/HTTP_METHOD_ANY|METHOD_ANY/i)
 
       methods = [] of String
       content.scan(/['"]?(GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)['"]?/i) do |match|
@@ -341,92 +399,88 @@ module Analyzer::Php
     private def extract_methods_from_route_call(call_content : String) : Array(String)
       args = split_top_level_args(call_content)
       method_arg = args[2]?
-      return HTTP_METHODS unless method_arg
+      return ANY_ROUTE_HTTP_METHODS unless method_arg
 
       stripped = method_arg.strip
-      return HTTP_METHODS if stripped.empty? || stripped.downcase == "null"
+      return ANY_ROUTE_HTTP_METHODS if stripped.empty? || stripped.downcase == "null"
 
       methods = extract_http_methods(stripped)
-      methods.empty? ? HTTP_METHODS : methods
+      methods.empty? ? ANY_ROUTE_HTTP_METHODS : methods
     end
 
+    # `Rules::SHARED_DEPTH_RAW` with a trailing empty dropped, then a
+    # `strip` applied by this method rather than by the splitter.
+    #
+    # The order matters and is not cosmetic. The body this replaces
+    # stripped each part as it pushed it, but decided whether to emit the
+    # tail from the RAW slice (`if start < size`), so `f(a, )` kept a final
+    # `""` while `f(a,)` did not. Stripping inside the splitter would test
+    # the stripped tail and drop both. Splitting raw and stripping
+    # afterwards reproduces the original exactly.
+    #
+    # The old scan walked bytes to dodge `String#[](Int)`; the shared
+    # splitter is a single forward `each_char` pass, so it is O(n) on any
+    # input without needing the byte detour. Every delimiter, quote and
+    # bracket involved is ASCII and UTF-8 continuation bytes are all
+    # >= 0x80, so the two scans see the same split points.
+    SPLIT_ARGS_RULES = Noir::TopLevelSplit::Rules.new(
+      nest: Noir::TopLevelSplit::Nest::Paren | Noir::TopLevelSplit::Nest::Bracket |
+            Noir::TopLevelSplit::Nest::Brace,
+      quotes: "\"'",
+      escape: Noir::TopLevelSplit::Escape::InQuotes,
+      strip: false,
+      empties: Noir::TopLevelSplit::Empties::DropTrailing,
+      per_kind: false,
+      clamp: true,
+    )
+
     private def split_top_level_args(content : String) : Array(String)
-      args = [] of String
-      start = 0
-      i = 0
-      depth = 0
-      in_string = false
-      quote = '\0'
-      escaped = false
-
-      while i < content.size
-        char = content[i]
-        if in_string
-          if escaped
-            escaped = false
-          elsif char == '\\'
-            escaped = true
-          elsif char == quote
-            in_string = false
-          end
-        elsif char == '\'' || char == '"'
-          in_string = true
-          quote = char
-        elsif char == '[' || char == '(' || char == '{'
-          depth += 1
-        elsif char == ']' || char == ')' || char == '}'
-          depth -= 1 if depth > 0
-        elsif char == ',' && depth == 0
-          args << content[start...i].strip
-          start = i + 1
-        end
-        i += 1
-      end
-
-      args << content[start...content.size].strip if start < content.size
-      args
+      Noir::TopLevelSplit.split(content, ',', SPLIT_ARGS_RULES).map(&.strip)
     end
 
     private def parse_top_level_entries(content : String) : Array(PhpArrayEntry)
       entries = [] of PhpArrayEntry
+      bytes = content.to_slice
       pos = 0
+      size = bytes.size
 
-      while pos < content.size
-        pos = skip_ws_and_commas(content, pos)
-        break if pos >= content.size
+      while pos < size
+        pos = skip_ws_and_commas(bytes, pos)
+        break if pos >= size
 
-        key_info = read_php_string(content, pos)
+        key_pos = pos
+        key_info = read_php_string(bytes, pos)
         unless key_info
           pos += 1
           next
         end
 
         key, after_key = key_info
-        pos = skip_ws(content, after_key)
-        unless content[pos, 2]? == "=>"
+        pos = skip_ws(bytes, after_key)
+        unless pos + 1 < size && bytes[pos] == BYTE_EQUAL && bytes[pos + 1] == BYTE_GT
           pos = after_key
           next
         end
 
-        pos = skip_ws(content, pos + 2)
-        break if pos >= content.size
+        pos = skip_ws(bytes, pos + 2)
+        break if pos >= size
 
-        if array_start = array_value_start(content, pos)
-          close_pos = find_matching_delimiter(content, array_start)
+        if array_start = array_value_start(bytes, pos)
+          close_pos = find_matching_delimiter(bytes, array_start)
           unless close_pos
             pos += 1
             next
           end
 
-          entries << PhpArrayEntry.new(key, nil, content[(array_start + 1)...close_pos])
+          entries << PhpArrayEntry.new(key, nil, String.new(bytes[(array_start + 1)...close_pos]), key_pos, array_start + 1)
           pos = close_pos + 1
-        elsif value_info = read_php_string(content, pos)
+        elsif value_info = read_php_string(bytes, pos)
           value, after_value = value_info
-          entries << PhpArrayEntry.new(key, value, nil)
+          entries << PhpArrayEntry.new(key, value, nil, key_pos, 0)
           pos = after_value
         else
-          value, after_value = read_raw_value(content, pos)
-          entries << PhpArrayEntry.new(key, value, nil)
+          value, after_value = read_raw_value(bytes, pos)
+          entries << PhpArrayEntry.new(key, value, nil, key_pos, 0)
           pos = after_value
         end
       end
@@ -434,132 +488,156 @@ module Analyzer::Php
       entries
     end
 
-    private def array_value_start(content : String, pos : Int32) : Int32?
-      return pos if content[pos]? == '['
+    private def array_value_start(bytes : Bytes, pos : Int32) : Int32?
+      return pos if pos < bytes.size && bytes[pos] == BYTE_LBRACKET
+      return unless ascii_ci_literal_at?(bytes, pos, "array")
 
-      if match = content[pos..].match(/\Aarray\s*\(/i)
-        return pos + match[0].size - 1
-      end
+      after = skip_ws(bytes, pos + 5)
+      return unless after < bytes.size && bytes[after] == BYTE_LPAREN
 
-      nil
+      after
     end
 
-    private def read_php_string(content : String, pos : Int32) : Tuple(String, Int32)?
-      quote = content[pos]?
-      return unless quote == '\'' || quote == '"'
+    # Case-insensitive match of an ASCII literal (e.g. "array") at `pos`.
+    private def ascii_ci_literal_at?(bytes : Bytes, pos : Int32, literal : String) : Bool
+      return false if pos + literal.bytesize > bytes.size
 
-      value = String.build do |io|
-        i = pos + 1
-        escaped = false
-        while i < content.size
-          char = content[i]
-          if escaped
-            io << char
-            escaped = false
-          elsif char == '\\'
-            escaped = true
-          elsif char == quote
-            return {io.to_s, i + 1}
-          else
-            io << char
-          end
-          i += 1
+      literal.each_byte.with_index do |lb, offset|
+        byte = bytes[pos + offset]
+        # ASCII-only downcase: clear bit 0x20 off an uppercase letter.
+        byte = byte + 0x20_u8 if byte >= 0x41_u8 && byte <= 0x5A_u8
+        return false unless byte == lb
+      end
+
+      true
+    end
+
+    private def read_php_string(bytes : Bytes, pos : Int32) : Tuple(String, Int32)?
+      return unless pos < bytes.size
+      quote = bytes[pos]
+      return unless quote == BYTE_SQUOTE || quote == BYTE_DQUOTE
+
+      io = IO::Memory.new
+      i = pos + 1
+      escaped = false
+      size = bytes.size
+      while i < size
+        byte = bytes[i]
+        if escaped
+          io.write_byte(byte)
+          escaped = false
+        elsif byte == BYTE_BACKSLASH
+          escaped = true
+        elsif byte == quote
+          return {io.to_s, i + 1}
+        else
+          io.write_byte(byte)
         end
+        i += 1
       end
 
-      {value, content.size}
+      {io.to_s, size}
     end
 
-    private def read_raw_value(content : String, pos : Int32) : Tuple(String, Int32)
+    private def read_raw_value(bytes : Bytes, pos : Int32) : Tuple(String, Int32)
       start = pos
       i = pos
       depth = 0
       in_string = false
-      quote = '\0'
+      quote = 0_u8
       escaped = false
+      size = bytes.size
 
-      while i < content.size
-        char = content[i]
+      while i < size
+        byte = bytes[i]
         if in_string
           if escaped
             escaped = false
-          elsif char == '\\'
+          elsif byte == BYTE_BACKSLASH
             escaped = true
-          elsif char == quote
+          elsif byte == quote
             in_string = false
           end
-        elsif char == '\'' || char == '"'
+        elsif byte == BYTE_SQUOTE || byte == BYTE_DQUOTE
           in_string = true
-          quote = char
-        elsif char == '[' || char == '(' || char == '{'
+          quote = byte
+        elsif byte == BYTE_LBRACKET || byte == BYTE_LPAREN || byte == BYTE_LBRACE
           depth += 1
-        elsif char == ']' || char == ')' || char == '}'
+        elsif byte == BYTE_RBRACKET || byte == BYTE_RPAREN || byte == BYTE_RBRACE
           break if depth == 0
           depth -= 1
-        elsif char == ',' && depth == 0
+        elsif byte == BYTE_COMMA && depth == 0
           break
         end
         i += 1
       end
 
-      {content[start...i].strip, i}
+      {String.new(bytes[start...i]).strip, i}
     end
 
-    private def find_matching_delimiter(content : String, open_pos : Int32) : Int32?
-      open_char = content[open_pos]?
-      close_char = case open_char
-                   when '[' then ']'
-                   when '(' then ')'
-                   when '{' then '}'
+    # Find the delimiter (`]`, `)`, or `}`) that matches the opener at
+    # `open_pos`, skipping delimiters inside strings and `//`, `#`,
+    # `/* */` comments. Byte-level scan for O(1) positional access — see
+    # `PhpEngine#find_matching_php_close_brace` for the equivalent fix
+    # applied to brace-only matching.
+    private def find_matching_delimiter(bytes : Bytes, open_pos : Int32) : Int32?
+      return unless open_pos < bytes.size
+
+      open_byte = bytes[open_pos]
+      close_byte = case open_byte
+                   when BYTE_LBRACKET then BYTE_RBRACKET
+                   when BYTE_LPAREN   then BYTE_RPAREN
+                   when BYTE_LBRACE   then BYTE_RBRACE
                    else
                      return
                    end
 
-      stack = [close_char]
+      stack = [close_byte]
       in_string = false
       in_line_comment = false
       in_block_comment = false
       escaped = false
-      quote = '\0'
+      quote = 0_u8
       pos = open_pos + 1
+      size = bytes.size
 
-      while pos < content.size
-        char = content[pos]
-        next_char = content[pos + 1]?
+      while pos < size
+        byte = bytes[pos]
+        next_byte = pos + 1 < size ? bytes[pos + 1] : 0_u8
 
         if in_line_comment
-          in_line_comment = false if char == '\n'
+          in_line_comment = false if byte == BYTE_NEWLINE
         elsif in_block_comment
-          if char == '*' && next_char == '/'
+          if byte == BYTE_STAR && next_byte == BYTE_SLASH
             in_block_comment = false
             pos += 1
           end
         elsif in_string
           if escaped
             escaped = false
-          elsif char == '\\'
+          elsif byte == BYTE_BACKSLASH
             escaped = true
-          elsif char == quote
+          elsif byte == quote
             in_string = false
           end
-        elsif char == '/' && next_char == '/'
+        elsif byte == BYTE_SLASH && next_byte == BYTE_SLASH
           in_line_comment = true
           pos += 1
-        elsif char == '/' && next_char == '*'
+        elsif byte == BYTE_SLASH && next_byte == BYTE_STAR
           in_block_comment = true
           pos += 1
-        elsif char == '#'
+        elsif byte == BYTE_HASH
           in_line_comment = true
-        elsif char == '"' || char == '\''
+        elsif byte == BYTE_DQUOTE || byte == BYTE_SQUOTE
           in_string = true
-          quote = char
-        elsif char == '['
-          stack << ']'
-        elsif char == '('
-          stack << ')'
-        elsif char == '{'
-          stack << '}'
-        elsif char == stack.last?
+          quote = byte
+        elsif byte == BYTE_LBRACKET
+          stack << BYTE_RBRACKET
+        elsif byte == BYTE_LPAREN
+          stack << BYTE_RPAREN
+        elsif byte == BYTE_LBRACE
+          stack << BYTE_RBRACE
+        elsif byte == stack.last?
           stack.pop
           return pos if stack.empty?
         end
@@ -570,62 +648,92 @@ module Analyzer::Php
       nil
     end
 
+    # Char-index overload for the top-level call sites (`route_blocks`,
+    # `extract_handler_body_with_end`, `analyze_programmatic_routes`) that
+    # only have a char position on hand. Converts once at the boundary
+    # instead of on every byte, then delegates to the byte-native version
+    # above.
+    private def find_matching_delimiter(content : String, open_pos : Int32) : Int32?
+      byte_pos = content.char_index_to_byte_index(open_pos)
+      return unless byte_pos
+
+      result = find_matching_delimiter(content.to_slice, byte_pos)
+      result ? content.byte_index_to_char_index(result) : nil
+    end
+
+    # Blank out `//`, `#` and `/* */` comment bodies (replacing each masked
+    # byte with a space; newlines are preserved) so the route-verb scans
+    # that run over the result never match syntax that only appears inside
+    # a comment.
+    #
+    # Byte-level scan for O(1) positional access — see
+    # `find_matching_delimiter` above. Nothing downstream compares this
+    # result's char count against the original `content` (every
+    # regex/index operation performed on it stays self-contained within
+    # the result itself), so masking a multi-byte comment character with
+    # one space per byte — rather than one space per character, as the
+    # previous char-based version did — is a safe, simpler substitute.
     private def strip_php_comments(content : String) : String
+      bytes = content.to_slice
       String.build do |io|
         in_string = false
         in_line_comment = false
         in_block_comment = false
         escaped = false
-        quote = '\0'
+        quote = 0_u8
         pos = 0
+        size = bytes.size
 
-        while pos < content.size
-          char = content[pos]
-          next_char = content[pos + 1]?
+        while pos < size
+          byte = bytes[pos]
+          next_byte = pos + 1 < size ? bytes[pos + 1] : 0_u8
 
           if in_line_comment
-            if char == '\n'
+            if byte == BYTE_NEWLINE
               in_line_comment = false
-              io << char
+              io.write_byte(byte)
             else
-              io << ' '
+              io.write_byte(BYTE_SPACE)
             end
           elsif in_block_comment
-            if char == '*' && next_char == '/'
+            if byte == BYTE_STAR && next_byte == BYTE_SLASH
               in_block_comment = false
-              io << "  "
+              io.write_byte(BYTE_SPACE)
+              io.write_byte(BYTE_SPACE)
               pos += 1
-            elsif char == '\n'
-              io << char
+            elsif byte == BYTE_NEWLINE
+              io.write_byte(byte)
             else
-              io << ' '
+              io.write_byte(BYTE_SPACE)
             end
           elsif in_string
-            io << char
+            io.write_byte(byte)
             if escaped
               escaped = false
-            elsif char == '\\'
+            elsif byte == BYTE_BACKSLASH
               escaped = true
-            elsif char == quote
+            elsif byte == quote
               in_string = false
             end
-          elsif char == '/' && next_char == '/'
+          elsif byte == BYTE_SLASH && next_byte == BYTE_SLASH
             in_line_comment = true
-            io << "  "
+            io.write_byte(BYTE_SPACE)
+            io.write_byte(BYTE_SPACE)
             pos += 1
-          elsif char == '/' && next_char == '*'
+          elsif byte == BYTE_SLASH && next_byte == BYTE_STAR
             in_block_comment = true
-            io << "  "
+            io.write_byte(BYTE_SPACE)
+            io.write_byte(BYTE_SPACE)
             pos += 1
-          elsif char == '#'
+          elsif byte == BYTE_HASH
             in_line_comment = true
-            io << ' '
-          elsif char == '"' || char == '\''
+            io.write_byte(BYTE_SPACE)
+          elsif byte == BYTE_DQUOTE || byte == BYTE_SQUOTE
             in_string = true
-            quote = char
-            io << char
+            quote = byte
+            io.write_byte(byte)
           else
-            io << char
+            io.write_byte(byte)
           end
 
           pos += 1
@@ -633,17 +741,17 @@ module Analyzer::Php
       end
     end
 
-    private def skip_ws(content : String, pos : Int32) : Int32
+    private def skip_ws(bytes : Bytes, pos : Int32) : Int32
       i = pos
-      while i < content.size && content[i].ascii_whitespace?
+      while i < bytes.size && ascii_ws_byte?(bytes[i])
         i += 1
       end
       i
     end
 
-    private def skip_ws_and_commas(content : String, pos : Int32) : Int32
+    private def skip_ws_and_commas(bytes : Bytes, pos : Int32) : Int32
       i = pos
-      while i < content.size && (content[i].ascii_whitespace? || content[i] == ',')
+      while i < bytes.size && (ascii_ws_byte?(bytes[i]) || bytes[i] == BYTE_COMMA)
         i += 1
       end
       i
@@ -657,34 +765,13 @@ module Analyzer::Php
       entries.find { |entry| entry.key == key }.try { |entry| entry.value || entry.array_body }
     end
 
+    # Line of byte offset `pos` in `text`, which starts on line `base_line`.
+    private def line_in(text : String, base_line : Int32, pos : Int32) : Int32
+      base_line + text.to_slice[0, pos.clamp(0, text.bytesize)].count('\n'.ord.to_u8)
+    end
+
     private def array_entry(entries : Array(PhpArrayEntry), key : String) : String?
       entries.find { |entry| entry.key == key }.try(&.array_body)
-    end
-
-    private def dedup_params(params : Array(Param)) : Array(Param)
-      seen = Set(String).new
-      params.select do |param|
-        key = "#{param.param_type}\0#{param.name}"
-        if seen.includes?(key)
-          false
-        else
-          seen.add(key)
-          true
-        end
-      end
-    end
-
-    private def dedup_endpoints(endpoints : Array(Endpoint)) : Array(Endpoint)
-      seen = Set(String).new
-      endpoints.select do |endpoint|
-        key = "#{endpoint.method}\0#{endpoint.url}"
-        if seen.includes?(key)
-          false
-        else
-          seen.add(key)
-          true
-        end
-      end
     end
   end
 end

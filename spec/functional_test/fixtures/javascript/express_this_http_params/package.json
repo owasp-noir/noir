@@ -1,0 +1,6 @@
+{
+  "name": "express-this-http-params",
+  "dependencies": {
+    "express": "^4.18.0"
+  }
+}

@@ -2,6 +2,16 @@ require "../../engines/crystal_engine"
 
 module Analyzer::Crystal
   class Lucky < CrystalEngine
+    analyzer_for "crystal_lucky"
+
+    # Only files inside a project whose `shard.yml` depends on `lucky`.
+    # See `CrystalEngine#shard_dependencies` — `get "/path"` is the same
+    # line in Kemal, Grip and Amber, so the manifest is what tells the
+    # frameworks apart.
+    protected def shard_dependencies : Array(String)
+      ["lucky"]
+    end
+
     def analyze
       collect_public_dir_endpoints
       super
@@ -9,16 +19,10 @@ module Analyzer::Crystal
 
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
-      lines = [] of String
 
-      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        file.each_line do |line|
-          lines << line
-        end
-      end
-      lines = mask_crystal_heredocs(lines)
+      lines = mask_crystal_heredocs(read_file_content(path).lines)
 
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       last_endpoint = Endpoint.new("", "")
 
       # Lucky's `param name : Type` macro declares a query parameter at the
@@ -29,6 +33,7 @@ module Analyzer::Crystal
       # Track the enclosing action class so `action`/`nested_route` (which
       # carry no path) can infer their route from the class name.
       current_class = ""
+      param_lines = crystal_param_lines(lines)
 
       lines.each_with_index do |line, index|
         stripped = Noir::CrystalCalleeExtractor.strip_comment(line)
@@ -71,7 +76,7 @@ module Analyzer::Crystal
           last_endpoint = endpoint
         end
 
-        param = line_to_param(line)
+        param = line_to_param(param_lines[index])
         unless param.name.empty?
           unless last_endpoint.method.empty?
             last_endpoint.push_param(param)
@@ -164,24 +169,19 @@ module Analyzer::Crystal
       attach_crystal_callees(endpoint, callees)
     end
 
-    private def collect_public_dir_endpoints
-      # `get_public_files` scopes to `public/` directories that sit
-      # next to a `shard.yml`, so files in unrelated `*/public/`
-      # subtrees (e.g. a built docs site at `docs/public/`) no
-      # longer leak in as fake Lucky endpoints.
-      each_public_file do |file|
-        # Extract the path after "/public/" regardless of depth
-        if file =~ /\/public\/(.*)/
-          relative_path = $1
-          @result << Endpoint.new("/#{relative_path}", "GET")
-        end
-      end
-    rescue e
-      logger.debug e
-    end
+    # Lucky uniquely registers TRACE routes. Shared engine verbs cover the
+    # rest; this is stitched in via `match_crystal_simple_route(..., extra:)`.
+    TRACE_ROUTE_PATTERN = /(?:^|[^.\w])trace\s*(?:\(\s*)?['"](.+?)['"]/
+    LUCKY_EXTRA_ROUTES  = [{"TRACE", TRACE_ROUTE_PATTERN}] of Tuple(String, Regex)
 
     def line_to_param(content : String) : Param
       content = Noir::CrystalCalleeExtractor.strip_comment(content)
+
+      # Most source lines never touch params; bail before the includes?/split
+      # chain when none of the Lucky accessor prefixes appear.
+      return Param.new("", "", "") unless content.includes?("params.") ||
+                                          content.includes?("request.") ||
+                                          content.includes?("cookies")
 
       if content.includes? "params.from_query[\""
         param = content.split("params.from_query[\"")[1].split("\"]")[0].gsub("\"", "").gsub("'", "")
@@ -222,53 +222,12 @@ module Analyzer::Crystal
     end
 
     def line_to_endpoint(content : String) : Endpoint
-      content = Noir::CrystalCalleeExtractor.strip_comment(content)
-
-      content.scan(/(?:^|[^.\w])get\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
-        if match.size > 1
-          return Endpoint.new(normalize_crystal_interpolation(match[1]), "GET")
-        end
-      end
-
-      content.scan(/(?:^|[^.\w])post\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
-        if match.size > 1
-          return Endpoint.new(normalize_crystal_interpolation(match[1]), "POST")
-        end
-      end
-
-      content.scan(/(?:^|[^.\w])put\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
-        if match.size > 1
-          return Endpoint.new(normalize_crystal_interpolation(match[1]), "PUT")
-        end
-      end
-
-      content.scan(/(?:^|[^.\w])delete\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
-        if match.size > 1
-          return Endpoint.new(normalize_crystal_interpolation(match[1]), "DELETE")
-        end
-      end
-
-      content.scan(/(?:^|[^.\w])patch\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
-        if match.size > 1
-          return Endpoint.new(normalize_crystal_interpolation(match[1]), "PATCH")
-        end
-      end
-
-      content.scan(/(?:^|[^.\w])trace\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
-        if match.size > 1
-          return Endpoint.new(normalize_crystal_interpolation(match[1]), "TRACE")
-        end
-      end
-
-      content.scan(/(?:^|[^.\w])ws\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
-        if match.size > 1
-          endpoint = Endpoint.new(normalize_crystal_interpolation(match[1]), "GET")
-          endpoint.protocol = "ws"
-          return endpoint
-        end
-      end
-
-      Endpoint.new("", "")
+      # Shared engine helper + Lucky's TRACE. Replaces 7 sequential
+      # unguarded .scan calls per source line.
+      match_crystal_simple_route(
+        Noir::CrystalCalleeExtractor.strip_comment(content),
+        extra: LUCKY_EXTRA_ROUTES
+      )
     end
   end
 end

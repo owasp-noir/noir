@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-Nix provides a reproducible development environment with consistent dependencies across machines.
+Nix provides a reproducible development environment: the same dependencies on every machine, isolated from system-wide packages.
 
 ## Installing Nix
 
@@ -26,7 +26,7 @@ See the [official Nix installation guide](https://nixos.org/download.html) for d
 
 ### Enable Flakes
 
-[Flakes](https://nixos.wiki/wiki/Flakes) are Nix's modern approach to reproducible project definitions. Enable them by adding this line to `~/.config/nix/nix.conf` (or `/etc/nix/nix.conf`).
+[Flakes](https://wiki.nixos.org/wiki/Flakes) are Nix's modern approach to reproducible project definitions. Enable them by adding this line to `~/.config/nix/nix.conf` (or `/etc/nix/nix.conf`).
 
 ```
 experimental-features = nix-command flakes
@@ -39,7 +39,12 @@ cd noir
 nix develop
 ```
 
-This sets up Crystal, shards, and all dependencies automatically.
+The shell brings its own Crystal, shards, `just`, and the native libraries Noir links against. The shard dependencies themselves still live in `./lib`, so install them once inside the shell and build as usual.
+
+```sh
+shards install
+just build
+```
 
 ## Alternative: Using Docker with Nix
 
@@ -55,20 +60,31 @@ Inside the container, enter the dev shell.
 nix develop
 ```
 
-## Updating Dependencies
+## Building the Package
 
-After modifying `shard.yml`, regenerate `shards.nix` to keep Nix in sync.
+The flake also builds the release binary, exactly as `nix profile add github:owasp-noir/noir` does for users. Same flags as every other official build: `--release --no-debug`.
 
 ```sh
-nix-shell -p crystal2nix --run crystal2nix
+just nix-build
+./result/bin/noir -h
 ```
 
-## Benefits
+## Updating Dependencies
 
-- **Reproducibility**: Same environment across all machines
-- **Isolation**: No interference with system-wide dependencies
-- **Consistency**: All team members use the same tool versions
-- **Easy Setup**: Single command to get started
+`shards.nix` pins every dependency of the Nix build by revision and hash, and it is generated rather than hand-written. Regenerate it whenever `shard.lock` changes, then verify the two agree.
+
+```sh
+just nix-update
+just nix-check
+```
+
+CI runs the same check, so a forgotten regeneration surfaces in review instead of in the first Nix install after release.
+
+To move the pinned nixpkgs forward, and with it the Crystal toolchain the package builds against:
+
+```sh
+nix flake update
+```
 
 ## Next Steps
 

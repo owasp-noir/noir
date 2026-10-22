@@ -1,6 +1,6 @@
 require "../../func_spec.cr"
 
-describe "--ai-context on Dancer2 auth fixtures" do
+describe "--ai-context on Dancer2 auth fixtures", tags: "functional" do
   fixture_path = "fixtures/perl/dancer2_auth/"
 
   before_each do

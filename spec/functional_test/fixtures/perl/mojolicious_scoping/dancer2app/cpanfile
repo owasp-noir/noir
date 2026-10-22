@@ -1,0 +1,2 @@
+requires 'perl', '5.020';
+requires 'Dancer2', '>= 1.0.0';

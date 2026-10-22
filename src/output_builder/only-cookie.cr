@@ -1,6 +1,7 @@
 require "../models/output_builder"
 require "../models/endpoint"
 
+@[Noir::OutputFormat(name: "only-cookie", description: "Only cookies", order: 200)]
 class OutputBuilderOnlyCookie < OutputBuilder
   def print(endpoints : Array(Endpoint))
     cookies = [] of String
@@ -12,8 +13,6 @@ class OutputBuilderOnlyCookie < OutputBuilder
       end
     end
 
-    cookies.uniq.each do |cookie|
-      ob_puts cookie.colorize(:light_green).toggle(@is_color)
-    end
+    print_unique(cookies, "No cookies found.")
   end
 end

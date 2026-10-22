@@ -1,0 +1,13 @@
+{
+  "openrpc": "1.2.6",
+  "info": { "title": "Defaulted endpoint", "version": "1.0.0" },
+  "servers": [
+    {
+      "url": "{endpoint}",
+      "variables": { "endpoint": { "default": "https://node.example.com/v1/rpc" } }
+    }
+  ],
+  "methods": [
+    { "name": "node_status", "params": [], "result": { "name": "status", "schema": { "type": "string" } } }
+  ]
+}

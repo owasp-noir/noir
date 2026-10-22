@@ -1,12 +1,12 @@
 +++
 title = "Passive Security Scanning"
-description = "Learn how to use Noir's passive scanning feature to identify potential security vulnerabilities in your code without actively exploiting them. This guide covers how to run a passive scan and interpret the results."
+description = "Rule-based checks that flag potential security issues in source code without sending any traffic."
 weight = 5
 sort_by = "weight"
 
 +++
 
-Analyze code for potential security issues using predefined rules without active exploitation. Uses regular expressions and string matching to identify common security risks.
+Passive scan checks your source code against YAML rules and reports lines that look like security issues (hard-coded secrets, risky calls). It sends no traffic. Rules match with plain strings and regular expressions.
 
 ## Usage
 
@@ -16,15 +16,15 @@ Run passive scan:
 noir scan <BASE_PATH> -P
 ```
 
-Use custom rules:
+To use your own rules, pass `--passive-scan-path`. It takes a **directory**, not a single file: Noir loads every `*.yml` / `*.yaml` below it. The bundled rules are skipped for that run, download included, so a run with `--passive-scan-path` needs neither git nor network. The flag is repeatable; a rule id that arrives from two directories is loaded once.
 
 ```bash
-noir scan <BASE_PATH> --passive-scan --passive-scan-path /path/to/your/rules.yml
+noir scan <BASE_PATH> -P --passive-scan-path /path/to/your/rules/
 ```
 
 ### Filtering by Severity
 
-Filter by severity level using `--passive-scan-severity`:
+`--passive-scan-severity` sets the lowest severity that is reported:
 
 - `critical`: Critical only
 - `high`: High and critical (default)
@@ -50,12 +50,13 @@ Example output:
 
 ```
 ★ Passive Results:
-[critical][hahwul-test][secret] use x-api-key
-  ├── extract:   env.request.headers["x-api-key"].as(String)
-  └── file: ./spec/functional_test/fixtures/crystal_kemal/src/testapp.cr:4
+[critical][aws-access-key][secret] Detect AWS_ACCESS_KEY
+  ├── extract: AWS_KEY = "AKIAIOSFODNN7EXAMPLE"
+  └── file: ./config/settings.py:1
 ```
 
 **Output components:**
-*   `[critical][hahwul-test][secret]`: Severity, rule name, issue type
+*   `[critical][aws-access-key][secret]`: severity, rule `id`, rule `category`
+*   `Detect AWS_ACCESS_KEY`: rule name (`info.name`)
 *   `extract`: Matched code line
 *   `file`: File path and line number

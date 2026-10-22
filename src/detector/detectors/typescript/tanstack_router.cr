@@ -2,29 +2,50 @@ require "../../../models/detector"
 
 module Detector::Typescript
   class TanstackRouter < Detector
-    # Single precompiled alternation — one PCRE2 scan instead of eight.
+    detector_for "ts_tanstack_router",
+      extensions: %w[.ts .tsx .cts .mts .js .jsx .cjs .mjs],
+      basenames: %w[package.json tsconfig.json]
+
+    # Single precompiled alternation — one PCRE2 scan over the file.
+    #
+    # `createRouter(` and `createRoute(` used to be listed here as
+    # standalone markers, and both are ordinary names other routers own:
+    # `createRouter({ history, routes })` is *the* Vue Router 4 entry point,
+    # Solid Router exports the same name, and tRPC v9's generated
+    # `createRouter()` helper carries it too. Every Vue 3 project with a
+    # TypeScript router module was therefore reported as TanStack Router and
+    # paid for a TanStack analyzer pass that had nothing to extract.
+    #
+    # Nothing is lost by dropping them: a file that calls either factory has
+    # to import it from `@tanstack/*router` in that same file, which the
+    # import branches below match. Those branches no longer demand the
+    # `import` keyword on the same line as the specifier either, so a
+    # formatter-wrapped multi-line import (`import {\n  createRoute,\n} from
+    # '@tanstack/react-router'`) is matched rather than relying on the bare
+    # factory names to carry it.
+    #
+    # The package pattern covers every TanStack Router adapter
+    # (`@tanstack/react-router`, `/solid-router`, `/svelte-router`, the bare
+    # `/router`) without reaching `@tanstack/react-router-devtools`, which
+    # the required closing quote excludes.
+    #
+    # `createFileRoute` / `createRootRoute` stay: they are TanStack's own
+    # file-based routing API and have no other owner.
     SIGNAL = Regex.union(
-      /import.*from ['"]@tanstack\/react-router['"]/,
-      /import.*from ['"]@tanstack\/router['"]/,
-      /require\(['"]@tanstack\/react-router['"]\)/,
-      /require\(['"]@tanstack\/router['"]\)/,
-      /createFileRoute\s*\(/,
-      /createRootRoute\s*\(/,
-      /createRoute\s*\(/,
-      /createRouter\s*\(/,
+      /from\s*['"]@tanstack\/(?:[a-z]+-)?router['"]/,
+      /require\(\s*['"]@tanstack\/(?:[a-z]+-)?router['"]\s*\)/,
+      /\bcreateFileRoute\s*\(/,
+      /\bcreateLazyFileRoute\s*\(/,
+      /\bcreateRootRoute(?:WithContext)?\s*[(<]/,
     )
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".ts") || filename.ends_with?(".tsx")
-      file_contents.matches?(SIGNAL)
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".ts") || filename.ends_with?(".tsx") || filename.ends_with?(".cts") || filename.ends_with?(".mts") || filename.ends_with?(".js") || filename.ends_with?(".jsx") || filename.ends_with?(".cjs") || filename.ends_with?(".mjs") || File.basename(filename) == "package.json" || File.basename(filename) == "tsconfig.json"
-    end
-
-    def set_name
-      @name = "ts_tanstack_router"
+      # Necessary condition for every marker below, which all spell
+      # `@tanstack` or `Route` literally; a memchr scan is far cheaper than
+      # the alternation regex.
+      return false unless file_contents.includes?("@tanstack") || file_contents.includes?("Route")
+      content_matches?(file_contents, SIGNAL)
     end
   end
 end

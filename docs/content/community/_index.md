@@ -4,10 +4,14 @@ description = "Resources for the OWASP Noir community, including articles, talks
 weight = 9
 sort_by = "weight"
 
+
+[cascade]
+toc = true
+
 +++
 
-OWASP Noir is a community-driven project, and we welcome contributions and feedback from everyone. This section provides resources to help you get involved with the community and learn more about how to use Noir effectively.
+OWASP Noir is built by its community. Contributions and feedback are welcome.
 
-*   **[Articles & Talks](media/)**: Read articles, blog posts, and watch talks about Noir from community members.
+*   **[Articles & Talks](media/)**: Articles, blog posts, and talks about Noir by community members.
 
-For information on contributing to the project, please see the [Development](../development/) section.
+To contribute, start with the [Development](../development/) section.

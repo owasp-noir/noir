@@ -1,0 +1,1 @@
+{ "name": "afterauth-app", "dependencies": { "@nestjs/core": "^10.0.0" } }

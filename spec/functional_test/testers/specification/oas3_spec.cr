@@ -1,16 +1,18 @@
 require "../../func_spec.cr"
 
+# `servers: [{url: 'https://api.example.com/v1'}]` puts every operation under
+# `/v1`, exactly the way OAS2's `basePath` and RAML's `baseUri` already do.
 expected_endpoints = [
-  Endpoint.new("/pets", "GET", [
+  Endpoint.new("/v1/pets", "GET", [
     Param.new("query", "", "query"),
     Param.new("sort", "", "query"),
     Param.new("cookie", "", "cookie"),
   ]),
-  Endpoint.new("/pets", "POST", [
+  Endpoint.new("/v1/pets", "POST", [
     Param.new("name", "", "json"),
   ]),
-  Endpoint.new("/pets/{petId}", "GET", [Param.new("petId", "", "path")]),
-  Endpoint.new("/pets/{petId}", "PUT", [
+  Endpoint.new("/v1/pets/{petId}", "GET", [Param.new("petId", "", "path")]),
+  Endpoint.new("/v1/pets/{petId}", "PUT", [
     Param.new("petId", "", "path"),
     Param.new("breed", "", "json"),
     Param.new("name", "", "json"),
@@ -35,6 +37,19 @@ FunctionalTester.new("fixtures/specification/oas3/no_servers/", {
 ], {
   "url" => YAML::Any.new("https://api.example.com"),
 }).perform_tests
+
+# A `servers[].url` is a URL, not a path. A protocol-relative entry contributes
+# only its path (`//api.example.com/edge` → `/edge`), a bare host is not a path
+# at all, and an unresolved placeholder is skipped in favour of the next usable
+# entry instead of becoming a leading URL segment.
+FunctionalTester.new("fixtures/specification/oas3/server_urls/", {
+  :techs     => 1,
+  :endpoints => 3,
+}, [
+  Endpoint.new("/edge/banners", "GET"),
+  Endpoint.new("/sync/diagnosis", "POST"),
+  Endpoint.new("/tickets", "GET"),
+]).perform_tests
 
 FunctionalTester.new("fixtures/specification/oas3/multiple_docs/", {
   :techs     => 1,
@@ -89,6 +104,37 @@ FunctionalTester.new("fixtures/specification/oas3/param_in_path/", {
   ]),
 ]).perform_tests
 
+# A document split across files: the path strings stay in `openapi.yaml` and
+# each operation lives one `$ref` away, which is the layout Redocly, Stoplight
+# and swagger-cli all recommend for anything large. The parameters ride a
+# second hop — path file back into the entry document, entry document out to
+# the parameter's own file — so each ref has to resolve from the file that
+# wrote it rather than from the document the scan started at.
+#
+# The fixture also carries the four refs noir does not follow (remote,
+# escaping the scan base, missing, and a two-file cycle). None of them may cost
+# the paths around them, which is what the count asserts.
+FunctionalTester.new("fixtures/specification/oas3/split_document/", {
+  :techs     => 1,
+  :endpoints => 4,
+}, [
+  Endpoint.new("/api/pets", "GET", [
+    Param.new("fields", "", "query"),
+    Param.new("limit", "", "query"),
+  ]),
+  Endpoint.new("/api/pets", "POST", [
+    Param.new("name", "", "json"),
+    Param.new("tag", "", "json"),
+  ]),
+  Endpoint.new("/api/pets/{petId}", "GET", [
+    Param.new("petId", "", "path"),
+  ]),
+  Endpoint.new("/api/pets/{petId}", "DELETE", [
+    Param.new("petId", "", "path"),
+    Param.new("X-Reason", "", "header"),
+  ]),
+]).perform_tests
+
 FunctionalTester.new("fixtures/specification/oas3/security_schemes/", {
   :techs     => 1,
   :endpoints => 4,
@@ -112,12 +158,27 @@ FunctionalTester.new("fixtures/specification/oas3/tab_in_block_scalar/", {
   :techs     => 1,
   :endpoints => 2,
 }, [
-  Endpoint.new("/widgets", "GET", [
+  Endpoint.new("/v1/widgets", "GET", [
     Param.new("state", "", "query"),
   ]),
-  Endpoint.new("/widgets", "POST", [
+  Endpoint.new("/v1/widgets", "POST", [
     Param.new("name", "", "json"),
     Param.new("color", "", "json"),
+  ]),
+]).perform_tests
+
+# Both documents open with a UTF-8 BOM. It used to survive the read as a
+# leading U+FEFF: the YAML missed its line-1 `openapi:` marker and the JSON
+# failed to parse, so neither contributed an endpoint.
+FunctionalTester.new("fixtures/specification/oas3/utf8_bom/", {
+  :techs     => 1,
+  :endpoints => 2,
+}, [
+  Endpoint.new("/bom-yaml", "GET", [
+    Param.new("q", "", "query"),
+  ]),
+  Endpoint.new("/bom-json", "POST", [
+    Param.new("X-Token", "", "header"),
   ]),
 ]).perform_tests
 
@@ -153,3 +214,15 @@ FunctionalTester.new("fixtures/specification/oas3_edge_cases/", {
 }, edge_case_url_endpoints, {
   "url" => YAML::Any.new("https://api.example.com"),
 }).perform_tests
+
+# OpenAPI 3.2 added `query` as a Path Item operation key for RFC 10008's
+# QUERY method; a spec declaring it yields a QUERY endpoint instead of the
+# operation being silently skipped.
+FunctionalTester.new("fixtures/specification/oas3/query_method/", {
+  :techs     => 1,
+  :endpoints => 1,
+}, [
+  Endpoint.new("/products/search", "QUERY", [
+    Param.new("q", "", "form"),
+  ]),
+]).perform_tests

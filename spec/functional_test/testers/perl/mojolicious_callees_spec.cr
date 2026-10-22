@@ -76,7 +76,7 @@ tester = FunctionalTester.new("fixtures/perl/mojolicious_callees/", {
 })
 tester.perform_tests
 
-it "reports exact Mojolicious::Lite callees for inline handlers" do
+it "reports exact Mojolicious::Lite callees for inline handlers", tags: "functional" do
   endpoint = tester.app.endpoints.find { |found| found.url == "/hello" && found.method == "GET" }
   endpoint.should_not be_nil
   endpoint.try do |actual|
@@ -84,7 +84,7 @@ it "reports exact Mojolicious::Lite callees for inline handlers" do
   end
 end
 
-it "reuses Mojolicious any-handler callees for every emitted method" do
+it "reuses Mojolicious any-handler callees for every emitted method", tags: "functional" do
   endpoint = tester.app.endpoints.find { |found| found.url == "/multi" && found.method == "POST" }
   endpoint.should_not be_nil
   endpoint.try do |actual|
@@ -92,7 +92,7 @@ it "reuses Mojolicious any-handler callees for every emitted method" do
   end
 end
 
-it "keeps nested websocket callback callees out of the route body" do
+it "keeps nested websocket callback callees out of the route body", tags: "functional" do
   endpoint = tester.app.endpoints.find { |found| found.url == "/echo" && found.method == "GET" }
   endpoint.should_not be_nil
   endpoint.try do |actual|
@@ -102,7 +102,7 @@ it "keeps nested websocket callback callees out of the route body" do
   end
 end
 
-it "attaches Mojolicious full-app controller action callees" do
+it "attaches Mojolicious full-app controller action callees", tags: "functional" do
   endpoint = tester.app.endpoints.find { |found| found.url == "/api/login" && found.method == "POST" }
   endpoint.should_not be_nil
   endpoint.try do |actual|
@@ -110,7 +110,7 @@ it "attaches Mojolicious full-app controller action callees" do
   end
 end
 
-it "attaches nested Mojolicious controller action callees" do
+it "attaches nested Mojolicious controller action callees", tags: "functional" do
   endpoint = tester.app.endpoints.find { |found| found.url == "/admin/users/:id" && found.method == "GET" }
   endpoint.should_not be_nil
   endpoint.try do |actual|
@@ -118,7 +118,7 @@ it "attaches nested Mojolicious controller action callees" do
   end
 end
 
-it "attaches named Mojolicious controller/action callees" do
+it "attaches named Mojolicious controller/action callees", tags: "functional" do
   endpoint = tester.app.endpoints.find { |found| found.url == "/admin/users" && found.method == "POST" }
   endpoint.should_not be_nil
   endpoint.try do |actual|
@@ -126,7 +126,7 @@ it "attaches named Mojolicious controller/action callees" do
   end
 end
 
-it "populates Mojolicious callee source paths" do
+it "populates Mojolicious callee source paths", tags: "functional" do
   endpoint = tester.app.endpoints.find { |found| found.url == "/api/status" && found.method == "GET" }
   endpoint.should_not be_nil
   endpoint.try do |actual|
@@ -138,7 +138,7 @@ it "populates Mojolicious callee source paths" do
   end
 end
 
-it "does not populate Mojolicious callees by default" do
+it "does not populate Mojolicious callees by default", tags: "functional" do
   config_init = ConfigInitializer.new
   noir_options = config_init.default_options
   noir_options["base"] = YAML::Any.new([YAML::Any.new("./spec/functional_test/fixtures/perl/mojolicious_callees/")])

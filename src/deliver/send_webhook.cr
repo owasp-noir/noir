@@ -1,4 +1,3 @@
-require "crest"
 require "../models/deliver"
 
 # POSTs the discovered endpoint catalog as a single JSON document to a
@@ -18,36 +17,18 @@ require "../models/deliver"
 # blocks, for example), users are expected to route through a
 # transformer rather than have noir grow per-platform formatters.
 #
-# Network errors are swallowed at debug level so a misconfigured
-# webhook URL doesn't crash the scan — same posture as the other
-# Deliver subclasses.
+# Network errors are warned and recorded (see Deliver#post_export) so a
+# misconfigured webhook URL doesn't crash the scan.
 class SendWebhook < Deliver
   def run(endpoints : Array(Endpoint), webhook_url : String)
-    applied_endpoints = apply_all(endpoints)
-
-    body = {
-      "endpoints"      => applied_endpoints,
-      "endpoint_count" => applied_endpoints.size,
-      "noir_version"   => Noir::VERSION,
-    }.to_json
-
-    webhook_headers = @headers.dup
-    webhook_headers["Content-Type"] = "application/json"
-    webhook_headers["Accept"] = "application/json"
-
-    # `form:` is the Crest knob that actually ships the body — see the
-    # comment in send_elasticsearch.cr for the rationale.
-    Crest::Request.execute(
-      method: :post,
-      url: webhook_url,
-      tls: OpenSSL::SSL::Context::Client.insecure,
-      user_agent: "Noir/#{Noir::VERSION}",
-      form: body,
-      headers: webhook_headers,
-      json: true
-    )
-  rescue e
-    @logger.debug "Exception of webhook Delivery"
-    @logger.debug_sub e
+    post_export(Noir::Redact.webhook(webhook_url), "Webhook", "webhook") do
+      applied_endpoints = apply_all(endpoints)
+      body = {
+        "endpoints"      => applied_endpoints,
+        "endpoint_count" => applied_endpoints.size,
+        "noir_version"   => Noir::VERSION,
+      }.to_json
+      {webhook_url, body}
+    end
   end
 end

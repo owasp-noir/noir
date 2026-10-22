@@ -1,4 +1,6 @@
 require "../models/endpoint"
+require "../utils/media_filter"
+require "../utils/http_symbols"
 require "./patterns"
 require "./pattern_matcher"
 require "./source_reader"
@@ -14,11 +16,20 @@ module NoirAIContext
     SOURCE_SCAN_RADIUS    = 6
     CALLEE_SNIPPET_RADIUS = 1
 
-    STATE_CHANGING_METHODS = Set{"POST", "PUT", "PATCH", "DELETE"}
-    BODY_LIKE_PARAM_TYPES  = Set{"json", "form"}
-    MOBILE_SOURCE_EXTS     = Set{".swift", ".m", ".mm", ".kt", ".java"}
+    STATE_CHANGING_METHODS   = Set{"POST", "PUT", "PATCH", "DELETE"}
+    BODY_LIKE_PARAM_TYPES    = Set{"json", "form"}
+    MOBILE_SOURCE_EXTS       = Set{".swift", ".m", ".mm", ".kt", ".java"}
+    PRIVILEGED_REALTIME_TAGS = Set{"admin"}
+
+    # SOAP transports every operation over POST. Treat read-style operation
+    # names as reads so HTTP method heuristics do not label them as mutations.
+    SOAP_READ_OPERATION_PATTERN = /\A(?:[Gg][Ee][Tt]|[Ll][Ii][Ss][Tt]|[Ff][Ii][Nn][Dd])(?:[A-Z]|[_-]|\z)/
+
+    REPOSITORY_SOURCE_EXTS = Set{".java", ".kt"}
 
     @reader : SourceReader
+    @declared_types = {} of Tuple(String, String) => String?
+    @repository_types = {} of String => Bool
 
     def initialize
       @reader = SourceReader.new
@@ -34,9 +45,28 @@ module NoirAIContext
       endpoints
     end
 
+    # A deduplicated endpoint can have both an implementation path and a
+    # specification path. The implementation is the useful anchor for route
+    # metadata; a YAML/JSON/proto/GraphQL document is only a fallback when no
+    # implementation path was found.
+    private def preferred_code_path(endpoint : Endpoint) : PathInfo?
+      endpoint.details.code_paths.find { |path_info| !MediaFilter.spec_document?(path_info.path) } ||
+        endpoint.details.code_paths.first?
+    end
+
+    # Specification documents can contain arbitrary examples and vendor
+    # extensions that happen to look like dangerous calls. They can anchor
+    # route metadata when no implementation is available, but only
+    # implementation paths are meaningful evidence for handler sinks/guards.
+    private def source_scan_paths(endpoint : Endpoint) : Array(PathInfo)
+      endpoint.details.code_paths.reject do |path_info|
+        MediaFilter.spec_document?(path_info.path)
+      end
+    end
+
     private def build_context(endpoint : Endpoint) : AIContext
       context = AIContext.new
-      anchor = endpoint.details.code_paths.first?
+      anchor = preferred_code_path(endpoint)
       route_snippet = @reader.snippet_for(anchor.try(&.path), anchor.try(&.line), ROUTE_SNIPPET_RADIUS)
 
       add_route_signal(context, endpoint, anchor, route_snippet)
@@ -75,10 +105,25 @@ module NoirAIContext
     # like input (redirect_input param covers url/uri/redirect/
     # return/next/dest/callback — all the names that typically
     # carry attacker-controlled URLs into server-side fetches).
+    #
+    # Hunt may already have tagged the same URL-like param as `ssrf`
+    # (param-name heuristic, confidence ~58). That weak tag must not
+    # satisfy this combination check — otherwise the stronger
+    # outbound_http + URL-input roll-up never appears. Upgrade /
+    # replace any non-heuristic `ssrf` when the combination ingredients
+    # exist; only skip when a heuristic combination SSRF is already present.
     private def add_ssrf_signal(context : AIContext, anchor : PathInfo?, route_snippet : String?)
       return unless context.sinks.any? { |s| s.kind == "outbound_http" }
       return unless context.signals.any? { |s| s.kind == "redirect_input" }
-      return if context.signals.any? { |s| s.kind == "ssrf" }
+
+      existing_ssrf = context.signals.select { |s| s.kind == "ssrf" }
+      return if existing_ssrf.any? { |s| s.source == "heuristic" }
+
+      # Drop weaker Hunt / param-tagger SSRF so the combination signal
+      # is the one LLMs see (and so it does not waste a cap slot).
+      unless existing_ssrf.empty?
+        context.signals.reject! { |s| s.kind == "ssrf" }
+      end
 
       outbound = context.sinks.find! { |s| s.kind == "outbound_http" }
       context.push_signal(AIContextEntry.new(
@@ -94,13 +139,10 @@ module NoirAIContext
     end
 
     # Path-traversal candidate: handler has a *code-derived* file_io
-    # sink AND a file-like input. The "code-derived" qualifier is
-    # what keeps this honest: the FileUpload tagger pushes a
-    # `file_io` sink to flag the endpoint as a file-handling route,
-    # but receiving a multipart upload doesn't itself imply that
-    # the file's PATH is attacker-controlled. The traversal pattern
-    # specifically wants `File.read(filename_from_user)` style sinks,
-    # not "endpoint accepts file content as bytes".
+    # sink AND a file-like input. FileUpload alone must not count —
+    # receiving a multipart upload does not imply the file's PATH is
+    # attacker-controlled. The filter also excludes any residual
+    # FileUpload-sourced sink if one still appears.
     private def add_path_traversal_signal(context : AIContext, anchor : PathInfo?, route_snippet : String?)
       code_derived_file_sink = context.sinks.find do |s|
         s.kind == "file_io" && s.source != "FileUpload"
@@ -184,7 +226,7 @@ module NoirAIContext
       # HEAD endpoint (often the GET-side of a `methods=['GET',
       # 'POST']` Flask split) has no security impact. Don't let it
       # bump priority on those routes.
-      method_safe = SAFE_METHODS.includes?(endpoint.method)
+      method_safe = SAFE_METHODS.includes?(endpoint.method.upcase)
       sharp_signal = context.signals.any? do |s|
         case s.kind
         when "csrf_exempt"
@@ -226,17 +268,28 @@ module NoirAIContext
     end
 
     private def priority_scoring_sink_mitigated?(context : AIContext, sink_kind : String) : Bool
-      return false unless sink_kind.in?("sql", "data_store_query")
-
-      context.validators.any? { |validator| validator.kind == "query_parameter_binding" }
+      case sink_kind
+      when "sql", "data_store_query"
+        context.validators.any? { |validator| validator.kind == "query_parameter_binding" }
+      when "xss"
+        # Sanitization is the direct mitigation. Schema validation is also
+        # useful evidence here: a strict input model can reject unexpected
+        # markup-bearing fields before they reach an HTML sink.
+        context.validators.any? { |validator| validator.kind.in?("sanitization", "schema_validation") }
+      else
+        false
+      end
     end
 
     # HTTP method intent vs implementation mismatch. A GET/HEAD
     # endpoint that mutates server state through a callee
     # (`User.create`, `record.destroy`, `db.delete`, …) is a textbook
     # CSRF / side-effect-on-read bug — the verb says "safe / idempotent"
-    # but the code says otherwise.
-    SAFE_METHODS = Set{"GET", "HEAD", "OPTIONS"}
+    # but the code says otherwise. `QUERY` makes the same promise
+    # (RFC 10008 defines it safe + idempotent), so a mutating QUERY
+    # handler earns the same signal. The shared set keeps this file,
+    # the taggers, and the probe path-filler agreeing on what a read is.
+    SAFE_METHODS = SAFE_HTTP_METHODS
 
     # Each verb may be followed by additional word chars
     # (`destroy_all`, `createMany`, `deleteOne`, `updateUser`), so we
@@ -252,11 +305,13 @@ module NoirAIContext
     # split that into one endpoint per method but share the
     # callees list. The mutating callee in the GET endpoint is
     # often the POST branch's call, not actually reachable via GET.
-    METHOD_DISPATCH_PATTERN = /(?:request\.method\s*==|req\.method\s*==|r\.Method\s*==|request\.getMethod\(\)\s*\.equals|\.match\(\s*['"](?:GET|POST|PUT|PATCH|DELETE)['"])/i
+    METHOD_DISPATCH_PATTERN = /(?:request\.method\s*==|req\.method\s*==|r\.Method\s*==|request\.getMethod\(\)\s*\.equals|\.match\(\s*['"](?:GET|POST|PUT|PATCH|DELETE|QUERY)['"])/i
 
     private def add_unsafe_method_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
       return if endpoint.mobile?
-      return unless SAFE_METHODS.includes?(endpoint.method)
+      # Upcase like the taggers do: the optimizer normalizes before this
+      # runs on a scan, but library callers can hand in raw endpoints.
+      return unless SAFE_METHODS.includes?(endpoint.method.upcase)
       return if context.signals.any? { |s| s.kind == "unsafe_method" }
 
       mutating = endpoint.callees.find(&.name.matches?(MUTATING_CALLEE_PATTERN))
@@ -271,7 +326,7 @@ module NoirAIContext
       if route_snippet && route_snippet.matches?(METHOD_DISPATCH_PATTERN)
         return
       end
-      endpoint.details.code_paths.each do |path_info|
+      source_scan_paths(endpoint).each do |path_info|
         scope = @reader.route_scope_snippet_for(path_info.path, path_info.line)
         if scope && scope.matches?(METHOD_DISPATCH_PATTERN)
           return
@@ -282,7 +337,7 @@ module NoirAIContext
         "unsafe_method",
         "#{endpoint.method} → #{mutating.name}",
         source: "heuristic",
-        description: "Safe-method (GET/HEAD/OPTIONS) endpoint invokes a state-changing callee; CSRF protections typically don't gate read methods, so a mutation through one is suspect.",
+        description: "Safe-method (GET/HEAD/OPTIONS/QUERY) endpoint invokes a state-changing callee; CSRF protections typically don't gate read methods, so a mutation through one is suspect.",
         path: mutating.path || anchor.try(&.path),
         line: mutating.line || anchor.try(&.line),
         confidence: 56,
@@ -301,9 +356,10 @@ module NoirAIContext
 
     private def add_log_injection_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
       return if context.signals.any? { |s| s.kind == "log_injection" }
-      return if endpoint.details.code_paths.empty?
+      paths = source_scan_paths(endpoint)
+      return if paths.empty?
 
-      endpoint.details.code_paths.each do |path_info|
+      paths.each do |path_info|
         scope = @reader.route_scope_snippet_for(path_info.path, path_info.line)
         next unless scope
         next unless scope.matches?(LOG_EMITTER_PATTERN)
@@ -357,29 +413,123 @@ module NoirAIContext
     # Sensitive-response detection runs as a two-step check on the
     # route-scope snippet:
     #
-    #   1. RESPONSE_EMITTER_PATTERN — the snippet calls a response-
-    #      serializing helper (`res.json`, `jsonify`, `render json:`,
-    #      `to_json`, `JsonResponse`, …).
+    #   1. RESPONSE_EMITTER_PATTERN — the snippet serializes a response,
+    #      either through a helper (`res.json`, `jsonify`, `render json:`,
+    #      `to_json`, …) or by returning a literal (`return {...}`).
     #   2. CREDENTIAL_KEY_IN_RESPONSE — the snippet also has a
-    #      credential noun *as a key* (followed by `:`, and not
-    #      preceded by a quote or word character — so the noun
-    #      appearing inside a string value like
-    #      `{ message: "Set X-API-KEY header" }` doesn't fire).
+    #      credential noun *as a key*, in either of the two spellings
+    #      a response literal uses:
+    #        bare   — `{ token: … }`   (JS/TS shorthand, Ruby, YAML)
+    #        quoted — `{ "token": … }` (JSON, Python dicts, Go maps,
+    #                                   PHP arrays, any serialized body)
     #
     # Both have to match in the same scope. The earlier single-regex
     # version was too loose and caught english prose mentioning
-    # credentials in response strings.
-    RESPONSE_EMITTER_PATTERN         = /\b(jsonify|res\.json|json_response|JsonResponse|render\s+json:|to_json|respond_with)\b/i
-    CREDENTIAL_KEY_IN_RESPONSE       = /[^"'\w](password|passwd|token|secret|api[_-]?key|session_id|access_token|refresh_token|private_key)\s*:/i
+    # credentials in response strings, so the fix required the noun
+    # not be preceded by a quote. That over-corrected: it also
+    # excluded every *quoted key*, which is the dominant shape in
+    # most languages, and the signal quietly stopped firing on them.
+    #
+    # The two branches below keep the original guard for bare keys
+    # while admitting quoted ones, and stay narrow because the quoted
+    # branch requires the string to *close* immediately after the
+    # noun. `{ message: "Set X-API-KEY header" }` still doesn't fire —
+    # the noun sits mid-string, so no closing quote follows it.
+    CREDENTIAL_NOUNS_IN_RESPONSE = "password|passwd|token|secret|api[_-]?key|session_id|access_token|refresh_token|private_key"
+
+    # The emitter list was built from helper calls (`jsonify`, `res.json`,
+    # …) and so missed the frameworks that serialize a returned literal
+    # with no helper at all: FastAPI and modern Flask handlers just
+    # `return {...}`, which is the single most common response shape in
+    # the Python corpus. Without it the credential-key check could not run
+    # on those handlers no matter what the payload held.
+    RESPONSE_EMITTER_PATTERN = /\b(jsonify|res\.json|res\.send|json_response|JsonResponse|JSONResponse|make_response|render\s+json:|to_json|respond_with)\b|\breturn\s*\{/i
+
+    # Capture 1 is the bare-key noun, capture 3 the quoted-key noun;
+    # exactly one of them is set per match.
+    CREDENTIAL_KEY_IN_RESPONSE = Regex.new(
+      "(?:[^\"'\\w](#{CREDENTIAL_NOUNS_IN_RESPONSE})|([\"'])(#{CREDENTIAL_NOUNS_IN_RESPONSE})\\2)\\s*:",
+      Regex::Options::IGNORE_CASE
+    )
+
     KOTLIN_CREDENTIAL_RETURN_PATTERN = /\bfun\s+\w+[^{|;]*=\s*(?:this\.)?(password|passwd|token|secret|api[_-]?key|session_?id|access_?token|refresh_?token|private_?key)\b/i
+
+    # This check needs the response emitter and the credential key in the
+    # same window, and in real handlers they sit far apart — the body
+    # assembles a dict/struct first and serializes it at the end. Under the
+    # default 12-line / 240-char route scope the two could not co-occur, so
+    # the signal never fired on the shape it exists to catch. Widen the
+    # window for this check only; the scope walk still stops at the end of
+    # the handler, so it cannot pair one route's emitter with another
+    # route's payload.
+    SENSITIVE_RESPONSE_SCOPE_LINES =   40
+    SENSITIVE_RESPONSE_SCOPE_CHARS = 1200
+
+    # FastAPI routes commonly declare credentials in the handler
+    # signature (`token: str = Security(...)`). The widened response
+    # scope includes that signature, but a typed parameter is not a
+    # response field. Drop Python function-signature lines before
+    # looking for credential keys while retaining the handler body.
+    private def response_body_without_python_signature(body : String, path : String?) : String
+      return body unless path && (path.ends_with?(".py") || path.ends_with?(".pyi"))
+
+      in_signature = false
+      paren_balance = 0
+      response_lines = [] of String
+
+      body.split(" | ").each do |segment|
+        code = segment.sub(/^\d+:\s*/, "")
+        if in_signature
+          paren_balance += python_signature_paren_balance(code)
+          in_signature = paren_balance > 0
+          if !in_signature && (inline_body = inline_python_response_body(code))
+            response_lines << inline_body
+          end
+          next
+        end
+
+        if code.matches?(/^(?:async\s+)?def\s+\w+\s*\(/)
+          paren_balance = python_signature_paren_balance(code)
+          in_signature = paren_balance > 0
+          if !in_signature && (inline_body = inline_python_response_body(code))
+            response_lines << inline_body
+          end
+          next
+        end
+
+        response_lines << segment
+      end
+
+      response_lines.join(" | ")
+    end
+
+    private def inline_python_response_body(line : String) : String?
+      if match = line.match(/\)\s*:\s*(.+)$/)
+        body = match[1].strip
+        body unless body.empty?
+      end
+    end
+
+    private def python_signature_paren_balance(line : String) : Int32
+      sanitized = line.gsub(/(['\"]).*?\1/, "\"\"").split('#').first
+      sanitized.count('(') - sanitized.count(')')
+    end
 
     private def add_sensitive_response_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
       return if context.signals.any? { |s| s.kind == "sensitive_response" }
-      return if endpoint.details.code_paths.empty?
+      paths = source_scan_paths(endpoint)
+      return if paths.empty?
 
-      endpoint.details.code_paths.each do |path_info|
+      paths.each do |path_info|
+        # `scope` stays the default-width snippet so the emitted evidence
+        # keeps the same size as every other entry; `body` is the wider
+        # view used only for detection.
         scope = @reader.route_scope_snippet_for(path_info.path, path_info.line)
         next unless scope
+        body = @reader.route_scope_snippet_for(
+          path_info.path, path_info.line,
+          SENSITIVE_RESPONSE_SCOPE_LINES, SENSITIVE_RESPONSE_SCOPE_CHARS
+        ) || scope
 
         if match = scope.match(KOTLIN_CREDENTIAL_RETURN_PATTERN)
           field = match[1]? || "credential"
@@ -397,9 +547,10 @@ module NoirAIContext
           return
         end
 
-        next unless scope.matches?(RESPONSE_EMITTER_PATTERN)
-        if match = scope.match(CREDENTIAL_KEY_IN_RESPONSE)
-          field = match[1]? || "credential"
+        next unless body.matches?(RESPONSE_EMITTER_PATTERN)
+        response_body = response_body_without_python_signature(body, path_info.path)
+        if match = response_body.match(CREDENTIAL_KEY_IN_RESPONSE)
+          field = match[1]? || match[3]? || "credential"
           context.push_signal(AIContextEntry.new(
             "sensitive_response",
             field.downcase,
@@ -482,7 +633,7 @@ module NoirAIContext
     end
 
     OBJECT_LOOKUP_PRIMARY_CALLEE_PATTERN  = /(?:^|\.)(?:findById|findOne|getOne|existsById|find\w*ById|find\w*By\w*Id|(?:find|count|exists)By\w*Id)\b/i
-    OBJECT_LOOKUP_FALLBACK_CALLEE_PATTERN = /(?:^|\.)(?:deleteById|removeById|get\w*ById|retrieve\w*)\b/i
+    OBJECT_LOOKUP_FALLBACK_CALLEE_PATTERN = /(?:^|\.)(?:deleteById|removeById|get\w*ById|retrieve\w*)\b|\b(?:session|db|repo|repository)\.get\b/i
 
     private def add_object_lookup_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
       return if context.signals.any? { |s| s.kind == "object_lookup" }
@@ -513,7 +664,7 @@ module NoirAIContext
     private def object_lookup_identifier_param?(endpoint : Endpoint) : Bool
       return true if endpoint.params.any? { |p| p.param_type == "path" && identifier_like?(p.name) }
       return true if endpoint.params.any? { |p| p.param_type == "query" && identifier_like?(p.name) }
-      return true if STATE_CHANGING_METHODS.includes?(endpoint.method) &&
+      return true if state_changing_endpoint?(endpoint) &&
                      endpoint.params.any? { |p| BODY_LIKE_PARAM_TYPES.includes?(p.param_type) && identifier_like?(p.name) }
       return true if graphql_field_endpoint?(endpoint)
       return false unless graphql_endpoint?(endpoint)
@@ -528,7 +679,7 @@ module NoirAIContext
     private def add_object_write_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
       return if context.signals.any? { |s| s.kind == "object_write" }
       return if context.signals.any? { |s| s.kind == "object_lookup" }
-      return unless STATE_CHANGING_METHODS.includes?(endpoint.method)
+      return unless state_changing_endpoint?(endpoint)
       return unless endpoint.params.any? { |p| p.param_type == "path" && identifier_like?(p.name) }
 
       mutating = endpoint.callees.find(&.name.matches?(MUTATING_CALLEE_PATTERN))
@@ -583,9 +734,10 @@ module NoirAIContext
 
     private def add_credential_from_source_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?)
       return if context.signals.any? { |s| s.kind == "credential_input" }
-      return if endpoint.details.code_paths.empty?
+      paths = source_scan_paths(endpoint)
+      return if paths.empty?
 
-      endpoint.details.code_paths.each do |path_info|
+      paths.each do |path_info|
         snippet = @reader.route_scope_snippet_for(path_info.path, path_info.line)
         next unless snippet
 
@@ -657,27 +809,77 @@ module NoirAIContext
     end
 
     private def add_method_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
-      return unless STATE_CHANGING_METHODS.includes?(endpoint.method)
+      return unless state_changing_endpoint?(endpoint)
       return if graphql_read_endpoint?(endpoint)
       return if read_only_post_endpoint?(endpoint)
 
-      description = case endpoint.method
-                    when "DELETE"
-                      "State-changing delete endpoint; review authorization, ownership, and destructive side effects"
+      description = if privileged_realtime_endpoint?(endpoint)
+                      "Privileged WebSocket message handler; review per-message authorization, origin checks, and state-changing side effects"
                     else
-                      "State-changing endpoint; review authz, validation, and side effects"
+                      case endpoint.method
+                      when "DELETE"
+                        "State-changing delete endpoint; review authorization, ownership, and destructive side effects"
+                      else
+                        "State-changing endpoint; review authz, validation, and side effects"
+                      end
                     end
 
       context.push_signal(AIContextEntry.new(
         "state_change",
         endpoint.method,
-        source: "http_method",
+        source: privileged_realtime_endpoint?(endpoint) ? "realtime_method" : "http_method",
         description: description,
         path: anchor.try(&.path),
         line: anchor.try(&.line),
         confidence: 88,
         snippet: route_snippet
       ))
+    end
+
+    # `SEND` is the shared synthetic verb for realtime message handlers. Most
+    # messages are not enough evidence of a server-side state change (for
+    # example, chat or room-join events), so only a privileged WebSocket
+    # surface is promoted to the same review path as POST/PUT/PATCH/DELETE.
+    private def state_changing_endpoint?(endpoint : Endpoint) : Bool
+      # Pure gRPC and Thrift RPCs are represented as POST for transport
+      # purposes, but that does not make them HTTP state-changing endpoints.
+      # Gateway routes keep protocol="http" and still receive the HTTP method
+      # signal.
+      return false if endpoint.protocol.in?("grpc", "thrift")
+      return false if soap_read_endpoint?(endpoint)
+
+      method = endpoint.method.upcase
+      return true if STATE_CHANGING_METHODS.includes?(method)
+
+      privileged_realtime_endpoint?(endpoint)
+    end
+
+    private def soap_read_endpoint?(endpoint : Endpoint) : Bool
+      return false unless endpoint.method.upcase == "POST"
+
+      soap_action = endpoint.params.find do |param|
+        param.param_type == "header" && param.name.downcase.tr("-", "_") == "soapaction"
+      end
+      return false unless soap_action || endpoint.tags.any? { |tag| tag.name == "soap" }
+
+      operation = if soap_action && !soap_action.value.empty?
+                    action = soap_action.value.strip.gsub(/\A["']|["']\z/, "").rstrip('/')
+                    action.split(/[\/#:.]/).last?
+                  else
+                    endpoint.url.rstrip('/').split('/').last?
+                  end
+      return false unless operation
+      return false if operation.matches?(MUTATING_POST_CALLEE_PATTERN)
+
+      operation.matches?(SOAP_READ_OPERATION_PATTERN)
+    end
+
+    private def privileged_realtime_endpoint?(endpoint : Endpoint) : Bool
+      return false unless endpoint.method.upcase == "SEND"
+      return false unless endpoint.protocol.downcase == "ws" || endpoint.realtime?
+
+      endpoint.tags.any? { |tag| PRIVILEGED_REALTIME_TAGS.includes?(tag.name.downcase) } ||
+        endpoint.url.matches?(/(?:^|[\/.\-_])(?:admin|admins|administrator|superadmin)(?:[\/.\-_]|$)/i)
     end
 
     private def add_internal_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
@@ -856,6 +1058,12 @@ module NoirAIContext
         "Query-string parameter supplied by the caller."
       when "header"
         "HTTP header supplied by the caller."
+      when "cookie"
+        "HTTP cookie supplied by the caller."
+      when "file"
+        "Uploaded file parameter supplied by the caller."
+      when "xml"
+        "XML body/field supplied by the caller."
       when "json", "form"
         "Request body field supplied by the caller."
       else
@@ -864,12 +1072,14 @@ module NoirAIContext
     end
 
     private def param_source_confidence(param : Param) : Int32
+      return 96 if PatternMatcher.matches_any?(param.name, CREDENTIAL_INPUT_NAME_PATTERNS)
+
       case param.param_type
       when "path"
         88
-      when "query", "header"
+      when "query", "header", "cookie"
         84
-      when "json", "form"
+      when "json", "form", "file", "xml"
         82
       else
         76
@@ -886,6 +1096,7 @@ module NoirAIContext
 
     private def param_tag_description(tag : Tag) : String
       return tag.description if tag.tagger == "kotlin_spring_validation_analyzer"
+      return tag_ai_context_description(tag) if tag.tagger == "Hunt"
 
       "#{tag.description} Matched by parameter-name heuristic."
     end
@@ -903,7 +1114,7 @@ module NoirAIContext
 
     private def safe_kotlin_query_identifier_without_lookup?(endpoint : Endpoint, param : Param) : Bool
       return false unless endpoint.details.technology == "kotlin_spring"
-      return false unless SAFE_METHODS.includes?(endpoint.method)
+      return false unless SAFE_METHODS.includes?(endpoint.method.upcase)
       return false unless param.param_type == "query" && identifier_like?(param.name)
 
       !object_lookup_callee(endpoint)
@@ -971,21 +1182,50 @@ module NoirAIContext
       endpoint.tags.each do |tag|
         next if skip_tag_signal?(context, endpoint, tag)
 
-        signal_kind = guard_tag?(tag) ? "auth_guard" : tag.name
-        signal_name = guard_tag?(tag) ? guard_name_from_tag(tag) : tag_signal_name(tag)
+        is_guard = guard_tag?(tag)
+        # `authz` tags (NestJS @Roles, Rails authorize*, …) must become
+        # authz_guard, not auth_guard — otherwise role checks look like
+        # authentication and trigger false authz_absence.
+        signal_kind = if tag.name == "authz"
+                        "authz_guard"
+                      elsif is_guard
+                        "auth_guard"
+                      else
+                        tag.name
+                      end
+        signal_name = is_guard ? guard_name_from_tag(tag) : tag_signal_name(tag)
+        confidence = (tag.name == "auth" || tag.name == "authz") ? 86 : 74
         entry = AIContextEntry.new(
           signal_kind,
           signal_name,
           source: tag.tagger,
-          description: tag.description,
+          description: tag_ai_context_description(tag),
           path: anchor.try(&.path),
           line: anchor.try(&.line),
-          confidence: tag.name == "auth" ? 86 : 74,
+          confidence: confidence,
           snippet: route_snippet
         )
 
-        if guard_tag?(tag)
+        if is_guard
           context.push_guard(entry)
+          # Spring's method-security annotations are authorization evidence,
+          # while the framework tag still represents the endpoint's broader
+          # authentication protection. Preserve that existing auth_guard and
+          # emit the more specific authz_guard as well; this is especially
+          # important for class-level annotations, which the route-scope scan
+          # cannot see without the class declaration lead-in.
+          if spring_authorization_annotation_tag?(tag)
+            context.push_guard(AIContextEntry.new(
+              "authz_guard",
+              signal_name,
+              source: tag.tagger,
+              description: tag.description,
+              path: anchor.try(&.path),
+              line: anchor.try(&.line),
+              confidence: confidence,
+              snippet: route_snippet
+            ))
+          end
         else
           context.push_signal(entry)
           if websocket_cors_config_tag?(tag)
@@ -1000,18 +1240,9 @@ module NoirAIContext
               snippet: route_snippet
             ))
           end
-          if tag.name == "file_upload"
-            context.push_sink(AIContextEntry.new(
-              "file_io",
-              "file_upload",
-              source: tag.tagger,
-              description: "Endpoint characteristics suggest file upload or file handling behavior",
-              path: anchor.try(&.path),
-              line: anchor.try(&.line),
-              confidence: 80,
-              snippet: route_snippet
-            ))
-          end
+          # FileUpload alone must not become a file_io sink @80 — a
+          # multipart upload tag is a surface hint, not confirmed
+          # path-based file I/O. The file_upload signal above is enough.
         end
       end
     end
@@ -1037,6 +1268,28 @@ module NoirAIContext
       return tag.description if graphql_operation_tag?(tag)
 
       tag.name
+    end
+
+    # Soften tagger marketing copy before it becomes an AI-context
+    # signal. Endpoint tags stay strong for list/tag output; the
+    # LLM-facing blurb must not read as a confirmed vulnerability.
+    private def tag_ai_context_description(tag : Tag) : String
+      case tag.tagger
+      when "FileUpload"
+        "Endpoint characteristics suggest file upload or file handling (tagger heuristic; not a confirmed vulnerability)."
+      when "Hunt"
+        "#{tag.description} Name-heuristic only — not confirmed exploitability."
+      when "GraphQL"
+        return tag.description if graphql_operation_tag?(tag)
+
+        "GraphQL endpoint surface (introspection/nested access may apply; not a confirmed vulnerability)."
+      when "JWT"
+        "JWT-related endpoint surface — review signature, expiration, and claims validation."
+      when "SOAP"
+        "SOAP/XML web-service endpoint surface."
+      else
+        tag.description
+      end
     end
 
     private def graphql_operation_tag?(tag : Tag) : Bool
@@ -1098,15 +1351,186 @@ module NoirAIContext
           snippet: callee_snippet
         ))
 
-        if raw_sink = PatternMatcher.detect_from_patterns(callee.name, callee_snippet, sink_patterns, callee.path, callee.line, "callee")
+        if type = repository_call_type(callee.name, callee.path)
+          context.push_sink(repository_sink(callee.name, type, callee.path, callee.line, callee_snippet))
+        elsif handle_sink = file_handle_sink(callee, callee_snippet)
+          context.push_sink(handle_sink)
+        elsif (raw_sink = PatternMatcher.detect_from_patterns(callee.name, callee_snippet, sink_patterns, callee.path, callee.line, "callee")) &&
+              !in_memory_send_file?(raw_sink, callee)
           sink = normalize_mobile_sink(endpoint, raw_sink)
           context.push_sink(enrich_callee_sink(sink, callee, callee_snippet))
+        end
+        unless context.sinks.any? { |entry| entry.kind == "sql" }
+          helper_repository_sink(callee).try { |entry| context.push_sink(entry) }
         end
 
         if validator = PatternMatcher.detect_from_patterns(callee.name, callee_snippet, VALIDATOR_PATTERNS, callee.path, callee.line, "callee")
           context.push_validator(validator)
         end
       end
+    end
+
+    # `f.read()` / `f.Write(b)` touches the file system only when `f` holds a
+    # file handle: its nearest binding above the call opens one
+    # (`with open(p) as f`, `f, err := os.Open(p)`, `File.open(p) do |f|`).
+    # A read on anything else is not file I/O: `rand.Read`, an upload's
+    # `file.stream.read`, `resp.Body.Read`.
+    private def file_handle_sink(callee : Callee, snippet : String?) : AIContextEntry?
+      return unless (path = callee.path) && (line = callee.line)
+      return unless match = callee.name.match(/\A(\w+)\.(?:read|write)\w*\z/i)
+      return unless bound_to?(path, line, match[1], FILE_HANDLE_OPEN)
+
+      AIContextEntry.new(
+        "file_io",
+        callee.name,
+        source: "callee",
+        description: "File read/write on a handle opened from the file system",
+        path: path,
+        line: line,
+        confidence: 68,
+        snippet: snippet
+      )
+    end
+
+    # `send_file(io.BytesIO(data))`, or a name bound to such a buffer.
+    private def in_memory_send_file?(sink : AIContextEntry, callee : Callee) : Bool
+      return false unless sink.kind == "file_io" && (path = callee.path) && (line = callee.line)
+      return false unless call = @reader.lines_for(path)[line - 1, 3]?.try(&.join(' '))
+      return true if call.matches?(SEND_IN_MEMORY_BUFFER)
+      return false unless arg = call.match(/\bsend_?file\s*\(\s*(\w+)\s*[,)]/i)
+
+      bound_to?(path, line, arg[1], IN_MEMORY_BUFFER)
+    end
+
+    SEND_IN_MEMORY_BUFFER = /\bsend_?file\s*\(\s*#{IN_MEMORY_BUFFER}/i
+
+    # Whether the nearest binding of `name` at or above `line` takes its value
+    # from `value`: `name = value`, `name, err := value`, `with value as name`,
+    # `value do |name|`, Go's `name *os.File`. Any other binding of the name
+    # (an assignment, a typed parameter, a loop variable) ends the walk.
+    # ponytail: a textual walk up the file, not scope-aware; an untyped
+    # parameter (`def h(f)`) is not seen as a binding, so the walk can run
+    # on into an earlier function's `f = open(...)`.
+    private def bound_to?(path : String, line : Int32, name : String, value : Regex) : Bool
+      from = /\b#{name}(?:\s*(?:,\s*\w+\s*)?:?=\s*(?:await\s+)?|\s+)#{value}|#{value}.*(?:\bas\s+|\|\s*)#{name}\b/
+      other = /\b#{name}\s*(?:,\s*\w+\s*)?:=|\b#{name}\s*=(?!=)|\bas\s+#{name}\b|\|\s*#{name}\s*[|,]|\b#{name}\s*:\s*[A-Za-z_]|\bfor\b.*\b#{name}\b.*\b(?:in|of|range)\b/
+      lines = @reader.lines_for(path)
+      Math.min(line, lines.size).pred.downto(0) do |i|
+        return true if lines[i].matches?(from)
+        return false if lines[i].matches?(other)
+      end
+      false
+    end
+
+    # The declared type of the receiver in `this.owners.save` /
+    # `owners.findById`, when that type is a data repository and the method
+    # one of its data-access methods. See `DATA_REPOSITORY_TYPE`.
+    private def repository_call_type(name : String, path : String?) : String?
+      return unless path && REPOSITORY_SOURCE_EXTS.includes?(File.extname(path))
+      return unless match = name.match(/\A(?:this\.)?(\w+)\.(\w+)\z/)
+      return unless (type = declared_type(path, match[1])) && repository_type?(type)
+      return unless match[2].matches?(DATA_ACCESS_METHOD) || query_annotated?(type, match[2])
+      type
+    end
+
+    # `private final OwnerRepository owners;`, `(OwnerRepository owners)`,
+    # Kotlin `owners: OwnerRepository`.
+    # ponytail: the first declaration of the name in the file wins (fields
+    # sit above the methods); a same-named local of another type in some
+    # other method is not told apart.
+    private def declared_type(path : String, variable : String) : String?
+      key = {path, variable}
+      return @declared_types[key] if @declared_types.has_key?(key)
+
+      pattern = /\b([A-Z]\w*)(?:<[^;=(){}]*>)?\s+#{variable}\s*[;=,)]|\b#{variable}\s*:\s*([A-Z]\w*)/
+      found = nil
+      @reader.lines_for(path).each do |line|
+        next if line.lstrip.starts_with?('*') || line.lstrip.starts_with?("//")
+        if match = line.match(pattern)
+          found = match[1]? || match[2]?
+          break
+        end
+      end
+      @declared_types[key] = found
+    end
+
+    private def repository_type?(type : String) : Bool
+      return true if type.matches?(DATA_REPOSITORY_TYPE)
+      cached = @repository_types[type]?
+      return cached unless cached.nil?
+
+      @repository_types[type] = false # cycle guard
+      @repository_types[type] = repository_supertypes(type).any? { |base| repository_type?(base) }
+    end
+
+    # Supertypes of an interface declared in the scanned source
+    # (`interface Owners extends JpaRepository<Owner, Integer>`, Kotlin
+    # `interface Owners : CrudRepository<Owner, Int>`), generics dropped.
+    private def repository_supertypes(type : String) : Array(String)
+      pattern = /\binterface\s+#{type}\b(?:<[^{]*?>)?\s*(?:extends\b|:)\s*([^{\n]+)/
+      declaration_files(type).each do |file|
+        next unless match = @reader.lines_for(file).join('\n').match(pattern)
+        bases = match[1]
+        while (stripped = bases.gsub(/<[^<>]*>/, "")) != bases
+          bases = stripped
+        end
+        return bases.split(',').map(&.strip.split('.').last).reject(&.empty?)
+      end
+      [] of String
+    end
+
+    private def declaration_files(type : String) : Array(String)
+      CodeLocator.instance.files_by_basename("#{type}.java") + CodeLocator.instance.files_by_basename("#{type}.kt")
+    end
+
+    # A repository method named outside `DATA_ACCESS_METHOD` still runs SQL
+    # when the annotation stack above its declaration carries `@Query`.
+    private def query_annotated?(type : String, method : String) : Bool
+      call = /\b#{method}\s*\(/
+      declaration_files(type).any? do |file|
+        lines = @reader.lines_for(file)
+        next false unless idx = lines.index(&.matches?(call))
+        idx.downto(Math.max(idx - 8, 0)).any? do |i|
+          line = lines[i].strip
+          break false if i < idx && (line.empty? || line.ends_with?(';') || line.ends_with?('{') || line.ends_with?('}') || line.starts_with?("fun "))
+          line.includes?("@Query")
+        end
+      end
+    end
+
+    # A bare / `this.` callee resolved to a same-class helper
+    # (`findPaginated(page)`): the repository call sits in its body. One
+    # level only; the body is the helper's brace block.
+    private def helper_repository_sink(callee : Callee) : AIContextEntry?
+      path = callee.path
+      return unless path && REPOSITORY_SOURCE_EXTS.includes?(File.extname(path))
+      return unless callee.name.matches?(/\A(?:this\.)?\w+\z/)
+      return unless body = @reader.route_scope_snippet_for(path, callee.line, 40, 4000)
+
+      body.split(" | ").each do |segment|
+        line_no, _, code = segment.partition(": ")
+        code.scan(/(?<![.\w])((?:this\.)?\w+\.\w+)\s*\(/) do |match|
+          if type = repository_call_type(match[1], path)
+            return repository_sink(match[1], type, path, line_no.to_i?, segment, via: callee.name)
+          end
+        end
+      end
+      nil
+    end
+
+    private def repository_sink(name : String, type : String, path : String?, line : Int32?, snippet : String?, via : String? = nil) : AIContextEntry
+      description = "Data-access call on a receiver declared as #{type}, a data repository"
+      description += ", reached through #{via}" if via
+      AIContextEntry.new(
+        "sql",
+        name,
+        source: "callee",
+        description: description,
+        path: path,
+        line: line,
+        confidence: 78,
+        snippet: snippet
+      )
     end
 
     private def enrich_callee_sink(sink : AIContextEntry, callee : Callee, snippet : String?) : AIContextEntry
@@ -1152,28 +1576,47 @@ module NoirAIContext
       true
     end
 
+    OUTBOUND_URI_PATTERN          = /\.\s*uri\s*\(\s*["']([^"']+)["']/
+    OUTBOUND_TEMPLATE_URI_PATTERN = /\.\s*(?:getForObject|postForObject|exchange)\s*\(\s*["']([^"']+)["']/
+    OUTBOUND_ANY_URI_PATTERN      = /\.\s*(?:uri|getForObject|postForObject|exchange)\s*\(\s*["']([^"']+)["']/
+
     private def outbound_uri_from_snippet(snippet : String?, line : Int32?) : String?
       return unless snippet
 
-      if line && (line_match = snippet.match(/(?:^|\|\s*)#{line}:\s*([^|]+)/))
-        if uri_match = line_match[1].match(/\.\s*uri\s*\(\s*["']([^"']+)["']/)
+      if line && (segment = snippet_segment_for_line(snippet, line))
+        if uri_match = segment.match(OUTBOUND_URI_PATTERN)
           return uri_match[1]
         end
-        if uri_match = line_match[1].match(/\.\s*(?:getForObject|postForObject|exchange)\s*\(\s*["']([^"']+)["']/)
+        if uri_match = segment.match(OUTBOUND_TEMPLATE_URI_PATTERN)
           return uri_match[1]
         end
       end
 
-      match = snippet.match(/\.\s*(?:uri|getForObject|postForObject|exchange)\s*\(\s*["']([^"']+)["']/)
+      match = snippet.match(OUTBOUND_ANY_URI_PATTERN)
       return unless match
 
       match[1]
     end
 
+    # Pulls the `<line>: …` segment out of a snippet. Snippets are built
+    # by joining `"<n>: <code>"` entries with `" | "`, so splitting on the
+    # separator is exact — and it avoids interpolating the line number
+    # into a regex literal, which made Crystal recompile the pattern on
+    # every outbound_http sink.
+    private def snippet_segment_for_line(snippet : String, line : Int32) : String?
+      prefix = "#{line}:"
+      snippet.split('|').each do |part|
+        stripped = part.strip
+        return stripped[prefix.size..].strip if stripped.starts_with?(prefix)
+      end
+
+      nil
+    end
+
     private def add_source_scan_entries(context : AIContext, endpoint : Endpoint)
       return if endpoint.details.code_paths.empty?
 
-      endpoint.details.code_paths.each do |path_info|
+      source_scan_paths(endpoint).each do |path_info|
         route_scope = @reader.route_scope_snippet_for(path_info.path, path_info.line)
 
         # Try each guard category independently — a route can be
@@ -1183,6 +1626,9 @@ module NoirAIContext
         GUARD_PATTERN_GROUPS.each do |patterns|
           kind = patterns.first.kind
           next if context.guards.any? { |g| g.kind == kind }
+          # The framework said the route admits anonymous callers; a name
+          # match in its source must not overrule that.
+          next if (kind == "auth_guard" || kind == "authz_guard") && endpoint.tags.any? { |t| t.name == "anonymous" }
           if guard = PatternMatcher.detect_from_patterns("", route_scope, patterns, path_info.path, path_info.line, "route_source")
             context.push_guard(guard)
           end
@@ -1194,7 +1640,7 @@ module NoirAIContext
         # Explicit CSRF bypass is a negative signal. CSRF only
         # protects state-changing methods, so suppress it on safe
         # endpoints split out from multi-method handlers.
-        unless SAFE_METHODS.includes?(endpoint.method)
+        unless SAFE_METHODS.includes?(endpoint.method.upcase)
           CSRF_EXEMPT_PATTERNS.each do |pattern|
             next if context.signals.any? { |s| s.kind == "csrf_exempt" }
             if entry = PatternMatcher.detect_single_pattern(pattern, "", snippet, path_info.path, path_info.line, "route_source")
@@ -1446,7 +1892,7 @@ module NoirAIContext
 
     private def add_foreign_identifier_write_signal(context : AIContext, endpoint : Endpoint, path_info : PathInfo, snippet : String)
       return if context.signals.any? { |s| s.kind == "foreign_identifier_write" }
-      return unless STATE_CHANGING_METHODS.includes?(endpoint.method)
+      return unless state_changing_endpoint?(endpoint)
       return if context.signals.any? { |s| s.kind == "object_lookup" }
       return if object_lookup_callee(endpoint)
       return if context.validators.any? { |v| v.kind == "existence_validation" }
@@ -1491,7 +1937,7 @@ module NoirAIContext
     end
 
     private def add_missing_guard_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
-      return unless STATE_CHANGING_METHODS.includes?(endpoint.method)
+      return unless state_changing_endpoint?(endpoint)
       return if graphql_read_endpoint?(endpoint)
       return if read_only_post_endpoint?(endpoint)
 
@@ -1523,12 +1969,19 @@ module NoirAIContext
       # always need rate limiting. Also accepts source-scanned
       # credential_input signals (analyzer missed the param) so
       # destructured login handlers still light up.
+      #
+      # Only a secret the route checks counts (body / query / form /
+      # path: password, reset token, …). An `Authorization` header or
+      # session cookie is the caller presenting an already-issued
+      # credential to the auth layer, which every guarded route
+      # inherits, so it says nothing about brute force on this route.
       credential_param = endpoint.params.any? do |p|
-        PARAM_PATTERNS.find { |pattern| pattern.kind == "credential_input" }.try do |pattern|
-          PatternMatcher.matches_any?(p.name, pattern.name_patterns)
-        end
+        !presented_credential_slot?(p.param_type) &&
+          PatternMatcher.matches_any?(p.name, CREDENTIAL_INPUT_NAME_PATTERNS)
       end
-      credential_signal = context.signals.any? { |s| s.kind == "credential_input" }
+      credential_signal = context.signals.any? do |s|
+        s.kind == "credential_input" && !presented_credential_slot?(s.name.split('.', 2).first)
+      end
       if (credential_param || credential_signal) && !has_rate_limit
         context.push_signal(AIContextEntry.new(
           "rate_limit_absence",
@@ -1641,7 +2094,9 @@ module NoirAIContext
     end
 
     private def guard_tag?(tag : Tag) : Bool
-      return true if tag.name == "auth"
+      return true if tag.name == "auth" || tag.name == "authz"
+      # A framework's statement that the route admits anonymous callers.
+      return false if tag.name == "anonymous"
       tag.tagger.downcase.ends_with?("_auth")
     end
 
@@ -1651,8 +2106,24 @@ module NoirAIContext
       tag.name
     end
 
+    private def spring_authorization_annotation_tag?(tag : Tag) : Bool
+      tag.name == "auth" &&
+        tag.tagger == "spring_auth" &&
+        tag.description.matches?(/@(PreAuthorize|Secured|RolesAllowed)\b/)
+    end
+
+    # Resolved once from the catalog instead of re-scanning PARAM_PATTERNS
+    # on every call. `identifier_like?` in particular runs several times
+    # per parameter per endpoint, and the answer never changes.
+    IDENTIFIER_INPUT_NAME_PATTERNS = PARAM_PATTERNS.find! { |pattern| pattern.kind == "identifier_input" }.name_patterns
+    CREDENTIAL_INPUT_NAME_PATTERNS = PARAM_PATTERNS.find! { |pattern| pattern.kind == "credential_input" }.name_patterns
+
+    private def presented_credential_slot?(param_type : String) : Bool
+      param_type == "header" || param_type == "cookie"
+    end
+
     private def identifier_like?(name : String) : Bool
-      return true if PatternMatcher.matches_any?(name, PARAM_PATTERNS.find! { |pattern| pattern.kind == "identifier_input" }.name_patterns)
+      return true if PatternMatcher.matches_any?(name, IDENTIFIER_INPUT_NAME_PATTERNS)
       return true if identifier_suffix_like?(name)
 
       false

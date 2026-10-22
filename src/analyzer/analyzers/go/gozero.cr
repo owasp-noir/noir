@@ -3,7 +3,16 @@ require "../../../miniparsers/go_route_extractor_ts"
 
 module Analyzer::Go
   class GoZero < GoEngine
+    analyzer_for "go_gozero"
+
     IMPORT_MARKER = "github.com/zeromicro/go-zero"
+
+    # One precompiled matcher instead of a `String#includes?` scan per
+    # `.go` file: `includes?` runs Rabin-Karp over the whole buffer and
+    # the marker is absent in the overwhelming majority of files in a
+    # polyglot repo, so every one of them pays the full scan. See
+    # `Analyzer#content_matches?`.
+    IMPORT_MARKER_RE = Regex.union(IMPORT_MARKER)
 
     # Crystal recompiles an interpolated regex literal on every evaluation
     # (a full PCRE2 JIT compile). The accessor set is fixed, so precompile
@@ -23,169 +32,170 @@ module Analyzer::Go
       # `read_package_file_contents` already filters to `.go`, so the
       # function-body map naturally skips `.api`.
       file_contents = read_package_file_contents
-      package_function_bodies = collect_package_function_bodies(file_contents)
-      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
-      begin
-        WaitGroup.wait do |wg|
-          # Producer — tracked by the WaitGroup
-          wg.spawn do
-            [".go", ".api"].each do |ext|
-              get_files_by_extension(ext).each { |file| channel.send(file) }
-            end
-            channel.close
+      package_function_bodies = lazy_package_bodies(file_contents)
+      named_scope = named_handler_scope(file_contents)
+      # Both `.go` files and gozero's `.api` DSL files. The per-path
+      # `File.extname` re-check the inlined walk carried is redundant:
+      # `get_files_by_extensions` resolves the same `File.extname` index,
+      # so every path here already has one of those two extensions.
+      parallel_analyze(get_files_by_extensions([".go", ".api"])) do |path|
+        next if GoEngine.go_test_file?(base_relative_path(path))
+        next unless File.exists?(path)
+
+        content = read_file_content(path)
+        # `.api` files are gozero's DSL (no Go imports);
+        # only gate `.go` files on the import marker.
+        next if File.extname(path) == ".go" && !content_matches?(content, IMPORT_MARKER_RE)
+        lines = GoEngine.strip_comments(content).lines
+        last_endpoint = Endpoint.new("", "")
+
+        # Go files: tree-sitter pre-pass (same verb-on-identifier
+        # pattern Gin uses, no groups in gozero's common idioms).
+        # .api files use a non-Go DSL — keep the legacy regex.
+        routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
+        callees_by_route = Hash(Int32, Array(Tuple(String, String, Int32))).new
+        if File.extname(path) == ".go"
+          Noir::TreeSitterGoRouteExtractor.extract_routes(content).each do |r|
+            next unless r.raw_path.starts_with?("/")
+            routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route
+            routes_by_line[r.line] << r
+          end
+          Noir::TreeSitterGoRouteExtractor.extract_simple_statics(content).each do |sp|
+            public_dirs << static_dir_entry(path, sp.url_prefix, sp.disk_path)
           end
 
-          @options["concurrency"].to_s.to_i.times do
-            wg.spawn do
-              loop do
-                begin
-                  path = channel.receive?
-                  break if path.nil?
-                  next if File.directory?(path)
-                  next if GoEngine.go_test_file?(path)
+          # Resolve 1-hop callees for every verb-style .go
+          # route. (Done before AddRoutes routes are folded in
+          # below: their handlers are cross-package wrapper
+          # refs, so directory-scoped body resolution can't
+          # reach them — they carry no 1-hop callees.)
+          route_rows = Set(Int32).new
+          routes_by_line.each_key { |row| route_rows << row }
+          external_fns = ts_function_bodies_for_directory(package_function_bodies, File.dirname(path))
+          callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns)
 
-                  # Handle both .go files and .api files
-                  if File.exists?(path) && (File.extname(path) == ".go" || File.extname(path) == ".api")
-                    content = read_file_content(path)
-                    # `.api` files are gozero's DSL (no Go imports);
-                    # only gate `.go` files on the import marker.
-                    next if File.extname(path) == ".go" && !content.includes?(IMPORT_MARKER)
-                    lines = content.lines
-                    last_endpoint = Endpoint.new("", "")
+          # go-zero's canonical generated `routes.go`:
+          # `server.AddRoutes([]rest.Route{ {Method, Path,
+          # Handler}, ... }, rest.WithPrefix("/p"))`. These are
+          # struct literals, not verb calls, so the generic
+          # extractor misses them. Fold them into the same
+          # per-line map for emission with full mounted paths.
+          Noir::TreeSitterGoRouteExtractor.extract_gozero_routes(content).each do |r|
+            routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route
+            routes_by_line[r.line] << r
+          end
+        end
 
-                    # Go files: tree-sitter pre-pass (same verb-on-identifier
-                    # pattern Gin uses, no groups in gozero's common idioms).
-                    # .api files use a non-Go DSL — keep the legacy regex.
-                    routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
-                    callees_by_route = Hash(Int32, Array(Tuple(String, String, Int32))).new
-                    if File.extname(path) == ".go"
-                      Noir::TreeSitterGoRouteExtractor.extract_routes(content).each do |r|
-                        next unless r.raw_path.starts_with?("/")
-                        routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route
-                        routes_by_line[r.line] << r
-                      end
-                      Noir::TreeSitterGoRouteExtractor.extract_simple_statics(content).each do |sp|
-                        public_dirs << static_dir_entry(path, sp.url_prefix, sp.disk_path)
-                      end
+        # `.api` route paths are relative to the `@server`
+        # block's `prefix:` (and go-zero mounts them under
+        # it). Track the active prefix as we scan so each
+        # `post /user/login` resolves to its full mounted
+        # path (`/usercenter/v1/user/login`) — matching what
+        # the generated `routes.go` registers via
+        # `rest.WithPrefix(...)`, so the two representations
+        # dedupe instead of producing half-paths.
+        api_prefix = ""
+        in_server_block = false
+        named = Noir::GoNamedHandler.new(content, path, routes_by_line.values.flatten, named_scope)
 
-                      # Resolve 1-hop callees for every verb-style .go
-                      # route. (Done before AddRoutes routes are folded in
-                      # below: their handlers are cross-package wrapper
-                      # refs, so directory-scoped body resolution can't
-                      # reach them — they carry no 1-hop callees.)
-                      route_rows = Set(Int32).new
-                      routes_by_line.each_key { |row| route_rows << row }
-                      external_fns = ts_function_bodies_for_directory(package_function_bodies, File.dirname(path))
-                      callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns)
+        lines.each_with_index do |line, index|
+          next if named.claim?(index, line)
 
-                      # go-zero's canonical generated `routes.go`:
-                      # `server.AddRoutes([]rest.Route{ {Method, Path,
-                      # Handler}, ... }, rest.WithPrefix("/p"))`. These are
-                      # struct literals, not verb calls, so the generic
-                      # extractor misses them. Fold them into the same
-                      # per-line map for emission with full mounted paths.
-                      Noir::TreeSitterGoRouteExtractor.extract_gozero_routes(content).each do |r|
-                        routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route
-                        routes_by_line[r.line] << r
-                      end
-                    end
+          details = Details.new(PathInfo.new(path, index + 1))
 
-                    # `.api` route paths are relative to the `@server`
-                    # block's `prefix:` (and go-zero mounts them under
-                    # it). Track the active prefix as we scan so each
-                    # `post /user/login` resolves to its full mounted
-                    # path (`/usercenter/v1/user/login`) — matching what
-                    # the generated `routes.go` registers via
-                    # `rest.WithPrefix(...)`, so the two representations
-                    # dedupe instead of producing half-paths.
-                    api_prefix = ""
-                    in_server_block = false
+          # Handle .api files (go-zero API definition files)
+          if File.extname(path) == ".api"
+            stripped = line.strip
+            if stripped.starts_with?("@server")
+              in_server_block = true
+              api_prefix = ""
+            elsif in_server_block && (pm = stripped.match(/^prefix:\s*"?([^"\s]+)"?/))
+              pfx = pm[1].strip
+              api_prefix = if pfx.empty?
+                             ""
+                           else
+                             pfx.starts_with?("/") ? pfx : "/#{pfx}"
+                           end
+            elsif in_server_block && stripped.starts_with?(")")
+              in_server_block = false
+            end
 
-                    lines.each_with_index do |line, index|
-                      details = Details.new(PathInfo.new(path, index + 1))
-
-                      # Handle .api files (go-zero API definition files)
-                      if File.extname(path) == ".api"
-                        stripped = line.strip
-                        if stripped.starts_with?("@server")
-                          in_server_block = true
-                          api_prefix = ""
-                        elsif in_server_block && (pm = stripped.match(/^prefix:\s*"?([^"\s]+)"?/))
-                          pfx = pm[1].strip
-                          api_prefix = if pfx.empty?
-                                         ""
-                                       else
-                                         pfx.starts_with?("/") ? pfx : "/#{pfx}"
-                                       end
-                        elsif in_server_block && stripped.starts_with?(")")
-                          in_server_block = false
-                        end
-
-                        if match = line.match(/^\s*(get|post|put|delete|patch|head|options)\s+([^\s\(]+)/)
-                          method = match[1].upcase
-                          route_path = match[2]
-                          full_path = if api_prefix.empty?
-                                        route_path
-                                      else
-                                        rel = route_path.starts_with?("/") ? route_path : "/#{route_path}"
-                                        "#{api_prefix}#{rel}"
-                                      end
-                          new_endpoint = Endpoint.new(full_path, method, details)
-                          result << new_endpoint
-                          last_endpoint = new_endpoint
-                        end
-                      end
-
-                      # Handle .go files
-                      if File.extname(path) == ".go"
-                        if ts_hits = routes_by_line[index]?
-                          ts_hits.each do |route|
-                            Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
-                              new_endpoint = Endpoint.new(route.path, verb, details)
-                              if entries = callees_by_route[route.line]?
-                                entries.each do |entry|
-                                  name, callee_path, callee_line = entry
-                                  new_endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
-                                end
-                              end
-                              result << new_endpoint
-                              last_endpoint = new_endpoint
-                            end
+            if match = line.match(/^\s*(get|post|put|delete|patch|head|options)\s+([^\s\(]+)/)
+              method = match[1].upcase
+              route_path = match[2]
+              full_path = if api_prefix.empty?
+                            route_path
+                          else
+                            rel = route_path.starts_with?("/") ? route_path : "/#{route_path}"
+                            "#{api_prefix}#{rel}"
                           end
-                        end
+              new_endpoint = Endpoint.new(full_path, method, details)
+              result << new_endpoint
+              last_endpoint = new_endpoint
+            end
+          end
 
-                        ["Query", "PostForm", "GetHeader", "PathParam", "FormValue"].each do |pattern|
-                          if line.includes?("#{pattern}(")
-                            add_param_to_endpoint(get_param(line, pattern), last_endpoint)
-                          end
-                        end
-
-                        # gozero's canonical body-binding entrypoint is
-                        # `httpx.Parse(r, &req)` / `httpx.ParseJsonBody`;
-                        # both populate the request body. `json.NewDecoder`
-                        # is also common in raw handlers.
-                        if line.includes?("httpx.Parse(") || line.includes?("httpx.ParseJsonBody(") ||
-                           line.includes?("httpx.ParseForm(") || line.matches?(/json\.NewDecoder\(.+\.Body\)/)
-                          add_param_to_endpoint(Param.new("body", "", "json"), last_endpoint)
-                        end
-                      end
+          # Handle .go files
+          if File.extname(path) == ".go"
+            if ts_hits = routes_by_line[index]?
+              ts_hits.each do |route|
+                Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
+                  new_endpoint = Endpoint.new(route.path, verb, details)
+                  if entries = callees_by_route[route.line]?
+                    entries.each do |entry|
+                      name, callee_path, callee_line = entry
+                      new_endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
                     end
                   end
-                rescue
-                  # Skip problematic files
-                  next
+                  new_endpoint.handler = named.handler_for(route)
+                  result << new_endpoint
+                  named.bind(route, new_endpoint)
+                  last_endpoint = new_endpoint
                 end
               end
             end
+
+            add_gozero_params(line, last_endpoint)
           end
         end
-      rescue
-        # Handle channel errors
+
+        named.each_attribution { |line, ep| add_gozero_params(line, ep) }
       end
 
-      resolve_public_dirs_with_glob(public_dirs)
+      resolve_public_dirs(public_dirs)
 
       result
+    end
+
+    private def add_gozero_params(line : String, endpoint : Endpoint)
+      ["Query", "PostForm", "GetHeader", "PathParam", "FormValue"].each do |pattern|
+        if line.includes?("#{pattern}(")
+          add_param_to_endpoint(get_param(line, pattern), endpoint)
+        end
+      end
+      Noir::GoRequestParamExtractor.header_params(line).each { |header| add_param_to_endpoint(header, endpoint) }
+
+      # gozero's canonical body-binding entrypoint is
+      # `httpx.Parse(r, &req)` / `httpx.ParseJsonBody`;
+      # both populate the request body. `json.NewDecoder`
+      # is also common in raw handlers. `httpx.Parse` binds a GET's
+      # `form:` fields from the query string, so a GET gets no JSON body.
+      bodyless = endpoint.method == "GET" || endpoint.method == "HEAD"
+      if line.includes?("httpx.ParseJsonBody(") || line.matches?(/json\.NewDecoder\(.+\.Body\)/) ||
+         (line.includes?("httpx.Parse(") && !bodyless)
+        add_param_to_endpoint(Param.new("body", "", "json"), endpoint)
+      end
+
+      # `httpx.ParseForm` binds form fields: the query string on a GET,
+      # the form body otherwise.
+      if line.includes?("httpx.ParseForm(")
+        form_type = bodyless ? "query" : "form"
+        if match = line.match(/httpx\.ParseForm\(\s*[^,]+,\s*"([^"]+)"/)
+          add_param_to_endpoint(Param.new(match[1], "", form_type), endpoint)
+        elsif !bodyless
+          add_param_to_endpoint(Param.new("body", "", form_type), endpoint)
+        end
+      end
     end
 
     # Type the param by the actual accessor name. The previous
@@ -204,8 +214,10 @@ module Analyzer::Go
                    else                  "query"
                    end
 
-      accessor_regex = PARAM_ACCESSOR_PATTERNS[pattern]? || /#{Regex.escape(pattern)}\(\s*"([^"]+)"/
-      if match = line.match(accessor_regex)
+      # `get_param` is only ever called with one of the five patterns
+      # `PARAM_ACCESSOR_PATTERNS` was built from (see the loop above), so
+      # this lookup always hits — no interpolated-regex fallback needed.
+      if match = line.match(PARAM_ACCESSOR_PATTERNS[pattern])
         return Param.new(match[1], "", param_type)
       end
       Param.new("", "", "")

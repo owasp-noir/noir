@@ -1,7 +1,9 @@
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 
 module Analyzer::Specification
-  class AwsCdk < Analyzer
+  class AwsCdk < SpecificationEngine
+    analyzer_for "aws_cdk"
+
     METHOD_ANY = "ANY"
 
     # Variable -> (parent variable | nil, literal path segment)
@@ -21,23 +23,12 @@ module Analyzer::Specification
     PY_METHODS_RE  = /methods\s*=\s*\[([^\]]*)\]/
 
     def analyze
-      spec_files = CodeLocator.instance.all("aws-cdk-spec")
-      return @result unless spec_files.is_a?(Array(String))
-
-      spec_files.each do |path|
-        next unless File.exists?(path)
-
-        details = Details.new(PathInfo.new(path))
+      each_spec_file_with_details(Noir::LocatorKeys::AWS_CDK_SPEC) do |path, details|
         content = read_file_content(path)
-        begin
-          if path.ends_with?(".py")
-            process_python(content, details)
-          else
-            process_typescript(content, details)
-          end
-        rescue e
-          @logger.debug "Exception processing #{path}"
-          @logger.debug_sub e
+        if path.ends_with?(".py")
+          process_python(content, details)
+        else
+          process_typescript(content, details)
         end
       end
 

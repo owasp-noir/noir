@@ -16,6 +16,8 @@ module Analyzer::Php
   # Verbs come from the optional `'method'` key (`'GET|POST'`, pipe-separated),
   # defaulting to GET. Path params are already `{brace}`-style.
   class Mautic < PhpEngine
+    analyzer_for "php_mautic"
+
     GROUP_PREFIXES = {"main" => "", "public" => "", "api" => "/api"}
 
     def analyze_file(path : String) : Array(Endpoint)
@@ -25,6 +27,7 @@ module Analyzer::Php
       begin
         content = read_file_content(path)
         return endpoints unless content.includes?("'routes'") || content.includes?("\"routes\"")
+        content = php_code(content)
 
         lexer = Noir::PhpLexer.new(content)
 
@@ -42,28 +45,10 @@ module Analyzer::Php
         end
       rescue e
         logger.debug "Error analyzing Mautic config #{path}: #{e}"
+        Noir::SkippedFiles.record(tech, path, e.message.presence || e.class.name)
       end
 
       endpoints
-    end
-
-    # Find `'<key>' => [` within `[from, to)` and return the index of the `[`,
-    # verified to be real code (not a comment / heredoc).
-    private def find_key_array_open(content : String, lexer : Noir::PhpLexer, key : String, from : Int32, to : Int32) : Int32?
-      regex = Regex.new("['\"]#{Regex.escape(key)}['\"]\\s*=>\\s*\\[")
-      pos = from
-      while match = content.match(regex, pos)
-        match_text = match[0]
-        start = content.index(match_text, pos)
-        break unless start && start < to
-        bracket_pos = start + match_text.size - 1
-        # Validate the `[` (a code char) rather than the key's opening quote,
-        # which the lexer masks as string content — so a real `'routes' => [`
-        # passes while one buried in a heredoc/comment (masked `[`) is rejected.
-        return bracket_pos if lexer.in_code?(bracket_pos)
-        pos = start + match_text.size
-      end
-      nil
     end
 
     # Parse the route entries of one group body (`[from, to)`). Each entry is

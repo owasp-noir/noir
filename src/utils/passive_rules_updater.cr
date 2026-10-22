@@ -6,6 +6,41 @@ require "../models/logger.cr"
 module PassiveRulesUpdater
   REPO_URL = "https://github.com/owasp-noir/noir-passive-rules.git"
 
+  # Force git into non-interactive mode so a missing/expired credential
+  # never drops the scan into an invisible username/password prompt that
+  # blocks forever (CI, automation). git exits with an error instead.
+  GIT_ENV = {"GIT_TERMINAL_PROMPT" => "0", "GCM_INTERACTIVE" => "never"}
+
+  # Upper bound on any single git call. A blackholed remote otherwise
+  # blocks `git fetch` / `clone` for the whole TCP connect timeout, and
+  # `noir scan -P` runs the fetch before it does anything else.
+  # Override with NOIR_RULES_GIT_TIMEOUT (seconds).
+  DEFAULT_GIT_TIMEOUT = 20.seconds
+  class_property git_timeout : Time::Span = ENV["NOIR_RULES_GIT_TIMEOUT"]?.try(&.to_i?).try { |sec| sec.seconds if sec > 0 } || DEFAULT_GIT_TIMEOUT
+
+  # Runs git with GIT_ENV, bounded by `git_timeout`. A call that overruns
+  # is terminated and reported as a warning, so callers fall back to the
+  # cached rules (or fail `noir rules update`) instead of hanging.
+  def self.run_git(args : Array(String), logger : NoirLogger, chdir : String? = nil,
+                   output : Process::Stdio = Process::Redirect::Close) : Bool
+    process = Process.new("git", args: args, chdir: chdir, env: GIT_ENV,
+      output: output, error: Process::Redirect::Close)
+    done = Channel(Process::Status).new(1)
+    spawn { done.send(process.wait) }
+    select
+    when status = done.receive
+      status.success?
+    when timeout(git_timeout)
+      begin
+        process.terminate
+      rescue RuntimeError
+        # already exited between the timeout firing and the signal
+      end
+      logger.warning "git #{args.first} timed out after #{git_timeout.total_seconds.to_i}s (NOIR_RULES_GIT_TIMEOUT raises the limit)."
+      false
+    end
+  end
+
   # Default location for the image-baked ruleset. Resolves via
   # `bundled_rules_path` so specs (and adventurous packagers) can
   # point at a different prefix with NOIR_BUNDLED_RULES_PATH.
@@ -20,12 +55,30 @@ module PassiveRulesUpdater
     ENV["NOIR_BUNDLED_RULES_PATH"]? || DEFAULT_BUNDLED_RULES_PATH
   end
 
+  # `Dir.exists?` / `Dir.empty?` don't return false when an ancestor of the
+  # queried path can't be stat'd (a chmod 000 parent, a revoked mount) — they
+  # raise `File::AccessDeniedError`. Every rules-path existence/emptiness check
+  # runs through these guards so a permissions problem degrades to "no usable
+  # rules here" (scan then warns; the `noir rules` CLI dies cleanly) instead of
+  # surfacing an unhandled Crystal stack trace to the user.
+  private def self.dir_exists?(path : String) : Bool
+    Dir.exists?(path)
+  rescue File::Error
+    false
+  end
+
+  private def self.dir_populated?(path : String) : Bool
+    Dir.exists?(path) && !Dir.empty?(path)
+  rescue File::Error
+    false
+  end
+
   # The user-managed rules path: where `noir rules update` clones to,
   # where `noir rules path` reports, and the canonical writable
   # location an end-user owns. Kept out of `effective_rules_path` so
   # the CLI rules subcommand has a stable single answer.
   def self.user_rules_path : String
-    File.join(get_home, "passive_rules")
+    File.join(Noir::Home.path, "passive_rules")
   end
 
   # Where `noir scan -P` should actually read rules from. Preference
@@ -34,8 +87,8 @@ module PassiveRulesUpdater
   # fallback in `initialize_rules` something concrete to populate).
   def self.effective_rules_path : String
     user = user_rules_path
-    return user if Dir.exists?(user) && !Dir.empty?(user)
-    return bundled_rules_path if Dir.exists?(bundled_rules_path) && !Dir.empty?(bundled_rules_path)
+    return user if dir_populated?(user)
+    return bundled_rules_path if dir_populated?(bundled_rules_path)
     user
   end
 
@@ -43,13 +96,23 @@ module PassiveRulesUpdater
   # provided their own. Callers use this to skip the git-clone fallback
   # (which costs network + a git binary the image doesn't ship).
   def self.bundled_rules_available? : Bool
-    user = user_rules_path
-    return false if Dir.exists?(user) && !Dir.empty?(user)
-    Dir.exists?(bundled_rules_path) && !Dir.empty?(bundled_rules_path)
+    return false if dir_populated?(user_rules_path)
+    dir_populated?(bundled_rules_path)
   end
 
-  # Check if the passive rules directory is a git repository and needs updates
-  def self.check_for_updates(logger : NoirLogger, auto_update : Bool = false) : Bool
+  # How long a scan trusts the last `git fetch` of the rules. Every `-P`
+  # scan used to fetch before doing anything else — about half a second on
+  # a good network, up to `git_timeout` on a bad one, for rules that change
+  # a few times a month.
+  SCAN_FETCH_INTERVAL = 24.hours
+
+  # Check if the passive rules directory is a git repository and needs updates.
+  #
+  # With `fetch_interval`, the network fetch is skipped when the last one
+  # (`.git/FETCH_HEAD`) is younger than that; the behind-count still comes
+  # from the local `origin/main`, so a stale-rules notice keeps appearing.
+  def self.check_for_updates(logger : NoirLogger, auto_update : Bool = false,
+                             fetch_interval : Time::Span? = nil) : Bool
     rules_path = user_rules_path
 
     # Image-baked install: the user-managed path is empty / missing
@@ -57,7 +120,7 @@ module PassiveRulesUpdater
     # from upstream because the bundled rules are pinned to the image
     # tag — users who want fresher rules switch image tags or run
     # `noir rules update` to materialise the user path.
-    if !Dir.exists?(rules_path) || Dir.empty?(rules_path)
+    if !dir_populated?(rules_path)
       if bundled_rules_available?
         logger.debug "Passive rules: image-baked ruleset in use; skipping upstream update check."
         return true
@@ -65,14 +128,14 @@ module PassiveRulesUpdater
     end
 
     # Return early if directory doesn't exist
-    unless Dir.exists?(rules_path)
+    unless dir_exists?(rules_path)
       logger.debug "Passive rules directory does not exist: #{rules_path}"
       return false
     end
 
     # Check if it's a git repository
     git_dir = File.join(rules_path, ".git")
-    unless Dir.exists?(git_dir)
+    unless dir_exists?(git_dir)
       logger.debug "Passive rules directory is not a git repository"
       return check_revision_file(rules_path, logger)
     end
@@ -80,21 +143,16 @@ module PassiveRulesUpdater
     logger.debug "Checking for passive rules updates..."
 
     begin
-      # Fetch latest updates from remote
-      result = Process.run("git", args: ["fetch", "--quiet"], chdir: rules_path,
-        output: Process::Redirect::Close, error: Process::Redirect::Close)
-
-      unless result.success?
+      if fetched_within?(git_dir, fetch_interval)
+        logger.debug "Passive rules were fetched recently; skipping the remote fetch."
+      elsif !run_git(["fetch", "--quiet"], logger, rules_path)
         logger.debug "Failed to fetch updates for passive rules"
         return false
       end
 
       # Check if local is behind remote
       output = IO::Memory.new
-      result = Process.run("git", args: ["rev-list", "--count", "HEAD..origin/main"],
-        chdir: rules_path, output: output, error: Process::Redirect::Close)
-
-      if result.success?
+      if run_git(["rev-list", "--count", "HEAD..origin/main"], logger, rules_path, output)
         behind_count = output.to_s.strip.to_i? || 0
 
         if behind_count > 0
@@ -126,11 +184,17 @@ module PassiveRulesUpdater
     end
   end
 
+  private def self.fetched_within?(git_dir : String, interval : Time::Span?) : Bool
+    return false unless interval
+    return false unless info = File.info?(File.join(git_dir, "FETCH_HEAD"))
+    Time.utc - info.modification_time < interval
+  rescue File::Error
+    false
+  end
+
   # Update the passive rules repository
   private def self.update_rules(rules_path : String, logger : NoirLogger) : Bool
-    result = Process.run("git", args: ["pull", "--quiet"], chdir: rules_path,
-      output: Process::Redirect::Close, error: Process::Redirect::Close)
-    result.success?
+    run_git(["pull", "--quiet"], logger, rules_path)
   rescue ex : Exception
     logger.debug "Error updating passive rules: #{ex.message}"
     false
@@ -154,10 +218,11 @@ module PassiveRulesUpdater
 
   # Notify user that updates are available
   private def self.notify_user_update_available(behind_count : Int32, logger : NoirLogger)
+    rules_path = user_rules_path
     logger.warning "Passive rules are #{behind_count} commits behind the latest version."
-    logger.sub "├── Run 'git pull' in ~/.config/noir/passive_rules/ to update"
-    logger.sub "├── Or use 'git clone #{REPO_URL} ~/.config/noir/passive_rules/' to get the latest rules"
-    logger.sub "├── Or run 'noir -b . -P --passive-scan-auto-update' to auto-update on startup"
+    logger.sub "├── Run 'git pull' in #{rules_path} to update"
+    logger.sub "├── Or use 'git clone #{REPO_URL} #{rules_path}' to get the latest rules"
+    logger.sub "├── Or run 'noir scan . -P --passive-scan-auto-update' to auto-update on startup"
   end
 
   # Initialize passive rules if they don't exist
@@ -165,7 +230,7 @@ module PassiveRulesUpdater
     rules_path = user_rules_path
 
     # Return true if directory already exists and is not empty
-    if Dir.exists?(rules_path) && !Dir.empty?(rules_path)
+    if dir_populated?(rules_path)
       return true
     end
 
@@ -186,10 +251,7 @@ module PassiveRulesUpdater
       Dir.mkdir_p(File.dirname(rules_path))
 
       # Clone the repository
-      result = Process.run("git", args: ["clone", "--quiet", REPO_URL, rules_path],
-        output: Process::Redirect::Close, error: Process::Redirect::Close)
-
-      if result.success?
+      if run_git(["clone", "--quiet", REPO_URL, rules_path], logger)
         logger.success "Passive rules initialized successfully."
         true
       else
@@ -197,17 +259,21 @@ module PassiveRulesUpdater
         logger.sub "➔ You can manually clone it with: git clone #{REPO_URL} #{rules_path}"
 
         # Create empty directory as fallback
-        Dir.mkdir_p(rules_path) unless Dir.exists?(rules_path)
+        Dir.mkdir_p(rules_path) unless dir_exists?(rules_path)
         false
       end
     rescue ex : Exception
-      logger.debug "Error initializing passive rules: #{ex.message}"
+      # Surface the failure: without rules a `-P` scan silently reports
+      # "clean", which is a false-negative security outcome. A warning at
+      # normal log level makes the missing-ruleset state visible.
+      logger.warning "Failed to initialize passive rules: #{ex.message}"
+      logger.sub "➔ Passive scan will run with no rules. Fix connectivity/permissions or clone manually: git clone #{REPO_URL} #{rules_path}"
 
       # Create empty directory as fallback
       begin
-        Dir.mkdir_p(rules_path) unless Dir.exists?(rules_path)
-      rescue
-        # Ignore errors creating fallback directory
+        Dir.mkdir_p(rules_path) unless dir_exists?(rules_path)
+      rescue err
+        logger.warning "Could not create passive rules directory at #{rules_path}: #{err.message}"
       end
 
       false

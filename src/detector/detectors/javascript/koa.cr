@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Javascript
   class Koa < Detector
+    detector_for "js_koa", extensions: %w[.js .mjs .cjs .jsx .ts .mts .cts .tsx], basenames: %w[package.json]
+
     # Single precompiled alternation — one PCRE2 scan instead of six.
     SIGNAL = Regex.union(
       /require\(['"]koa['"]\)/,
@@ -13,16 +15,13 @@ module Detector::Javascript
     )
 
     def detect(filename : String, file_contents : String) : Bool
-      return false unless filename.ends_with?(".js") || filename.ends_with?(".mjs") || filename.ends_with?(".ts")
-      file_contents.matches?(SIGNAL)
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".js") || filename.ends_with?(".mjs") || filename.ends_with?(".cjs") || filename.ends_with?(".jsx") || filename.ends_with?(".ts") || filename.ends_with?(".tsx") || File.basename(filename) == "package.json"
-    end
-
-    def set_name
-      @name = "js_koa"
+      return false unless filename.ends_with?(".js") || filename.ends_with?(".mjs") || filename.ends_with?(".ts") ||
+                          filename.ends_with?(".cjs") || filename.ends_with?(".mts") || filename.ends_with?(".cts")
+      # Necessary condition for every marker below, which all spell `koa` or
+      # `Koa` literally; a memchr scan is far cheaper than the alternation
+      # regex.
+      return false unless file_contents.includes?("koa") || file_contents.includes?("Koa")
+      content_matches?(file_contents, SIGNAL)
     end
   end
 end

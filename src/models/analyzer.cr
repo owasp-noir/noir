@@ -1,20 +1,37 @@
 require "./logger"
 require "./endpoint"
 require "./file_helper"
+require "./code_locator"
+require "./skipped_files"
 require "wait_group"
+require "../utils/exclude_path"
 require "../utils/media_filter"
 require "../utils/path_scope"
+require "../utils/text_file"
 require "../utils/utils"
+require "../techs/techs"
 
 class Analyzer
   include FileHelper
 
-  DEFAULT_CHANNEL_CAPACITY         = 128
-  DEFAULT_CONTENT_CHANNEL_CAPACITY =  16
-  MAX_ANALYZER_WORKERS             =  64
+  DEFAULT_CHANNEL_CAPACITY = 128
+  # Detector reader → worker content channel. Each buffered entry holds a
+  # full file's content (up to the size budget the media filter applied —
+  # MAX_FILE_SIZE, or MAX_SPEC_FILE_SIZE for specification documents), so
+  # this bounds worst-case unreclaimable memory as capacity * that budget.
+  #
+  # Was raised 16 -> 64 under the theory that the single reader fiber was
+  # blocking on send and stalling disk I/O. Re-measured (#2362) on a
+  # heavy-load corpus (multi-detector + passive-scan + -T + --ai-context,
+  # ~80MB of large files): 16 and 64 perform identically (~14.7s avg
+  # either way over 9 interleaved runs). Reader and workers share the
+  # default execution context, which runs one fiber at a time, so there is
+  # no blocking-I/O yield point to recover — a deeper buffer just lets the
+  # reader run further ahead without unblocking anything. Kept at 16.
+  DEFAULT_CONTENT_CHANNEL_CAPACITY = 16
+  MAX_ANALYZER_WORKERS             = 64
 
   @result : Array(Endpoint)
-  @endpoint_references : Array(EndpointReference)
   @base_path : String
   @base_paths : Array(String)
   @normalized_base_paths : Array(Tuple(String, String))
@@ -22,9 +39,8 @@ class Analyzer
   @logger : NoirLogger
   @is_debug : Bool
   @is_verbose : Bool
-  @is_color : Bool
-  @is_log : Bool
-  @options : Hash(String, YAML::Any)
+  @raw_options : Hash(String, YAML::Any)
+  @exclude_path : Noir::ExcludePath
   # path => longest-matching configured base. Populated lazily by
   # `configured_base_for`; only used on multi-base (monorepo) scans.
   @configured_base_cache = {} of String => String
@@ -36,23 +52,59 @@ class Analyzer
     @normalized_base_paths = @base_paths.map { |base| {base, Noir::PathScope.normalize_root(base)} }
     @url = options["url"].to_s
     @result = [] of Endpoint
-    @endpoint_references = [] of EndpointReference
     @is_debug = any_to_bool(options["debug"])
     @is_verbose = any_to_bool(options["verbose"])
-    @is_color = any_to_bool(options["color"])
-    @is_log = any_to_bool(options["nolog"])
-    @options = options
+    @raw_options = options
+    @exclude_path = Noir::ExcludePath.new(options["exclude_path"]?.to_s)
 
-    @logger = NoirLogger.new @is_debug, @is_verbose, @is_color, @is_log
+    @logger = NoirLogger.from_options(options)
   end
 
   def analyze
     # After inheriting the class, write an action code here.
   end
 
+  # Declares which tech this analyzer implements.
+  #
+  #     class Gin < GoEngine
+  #       analyzer_for "go_gin"
+  #     end
+  #
+  # `initialize_analyzers` reads the registry off the classes themselves, so
+  # this is the only place the name is written. Before it, the mapping lived
+  # in a hand-maintained `define_analyzers` list — a second place to
+  # remember, where forgetting produced no error and no failing spec, just an
+  # analyzer that never ran. Mirrors `Detector.detector_for`.
+  #
+  # Every concrete class under the `Analyzer::` namespace must declare one:
+  # the derivation calls `tech_name` on each, so omitting it is a compile
+  # error rather than a silent no-op. Shared base classes (`GoEngine`,
+  # `SpecificationEngine`, …) are `abstract` and sit outside that set.
+  macro analyzer_for(tech)
+    def self.tech_name : String
+      {{ tech }}
+    end
+
+    # Instance-side view of the same declaration. The per-file rescues live on
+    # this base class, which has no way to name the analyzer that is running
+    # inside them, so a skipped file could not be attributed to a tech.
+    # Deriving it from `analyzer_for` keeps the name written exactly once.
+    def tech : String
+      {{ tech }}
+    end
+  end
+
+  # Overridden by `analyzer_for` in every registered analyzer. The base value
+  # exists so shared code can call it unconditionally; it is deliberately NOT
+  # a `self.tech_name` fallback, which would turn "forgot `analyzer_for`" from
+  # a compile error into an analyzer that silently never runs.
+  def tech : String
+    ""
+  end
+
   # Prefer the detector-populated cache over a fresh disk read. On
   # cache miss (budget exhausted, cache cleared between runs, path
-  # not registered via register_file) falls back to `File.read`.
+  # not registered via register_file) falls back to a disk read.
   #
   # Analyzers migrating from direct `File.read(path, ...)` calls
   # should use this helper so the second read of files the detector
@@ -60,7 +112,72 @@ class Analyzer
   def read_file_content(path : String) : String
     cached = CodeLocator.instance.content_for(path)
     return cached if cached
-    File.read(path, encoding: "utf-8", invalid: :skip)
+    Noir::TextFile.read(path)
+  end
+
+  # `line_number_for_index` for a *byte* offset — what `Regex::MatchData#byte_begin`
+  # and the byte-wise scanners hand back. Counting newline bytes over a slice
+  # is both correct for multibyte content (a UTF-8 continuation byte never
+  # collides with an ASCII value) and free of the per-call string allocation
+  # the char form pays.
+  def line_at_byte_offset(content : String, byte_offset : Int32) : Int32
+    return 1 if byte_offset <= 0
+    byte_offset = content.bytesize if byte_offset > content.bytesize
+    content.to_slice[0, byte_offset].count(0x0a_u8) + 1
+  end
+
+  # Whether the user's `--exclude-path` covers `path`.
+  #
+  # `CodeLocator` lookups need no such check: the exclusion is applied once,
+  # in the detector's walk, so an excluded file never enters `file_map` in
+  # the first place. This exists for the handful of adapters that enumerate
+  # the filesystem themselves (static-resource directories, convention-
+  # located config, mobile resource bundles) — see the allowlist in
+  # `spec/unit_test/analyzer/layering_boundary_spec.cr`. Every candidate
+  # such a walk produces must pass through here, or the user's exclusion is
+  # silently ignored and the file they excluded for scope or secrecy
+  # reasons lands in the report anyway.
+  #
+  # Matches on the scan-base-relative path, exactly like the detector: the
+  # patterns are written against the project layout, not against wherever
+  # the checkout happens to sit.
+  protected def excluded_path?(path : String) : Bool
+    return false unless @exclude_path.active?
+    @exclude_path.excluded?(base_relative_path(path))
+  end
+
+  # Whether `path` sits inside one of the configured scan bases.
+  #
+  # A walker that resolves a directory out of *project configuration*
+  # (Spring's `spring.web.resources.static-locations`, say) can be handed
+  # an absolute path pointing anywhere on the machine. Globbing it walks
+  # files the user never asked noir to look at and puts the scanning
+  # machine's directory layout into a report that may be shared, so the
+  # resolved directory has to be confirmed in scope first.
+  #
+  # With no configured base there is nothing to be outside of, so the
+  # answer is true — that is the shape specs drive analyzers in.
+  protected def within_scan_base?(path : String) : Bool
+    return true if @normalized_base_paths.empty?
+    expanded = Noir::PathScope.expand(path)
+    @normalized_base_paths.any? do |_, normalized|
+      Noir::PathScope.under_normalized_root?(expanded, normalized)
+    end
+  end
+
+  # Whether `content` matches `markers`, skipping PCRE2's per-call UTF-8
+  # revalidation. Analyzer content always comes from `read_file_content`
+  # (or the detector cache it reads through), so the subject is
+  # known-valid UTF-8 — see `Noir::TextFile::MATCH_OPTIONS`.
+  #
+  # Use this in place of a chain of `String#includes?` over whole file
+  # content: `String#includes?` runs Rabin-Karp per marker, while one
+  # precompiled `Regex.union` of the same literals is the same predicate
+  # in a single JIT-compiled pass. A single `includes?` on a short string
+  # (one source line, a path segment) is not worth converting — the win
+  # scales with the size of the subject.
+  def content_matches?(content : String, markers : Regex) : Bool
+    markers.matches?(content, options: Noir::TextFile::MATCH_OPTIONS)
   end
 
   # Callees feed `--include-callee` (direct output) and `--ai-context`
@@ -68,7 +185,50 @@ class Analyzer
   # running their callee extractor so the work is skipped on default
   # scans where neither flag is set.
   def callees_needed? : Bool
-    any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+    option_flag?("include_callee") || option_flag?("ai_context")
+  end
+
+  # Reads a boolean option the orchestrator sets on this analyzer's behalf.
+  #
+  # The one remaining caller is the CFML components-only flag, which
+  # `analysis_endpoints` injects. Analyzers have no other business reaching
+  # into the options hash — `callees_needed?` and `worker_count` cover
+  # everything else the layer needs, and
+  # `spec/unit_test/analyzer/options_boundary_spec.cr` keeps it that way.
+  protected def option_flag?(key : String) : Bool
+    any_to_bool(@raw_options[key]?)
+  end
+
+  # Worker-fiber count for this analyzer's file walk.
+  #
+  # Nil-safe and floored at 1, matching the shape `src/models/deliver.cr`
+  # already used. The 21 call sites this replaces all spelled it
+  # `@options["concurrency"].to_s.to_i`, which raised `KeyError` on a
+  # missing key and `ArgumentError` on a non-numeric one — reachable only
+  # by a library embedder building the options hash by hand, since
+  # `ConfigInitializer#default_options` always sets it and
+  # `validate_concurrency!` rejects anything below 1. A value of `0` used
+  # to spawn zero workers, so the analyzer silently produced nothing.
+  protected def worker_count : Int32
+    n = @raw_options["concurrency"]?.try(&.to_s.to_i?) || 0
+    n > 0 ? n : 1
+  end
+
+  # `worker_count` capped at `MAX_ANALYZER_WORKERS`.
+  #
+  # Applies to everything routed through `parallel_analyze` — which now
+  # includes the Go analyzers, whose hand-inlined walks used to spawn
+  # `--concurrency` fibers uncapped. A `--concurrency 100` run therefore
+  # gives them 64 worker fibers, not 100; the default is
+  # `System.cpu_count.clamp(4, 32)`, so no default scan changes.
+  #
+  # Still uncapped: the walks `java/{armeria,jsp,vertx}.cr`,
+  # `python/django.cr`, `llm_analyzers/unified_ai.cr` and
+  # `FileAnalyzer#analyze` inline for themselves. Those send a different
+  # file set than `parallel_analyze` would iterate, so folding them in is
+  # its own change.
+  protected def bounded_worker_count : Int32
+    worker_count.clamp(1, MAX_ANALYZER_WORKERS)
   end
 
   # Resolves the longest configured base that owns `path`. Cross-file
@@ -93,14 +253,23 @@ class Analyzer
     end
   end
 
-  private def longest_configured_base(path : String) : String?
+  # The outermost configured base that owns `path`: the boundary for
+  # resolving its relative imports. With nested bases (`-b T -b T/svc`) a
+  # file under `T/svc` may still import `../shared` from `T`, which the
+  # longest-match base would reject.
+  protected def import_boundary_for(path : String) : String
+    return @base_path if @base_paths.size <= 1
+    longest_configured_base(path, outermost: true) || @base_path
+  end
+
+  private def longest_configured_base(path : String, outermost : Bool = false) : String?
     expanded_path = CodeLocator.instance.expanded_path_for(path)
     best_base = nil.as(String?)
     best_size = -1
 
     @normalized_base_paths.each do |base, normalized|
       next unless Noir::PathScope.under_normalized_root?(expanded_path, normalized)
-      next unless normalized.size > best_size
+      next unless best_size < 0 || (outermost ? normalized.size < best_size : normalized.size > best_size)
 
       best_base = base
       best_size = normalized.size
@@ -118,93 +287,326 @@ class Analyzer
   def parallel_analyze(files : Array(String), &block : String -> Nil)
     channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
     WaitGroup.wait do |wg|
-      # Producer — tracked by the WaitGroup
+      # Producer — tracked by the WaitGroup.
+      #
+      # `ensure`, not a trailing statement: if the producer ever raises
+      # mid-send, an unclosed channel leaves every worker parked in
+      # `receive?` forever and `WaitGroup.wait` never returns — a silent
+      # hang with no output and no exit code. `detector.cr`'s reader already
+      # closes in an `ensure` for that reason; the analyzer side did not.
+      # Nothing in this body can raise today (pure array iteration), so this
+      # is defence in depth against the next edit, not a live fix.
       wg.spawn do
         files.each { |file| channel.send(file) }
+      ensure
         channel.close
       end
 
-      worker_count = @options["concurrency"].to_s.to_i
-      worker_count = MAX_ANALYZER_WORKERS if worker_count > MAX_ANALYZER_WORKERS
-      worker_count = 1 if worker_count < 1
-      worker_count.times do
+      bounded_worker_count.times do
         wg.spawn do
           loop do
-            begin
-              path = channel.receive?
-              break if path.nil?
-              block.call(path)
-            rescue File::NotFoundError
-              @logger.debug "File not found: #{path}"
-            rescue e : Exception
-              if path
-                @logger.debug "Error processing file #{path}: #{e.message}"
-              else
-                @logger.debug "Error in worker: #{e.message}"
-              end
+            path = channel.receive?
+            break if path.nil?
+            block.call(path)
+          rescue File::NotFoundError
+            @logger.debug "File not found: #{path}"
+            Noir::SkippedFiles.record(tech, path, "file not found") if path
+          rescue e : Exception
+            if path
+              @logger.debug "Error processing file #{path}: #{e.message}"
+              Noir::SkippedFiles.record(tech, path, e.message.presence || e.class.name)
+            else
+              # No path means the worker itself failed, not a file — there is
+              # nothing to tally, and the tech-level rescue in
+              # `analysis_endpoints` is what reports a dead analyzer.
+              @logger.debug "Error in worker: #{e.message}"
             end
           end
         end
       end
     end
+  end
+
+  # Engine scan skeleton shared by the per-language engines: runs `block`
+  # over `files` in parallel, skipping paths `scan_accepts?` vetoes, and
+  # isolating failures so one unreadable or unparsable file costs only
+  # itself (logged at debug), never the whole scan. Before this existed,
+  # nine engines carried byte-identical copies of the double-rescue body.
+  # `scan_files` for analyzers that merge per-file results into shared
+  # state before emitting: each file's non-nil result comes back in input
+  # order, whatever order the workers finished in.
+  #
+  # Worker completion order is not stable. When a worker blocks in a slow
+  # syscall, Crystal's runtime moves the scheduler to another thread and
+  # lets the next worker finish first. A merge that lets one file override
+  # another — two services in one scan that both define
+  # `MyApp::Controller::Root`, two tRPC apps that both name a `user`
+  # router — then picks a different winner from run to run.
+  protected def ordered_scan_files(files : Array(String), &block : String -> T?) : Array(T) forall T
+    results = Hash(String, T).new
+    mutex = Mutex.new
+    scan_files(files) do |path|
+      if value = block.call(path)
+        mutex.synchronize { results[path] = value }
+      end
+    end
+    files.compact_map { |path| results[path]? }
+  end
+
+  # `ordered_scan_files` over plain `parallel_analyze`: no `scan_accepts?`
+  # veto, for the callers that never had one.
+  protected def ordered_parallel_analyze(files : Array(String), &block : String -> T?) : Array(T) forall T
+    results = Hash(String, T).new
+    mutex = Mutex.new
+    parallel_analyze(files) do |path|
+      if value = block.call(path)
+        mutex.synchronize { results[path] = value }
+      end
+    end
+    files.compact_map { |path| results[path]? }
+  end
+
+  protected def scan_files(files : Array(String), &block : String -> Nil) : Nil
+    parallel_analyze(files) do |path|
+      next unless scan_accepts?(path)
+      isolating_file_errors(path) { block.call(path) }
+    end
+  rescue e
+    logger.debug e
+  end
+
+  # Runs the work for one file so that a file which raises (a PCRE2 match
+  # limit blown by one multi-megabyte line, say) costs only itself and is
+  # reported in `errors`, instead of unwinding to the tech-level rescue and
+  # discarding every endpoint. For analyzers that walk their files
+  # sequentially and so cannot use `scan_files`.
+  protected def isolating_file_errors(path : String, &) : Nil
+    yield
+  rescue e
+    logger.debug "Error analyzing #{path}: #{e}"
+    Noir::SkippedFiles.record(tech, path, e.message.presence || e.class.name)
+  end
+
+  # Per-path veto consulted by `scan_files`. Engines override this with
+  # their language's test/vendor/dependency filters.
+  protected def scan_accepts?(path : String) : Bool
+    true
+  end
+
+  # Order-preserving dedup of params by (name, param_type). Analyzers
+  # that accumulate every reference they see (rather than every route)
+  # collect the same key many times over.
+  def unique_params(params : Array(Param)) : Array(Param)
+    seen = Set(Tuple(String, String)).new
+    params.select { |param| seen.add?({param.name, param.param_type}) }
+  end
+
+  # URL for a file-path-routed stack — plain PHP, JSP, CFML, Classic ASP,
+  # WebForms — where the file's location under the web root *is* the
+  # route.
+  #
+  # The root is the configured scan base unless one of `markers` names a
+  # document root deeper in the tree. The *last* occurrence wins: for
+  # `app/wwwroot/x/htdocs/y.asp` the deepest marker is the real root,
+  # whereas testing markers in list order would pick whichever name
+  # happened to be listed first.
+  #
+  # Keep `markers` unambiguous. Generic names like `public/` or `www/`
+  # collide with build output (`docs/public/`) — the false positive
+  # `FileHelper#get_public_files` documents.
+  # The file's location relative to the configured scan base, `/`-separated
+  # and rooted with a leading `/`.
+  #
+  # Convention filters — "is this file under `includes/`?", "is this a test
+  # fixture?" — must be applied to this, never to the absolute path. A
+  # checkout that merely *lives* under a directory with a matching name
+  # otherwise matches every file in it: scanning the same Classic ASP site
+  # from `/srv/inc/site` instead of `/srv/site` dropped 33 of its 35
+  # endpoints, because every page looked like an `#include` fragment.
+  def base_relative_path(path : String) : String
+    Noir::PathScope.base_relative(path, configured_base_for(path))
+  end
+
+  def web_root_path(path : String, markers : Array(String)) : String
+    relative = base_relative_path(path)
+
+    best = -1
+    markers.each do |marker|
+      if index = relative.rindex(marker)
+        candidate = index + marker.size
+        best = candidate if candidate > best
+      end
+    end
+
+    normalized = best >= 0 ? relative[best..] : relative
+    normalized.starts_with?("/") ? normalized : "/#{normalized}"
+  end
+
+  # `HTTP_X_FORWARDED_FOR` -> `x-forwarded-for`.
+  #
+  # CGI-style server-variable collections (`Request.ServerVariables` in
+  # ASP/WebForms, `cgi.*` in CFML) expose inbound headers under an
+  # `HTTP_`-prefixed, underscore-separated name. Everything without that
+  # prefix (REMOTE_ADDR, SCRIPT_NAME, ...) is server state, not a
+  # request parameter, and returns nil.
+  def http_header_name(name : String) : String?
+    return unless name.downcase.starts_with?("http_")
+
+    header = name[5..].gsub("_", "-").downcase
+    header.empty? ? nil : header
+  end
+
+  # 1-based line number for a character offset into `content`.
+  #
+  # Counts newlines over the raw byte buffer rather than slicing
+  # `content[0...index]`, which would be an O(n) copy per call. The scan
+  # is correct because `\n` is ASCII and never appears inside a UTF-8
+  # multi-byte sequence.
+  #
+  # Takes a CHAR offset. Feeding it a byte offset silently reports a line
+  # that is too low on non-ASCII input — the defect four JS analyzers
+  # carried until they were folded in here.
+  def line_number_for_index(content : String, char_index : Int32) : Int32
+    return 1 if char_index <= 0
+
+    bytes = content.to_slice
+    byte_end = content.char_index_to_byte_index(char_index) || bytes.size
+    line = 1
+    index = 0
+    while index < byte_end
+      line += 1 if bytes[index] == '\n'.ord.to_u8
+      index += 1
+    end
+    line
   end
 
   getter result, base_path, base_paths, url, logger
 end
 
 class FileAnalyzer < Analyzer
-  @@hooks = [] of Proc(String, String, Array(Endpoint))
+  # A file hook recognises an endpoint by matching a URL it found in the
+  # file against the user-supplied `-u/--url`. With no url that
+  # `includes?(url)` test degenerates to "matches everything", so with no
+  # url no hook may run.
+  #
+  # `tech` is the technology the hook's endpoints are attributed to. Every
+  # hook has to name one: an endpoint that leaves the analysis phase with
+  # `details.technology` unset belongs to no group in any report and to no
+  # view in a cross-view tool, which is exactly what the GraphQL
+  # operation-document hook used to produce before it became the
+  # `graphql_operation` analyzer.
+  #
+  # These names are deliberately *not* in `NoirTechs::TECHS`. A catalog
+  # entry has to be backed by a detector, and there is nothing to detect
+  # here — the hooks are activated by a flag, like `ai` is by
+  # `--ai-provider`, and they read every file in the scan rather than a
+  # recognisable one.
+  record Hook, func : Proc(String, String, Array(Endpoint)), tech : String
 
-  def hooks_count
-    @@hooks.size
+  @@hooks = [] of Hook
+
+  # The `--only-techs` restriction, resolved once. Read from the raw options
+  # rather than from `analysis_endpoints`' selected-tech list because a
+  # library embedder may drive this class on its own; an absent key (the
+  # shape most specs build) means "unrestricted".
+  @only_techs : Array(String)
+
+  def initialize(options : Hash(String, YAML::Any))
+    super
+    @only_techs = NoirTechs.resolve_tech_list(options["only_techs"]?.to_s)
   end
 
-  def self.add_hook(func : Proc(String, String, Array(Endpoint)))
-    @@hooks << func
+  # Not registered through `analyzer_for` — the FileAnalyzer runs outside the
+  # tech registry — but its per-file rescue needs a name to report a skipped
+  # file under, and an empty one renders as `": skipped 1 file…"`.
+  def tech : String
+    "file_analyzer"
+  end
+
+  def self.add_hook(func : Proc(String, String, Array(Endpoint)), tech : String)
+    @@hooks << Hook.new(func, tech)
+  end
+
+  # Hooks that can actually produce something for this scan.
+  #
+  # `--only-techs` names the technologies the scan is restricted to, and
+  # these hooks are not among them: their names have no catalog entry, so
+  # the flag cannot resolve one. A restriction therefore switches them off
+  # rather than leaving them running underneath it — the rule is written as
+  # a membership test rather than "any restriction disables them" so it
+  # stays correct if one of these ever does become nameable.
+  #
+  # Measured on flipt with `-u`: `--only-techs go_chi` returned four
+  # endpoints, three of them URL literals the string hook had found in
+  # unrelated files. It returns one now — the one go_chi produced.
+  def active_hooks : Array(Hook)
+    return [] of Hook if @url.empty?
+    return @@hooks if @only_techs.empty?
+    @@hooks.select { |hook| @only_techs.includes?(hook.tech) }
+  end
+
+  def hooks_count
+    active_hooks.size
   end
 
   def analyze
+    hooks = active_hooks
+    return @result if hooks.empty?
+
+    # Hoisted out of the worker loop: this used to re-read the locator's
+    # `har-path` array and scan it linearly for every file, i.e.
+    # O(files × har_paths) with a fresh Array allocation per file.
+    har_paths = CodeLocator.instance.all(Noir::LocatorKeys::HAR_PATH).to_set
+
     channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
 
     WaitGroup.wait do |wg|
-      # Producer — tracked by the WaitGroup
+      # Producer — tracked by the WaitGroup. Closes in an `ensure` for the
+      # same reason as the overload above.
       wg.spawn do
         all_files.each { |file| channel.send(file) }
+      ensure
         channel.close
       end
 
-      @options["concurrency"].to_s.to_i.times do
+      worker_count.times do
         wg.spawn do
           loop do
-            begin
-              path = channel.receive?
-              break if path.nil?
-              next if File.directory?(path)
-              next if skip_file_analyzer?(path)
+            path = channel.receive?
+            break if path.nil?
+            # No `File.directory?` guard — `all_files` comes from
+            # `file_map`, which the detector only fills with regular
+            # files.
+            next if har_paths.includes?(path)
 
-              logger.debug "Analyzing: #{path}"
+            logger.debug "Analyzing: #{path}"
 
-              @@hooks.each do |hook|
-                file_results = hook.call(path, @url)
-                unless file_results.nil?
-                  file_results.each do |file_result|
-                    @result << file_result
-                  end
+            hooks.each do |hook|
+              file_results = hook.func.call(path, @url)
+              unless file_results.nil?
+                file_results.each do |file_result|
+                  # Same stamp `analysis_endpoints` applies to every tech
+                  # analyzer's output, applied here because these hooks run
+                  # outside that loop. `Details` is a struct, so the
+                  # assignment has to be written back through `details=`.
+                  details = file_result.details
+                  details.technology = hook.tech
+                  file_result.details = details
+                  @result << file_result
                 end
               end
-            rescue e
-              logger.debug e
             end
+          rescue e
+            logger.debug e
+            # Same contract as `parallel_analyze`'s worker rescue: one file
+            # that blows up a hook costs only itself, and the fact that it
+            # did reaches `errors` instead of only `--debug`.
+            Noir::SkippedFiles.record(tech, path, e.message.presence || e.class.name) if path
           end
         end
       end
     end
 
     @result
-  end
-
-  private def skip_file_analyzer?(path : String) : Bool
-    har_files = CodeLocator.instance.all("har-path")
-    har_files.is_a?(Array(String)) && har_files.includes?(path)
   end
 end

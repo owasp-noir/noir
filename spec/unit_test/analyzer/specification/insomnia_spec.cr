@@ -6,17 +6,17 @@ private def analyze_insomnia_json(content : String)
   path = File.tempname("insomnia", ".json")
   File.write(path, content)
   locator = CodeLocator.instance
-  locator.clear "insomnia-json"
-  locator.clear "insomnia-yaml"
-  locator.push "insomnia-json", path
+  locator.clear Noir::LocatorKeys::INSOMNIA_JSON
+  locator.clear Noir::LocatorKeys::INSOMNIA_YAML
+  locator.push Noir::LocatorKeys::INSOMNIA_JSON, path
 
   options = create_test_options
   analyzer = Analyzer::Specification::Insomnia.new options
   analyzer.analyze
 ensure
   locator = CodeLocator.instance
-  locator.clear "insomnia-json"
-  locator.clear "insomnia-yaml"
+  locator.clear Noir::LocatorKeys::INSOMNIA_JSON
+  locator.clear Noir::LocatorKeys::INSOMNIA_YAML
   File.delete(path) if path && File.exists?(path)
 end
 
@@ -24,17 +24,17 @@ private def analyze_insomnia_yaml(content : String)
   path = File.tempname("insomnia", ".yaml")
   File.write(path, content)
   locator = CodeLocator.instance
-  locator.clear "insomnia-json"
-  locator.clear "insomnia-yaml"
-  locator.push "insomnia-yaml", path
+  locator.clear Noir::LocatorKeys::INSOMNIA_JSON
+  locator.clear Noir::LocatorKeys::INSOMNIA_YAML
+  locator.push Noir::LocatorKeys::INSOMNIA_YAML, path
 
   options = create_test_options
   analyzer = Analyzer::Specification::Insomnia.new options
   analyzer.analyze
 ensure
   locator = CodeLocator.instance
-  locator.clear "insomnia-json"
-  locator.clear "insomnia-yaml"
+  locator.clear Noir::LocatorKeys::INSOMNIA_JSON
+  locator.clear Noir::LocatorKeys::INSOMNIA_YAML
   File.delete(path) if path && File.exists?(path)
 end
 
@@ -163,5 +163,83 @@ describe "Insomnia Analyzer" do
 
     users.details.code_paths.map(&.path).should contain("UsersController.kt")
     graphql.details.code_paths.map(&.path).should_not contain("UsersController.kt")
+  end
+
+  # `[]?` on the null node raised "Expected Array or Hash, not Nil" and the
+  # whole collection was skipped.
+  it "treats a null or scalar v5 environments block as empty" do
+    endpoints = analyze_insomnia_yaml <<-YAML
+      type: collection.insomnia.rest/5.0
+      name: Demo
+      collection:
+        - name: users
+          method: GET
+          url: /users
+      environments:
+      environment: production
+      YAML
+
+    endpoints.map(&.url).should eq(["/users"])
+  end
+
+  it "skips a scalar v5 sub-environment" do
+    endpoints = analyze_insomnia_yaml <<-YAML
+      type: collection.insomnia.rest/5.0
+      name: Demo
+      collection:
+        - name: users
+          method: GET
+          url: "{{ _.base }}/users"
+      environments:
+        data: {}
+        subEnvironments:
+          - null
+          - data: {base: /v1}
+      YAML
+
+    endpoints.map(&.url).should eq(["/v1/users"])
+  end
+
+  it "skips absolute request URLs with an empty host" do
+    endpoints = analyze_insomnia_json <<-JSON
+      {
+        "_type": "export",
+        "__export_format": 4,
+        "resources": [
+          { "_id": "req_1", "_type": "request", "method": "GET", "url": "https:///users" },
+          { "_id": "req_2", "_type": "request", "method": "GET", "url": "https://:443/orders" },
+          { "_id": "req_3", "_type": "request", "method": "GET", "url": "https://?next=/query" },
+          { "_id": "req_4", "_type": "request", "method": "GET", "url": "/health" }
+        ]
+      }
+      JSON
+
+    endpoints.map(&.url).should eq ["/health"]
+  end
+
+  it "keeps JSON body params next to unquoted template values" do
+    endpoints = analyze_insomnia_json <<-JSON
+      {"_type": "export", "__export_format": 4, "resources": [
+        {"_id": "req_1", "parentId": "wrk_1", "_type": "request", "method": "POST", "url": "https://shop.example.com/orders",
+         "body": {"mimeType": "application/json", "text": "{\\"product_id\\": {{ _.product_id }}, \\"ref\\": {% response 'body', 'req_0', 'b64::JC5pZA==::46b', 'never', 60 %}, \\"quantity\\": 2}"}},
+        {"_id": "wrk_1", "parentId": null, "_type": "workspace", "name": "Shop"}
+      ]}
+      JSON
+
+    endpoints[0].params.select(&.param_type.==("json")).map(&.name).should eq(["product_id", "ref", "quantity"])
+  end
+
+  it "resolves variables from the request's folder environments" do
+    endpoints = analyze_insomnia_json <<-JSON
+      {"_type": "export", "__export_format": 4, "resources": [
+        {"_id": "req_1", "parentId": "fld_2", "_type": "request", "method": "GET", "url": "{{ _.users_api }}/users/{{ _.user_id }}"},
+        {"_id": "fld_2", "parentId": "fld_1", "_type": "request_group", "name": "Inner", "environment": {"users_api": "https://users.example.com/v2"}},
+        {"_id": "fld_1", "parentId": "wrk_1", "_type": "request_group", "name": "Outer", "environment": {"users_api": "https://old.example.com/v1", "user_id": "42"}},
+        {"_id": "wrk_1", "parentId": null, "_type": "workspace", "name": "Shop"},
+        {"_id": "env_1", "parentId": "wrk_1", "_type": "environment", "name": "Base", "data": {"user_id": "7"}}
+      ]}
+      JSON
+
+    endpoints.map(&.url).should eq(["/v2/users/42"])
   end
 end

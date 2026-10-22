@@ -19,7 +19,7 @@ tester = FunctionalTester.new("fixtures/dart/shelf_multi_base/", {
 })
 tester.perform_tests
 
-it "keeps Shelf router mounts inside each base path" do
+it "keeps Shelf router mounts inside each base path", tags: "functional" do
   service_a = tester.app.endpoints.find! { |endpoint| endpoint.url == "/a/shared" }
   service_a.method.should eq("GET")
 

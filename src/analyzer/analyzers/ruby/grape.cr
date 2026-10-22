@@ -2,7 +2,15 @@ require "../../engines/ruby_engine"
 
 module Analyzer::Ruby
   class Grape < RubyEngine
+    analyzer_for "ruby_grape"
+
     GRAPE_VERBS = ["get", "post", "put", "delete", "patch", "head", "options"]
+
+    # `build_grape_index`'s whole-tree pre-pass gate OR-ed two
+    # String#includes? scans over every file's content as a standalone
+    # boolean gate. Folded into one precompiled union so it costs a single
+    # PCRE2 match instead of up to two naive substring scans per file.
+    GRAPE_OR_MOUNT_MARKER_RE = Regex.union("Grape", "mount ")
 
     # Crystal recompiles an interpolated regex literal (`/^#{verb}.../`)
     # on every evaluation — ~11000x slower than a precompiled one — so
@@ -12,14 +20,14 @@ module Analyzer::Ruby
     # `get '/users' do` (capturing the path literal/symbol); `_BARE_DO`
     # matches the path-less `get do` form.
     GRAPE_VERB_WITH_PATH = GRAPE_VERBS.to_h do |verb|
-      {verb, /^#{verb}\b(?:\s+(['":][\w\/\-:]+[\'""]?))?(?:\s*,[^#]*?)?\s*do\b/}
+      {verb, /^#{verb}\b(?:\s+('[^']*'|"[^"]*"|:[^\s,]+))?(?:\s*,[^#]*?)?\s*do\b/}
     end
     GRAPE_VERB_BARE_DO = GRAPE_VERBS.to_h do |verb|
       {verb, /^#{verb}\s+do\b/}
     end
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
 
       # Real Grape apps almost always share config/helpers through a custom
       # base class (`class Base < Grape::API`, then `class Users < API::Base`)
@@ -35,7 +43,7 @@ module Analyzer::Ruby
       parallel_file_scan do |path|
         next unless path.ends_with?(".rb")
         next if ruby_non_production_path?(path)
-        content = read_file_content(path)
+        content = ruby_source(path)
         next unless grape_api_file?(content, index.classes)
         mount_prefix = grape_file_mount_prefix(content, index)
         process_file(path, content, include_callee, mount_prefix)
@@ -57,30 +65,30 @@ module Analyzer::Ruby
     GRAPE_CLASS_EDGE   = /^\s*class\s+([A-Z][\w:]*)\s*<\s*([:\w][\w:]*)/
     GRAPE_PREFIX_DECL  = /^\s*prefix\s+['":]([\w\/]+)['"]?/
     GRAPE_VERSION_DECL = /^\s*version\s+(.+)\busing:\s*:path\b/
-    GRAPE_MOUNT_DECL   = /^\s*mount\s+([:\w][\w:]*)/
+    # `mount Child` / `mount Child => "/path"` (capture 2: the mount path).
+    GRAPE_MOUNT_DECL = /^\s*mount\s+([:\w][\w:]*)(?:\s*=>\s*['"]([^'"]*)['"])?/
 
     # Build the transitive closure of Grape classes and the mount-inherited
     # prefix per class. Names are reduced to their final `::` segment so
     # `::API::Base`, `API::Base` and `Base` all match `class Base < Grape::API`.
     private def build_grape_index : GrapeIndex
-      edges = {} of String => String         # child class -> super class
-      grape = Set(String).new                # classes that ARE a Grape::API
-      own_base = {} of String => String      # class -> its own prefix+version
-      mounts = {} of String => Array(String) # mounter class -> mounted classes
-      mounted = Set(String).new              # classes mounted by someone
+      edges = {} of String => String                   # child class -> super class
+      grape = Set(String).new                          # classes that ARE a Grape::API
+      own_base = {} of String => String                # class -> its own prefix+version
+      mounts = {} of String => Array({String, String}) # mounter class -> {mounted class, mount path}
+      mounted = Set(String).new                        # classes mounted by someone
 
       all_files.each do |path|
         next unless path.ends_with?(".rb")
         next if ruby_non_production_path?(path)
-        next if File.directory?(path)
-        content = read_file_content(path)
+        content = ruby_source(path)
         # Only base-class definitions (`Grape::API`) and aggregators
         # (`mount`) feed the index; plain route files inherit from a custom
         # base and are recognised by `grape_api_file?` re-checking their
         # `< Base` against the resolved class set. Restricting the whole-tree
         # pre-pass to these two markers keeps it off the thousands of
         # unrelated `.rb` files in a large repo.
-        next unless content.includes?("Grape") || content.includes?("mount ")
+        next unless content.matches?(GRAPE_OR_MOUNT_MARKER_RE)
         next unless content.includes?("class ") && content.includes?("<")
 
         # Edges are collected for every `class X < Y`, but the
@@ -117,7 +125,7 @@ module Analyzer::Ruby
               own_base[cls] = grape_join_segments(prefix, version)
             elsif raw_line.includes?("mount") && (m = raw_line.match(GRAPE_MOUNT_DECL))
               mounted_child = grape_simple_class_name(m[1])
-              (mounts[cls] ||= [] of String) << mounted_child
+              (mounts[cls] ||= [] of {String, String}) << {mounted_child, m[2]? || ""}
               mounted << mounted_child
               # A class reached only through `mount` (its own definition file
               # may not be in the pre-pass set) is still a Grape API — record
@@ -143,27 +151,39 @@ module Analyzer::Ruby
 
       # Propagate prefixes down the mount graph from each root aggregator
       # (a Grape class nobody mounts). A child mounted by P inherits P's
-      # full path = P's inherited prefix + P's own prefix/version.
+      # prefix/version on top of P's own, and the `=> "/path"` mount paths
+      # along the way. Grape puts every mount path ahead of the inherited
+      # prefix (`Grape::Path#parts`: mount_path, root_prefix, version), so
+      # the two are carried apart and joined in that order.
       inherited = Hash(String, String).new("")
       roots = grape.select { |c| !mounted.includes?(c) }
       visited = Set(String).new
-      queue = roots.map { |r| {r, ""} }
+      queue = roots.map { |r| {r, "", ""} }
       until queue.empty?
-        cls, prefix = queue.shift
-        next if visited.includes?(cls)
-        visited << cls
-        inherited[cls] = prefix
+        cls, mount_path, prefix = queue.shift
+        next unless visited.add?(cls)
+        inherited[cls] = grape_join_segments(mount_path, prefix)
         child_prefix = grape_join_segments(prefix, own_base[cls]? || "")
-        (mounts[cls]? || [] of String).each do |child|
-          queue << {child, child_prefix}
+        (mounts[cls]? || [] of {String, String}).each do |child, at|
+          queue << {child, grape_join_segments(mount_path, at), child_prefix}
         end
       end
 
       GrapeIndex.new(grape, inherited)
     end
 
+    # `Grape::API` is absent from almost every `.rb` file in a large repo,
+    # so `String#includes?` scanned each one end to end. One precompiled
+    # matcher via `content_matches?` is the same test in a single pass.
+    GRAPE_API_MARKER_RE = Regex.union("Grape::API")
+
     private def grape_api_file?(content : String, grape_classes : Set(String)) : Bool
-      return true if content.includes?("Grape::API")
+      return true if content_matches?(content, GRAPE_API_MARKER_RE)
+      # With no Grape classes anywhere in the project, the per-line membership
+      # loop below can only ever miss, so skip it. This is the common case when
+      # the whole-tree scan runs over a non-Grape repo (e.g. a Rails app, where
+      # every controller is a `class X < ApplicationController`).
+      return false if grape_classes.empty?
       return false unless content.includes?("class ") && content.includes?("<")
       content.each_line do |raw_line|
         next unless m = raw_line.match(GRAPE_CLASS_DEF)
@@ -285,11 +305,11 @@ module Analyzer::Ruby
 
             pending_params.each do |param_name|
               next if raw_path.includes?(":#{param_name}")
-              endpoint.push_param(Param.new(param_name, "", "json"))
+              endpoint.push_param(Param.new(param_name, "", declared_param_type(verb)))
             end
             pending_params.clear
 
-            attach_route_callees(endpoint, lines, index, path) if include_callee
+            attach_do_block_callees(endpoint, lines, index, path) if include_callee
             @result << endpoint
             last_endpoint = endpoint
             block_kinds << :other unless stripped.match(/\bend\b/)
@@ -307,11 +327,11 @@ module Analyzer::Ruby
             end
 
             pending_params.each do |param_name|
-              endpoint.push_param(Param.new(param_name, "", "json"))
+              endpoint.push_param(Param.new(param_name, "", declared_param_type(verb)))
             end
             pending_params.clear
 
-            attach_route_callees(endpoint, lines, index, path) if include_callee
+            attach_do_block_callees(endpoint, lines, index, path) if include_callee
             @result << endpoint
             last_endpoint = endpoint
             block_kinds << :other unless stripped.match(/\bend\b/)
@@ -368,13 +388,18 @@ module Analyzer::Ruby
       literal_symbol ? path.lchop(':') : path
     end
 
+    # `params do; requires :x; end` declares the request's params; Grape reads
+    # them from the query string on a bodyless verb and the body otherwise.
+    private def declared_param_type(verb : String) : String
+      verb.in?("get", "head", "delete") ? "query" : "json"
+    end
+
     private def push_grape_param(endpoint : Endpoint, param : Param)
       return if param.param_type == "query" && endpoint.params.any? { |existing| existing.name == param.name && existing.param_type == "path" }
       # A `params do; requires :x; end` block already declared `:x` as a json
       # body param; a later `params[:x]` read in the handler body must not
       # re-add it as a separate `query` param. The declared type wins.
       return if param.param_type == "query" && endpoint.params.any? { |existing| existing.name == param.name && existing.param_type == "json" }
-      return if endpoint.params.any? { |existing| existing.name == param.name && existing.param_type == param.param_type }
       endpoint.push_param(param)
     end
 
@@ -386,14 +411,6 @@ module Analyzer::Ruby
         return m[1]
       end
       ""
-    end
-
-    private def attach_route_callees(endpoint : Endpoint, lines : Array(String), index : Int32, path : String)
-      if block = extract_ruby_do_block(lines, index)
-        body, body_start_line = block
-        callees = Noir::RubyCalleeExtractor.callees_for_body(body, path, body_start_line)
-        attach_ruby_callees(endpoint, callees)
-      end
     end
 
     private def build_path(mount_prefix : String, class_prefix : String, version_prefix : String, prefix_segments : Array(String), raw : String) : String

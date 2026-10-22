@@ -29,6 +29,20 @@ ws "/socket" do |socket|
   socket.send "Hello from Kemal!"
 end
 
+query "/search" do |env|
+  env.params.json["q"]?
+  env.params.query["mode"]
+  "search results"
+end
+
+before_query "/admin/*" do |env|
+  env.response.status_code = 403
+end
+
+after_query "/admin/*" do |env|
+  env.response.headers["x-filtered"] = "true"
+end
+
 api = Kemal::Router.new
 api.namespace "/users" do
   get "/" do |env|

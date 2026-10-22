@@ -4,11 +4,19 @@ require "../../../models/code_locator"
 
 module Detector::Specification
   class Postman < Detector
+    # Registers Postman collection paths in `CodeLocator`.
+    detector_for "postman", extensions: %w[.json], idempotent: false
+
+    # Every `.json` in the tree reaches this guard.
+    CANDIDATE_MARKER = Regex.union(
+      "schema.getpostman.com", "schema.postman.com", "\"_postman_id\"",
+    )
+
     def detect(filename : String, file_contents : String) : Bool
       check = false
       if filename.ends_with?(".json") && postman_json_candidate?(file_contents)
         begin
-          data = JSON.parse(file_contents)
+          data = parse_json_lenient(file_contents)
           # Check for Postman Collection v2.1.0 or v2.0.0 schema
           if data["info"]? && data["info"]["schema"]?
             schema = data["info"]["schema"].as_s
@@ -21,33 +29,19 @@ module Detector::Specification
 
           if check
             locator = CodeLocator.instance
-            locator.push("postman-json", filename)
+            locator.push(Noir::LocatorKeys::POSTMAN_JSON, filename)
           end
         rescue e
           logger.debug "Postman detection failed for #{filename}: #{e}"
+          record_unparsable_document(filename, e)
         end
       end
 
       check
     end
 
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".json")
-    end
-
-    def set_name
-      @name = "postman"
-    end
-
-    # Registers Postman collection paths in `CodeLocator`.
-    def idempotent? : Bool
-      false
-    end
-
     private def postman_json_candidate?(content : String) : Bool
-      content.includes?("schema.getpostman.com") ||
-        content.includes?("schema.postman.com") ||
-        content.includes?("\"_postman_id\"")
+      content_matches?(content, CANDIDATE_MARKER)
     end
   end
 end

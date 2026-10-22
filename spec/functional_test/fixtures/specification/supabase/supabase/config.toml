@@ -1,0 +1,6 @@
+project_id = "noir-demo"
+
+[api]
+port = 54321
+schemas = ["public"]
+extra_search_path = ["public", "extensions"]

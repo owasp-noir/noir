@@ -7,16 +7,12 @@ This document explains the test directory structure and how to add new test case
 ```
 spec/
 ├── spec_helper.cr              # Shared test helpers
-├── noir_spec.cr                # Main spec entry point
+├── suite.cr                    # Entry point: both CI suites in one binary
 ├── unit_test/                  # Unit tests (included in CI)
 ├── functional_test/            # Functional/integration tests (included in CI)
 │   ├── func_spec.cr            # FunctionalTester class
 │   ├── fixtures/               # Sample source code for each language/framework
 │   └── testers/                # Test specs that validate endpoint detection
-└── uncovered_test/             # Uncovered test cases (NOT included in CI)
-    ├── func_spec.cr            # UncoveredFunctionalTester class
-    ├── fixtures/               # Sample source code for uncovered cases
-    └── testers/                # Test specs for uncovered cases
 ```
 
 ## Directory Roles
@@ -36,22 +32,131 @@ Contains functional (integration) tests that verify end-to-end endpoint detectio
   - Fixtures: `spec/functional_test/fixtures/{language}/{framework}/`
   - Testers: `spec/functional_test/testers/{language}/{framework}_spec.cr`
 
-### `uncovered_test/`
-A staging area for test cases that are **not yet fully covered** or are **expected to fail**. This directory is separated from CI to avoid blocking builds while still tracking known gaps.
-
-- **Included in CI**: No (run manually with `just test-uncovered`)
-- **Structure**:
-  - Fixtures: `spec/uncovered_test/fixtures/{language}/{framework}/`
-  - Testers: `spec/uncovered_test/testers/{language}/{framework}_spec.cr`
-
 ## How to Run Tests
 
 ```bash
-just test              # Run all CI tests (unit + functional)
-just test-unit         # Run unit tests only
-just test-func         # Run functional tests only
-just test-uncovered    # Run uncovered tests only (not in CI)
+just spec-build        # Build the whole suite as bin/noir_spec
+just test              # spec-build, then run both halves in parallel
+just test-random       # Re-run the built binary in randomized example order
+just test-seed 12345   # Re-run it in one specific order
+just test-unit         # Run unit tests only (compiles just that directory)
+just test-func         # Run functional tests only (compiles just that directory)
 ```
+
+`spec/suite.cr` requires `unit_test/**` plus `functional_test/testers/**` and
+nothing else, so `bin/noir_spec` is the single binary CI uses for both test
+groups.
+
+Two constraints come with the binary:
+
+- **Run it from the repository root.** `FunctionalTester` resolves fixtures
+  through a relative `./spec/functional_test/...` path.
+- **It takes no positional paths.** `bin/noir_spec spec/unit_test` fails with
+  `unknown argument`. Narrow a run with a filter instead:
+
+```bash
+./bin/noir_spec -e hono                                    # ~49 examples
+./bin/noir_spec --location spec/unit_test/foo_spec.cr:42    # one example
+./bin/noir_spec --tag functional                            # functional half only
+./bin/noir_spec --tag '~functional'                         # unit half only
+./bin/noir_spec --dry-run                                   # list without running
+```
+
+### Tags
+
+`functional` marks every example that drives a real scan over a fixture: the
+examples registered under `spec/functional_test/testers/`. The remaining
+examples are the unit half. `just test` runs the two groups as parallel
+processes.
+
+`FunctionalTester` tags what it registers. **A hand-written `describe`,
+`context` or `it` in a tester file has to spell the tag itself:**
+
+```crystal
+describe "TanStack Router source attribution", tags: "functional" do
+```
+
+Only top-level blocks need it, because Crystal merges a parent's tags into its
+children (`Spec::Item#all_tags`).
+`spec/unit_test/functional_tag_coverage_spec.cr` fails, naming the file and
+line, if one is missed. That guard exists because a missing tag breaks nothing
+visibly: the example simply joins the unit half and drags a full fixture scan
+into it, so the split quietly stops being a split.
+
+### Why one binary
+
+Compiling `src/` is essentially the whole cost of a spec run, and it does not
+grow when the suites are combined. Historical local measurements on a warm
+compiler cache, when the suite contained 20,807 examples:
+
+| Command | wall | running examples | peak RSS |
+|---|---|---|---|
+| `crystal spec spec/unit_test` | 28.7s | 9.1s | 6.1 GB |
+| `crystal spec spec/functional_test` | 23.5s | 8.3s | 5.2 GB |
+| both suites compiled together | 20.9s | - | 6.1 GB |
+| `crystal build spec/suite.cr -o bin/noir_spec` | 20.0s | - | 6.6 GB |
+| `./bin/noir_spec` (20,807 ex) | 17.5s | 17.4s | 0.3 GB |
+
+The two `crystal spec` rows were timed before the tautological url/method/name
+examples came out, when the same work registered 30,357 examples rather than
+20,807. The wall times did not move: the fixture scans dominate, and dropping
+9,550 examples took ~0.3s off the functional half.
+
+So the compile is paid once and every re-run after that is 18s on 0.3GB. Runs
+of the binary are single-threaded and cheap enough in memory to go in parallel:
+two at once finish in 19s wall against 36s sequential. CI builds once and then
+launches four (default order, randomized order, and each tag half on its own),
+where it previously compiled the same program four times, for about 90s each,
+to run unit, functional, and both again randomized.
+
+### While working on one analyzer
+
+Don't run the whole suite on every edit. Target the one tester:
+
+```bash
+just test-func-one javascript/hono    # crystal spec spec/functional_test/testers/javascript/hono_spec.cr
+just test-func-lang python            # every tester under testers/python/
+```
+
+Measured on this repo: one tester **~8.5s**, one language directory ~10.5s.
+Compiling one file is still ~10s cheaper than compiling the suite, so these
+recipes stay on `crystal spec`. If `bin/noir_spec` is already built and your
+change is in a spec rather than in `src/`, `./bin/noir_spec -e hono` beats both.
+
+Two things worth knowing before you try to make that faster:
+
+- **Compiling `src/` is essentially the whole cost.** The single-tester run
+  above executes its 78 examples in ~0.06s; the other ~8.5s is the compiler.
+  The number of spec files barely matters: 55 python testers compile in about
+  the same time as all 576. So narrowing the target below one file, or sharding
+  the suite across jobs, buys nothing.
+- **`--example` works too, and is cheap.** `FunctionalTester` scans lazily: the
+  first example to run triggers its tester's scan, so a filter only pays for the
+  testers it selects. `--example hono` costs ~0.2s of run time against ~6.9s
+  before the scans moved out of collection time. It still pays the ~8.5s
+  compile, so a path and a filter cost about the same with `crystal spec`; use
+  whichever names what you want.
+
+### Assertions go inside the example
+
+`FunctionalTester` scans on first use from *inside* an example. So when you
+reach past `perform_tests` for a one-off assertion, do the lookup in the `it`
+block:
+
+```crystal
+it "keeps a single path param", tags: "functional" do
+  endpoint = tester.endpoints.find { |ep| ep.url == "/users/:id" }   # scans here
+  ...
+end
+```
+
+Not in the `describe` body, which runs at collection time. Crystal installs its
+spec runner with `at_exit` and skips it entirely when the process is already
+exiting on an error, so anything that raises during collection takes the whole
+run down and reports `0 examples` — no failure, no name, nothing to grep. That
+is what moving the scan into the examples fixed; putting it back reintroduces
+it. `tester.url = ...` is the one pre-scan setter, and it raises if the scan has
+already run.
 
 ## How to Add a Functional Test
 
@@ -100,47 +205,3 @@ FunctionalTester.new("fixtures/{language}/{framework}/", {
 ```bash
 crystal spec spec/functional_test/testers/{language}/{framework}_spec.cr
 ```
-
-## How to Add an Uncovered Test
-
-Use the same process as functional tests, but place files under `uncovered_test/` instead. Use `UncoveredFunctionalTester` instead of `FunctionalTester`.
-
-### 1. Add Fixture Code
-
-```
-spec/uncovered_test/fixtures/{language}/{framework}/
-```
-
-### 2. Add a Test Spec
-
-```
-spec/uncovered_test/testers/{language}/{framework}_spec.cr
-```
-
-Example test spec:
-```crystal
-require "../../func_spec.cr"
-
-expected_endpoints = [
-  Endpoint.new("/items", "GET"),
-]
-
-UncoveredFunctionalTester.new("fixtures/{language}/{framework}/", {
-  :techs     => 1,
-  :endpoints => expected_endpoints.size,
-}, expected_endpoints).perform_tests
-```
-
-### 3. Run and Verify
-
-```bash
-crystal spec spec/uncovered_test/testers/{language}/{framework}_spec.cr
-```
-
-## When to Use `uncovered_test/`
-
-- You have identified endpoints that Noir **should** detect but **currently does not**.
-- You want to document a known gap without breaking CI.
-- You are working on a new analyzer and want to write tests before the implementation is complete.
-
-Once the corresponding analyzer or detector is implemented and the tests pass, move the fixture and test spec from `uncovered_test/` to `functional_test/` (updating the require path and class name from `UncoveredFunctionalTester` to `FunctionalTester`).

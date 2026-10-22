@@ -17,9 +17,23 @@ module Analyzer::Rust
   # subtree for the warp::* call shapes, and assembles a single
   # `Endpoint` from them.
   class Warp < RustEngine
+    analyzer_for "rust_warp"
+
+    # Only files inside a crate that depends on `warp`. See
+    # `RustEngine#crate_dependencies` — without this every Rust analyzer
+    # sees every `.rs` file in the scan.
+    protected def crate_dependencies : Array(String)
+      ["warp"]
+    end
+
     @external_handler_callee_cache = {} of String => Array(Noir::RustCalleeExtractor::Entry)
     @external_handler_miss_cache = Set(String).new
     @external_handler_callee_cache_mutex = Mutex.new
+
+    # Precompiled union for collect_warp_mounts' per-function-body evidence
+    # check, so it costs a single PCRE2 match instead of two naive substring
+    # scans.
+    ROUTE_FN_EVIDENCE_RE = Regex.union("warp::path(", "warp::path!")
 
     def analyze
       @external_handler_callee_cache_mutex.synchronize do
@@ -32,7 +46,7 @@ module Analyzer::Rust
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       source = read_file_content(path)
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
 
       Noir::TreeSitter.parse_rust(source) do |root|
         function_index = build_function_index(root, source)
@@ -57,40 +71,60 @@ module Analyzer::Rust
               function_tail_expression(node)
             end
           next unless value
+          let_prefixes = nil.as(Array(String)?)
+          if !mounts[:prefix_lets].empty? && (let_name = let_binding_name(node, source))
+            key = let_key(node, let_name, mounts[:fn_ranges])
+            # `let api = warp::path("api")…` used as `api.and(list)` is a
+            # prefix, not a route.
+            next if mounts[:prefix_lets].includes?(key)
+            let_prefixes = mounts[:let_prefix][key]?
+          end
           next unless warp_chain?(value, source)
           byte = LibTreeSitter.ts_node_start_byte(value).to_i
           next if seen.includes?(byte)
           seen.add(byte)
 
-          # `warp::path("api").and(backend(config)).or(frontend())` is a
-          # mount/combinator, not a leaf — its real routes live in the
-          # mounted fns (emitted with the composed prefix). Skip it so we
-          # don't surface a phantom `/api`.
-          next if composition_root?(value, source, mounts[:route_fns])
+          # `a.or(b)` is two routes, not one: build each alternative on
+          # its own so their path segments and verbs don't merge.
+          or_alternatives(value, source, mounts[:route_fns]) do |branch, suffix|
+            next unless warp_chain?(branch, source)
+            # The calls chained after the `.or` apply to every alternative:
+            # `a.or(b).unify().and(warp::post())`.
+            parts = branch_filter_parts(branch, source, mounts[:route_fns]).then(suffix)
 
-          endpoint = build_endpoint(value, source, path, Noir::TreeSitter.node_start_row(value) + 1)
-          next unless endpoint
+            # `warp::path("api").and(backend(config))` is a mount, not a
+            # leaf — its real routes live in the mounted fns (emitted with
+            # the composed prefix). Skip it so we don't surface a phantom
+            # `/api`.
+            next if parts.mount?
 
-          if include_callee
-            handler_name = find_handler_name(value, source)
-            if handler_name
-              if handler_fn = function_for_handler(function_index, handler_name)
-                attach_handler_callees(handler_fn, source, path, endpoint)
-              else
-                attach_external_handler_callees(handler_name, path, endpoint)
+            endpoint = build_endpoint(parts, path, Noir::TreeSitter.node_start_row(branch) + 1)
+            next unless endpoint
+
+            if include_callee
+              handler_name = suffix.handler || find_handler_name(branch, source)
+              if handler_name
+                if handler_fn = function_for_handler(function_index, handler_name)
+                  attach_handler_callees(handler_fn, source, path, endpoint)
+                else
+                  attach_external_handler_callees(handler_name, path, endpoint)
+                end
               end
             end
-          end
 
-          prefixes = enclosing_mount_prefixes(value, mounts[:mount_prefix], mounts[:fn_ranges])
-          if prefixes.empty?
-            endpoints << endpoint
-          else
-            base_url = endpoint.url
-            prefixes.each do |pfx|
-              ep = endpoint
-              ep.url = join_paths(pfx, base_url)
-              endpoints << ep
+            prefixes = enclosing_mount_prefixes(branch, mounts[:mount_prefix], mounts[:fn_ranges])
+            if lp = let_prefixes
+              prefixes = prefixes.empty? ? lp : prefixes.flat_map { |fp| lp.map { |l| filter_chain_join(fp, l) } }
+            end
+            if prefixes.empty?
+              endpoints << endpoint
+            else
+              base_url = endpoint.url
+              prefixes.each do |pfx|
+                ep = endpoint
+                ep.url = filter_chain_join(pfx, base_url)
+                endpoints << ep
+              end
             end
           end
         end
@@ -127,7 +161,7 @@ module Analyzer::Rust
         # leaf. `warp::path::param`/`::end` don't match `warp::path(`.
         if body
           btext = Noir::TreeSitter.node_text(body, source)
-          route_fns << name if btext.includes?("warp::path(") || btext.includes?("warp::path!")
+          route_fns << name if btext.matches?(ROUTE_FN_EVIDENCE_RE)
         end
       end
 
@@ -144,22 +178,225 @@ module Analyzer::Rust
         bucket << prefix unless bucket.includes?(prefix)
       end
 
-      {route_fns: route_fns, mount_prefix: mount_prefix, fn_ranges: fn_ranges}
+      # Let-bound prefix filters: `let api = warp::path("api"); … api.and(
+      # list.or(create))` mounts the route lets `list`/`create` (directly or
+      # through a plain `let todos = list.or(create)`) under `/api`. Let
+      # names are scoped to their enclosing fn.
+      lets = {} of String => LibTreeSitter::TSNode
+      walk(root) do |node|
+        next unless name = let_binding_name(node, source)
+        next unless value = Noir::TreeSitter.field(node, "value")
+        key = let_key(node, name, fn_ranges)
+        lets[key] = value unless lets.has_key?(key)
+      end
+      let_prefix = Hash(String, Array(String)).new
+      prefix_lets = Set(String).new
+      unless lets.empty?
+        walk(root) do |node|
+          next unless Noir::TreeSitter.node_type(node) == "call_expression"
+          next unless warp_field_name(node, source) == "and"
+          recv = warp_receiver(node)
+          next unless recv && Noir::TreeSitter.node_type(recv) == "identifier"
+          recv_key = let_key(node, Noir::TreeSitter.node_text(recv, source), fn_ranges)
+          next unless recv_value = lets[recv_key]?
+          prefix = extract_prefix_path(recv_value, source)
+          next if prefix.empty?
+          args = Noir::TreeSitter.field(node, "arguments")
+          next unless args
+          targets = Set(String).new
+          collect_route_lets(args, source, node, lets, fn_ranges, targets, Set(String).new)
+          next if targets.empty?
+          prefix_lets << recv_key
+          targets.each do |target|
+            bucket = (let_prefix[target] ||= [] of String)
+            bucket << prefix unless bucket.includes?(prefix)
+          end
+        end
+      end
+
+      {route_fns: route_fns, mount_prefix: mount_prefix, fn_ranges: fn_ranges,
+       let_prefix: let_prefix, prefix_lets: prefix_lets}
     end
 
-    # True when `value` combines a local route-bearing fn via `.and(fn())`
-    # / `.or(fn())` — i.e. it's a router composition, not a leaf endpoint.
-    private def composition_root?(value : LibTreeSitter::TSNode, source : String, route_fns : Set(String)) : Bool
+    # Route-bearing lets (`warp::path(..)` / `path!`) named in `node`,
+    # following plain composition lets (`let todos = list.or(create)`).
+    private def collect_route_lets(node : LibTreeSitter::TSNode,
+                                   source : String,
+                                   site : LibTreeSitter::TSNode,
+                                   lets : Hash(String, LibTreeSitter::TSNode),
+                                   fn_ranges : Array(Tuple(String, Int32, Int32)),
+                                   targets : Set(String),
+                                   visited : Set(String))
+      walk(node) do |child|
+        next unless Noir::TreeSitter.node_type(child) == "identifier"
+        key = let_key(site, Noir::TreeSitter.node_text(child, source), fn_ranges)
+        next unless (value = lets[key]?) && visited.add?(key)
+        if Noir::TreeSitter.node_text(value, source).matches?(ROUTE_FN_EVIDENCE_RE)
+          targets << key
+        else
+          collect_route_lets(value, source, site, lets, fn_ranges, targets, visited)
+        end
+      end
+    end
+
+    # `let NAME = …` → `NAME` (plain identifier patterns only).
+    private def let_binding_name(node : LibTreeSitter::TSNode, source : String) : String?
+      return unless Noir::TreeSitter.node_type(node) == "let_declaration"
+      pattern = Noir::TreeSitter.field(node, "pattern")
+      return unless pattern && Noir::TreeSitter.node_type(pattern) == "identifier"
+      Noir::TreeSitter.node_text(pattern, source)
+    end
+
+    # A let name qualified by the start byte of the smallest fn enclosing
+    # `node`, so same-named lets in different fns don't collide.
+    private def let_key(node : LibTreeSitter::TSNode, name : String, fn_ranges : Array(Tuple(String, Int32, Int32))) : String
+      b = LibTreeSitter.ts_node_start_byte(node).to_i
+      best = -1
+      best_size = Int32::MAX
+      fn_ranges.each do |_, s, e|
+        next unless b >= s && b < e && e - s < best_size
+        best = s
+        best_size = e - s
+      end
+      "#{best}:#{name}"
+    end
+
+    # What a run of filter nodes contributes to an endpoint, in chain
+    # order. `.or` alternatives share the calls chained after them, so
+    # those are collected once per split and combined with each
+    # alternative instead of being re-walked per alternative (quadratic on
+    # a long `.or(..).unify().and(..)` chain).
+    private class FilterParts
+      getter method : String?
+      getter path_parts : Array(String)
+      # query/json/form and `path!` params, first occurrence kept.
+      getter params : Array(Param)
+      # header/cookie params, listed after `params` (first occurrence kept).
+      getter late_params : Array(Param)
+      getter param_count : Int32
+      getter? path_end : Bool
+      # Combines a local route-bearing fn (`.and(backend())`): a mount.
+      getter? mount : Bool
+      # Outermost `.map` / `.and_then` / `.then` handler.
+      getter handler : String?
+
+      EMPTY = new
+
+      def initialize(@method : String? = nil,
+                     @path_parts = [] of String,
+                     @params = [] of Param,
+                     @late_params = [] of Param,
+                     @param_count = 0,
+                     @path_end = false,
+                     @mount = false,
+                     @handler : String? = nil)
+      end
+
+      def empty? : Bool
+        @method.nil? && @path_parts.empty? && @params.empty? && @late_params.empty? &&
+          @param_count == 0 && !@path_end && !@mount && @handler.nil?
+      end
+
+      # `self` followed by `outer`, the calls chained after it.
+      def then(outer : FilterParts) : FilterParts
+        return self if outer.empty?
+        return outer if empty?
+        FilterParts.new(outer.method || @method,
+          @path_parts + outer.path_parts,
+          FilterParts.merge(@params, outer.params),
+          FilterParts.merge(@late_params, outer.late_params),
+          @param_count + outer.param_count,
+          @path_end || outer.path_end?,
+          @mount || outer.mount?,
+          outer.handler || @handler)
+      end
+
+      def self.merge(a : Array(Param), b : Array(Param)) : Array(Param)
+        return a if b.empty?
+        return b if a.empty?
+        seen = a.to_set { |param| {param.name, param.param_type} }
+        merged = a.dup
+        b.each { |param| merged << param if seen.add?({param.name, param.param_type}) }
+        merged
+      end
+    end
+
+    # Split a filter chain on the `.or(..)` calls along its receiver spine
+    # and yield each alternative with the parts of the calls chained after
+    # its `.or`, which apply to every alternative:
+    # `a.or(b).unify().and(warp::post())` yields `a` and `b`, each with the
+    # `unify`/`and(post)` parts. An `.or` nested inside an argument
+    # (`.and(get().or(head()))`) is not on the spine and stays part of its
+    # branch. A chain without `.or` is yielded as-is with empty parts.
+    private def or_alternatives(value : LibTreeSitter::TSNode, source : String, route_fns : Set(String), &)
+      # Stack, left alternative pushed last so it pops first.
+      pending = [{value, FilterParts::EMPTY}]
+      while item = pending.pop?
+        node, suffix = item
+        above = [] of LibTreeSitter::TSNode # calls above the topmost `.or`, outermost first
+        split = nil
+        cur = node
+        while Noir::TreeSitter.node_type(cur) == "call_expression" && (recv = warp_receiver(cur))
+          if warp_field_name(cur, source) == "or"
+            args = Noir::TreeSitter.field(cur, "arguments")
+            split = {recv, args ? Noir::TreeSitter.first_named_child(args) : nil}
+            break
+          end
+          above << cur
+          cur = recv
+        end
+
+        if split
+          left, alt = split
+          # Each side may itself be an `x.or(y)` chain.
+          inner = above.empty? ? suffix : call_filter_parts(above, source, route_fns).then(suffix)
+          pending << {alt, inner} if alt
+          pending << {left, inner}
+        else
+          yield node, suffix
+        end
+      end
+    end
+
+    # Parts of an alternative's own subtree. Its handler is looked up only
+    # when callees are wanted (`find_handler_name`).
+    private def branch_filter_parts(branch : LibTreeSitter::TSNode, source : String, route_fns : Set(String)) : FilterParts
+      collect_filter_parts([branch], source, contains_mount_call?(branch, source, route_fns), nil)
+    end
+
+    # Parts of the chained calls `calls` (outermost first) themselves: their
+    # arguments, plus their own field name for mounts and handlers.
+    private def call_filter_parts(calls : Array(LibTreeSitter::TSNode), source : String, route_fns : Set(String)) : FilterParts
+      args = [] of LibTreeSitter::TSNode
+      calls.reverse_each do |call|
+        if call_args = Noir::TreeSitter.field(call, "arguments")
+          args << call_args
+        end
+      end
+      mount = calls.any? { |call| mount_call?(call, source, route_fns) } ||
+              args.any? { |call_args| contains_mount_call?(call_args, source, route_fns) }
+      handler = nil.as(String?)
+      calls.each do |call|
+        break if handler = handler_in_call(call, source)
+      end
+      collect_filter_parts(args, source, mount, handler)
+    end
+
+    private def contains_mount_call?(node : LibTreeSitter::TSNode, source : String, route_fns : Set(String)) : Bool
       found = false
-      walk(value) do |node|
+      walk(node) do |child|
         next if found
-        next unless Noir::TreeSitter.node_type(node) == "call_expression"
-        name = warp_field_name(node, source)
-        next unless name == "and" || name == "or"
-        arg_fn = warp_mount_arg_fn(node, source)
-        found = true if arg_fn && route_fns.includes?(arg_fn)
+        next unless Noir::TreeSitter.node_type(child) == "call_expression"
+        found = mount_call?(child, source, route_fns)
       end
       found
+    end
+
+    private def mount_call?(call : LibTreeSitter::TSNode, source : String, route_fns : Set(String)) : Bool
+      name = warp_field_name(call, source)
+      return false unless name == "and" || name == "or"
+      arg_fn = warp_mount_arg_fn(call, source)
+      !arg_fn.nil? && route_fns.includes?(arg_fn)
     end
 
     # The mount prefix(es) for the smallest enclosing fn of `value`, if that
@@ -204,7 +441,7 @@ module Analyzer::Rust
       args = Noir::TreeSitter.field(call, "arguments")
       return unless args
       result : String? = nil
-      Noir::TreeSitter.each_named_child(args) do |arg|
+      Noir::TreeSitter.each_named_arg(args) do |arg|
         next if result
         next unless Noir::TreeSitter.node_type(arg) == "call_expression"
         f = Noir::TreeSitter.field(arg, "function")
@@ -235,7 +472,7 @@ module Analyzer::Rust
       parts.empty? ? "" : "/" + parts.join("/")
     end
 
-    private def join_paths(prefix : String, route : String) : String
+    private def filter_chain_join(prefix : String, route : String) : String
       return route if prefix.empty?
       return prefix if route.empty? || route == "/"
       "#{prefix.rstrip('/')}/#{route.lstrip('/')}"
@@ -253,65 +490,73 @@ module Analyzer::Rust
       found
     end
 
-    # Walk the value subtree once, gathering enough state to build
-    # the endpoint: method, ordered path parts, params.
-    private def build_endpoint(value : LibTreeSitter::TSNode,
-                               source : String,
-                               file_path : String,
-                               row : Int32) : Endpoint?
-      method = "GET"
+    # Walk the filter's subtrees (in chain order) once, gathering what they
+    # contribute to an endpoint: method, ordered path parts, params.
+    private def collect_filter_parts(parts : Array(LibTreeSitter::TSNode),
+                                     source : String,
+                                     mount : Bool,
+                                     handler : String?) : FilterParts
+      method = nil.as(String?)
       path_parts = [] of String
       params = [] of Param
+      late_params = [] of Param
       param_count = 0
       has_path_end = false
 
-      walk(value) do |node|
-        case Noir::TreeSitter.node_type(node)
-        when "macro_invocation"
-          # `warp::path!("todos" / u64 / "items")` — the idiomatic
-          # multi-segment form. tree-sitter leaves the args as a flat
-          # `token_tree`; string literals are path segments and type
-          # tokens (`u64`, `String`, `Uuid`, …) are path params.
-          if path_macro?(node, source)
-            seg_count = parse_path_macro(node, source, path_parts, params)
-            has_path_end = true if seg_count > 0
-          end
-        when "call_expression"
-          fn_text = call_function_text(node, source)
-          next unless fn_text
+      parts.each do |value|
+        walk(value) do |node|
+          case Noir::TreeSitter.node_type(node)
+          when "macro_invocation"
+            # `warp::path!("todos" / u64 / "items")` — the idiomatic
+            # multi-segment form. tree-sitter leaves the args as a flat
+            # `token_tree`; string literals are path segments and type
+            # tokens (`u64`, `String`, `Uuid`, …) are path params.
+            if path_macro?(node, source)
+              seg_count = parse_path_macro(node, source, path_parts, params)
+              has_path_end = true if seg_count > 0
+            end
+          when "call_expression"
+            fn_text = call_function_text(node, source)
+            next unless fn_text
 
-          case fn_text
-          when "warp::get"     then method = "GET"
-          when "warp::post"    then method = "POST"
-          when "warp::put"     then method = "PUT"
-          when "warp::delete"  then method = "DELETE"
-          when "warp::patch"   then method = "PATCH"
-          when "warp::head"    then method = "HEAD"
-          when "warp::options" then method = "OPTIONS"
-          when "warp::path"
-            text = first_string_literal_text(Noir::TreeSitter.field(node, "arguments"), source)
-            path_parts << text if text
-          when "warp::path::end"
-            has_path_end = true
-          end
-        when "generic_function"
-          fn_text = call_function_text_from_generic(node, source)
-          next unless fn_text
+            case fn_text
+            when "warp::get"     then method = "GET"
+            when "warp::post"    then method = "POST"
+            when "warp::put"     then method = "PUT"
+            when "warp::delete"  then method = "DELETE"
+            when "warp::patch"   then method = "PATCH"
+            when "warp::head"    then method = "HEAD"
+            when "warp::options" then method = "OPTIONS"
+            when "warp::path"
+              text = first_string_literal_text(Noir::TreeSitter.field(node, "arguments"), source)
+              path_parts << text if text
+            when "warp::path::end"
+              has_path_end = true
+            when "warp::body::json"
+              # Untyped `warp::body::json()`: the type comes from the closure.
+              params << Param.new("body", "", "json") unless params.any? { |p| p.name == "body" && p.param_type == "json" }
+            when "warp::body::form"
+              params << Param.new("body", "", "form") unless params.any? { |p| p.name == "body" && p.param_type == "form" }
+            end
+          when "generic_function"
+            fn_text = call_function_text_from_generic(node, source)
+            next unless fn_text
 
-          if fn_text == "warp::query"
-            type_name = first_type_argument(node, source) || "query"
-            params << Param.new(type_name, "", "query") unless params.any? { |p| p.name == type_name && p.param_type == "query" }
-          elsif fn_text == "warp::body::json"
-            type_name = first_type_argument(node, source) || "body"
-            params << Param.new(type_name, "", "json") unless params.any? { |p| p.name == type_name && p.param_type == "json" }
-          elsif fn_text == "warp::body::form"
-            type_name = first_type_argument(node, source) || "body"
-            params << Param.new(type_name, "", "form") unless params.any? { |p| p.name == type_name && p.param_type == "form" }
-          end
-        when "scoped_identifier"
-          text = Noir::TreeSitter.node_text(node, source)
-          if text == "warp::path::param"
-            param_count += 1
+            if fn_text == "warp::query"
+              type_name = first_type_argument(node, source) || "query"
+              params << Param.new(type_name, "", "query") unless params.any? { |p| p.name == type_name && p.param_type == "query" }
+            elsif fn_text == "warp::body::json"
+              type_name = first_type_argument(node, source) || "body"
+              params << Param.new(type_name, "", "json") unless params.any? { |p| p.name == type_name && p.param_type == "json" }
+            elsif fn_text == "warp::body::form"
+              type_name = first_type_argument(node, source) || "body"
+              params << Param.new(type_name, "", "form") unless params.any? { |p| p.name == type_name && p.param_type == "form" }
+            end
+          when "scoped_identifier"
+            text = Noir::TreeSitter.node_text(node, source)
+            if text == "warp::path::param"
+              param_count += 1
+            end
           end
         end
       end
@@ -319,32 +564,41 @@ module Analyzer::Rust
       # Walk again for warp::header(...) / warp::cookie(...) names —
       # the call_expression's function side may be a `generic_function`
       # (turbofish present) or a plain `scoped_identifier`.
-      walk(value) do |node|
-        next unless Noir::TreeSitter.node_type(node) == "call_expression"
-        fn_text = call_function_text(node, source) || call_function_text_from_generic_call(node, source)
-        next unless fn_text
+      parts.each do |value|
+        walk(value) do |node|
+          next unless Noir::TreeSitter.node_type(node) == "call_expression"
+          fn_text = call_function_text(node, source) || call_function_text_from_generic_call(node, source)
+          next unless fn_text
 
-        case fn_text
-        when "warp::header"
-          name = first_string_literal_text(Noir::TreeSitter.field(node, "arguments"), source)
-          params << Param.new(name, "", "header") if name && !params.any? { |p| p.name == name && p.param_type == "header" }
-        when "warp::cookie"
-          name = first_string_literal_text(Noir::TreeSitter.field(node, "arguments"), source)
-          params << Param.new(name, "", "cookie") if name && !params.any? { |p| p.name == name && p.param_type == "cookie" }
+          case fn_text
+          when "warp::header"
+            name = first_string_literal_text(Noir::TreeSitter.field(node, "arguments"), source)
+            late_params << Param.new(name, "", "header") if name && !late_params.any? { |p| p.name == name && p.param_type == "header" }
+          when "warp::cookie"
+            name = first_string_literal_text(Noir::TreeSitter.field(node, "arguments"), source)
+            late_params << Param.new(name, "", "cookie") if name && !late_params.any? { |p| p.name == name && p.param_type == "cookie" }
+          end
         end
       end
 
+      FilterParts.new(method, path_parts, params, late_params, param_count, has_path_end, mount, handler)
+    end
+
+    private def build_endpoint(parts : FilterParts, file_path : String, row : Int32) : Endpoint?
+      path_parts = parts.path_parts.dup
+      params = parts.params + parts.late_params
+      param_count = parts.param_count
       param_count.times do |i|
         name = param_count > 1 ? "param#{i + 1}" : "param"
         path_parts << ":#{name}"
         params << Param.new(name, "", "path")
       end
 
-      return if path_parts.empty? && !has_path_end
+      return if path_parts.empty? && !parts.path_end?
 
       route = path_parts.empty? ? "/" : "/" + path_parts.join("/")
       details = Details.new(PathInfo.new(file_path, row))
-      Endpoint.new(route, method, params, details)
+      Endpoint.new(route, parts.method || "GET", params, details)
     end
 
     # The trailing (no-semicolon) expression of a function body block —
@@ -409,7 +663,7 @@ module Analyzer::Rust
       Noir::TreeSitter.each_named_child(token_tree) do |child|
         case Noir::TreeSitter.node_type(child)
         when "string_literal"
-          seg = string_content_text(child, source)
+          seg = string_content(child, source)
           if seg && !seg.empty?
             path_parts << seg
             count += 1
@@ -431,13 +685,6 @@ module Analyzer::Rust
       count
     end
 
-    private def string_content_text(string_literal : LibTreeSitter::TSNode, source : String) : String?
-      Noir::TreeSitter.each_named_child(string_literal) do |grand|
-        return Noir::TreeSitter.node_text(grand, source) if Noir::TreeSitter.node_type(grand) == "string_content"
-      end
-      nil
-    end
-
     # `.map(handler)` / `.and_then(handler)` / `.then(handler)` — pull
     # the handler identifier (or trailing segment of a scoped path).
     private def find_handler_name(value : LibTreeSitter::TSNode, source : String) : String?
@@ -445,30 +692,33 @@ module Analyzer::Rust
       walk(value) do |node|
         next if found
         next unless Noir::TreeSitter.node_type(node) == "call_expression"
-        fn_node = Noir::TreeSitter.field(node, "function")
-        next unless fn_node && Noir::TreeSitter.node_type(fn_node) == "field_expression"
-        field = Noir::TreeSitter.field(fn_node, "field")
-        next unless field
-        method = Noir::TreeSitter.node_text(field, source)
-        next unless method == "map" || method == "and_then" || method == "then"
+        found = handler_in_call(node, source)
+      end
+      found
+    end
 
-        args = Noir::TreeSitter.field(node, "arguments")
-        next unless args
-        Noir::TreeSitter.each_named_child(args) do |arg|
-          case Noir::TreeSitter.node_type(arg)
-          when "identifier"
-            found = Noir::TreeSitter.node_text(arg, source)
-          when "scoped_identifier"
-            found = Noir::TreeSitter.node_text(arg, source)
-          when "generic_function"
-            # `handlers::generic_handler::<u32>` — peel the turbofish.
-            inner = Noir::TreeSitter.field(arg, "function")
-            if inner
-              found = Noir::TreeSitter.node_text(inner, source)
-            end
+    private def handler_in_call(node : LibTreeSitter::TSNode, source : String) : String?
+      fn_node = Noir::TreeSitter.field(node, "function")
+      return unless fn_node && Noir::TreeSitter.node_type(fn_node) == "field_expression"
+      field = Noir::TreeSitter.field(fn_node, "field")
+      return unless field
+      method = Noir::TreeSitter.node_text(field, source)
+      return unless method == "map" || method == "and_then" || method == "then"
+
+      args = Noir::TreeSitter.field(node, "arguments")
+      return unless args
+      found : String? = nil
+      Noir::TreeSitter.each_named_arg(args) do |arg|
+        case Noir::TreeSitter.node_type(arg)
+        when "identifier", "scoped_identifier"
+          found = Noir::TreeSitter.node_text(arg, source)
+        when "generic_function"
+          # `handlers::generic_handler::<u32>` — peel the turbofish.
+          if inner = Noir::TreeSitter.field(arg, "function")
+            found = Noir::TreeSitter.node_text(inner, source)
           end
-          break if found
         end
+        break if found
       end
       found
     end
@@ -476,16 +726,6 @@ module Analyzer::Rust
     private def function_for_handler(index : Hash(String, LibTreeSitter::TSNode), handler_name : String) : LibTreeSitter::TSNode?
       leaf = handler_name.split("::").last
       index[handler_name]? || index[leaf]?
-    end
-
-    private def attach_handler_callees(function : LibTreeSitter::TSNode,
-                                       source : String,
-                                       path : String,
-                                       endpoint : Endpoint)
-      body = Noir::TreeSitter.field(function, "body")
-      return unless body
-      entries = Noir::RustCalleeExtractorTS.callees_in_body(body, source, path)
-      attach_rust_callees(endpoint, entries)
     end
 
     private def attach_external_handler_callees(handler_name : String,
@@ -541,48 +781,6 @@ module Analyzer::Rust
       entries
     end
 
-    private def candidate_module_paths(current_path : String, module_parts : Array(String)) : Array(String)
-      return [] of String if module_parts.empty?
-
-      base_dir, parts = module_base_dir(current_path, module_parts)
-      return [] of String if parts.empty?
-
-      module_path = parts.join("/")
-      [
-        File.join(base_dir, "#{module_path}.rs"),
-        File.join(base_dir, module_path, "mod.rs"),
-      ]
-    end
-
-    private def module_base_dir(current_path : String, module_parts : Array(String)) : Tuple(String, Array(String))
-      first = module_parts.first
-      rest = module_parts[1..]? || [] of String
-
-      case first
-      when "crate"
-        {crate_src_dir(current_path), rest}
-      when "self"
-        {current_module_dir(current_path), rest}
-      when "super"
-        {File.dirname(current_module_dir(current_path)), rest}
-      else
-        {current_module_dir(current_path), module_parts}
-      end
-    end
-
-    private def current_module_dir(current_path : String) : String
-      File.dirname(current_path)
-    end
-
-    private def crate_src_dir(current_path : String) : String
-      marker = "/src/"
-      if idx = current_path.rindex(marker)
-        current_path[0, idx + marker.size - 1]
-      else
-        File.dirname(current_path)
-      end
-    end
-
     private def call_function_text(call : LibTreeSitter::TSNode, source : String) : String?
       fn_node = Noir::TreeSitter.field(call, "function")
       return unless fn_node
@@ -624,42 +822,6 @@ module Analyzer::Rust
         end
       end
       result
-    end
-
-    private def build_function_index(root : LibTreeSitter::TSNode, source : String) : Hash(String, LibTreeSitter::TSNode)
-      index = {} of String => LibTreeSitter::TSNode
-      walk(root) do |node|
-        next unless Noir::TreeSitter.node_type(node) == "function_item"
-        name_node = Noir::TreeSitter.field(node, "name")
-        next unless name_node
-        name = Noir::TreeSitter.node_text(name_node, source)
-        index[name] = node unless index.has_key?(name)
-      end
-      index
-    end
-
-    private def first_string_literal_text(node : LibTreeSitter::TSNode?, source : String) : String?
-      return unless node
-      result : String? = nil
-      walk(node) do |child|
-        next if result
-        if Noir::TreeSitter.node_type(child) == "string_literal"
-          Noir::TreeSitter.each_named_child(child) do |grand|
-            if Noir::TreeSitter.node_type(grand) == "string_content"
-              result = Noir::TreeSitter.node_text(grand, source)
-              break
-            end
-          end
-        end
-      end
-      result
-    end
-
-    private def walk(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
-      block.call(node)
-      Noir::TreeSitter.each_named_child(node) do |child|
-        walk(child, &block)
-      end
     end
   end
 end

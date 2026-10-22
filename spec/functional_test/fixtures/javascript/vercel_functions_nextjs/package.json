@@ -1,0 +1,9 @@
+{
+  "name": "next-on-vercel",
+  "private": true,
+  "dependencies": {
+    "@vercel/functions": "^1.4.0",
+    "next": "14.2.5",
+    "react": "18.3.1"
+  }
+}

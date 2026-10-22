@@ -21,7 +21,7 @@ return [
             'user' => [
                 'type' => Segment::class,
                 'options' => [
-                    'route' => '/users[/:id]',
+                    'route' => /* segment */ '/users[/:id]',
                     'constraints' => [
                         'id' => '[0-9]+',
                     ],

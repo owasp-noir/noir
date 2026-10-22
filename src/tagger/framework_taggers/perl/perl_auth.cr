@@ -14,6 +14,7 @@ require "../../../models/endpoint"
 # (`$c->user_exists`, `$c->assert_user_roles`, `$c->require_login`,
 # `$self->is_user_authenticated`). This tagger surfaces all of them as a
 # single `auth` tag so reviewers can spot the unprotected routes.
+@[Noir::TaggerFor(key: "perl_auth", name: "Perl Auth Tagger", desc: "Identifies Perl authentication patterns (Dancer2 Auth::Extensible, Mojolicious, Catalyst)", order: 260)]
 class PerlAuthTagger < FrameworkTagger
   # Inline route wrappers from Dancer2::Plugin::Auth::Extensible. These
   # sit between the path and the `sub { ... }` on the route declaration.
@@ -43,26 +44,14 @@ class PerlAuthTagger < FrameworkTagger
 
   GLOBAL_GUARD_BLOCK_START = /\bhook\s+before\b|\bbefore\s*=>\s*sub\b|\bsub\s+auto\b|\bsub\s+begin\b/
 
-  def initialize(options : Hash(String, YAML::Any))
-    super
-    @name = "perl_auth"
-  end
-
   def self.target_techs : Array(String)
     ["perl_dancer2", "perl_mojolicious", "perl_catalyst"]
   end
 
-  def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
-    endpoints.each { |endpoint| check_endpoint(endpoint) }
-    endpoints
-  end
-
   private def check_endpoint(endpoint : Endpoint)
     endpoint.details.code_paths.each do |path_info|
-      content = read_file(path_info.path)
-      next if content.nil?
-
-      lines = content.split("\n")
+      lines = read_file_lines(path_info.path)
+      next if lines.nil?
       line_num = path_info.line
       next if line_num.nil?
       next if line_num < 1 || line_num > lines.size
@@ -70,6 +59,7 @@ class PerlAuthTagger < FrameworkTagger
 
       description = check_route_wrapper(lines, idx) ||
                     check_handler_body(lines, idx) ||
+                    check_lite_under(lines, idx) ||
                     check_global_guard(lines)
       next if description.nil?
 
@@ -108,12 +98,25 @@ class PerlAuthTagger < FrameworkTagger
 
     (start_idx..end_idx).each do |i|
       current = lines[i]
-      # Stop if we fall into the next route/sub declaration.
-      break if i > idx && current.matches?(/^\s*(?:get|post|put|patch|options|del|any|prefix)\s/)
+      # Stop if we fall into the next route/sub declaration — or a
+      # Mojolicious::Lite `under`, whose guard covers the routes after it.
+      break if i > idx && current.matches?(/^\s*(?:get|post|put|patch|options|del|any|prefix|under)\b/)
 
       BODY_PATTERNS.each do |pattern, desc|
         return desc if current.matches?(pattern)
       end
+    end
+    nil
+  end
+
+  # Mojolicious::Lite `under sub { ... }`: every route declared after it
+  # (up to the next `under`) runs behind its callback, so the nearest
+  # `under` above the route decides.
+  # ponytail: file-order only; an `under` scoped inside a `group { }` block
+  # leaks to the routes after the group.
+  private def check_lite_under(lines : Array(String), idx : Int32) : String?
+    (idx - 1).downto(0) do |i|
+      return check_handler_body(lines, i) if lines[i].matches?(/^\s*under\b/)
     end
     nil
   end

@@ -1,58 +1,41 @@
 require "../ext/tree_sitter/tree_sitter"
 require "../models/endpoint"
 require "./go_callee_extractor"
+require "../utils/c_comments"
 
 module Noir::GoRequestParamExtractor
   extend self
 
   MAX_HELPER_DEPTH = 3
 
-  def package_function_bodies_for_dirs(file_contents : Hash(String, String),
-                                       dirs : Set(String)) : Hash(String, Hash(String, Noir::GoCalleeExtractor::FunctionBody))
-    bodies = Hash(String, Hash(String, Noir::GoCalleeExtractor::FunctionBody)).new
-    return bodies if dirs.empty?
+  # A stdlib request-header read, whatever the request is called: `r` /
+  # `req`, gin's `c.Request`, echo's `c.Request()`. `Header.Get("X")`,
+  # `Header.Values("X")` and `Header["X"]`; not a `Header["X"] = v` write,
+  # nor `w.Header().Get` (the response's own headers).
+  HEADER_READ_RE = /\.Header\s*(?:\.\s*(?:Get|Values)\s*\(\s*["`]([^"`]+)["`]|\[\s*["`]([^"`]+)["`]\s*\](?!\s*=[^=]))/
 
-    file_contents.each do |path, content|
-      dir = File.dirname(path)
-      next unless dirs.includes?(dir)
-      next unless content.includes?("func ")
-      fns = Noir::GoCalleeExtractor.collect_function_bodies(content, path)
-      next if fns.empty?
-      bodies[dir] ||= Hash(String, Noir::GoCalleeExtractor::FunctionBody).new
-      fns.each { |name, fb| bodies[dir][name] ||= fb }
-    end
-
-    bodies
+  # Every header `text` reads, as `header` params. Shared by the Go
+  # adapters whose handlers see a `*http.Request`.
+  def header_params(text : String) : Array(Param)
+    text.scan(HEADER_READ_RE).map { |m| Param.new(m[1]? || m[2], "", "header") }
   end
 
-  def package_method_bodies_for_dirs(file_contents : Hash(String, String),
-                                     dirs : Set(String)) : Hash(String, Hash(String, Array(Noir::GoCalleeExtractor::FunctionBody)))
-    bodies = Hash(String, Hash(String, Array(Noir::GoCalleeExtractor::FunctionBody))).new
-    return bodies if dirs.empty?
-
-    file_contents.each do |path, content|
-      dir = File.dirname(path)
-      next unless dirs.includes?(dir)
-      next unless content.includes?("func (")
-      methods = Noir::GoCalleeExtractor.collect_method_bodies(content, path)
-      next if methods.empty?
-      dir_map = (bodies[dir] ||= Hash(String, Array(Noir::GoCalleeExtractor::FunctionBody)).new)
-      methods.each do |name, list|
-        (dir_map[name] ||= [] of Noir::GoCalleeExtractor::FunctionBody).concat(list)
-      end
-    end
-
-    bodies
+  # Function and method tables restricted to `dirs`, behind the `func ` /
+  # `func (` per-file gates. A directory is parsed only when a route file
+  # in it asks for its table. See `Noir::GoCalleeExtractor::LazyPackageBodies`.
+  def lazy_package_bodies_for_dirs(file_contents : Hash(String, String),
+                                   dirs : Set(String)) : Noir::GoCalleeExtractor::LazyPackageBodies
+    Noir::GoCalleeExtractor::LazyPackageBodies.new(file_contents, function_gate: "func ", method_gate: "func (", only_dirs: dirs)
   end
 
-  def function_bodies_for_directory(package_bodies : Hash(String, Hash(String, Noir::GoCalleeExtractor::FunctionBody)),
+  def function_bodies_for_directory(package_bodies : Noir::GoCalleeExtractor::LazyPackageBodies,
                                     dir : String) : Hash(String, Noir::GoCalleeExtractor::FunctionBody)
-    package_bodies[dir]? || Hash(String, Noir::GoCalleeExtractor::FunctionBody).new
+    package_bodies.functions_for(dir)
   end
 
-  def method_bodies_for_directory(package_bodies : Hash(String, Hash(String, Array(Noir::GoCalleeExtractor::FunctionBody))),
+  def method_bodies_for_directory(package_bodies : Noir::GoCalleeExtractor::LazyPackageBodies,
                                   dir : String) : Hash(String, Array(Noir::GoCalleeExtractor::FunctionBody))
-    package_bodies[dir]? || Hash(String, Array(Noir::GoCalleeExtractor::FunctionBody)).new
+    package_bodies.methods_for(dir)
   end
 
   def params_for_routes(source : String,
@@ -65,7 +48,7 @@ module Noir::GoRequestParamExtractor
 
     cache = Hash(String, Array(Param)).new
     Noir::TreeSitter.parse_go(source) do |root|
-      walk(root) do |node|
+      Noir::TreeSitter.walk(root) do |node|
         next unless Noir::TreeSitter.node_type(node) == "call_expression"
         row = Noir::TreeSitter.node_start_row(node)
         next unless route_rows.includes?(row)
@@ -189,7 +172,7 @@ module Noir::GoRequestParamExtractor
                                      visiting : Set(String),
                                      sink : Array(Param),
                                      depth : Int32)
-    walk(body) do |node|
+    Noir::TreeSitter.walk(body) do |node|
       next unless Noir::TreeSitter.node_type(node) == "call_expression"
 
       extract_params_from_call(node, source, http_method).each do |param|
@@ -207,7 +190,8 @@ module Noir::GoRequestParamExtractor
                                        source : String,
                                        http_method : String) : Array(Param)
     params = [] of Param
-    call_text = Noir::TreeSitter.node_text(call, source)
+    # Comments blanked so `Get(/* c */ "q")` still matches the regexes below.
+    call_text = Noir::CComments.strip(Noir::TreeSitter.node_text(call, source), raw_quotes: "`")
 
     if call_text.matches?(/json\.NewDecoder\([^)]*\.Body\)\s*\.\s*Decode/) ||
        call_text.matches?(/(?:io|ioutil)\.ReadAll\([^)]*\.Body\)/)
@@ -219,7 +203,7 @@ module Noir::GoRequestParamExtractor
     append_regex_param(params, call_text, /\.Form\s*\.\s*Get\s*\(\s*["`]([^"`]+)["`]/, form_value_param_type(http_method))
     append_regex_param(params, call_text, /\.PostFormValue\s*\(\s*["`]([^"`]+)["`]/, "form")
     append_regex_param(params, call_text, /\.FormValue\s*\(\s*["`]([^"`]+)["`]/, form_value_param_type(http_method))
-    append_regex_param(params, call_text, /\.Header\s*\.\s*Get\s*\(\s*["`]([^"`]+)["`]/, "header")
+    params.concat(header_params(call_text))
     append_regex_param(params, call_text, /\.Cookie\s*\(\s*["`]([^"`]+)["`]/, "cookie")
     append_regex_param(params, call_text, /\.PathValue\s*\(\s*["`]([^"`]+)["`]/, "path")
 
@@ -286,7 +270,7 @@ module Noir::GoRequestParamExtractor
 
   private def form_value_param_type(http_method : String) : String
     case http_method
-    when "GET", "HEAD", ""
+    when "GET", "HEAD", "QUERY", ""
       "query"
     else
       "form"
@@ -297,7 +281,7 @@ module Noir::GoRequestParamExtractor
     args = Noir::TreeSitter.field(call, "arguments")
     return unless args
 
-    Noir::TreeSitter.each_named_child(args) do |arg|
+    Noir::TreeSitter.each_named_arg(args) do |arg|
       if string_literal_node?(arg)
         return decode_string_literal(arg, source)
       end
@@ -312,7 +296,7 @@ module Noir::GoRequestParamExtractor
     return found unless args
 
     first = true
-    Noir::TreeSitter.each_named_child(args) do |arg|
+    Noir::TreeSitter.each_named_arg(args) do |arg|
       if first
         first = false
         next
@@ -331,7 +315,7 @@ module Noir::GoRequestParamExtractor
     args = Noir::TreeSitter.field(call, "arguments")
     return unless args
 
-    Noir::TreeSitter.each_named_child(args) do |arg|
+    Noir::TreeSitter.each_named_arg(args) do |arg|
       next if string_literal_node?(arg)
       candidate = unwrap_handler_arg(arg, source)
       return candidate if handler_candidate?(candidate, source, external_functions, external_methods)
@@ -371,7 +355,7 @@ module Noir::GoRequestParamExtractor
     return arg unless args
 
     inner : LibTreeSitter::TSNode? = nil
-    Noir::TreeSitter.each_named_child(args) do |child|
+    Noir::TreeSitter.each_named_arg(args) do |child|
       next if string_literal_node?(child)
       inner = child
       break unless wrapper_name == "append"
@@ -442,12 +426,5 @@ module Noir::GoRequestParamExtractor
     return if param.name.empty? || param.param_type.empty?
     return if params.any? { |existing| existing.name == param.name && existing.param_type == param.param_type }
     params << param
-  end
-
-  private def walk(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
-    block.call(node)
-    Noir::TreeSitter.each_named_child(node) do |child|
-      walk(child, &block)
-    end
   end
 end

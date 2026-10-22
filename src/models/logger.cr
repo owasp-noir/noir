@@ -1,11 +1,11 @@
 require "colorize"
-
-lib LibC
-  fun usleep(useconds : UInt32) : Int32
-end
+require "../utils/utils"
 
 class NoirLogger
-  SPINNER_FRAMES      = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+  SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+  # Frame delay. `sleep` (fiber-aware) rather than `LibC.usleep`, which
+  # would block the whole scheduler now that the spinner is a fiber.
+  SPINNER_INTERVAL    = 60.milliseconds
   SHIMMER_COLORS      = [159, 255, 250, 247, 245]
   SHIMMER_BAND_RADIUS = SHIMMER_COLORS.size - 1
 
@@ -16,25 +16,59 @@ class NoirLogger
     SUCCESS
     WARNING
     ERROR
-    FATAL
     HEADING
   end
 
   @stdout_busy : Atomic(Int8)
 
+  # `IO::Error#os_error` is `Errno | WinError | WasiError | Nil` — on
+  # Windows a broken pipe surfaces as a `WinError`, not an `Errno`, so
+  # comparing straight against `Errno::EPIPE` silently never matches
+  # there. `WinError#to_errno` normalizes it (`ERROR_BROKEN_PIPE` /
+  # `ERROR_NO_DATA` both map to `Errno::EPIPE`). Noir doesn't ship a WASI
+  # build, so `WasiError` — whose own `#to_errno` doesn't even compile on
+  # every native target (it references an `Errno` member some platforms'
+  # bindings omit) — is intentionally left out of this check.
+  def self.broken_pipe?(ex : IO::Error) : Bool
+    case os_error = ex.os_error
+    when Errno
+      os_error == Errno::EPIPE
+    when WinError
+      os_error.to_errno == Errno::EPIPE
+    else
+      false
+    end
+  end
+
   def initialize(debug : Bool, verbose : Bool, colorize : Bool, no_log : Bool, no_spinner : Bool = false)
     @debug = debug
     @verbose = verbose
-    @color_mode = colorize
+    # Every glyph below is emitted as `.colorize(...).toggle(@color_mode)`,
+    # and `Colorize::Object#toggle` overwrites the enabled flag the object
+    # captured from `Colorize.enabled?` — so it bypasses Crystal's own
+    # "only on a terminal" default the same way it bypasses `NO_COLOR`.
+    # This logger writes to STDERR only, so gate on STDERR rather than on
+    # `Colorize.enabled?`, which also requires STDOUT to be a terminal and
+    # would drop the color from an interactive `noir scan . -f json > out`.
+    # Without this, `noir scan ./app 2> run.log` wrote `\e[32m✔\e[39m` into
+    # the log file — the same ANSI-into-a-pipe problem `OutputBuilder`
+    # already fixed for STDOUT, on the other stream.
+    @color_mode = colorize && Colorize.default_enabled?(STDERR)
     @no_log = no_log
     @no_spinner = no_spinner
-    @output_mutex = Mutex.new
     @spinner_active = false
     @stdout_busy = Atomic(Int8).new(0_i8)
   end
 
-  def log(level : LogLevel, message : String)
-    return if @no_log
+  # The logger a pipeline stage builds from the scan's option hash.
+  # `colorize` is overridable for `OutputBuilder`, which also gates color
+  # on STDOUT being a terminal.
+  def self.from_options(options, colorize : Bool = any_to_bool(options["color"]), no_spinner : Bool = false) : NoirLogger
+    new(any_to_bool(options["debug"]), any_to_bool(options["verbose"]), colorize, any_to_bool(options["nolog"]), no_spinner)
+  end
+
+  def log(level : LogLevel, message : String, force : Bool = false)
+    return if @no_log && !force
 
     prefix = case level
              when LogLevel::DEBUG
@@ -49,15 +83,11 @@ class NoirLogger
                "▲".colorize(:yellow).toggle(@color_mode)
              when LogLevel::ERROR
                "✖︎".colorize(:red).toggle(@color_mode)
-             when LogLevel::FATAL
-               "☠".colorize(:red).toggle(@color_mode)
              when LogLevel::HEADING
                "★".colorize(:yellow).toggle(@color_mode)
              end
 
     write_stderr_line "#{prefix} #{message}"
-
-    exit(1) if level == LogLevel::FATAL
   end
 
   def loading(message : String, &)
@@ -79,42 +109,66 @@ class NoirLogger
     @spinner_active = true
     @stdout_busy.set(0_i8)
 
-    thread = Thread.new do
+    # Must be a fiber, not a `Thread`. Crystal 1.21 requires every thread
+    # that touches the scheduler to belong to an execution context, and a
+    # bare `Thread.new` has none — the `STDERR.print`/`flush` inside
+    # `render_spinner` then aborts the process with
+    # "Thread#execution_context cannot be nil (NilAssertionError)".
+    # Only reproducible on a TTY, because that is the sole condition under
+    # which `spinner_enabled?` is true.
+    finished = Channel(Nil).new
+
+    spawn do
+      # The outer `ensure` guarantees `finished.send(nil)` fires no matter
+      # how this fiber body exits. It matters because an unhandled
+      # exception inside a spawned fiber doesn't crash the process —
+      # Crystal just prints "Unhandled exception in spawn" and lets the
+      # fiber die — so without this, any exception here (render_spinner
+      # and clear_spinner_line no longer raise on IO::Error, but a future
+      # change or an unrelated bug could still raise something) would kill
+      # the fiber before it ever calls `finished.send`, and the caller's
+      # `ensure { stop.set(1_i8); finished.receive }` below would then
+      # block forever on a channel nothing is left alive to send on.
+      # Confirmed empirically: an unhandled raise here previously hung a
+      # minimal repro of this exact fiber/channel shape indefinitely.
+
       index = 0
       while stop.get == 0_i8
         # Non-blocking lock try
         _, success = @stdout_busy.compare_and_set(0_i8, 2_i8, :acquire_release, :acquire)
         if success
-          render_spinner(message, index)
-          index += 1
-          @stdout_busy.set(0_i8)
+          begin
+            render_spinner(message, index)
+            index += 1
+          ensure
+            @stdout_busy.set(0_i8)
+          end
         end
-        LibC.usleep(60000_u32)
+        sleep SPINNER_INTERVAL
       end
 
       # Spin-acquire for final cleanup
       while @stdout_busy.compare_and_set(0_i8, 2_i8, :acquire_release, :acquire)[1] == false
-        LibC.usleep(100_u32)
+        Fiber.yield
       end
-      clear_spinner_line
-      @spinner_active = false
-      @stdout_busy.set(0_i8)
+      begin
+        clear_spinner_line
+        @spinner_active = false
+      ensure
+        @stdout_busy.set(0_i8)
+      end
+    ensure
+      finished.send(nil)
     end
 
     begin
       yield
     ensure
       stop.set(1_i8)
-      thread.join
+      # Wait for the frame loop to clear its line before returning, so the
+      # next writer doesn't land on top of a half-drawn spinner.
+      finished.receive
     end
-  end
-
-  def puts(message)
-    STDOUT.puts message
-  end
-
-  def puts_sub(message)
-    STDOUT.puts "  " + message
   end
 
   def heading(message)
@@ -134,6 +188,16 @@ class NoirLogger
     write_stderr_line "  " + message
   end
 
+  # Not gated by --no-log: for a report that is the run's only result,
+  # such as the --ai-dry-run file list.
+  def report(message)
+    log(LogLevel::INFO, message, force: true)
+  end
+
+  def report_sub(message)
+    write_stderr_line "  " + message
+  end
+
   def warning(message)
     log(LogLevel::WARNING, message)
   end
@@ -145,6 +209,15 @@ class NoirLogger
   def debug(message)
     return if @no_log || !@debug
     log(LogLevel::DEBUG, message.to_s)
+  end
+
+  # Block form for messages that cost something to build. The `message`
+  # overload takes an already-built String, so `debug "...#{expensive}"`
+  # pays for the interpolation on every call and then throws it away with
+  # debug off; `debug { "...#{expensive}" }` doesn't build it at all.
+  def debug(&) : Nil
+    return if @no_log || !@debug
+    log(LogLevel::DEBUG, yield.to_s)
   end
 
   def debug_sub(message)
@@ -162,10 +235,6 @@ class NoirLogger
     write_stderr_line "  " + message
   end
 
-  def fatal(message)
-    log(LogLevel::FATAL, message)
-  end
-
   private def spinner_enabled? : Bool
     @color_mode && !@no_spinner && STDERR.tty?
   end
@@ -176,6 +245,12 @@ class NoirLogger
 
     STDERR.print "\r\e[2K#{line}"
     STDERR.flush
+  rescue IO::Error
+    # STDERR here is pure progress UI, never primary report content — on
+    # any write failure (broken pipe, closed terminal, ...) there's
+    # nothing useful to do but stop trying. Swallowing rather than
+    # exiting/re-raising also guarantees this can never kill the spinner
+    # fiber before it reaches its `finished.send(nil)` cleanup in `loading`.
   end
 
   private def write_stderr_line(message : String)
@@ -187,14 +262,25 @@ class NoirLogger
     clear_spinner_line if @spinner_active
     STDERR.puts message
     STDERR.flush
-
-    @stdout_busy.set(0_i8)
     nil
+  rescue IO::Error
+    # STDERR here is pure progress/debug logging, never primary report
+    # content — on any write failure there's nothing useful to do but give up on this
+    # line. Swallowing unconditionally (rather than exiting or re-raising)
+    # means this can never strand @stdout_busy at "held" (an unhandled
+    # exception inside a spawned fiber doesn't stop the whole process —
+    # Crystal just prints "Unhandled exception in spawn" and the fiber
+    # dies — so every other logging fiber would otherwise spin on the
+    # acquire loop above at 100% CPU for good).
+    nil
+  ensure
+    @stdout_busy.set(0_i8)
   end
 
   private def clear_spinner_line
     STDERR.print "\r\e[2K"
     STDERR.flush
+  rescue IO::Error
   end
 
   private def shimmer(text : String, index : Int32) : String

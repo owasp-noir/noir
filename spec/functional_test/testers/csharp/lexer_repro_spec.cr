@@ -27,12 +27,29 @@ calc = Endpoint.new("/api/Repro/calc", "GET", [
 calc.push_callee(Callee.new("Ok", line: 27))
 calc.push_callee(Callee.new("Compute", line: 27))
 
+interp_get = Endpoint.new("/api/Repro/interp/{id}", "GET", [
+  Param.new("id", "", "path"),
+])
+interp_get.push_callee(Callee.new("SecretHelperCall", line: 35))
+interp_get.push_callee(Callee.new("AuditLog.Write", line: 36))
+interp_get.push_callee(Callee.new("Ok", line: 37))
+interp_get.push_callee(Callee.new("SerializeOrder", line: 37))
+
+interp_post = Endpoint.new("/api/Repro/interp", "POST", [
+  Param.new("name", "", "json"),
+])
+interp_post.push_callee(Callee.new("orderService.Create", line: 43))
+interp_post.push_callee(Callee.new("Created", line: 44))
+interp_post.push_callee(Callee.new("SerializeOrder", line: 44))
+
 FunctionalTester.new("fixtures/csharp/lexer_repro/", {
   :techs     => 1,
-  :endpoints => 2,
+  :endpoints => 4,
 }, [
   dirty,
   calc,
+  interp_get,
+  interp_post,
 ], {
   "include_callee" => YAML::Any.new(true),
 }).perform_tests

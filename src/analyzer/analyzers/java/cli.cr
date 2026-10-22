@@ -1,17 +1,22 @@
 require "../../../models/analyzer"
 require "../../engines/java_engine"
+require "../../engines/cli_endpoint_support"
 
 module Analyzer::Java
   # Surfaces the command-line attack surface of Java programs as `cli://`
   # endpoints: one endpoint per (sub)command with named options
   # (param_type "flag"), positional arguments ("argument") and consumed
   # environment variables ("env"). Covers picocli, args4j, JCommander,
-  # commons-cli and airline, plus gated System.getenv reads.
+  # commons-cli, airline and jopt-simple, plus gated System.getenv reads.
   #
   # Line-scan analyzer (Go/Ruby/Rust CLI house style) merging endpoints by
   # URL. Subclasses Analyzer directly (JavaEngine is a module) and uses
   # JavaEngine.test_path? to skip tests.
   class Cli < Analyzer
+    analyzer_for "java_cli"
+
+    include CliEndpointSupport
+
     COMMAND_ATTR    = /@Command\s*\([^)]*\bname\s*=\s*"([^"]+)"/
     COMMAND_OPEN    = /@Command\b/
     COMMAND_NAME_KV = /\bname\s*=\s*"([^"]+)"/
@@ -26,36 +31,78 @@ module Analyzer::Java
 
     # commons-cli (no subcommands; flags on root).
     ADD_OPTION_LL = /\.addOption\s*\(\s*"([^"]+)"\s*,\s*"([^"]+)"\s*,/
-    LONG_OPT      = /\.longOpt\s*\(\s*"([^"]+)"/
+    # Current (non-deprecated) `addOption(String opt, boolean hasArg, String
+    # description)` overload used for short-only flags. The `true|false`
+    # literal gate in the 2nd argument position guarantees this never
+    # overlaps with ADD_OPTION_LL above (which requires a quoted string
+    # there), so a given call is matched by exactly one of the two.
+    ADD_OPTION_SHORT = /\.addOption\s*\(\s*"([^"]+)"\s*,\s*(?:true|false)\s*,/
+    LONG_OPT         = /\.longOpt\s*\(\s*"([^"]+)"/
 
     GET_ENV = /\bSystem\.getenv\s*\(\s*"([^"]+)"\s*\)/
 
-    LIB_MARKERS      = ["picocli.", "org.kohsuke.args4j", "com.beust.jcommander", "org.apache.commons.cli", "com.github.rvesse.airline", "io.airlift.airline"]
+    # jopt-simple (no subcommands; flags land on root, like commons-cli).
+    # `.accepts("flag")`/`.acceptsAll(List.of("f","flag"))` are only real CLI
+    # flags when called on a variable that was actually bound to
+    # `new OptionParser(...)` — jopt-simple's `OptionParser` isn't the only
+    # class with an `accepts(...)` method (e.g. a `FormatMatcher.accepts(fmt)`
+    # helper), so the receiver is tracked per-file in the same forward pass
+    # and matches on an untracked receiver are dropped rather than attributed
+    # to the root command.
+    JOPT_PARSER_DECL = /\b(\w+)\s*=\s*new\s+OptionParser\s*\(/
+    JOPT_ACCEPTS     = /\b(\w+)\.accepts\s*\(\s*"([^"]+)"/
+    JOPT_ACCEPTS_ALL = /\b(\w+)\.acceptsAll\s*\(\s*(?:Arrays\.asList|List\.of|Collections\.singletonList)\s*\(\s*"([^"]+)"/
+
+    LIB_MARKERS      = ["picocli.", "org.kohsuke.args4j", "com.beust.jcommander", "org.apache.commons.cli", "com.github.rvesse.airline", "io.airlift.airline", "joptsimple."]
+    LIB_MARKERS_RE   = Regex.union(LIB_MARKERS)
     WEB_FRAMEWORK_RE = /\bimport\s+(?:org\.springframework|jakarta\.ws\.rs|javax\.ws\.rs|io\.quarkus|io\.micronaut|io\.javalin|io\.vertx|com\.linecorp\.armeria|io\.dropwizard|spark\.|org\.apache\.struts)/
+
+    # No bare `@Parameter`: swagger/OpenAPI, Maven Mojo and Hibernate all
+    # declare one. A real JCommander file names `com.beust.jcommander`
+    # (LIB_MARKERS), and `scan` only reads `@Parameter` for those.
+    CLI_GATE_RE = /@Command\b|new\s+JCommander|new\s+CmdLineParser|new\s+Options\s*\(/
+
+    # Cheap pre-gate applied to the RAW file, before the comment strip.
+    #
+    # `strip_comments` materialises an `Array(Char)` of the whole file and
+    # rebuilds it character by character; running it on all 8,658 `.java`
+    # files in spring-boot to then reject 97% of them on the gate below was
+    # the bulk of this analyzer. Stripping only replaces characters with
+    # `' '` or `'\n'` and never changes the character count, so a literal
+    # with no whitespace in it can appear in the stripped text only if it
+    # already appears, unchanged, in the raw text. Each alternative of the
+    # real gate requires one of these literals verbatim (the `new\s+X`
+    # forms require `X`; the `\s`-carrying parts are deliberately not
+    # relied on, since blanking a comment *can* manufacture whitespace).
+    # Files that pass still go through the full, comment-aware gate.
+    RAW_CLI_MARKERS_RE = Regex.union(
+      LIB_MARKERS + ["@Command", "JCommander", "CmdLineParser", "Options"]
+    )
 
     def analyze
       endpoints = {} of String => Endpoint
 
       get_files_by_extension(".java").each do |path|
-        next if File.directory?(path)
-        next if JavaEngine.test_path?(path)
+        next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
 
         begin
-          content = read_file_content(path)
-          next unless LIB_MARKERS.any? { |m| content.includes?(m) } || content.matches?(/@Command\b|@Parameter\b|new\s+JCommander|new\s+CmdLineParser|new\s+Options\s*\(/)
+          raw = read_file_content(path)
+          next unless content_matches?(raw, RAW_CLI_MARKERS_RE)
+          content = JavaEngine.strip_comments(raw)
+          next unless content_matches?(content, LIB_MARKERS_RE) || content_matches?(content, CLI_GATE_RE)
 
           binary = java_binary_name(content, path)
           root_url = "cli://#{binary}"
           emit_env = !content.matches?(WEB_FRAMEWORK_RE)
-          scan(content.lines, path, binary, root_url, endpoints, emit_env)
+          scan(content.lines, path, binary, root_url, endpoints, emit_env, content.includes?("com.beust.jcommander"))
         rescue e
           logger.debug "Error analyzing #{path}: #{e}"
           next
         end
       end
 
-      endpoints.each_value { |ep| @result << ep }
+      @result.concat(cli_endpoints(endpoints))
       @result
     end
 
@@ -75,9 +122,11 @@ module Analyzer::Java
     end
 
     private def scan(lines : Array(String), path : String, binary : String,
-                     root_url : String, endpoints : Hash(String, Endpoint), emit_env : Bool)
+                     root_url : String, endpoints : Hash(String, Endpoint), emit_env : Bool,
+                     jcommander : Bool)
       current_url = root_url
       pending_argument = false
+      jopt_vars = Set(String).new
 
       lines.each_with_index do |line, index|
         line_no = index + 1
@@ -115,7 +164,7 @@ module Analyzer::Java
         # jcommander @Parameter: `names = {"-p", "--port"}` is a named
         # option; a name-less @Parameter(description = ...) is the command's
         # main parameter — bind the next field declaration as a positional.
-        if m = line.match(PARAMETER_ATTR)
+        if jcommander && (m = line.match(PARAMETER_ATTR))
           if name = annotation_flag_name(m[1])
             pending_argument = false
             fetch_endpoint(endpoints, current_url, path, line_no).push_param(Param.new(name, "", "flag"))
@@ -127,9 +176,30 @@ module Analyzer::Java
         # commons-cli (root flags).
         if m = line.match(ADD_OPTION_LL)
           fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(m[2], "", "flag"))
+        elsif m = line.match(ADD_OPTION_SHORT)
+          fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(m[1], "", "flag"))
         end
         if m = line.match(LONG_OPT)
           fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(m[1], "", "flag"))
+        end
+
+        # jopt-simple (root flags). Track `x = new OptionParser(...)` bindings
+        # as they're seen, then only attribute `.accepts(...)`/`.acceptsAll(...)`
+        # to a CLI flag when the receiver is a tracked parser variable — a
+        # same-named `accepts`/`acceptsAll` method on an unrelated object must
+        # not be attributed here.
+        if m = line.match(JOPT_PARSER_DECL)
+          jopt_vars << m[1]
+        end
+        if m = line.match(JOPT_ACCEPTS_ALL)
+          if jopt_vars.includes?(m[1])
+            fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(m[2], "", "flag"))
+          end
+        end
+        if m = line.match(JOPT_ACCEPTS)
+          if jopt_vars.includes?(m[1])
+            fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(m[2], "", "flag"))
+          end
         end
 
         # positional args (picocli @Parameters / args4j @Argument / airline
@@ -174,15 +244,6 @@ module Analyzer::Java
       return if tokens.empty?
       long = tokens.find(&.starts_with?("--"))
       (long || tokens.first).lstrip('-')
-    end
-
-    private def fetch_endpoint(endpoints : Hash(String, Endpoint), url : String,
-                               path : String, line_no : Int32) : Endpoint
-      endpoints[url] ||= begin
-        ep = Endpoint.new(url, "CLI", Details.new(PathInfo.new(path, line_no)))
-        ep.protocol = "cli"
-        ep
-      end
     end
   end
 end

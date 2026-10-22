@@ -87,7 +87,7 @@ tester = FunctionalTester.new("fixtures/lua/lapis_callees/", {
 })
 tester.perform_tests
 
-it "reports exact Lapis callees for inline Lua handlers" do
+it "reports exact Lapis callees for inline Lua handlers", tags: "functional" do
   endpoint = tester.app.endpoints.find { |found| found.url == "/users" && found.method == "GET" }
   endpoint.should_not be_nil
   endpoint.try do |actual|
@@ -95,7 +95,7 @@ it "reports exact Lapis callees for inline Lua handlers" do
   end
 end
 
-it "reuses same Lapis callees for app:match fallback methods" do
+it "reuses same Lapis callees for app:match fallback methods", tags: "functional" do
   endpoint = tester.app.endpoints.find { |found| found.url == "/health" && found.method == "PATCH" }
   endpoint.should_not be_nil
   endpoint.try do |actual|
@@ -103,7 +103,7 @@ it "reuses same Lapis callees for app:match fallback methods" do
   end
 end
 
-it "resolves same-file string action handlers for Lapis table routes" do
+it "resolves same-file string action handlers for Lapis table routes", tags: "functional" do
   endpoint = tester.app.endpoints.find { |found| found.url == "/admin/dashboard" && found.method == "GET" }
   endpoint.should_not be_nil
   endpoint.try do |actual|
@@ -111,7 +111,7 @@ it "resolves same-file string action handlers for Lapis table routes" do
   end
 end
 
-it "extracts MoonScript action callees without leaking adjacent routes" do
+it "extracts MoonScript action callees without leaking adjacent routes", tags: "functional" do
   endpoint = tester.app.endpoints.find { |found| found.url == "/moon/users/:id" && found.method == "GET" }
   endpoint.should_not be_nil
   endpoint.try do |actual|
@@ -119,7 +119,7 @@ it "extracts MoonScript action callees without leaking adjacent routes" do
   end
 end
 
-it "ignores fake calls in Lua strings and comments" do
+it "ignores fake calls in Lua strings and comments", tags: "functional" do
   endpoint = tester.app.endpoints.find { |found| found.url == "/string-noise" && found.method == "GET" }
   endpoint.should_not be_nil
   endpoint.try do |actual|
@@ -127,7 +127,7 @@ it "ignores fake calls in Lua strings and comments" do
   end
 end
 
-it "resolves identifier handler variables for Lapis routes" do
+it "resolves identifier handler variables for Lapis routes", tags: "functional" do
   endpoint = tester.app.endpoints.find { |found| found.url == "/identifier" && found.method == "GET" }
   endpoint.should_not be_nil
   endpoint.try do |actual|
@@ -135,7 +135,7 @@ it "resolves identifier handler variables for Lapis routes" do
   end
 end
 
-it "populates Lapis callee source paths" do
+it "populates Lapis callee source paths", tags: "functional" do
   endpoint = tester.app.endpoints.find { |found| found.url == "/named" && found.method == "GET" }
   endpoint.should_not be_nil
   endpoint.try do |actual|

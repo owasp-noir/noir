@@ -1,0 +1,13 @@
+{
+  "openrpc": "1.2.6",
+  "info": { "title": "Undefaulted endpoint", "version": "1.0.0" },
+  "servers": [
+    {
+      "url": "{endpoint}",
+      "variables": { "endpoint": { "description": "The node's base URL" } }
+    }
+  ],
+  "methods": [
+    { "name": "node_peers", "params": [], "result": { "name": "peers", "schema": { "type": "array" } } }
+  ]
+}

@@ -1,12 +1,12 @@
 +++
 title = "AI Context"
-description = "Per-endpoint AI review context that aggregates guards, callees, sinks, validators, and signals."
+description = "Per-endpoint AI review context that aggregates guards, callees, sources, sinks, validators, and signals."
 weight = 5
 sort_by = "weight"
 
 +++
 
-Noir can attach a structured **AI review context** to each endpoint. It groups static signals that LLM-based SAST tools, code reviewers, and security agents commonly need to triage a route, without forcing them to walk the repository themselves.
+Noir can attach a structured AI review context to each endpoint. It collects the static signals that LLM-based SAST tools, code reviewers, and security agents need to triage a route, so they don't have to walk the repository themselves.
 
 Use `--ai-context` to enable it:
 
@@ -14,18 +14,27 @@ Use `--ai-context` to enable it:
 noir scan . --ai-context
 ```
 
-Pass a comma-separated bucket list to narrow the output to just the categories you care about. The filter applies at the data layer, so JSON / SARIF / YAML / Postman / OAS all see the same selection — not just the plain-text renderer.
+Pass a comma-separated list of buckets to keep only the categories you need. The filter runs on the data itself, so JSON, SARIF, YAML, Postman, and OAS output get the same selection as plain text.
 
 ```bash
-noir scan . --ai-context=guards,sinks       # only auth + likely-dangerous sinks
+noir scan . --ai-context=guards,sinks       # auth + sinks, plus linked signals
 noir scan . --ai-context=callee             # only the 1-hop handler callees
 noir scan . --ai-context=all                # explicit form of "everything"
 noir scan . --ai-context                    # bare form: also "everything"
 ```
 
-Valid feature names: `guards`, `callee`, `sinks`, `validators`, `signals` (plus `all`). Names are case-insensitive.
+Valid feature names: `guards`, `callee`, `sources`, `sinks`, `validators`, `signals` (plus `all`). Names are case-insensitive.
 
-In plain output, every endpoint with non-empty context grows an `ai_context:` block. Model-based formats expose the same structure under standard locations:
+Signals are derived from the other buckets, and the filter keeps them
+together. Selecting `signals` keeps the evidence those signals need (for
+example `ssrf` keeps `outbound_http` sinks). Selecting an evidence bucket
+keeps only the signals linked to it (for example `guards,sinks` still
+shows `authz_absence`), and each of those signals brings its own evidence
+along, so `guards,sinks` can also show `sources`. The `priority_review` roll-up, which draws on
+several buckets, appears only when `signals` is selected (bare
+`--ai-context` and `all` include it).
+
+In plain output, every endpoint with non-empty context gets an `ai_context:` block. Structured formats put the same data here:
 
 | Format | Where AI context appears |
 |---|---|
@@ -33,7 +42,7 @@ In plain output, every endpoint with non-empty context grows an `ai_context:` bl
 | OpenAPI 2.0 / 3.0 | Operation-level `x-noir-ai-context` extension |
 | SARIF | `result.properties.noir.ai_context` |
 | Postman | Appended to the item description |
-| cURL / HTTPie / only-url / only-param | Omitted on purpose (primary output stays stable) |
+| cURL / HTTPie / PowerShell / only-url / only-param | Left out on purpose, so their main output stays the same |
 
 ## What goes inside
 
@@ -42,17 +51,22 @@ Every context bucket is a list of entries with `kind`, `name`, optional `source`
 | Bucket | Meaning |
 |---|---|
 | `guards` | Authentication / authorization gates detected on the route (middleware, decorators, `requires_auth`, role checks, etc.) |
-| `callees` | The 1-hop handler callees Noir already collects with `--include callee`, re-emitted under the AI context structure for one-stop consumption |
+| `callees` | The 1-hop handler callees Noir already collects with `--include callee`, repeated inside the AI context so everything is in one place |
+| `sources` | Attacker-controlled inputs that reach the handler: each request parameter, header, cookie, and GraphQL field, plus mobile deep-link payloads. A few server-side value sources worth reviewing (a Spring `@Value` secret, a WebSocket CORS policy) land here too |
 | `sinks` | Likely dangerous operations inferred from the handler body or callee names (SQL, command execution, deserialization, template rendering, file I/O, redirects, etc.) |
 | `validators` | Input-validation and sanitization signals (schema validators, parameter coercion, allow-listing patterns) that mitigate sink risk |
 | `signals` | Other route-shape hints worth surfacing (state-changing methods without a detected guard, path-id usage suggesting object-level authorization concerns, file-upload behavior, etc.) |
 
-The list is best-effort. Heuristic confidence is exposed on each entry so consumers can filter by threshold. Up to 16 entries per bucket are kept to keep output compact.
+The list is best-effort. Heuristic confidence is exposed on each entry so consumers can filter by threshold. Each bucket keeps at most 16 entries so the output stays compact.
+
+Every non-empty context also carries `"untrusted_fields": ["name", "path", "snippet"]`. Those fields come from the scanned repository as-is, so `snippet` includes comments and string literals written by whoever controls that code. When you pass this output to an LLM, treat those fields as untrusted data and fence them off from your instructions.
+
+The shape is published as a JSON Schema at [`schemas/ai-context.schema.json`](https://owasp-noir.github.io/noir/schemas/ai-context.schema.json), for validators and for prompts that need a stable contract. The untrusted fields carry `"x-noir-untrusted": true` there. Entry `kind` values are an open vocabulary: new ones are added without a schema change.
 
 ## Typical use cases
 
 - **AI SAST**: hand the endpoint inventory plus its AI context to an LLM so it can decide where vulnerabilities are reachable from the attack surface without re-discovering the route structure.
-- **Manual triage**: a reviewer skimming a large JSON or SARIF report can sort or filter by sink kind or by `signals` like `state_changing_without_guard`.
+- **Manual triage**: a reviewer skimming a large JSON or SARIF report can sort or filter by sink kind or by `signals` like `guard_absence`.
 - **CI gating**: surface `sinks` minus `validators` to flag risky endpoints in pull requests.
 
 ## Combine with other flags
@@ -70,7 +84,7 @@ noir scan . --ai-context -f oas3 -o spec.json
 
 ## Completeness notes
 
-- AI context is **additive**: endpoints unaffected by any heuristic come out exactly as they would without the flag (no `ai_context` key in serialized models).
-- Heuristics are tuned conservatively. Both false positives and false negatives exist; treat entries as priors, not findings.
-- Guard / sink / validator patterns improve over time. The set is intentionally cross-language so a single context schema works across the framework matrix Noir already covers.
+- AI context only adds data: endpoints unaffected by any heuristic come out exactly as they would without the flag (no `ai_context` key in serialized models).
+- Heuristics are tuned conservatively. Both false positives and false negatives exist, so treat entries as leads to review, not findings.
+- Guard / sink / validator patterns improve over time. They are cross-language on purpose, so one context schema works for every framework Noir covers.
 - Callee coverage drives much of the AI context. See [Callee Coverage](@/usage/supported/callee_coverage/index.md) for which frameworks expose handler callees today.

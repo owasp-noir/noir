@@ -43,12 +43,7 @@ module Noir::ScalaCalleeExtractor
     end
 
     scan_code(code.to_s, file_path, start_line, line_offsets, entries)
-    dedup_entries(entries.sort_by(&.[0]).map(&.[1]))
-  end
-
-  def strip_comment(line : String, block_comment_depth : Int32 = 0, in_multiline_string : Bool = false) : String
-    stripped, _, _ = strip_non_code_with_state(line, block_comment_depth, in_multiline_string)
-    stripped
+    entries.sort_by(&.[0]).map(&.[1]).uniq!
   end
 
   def strip_comment_preserving_strings(line : String) : String
@@ -63,12 +58,14 @@ module Noir::ScalaCalleeExtractor
     in_string = false
     escaped = false
     index = 0
-    stripped = String::Builder.new
+    chars = line.chars
+    size = chars.size
+    stripped = String::Builder.new(size)
 
-    while index < line.size
-      char = line[index]
-      next_char = line[index + 1]?
-      third_char = line[index + 2]?
+    while index < size
+      char = chars[index]
+      next_char = chars[index + 1]?
+      third_char = chars[index + 2]?
 
       if block_comment_depth > 0
         if char == '/' && next_char == '*'
@@ -82,7 +79,7 @@ module Noir::ScalaCalleeExtractor
           index += 2
           next
         end
-        stripped << ' '
+        stripped.write_byte(' '.ord.to_u8)
       elsif in_multiline_string
         if char == '"' && next_char == '"' && third_char == '"'
           in_multiline_string = false
@@ -90,7 +87,7 @@ module Noir::ScalaCalleeExtractor
           index += 3
           next
         end
-        stripped << ' '
+        stripped.write_byte(' '.ord.to_u8)
       elsif in_string
         if escaped
           escaped = false
@@ -99,7 +96,11 @@ module Noir::ScalaCalleeExtractor
         elsif char == '"'
           in_string = false
         end
-        stripped << (preserve_strings ? char : ' ')
+        if preserve_strings
+          stripped << char
+        else
+          stripped.write_byte(' '.ord.to_u8)
+        end
       elsif char == '"'
         if next_char == '"' && third_char == '"'
           in_multiline_string = true
@@ -109,9 +110,23 @@ module Noir::ScalaCalleeExtractor
         else
           in_string = true
         end
-        stripped << (preserve_strings ? char : ' ')
+        if preserve_strings
+          stripped << char
+        else
+          stripped.write_byte(' '.ord.to_u8)
+        end
+      elsif char == '\'' && (length = char_literal_length(chars, index))
+        # `'{'` / `'\''`, as `ScalaLexer` reads them: a brace in a char
+        # literal must not count toward block nesting.
+        if preserve_strings
+          length.times { |k| stripped << chars[index + k] }
+        else
+          append_spaces(stripped, length)
+        end
+        index += length
+        next
       elsif char == '/' && next_char == '/'
-        append_spaces(stripped, line.size - index)
+        append_spaces(stripped, size - index)
         return {stripped.to_s, block_comment_depth, in_multiline_string}
       elsif char == '/' && next_char == '*'
         block_comment_depth += 1
@@ -127,8 +142,18 @@ module Noir::ScalaCalleeExtractor
     {stripped.to_s, block_comment_depth, in_multiline_string}
   end
 
+  # Length of the char literal (`'x'` or `'\x'`) opening at `index`, nil
+  # for a `'symbol` literal.
+  private def char_literal_length(chars : Array(Char), index : Int32) : Int32?
+    if chars[index + 1]? == '\\'
+      4 if chars[index + 3]? == '\''
+    elsif chars[index + 1]? != '\''
+      3 if chars[index + 2]? == '\''
+    end
+  end
+
   private def append_spaces(stripped : String::Builder, count : Int32)
-    count.times { stripped << ' ' }
+    count.times { stripped.write_byte(' '.ord.to_u8) }
   end
 
   private def scan_code(code : String,
@@ -136,6 +161,8 @@ module Noir::ScalaCalleeExtractor
                         start_line : Int32,
                         line_offsets : Array(Int32),
                         entries : Array(Tuple(Int32, Entry)))
+    return unless code.includes?('(') || code.includes?('{')
+
     code.scan(RECEIVER_CALL_REGEX) do |match|
       name = normalized_name(match[1])
       next if skip_callee?(name)

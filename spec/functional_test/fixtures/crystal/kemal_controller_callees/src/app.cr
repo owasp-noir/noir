@@ -12,6 +12,7 @@ module App::Routing
   def register_all
     get "/", Routes::Misc, :home
     post "/users", Routes::Misc, :create_user
+    query "/search", Routes::Misc, :search
 
     register_api_routes
   end

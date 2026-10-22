@@ -4,15 +4,17 @@ require "../../engines/kotlin_engine"
 
 module Analyzer::Kotlin
   class Ktor < Analyzer
+    analyzer_for "kotlin_ktor"
+
     KOTLIN_EXTENSION = "kt"
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       file_list = all_files()
       kotlin_files = file_list.select do |path|
-        File.exists?(path) &&
-          path.ends_with?(".#{KOTLIN_EXTENSION}") &&
-          !KotlinEngine.test_path?(path)
+        path.ends_with?(".#{KOTLIN_EXTENSION}") &&
+          File.exists?(path) &&
+          !KotlinEngine.test_path?(base_relative_path(path))
       end
       file_contents = Hash(String, String).new
       string_constants_by_base = Hash(String, Hash(String, String)).new do |hash, key|
@@ -60,14 +62,29 @@ module Analyzer::Kotlin
       @result
     end
 
+    # One precompiled `Regex.union` scan (PCRE2 JIT, auto-escapes each
+    # literal) replaces the three OR-ed `String#includes?` passes over the
+    # same buffer — this gate runs once per Kotlin file in the scan.
+    POTENTIAL_KTOR_ROUTE_RE = Regex.union("routing", "io.ktor.server.routing", "Route.")
+
     private def potential_ktor_route_file?(content : String) : Bool
-      content.includes?("routing") ||
-        content.includes?("io.ktor.server.routing") ||
-        content.includes?("Route.")
+      content.matches?(POTENTIAL_KTOR_ROUTE_RE)
     end
 
     private def fully_qualified_constant?(name : String) : Bool
       name.count('.') >= 2
+    end
+
+    # The parameter name inside one Ktor placeholder. Ktor spells the
+    # tailcard as `{name...}` and the optional as `{name?}`, but the
+    # handler still reads `call.parameters["name"]` — the decoration
+    # describes the segment, not the parameter. Emitting the raw body
+    # produced params literally named `segments...` and `name?`, which
+    # no probe or spec fill could ever match. `{...}` is the anonymous
+    # tailcard and names nothing.
+    private def ktor_path_param_name(body : String) : String?
+      name = body.rchop("...").rchop("?")
+      name.empty? ? nil : name
     end
 
     private def build_endpoint(route : Noir::TreeSitterKotlinKtorRouteExtractor::Route, path : String) : Endpoint
@@ -80,8 +97,10 @@ module Analyzer::Kotlin
       # URL string, but emitting here keeps parity with the legacy
       # analyzer.
       route.path.scan(/\{([^}]+)\}/) do |match|
-        path_param_names << match[1]
-        params << Param.new(match[1], "", "path")
+        name = ktor_path_param_name(match[1])
+        next unless name
+        path_param_names << name
+        params << Param.new(name, "", "path")
       end
 
       if rt = route.receive_type

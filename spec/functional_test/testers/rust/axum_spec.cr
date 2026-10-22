@@ -15,6 +15,17 @@ expected_endpoints = [
   Endpoint.new("/search", "GET", [
     Param.new("query", "", "query"),
   ]),
+  Endpoint.new("/search_query", "QUERY", [
+    Param.new("query", "", "query"),
+  ]),
+  Endpoint.new("/items", "GET"),
+  Endpoint.new("/items", "QUERY", [
+    Param.new("query", "", "query"),
+  ]),
+  Endpoint.new("/svc", "QUERY"),
+  Endpoint.new("/filter-query", "QUERY"),
+  Endpoint.new("/filter-combo", "GET"),
+  Endpoint.new("/filter-combo", "QUERY"),
   Endpoint.new("/submit", "POST", [
     Param.new("form", "", "form"),
   ]),
@@ -26,6 +37,7 @@ expected_endpoints = [
   ]),
   Endpoint.new("/api/users", "GET"),
   Endpoint.new("/api/admin", "POST"),
+  Endpoint.new("/api/query-nested", "QUERY"),
   Endpoint.new("/internal/health", "GET"),
   Endpoint.new("/v1/projects", "GET"),
   Endpoint.new("/v1/projects/{id}", "GET", [

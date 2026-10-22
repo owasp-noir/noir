@@ -1,0 +1,2 @@
+### Health check against the real API
+GET http://localhost:8080/health

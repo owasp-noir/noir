@@ -107,8 +107,8 @@ describe "Detect GraphQL SDL" do
   it "registers path in code_locator" do
     content = "type Query { ok: Boolean }"
     locator = CodeLocator.instance
-    locator.clear "graphql-sdl"
+    locator.clear Noir::LocatorKeys::GRAPHQL_SDL
     instance.detect("schema.graphql", content)
-    locator.all("graphql-sdl").should eq(["schema.graphql"])
+    locator.all(Noir::LocatorKeys::GRAPHQL_SDL).should eq(["schema.graphql"])
   end
 end

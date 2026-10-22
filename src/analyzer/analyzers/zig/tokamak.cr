@@ -39,6 +39,8 @@ module Analyzer::Zig
   # to a `tk.Route` const (rather than an inline `&.{ … }` array) — those
   # controllers' routes are emitted without the referenced-group prefix.
   class Tokamak < Analyzer
+    analyzer_for "zig_tokamak"
+
     VERB_METHOD = {
       "get" => "GET", "post" => "POST", "post0" => "POST", "put" => "PUT",
       "put0" => "PUT", "patch" => "PATCH", "patch0" => "PATCH",
@@ -61,6 +63,11 @@ module Analyzer::Zig
     ROUTE_CONST_RE  = /pub\s+const\s+@"(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+(\/[^"]*)"/
     STRUCT_DECL_RE  = /(?:^|[^A-Za-z0-9_.])(?:pub\s+)?const\s+([A-Za-z_]\w*)\s*=\s*struct\s*\{/
     IMPORT_RE       = /(?:pub\s+)?(?:const|var)\s+([A-Za-z_]\w*)\s*=\s*@import\(\s*"([^"]+\.zig)"\s*\)/
+    # Cheap whole-file route gate. One precompiled `Regex.union` scan (PCRE2
+    # JIT) replaces five naive `String#includes?` char scans and rejects a
+    # non-route file in a single pass instead of running all five. Equivalent
+    # to the OR-of-substrings it replaces (union escapes each literal).
+    ROUTE_FILE_RE = Regex.union("tk.Route", ".group(", ".router(", "pub fn @\"", "pub const @\"")
 
     private record GroupFrame, prefix : String, close : Int32
     # A `.router(...)` mount targeting a controller file. `scope` is the struct
@@ -72,7 +79,7 @@ module Analyzer::Zig
     def analyze
       include_callee = callees_needed?
       zig_files = all_files.select do |f|
-        f.ends_with?(".zig") && !Noir::ZigCalleeExtractor.vendored_framework_path?(f)
+        f.ends_with?(".zig") && !Noir::ZigCalleeExtractor.vendored_framework_path?(base_relative_path(f))
       end
 
       alias_to_file = build_alias_map(zig_files)
@@ -88,9 +95,7 @@ module Analyzer::Zig
     end
 
     private def route_file?(content : String) : Bool
-      content.includes?("tk.Route") || content.includes?(".group(") ||
-        content.includes?(".router(") || content.includes?("pub fn @\"") ||
-        content.includes?("pub const @\"")
+      content.matches?(ROUTE_FILE_RE)
     end
 
     # alias identifier => absolute file it `@import`s.
@@ -101,7 +106,7 @@ module Analyzer::Zig
         next unless content.includes?("@import")
         dir = File.dirname(path)
         Noir::ZigCalleeExtractor.strip_comments(content).scan(IMPORT_RE) do |m|
-          map[m[1]] = File.expand_path(File.join(dir, m[2]))
+          map[m[1]] = Noir::PathScope.expand(File.join(dir, m[2]))
         end
       end
       map
@@ -114,13 +119,14 @@ module Analyzer::Zig
       files.each do |path|
         content = read_file_content(path)
         next unless content.includes?(".router(")
-        text = Noir::ZigCalleeExtractor.strip_comments(content)
         # `strip_comments` keeps string contents, so `{`/`}` inside a literal
         # would corrupt brace matching. `strip_non_code` blanks strings at the
         # same offsets, so it is the right char array for `find_matching`.
-        stripped = Noir::ZigCalleeExtractor.strip_non_code(content)
-        code_chars = stripped.chars
-        local_structs = struct_regions(stripped).map(&.name)
+        prepared = Noir::ZigCalleeExtractor.prepare(content)
+        text = prepared[:comments]
+        stripped = prepared[:non_code]
+        code_chars = prepared[:non_code_chars]
+        local_structs = struct_regions(stripped, code_chars).map(&.name)
 
         events = [] of NamedTuple(kind: Symbol, off: Int32, prefix: String, close: Int32?, target: String)
         # Array-form group: `.group("/p", &.{ … })` — scoped by its body braces.
@@ -152,7 +158,7 @@ module Analyzer::Zig
             stack << GroupFrame.new(ev[:prefix], close) if close
             next
           end
-          resolved = resolve_router_target(ev[:target], alias_to_file, File.expand_path(path), local_structs)
+          resolved = resolve_router_target(ev[:target], alias_to_file, Noir::PathScope.expand(path), local_structs)
           next if resolved.nil?
           target_file, scope = resolved
           prefix = stack.reduce("") { |acc, frame| Noir::URLPath.join(acc, frame.prefix) }
@@ -189,19 +195,25 @@ module Analyzer::Zig
     end
 
     private def process_file(path : String, content : String, mounts : Hash(String, Array(RouterMount)), include_callee : Bool)
-      text = Noir::ZigCalleeExtractor.strip_comments(content)
+      prepared = Noir::ZigCalleeExtractor.prepare(content)
       # Strings preserved in `text` for reading paths/handlers; brace matching
       # runs on the string-blanked (but offset-identical) char array so a `{`/`}`
       # inside a literal can't throw off group-scope tracking.
-      stripped = Noir::ZigCalleeExtractor.strip_non_code(content)
-      code_chars = stripped.chars
-      bodies = include_callee ? Noir::ZigCalleeExtractor.function_bodies(content, path) : {} of String => Noir::ZigCalleeExtractor::FunctionBody
+      text = prepared[:comments]
+      stripped = prepared[:non_code]
+      code_chars = prepared[:non_code_chars]
+      bodies = if include_callee
+                 table = Noir::ZigCalleeExtractor.function_table_from(code_chars, path)
+                 Noir::ZigCalleeExtractor.function_bodies_from(table, path)
+               else
+                 {} of String => Noir::ZigCalleeExtractor::FunctionBody
+               end
       # Routes declared inside `test { … }` blocks are unit-test fixtures (e.g.
       # tokamak's own client tests register `.get("/ping", …)`), not endpoints.
       test_blocks = Noir::ZigCalleeExtractor.test_block_ranges(stripped)
 
       emit_route_array(path, text, code_chars, bodies, test_blocks, include_callee)
-      emit_controller_routes(path, content, text, mounts, test_blocks, include_callee)
+      emit_controller_routes(path, content, text, stripped, code_chars, mounts, test_blocks, include_callee)
     end
 
     # Inline `tk.Route` array routes (.get/.post/.group/…).
@@ -234,15 +246,13 @@ module Analyzer::Zig
     # mounted, or its mount chain crosses a route-value reference we don't
     # expand. `const` routes name a handler defined elsewhere, so they carry no
     # inline body and thus no callees.
-    private def emit_controller_routes(path, content, text, mounts, test_blocks, include_callee)
+    private def emit_controller_routes(path, content, text, stripped, stripped_chars, mounts, test_blocks, include_callee)
       has_fn = content.includes?("pub fn @\"")
       has_const = content.includes?("pub const @\"")
       return unless has_fn || has_const
 
-      stripped = Noir::ZigCalleeExtractor.strip_non_code(content)
-      stripped_chars = stripped.chars
-      file_mounts = mounts[File.expand_path(path)]?
-      regions = struct_regions(stripped)
+      file_mounts = mounts[Noir::PathScope.expand(path)]?
+      regions = struct_regions(stripped, stripped_chars)
 
       if has_fn
         text.scan(ROUTE_FN_RE) do |m|
@@ -273,13 +283,13 @@ module Analyzer::Zig
     # Struct declaration regions (`const X = struct { … }`), brace-matched on
     # the string-blanked char array, so a `@"…"` route name can be attributed
     # to its enclosing struct.
-    private def struct_regions(stripped : String) : Array(StructRegion)
-      chars = stripped.chars
+    private def struct_regions(stripped : String, chars : Array(Char)? = nil) : Array(StructRegion)
+      code_chars = chars || stripped.chars
       regions = [] of StructRegion
       stripped.scan(STRUCT_DECL_RE) do |m|
         name = m[1]
         brace = (m.end(0) || 0) - 1
-        close = Noir::ZigCalleeExtractor.find_matching(chars, brace, '{', '}')
+        close = Noir::ZigCalleeExtractor.find_matching(code_chars, brace, '{', '}')
         next if close.nil?
         regions << StructRegion.new(name, brace, close)
       end
@@ -370,7 +380,7 @@ module Analyzer::Zig
 
     private def emit(path, text, offset, url, method, callees : Array(Noir::ZigCalleeExtractor::Entry))
       params = extract_path_params(url)
-      line = Noir::ZigCalleeExtractor.line_at(text.chars, offset)
+      line = Noir::ZigCalleeExtractor.line_at(text, offset)
       details = Details.new(PathInfo.new(path, line))
       endpoint = Endpoint.new(url, method, params, details)
       Noir::ZigCalleeExtractor.attach_to(endpoint, callees) unless callees.empty?
@@ -378,11 +388,7 @@ module Analyzer::Zig
     end
 
     private def extract_path_params(url : String) : Array(Param)
-      params = [] of Param
-      url.scan(/:([A-Za-z_]\w*)/) do |m|
-        params << Param.new(m[1], "", "path")
-      end
-      params
+      url.scan(/:([A-Za-z_]\w*)/).map { |m| Param.new(m[1], "", "path") }
     end
 
     # Join a mount/group prefix with a route path. A bare-root route ("/")

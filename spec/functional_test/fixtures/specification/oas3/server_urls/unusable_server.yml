@@ -1,0 +1,16 @@
+openapi: 3.0.0
+info:
+  title: Unusable Server Entry
+  version: 1.0.0
+servers:
+  - description: cloud integration
+    url: https://terminal.example.com/sync
+  - description: local hosting, address filled in by the operator
+    url: <local-terminal-IP-address>
+paths:
+  /diagnosis:
+    post:
+      summary: Run diagnosis
+      responses:
+        '200':
+          description: OK

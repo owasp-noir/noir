@@ -1,0 +1,39 @@
+# Bootstrap layout: route_config lives under
+# static_resources.listeners[].filter_chains[].filters[].typed_config.
+# This is the everyday shape of an Envoy config file, and the shape a plain
+# `envoy.yaml` from the upstream docs uses.
+admin:
+  address:
+    socket_address:
+      address: 0.0.0.0
+      port_value: 9901
+static_resources:
+  listeners:
+    - name: listener_0
+      address:
+        socket_address:
+          address: 0.0.0.0
+          port_value: 10000
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: ingress_http
+                route_config:
+                  name: local_route
+                  virtual_hosts:
+                    - name: bootstrap_service
+                      domains: ["bootstrap.example.com"]
+                      routes:
+                        - match:
+                            prefix: "/bootstrap"
+                          route:
+                            cluster: bootstrap_cluster
+                        - match:
+                            path_separated_prefix: "/separated"
+                          route:
+                            cluster: separated_cluster
+  clusters:
+    - name: bootstrap_cluster
+      type: STRICT_DNS

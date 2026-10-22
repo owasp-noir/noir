@@ -1,40 +1,30 @@
 +++
 title = "AI Providers"
-description = "Learn how to connect Noir to various AI providers, including OpenAI, xAI, and local/agent-based runtimes like Ollama, LM Studio, and ACP."
+description = "Learn how to connect Noir to supported AI providers such as OpenAI, Azure AI, OpenRouter, and local or ACP runtimes."
 weight = 3
 sort_by = "weight"
 
 +++
 
-Noir's AI-powered analysis can be used with a variety of different Large Language Model (LLM) providers. Whether you want to use a powerful cloud-based model or a local model for privacy and offline use, Noir has you covered.
+Noir's AI analysis can use cloud APIs, local model servers, or ACP agents.
 
-## Provider Comparison
+`--ai-provider` takes a preset name from the table below or any OpenAI-compatible URL (for example `http://localhost:8000/v1`). Pass the API key with `NOIR_AI_KEY` or `--ai-key-file`; `--ai-key` works too, but the key is then visible in the process list.
 
-| Provider | Type | API Key | Internet | Best For |
+## Providers
+
+| Provider | Type | API Key | Internet | Notes |
 |---|---|---|---|---|
-| [OpenAI](openai/) | Cloud | Required | Required | High accuracy, latest models |
+| [OpenAI](openai/) | Cloud | Required | Required | GPT models |
 | [xAI](xai/) | Cloud | Required | Required | Grok models |
-| [Azure AI](azure/) | Cloud | Required | Required | Enterprise, compliance |
-| [GitHub Marketplace](github_marketplace/) | Cloud | GitHub PAT | Required | GitHub ecosystem users |
-| [OpenRouter](openrouter/) | Cloud | Required | Required | Access to multiple models via one API |
-| [Ollama](ollama/) | Local | Not needed | Not needed | Privacy, offline, free |
-| [vLLM](vllm/) | Local | Not needed | Not needed | High-performance local inference |
-| [LM Studio](lmstudio/) | Local | Not needed | Not needed | GUI-based local models |
-| [ACP](acp/) | Agent | Varies | Varies | Agent-based workflows (Codex, Gemini, Claude) |
+| [Azure AI](azure/) | Cloud | Required | Required | Use your Foundry resource URL |
+| [Anthropic](anthropic/) | Cloud | Required | Required | Claude models, native Messages API |
+| [Google Gemini](gemini/) | Cloud | Required | Required | Gemini models |
+| [OpenRouter](openrouter/) | Cloud | Required | Required | Many vendors' models behind one key |
+| [Ollama](ollama/) | Local | Not needed | Not needed | Native Ollama API |
+| [vLLM](vllm/) | Local | Not needed | Not needed | OpenAI-compatible server |
+| [LM Studio](lmstudio/) | Local | Not needed | Not needed | Desktop app with a local server |
+| [ACP](acp/) | Agent | Not needed | Required | Codex, Gemini or Claude agent, signed in on its own |
 
-## Detailed Guides
+## Retired integrations
 
-*   **Cloud-Based Providers**:
-    *   [OpenAI](openai/)
-    *   [xAI](xai/)
-    *   [Azure AI](azure/)
-    *   [GitHub Marketplace](github_marketplace/)
-    *   [OpenRouter](openrouter/)
-*   **Local Model Providers**:
-    *   [Ollama](ollama/)
-    *   [vLLM](vllm/)
-    *   [LM Studio](lmstudio/)
-*   **ACP Agent Providers**:
-    *   [ACP (Codex/Gemini/Claude/Custom)](acp/)
-
-By following these guides, you can easily integrate the power of AI into your code analysis workflow.
+*   [GitHub Models provider (retired)](github_marketplace/): GitHub retired GitHub Models on July 30, 2026. The page is kept as a migration note for older Noir configurations.

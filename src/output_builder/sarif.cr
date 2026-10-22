@@ -2,13 +2,9 @@ require "../models/output_builder"
 require "../models/endpoint"
 require "sarif"
 
+@[Noir::OutputFormat(name: "sarif", description: "SARIF format", order: 70, structured: true)]
 class OutputBuilderSarif < OutputBuilder
-  def print(endpoints : Array(Endpoint))
-    message = build_sarif(endpoints, [] of PassiveScanResult)
-    ob_puts message
-  end
-
-  def print(endpoints : Array(Endpoint), passive_results : Array(PassiveScanResult))
+  def print(endpoints : Array(Endpoint), passive_results : Array(PassiveScanResult) = [] of PassiveScanResult)
     message = build_sarif(endpoints, passive_results)
     ob_puts message
   end
@@ -18,8 +14,15 @@ class OutputBuilderSarif < OutputBuilder
       b.run("OWASP Noir", Noir::VERSION) do |r|
         r.information_uri("https://github.com/owasp-noir/noir")
 
+        # SARIF's own signal for "this run did not complete as intended".
+        # A tech analyzer that raised means part of the code base was never
+        # examined, so the empty result list for it is not a finding of
+        # nothing — and `executionSuccessful` is the field a CI gate reads
+        # to tell those two apart.
+        r.invocation(execution_successful: analyzer_failures.empty?)
+
         # Add endpoint discovery rule
-        if endpoints.size > 0
+        if !endpoints.empty?
           r.rule("endpoint-discovery",
             name: "Endpoint Discovery",
             short_description: "Discovered API endpoints through static analysis",
@@ -49,17 +52,19 @@ class OutputBuilderSarif < OutputBuilder
           end
 
           message_text = "#{endpoint.method} #{endpoint.url}"
-          if params_info.size > 0
+          if !params_info.empty?
             message_text += " (Parameters: #{params_info.join(", ")})"
           end
 
-          if endpoint.details.code_paths && endpoint.details.code_paths.size > 0
+          # `code_paths` is a non-nilable `Array(PathInfo)`, so the old
+          # `code_paths && ...` truthiness half was always true.
+          if !endpoint.details.code_paths.empty?
             r.result do |rb|
               rb.message(message_text)
               rb.rule_id("endpoint-discovery")
               rb.level(Sarif::Level::Note)
               endpoint.details.code_paths.each do |code_path|
-                rb.location(uri: code_path.path, start_line: code_path.line)
+                rb.location(uri: sarif_uri(code_path.path), start_line: code_path.line)
               end
             end
           else
@@ -69,18 +74,21 @@ class OutputBuilderSarif < OutputBuilder
           end
         end
 
-        # Add passive scan results
+        # The message names the rule, never the matched line: the extract is
+        # the secret itself, and SARIF is uploaded to code scanning where
+        # anyone who can read alerts sees it. The location already points
+        # consumers at the line.
         passive_results.each do |result|
-          r.result(result.extract,
+          r.result(result.info.name,
             rule_id: result.id,
             level: map_severity_to_sarif_level(result.info.severity),
-            uri: result.file_path,
+            uri: sarif_uri(result.file_path),
             start_line: result.line_number)
         end
       end
     end
 
-    attach_noir_properties(log.to_json, endpoints)
+    attach_noir_properties(sarif_with_srcroot(log).to_json, endpoints)
   end
 
   private def attach_noir_properties(message : String, endpoints : Array(Endpoint)) : String
@@ -105,7 +113,7 @@ class OutputBuilderSarif < OutputBuilder
       properties = result["properties"]?.try(&.as_h?) || {} of String => JSON::Any
       noir_props = {} of String => JSON::Any
       unless endpoint.callees.empty?
-        noir_props["callees"] = JSON::Any.new(noir_callees_json(endpoint))
+        noir_props["callees"] = noir_callees_json(endpoint)
       end
       context_json = noir_ai_context_json(endpoint)
       if context_json

@@ -1,27 +1,42 @@
 require "../../../models/analyzer"
 require "../../engines/java_engine"
 require "../../../miniparsers/jaxrs_extractor_ts"
-require "../../../miniparsers/import_graph"
+require "../../../miniparsers/kotlin_route_extractor_ts"
 require "xml"
+require "../../../utils/url_path"
+require "../../../utils/xml_comments"
 
 module Analyzer::Java
   class JaxRs < Analyzer
-    JAVA_EXTENSION = "java"
+    analyzer_for "java_jaxrs"
+
+    include JavaEngine
+
     alias ApplicationBaseKey = Tuple(String, String)
 
+    # `jaxrs_or_websocket_source?` gates the per-file tree-sitter parse;
+    # one precompiled `Regex.union` scan (PCRE2 JIT, auto-escapes each
+    # literal) replaces 5 separate `String#includes?` passes over the
+    # same buffer.
+    JAXRS_OR_WEBSOCKET_SOURCE_RE = Regex.union(
+      "jakarta.ws.rs", "javax.ws.rs", "jakarta.websocket", "javax.websocket", "@ServerEndpoint"
+    )
+
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       dto_builder = Noir::TreeSitterJavaDtoIndex.new
       bean_cache = Hash(String, Hash(String, Array(Param))).new
       source_cache = Hash(String, String).new
+      custom_verb_cache = Hash(String, Hash(String, String)).new
+      kotlin_dto_builder = Noir::TreeSitterKotlinDtoIndex.new
 
       file_list = all_files()
       application_base_paths = application_base_paths_for(file_list)
       derivative_project_roots = derivative_project_roots_for(file_list)
       file_list.each do |path|
-        next if JavaEngine.test_path?(path)
+        next unless jvm_source?(path)
+        next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
-        next unless path.ends_with?(".#{JAVA_EXTENSION}")
         next if derivative_project_roots.includes?(project_root_for(path))
 
         content = read_file_content(path)
@@ -36,6 +51,11 @@ module Analyzer::Java
         # both `java_jaxrs` and `java_quarkus` endpoints.
         next if claimed_by_derivative?(content)
 
+        if path.ends_with?(".kt")
+          analyze_kotlin_file(path, content, kotlin_dto_builder, application_base_paths, include_callee)
+          next
+        end
+
         Noir::TreeSitter.parse_java(content) do |root|
           package_name = Noir::TreeSitterJavaParameterExtractor.extract_package_name_from(root, content)
           next if package_name.empty?
@@ -46,18 +66,15 @@ module Analyzer::Java
             Noir::TreeSitterJaxRsExtractor.extract_bean_fields_from(root, content))
           subresource_sources = subresource_sources_for(path, content, package_name, source_cache, imports,
             Noir::TreeSitterJaxRsExtractor.extract_class_names_from(root, content))
+          custom_verb_annotations = custom_verb_index_for(path, content, package_name, custom_verb_cache, imports,
+            Noir::TreeSitterJaxRsExtractor.extract_custom_verb_annotations_from(root, content))
           application_base_path = application_base_path_for(path, package_name, application_base_paths)
 
-          Noir::TreeSitterJaxRsExtractor.extract_routes_from(root, content, dto_index, bean_index, subresource_sources, include_callees: include_callee).each do |route|
-            line = route.line + 1
-            details = Details.new(PathInfo.new(route.file_path || path, line))
-            endpoint_path = route.protocol == "ws" ? route.path : join_paths(application_base_path, route.path)
-            endpoint = Endpoint.new(endpoint_path, route.verb, route.params, details)
-            endpoint.protocol = route.protocol
-            route.callees.each do |name, callee_line|
-              endpoint.push_callee(Callee.new(name, path: route.file_path || path, line: callee_line))
-            end
-            @result << endpoint
+          Noir::TreeSitterJaxRsExtractor.extract_routes_from(root, content, dto_index, bean_index, subresource_sources,
+            custom_verb_annotations: custom_verb_annotations, include_callees: include_callee,
+            project_constants: java_project_constants(path)).each do |route|
+            endpoint_path = route.protocol == "ws" ? route.path : Noir::URLPath.join_trimmed(application_base_path, route.path)
+            @result << jvm_route_endpoint(route, endpoint_path, route.file_path || path)
           end
         end
       end
@@ -66,19 +83,46 @@ module Analyzer::Java
       @result
     end
 
+    private def analyze_kotlin_file(path : String,
+                                    content : String,
+                                    dto_builder : Noir::TreeSitterKotlinDtoIndex,
+                                    application_base_paths : Hash(ApplicationBaseKey, String),
+                                    include_callee : Bool)
+      Noir::TreeSitter.parse_kotlin(content) do |root|
+        package_name = Noir::TreeSitterKotlinParameterExtractor.extract_package_name_from(root, content)
+        dto_index = dto_builder.build_for_with_root(path, content, root)
+        application_base_path = application_base_path_for(path, package_name, application_base_paths)
+
+        Noir::TreeSitterKotlinRouteExtractor.extract_jaxrs_routes_from(root, content, dto_index, include_callees: include_callee).each do |route|
+          endpoint_path = route.protocol == "ws" ? route.path : Noir::URLPath.join_trimmed(application_base_path, route.path)
+          @result << jvm_route_endpoint(route, endpoint_path, path)
+        end
+      end
+    end
+
+    APPLICATION_PATH_RE = Regex.union("ApplicationPath")
+    WS_RS_PACKAGE_RE    = Regex.union("jakarta.ws.rs", "javax.ws.rs")
+
     private def application_base_paths_for(file_list : Array(String)) : Hash(ApplicationBaseKey, String)
       base_paths = Hash(ApplicationBaseKey, String).new
       application_packages = Hash(String, Array(ApplicationBaseKey)).new { |hash, key| hash[key] = [] of ApplicationBaseKey }
 
       file_list.each do |path|
-        next if JavaEngine.test_path?(path)
+        next unless jvm_source?(path)
+        next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
-        next unless path.ends_with?(".#{JAVA_EXTENSION}")
 
         content = read_file_content(path)
-        next unless content.includes?("ApplicationPath")
-        next unless content.includes?("jakarta.ws.rs") || content.includes?("javax.ws.rs")
+        # One precompiled matcher per gate instead of a `String#includes?`
+        # scan per `.java` file — this walks the whole Java source set.
+        next unless content_matches?(content, APPLICATION_PATH_RE)
+        next unless content_matches?(content, WS_RS_PACKAGE_RE)
         next if claimed_by_derivative?(content)
+
+        if path.ends_with?(".kt")
+          add_kotlin_application_path(path, content, base_paths)
+          next
+        end
 
         Noir::TreeSitter.parse_java(content) do |root|
           package_name = Noir::TreeSitterJavaParameterExtractor.extract_package_name_from(root, content)
@@ -87,7 +131,7 @@ module Analyzer::Java
           key = {project_root, package_name}
           next if base_paths.has_key?(key)
 
-          if base_path = Noir::TreeSitterJaxRsExtractor.extract_application_path_from(root, content)
+          if base_path = Noir::TreeSitterJaxRsExtractor.extract_application_path_from(root, content, java_project_constants(path))
             base_paths[key] = base_path
             Noir::TreeSitterJaxRsExtractor.extract_class_names_from(root, content).each do |class_name|
               add_application_package(application_packages, class_name, key)
@@ -104,13 +148,22 @@ module Analyzer::Java
       base_paths
     end
 
+    # Manifest basenames a derivative framework can *only* show up in.
+    # Helidon MP's own quickstart is the concrete case: its JAX-RS
+    # resource classes carry no `io.helidon` import at all — the
+    # runtime is pulled in solely via `pom.xml`'s
+    # `io.helidon.microprofile.*` dependencies, so a `.java`-only scan
+    # would never see the marker and JAX-RS would double-count those
+    # routes under `java_jaxrs` too.
+    DERIVATIVE_MANIFEST_BASENAMES = Set{"pom.xml", "build.gradle", "build.gradle.kts"}
+
     private def derivative_project_roots_for(file_list : Array(String)) : Set(String)
       roots = Set(String).new
 
       file_list.each do |path|
-        next if JavaEngine.test_path?(path)
+        next unless jvm_source?(path) || DERIVATIVE_MANIFEST_BASENAMES.includes?(File.basename(path))
+        next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
-        next unless path.ends_with?(".#{JAVA_EXTENSION}")
 
         content = read_file_content(path)
         roots << project_root_for(path) if claimed_by_derivative?(content)
@@ -120,11 +173,7 @@ module Analyzer::Java
     end
 
     private def jaxrs_or_websocket_source?(content : String) : Bool
-      content.includes?("jakarta.ws.rs") ||
-        content.includes?("javax.ws.rs") ||
-        content.includes?("jakarta.websocket") ||
-        content.includes?("javax.websocket") ||
-        content.includes?("@ServerEndpoint")
+      content.matches?(JAXRS_OR_WEBSOCKET_SOURCE_RE)
     end
 
     private def add_application_package(application_packages : Hash(String, Array(ApplicationBaseKey)),
@@ -134,34 +183,16 @@ module Analyzer::Java
       entries << key unless entries.includes?(key)
     end
 
-    private def application_base_path_for(path : String,
-                                          package_name : String,
-                                          base_paths : Hash(ApplicationBaseKey, String)) : String
-      project_root = project_root_for(path)
-      keys = base_paths.keys.select { |key| key[0] == project_root }
-      keys.sort_by!(&.[1].size)
-      keys.reverse_each do |key|
-        base_package = key[1]
-        next unless package_name == base_package || package_name.starts_with?("#{base_package}.")
-        return base_paths[key]
-      end
-      ""
-    end
-
-    private def join_paths(prefix : String, suffix : String) : String
-      return suffix if prefix.empty?
-      return prefix.rstrip('/') if suffix.empty?
-      "#{prefix.rstrip('/')}/#{suffix.lstrip('/')}"
-    end
-
     private def project_root_for(path : String) : String
-      ["/src/main/java/", "/src/main/resources/", "/src/main/webapp/"].each do |marker|
-        if index = path.index(marker)
-          return path[...index]
-        end
-      end
-
-      configured_base_for(path)
+      # A manifest file (`pom.xml`, `build.gradle` — see
+      # `DERIVATIVE_MANIFEST_BASENAMES`) at the module root has no
+      # `/src/...` marker to slice on, so it falls back to the raw
+      # configured base — which, unlike a marker-sliced root,
+      # may carry a trailing slash depending on how `-b` was passed.
+      # Strip it so this root compares equal to the marker-derived
+      # root for `.java` files in the same module.
+      base = configured_base_for(path)
+      Noir::PathScope.marker_root(path, base, {"/src/main/java/", "/src/main/kotlin/", "/src/main/resources/", "/src/main/webapp/"}) || base.rstrip('/')
     end
 
     private def web_xml_base_paths_for(file_list : Array(String),
@@ -170,7 +201,7 @@ module Analyzer::Java
       global_candidates = Hash(String, Array(String)).new { |hash, key| hash[key] = [] of String }
 
       file_list.each do |path|
-        next if JavaEngine.test_path?(path)
+        next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.basename(path) == "web.xml"
         next unless File.exists?(path)
 
@@ -230,7 +261,7 @@ module Analyzer::Java
 
     private def parse_web_xml_jaxrs_mappings(content : String) : Array(NamedTuple(pattern: String, application_classes: Array(String), jaxrs_servlet: Bool))
       mappings = [] of NamedTuple(pattern: String, application_classes: Array(String), jaxrs_servlet: Bool)
-      doc = XML.parse(content)
+      doc = Noir::XmlComments.parse(content)
       root = find_xml_child(doc, "web-app") || doc
       servlets = Hash(String, NamedTuple(application_classes: Array(String), jaxrs_servlet: Bool)).new
 
@@ -332,68 +363,13 @@ module Analyzer::Java
     # Frameworks that ride on JAX-RS but ship their own analyzer.
     # Listing them here keeps the JAX-RS analyzer the fallback for
     # vanilla Jersey / RESTEasy resources without double-counting.
-    DERIVATIVE_MARKERS = ["io.quarkus", "io.dropwizard"]
+    # `io.helidon.microprofile` routes to `Analyzer::Java::HelidonMp`,
+    # which drives this same extractor under the `java_helidon_mp` tech.
+    DERIVATIVE_MARKERS    = ["io.quarkus", "io.dropwizard", "io.helidon.microprofile"]
+    DERIVATIVE_MARKERS_RE = Regex.union(DERIVATIVE_MARKERS)
 
     private def claimed_by_derivative?(content : String) : Bool
-      DERIVATIVE_MARKERS.any? { |marker| content.includes?(marker) }
-    end
-
-    # Build the cross-file `@BeanParam` index for `path`. Same
-    # traversal as the DTO index — current file + same-package
-    # siblings + imports — but each file's `extract_bean_fields`
-    # result is memoised in the analyzer's per-run cache.
-    private def bean_index_for(path : String,
-                               content : String,
-                               package_name : String,
-                               cache : Hash(String, Hash(String, Array(Param))),
-                               imports : Array(Noir::ImportGraph::ImportRef)? = nil,
-                               current_file_beans : Hash(String, Array(Param))? = nil) : Hash(String, Array(Param))
-      result = Hash(String, Array(Param)).new
-      resolved_imports = imports || Noir::TreeSitterJavaParameterExtractor.extract_imports(content)
-
-      Noir::ImportGraph.related_files(path, package_name, resolved_imports, JAVA_EXTENSION) do |file|
-        beans = cache[file] ||= begin
-          if file == path && current_file_beans
-            current_file_beans
-          else
-            body = file == path ? content : read_file_content(file)
-            Noir::TreeSitterJaxRsExtractor.extract_bean_fields(body)
-          end
-        rescue File::NotFoundError
-          {} of String => Array(Param)
-        end
-
-        beans.each { |name, params| result[name] ||= params }
-      end
-
-      result
-    end
-
-    private def subresource_sources_for(path : String,
-                                        content : String,
-                                        package_name : String,
-                                        cache : Hash(String, String),
-                                        imports : Array(Noir::ImportGraph::ImportRef)? = nil,
-                                        current_file_class_names : Array(String)? = nil) : Hash(String, Noir::TreeSitterJaxRsExtractor::SourceEntry)
-      result = Hash(String, Noir::TreeSitterJaxRsExtractor::SourceEntry).new
-      resolved_imports = imports || Noir::TreeSitterJavaParameterExtractor.extract_imports(content)
-
-      Noir::ImportGraph.related_files(path, package_name, resolved_imports, JAVA_EXTENSION) do |file|
-        body = cache[file] ||= begin
-          file == path ? content : read_file_content(file)
-        rescue File::NotFoundError
-          ""
-        end
-        next if body.empty?
-        next unless body.includes?("jakarta.ws.rs") || body.includes?("javax.ws.rs")
-
-        class_names = file == path && current_file_class_names ? current_file_class_names : Noir::TreeSitterJaxRsExtractor.extract_class_names(body)
-        class_names.each do |name|
-          result[name] ||= {file, body}
-        end
-      end
-
-      result
+      content_matches?(content, DERIVATIVE_MARKERS_RE)
     end
   end
 end

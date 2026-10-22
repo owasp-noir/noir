@@ -11,4 +11,7 @@ const mutateUser = async ({ params, request }: ActionFunctionArgs) => {
   return json({ ok: true });
 };
 
-export { mutateUser as action };
+export {
+  // form posts
+  mutateUser as action,
+};

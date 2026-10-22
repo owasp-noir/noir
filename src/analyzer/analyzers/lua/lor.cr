@@ -25,6 +25,8 @@ module Analyzer::Lua
   # convention. Verbs come from lor's supported set (get/post/put/delete/patch/
   # head/options/trace and the catch-all `all`).
   class Lor < Analyzer
+    analyzer_for "lua_lor"
+
     # Crystal recompiles an interpolated regex literal on every evaluation, so
     # memoize the route matcher per app/router-variable alternation.
     @route_regexes = Hash(String, Regex).new
@@ -52,22 +54,26 @@ module Analyzer::Lua
       content : String,
       cleaned : String,
       requires : Hash(String, String),
-      route_vars : Set(String)
+      route_vars : Set(String),
+      mounts : Array(Tuple(String, String)) # {prefix, mounted var} per `:use("/p", var(`
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
 
       files = collect_files
       return @result if files.empty?
 
-      infos = files.map { |path| build_file_info(path) }
+      infos = [] of FileInfo
+      files.each { |path| isolating_file_errors(path) { infos << build_file_info(path) } }
       basename_index = build_basename_index(infos)
 
       file_prefixes = resolve_file_prefixes(infos, basename_index)
       local_mounts = resolve_local_mounts(infos, basename_index)
 
       infos.each do |info|
-        emit_routes(info, include_callee, file_prefixes[info.path]? || "", local_mounts[info.path]? || {} of String => String)
+        isolating_file_errors(info.path) do
+          emit_routes(info, include_callee, file_prefixes[info.path]? || "", local_mounts[info.path]? || {} of String => String)
+        end
       end
 
       @result
@@ -76,7 +82,6 @@ module Analyzer::Lua
     private def collect_files : Array(String)
       result = [] of String
       all_files.each do |path|
-        next if File.directory?(path)
         next unless path.ends_with?(".lua") || path.ends_with?(".moon")
         next if lor_test_path?(path)
         result << path
@@ -96,15 +101,15 @@ module Analyzer::Lua
       base = File.basename(path)
       return true if base.ends_with?("_spec.lua") || base.ends_with?("_spec.moon")
       return true if base.ends_with?(".test.lua") || base.ends_with?(".test.moon")
-      expanded_path = File.expand_path(path)
+      expanded_path = Noir::PathScope.expand(path)
 
       base_paths.any? do |root|
         next false unless path_under_root?(expanded_path, root)
 
-        expanded_root = File.expand_path(root)
-        expanded_root = expanded_root.rstrip('/') unless expanded_root == File::SEPARATOR
-        tail = expanded_path[expanded_root.size..]?.try(&.lchop(File::SEPARATOR)) || ""
-        tail.split(File::SEPARATOR).any? do |seg|
+        expanded_root = Noir::PathScope.expand(root)
+        expanded_root = expanded_root.rstrip('/') unless expanded_root == "/"
+        tail = expanded_path[expanded_root.size..]?.try(&.lchop('/')) || ""
+        tail.split('/').any? do |seg|
           seg == "spec" || seg.starts_with?("spec_") || seg == "test" || seg == "tests"
         end
       end
@@ -115,16 +120,28 @@ module Analyzer::Lua
       cleaned = Noir::LuaCalleeExtractor.strip_comments(content)
       requires = detect_requires(cleaned)
       route_vars = detect_route_vars(cleaned)
-      FileInfo.new(path, content, cleaned, requires, route_vars)
+      FileInfo.new(path, content, cleaned, requires, route_vars, detect_mounts(cleaned))
+    end
+
+    # Scanned here, per file, so a file whose content blows the regex match
+    # limit is skipped alone (see `isolating_file_errors`) instead of raising
+    # out of the cross-file prefix resolution.
+    private def detect_mounts(cleaned : String) : Array(Tuple(String, String))
+      mounts = [] of Tuple(String, String)
+      return mounts unless cleaned.includes?("use")
+      cleaned.scan(USE_MOUNT_RE) { |match| mounts << {match[3], match[4]} }
+      mounts
     end
 
     # `local x = require("a.b.c")` → { "x" => "a.b.c" }.
     private def detect_requires(cleaned : String) : Hash(String, String)
       map = {} of String => String
-      cleaned.scan(REQUIRE_RE) do |match|
-        name = match[1]
-        next if name == "local"
-        map[name] = match[3]
+      if cleaned.includes?("require")
+        cleaned.scan(REQUIRE_RE) do |match|
+          name = match[1]
+          next if name == "local"
+          map[name] = match[3]
+        end
       end
       map
     end
@@ -137,9 +154,13 @@ module Analyzer::Lua
     # leaking as phantom endpoints.
     private def detect_route_vars(cleaned : String) : Set(String)
       vars = Set(String).new
-      cleaned.scan(APP_VAR_RE) { |m| vars << m[1] unless m[1] == "local" }
-      cleaned.scan(ROUTER_VAR_RE) { |m| vars << m[1] unless m[1] == "local" }
-      cleaned.scan(USE_RECEIVER_RE) { |m| vars << m[1] }
+      if cleaned.includes?("lor")
+        cleaned.scan(APP_VAR_RE) { |m| vars << m[1] unless m[1] == "local" }
+        cleaned.scan(ROUTER_VAR_RE) { |m| vars << m[1] unless m[1] == "local" }
+      end
+      if cleaned.includes?("use")
+        cleaned.scan(USE_RECEIVER_RE) { |m| vars << m[1] }
+      end
       vars
     end
 
@@ -186,9 +207,7 @@ module Analyzer::Lua
     private def resolve_file_prefixes(infos : Array(FileInfo), basename_index : Hash(String, Array(String))) : Hash(String, String)
       edges = [] of {String, String, String} # {src_file, prefix, dst_file}
       infos.each do |info|
-        info.cleaned.scan(USE_MOUNT_RE) do |match|
-          prefix = match[3]
-          mount_var = match[4]
+        info.mounts.each do |prefix, mount_var|
           mod = info.requires[mount_var]?
           next unless mod
           dst = resolve_module(mod, basename_index)
@@ -220,9 +239,7 @@ module Analyzer::Lua
     private def resolve_local_mounts(infos : Array(FileInfo), basename_index : Hash(String, Array(String))) : Hash(String, Hash(String, String))
       result = {} of String => Hash(String, String)
       infos.each do |info|
-        info.cleaned.scan(USE_MOUNT_RE) do |match|
-          prefix = match[3]
-          mount_var = match[4]
+        info.mounts.each do |prefix, mount_var|
           next if info.requires.has_key?(mount_var) # cross-file: handled above
           map = result[info.path] ||= {} of String => String
           map[mount_var] = prefix unless map.has_key?(mount_var)
@@ -292,9 +309,13 @@ module Analyzer::Lua
     end
 
     private def first_open_paren_before(content : String, start_index : Int32, end_index : Int32) : Int32?
+      # `String#[]` re-walks from byte 0 on every call once the source
+      # contains any multi-byte char, turning this scan O(n^2); index a
+      # materialized Array(Char) instead (O(1) per access).
+      chars = content.chars
       cursor = start_index
-      while cursor < end_index && cursor < content.size
-        return cursor if content[cursor] == '('
+      while cursor < end_index && cursor < chars.size
+        return cursor if chars[cursor] == '('
         cursor += 1
       end
       nil
@@ -305,7 +326,7 @@ module Analyzer::Lua
                               callees : Array(Noir::LuaCalleeExtractor::Entry))
       url = normalize_url(url)
       params = extract_path_params(url)
-      line = line_for_offset(content, offset)
+      line = line_number_for_index(content, offset)
       details = Details.new(PathInfo.new(path, line))
       methods.each do |verb|
         endpoint_params = params.map { |p| Param.new(p.name, p.value, p.param_type) }
@@ -345,17 +366,6 @@ module Analyzer::Lua
         params << Param.new(match[1], "", "path")
       end
       params
-    end
-
-    private def line_for_offset(content : String, offset : Int32) : Int32
-      return 1 if offset <= 0
-      limit = offset > content.size ? content.size : offset
-      count = 1
-      content.each_char_with_index do |ch, i|
-        break if i >= limit
-        count += 1 if ch == '\n'
-      end
-      count
     end
   end
 end

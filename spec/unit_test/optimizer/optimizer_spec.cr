@@ -4,11 +4,53 @@ require "../../../src/optimizer/optimizer"
 require "../../../src/models/endpoint"
 require "../../../src/models/logger"
 
+private def tech_endpoint(url : String, method : String, technology : String, path : String, line : Int32 = 1) : Endpoint
+  details = Details.new(PathInfo.new(path, line))
+  details.technology = technology
+  Endpoint.new(url, method, [] of Param, details)
+end
+
 describe "EndpointOptimizer" do
   options = create_test_options
   logger = NoirLogger.new(false, false, false, false)
 
+  # Examples below mutate `options` (url, set_pvalue*). Without a reset,
+  # `--order random` lets a pvalue example leak `name=FUZZ` into
+  # optimize_endpoints assertions that expect the original body value.
+  before_each do
+    create_test_options.each { |key, value| options[key] = value }
+  end
+
   describe "optimize_endpoints" do
+    it "folds an AI endpoint into the static route under a different param spelling" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      static = tech_endpoint("/users/:id", "GET", "js_express", "server.js", 4)
+      ai = Endpoint.new("/users/{id}", "GET", [Param.new("id", "", "path"), Param.new("q", "", "query")], Details.new(PathInfo.new("server.js")))
+      ai_details = ai.details
+      ai_details.technology = "ai"
+      ai.details = ai_details
+      login_ai = Endpoint.new("/login", "POST", [] of Param, ai_details)
+      login = tech_endpoint("/login", "POST", "js_express", "server.js", 5)
+      other_ai = Endpoint.new("/only/ai", "GET", [] of Param, ai_details)
+      files = tech_endpoint("/files/*filepath", "GET", "go_gin", "main.go", 9)
+      files_ai = Endpoint.new("https://api.example.com/files/{filepath}", "GET", [] of Param, Details.new(PathInfo.new("handlers.go", 3)))
+      files_ai_details = files_ai.details
+      files_ai_details.technology = "ai"
+      files_ai.details = files_ai_details
+
+      result = optimizer.optimize_endpoints([ai, static, login_ai, login, other_ai, files, files_ai])
+      result.size.should eq(4)
+      result.find!(&.url.==("/files/*filepath")).details.code_paths.map(&.path).should eq(["main.go", "handlers.go"])
+      user = result.find!(&.url.==("/users/:id"))
+      user.details.technology.should eq("js_express")
+      user.details.technologies.should eq(["ai", "js_express"])
+      user.details.code_paths.map(&.line).should eq([4])
+      user.params.map(&.name).should eq(["q"])
+      result.find!(&.url.==("/login")).details.technology.should eq("js_express")
+      result.find!(&.url.==("/login")).details.code_paths.size.should eq(1)
+      result.find!(&.url.==("/only/ai")).details.technology.should eq("ai")
+    end
+
     it "removes duplicated endpoints" do
       optimizer = EndpointOptimizer.new(logger, options)
       endpoints = [
@@ -21,6 +63,148 @@ describe "EndpointOptimizer" do
       result.size.should eq(2)
       result[0].method.should eq("GET")
       result[1].method.should eq("POST")
+    end
+
+    it "merges one route spelled with different placeholder syntaxes" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      express = tech_endpoint("/items/:itemId/:sub", "GET", "js_express", "/app/app.js", 3)
+      express.params << Param.new("itemId", "", "path")
+      spec = tech_endpoint("/items/{item_id}/{s}", "GET", "oas3", "/app/openapi.json")
+      spec.params << Param.new("item_id", "", "path")
+      spec.params << Param.new("q", "", "query")
+      endpoints = [
+        express,
+        spec,
+        tech_endpoint("/items/<int:pk>/<sub>", "GET", "python_flask", "/app/app.py"),
+        tech_endpoint("/items/new/:sub", "GET", "js_express", "/app/app.js", 4),
+      ]
+
+      result = optimizer.optimize_endpoints(endpoints)
+      result.map(&.url).sort!.should eq(["/items/:itemId/:sub", "/items/new/:sub"])
+      merged = result.find!(&.url.==("/items/:itemId/:sub"))
+      # The loser's path params name slots the winner's URL does not have.
+      merged.params.map(&.name).should eq(["itemId", "q"])
+    end
+
+    it "keeps one analyzer's differently-named placeholders apart" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      result = optimizer.optimize_endpoints([
+        tech_endpoint("/users/{id}", "GET", "php_laravel", "/app/routes/web.php"),
+        tech_endpoint("/users/{user}", "GET", "php_laravel", "/app/routes/api.php"),
+      ])
+      result.map(&.url).sort!.should eq(["/users/{id}", "/users/{user}"])
+    end
+
+    it "does not unify placeholders that split one technology's routes" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      endpoints = [
+        tech_endpoint("/users/:id", "GET", "js_express", "/app/app.js", 3),
+        tech_endpoint("/users/:username", "GET", "js_express", "/app/app.js", 7),
+        tech_endpoint("/users/{userId}", "GET", "oas3", "/app/openapi.json"),
+      ]
+
+      result = optimizer.optimize_endpoints(endpoints)
+      result.map(&.url).sort!.should eq(["/users/:id", "/users/:username", "/users/{userId}"])
+      result.find!(&.url.==("/users/:username")).details.code_paths.map(&.line).should eq([7])
+    end
+
+    it "keeps QUERY endpoints instead of downgrading them to GET" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      endpoints = [
+        Endpoint.new("/api/search", "QUERY"),
+        Endpoint.new("/api/search", "query"), # same endpoint, lowercase verb
+        Endpoint.new("/api/search", "GET"),
+      ]
+
+      result = optimizer.optimize_endpoints(endpoints)
+      result.map(&.method).sort!.should eq(["GET", "QUERY"])
+    end
+
+    # An analyzer that can tell a param exists but not what it is called
+    # (`request.getCookies()` hands back the whole jar) used to stand that
+    # in with an empty name, and every builder rendered the hole:
+    # `curl --cookie '='`, an empty `└──` node in plain output, and a
+    # `{"name": "", "in": "cookie"}` entry that makes the OAS document
+    # invalid. Unsendable names are dropped here alongside spaced ones.
+    it "drops params whose name is blank or contains a space" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      endpoints = [
+        Endpoint.new("/test", "GET", [
+          Param.new("", "", "cookie"),
+          Param.new("   ", "", "query"),
+          Param.new("two words", "", "query"),
+          Param.new("session_id", "", "cookie"),
+        ]),
+      ]
+
+      result = optimizer.optimize_endpoints(endpoints)
+      result[0].params.map(&.name).should eq(["session_id"])
+    end
+
+    # `push_param` / `merge_params` / the graphql merges all dedup on
+    # (name, param_type), and `params_to_hash` collapses on it regardless —
+    # but an analyzer that appends straight to `params` bypasses all of them,
+    # and the duplicate reached the report as two conflicting values for one
+    # field (`-H 'Host: a' -H 'Host: b'`).
+    it "collapses repeated (name, param_type) params, first value wins" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      endpoints = [
+        Endpoint.new("/test", "GET", [
+          Param.new("Host", "api.example.com", "header"),
+          Param.new("Host", "internal.example.com", "header"),
+          # Same name in a different bucket is a different param and stays.
+          Param.new("Host", "query-value", "query"),
+        ]),
+      ]
+
+      result = optimizer.optimize_endpoints(endpoints)
+      result[0].params.map { |p| {p.name, p.value, p.param_type} }.should eq([
+        {"Host", "api.example.com", "header"},
+        {"Host", "query-value", "query"},
+      ])
+    end
+
+    it "collapses body aliases into one canonical JSON param" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      endpoints = [
+        Endpoint.new("/test", "POST", [
+          Param.new("name", "from-body", "body"),
+          Param.new("name", "from-json", "json"),
+        ]),
+      ]
+
+      result = optimizer.optimize_endpoints(endpoints)
+      result[0].params.map { |param| {param.name, param.value, param.param_type, param.request_type} }.should eq([
+        {"name", "from-body", "body", "json"},
+      ])
+    end
+
+    it "collapses body aliases when duplicate endpoints are merged" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      endpoints = [
+        Endpoint.new("/test", "POST", [Param.new("name", "from-body", "body")]),
+        Endpoint.new("/test", "POST", [Param.new("name", "from-json", "json")]),
+      ]
+
+      result = optimizer.optimize_endpoints(endpoints)
+      result.size.should eq(1)
+      result[0].params.map { |param| {param.name, param.value, param.param_type, param.request_type} }.should eq([
+        {"name", "from-body", "body", "json"},
+      ])
+    end
+
+    it "collapses body aliases when duplicate GraphQL operations are merged" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      endpoints = [
+        Endpoint.new("/graphql#Mutation.update", "POST", [Param.new("input", "from-body", "body")]),
+        Endpoint.new("/graphql#Mutation.update", "POST", [Param.new("input", "from-json", "json")]),
+      ]
+
+      result = optimizer.optimize_endpoints(endpoints)
+      result.size.should eq(1)
+      result[0].params.map { |param| {param.name, param.value, param.param_type, param.request_type} }.should eq([
+        {"input", "from-body", "body", "json"},
+      ])
     end
 
     it "normalizes HTTP methods" do
@@ -51,7 +235,9 @@ describe "EndpointOptimizer" do
       ]
 
       result = optimizer.optimize_endpoints(endpoints)
-      result.map(&.method).should eq(["GET", "POST"])
+      # Assert the set, not the sequence: `optimize_endpoints` orders by
+      # source location, which these path-less fixtures don't have.
+      result.map(&.method).sort!.should eq(["GET", "POST"])
     end
 
     it "deduplicates endpoints whose methods differ only in case" do
@@ -83,36 +269,112 @@ describe "EndpointOptimizer" do
       result[0].details.code_paths.map(&.path).should eq(["UserApi.kt", "UserController.kt"])
     end
 
-    it "keeps identical endpoints from separate build modules distinct" do
+    {"kotlin_spring", "java_spring", "js_express", "go_gin"}.each do |technology|
+      it "keeps identical #{technology} endpoints from separate build modules distinct" do
+        optimizer = EndpointOptimizer.new(logger, options)
+        temp_dir = File.join(Dir.tempdir, "noir-optimizer-modules-#{Process.pid}-#{Time.utc.to_unix_ms}")
+        module_a = File.join(temp_dir, "data-r2dbc")
+        module_b = File.join(temp_dir, "webclient")
+        controller_a = File.join(module_a, "src/main/kotlin/com/example/demo/PostController.kt")
+        controller_b = File.join(module_b, "src/main/kotlin/com/example/demo/PostController.kt")
+
+        begin
+          Dir.mkdir_p(File.dirname(controller_a))
+          Dir.mkdir_p(File.dirname(controller_b))
+          File.write(File.join(module_a, "pom.xml"), "<project></project>")
+          File.write(File.join(module_b, "pom.xml"), "<project></project>")
+          File.write(controller_a, "class PostController")
+          File.write(controller_b, "class PostController")
+
+          endpoint_a = Endpoint.new("/posts", "GET", Details.new(PathInfo.new(controller_a, 12)))
+          endpoint_b = Endpoint.new("/posts", "GET", Details.new(PathInfo.new(controller_b, 18)))
+          endpoint_a.details.technology = technology
+          endpoint_b.details.technology = technology
+          endpoint_a.push_callee(Callee.new("postRepository.findAll", path: controller_a, line: 13))
+          endpoint_b.push_callee(Callee.new("client.get", path: controller_b, line: 19))
+
+          result = optimizer.optimize_endpoints([endpoint_a, endpoint_b])
+
+          result.size.should eq(2)
+          result.map(&.details.code_paths.size).should eq([1, 1])
+          result.flat_map(&.callees.map(&.name)).sort!.should eq(["client.get", "postRepository.findAll"])
+        ensure
+          FileUtils.rm_rf(temp_dir) if Dir.exists?(temp_dir)
+        end
+      end
+    end
+
+    it "keeps handlers with different request conditions apart" do
       optimizer = EndpointOptimizer.new(logger, options)
-      temp_dir = File.join(Dir.tempdir, "noir-optimizer-modules-#{Process.pid}-#{Time.utc.to_unix_ms}")
-      module_a = File.join(temp_dir, "data-r2dbc")
-      module_b = File.join(temp_dir, "webclient")
-      controller_a = File.join(module_a, "src/main/kotlin/com/example/demo/PostController.kt")
-      controller_b = File.join(module_b, "src/main/kotlin/com/example/demo/PostController.kt")
+      build = ->(line : Int32, conditions : Array(Param)) do
+        endpoint = Endpoint.new("/gate/reset", "GET", conditions, Details.new(PathInfo.new("GateController.java", line)))
+        endpoint.details.technology = "java_spring"
+        endpoint.route_conditions = conditions
+        endpoint
+      end
+      ticket = [Param.new("ticket", "", "query")]
+
+      result = optimizer.optimize_endpoints([
+        build.call(7, [] of Param),
+        build.call(10, ticket),
+        build.call(13, [Param.new("relink", "", "query")]),
+        build.call(16, ticket),
+      ])
+
+      result.map { |endpoint| {endpoint.params.map(&.name), endpoint.details.code_paths.map(&.line)} }.should eq([
+        {[] of String, [7]},
+        {["ticket"], [10, 16]},
+        {["relink"], [13]},
+      ])
+    end
+
+    it "keeps the programs of a multi-program Go module distinct, and merges within one program" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      temp_dir = File.join(Dir.tempdir, "noir-optimizer-gomulti-#{Process.pid}-#{Time.utc.to_unix_ms}")
+      upload_single = File.join(temp_dir, "upload-file/single/main.go")
+      upload_multi = File.join(temp_dir, "upload-file/multiple/main.go")
+      helper = File.join(temp_dir, "upload-file/multiple/routes.go")
 
       begin
-        Dir.mkdir_p(File.dirname(controller_a))
-        Dir.mkdir_p(File.dirname(controller_b))
-        File.write(File.join(module_a, "pom.xml"), "<project></project>")
-        File.write(File.join(module_b, "pom.xml"), "<project></project>")
-        File.write(controller_a, "class PostController")
-        File.write(controller_b, "class PostController")
+        {upload_single, upload_multi}.each do |main|
+          Dir.mkdir_p(File.dirname(main))
+          File.write(main, "// license\npackage main\n\nfunc main() {}\n")
+        end
+        File.write(helper, "package main\n\nfunc routes() {}\n")
+        File.write(File.join(temp_dir, "go.mod"), "module example.com/examples\n")
 
-        endpoint_a = Endpoint.new("/posts", "GET", Details.new(PathInfo.new(controller_a, 12)))
-        endpoint_b = Endpoint.new("/posts", "GET", Details.new(PathInfo.new(controller_b, 18)))
-        endpoint_a.details.technology = "kotlin_spring"
-        endpoint_b.details.technology = "kotlin_spring"
-        endpoint_a.push_callee(Callee.new("postRepository.findAll", path: controller_a, line: 13))
-        endpoint_b.push_callee(Callee.new("client.get", path: controller_b, line: 19))
+        a = tech_endpoint("/upload", "POST", "go_gin", upload_single, 15)
+        b = tech_endpoint("/upload", "POST", "go_gin", upload_multi, 15)
+        c = tech_endpoint("/upload", "POST", "go_gin", helper, 3)
 
-        result = optimizer.optimize_endpoints([endpoint_a, endpoint_b])
-
+        result = optimizer.optimize_endpoints([a, b, c])
         result.size.should eq(2)
-        result.map(&.details.code_paths.size).should eq([1, 1])
-        result.flat_map(&.callees.map(&.name)).sort!.should eq(["client.get", "postRepository.findAll"])
+        paths = result.map(&.details.code_paths.map(&.path).sort!)
+        paths.should contain([upload_single])
+        paths.should contain([upload_multi, helper].sort!)
       ensure
-        FileUtils.rm_rf(temp_dir) if Dir.exists?(temp_dir)
+        FileUtils.rm_rf(temp_dir)
+      end
+    end
+
+    it "keeps one module scope for a single-program Go module" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      temp_dir = File.join(Dir.tempdir, "noir-optimizer-gosingle-#{Process.pid}-#{Time.utc.to_unix_ms}")
+      main = File.join(temp_dir, "cmd/api/main.go")
+      handler = File.join(temp_dir, "internal/handlers/health.go")
+
+      begin
+        Dir.mkdir_p(File.dirname(main))
+        Dir.mkdir_p(File.dirname(handler))
+        File.write(main, "package main\n\nfunc main() {}\n")
+        File.write(handler, "package handlers\n")
+        File.write(File.join(temp_dir, "go.mod"), "module example.com/app\n")
+
+        a = tech_endpoint("/health", "GET", "go_gin", main, 9)
+        b = tech_endpoint("/health", "GET", "go_gin", handler, 4)
+        optimizer.optimize_endpoints([a, b]).size.should eq(1)
+      ensure
+        FileUtils.rm_rf(temp_dir)
       end
     end
 
@@ -180,7 +442,9 @@ describe "EndpointOptimizer" do
         result = optimizer.optimize_endpoints([endpoint_a, endpoint_b])
 
         result.size.should eq(1)
-        result[0].details.code_paths.map(&.path).should eq([static_a, static_b])
+        # Both module paths must survive the merge; their order follows
+        # the source-location sort, so compare as a set.
+        result[0].details.code_paths.map(&.path).sort!.should eq([static_a, static_b].sort)
       ensure
         FileUtils.rm_rf(temp_dir) if Dir.exists?(temp_dir)
       end
@@ -246,8 +510,36 @@ describe "EndpointOptimizer" do
       tags = result.find! { |endpoint| endpoint.url == "/api/tags" }
       users = result.find! { |endpoint| endpoint.url == "/api/users" }
 
-      tags.details.code_paths.map(&.path).should eq(["openapi.json", "tags.py"])
-      users.details.code_paths.map(&.path).should eq(["openapi.json", "users.py"])
+      tags.details.code_paths.map(&.path).should eq(["tags.py", "openapi.json"])
+      users.details.code_paths.map(&.path).should eq(["users.py", "openapi.json"])
+    end
+
+    it "promotes implementation context when a specification duplicate sorts first" do
+      optimizer = EndpointOptimizer.new(logger, options)
+
+      [
+        {
+          document_technology:       "oas3",
+          document_path:             "a-openapi.yaml",
+          implementation_technology: "java_spring",
+          implementation_path:       "b-Handler.java",
+        },
+        {
+          document_technology:       "grpc",
+          document_path:             "a-service.proto",
+          implementation_technology: "go_grpc",
+          implementation_path:       "b-handler.go",
+        },
+      ].each do |entry|
+        document = tech_endpoint("/users", "GET", entry[:document_technology], entry[:document_path])
+        implementation = tech_endpoint("/users", "GET", entry[:implementation_technology], entry[:implementation_path])
+
+        result = optimizer.optimize_endpoints([document, implementation])
+
+        result.size.should eq(1)
+        result[0].details.technology.should eq(entry[:implementation_technology])
+        result[0].details.code_paths.map(&.path).should eq([entry[:implementation_path], entry[:document_path]])
+      end
     end
 
     it "merges Postman colon path templates with Kotlin Spring brace templates" do
@@ -345,6 +637,24 @@ describe "EndpointOptimizer" do
         "Authorization:header",
         "X-Tenant:header",
         "limit:query",
+      ])
+    end
+
+    it "folds a .http concrete example into the code route without its browser headers" do
+      optimizer = EndpointOptimizer.new(logger, options)
+
+      code = tech_endpoint("/api/gadgets/item/{itemId}", "GET", "java_spring", "src/main/java/GadgetController.java", 5)
+      code.params << Param.new("itemId", "", "path")
+
+      http_file = tech_endpoint("/api/gadgets/item/42", "GET", "http_file", "requests/manual.http", 1)
+      %w[Cookie Origin Referer X-Tenant].each { |name| http_file.params << Param.new(name, "", "header") }
+
+      result = optimizer.optimize_endpoints([code, http_file])
+
+      result.map(&.url).should eq(["/api/gadgets/item/{itemId}"])
+      result[0].params.map { |param| "#{param.name}:#{param.param_type}" }.sort!.should eq([
+        "X-Tenant:header",
+        "itemId:path",
       ])
     end
 
@@ -536,6 +846,385 @@ describe "EndpointOptimizer" do
       result[0].details.code_paths.map(&.path).should eq(["ArticleController.kt", "schema.graphqls"])
     end
 
+    # `merge_graphql_params` used to take `target` by value and assign
+    # `target.details` on that copy. `target.params << …` survived because
+    # `Array` is a reference, so the SDL document replaced the runtime one
+    # (asserted below) while the `graphql_sdl` technology promotion right
+    # underneath it was silently dropped — half the method landed.
+    it "promotes the SDL technology onto the surviving GraphQL duplicate" do
+      optimizer = EndpointOptimizer.new(logger, options)
+
+      runtime_details = Details.new(PathInfo.new("app.js", 12))
+      runtime_details.technology = "javascript_graphql_yoga"
+      runtime_endpoint = Endpoint.new(
+        "/graphql#Query.user", "POST",
+        [Param.new("graphql_query", "query { user { id } }", "json")],
+        runtime_details
+      )
+
+      sdl_details = Details.new(PathInfo.new("schema.graphqls", 4))
+      sdl_details.technology = "graphql_sdl"
+      sdl_endpoint = Endpoint.new(
+        "/graphql#Query.user", "POST",
+        [Param.new("graphql_query", "query SDLVERSION($id: ID!) { user(id: $id) { id } }", "json")],
+        sdl_details
+      )
+
+      # "app.js" sorts before "schema.graphqls", so the runtime endpoint is
+      # the one kept and the SDL one is the source being merged in.
+      result = optimizer.optimize_endpoints([runtime_endpoint, sdl_endpoint])
+
+      result.size.should eq(1)
+      doc_param = result[0].params.find! { |param| param.name == "graphql_query" }
+      doc_param.value.should contain("SDLVERSION")
+      result[0].details.technology.should eq("graphql_sdl")
+    end
+
+    # The dedup merged four collections and threw every scalar the losing
+    # endpoint carried away. `protocol` is the consequential one: taggers run
+    # *after* the optimizer and `WebsocketTagger` keys off exactly this field,
+    # so a `ws` endpoint that lost the source-location tiebreak to a plain
+    # HTTP one at the same path silently stopped being tagged.
+    it "carries the losing duplicate's protocol, metadata and status code" do
+      optimizer = EndpointOptimizer.new(logger, options)
+
+      http_endpoint = Endpoint.new("/chat", "GET", [] of Param, Details.new(PathInfo.new("a_http.py", 3)))
+
+      ws_details = Details.new(PathInfo.new("b_ws.py", 9))
+      ws_details.status_code = 101
+      ws_endpoint = Endpoint.new("/chat", "GET", [] of Param, ws_details)
+      ws_endpoint.protocol = "ws"
+      ws_endpoint.kind = "channel"
+      ws_endpoint.metadata = {"channel" => "room:lobby"}
+
+      # "a_http.py" sorts first, so the HTTP endpoint wins the tiebreak and
+      # the websocket facts are the ones at risk of being dropped.
+      result = optimizer.optimize_endpoints([http_endpoint, ws_endpoint])
+
+      result.size.should eq(1)
+      result[0].protocol.should eq("ws")
+      result[0].kind.should eq("channel")
+      result[0].metadata.should eq({"channel" => "room:lobby"})
+      result[0].details.status_code.should eq(101)
+    end
+
+    it "does not overwrite scalars the surviving duplicate already carries" do
+      optimizer = EndpointOptimizer.new(logger, options)
+
+      winner_details = Details.new(PathInfo.new("a_first.py", 1))
+      winner_details.status_code = 200
+      winner = Endpoint.new("/chat", "GET", [] of Param, winner_details)
+      winner.protocol = "wss"
+      winner.metadata = {"source" => "winner"}
+
+      loser_details = Details.new(PathInfo.new("b_second.py", 1))
+      loser_details.status_code = 101
+      loser = Endpoint.new("/chat", "GET", [] of Param, loser_details)
+      loser.protocol = "ws"
+      loser.metadata = {"source" => "loser"}
+
+      result = optimizer.optimize_endpoints([winner, loser])
+
+      result.size.should eq(1)
+      result[0].protocol.should eq("wss")
+      result[0].metadata.should eq({"source" => "winner"})
+      result[0].details.status_code.should eq(200)
+    end
+
+    # `internal` marks a declaration of a request the app *makes*
+    # (`@FeignClient`, `@HttpExchange`), which `Deliver#probe_all`
+    # reads to skip probing. A served route at the same address is the
+    # endpoint; the client contributes only where it was declared, so its
+    # params do not leak into the served route whichever file sorts first.
+    it "keeps the served route primary when it dedups with an outbound declaration" do
+      optimizer = EndpointOptimizer.new(logger, options)
+
+      client = Endpoint.new("/users", "GET", [Param.new("ticker", "", "query")], Details.new(PathInfo.new("a_client.java", 5)), true)
+      served = Endpoint.new("/users", "GET", [Param.new("sym", "", "query")], Details.new(PathInfo.new("b_controller.java", 7)), false)
+
+      [[client, served], [served, client]].each do |endpoints|
+        result = optimizer.optimize_endpoints(endpoints)
+
+        result.size.should eq(1)
+        result[0].internal.should be_false
+        result[0].params.map(&.name).should eq(["sym"])
+        result[0].details.code_paths.map(&.path).should eq(["b_controller.java", "a_client.java"])
+      end
+    end
+
+    it "keeps internal when both duplicates are outbound declarations" do
+      optimizer = EndpointOptimizer.new(logger, options)
+
+      first = Endpoint.new("/users", "GET", [] of Param, Details.new(PathInfo.new("a_client.java", 5)), true)
+      second = Endpoint.new("/users", "GET", [] of Param, Details.new(PathInfo.new("b_client.java", 7)), true)
+
+      result = optimizer.optimize_endpoints([first, second])
+
+      result.size.should eq(1)
+      result[0].internal.should be_true
+    end
+
+    it "makes the code handler primary over infra declarations that sort first" do
+      optimizer = EndpointOptimizer.new(logger, options)
+
+      ingress = Endpoint.new("/", "GET", Details.new(PathInfo.new("deploy/ingress.yaml")))
+      ingress.details.technology = "k8s_ingress"
+      http_file = tech_endpoint("/", "GET", "http_file", "requests/home.http", 1)
+      code = tech_endpoint("/", "GET", "java_spring", "src/HomeController.java", 7)
+
+      result = optimizer.optimize_endpoints([ingress, http_file, code])
+
+      result.size.should eq(1)
+      result[0].details.technology.should eq("java_spring")
+      result[0].details.code_paths.first.path.should eq("src/HomeController.java")
+    end
+
+    it "does not demote a schema-generated backend whose paths are .json files" do
+      optimizer = EndpointOptimizer.new(logger, options)
+
+      strapi = tech_endpoint("/api/articles", "GET", "strapi", "a/content-types/article/schema.json", 1)
+      express = tech_endpoint("/api/articles", "GET", "js_express", "b/server.js", 9)
+
+      result = optimizer.optimize_endpoints([strapi, express])
+
+      result[0].details.technology.should eq("strapi")
+      result[0].details.code_paths.first.path.should eq("a/content-types/article/schema.json")
+    end
+
+    it "keeps every distinct value of a merged tag" do
+      optimizer = EndpointOptimizer.new(logger, options)
+
+      staging = tech_endpoint("/", "GET", "k8s_ingress", "deploy/staging.yaml")
+      staging.add_tag(Tag.new("ingress-host", "staging.example.test", "k8s_ingress_analyzer"))
+      live = tech_endpoint("/", "GET", "k8s_ingress", "deploy/live.yaml")
+      live.add_tag(Tag.new("ingress-host", "live.example.test", "k8s_ingress_analyzer"))
+      again = tech_endpoint("/", "GET", "k8s_ingress", "deploy/z.yaml")
+      again.add_tag(Tag.new("ingress-host", "live.example.test", "k8s_ingress_analyzer"))
+
+      result = optimizer.optimize_endpoints([staging, live, again])
+
+      result[0].tags.map(&.description).should eq(["live.example.test", "staging.example.test"])
+    end
+
+    describe "spec-only tag" do
+      it "tags spec operations no code analyzer reported" do
+        optimizer = EndpointOptimizer.new(logger, options)
+
+        endpoints = [
+          tech_endpoint("/served", "GET", "oas3", "openapi.yaml", 3),
+          tech_endpoint("/served", "GET", "go_gin", "main.go", 9),
+          tech_endpoint("/published", "GET", "openrpc", "openrpc.json", 5),
+          tech_endpoint("/routed", "GET", "k8s_ingress", "ingress.yaml", 2),
+        ]
+
+        result = optimizer.optimize_endpoints(endpoints)
+
+        tagged = result.select(&.tags.any?(&.name.==("spec-only"))).map(&.url)
+        tagged.should eq(["/published"])
+      end
+
+      # Strapi serves its content types; the documentation plugin's OAS file
+      # describes those same routes and must not read as unimplemented just
+      # because another code tech is in the scan.
+      it "does not tag spec operations a schema-generated backend serves" do
+        optimizer = EndpointOptimizer.new(logger, options)
+
+        endpoints = [
+          tech_endpoint("/api/articles", "GET", "oas3", "src/extensions/documentation/full_documentation.json", 3),
+          tech_endpoint("/api/articles", "GET", "strapi", "src/api/article/content-types/article/schema.json", 1),
+          tech_endpoint("/health", "GET", "js_express", "server.js", 9),
+        ]
+
+        result = optimizer.optimize_endpoints(endpoints)
+
+        result.flat_map(&.tags).map(&.name).should_not contain("spec-only")
+        result.find!(&.url.==("/api/articles")).details.technology.should eq("strapi")
+      end
+
+      it "tags nothing when no code analyzer reported a route" do
+        optimizer = EndpointOptimizer.new(logger, options)
+
+        result = optimizer.optimize_endpoints([tech_endpoint("/published", "GET", "oas3", "openapi.yaml", 3)])
+
+        result[0].tags.should be_empty
+      end
+    end
+
+    # The dedup kept the winner's `technology` and discarded the loser's, so
+    # a route declared by both a Go router and the project's swagger document
+    # was reported as Go only. `code_paths` proved a second file existed, but
+    # nothing said which analyzer read it; scanning casdoor whole attributed
+    # 9 endpoints to `oas2` when its `swagger/` directory alone yields 235.
+    describe "contributing technologies" do
+      it "lists only the endpoint's own technology when nothing merged into it" do
+        optimizer = EndpointOptimizer.new(logger, options)
+
+        result = optimizer.optimize_endpoints([tech_endpoint("/api/users", "GET", "go_gin", "router.go")])
+
+        result.size.should eq(1)
+        result[0].details.technology.should eq("go_gin")
+        result[0].details.technologies.should eq(["go_gin"])
+      end
+
+      it "keeps both technologies when two analyzers report the same endpoint" do
+        optimizer = EndpointOptimizer.new(logger, options)
+
+        # "routers/" sorts before "swagger/", so the Go route wins and the
+        # spec's technology is the one that used to be lost.
+        go = tech_endpoint("/api/users", "GET", "go_beego", "routers/router.go", 42)
+        spec = tech_endpoint("/api/users", "GET", "oas2", "swagger/swagger.json", 1300)
+
+        result = optimizer.optimize_endpoints([go, spec])
+
+        result.size.should eq(1)
+        result[0].details.technology.should eq("go_beego")
+        result[0].details.technologies.should eq(["go_beego", "oas2"])
+        result[0].details.code_paths.map(&.path).should eq(["routers/router.go", "swagger/swagger.json"])
+      end
+
+      it "accumulates every technology when an endpoint absorbs three duplicates" do
+        optimizer = EndpointOptimizer.new(logger, options)
+
+        endpoints = [
+          tech_endpoint("/api/users", "GET", "oas3", "d_openapi.yaml"),
+          tech_endpoint("/api/users", "GET", "go_beego", "a_router.go"),
+          tech_endpoint("/api/users", "GET", "k8s_ingress", "c_ingress.yaml"),
+          tech_endpoint("/api/users", "GET", "har", "b_capture.har"),
+        ]
+
+        result = optimizer.optimize_endpoints(endpoints)
+
+        result.size.should eq(1)
+        result[0].details.technology.should eq("go_beego")
+        result[0].details.technologies.should eq(["go_beego", "har", "k8s_ingress", "oas3"])
+      end
+
+      it "does not repeat a technology two files of the same framework share" do
+        optimizer = EndpointOptimizer.new(logger, options)
+
+        endpoints = [
+          tech_endpoint("/health", "GET", "go_gin", "a.go"),
+          tech_endpoint("/health", "GET", "go_gin", "b.go"),
+        ]
+
+        result = optimizer.optimize_endpoints(endpoints)
+
+        result.size.should eq(1)
+        result[0].details.technologies.should eq(["go_gin"])
+      end
+
+      it "keeps distinct endpoints' technology lists apart" do
+        optimizer = EndpointOptimizer.new(logger, options)
+
+        endpoints = [
+          tech_endpoint("/a", "GET", "go_gin", "a.go"),
+          tech_endpoint("/a", "GET", "oas3", "openapi.yaml"),
+          tech_endpoint("/b", "GET", "oas3", "openapi.yaml", 2),
+        ]
+
+        result = optimizer.optimize_endpoints(endpoints)
+
+        result.size.should eq(2)
+        by_url = result.to_h { |endpoint| {endpoint.url, endpoint.details.technologies} }
+        by_url["/a"].should eq(["go_gin", "oas3"])
+        by_url["/b"].should eq(["oas3"])
+      end
+
+      # `promote_source_context` replaces a collection winner's `technology`
+      # with the framework's. Both belong in the list: the promotion changes
+      # which one is "the" technology, not which ones contributed.
+      it "lists the collection technology after a source promotion replaced it" do
+        optimizer = EndpointOptimizer.new(logger, options)
+
+        collection = tech_endpoint("/api/users", "GET", "postman", "a_collection.json")
+        source = tech_endpoint("/api/users", "GET", "kotlin_spring", "b_controller.kt")
+
+        result = optimizer.optimize_endpoints([collection, source])
+
+        result.size.should eq(1)
+        result[0].details.technology.should eq("kotlin_spring")
+        result[0].details.technologies.should eq(["kotlin_spring", "postman"])
+      end
+
+      # Same for the GraphQL SDL promotion in `merge_graphql_params`.
+      it "lists the runtime technology after the SDL promotion replaced it" do
+        optimizer = EndpointOptimizer.new(logger, options)
+
+        runtime = tech_endpoint("/graphql#Query.user", "POST", "javascript_graphql_yoga", "app.js")
+        runtime.params << Param.new("graphql_query", "query { user { id } }", "json")
+        sdl = tech_endpoint("/graphql#Query.user", "POST", "graphql_sdl", "schema.graphqls")
+        sdl.params << Param.new("graphql_query", "query Q($id: ID!) { user(id: $id) { id } }", "json")
+
+        result = optimizer.optimize_endpoints([runtime, sdl])
+
+        result.size.should eq(1)
+        result[0].details.technology.should eq("graphql_sdl")
+        result[0].details.technologies.should eq(["graphql_sdl", "javascript_graphql_yoga"])
+      end
+
+      # Collection concrete examples merge into templates in a second pass
+      # (`merge_concrete_example_endpoints`), not the main dedup loop.
+      it "records the collection technology when a concrete example folds into a template" do
+        optimizer = EndpointOptimizer.new(logger, options)
+
+        template = tech_endpoint("/api/users/{id}", "GET", "kotlin_spring", "a_controller.kt")
+        example = tech_endpoint("/api/users/42", "GET", "postman", "b_collection.json")
+
+        result = optimizer.optimize_endpoints([template, example])
+
+        result.size.should eq(1)
+        result[0].url.should eq("/api/users/{id}")
+        result[0].details.technology.should eq("kotlin_spring")
+        result[0].details.technologies.should eq(["kotlin_spring", "postman"])
+      end
+
+      it "folds a concrete example into the first matching template only" do
+        optimizer = EndpointOptimizer.new(logger, options)
+
+        result = optimizer.optimize_endpoints([
+          tech_endpoint("/{v}/users/{id}", "GET", "go_gin", "a.go"),
+          tech_endpoint("/{v}/users/7", "GET", "go_echo", "b.go"),
+          tech_endpoint("/1/users/42", "POST", "postman", "c.json"),
+          tech_endpoint("/1/users/7", "GET", "postman", "c.json"),
+        ])
+
+        result.map(&.url).should eq(["/{v}/users/{id}", "/{v}/users/7", "/1/users/42"])
+        result[0].details.code_paths.map(&.path).should eq(["a.go", "c.json"])
+        result[1].details.code_paths.map(&.path).should eq(["b.go"])
+      end
+
+      # Every concrete request used to re-test every endpoint as a template:
+      # 4000 Postman requests took 13s.
+      it "merges a large collection in linear time" do
+        optimizer = EndpointOptimizer.new(logger, options)
+        endpoints = (0...8000).map { |i| tech_endpoint("/items#{i}/#{i}", "GET", "postman", "c.json") }
+        endpoints << tech_endpoint("/items0/{id}", "GET", "go_gin", "a.go")
+
+        result = [] of Endpoint
+        elapsed = Time.measure { result = optimizer.optimize_endpoints(endpoints) }
+
+        result.size.should eq(8000)
+        elapsed.should be < 5.seconds
+      end
+
+      it "orders the list the same way whichever duplicate sorts first" do
+        optimizer = EndpointOptimizer.new(logger, options)
+
+        forward = optimizer.optimize_endpoints([
+          tech_endpoint("/x", "GET", "oas3", "a.yaml"),
+          tech_endpoint("/x", "GET", "go_gin", "b.go"),
+        ])
+        reverse = optimizer.optimize_endpoints([
+          tech_endpoint("/x", "GET", "go_gin", "a.go"),
+          tech_endpoint("/x", "GET", "oas3", "b.yaml"),
+        ])
+
+        forward[0].details.technology.should eq("go_gin")
+        reverse[0].details.technology.should eq("go_gin")
+        forward[0].details.technologies.should eq(reverse[0].details.technologies)
+      end
+    end
+
     it "still merges Kotlin Spring GraphQL endpoints with SDL when the controller is under a build module" do
       optimizer = EndpointOptimizer.new(logger, options)
       temp_dir = File.join(Dir.tempdir, "noir-optimizer-graphql-#{Process.pid}-#{Time.utc.to_unix_ms}")
@@ -586,8 +1275,7 @@ describe "EndpointOptimizer" do
       ]
 
       result = optimizer.optimize_endpoints(endpoints)
-      result[0].url.should eq("/api/users")
-      result[1].url.should eq("/api/data")
+      result.map(&.url).sort!.should eq(["/api/data", "/api/users"])
     end
 
     it "does not corrupt absolute URLs while normalizing slashes" do
@@ -626,6 +1314,69 @@ describe "EndpointOptimizer" do
       result[2].url.should eq("/a/{x}/b/{y}")
     end
 
+    it "strips inline regex constraints that carry their own {n} quantifier" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      endpoints = [
+        Endpoint.new("/items/{id:[0-9]{3}}", "GET"),
+        Endpoint.new("/zip/{code:\\d{5}}/x", "GET"),
+        Endpoint.new("/d/{day:\\d{1,2}}-{month:[a-z]{3}}", "GET"),
+        Endpoint.new("/archive/\\d{4}/", "GET"), # bare quantifier, no name
+      ]
+
+      result = optimizer.normalize_url_shapes(endpoints)
+      result[0].url.should eq("/items/{id}")
+      result[1].url.should eq("/zip/{code}/x")
+      result[2].url.should eq("/d/{day}-{month}")
+      result[3].url.should eq("/archive/\\d{4}/")
+    end
+
+    it "keeps a chi / gorilla regex constraint, which picks the route" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      chi = Details.new(PathInfo.new("routers/web/web.go", 1))
+      chi.technology = "go_chi"
+      endpoints = [
+        Endpoint.new("/{owner}/{repo}/{type:issues}/{index}", "GET", chi),
+        Endpoint.new("/{owner}/{repo}/{type:pulls}/{index}", "GET", chi),
+        Endpoint.new("/{owner}/{repo}/objects/{sha:[a-f0-9]{7,64}}", "GET", chi),
+        Endpoint.new("/users/{id:[0-9]+}", "GET"),
+      ]
+
+      result = optimizer.optimize(endpoints).to_h { |ep| {ep.url, ep.params.map(&.name)} }
+      result.should eq({
+        "/{owner}/{repo}/{type:issues}/{index}"        => ["owner", "repo", "type", "index"],
+        "/{owner}/{repo}/{type:pulls}/{index}"         => ["owner", "repo", "type", "index"],
+        "/{owner}/{repo}/objects/{sha:[a-f0-9]{7,64}}" => ["owner", "repo", "sha"],
+        "/users/{id}"                                  => ["id"],
+      })
+    end
+
+    it "matches braces past unbalanced openers and escapes" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      endpoints = [
+        Endpoint.new("/a/{{id:[0-9]}", "GET"),
+        Endpoint.new("/a/{x/{id:\\d{3}}", "GET"),
+        Endpoint.new("/a/{id:\\}x}/y", "GET"),
+      ]
+
+      result = optimizer.normalize_url_shapes(endpoints)
+      result[0].url.should eq("/a/{{id}")
+      result[1].url.should eq("/a/{x/{id}")
+      result[2].url.should eq("/a/{id}/y")
+    end
+
+    # Each unbalanced `{` used to rescan to the end of the URL.
+    it "normalizes a URL full of unbalanced braces in linear time" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      urls = ["/" + "{" * 20000, "/b" + "{/a" * 20000, "/c" + "{a:" * 20000]
+      endpoints = urls.map { |url| Endpoint.new(url, "GET") }
+
+      result = [] of Endpoint
+      elapsed = Time.measure { result = optimizer.optimize_endpoints(endpoints) }
+
+      result.size.should eq(3)
+      elapsed.should be < 5.seconds
+    end
+
     it "normalizes Django re_path named groups even when the body contains \\d / \\w classes" do
       optimizer = EndpointOptimizer.new(logger, options)
       endpoints = [
@@ -638,6 +1389,36 @@ describe "EndpointOptimizer" do
       result[1].url.should eq("/api/0/{event_id}/")
     end
 
+    # `(?P<name>…)` is Python's spelling; `(?<name>…)` is what Perl 5.10+,
+    # PCRE, .NET, Java, Ruby and JavaScript use. Only the first was handled,
+    # so Dancer2's `get qr{/ticket/(?<code>[0-9]+)}` reached reports as the
+    # literal URL `/ticket/(?<code>[0-9]+)` — disagreeing with the `code` path
+    # param the analyzer had already recorded for it.
+    it "normalizes plain (?<name>...) capture groups too" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      endpoints = [
+        Endpoint.new("/ticket/(?<code>[0-9]+)", "GET"),
+        Endpoint.new("/(?<org>[^/]+)/issues/(?<id>\\d+)/", "GET"),
+      ]
+
+      result = optimizer.normalize_url_shapes(endpoints)
+      result[0].url.should eq("/ticket/{code}")
+      result[1].url.should eq("/{org}/issues/{id}/")
+    end
+
+    it "leaves lookbehind assertions alone" do
+      # `(?<=` and `(?<!` open a lookbehind, not a name.
+      optimizer = EndpointOptimizer.new(logger, options)
+      endpoints = [
+        Endpoint.new("/files/(?<=v2)report", "GET"),
+        Endpoint.new("/files/(?<!beta)report", "GET"),
+      ]
+
+      result = optimizer.normalize_url_shapes(endpoints)
+      result[0].url.should eq("/files/(?<=v2)report")
+      result[1].url.should eq("/files/(?<!beta)report")
+    end
+
     it "still skips verbatim Express regex-literal routes" do
       optimizer = EndpointOptimizer.new(logger, options)
       endpoints = [
@@ -646,6 +1427,30 @@ describe "EndpointOptimizer" do
 
       result = optimizer.normalize_url_shapes(endpoints)
       result[0].url.should eq("/^\\/api\\/(\\d+)$/")
+    end
+
+    it "leaves regex anchors and literal dollar signs to the analyzers" do
+      # Only the analyzer knows whether a route is a regex, so it strips the
+      # anchors (`Noir::URLPath.strip_regex_anchors`). Here a `^` or `$` is
+      # path text whatever the technology.
+      optimizer = EndpointOptimizer.new(logger, options)
+      endpoints = [
+        tech_endpoint("/^tags/?$", "GET", "python_django", "urls.py"),
+        tech_endpoint("/dollar$", "GET", "ruby_grape", "api.rb"),
+        tech_endpoint("/dollar$", "GET", "js_express", "app.js"),
+        tech_endpoint("/price/$", "GET", "js_express", "app.js"),
+        tech_endpoint("/^caret", "GET", "js_express", "app.js"),
+        tech_endpoint("/keep$mid", "GET", "js_express", "app.js"),
+        tech_endpoint("/dollar$", "GET", "python_flask", "app.py"),
+        tech_endpoint("/^start", "GET", "ruby_sinatra", "app.rb"),
+        tech_endpoint("/dollar$", "GET", "ruby_rails", "routes.rb"),
+        tech_endpoint("/dollar$", "GET", "java_spring", "Ctrl.java"),
+        tech_endpoint("/dollar$", "GET", "php_laravel", "web.php"),
+        tech_endpoint("/dollar$", "GET", "oas3", "openapi.yaml"),
+      ]
+
+      result = optimizer.normalize_url_shapes(endpoints)
+      result.map(&.url).should eq(endpoints.map(&.url))
     end
   end
 
@@ -842,6 +1647,18 @@ describe "EndpointOptimizer" do
       result[1].params[0].name.should eq("remaining")
     end
 
+    it "names optional and multi-segment brace params without their markers" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      result = optimizer.add_path_parameters([
+        Endpoint.new("/users/{userId}/posts/{postId?}", "GET"), # hapi / ASP.NET optional
+        Endpoint.new("/files/{path*}", "GET"),                  # hapi multi-segment
+        Endpoint.new("/pair/{parts*2}", "GET"),
+      ])
+      result[0].params.map(&.name).should eq(["userId", "postId"])
+      result[1].params.map(&.name).should eq(["path"])
+      result[2].params.map(&.name).should eq(["parts"])
+    end
+
     it "ignores bare glob splats that are not real parameter names" do
       optimizer = EndpointOptimizer.new(logger, options)
       endpoints = [
@@ -859,10 +1676,24 @@ describe "EndpointOptimizer" do
 
     it "extracts parameters from angle bracket patterns" do
       optimizer = EndpointOptimizer.new(logger, options)
+      flask = Details.new
+      flask.technology = "python_flask"
+      django = Details.new
+      django.technology = "python_django"
+      marten = Details.new
+      marten.technology = "crystal_marten"
+      express = Details.new
+      express.technology = "js_express"
+
       endpoints = [
-        Endpoint.new("/users/<id>", "GET"),
-        Endpoint.new("/posts/<int:post_id>", "GET"), # Django style
-        Endpoint.new("/items/<name:str>", "GET"),    # Marten style
+        Endpoint.new("/users/<id>", "GET", [] of Param, flask),
+        Endpoint.new("/posts/<int:post_id>", "GET", [] of Param, django), # Django style
+        Endpoint.new("/items/<name:str>", "GET", [] of Param, marten),    # Marten style
+        # Express keeps the brackets. They are not placeholders, and a
+        # partial `<word>` must not become a path param.
+        Endpoint.new("/files/<id>", "GET", [] of Param, express),
+        Endpoint.new("/users/<script>alert(1)</script>", "GET", [] of Param, express),
+        Endpoint.new("/plain/<id>", "GET"),
       ]
 
       result = optimizer.add_path_parameters(endpoints)
@@ -874,6 +1705,169 @@ describe "EndpointOptimizer" do
 
       result[2].params.size.should eq(1)
       result[2].params[0].name.should eq("name")
+
+      result[3].params.should be_empty
+      result[3].url.should eq("/files/<id>")
+      result[4].params.should be_empty
+      result[4].url.should eq("/users/<script>alert(1)</script>")
+      result[5].params.map(&.name).should eq(["id"])
+    end
+
+    it "splits colon params joined by a hyphen or a dot" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      endpoints = [
+        Endpoint.new("/flights/:from-:to", "GET"),       # Express docs
+        Endpoint.new("/plantae/:genus.:species", "GET"), # Express docs
+        Endpoint.new("/maven/:group-id/:artifact-id", "GET"),
+      ]
+
+      result = optimizer.add_path_parameters(endpoints)
+      result[0].params.map(&.name).should eq(["from", "to"])
+      result[1].params.map(&.name).should eq(["genus", "species"])
+      result[2].params.map(&.name).should eq(["group-id", "artifact-id"])
+    end
+
+    it "names a regex placeholder whose constraint has an {n} quantifier" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      endpoints = [Endpoint.new("/items/{id:[0-9]{3}}", "GET")]
+
+      result = optimizer.add_path_parameters(endpoints)
+      result[0].params.map(&.name).should eq(["id"])
+    end
+
+    it "takes the name after the converter for Django and Flask placeholders" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      django = Details.new
+      django.technology = "python_django"
+      flask = Details.new
+      flask.technology = "python_flask"
+      sanic = Details.new
+      sanic.technology = "python_sanic"
+      marten = Details.new
+      marten.technology = "crystal_marten"
+
+      endpoints = [
+        # Custom converter from `register_converter(..., "yyyy")`.
+        Endpoint.new("/articles/<yyyy:year>/", "GET", [] of Param, django),
+        # Werkzeug converters with arguments.
+        Endpoint.new("/n/<int(signed=True):num>", "GET", [] of Param, flask),
+        Endpoint.new("/k/<any(about, help):page>", "GET", [] of Param, flask),
+        # Name-first frameworks keep their order.
+        Endpoint.new("/users/<id:int>", "GET", [] of Param, sanic),
+        Endpoint.new("/posts/<pk:custom>", "GET", [] of Param, marten),
+        # Name-first, and not converter-first: arguments are still not part
+        # of the name (`float(signed=True)` must not survive as the param).
+        Endpoint.new("/v/<float(signed=True):ratio>", "GET", [] of Param, sanic),
+      ]
+
+      result = optimizer.add_path_parameters(endpoints)
+      result.map(&.params.map(&.name)).should eq([["year"], ["num"], ["page"], ["id"], ["pk"], ["ratio"]])
+    end
+
+    it "lets a path param the analyzer recorded settle the angle-bracket order" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      endpoints = [Endpoint.new("/r/<report_id:hexid>", "GET", [Param.new("report_id", "", "path")])]
+
+      result = optimizer.add_path_parameters(endpoints)
+      result[0].params.map(&.name).should eq(["report_id"])
+    end
+
+    describe "with a path value configured" do
+      it "does not rewrite a param whose name extends another's" do
+        options["set_pvalue"] = YAML::Any.new([YAML::Any.new("FUZZ")])
+        optimizer = EndpointOptimizer.new(logger, options)
+        endpoints = [
+          Endpoint.new("/users/:id/files/:identifier", "GET"),
+          Endpoint.new("/a/:id-:idx", "GET"),
+          Endpoint.new("/s/*path/t/*pathname", "GET"),
+          Endpoint.new("/flights/:from-:to", "GET"),
+        ]
+
+        result = optimizer.add_path_parameters(endpoints)
+        result[0].url.should eq("/users/FUZZ/files/FUZZ")
+        result[1].url.should eq("/a/FUZZ-FUZZ")
+        result[2].url.should eq("/s/FUZZ/t/FUZZ")
+        result[3].url.should eq("/flights/FUZZ-FUZZ")
+      end
+
+      it "substitutes only the named param and leaves its neighbours alone" do
+        options["set_pvalue_path"] = YAML::Any.new([YAML::Any.new("id=7")])
+        optimizer = EndpointOptimizer.new(logger, options)
+        endpoints = [
+          Endpoint.new("/users/:id/files/:identifier", "GET"),
+          Endpoint.new("/a/:id-:idx", "GET"),
+          Endpoint.new("/b/{id}/{identifier}", "GET"),
+        ]
+
+        result = optimizer.add_path_parameters(endpoints)
+        result[0].url.should eq("/users/7/files/:identifier")
+        result[1].url.should eq("/a/7-:idx")
+        result[2].url.should eq("/b/7/{identifier}")
+      end
+
+      it "replaces a colon param's constraint and modifier but keeps a format suffix" do
+        options["set_pvalue_path"] = YAML::Any.new([YAML::Any.new("id=7"), YAML::Any.new("lang=en")])
+        optimizer = EndpointOptimizer.new(logger, options)
+        endpoints = [
+          Endpoint.new("/users/:id(\\d+)", "GET"),
+          Endpoint.new("/geo/:id?", "GET"),
+          Endpoint.new("/docs/:lang.json", "GET"),
+        ]
+
+        result = optimizer.add_path_parameters(endpoints)
+        result[0].url.should eq("/users/7")
+        result[1].url.should eq("/geo/7")
+        result[2].url.should eq("/docs/en.json")
+      end
+
+      it "keeps a query string that follows a colon param" do
+        options["set_pvalue"] = YAML::Any.new([YAML::Any.new("FUZZ")])
+        optimizer = EndpointOptimizer.new(logger, options)
+        endpoints = [
+          Endpoint.new("/u/:id?sort=asc", "GET"),
+          Endpoint.new("/u/:id?/edit", "GET"),  # optional segment marker
+          Endpoint.new("/r/:from?-:to", "GET"), # optional before a joined param
+          Endpoint.new("/v/:id?", "GET"),       # optional at the end
+        ]
+
+        result = optimizer.add_path_parameters(endpoints)
+        result[0].url.should eq("/u/FUZZ?sort=asc")
+        result[1].url.should eq("/u/FUZZ/edit")
+        result[2].url.should eq("/r/FUZZ-FUZZ")
+        result[3].url.should eq("/v/FUZZ")
+      end
+
+      it "replaces an Express constraint that has its own {n} quantifier" do
+        options["set_pvalue"] = YAML::Any.new([YAML::Any.new("FUZZ")])
+        optimizer = EndpointOptimizer.new(logger, options)
+        endpoints = [
+          Endpoint.new("/u/:id(\\d{3})", "GET"),
+          Endpoint.new("/u/:id(\\d{3})/x/:name", "GET"),
+        ]
+
+        result = optimizer.add_path_parameters(endpoints)
+        result[0].url.should eq("/u/FUZZ")
+        result[1].url.should eq("/u/FUZZ/x/FUZZ")
+        result[1].params.map(&.name).should eq(["id", "name"])
+      end
+
+      it "replaces a whole regex placeholder whose constraint has an {n} quantifier" do
+        options["set_pvalue_path"] = YAML::Any.new([YAML::Any.new("id=7")])
+        optimizer = EndpointOptimizer.new(logger, options)
+        endpoints = [Endpoint.new("/items/{id:[0-9]{3}}", "GET")]
+
+        result = optimizer.add_path_parameters(endpoints)
+        result[0].url.should eq("/items/7")
+      end
+
+      it "records the substituted value on the path param" do
+        options["set_pvalue_path"] = YAML::Any.new([YAML::Any.new("id=7")])
+        optimizer = EndpointOptimizer.new(logger, options)
+        endpoints = [Endpoint.new("/users/{id}/{name}", "GET")]
+
+        result = optimizer.add_path_parameters(endpoints)
+        result[0].params.map { |param| {param.name, param.value} }.should eq([{"id", "7"}, {"name", ""}])
+      end
     end
   end
 
@@ -892,6 +1886,19 @@ describe "EndpointOptimizer" do
 
       result = optimizer.apply_pvalue("query", "unknown", "original")
       result.should eq("original")
+    end
+
+    it "applies a json rule to a param the analyzer spelled `body`" do
+      options["set_pvalue_json"] = YAML::Any.new([YAML::Any.new("id=FUZZ")])
+      optimizer = EndpointOptimizer.new(logger, options)
+
+      # `body` is the alias fourteen analyzers use for a request-body field.
+      # Rules are keyed by the canonical bucket, so the lookup has to be too.
+      endpoint = Endpoint.new("/deleteUser", "POST")
+      endpoint.push_param(Param.new("id", "", "body"))
+
+      result = optimizer.optimize([endpoint])
+      result[0].params[0].value.should eq("FUZZ")
     end
   end
 
@@ -913,17 +1920,102 @@ describe "EndpointOptimizer" do
       result.size.should eq(2)
 
       # URLs should be combined with target URL
-      result[0].url.should contain("https://api.example.com")
-      result[1].url.should contain("https://api.example.com")
+      result.all?(&.url.includes?("https://api.example.com")).should be_true
 
-      # Parameters should be extracted
-      result[0].params.size.should eq(1)
-      result[0].params[0].name.should eq("id")
-      result[0].params[0].param_type.should eq("path")
+      # Parameters should be extracted. Look endpoints up by URL rather
+      # than by index — ordering follows the source-location sort.
+      users = result.find!(&.url.includes?("/users/"))
+      posts = result.find!(&.url.includes?("/posts/"))
 
-      result[1].params.size.should eq(1)
-      result[1].params[0].name.should eq("post_id")
-      result[1].params[0].param_type.should eq("path")
+      users.params.size.should eq(1)
+      users.params[0].name.should eq("id")
+      users.params[0].param_type.should eq("path")
+
+      posts.params.size.should eq(1)
+      posts.params[0].name.should eq("post_id")
+      posts.params[0].param_type.should eq("path")
     end
+  end
+end
+
+describe "EndpointOptimizer source-document merges" do
+  logger = NoirLogger.new(false, false, false, false)
+
+  it "keeps the code's path params when a collection that sorts first is promoted" do
+    optimizer = EndpointOptimizer.new(logger, create_test_options)
+    collection = tech_endpoint("/users/:userId", "GET", "postman", "aaa.postman_collection.json")
+    collection.params << Param.new("userId", "42", "path")
+    code = tech_endpoint("/users/:id", "GET", "js_express", "server.js", 3)
+    code.params << Param.new("id", "", "path")
+    code.params << Param.new("q", "", "query")
+
+    result = optimizer.optimize_endpoints([collection, code])
+    result.size.should eq(1)
+    result[0].url.should eq("/users/:id")
+    result[0].params.map { |param| {param.name, param.param_type} }.sort!.should eq([{"id", "path"}, {"q", "query"}])
+  end
+
+  it "keeps a noise-named header the code reads when a collection sorts first" do
+    optimizer = EndpointOptimizer.new(logger, create_test_options)
+    collection = tech_endpoint("/cors", "POST", "postman", "aaa.postman_collection.json")
+    collection.params << Param.new("Accept", "", "header")
+    code = tech_endpoint("/cors", "POST", "js_express", "server.js", 3)
+    code.params << Param.new("origin", "", "header")
+
+    result = optimizer.optimize_endpoints([collection, code])
+    result[0].params.map(&.name).should eq(["origin"])
+  end
+
+  it "gives struct copies their own params and tags" do
+    optimizer = EndpointOptimizer.new(logger, create_test_options)
+    admin = tech_endpoint("/admin/stats", "GET", "rust_warp", "main.rs", 7)
+    open = admin
+    open.url = "/public/stats"
+
+    result = optimizer.optimize_endpoints([admin, open])
+    result[0].params << Param.new("leak", "", "path")
+    result[0].add_tag(Tag.new("admin", "", "test"))
+    result[1].params.should be_empty
+    result[1].tags.should be_empty
+  end
+
+  it "folds a concrete collection request into a colon or angle-bracket template" do
+    optimizer = EndpointOptimizer.new(logger, create_test_options)
+    result = optimizer.optimize_endpoints([
+      tech_endpoint("/users/:id", "GET", "js_express", "server.js", 3),
+      tech_endpoint("/items/<int:id>", "GET", "python_flask", "app.py", 3),
+      tech_endpoint("/users/42", "GET", "postman", "c.postman_collection.json"),
+      tech_endpoint("/items/7", "GET", "postman", "c.postman_collection.json"),
+    ])
+    result.map(&.url).sort!.should eq(["/items/<int:id>", "/users/:id"])
+  end
+
+  it "prefers a rule naming the param over a type-wide default regardless of order" do
+    options = create_test_options
+    options["set_pvalue_query"] = YAML::Any.new([YAML::Any.new("1"), YAML::Any.new("limit=10")])
+    optimizer = EndpointOptimizer.new(logger, options)
+    optimizer.apply_pvalue("query", "limit", "").should eq("10")
+    optimizer.apply_pvalue("query", "page", "").should eq("1")
+  end
+
+  it "keeps a URL value whole instead of splitting it at the scheme colon" do
+    options = create_test_options
+    options["set_pvalue_query"] = YAML::Any.new([YAML::Any.new("https://evil.example/")])
+    optimizer = EndpointOptimizer.new(logger, options)
+    optimizer.apply_pvalue("query", "q", "").should eq("https://evil.example/")
+
+    options["set_pvalue_query"] = YAML::Any.new([YAML::Any.new("http://localhost:8080/cb?a=b")])
+    EndpointOptimizer.new(logger, options).apply_pvalue("query", "q", "").should eq("http://localhost:8080/cb?a=b")
+    options["set_pvalue_query"] = YAML::Any.new([YAML::Any.new("cb=http://localhost:8080/x")])
+    EndpointOptimizer.new(logger, options).apply_pvalue("query", "cb", "").should eq("http://localhost:8080/x")
+  end
+
+  it "keeps two collection templates that would fold into each other" do
+    optimizer = EndpointOptimizer.new(logger, create_test_options)
+    result = optimizer.optimize_endpoints([
+      tech_endpoint("/users/:userId", "GET", "postman", "c.postman_collection.json"),
+      tech_endpoint("/users/:id", "GET", "postman", "c.postman_collection.json"),
+    ])
+    result.size.should eq(1)
   end
 end

@@ -1,3 +1,4 @@
+require "file_utils"
 require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
@@ -10,7 +11,7 @@ def perl_auth_tag_for(path, line, options, tech = "perl_dancer2")
 end
 
 describe "PerlAuthTagger" do
-  fixture_base = "#{__DIR__}/../../../functional_test/fixtures/perl/dancer2_auth"
+  fixture_base = File.expand_path("../../../functional_test/fixtures/perl/dancer2_auth", __DIR__)
   app_path = "#{fixture_base}/lib/MyApp.pm"
   guarded_path = "#{fixture_base}/lib/Guarded.pm"
 
@@ -68,11 +69,43 @@ describe "PerlAuthTagger" do
   end
 
   it "labels a Catalyst `sub auto` global guard as Catalyst, not Dancer2" do
-    catalyst_path = "#{__DIR__}/../../../functional_test/fixtures/perl/catalyst_auth/lib/Admin.pm"
+    catalyst_path = File.expand_path("../../../functional_test/fixtures/perl/catalyst_auth/lib/Admin.pm", __DIR__)
     endpoint = perl_auth_tag_for(catalyst_path, 13, create_test_options, "perl_catalyst")
     endpoint.tags.empty?.should be_false
     endpoint.tags[0].name.should eq("auth")
     endpoint.tags[0].description.should contain("Catalyst")
     endpoint.tags[0].description.should_not contain("Dancer2")
+  end
+
+  it "applies a Mojolicious::Lite `under` guard to the routes after it, not before" do
+    dir = File.tempname("noir_perl_under")
+    Dir.mkdir_p(dir)
+    app = File.join(dir, "app.pl")
+    File.write(app, <<-PL)
+      use Mojolicious::Lite -signatures;
+
+      get '/' => sub ($c) {
+        $c->render(text => 'public');
+      };
+
+      under sub ($c) {
+        return 1 if $c->is_user_authenticated;
+        $c->redirect_to('/login');
+        return undef;
+      };
+
+      get '/secret' => sub ($c) {
+        $c->render(text => 'secret');
+      };
+      PL
+
+    begin
+      public_route = perl_auth_tag_for(app, 3, create_test_options, "perl_mojolicious")
+      secret = perl_auth_tag_for(app, 13, create_test_options, "perl_mojolicious")
+      public_route.tags.should be_empty
+      secret.tags.map(&.description).should eq(["Protected by Mojolicious is_user_authenticated"])
+    ensure
+      FileUtils.rm_rf(dir)
+    end
   end
 end

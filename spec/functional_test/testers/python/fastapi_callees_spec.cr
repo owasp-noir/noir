@@ -84,7 +84,7 @@ FunctionalTester.new("fixtures/python/fastapi_callees/", {
   "include_callee" => YAML::Any.new(true),
 }).perform_tests
 
-describe "FastAPI programmatic route callees" do
+describe "FastAPI programmatic route callees", tags: "functional" do
   it "does not emit handler references unless callee context is requested" do
     options = ConfigInitializer.new.default_options
     options["base"] = YAML::Any.new([YAML::Any.new("./spec/functional_test/fixtures/python/fastapi_callees/")])
@@ -100,7 +100,7 @@ describe "FastAPI programmatic route callees" do
   end
 end
 
-describe "FastAPI multi-line decorator callee scope" do
+describe "FastAPI multi-line decorator callee scope", tags: "functional" do
   it "does not treat decorator dependency calls as handler callees" do
     options = ConfigInitializer.new.default_options
     options["base"] = YAML::Any.new([YAML::Any.new("./spec/functional_test/fixtures/python/fastapi_callees/")])

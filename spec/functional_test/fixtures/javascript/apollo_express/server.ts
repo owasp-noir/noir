@@ -26,6 +26,6 @@ await server.start();
 
 const app = express();
 app.use(express.json());
-app.use('/api/graphql', expressMiddleware(server));
+app.use(/* gateway */ '/api/graphql', expressMiddleware(server));
 
 app.listen(4000);

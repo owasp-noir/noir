@@ -1,0 +1,9 @@
+{
+  "name": "feathers-fixture",
+  "version": "1.0.0",
+  "dependencies": {
+    "@feathersjs/feathers": "^5.0.0",
+    "@feathersjs/express": "^5.0.0",
+    "@feathersjs/errors": "^5.0.0"
+  }
+}

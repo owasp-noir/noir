@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-Use [OpenRouter](https://openrouter.ai) to access multiple AI models (OpenAI, Anthropic, Google, Meta, etc.) through a single unified API.
+Use [OpenRouter](https://openrouter.ai) to access multiple AI models (OpenAI, Anthropic, Google, Meta, etc.) through one API.
 
 ## Setup
 
@@ -15,8 +15,6 @@ Use [OpenRouter](https://openrouter.ai) to access multiple AI models (OpenAI, An
 
 ## Usage
 
-Run Noir with OpenRouter:
-
 ```bash
 noir scan ./myapp \
      --ai-provider=openrouter \
@@ -24,16 +22,10 @@ noir scan ./myapp \
      --ai-key=sk-or-...
 ```
 
-Using environment variable:
+Using an environment variable:
 
 ```bash
 export NOIR_AI_KEY=sk-or-...
 noir scan ./myapp --ai-provider=openrouter --ai-model=openai/gpt-5.5
 ```
-
-OpenRouter provides:
-*   Access to 100+ models from multiple providers
-*   Unified API for all models
-*   Automatic fallbacks and load balancing
-*   Cost-effective model selection
 

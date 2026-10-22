@@ -1,9 +1,12 @@
 require "xml"
 require "uri"
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
+require "../../../utils/xml_comments"
 
 module Analyzer::Specification
-  class WSDL < Analyzer
+  class WSDL < SpecificationEngine
+    analyzer_for "wsdl"
+
     SOAP12_NS        = "http://schemas.xmlsoap.org/wsdl/soap12/"
     MAX_IMPORT_DEPTH = 8
 
@@ -15,26 +18,16 @@ module Analyzer::Specification
     alias PartRef = NamedTuple(name: String, ref: String, is_element: Bool)
 
     def analyze
-      locator = CodeLocator.instance
-      wsdl_specs = locator.all("wsdl-spec")
-      return @result unless wsdl_specs.is_a?(Array(String))
-
-      wsdl_specs.each do |path|
-        next unless File.exists?(path)
-        begin
-          content = read_file_content(path)
-          parse_wsdl(content, path)
-        rescue e
-          @logger.debug "Failed to parse WSDL #{path}: #{e.message}"
-          @logger.debug_sub e
-        end
+      each_spec_file(Noir::LocatorKeys::WSDL_SPEC) do |path|
+        content = read_file_content(path)
+        parse_wsdl(content, path)
       end
 
       @result
     end
 
     private def parse_wsdl(content : String, source : String)
-      doc = XML.parse(content)
+      doc = Noir::XmlComments.parse(content)
       definitions = find_child(doc, "definitions")
       return unless definitions
 
@@ -82,7 +75,7 @@ module Analyzer::Specification
         next unless File.exists?(path)
 
         begin
-          sub_doc = XML.parse(read_file_content(path))
+          sub_doc = Noir::XmlComments.parse(read_file_content(path))
           sub_def = find_child(sub_doc, "definitions")
           next unless sub_def
           docs << sub_doc
@@ -300,6 +293,11 @@ module Analyzer::Specification
 
     private def base_path(location : String) : String
       return "" if location.empty?
+      if location.matches?(ABSOLUTE_SERVER_URL)
+        uri = parse_absolute_url(location)
+        return uri.try(&.path) || ""
+      end
+
       begin
         uri = URI.parse(location)
         if uri.scheme && uri.host
@@ -335,19 +333,6 @@ module Analyzer::Specification
         qname[(idx + 1)..]
       else
         qname
-      end
-    end
-
-    private def find_child(node : XML::Node, local_name : String) : XML::Node?
-      node.children.each do |c|
-        return c if c.element? && c.name == local_name
-      end
-      nil
-    end
-
-    private def each_child(node : XML::Node, local_name : String, &)
-      node.children.each do |c|
-        yield c if c.element? && c.name == local_name
       end
     end
   end

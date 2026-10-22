@@ -1,36 +1,25 @@
 require "base64"
 require "uri"
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 
 module Analyzer::Specification
-  class Caido < Analyzer
+  class Caido < SpecificationEngine
+    analyzer_for "caido"
+
     def analyze
-      locator = CodeLocator.instance
-      caido_files = locator.all("caido-json")
-      return @result unless caido_files.is_a?(Array(String))
+      each_spec_file_with_details(Noir::LocatorKeys::CAIDO_JSON) do |path, details|
+        content = read_file_content(path)
 
-      caido_files.each do |path|
-        next unless File.exists?(path)
-        details = Details.new(PathInfo.new(path))
-        content = File.read(path, encoding: "utf-8", invalid: :skip)
+        data = parse_json_lenient(content)
+        entries = data.as_a?
+        next unless entries
 
-        begin
-          data = JSON.parse(content)
-          entries = data.as_a?
-          next unless entries
+        seen = Set(String).new
 
-          seen = Set(String).new
-
-          entries.each do |entry|
-            begin
-              process_entry(entry, details, seen)
-            rescue e
-              @logger.debug "Exception processing caido entry in #{path}"
-              @logger.debug_sub e
-            end
-          end
+        entries.each do |entry|
+          process_entry(entry, details, seen)
         rescue e
-          @logger.debug "Exception processing #{path}"
+          @logger.debug "Exception processing caido entry in #{path}"
           @logger.debug_sub e
         end
       end
@@ -49,11 +38,17 @@ module Analyzer::Specification
       # Caido's `path` field already excludes the host/query string,
       # but some entries store the full request URI here. Normalize
       # both shapes through URI.parse, falling back to the raw value.
-      normalized_path = begin
-        uri = URI.parse(path)
-        uri.path.empty? ? path : uri.path
-      rescue
-        path
+      if path.matches?(ABSOLUTE_SERVER_URL)
+        uri = parse_absolute_url(path)
+        return unless uri
+        normalized_path = uri.path.empty? ? "/" : uri.path
+      else
+        normalized_path = begin
+          uri = URI.parse(path)
+          uri.path.empty? ? path : uri.path
+        rescue
+          path
+        end
       end
 
       # Defensive: Caido stores leading-slash paths, but normalize odd
@@ -155,7 +150,7 @@ module Analyzer::Specification
       when content_type.includes?("application/json")
         begin
           body_str = String.new(body_bytes, encoding: "UTF-8", invalid: :skip)
-          parsed = JSON.parse(body_str)
+          parsed = parse_json_lenient(body_str)
           if h = parsed.as_h?
             h.each { |k, _| params << Param.new(k, "", "json") }
           end

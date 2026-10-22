@@ -1,3 +1,9 @@
+require "../utils/file_extension"
+require "../utils/path_scope"
+require "../utils/utils"
+require "./logger"
+require "./locator_key"
+
 class CodeLocator
   @@instance : CodeLocator? = nil
 
@@ -9,37 +15,31 @@ class CodeLocator
   DEFAULT_CONTENT_CACHE_BUDGET = 512_i64 * 1024 * 1024
 
   @logger : NoirLogger
-  @is_debug : Bool
-  @is_verbose : Bool
-  @is_color : Bool
-  @is_log : Bool
   @s_map : Hash(String, String)
   @a_map : Hash(String, Array(String))
-  @file_usage_stats : Hash(String, Int32) # Track number of file reads
   @extension_index : Hash(String, Array(String))
   @extension_index_built : Bool
+  @basename_index : Hash(String, Array(String))
+  @basename_index_built : Bool
   @file_contents : Hash(String, String)
   @content_cache_budget : Int64
   @content_cache_used : Int64
   @content_cache_skipped : Int32
   @expanded_file_map : Array(Tuple(String, String))?
   @expanded_path_index : Hash(String, String)?
+  getter scan_base_paths : Array(String)
 
   @lock : Mutex
 
   def initialize
-    options = {"debug" => "false", "verbose" => "false", "color" => "true", "nolog" => "false"}
-    @is_debug = any_to_bool(options["debug"])
-    @is_verbose = any_to_bool(options["verbose"])
-    @is_color = any_to_bool(options["color"])
-    @is_log = any_to_bool(options["nolog"])
-    @logger = NoirLogger.new @is_debug, @is_verbose, @is_color, @is_log
+    @logger = NoirLogger.new(false, false, true, false)
 
     @s_map = Hash(String, String).new
     @a_map = Hash(String, Array(String)).new
-    @file_usage_stats = Hash(String, Int32).new
     @extension_index = Hash(String, Array(String)).new
     @extension_index_built = false
+    @basename_index = Hash(String, Array(String)).new
+    @basename_index_built = false
 
     @file_contents = Hash(String, String).new
     @content_cache_budget = resolve_content_cache_budget
@@ -47,14 +47,48 @@ class CodeLocator
     @content_cache_skipped = 0
     @expanded_file_map = nil
     @expanded_path_index = nil
+    @scan_base_paths = [] of String
     @lock = Mutex.new
   end
+
+  # The `-b` roots of the current scan, published once by `NoirRunner`.
+  #
+  # Convention filters ("is this file under `tests/`?", "is this bundled
+  # output?") must run on the path *relative to the scan base*, never on
+  # the absolute path — otherwise a directory above the base decides the
+  # result and the same source tree reports different endpoints depending
+  # on where it is checked out. Analyzers get that through
+  # `Analyzer#base_relative_path`; the shared parser layer
+  # (`Noir::JSRouteExtractor` and friends) has no analyzer instance, so it
+  # reads the roots from here.
+  def scan_base_paths=(paths : Array(String))
+    @scan_base_paths = paths.reject(&.empty?)
+  end
+
+  # `path` relative to the scan base that owns it, `/`-separated and
+  # rooted with a leading `/`. With no registered bases (library callers,
+  # unit specs that drive a parser directly) the path is returned
+  # unchanged, which is exactly the pre-registry behaviour.
+  def base_relative(path : String) : String
+    return path if @scan_base_paths.empty?
+    Noir::PathScope.base_relative(path, @scan_base_paths)
+  end
+
+  # Megabyte figures at or above this overflow `Int64` once scaled to bytes.
+  # Crystal checks integer arithmetic, so the multiply below *raised* rather
+  # than wrapping: `NOIR_CONTENT_CACHE_MAX_MB=99999999999999` aborted the whole
+  # scan with an unhandled `OverflowError` stack trace before the first file
+  # was read. Saturate instead — a budget that large already means "cache
+  # everything", which is exactly what `Int64::MAX` gives.
+  MAX_CONTENT_CACHE_MB = Int64::MAX // (1024_i64 * 1024)
 
   private def resolve_content_cache_budget : Int64
     return 0_i64 if any_to_bool(ENV["NOIR_CONTENT_CACHE_DISABLE"]?)
     if raw = ENV["NOIR_CONTENT_CACHE_MAX_MB"]?
       parsed = raw.to_i64?
-      return parsed * 1024 * 1024 if parsed && parsed >= 0
+      if parsed && parsed >= 0
+        return parsed >= MAX_CONTENT_CACHE_MB ? Int64::MAX : parsed * 1024 * 1024
+      end
     end
     DEFAULT_CONTENT_CACHE_BUDGET
   end
@@ -63,26 +97,83 @@ class CodeLocator
     @@instance ||= new
   end
 
-  def set(key : String, value : String)
-    @s_map[key] = value
+  def set(key : Noir::LocatorKey(String), value : String)
+    @s_map[key.name] = value
   end
 
-  def get(key : String) : (String | Array(String))
-    @s_map[key]
-  rescue
-    ""
+  # `String?` rather than the old `(String | Array(String))`: the union only
+  # existed because a bare string key carried no type, so `get` could not
+  # promise which map it was reading. Its one caller worked around it by
+  # interpolating the result.
+  def get(key : Noir::LocatorKey(String)) : String?
+    @s_map[key.name]?
   end
 
-  def push(key : String, value : String)
-    @a_map[key] ||= Array(String).new
-    @a_map[key] << value
+  def push(key : Noir::LocatorKey(Array(String)), value : String)
+    @a_map[key.name] ||= Array(String).new
+    @a_map[key.name] << value
+  end
 
-    # Track file usage if this is the file_map
-    if key == "file_map"
-      increment_file_usage(value)
-      @expanded_file_map = nil
-      @expanded_path_index = nil
-    end
+  # The scanned-file registry.
+  #
+  # `file_map` was never a blackboard key like the other 64. It is a file
+  # registry with four derived views (`@extension_index`, `@basename_index`,
+  # `@expanded_file_map`, `@expanded_path_index`) plus a content cache bolted
+  # to it, and it was the only reason `push` and `clear` each carried an
+  # `if key == "file_map"` branch. Giving it methods makes the coupling
+  # structural instead of a string comparison that behaves differently in two
+  # places.
+  private FILE_MAP    = "file_map"
+  private MEDIA_FILES = "media_files"
+
+  # Register a path with no content — the detector's content-free fast path,
+  # for files nothing will read during detection or passive scan.
+  #
+  # Invalidates the four derived views but deliberately NOT `@file_contents`.
+  # A newly registered path has no cached content to invalidate, and dropping
+  # the cache here would throw away every file read so far. `content_for`
+  # returning nil for a registered path is the contract — `register_file`
+  # skips over-budget files the same way — so callers keep a `File.read`
+  # fallback regardless.
+  def register_path(path : String)
+    @a_map[FILE_MAP] ||= Array(String).new
+    @a_map[FILE_MAP] << path
+    invalidate_file_views
+  end
+
+  # Every registered path, in registration order.
+  def all_files : Array(String)
+    @a_map[FILE_MAP]? || Array(String).new
+  end
+
+  # A media file the walk reached but kept out of `file_map` (the media
+  # filter). Nothing reads it for routes; a static mount still serves it.
+  def register_media_path(path : String)
+    (@a_map[MEDIA_FILES] ||= Array(String).new) << path
+  end
+
+  def media_files : Array(String)
+    @a_map[MEDIA_FILES]? || Array(String).new
+  end
+
+  # Forget every registered file, its cached content, and every derived view.
+  def reset_files
+    @a_map.delete(FILE_MAP)
+    @a_map.delete(MEDIA_FILES)
+    @file_contents.clear
+    @content_cache_used = 0_i64
+    @content_cache_skipped = 0
+    invalidate_file_views
+  end
+
+  # The memoised views are rebuilt on next read; the indexes sit behind a
+  # `_built` flag, so a lookup taken before a later registration would
+  # otherwise keep serving the older file list.
+  private def invalidate_file_views
+    @expanded_file_map = nil
+    @expanded_path_index = nil
+    @extension_index_built = false
+    @basename_index_built = false
   end
 
   # One-shot used by the detector's file reader: push the path into
@@ -92,7 +183,7 @@ class CodeLocator
   # and `content_for(path)` returns `nil` for them — callers must keep
   # a `File.read` fallback.
   def register_file(path : String, content : String)
-    push("file_map", path)
+    register_path(path)
 
     return if @content_cache_budget <= 0
     size = content.bytesize.to_i64
@@ -115,8 +206,8 @@ class CodeLocator
     {bytes: @content_cache_used, files: @file_contents.size, skipped: @content_cache_skipped, budget: @content_cache_budget}
   end
 
-  def all(key : String) : Array(String)
-    result = @a_map[key]?
+  def all(key : Noir::LocatorKey(Array(String))) : Array(String)
+    result = @a_map[key.name]?
     return result if result
     Array(String).new
   end
@@ -135,8 +226,8 @@ class CodeLocator
       cached = @expanded_file_map
       return cached if cached
 
-      files = @a_map["file_map"]?
-      built = files ? files.map { |file| {file, File.expand_path(file)} } : [] of Tuple(String, String)
+      files = @a_map[FILE_MAP]?
+      built = files ? files.map { |file| {file, Noir::PathScope.expand(file)} } : [] of Tuple(String, String)
       @expanded_file_map = built
       built
     end
@@ -149,7 +240,7 @@ class CodeLocator
   # relative path issues a `getcwd`). Unregistered paths fall back to a live
   # expansion. Shares the lazy lifecycle / invalidation of `expanded_file_map`.
   def expanded_path_for(path : String) : String
-    expanded_path_index[path]? || File.expand_path(path)
+    expanded_path_index[path]? || Noir::PathScope.expand(path)
   end
 
   private def expanded_path_index : Hash(String, String)
@@ -170,49 +261,86 @@ class CodeLocator
     end
   end
 
+  # Group every file_map entry under the key `block` derives from it.
+  #
+  # Shared by the extension and basename indexes, which differ only in
+  # that key. Returns whether the index is now built: with no file_map
+  # yet there is nothing to index and the caller leaves its `_built`
+  # flag false so a later lookup retries. Callers must hold `@lock`.
+  private def rebuild_path_index(index : Hash(String, Array(String)), & : String -> String) : Bool
+    index.clear
+    files = @a_map[FILE_MAP]?
+    return false unless files
+    files.each do |file|
+      (index[yield file] ||= Array(String).new) << file
+    end
+    true
+  end
+
   # Build extension index from file_map for fast lookups
   def build_extension_index
     return if @extension_index_built
     @lock.synchronize do
       return if @extension_index_built
-      @extension_index.clear
-      files = @a_map["file_map"]?
-      return unless files
-      files.each do |file|
-        ext = File.extname(file)
-        @extension_index[ext] ||= Array(String).new
-        @extension_index[ext] << file
-      end
-      @extension_index_built = true
+      # `LOGIN.ASP` is indexed as `.asp`; see `Noir::FileExtension`.
+      @extension_index_built = rebuild_path_index(@extension_index) { |file| Noir::FileExtension.index_key(File.extname(file)) }
     end
   end
 
   # Get files by extension using the index (O(1) lookup)
   def files_by_extension(extension : String) : Array(String)
     build_extension_index
-    @extension_index[extension]? || Array(String).new
+    @extension_index[Noir::FileExtension.index_key(extension)]? || Array(String).new
   end
 
-  def clear(key : String)
-    @s_map.delete(key)
-    @a_map.delete(key)
-    if key == "file_map"
-      @extension_index.clear
-      @extension_index_built = false
-      @file_contents.clear
-      @content_cache_used = 0_i64
-      @content_cache_skipped = 0
-      @expanded_file_map = nil
-      @expanded_path_index = nil
+  # Build a `basename => paths` index from file_map.
+  #
+  # The companion to `build_extension_index`, for the "find the file(s)
+  # whose path ends with `a/b/c.py`" lookups that analyzers otherwise
+  # answer with `Dir.glob("root/**/a/b/c.py")`. That glob walks the whole
+  # tree from the scan root — descending into `node_modules`, `.git` and
+  # every other subtree the detector deliberately pruned — and costs one
+  # `opendir`/`getdirentries` pass per call. Django's ROOT_URLCONF
+  # resolution ran it once per `settings.py`, which on a 44k-file
+  # monorepo was ~73% of the entire analysis phase.
+  #
+  # Keyed on basename because that is the selective part of those
+  # patterns: `urls.py` narrows 44k files to a handful, and the caller
+  # confirms the rest of the path with a cheap `ends_with?`.
+  def build_basename_index
+    return if @basename_index_built
+    @lock.synchronize do
+      return if @basename_index_built
+      @basename_index_built = rebuild_path_index(@basename_index) { |file| File.basename(file) }
     end
+  end
+
+  # Files whose basename is exactly `basename` (O(1) lookup).
+  def files_by_basename(basename : String) : Array(String)
+    build_basename_index
+    @basename_index[basename]? || Array(String).new
+  end
+
+  def clear(key : Noir::LocatorKey)
+    @s_map.delete(key.name)
+    @a_map.delete(key.name)
+  end
+
+  # Drops every runtime-minted key under `ns`. Runs at a phase boundary with
+  # no fibers in flight, so a plain reject is enough — no minted-key
+  # bookkeeping to maintain.
+  def clear_namespace(ns : Noir::LocatorKeyNamespace)
+    @a_map.reject! { |name, _| ns.matches?(name) }
+    @s_map.reject! { |name, _| ns.matches?(name) }
   end
 
   def clear_all
     @s_map.clear
     @a_map.clear
-    @file_usage_stats.clear
     @extension_index.clear
     @extension_index_built = false
+    @basename_index.clear
+    @basename_index_built = false
     @file_contents.clear
     @content_cache_used = 0_i64
     @content_cache_skipped = 0
@@ -228,32 +356,6 @@ class CodeLocator
     @logger.sub("Array Map:")
     @a_map.each do |key, value|
       @logger.sub("  #{key} => #{value.size} items")
-    end
-  end
-
-  # Get file usage statistics
-  def file_usage_stats : Hash(String, Int32)
-    @file_usage_stats
-  end
-
-  # Increment file usage count
-  private def increment_file_usage(file_path : String)
-    @file_usage_stats[file_path] ||= 0
-    @file_usage_stats[file_path] += 1
-  end
-
-  # Show file usage statistics
-  def show_file_stats
-    @logger.sub("File Usage Statistics:")
-    @logger.sub("  Total unique files: #{@file_usage_stats.size}")
-    total_usages = @file_usage_stats.values.sum
-    @logger.sub("  Total file reads: #{total_usages}")
-
-    if @is_verbose && !@file_usage_stats.empty?
-      @logger.sub("  Top 10 most accessed files:")
-      @file_usage_stats.to_a.sort_by { |_, count| -count }[0..9].each do |file, count|
-        @logger.sub("    #{count} times: #{file}")
-      end
     end
   end
 end

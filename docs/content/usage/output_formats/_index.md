@@ -1,12 +1,12 @@
 +++
 title = "Output Formats"
-description = "Noir supports a wide range of output formats to help you make the most of your scan results. This section provides an overview of the available formats, including JSON, YAML, TOML, OpenAPI Specification (OAS), and more."
+description = "The output formats Noir can emit: JSON, YAML, TOML, OpenAPI (OAS), SARIF, HTML, and more."
 weight = 2
 sort_by = "weight"
 
 +++
 
-Noir is built to be a versatile tool that can fit into any workflow. A key part of this flexibility is the ability to output scan results in a variety of formats. Whether you need a machine-readable format for automation or a human-readable one for manual review, Noir has you covered.
+Pick an output format with `-f`. Some formats are for scripts and other tools, others are for people to read.
 
 ## Choosing the Right Format
 
@@ -24,15 +24,35 @@ Noir is built to be a versatile tool that can fit into any workflow. A key part 
 | API structure visualization | [Mermaid](mermaid/) | `-f mermaid` |
 | Just list URLs or params | [More](more/) (Filters) | `-f only-url` |
 
+## Request body coverage by format
+
+Not every format turns every `param_type` into a wire body. Use this as a quick map (✅ = emitted as a request body / multipart part, ➖ = kept on the endpoint record only, or not applicable):
+
+| `param_type` | `json` / `yaml` / plain | `oas2` / `oas3` | `postman` | `curl` / `httpie` / `powershell` / HTML copy-as-curl |
+|---|---|---|---|---|
+| `json` | ✅ (typed field) | ✅ `application/json` | ✅ raw JSON | ✅ JSON body |
+| `form` | ✅ (typed field) | ✅ urlencoded or multipart | ✅ `urlencoded` | ✅ urlencoded body |
+| `file` | ✅ (typed field) | ✅ multipart `format: binary` | ✅ `formdata` file | ✅ multipart upload |
+| `xml` | ✅ (typed field) | ✅ `application/xml` | ✅ raw XML (`<name/>` if empty) | ➖ not baked into the command; use OAS / Postman / JSON |
+
+Details: [cURL](curl/#xml-request-bodies), [OpenAPI](openapi/), [Postman](more/#postman-collection).
+
 ## Available Formats
 
-*   **[HTTP Client Commands](curl/)**: Generate executable cURL, HTTPie, and PowerShell commands for testing endpoints — plus [ADB](curl/#adb-android) (Android) and [simctl](curl/#simctl-ios) (iOS) commands for launching mobile deep links, intents, and content providers.
-*   **[JSON and JSONL](json/)**: A widely used format that's perfect for integrating with other tools and scripts.
-*   **[YAML](yaml/)**: A human-readable format that's great for configuration files and manual inspection.
-*   **[OpenAPI Specification (OAS)](openapi/)**: Generate an OpenAPI document from your code to easily create API documentation or set up security testing.
-*   **[SARIF](sarif/)**: Industry-standard format for security tool output with native CI/CD platform integration.
-*   **[HTML Report](html/)**: Generate a comprehensive, visual HTML report of your scan results.
-*   **[Mermaid Chart](mermaid/)**: Generate diagrams for visualizing your API structure.
-*   **[Additional Formats](more/)**: Discover additional formats including TOML, JSONL, Postman collections, Markdown tables, and specialized filters.
+Every value `-f` accepts (`noir list formats` prints the same list):
 
-By choosing the right output format, you can streamline your development process and make it easier to act on the insights provided by Noir.
+| Format | Output | Page |
+|---|---|---|
+| `plain` | Plain text (default) | [More](more/) |
+| `json`, `jsonl` | JSON, JSON Lines | [JSON and JSONL](json/) |
+| `yaml` | YAML | [YAML](yaml/) |
+| `toml` | TOML | [More](more/) |
+| `markdown-table` | Markdown table | [More](more/) |
+| `sarif` | SARIF v2.1.0 | [SARIF](sarif/) |
+| `html` | Self-contained HTML report | [HTML](html/) |
+| `curl`, `httpie`, `powershell` | HTTP client commands | [HTTP Client Commands](curl/) |
+| `adb`, `simctl` | Android / iOS launch commands for mobile entry points | [HTTP Client Commands](curl/#adb-android) |
+| `oas2`, `oas3` | OpenAPI 2.0 (Swagger) / 3.x | [OpenAPI](openapi/) |
+| `postman` | Postman collection | [More](more/) |
+| `only-url`, `only-param`, `only-header`, `only-cookie`, `only-tag` | One value per line | [More](more/) |
+| `mermaid` | Mermaid mindmap | [Mermaid](mermaid/) |

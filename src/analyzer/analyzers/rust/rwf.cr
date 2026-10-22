@@ -22,7 +22,21 @@ module Analyzer::Rust
   # nodes, so we re-parse each route-bearing macro body as an expression
   # fragment and scan it too, mapping line numbers back onto the file.
   class Rwf < RustEngine
+    analyzer_for "rust_rwf"
+
+    # Only files inside a crate that depends on `rwf`. See
+    # `RustEngine#crate_dependencies` — without this every Rust analyzer
+    # sees every `.rs` file in the scan.
+    protected def crate_dependencies : Array(String)
+      ["rwf"]
+    end
+
     HTTP_METHODS = %w[GET POST PUT DELETE PATCH HEAD OPTIONS]
+
+    # Precompiled union for collect_route_macro_fragments' per-macro
+    # evidence gate, so it costs a single PCRE2 match instead of four naive
+    # substring scans.
+    ROUTE_MACRO_EVIDENCE_RE = Regex.union("route", "crud", "rest", "wildcard")
     # `crud!` / `rest!` register the standard REST surface. `:id` is the
     # resource identifier param RWF uses for the member routes.
     REST_ROUTES = [
@@ -47,7 +61,7 @@ module Analyzer::Rust
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       source = read_file_content(path)
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
 
       @current_source = source
       Noir::TreeSitter.parse_rust(source) do |root|
@@ -289,7 +303,7 @@ module Analyzer::Rust
         end
         next unless tt = token_tree
         text = Noir::TreeSitter.node_text(tt, source)
-        next unless text.includes?("route") || text.includes?("crud") || text.includes?("rest") || text.includes?("wildcard")
+        next unless text.matches?(ROUTE_MACRO_EVIDENCE_RE)
         # A `vec!` body sitting inside a mounted engine's `Engine::new(...)`
         # inherits that engine's mount prefix.
         tt_byte = LibTreeSitter.ts_node_start_byte(tt).to_i
@@ -424,30 +438,6 @@ module Analyzer::Rust
       field = Noir::TreeSitter.field(target, "field")
       return unless field
       Noir::TreeSitter.node_text(field, source)
-    end
-
-    private def first_string_literal_text(node : LibTreeSitter::TSNode?, source : String) : String?
-      return unless node
-      result : String? = nil
-      walk(node) do |child|
-        next if result
-        if Noir::TreeSitter.node_type(child) == "string_literal"
-          Noir::TreeSitter.each_named_child(child) do |grand|
-            if Noir::TreeSitter.node_type(grand) == "string_content"
-              result = Noir::TreeSitter.node_text(grand, source)
-              break
-            end
-          end
-        end
-      end
-      result
-    end
-
-    private def walk(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
-      block.call(node)
-      Noir::TreeSitter.each_named_child(node) do |child|
-        walk(child, &block)
-      end
     end
   end
 end

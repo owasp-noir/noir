@@ -2,9 +2,12 @@ require "../../../models/analyzer"
 require "../../engines/java_engine"
 require "../../../miniparsers/java_route_extractor_ts"
 require "../../../miniparsers/java_callee_extractor"
+require "../../../utils/top_level_split"
 
 module Analyzer::Java
   class Wicket < Analyzer
+    analyzer_for "java_wicket"
+
     JAVA_EXTENSION = "java"
     WICKET_MARKERS = [
       "org.apache.wicket",
@@ -44,12 +47,14 @@ module Analyzer::Java
     alias PageMountIndex = Hash(ScopedClassKey, Array(String))
     alias RestRouteIndex = Hash(ScopedClassKey, Array(RestRoute))
     alias RestMountIndex = Hash(ScopedClassKey, RestMount)
+    alias ClassFileIndex = Hash(ScopedClassKey, FileInfo)
 
     @include_callee : Bool = false
 
     def analyze
       @include_callee = callees_needed?
       files = java_files_with_content
+      class_index = build_class_file_index(files)
       page_mounts = PageMountIndex.new { |hash, key| hash[key] = [] of String }
       rest_routes = RestRouteIndex.new { |hash, key| hash[key] = [] of RestRoute }
       rest_mounts = RestMountIndex.new
@@ -63,7 +68,7 @@ module Analyzer::Java
 
       files.each do |file|
         collect_mount_path_annotations(file, page_mounts, seen)
-        collect_mount_calls(file, page_mounts, rest_routes, seen)
+        collect_mount_calls(file, page_mounts, rest_routes, class_index, seen)
         collect_mapper_mounts(file, page_mounts, seen)
         collect_local_page_mount_helpers(file, page_mounts, seen)
         collect_rest_lambda_mounts(file, seen)
@@ -81,12 +86,18 @@ module Analyzer::Java
       files = [] of FileInfo
 
       all_files.each do |path|
-        next if JavaEngine.test_path?(path)
-        next unless File.exists?(path)
         next unless path.ends_with?(".#{JAVA_EXTENSION}")
+        next if JavaEngine.test_path?(base_relative_path(path))
+        next unless File.exists?(path)
 
         content = read_file_content(path)
         next unless WICKET_MARKERS.any? { |marker| content.includes?(marker) }
+
+        # Blank // and /* */ comments (preserving newlines / offsets) so
+        # regex mount scanners never treat commented-out mountPage /
+        # @MountPath / etc. as live. String literals stay intact so
+        # values like "http://" are not misread as comment openers.
+        content = JavaEngine.strip_comments(content)
 
         files << {
           path:      path,
@@ -97,6 +108,17 @@ module Analyzer::Java
       end
 
       files
+    end
+
+    private def build_class_file_index(files : Array(FileInfo)) : ClassFileIndex
+      index = ClassFileIndex.new
+      files.each do |file|
+        file[:content].scan(/\bclass\s+([A-Za-z_][A-Za-z0-9_]*)\b/) do |match|
+          key = scoped_class_key(file, match[1])
+          index[key] ||= file
+        end
+      end
+      index
     end
 
     private def scoped_class_key(file : FileInfo, class_name : String) : ScopedClassKey
@@ -119,7 +141,7 @@ module Analyzer::Java
 
         scan_from = skip_whitespace(content, scan_from)
         if scan_from < content.size && content[scan_from] == '('
-          if close_idx = find_matching_paren(content, scan_from)
+          if close_idx = JavaEngine.find_matching_delimiter(content, scan_from, '(', ')')
             args = content[(scan_from + 1)...close_idx]
             scan_from = close_idx + 1
           end
@@ -132,7 +154,7 @@ module Analyzer::Java
           normalized = normalize_mount_path(mount_path)
           key = scoped_class_key(file, class_name)
           page_mounts[key] << normalized unless page_mounts[key].includes?(normalized)
-          add_endpoint(normalized, file[:path], line_for_offset(content, marker), seen)
+          add_endpoint(normalized, file[:path], line_number_for_index(content, marker), seen)
         end
       end
     end
@@ -140,6 +162,7 @@ module Analyzer::Java
     private def collect_mount_calls(file : FileInfo,
                                     page_mounts : PageMountIndex,
                                     rest_routes : RestRouteIndex,
+                                    class_index : ClassFileIndex,
                                     seen : Set(String))
       {"mountPage", "mountPackage", "mountResource"}.each do |method_name|
         scan_method_calls(file[:content], method_name) do |args, offset|
@@ -152,7 +175,7 @@ module Analyzer::Java
           normalized = normalize_mount_path(mount_path)
 
           if method_name == "mountResource"
-            if resource_key = rest_resource_class_key(args, file[:base], rest_routes)
+            if resource_key = rest_resource_class_key(args, file[:base], rest_routes, class_index)
               if routes = rest_routes[resource_key]?
                 routes.each do |route|
                   add_endpoint(join_mount_paths(normalized, route[:path]), route[:file_path], route[:line], seen, route[:method], route[:callees], route[:params])
@@ -163,7 +186,7 @@ module Analyzer::Java
           end
 
           endpoint_path = method_name == "mountPackage" ? package_mount_path(normalized) : normalized
-          add_endpoint(endpoint_path, file[:path], line_for_offset(file[:content], offset), seen)
+          add_endpoint(endpoint_path, file[:path], line_number_for_index(file[:content], offset), seen)
 
           if method_name == "mountPage"
             if page_class = class_literal_name(arguments[1]?)
@@ -183,7 +206,7 @@ module Analyzer::Java
         next unless MAPPER_CLASSES.includes?(mapper_class)
 
         open_idx = (match.end(0) || 1) - 1
-        close_idx = find_matching_paren(file[:content], open_idx)
+        close_idx = JavaEngine.find_matching_delimiter(file[:content], open_idx, '(', ')')
         next unless close_idx
 
         args = file[:content][(open_idx + 1)...close_idx]
@@ -195,7 +218,7 @@ module Analyzer::Java
 
         normalized = normalize_mount_path(mount_path)
         endpoint_path = PACKAGE_MAPPER_CLASSES.includes?(mapper_class) ? package_mount_path(normalized) : normalized
-        add_endpoint(endpoint_path, file[:path], line_for_offset(file[:content], match.begin(0) || open_idx), seen)
+        add_endpoint(endpoint_path, file[:path], line_number_for_index(file[:content], match.begin(0) || open_idx), seen)
 
         next if RESOURCE_MAPPER_CLASSES.includes?(mapper_class) || PACKAGE_MAPPER_CLASSES.includes?(mapper_class)
         if page_class = class_literal_name(arguments[1]?)
@@ -220,7 +243,7 @@ module Analyzer::Java
           next unless mount_path
 
           normalized = normalize_mount_path(mount_path)
-          add_endpoint(normalized, file[:path], line_for_offset(file[:content], offset), seen)
+          add_endpoint(normalized, file[:path], line_number_for_index(file[:content], offset), seen)
 
           if page_class = class_literal_name(arguments[indexes[1]]?)
             key = scoped_class_key(file, page_class)
@@ -251,7 +274,7 @@ module Analyzer::Java
         scan_from = skip_whitespace(file[:content], after)
 
         if scan_from < file[:content].size && file[:content][scan_from] == '('
-          if close_idx = find_matching_paren(file[:content], scan_from)
+          if close_idx = JavaEngine.find_matching_delimiter(file[:content], scan_from, '(', ')')
             args = file[:content][(scan_from + 1)...close_idx]
             scan_from = close_idx + 1
           end
@@ -262,7 +285,7 @@ module Analyzer::Java
         pending << {
           path:        normalize_mount_path(path),
           method:      method,
-          line:        line_for_offset(file[:content], marker),
+          line:        line_number_for_index(file[:content], marker),
           method_name: method_name,
           params:      rest_method_params(param_list),
         }
@@ -295,11 +318,12 @@ module Analyzer::Java
       return result unless @include_callee
 
       Noir::TreeSitter.parse_java(file[:content]) do |root|
+        file_callees = Noir::JavaCalleeExtractor::FileCallees.new(root, file[:content], file[:path])
         method_names.uniq.each do |method_name|
           next if method_name.empty? || result.has_key?(method_name)
 
           callees = [] of Callee
-          Noir::JavaCalleeExtractor.callees_in_method(root, file[:content], file[:path], class_name, method_name).each do |entry|
+          file_callees.callees_in_method(class_name, method_name).each do |entry|
             name, callee_path, callee_line = entry
             callees << Callee.new(name, path: callee_path, line: callee_line)
           end
@@ -325,7 +349,7 @@ module Analyzer::Java
 
       name = match[1]
       open_abs = offset + (match.end(0) || 1) - 1
-      close_abs = find_matching_paren(content, open_abs)
+      close_abs = JavaEngine.find_matching_delimiter(content, open_abs, '(', ')')
       return {name, ""} unless close_abs
 
       {name, content[(open_abs + 1)...close_abs]}
@@ -391,7 +415,7 @@ module Analyzer::Java
         scan_from = skip_whitespace(file[:content], after)
 
         if scan_from < file[:content].size && file[:content][scan_from] == '('
-          if close_idx = find_matching_paren(file[:content], scan_from)
+          if close_idx = JavaEngine.find_matching_delimiter(file[:content], scan_from, '(', ')')
             args = file[:content][(scan_from + 1)...close_idx]
             scan_from = close_idx + 1
           end
@@ -404,7 +428,7 @@ module Analyzer::Java
           rest_mounts[scoped_class_key(file, class_name)] = {
             path:      normalize_mount_path(mount_path),
             file_path: file[:path],
-            line:      line_for_offset(file[:content], marker),
+            line:      line_number_for_index(file[:content], marker),
           }
         end
       end
@@ -434,7 +458,7 @@ module Analyzer::Java
         path = resolve_string_expression(arguments[1], file[:constants])
         next unless method && path
 
-        add_endpoint(normalize_mount_path(path), file[:path], line_for_offset(file[:content], offset), seen, method)
+        add_endpoint(normalize_mount_path(path), file[:path], line_number_for_index(file[:content], offset), seen, method)
       end
 
       lambda_mounters = lambda_rest_mounter_variables(file[:content])
@@ -447,7 +471,7 @@ module Analyzer::Java
             next if arguments.empty?
 
             if path = resolve_string_expression(arguments[0], file[:constants])
-              add_endpoint(normalize_mount_path(path), file[:path], line_for_offset(file[:content], offset), seen, method_name.upcase)
+              add_endpoint(normalize_mount_path(path), file[:path], line_number_for_index(file[:content], offset), seen, method_name.upcase)
             end
           end
         end
@@ -476,7 +500,7 @@ module Analyzer::Java
                                             seen : Set(String),
                                             open_idx : Int32,
                                             offset : Int32)
-      close_idx = find_matching_paren(file[:content], open_idx)
+      close_idx = JavaEngine.find_matching_delimiter(file[:content], open_idx, '(', ')')
       return unless close_idx
 
       args = file[:content][(open_idx + 1)...close_idx]
@@ -490,7 +514,7 @@ module Analyzer::Java
                                           offset : Int32)
       page_classes.uniq.each do |page_class|
         page_mounts[scoped_class_key(file, page_class)]?.try &.each do |mount_path|
-          add_endpoint(mount_path, file[:path], line_for_offset(file[:content], offset), seen)
+          add_endpoint(mount_path, file[:path], line_number_for_index(file[:content], offset), seen)
         end
       end
     end
@@ -635,7 +659,7 @@ module Analyzer::Java
         open_idx = skip_whitespace(content, marker + method_name.size)
         next unless open_idx < content.size && content[open_idx] == '('
 
-        close_idx = find_matching_paren(content, open_idx)
+        close_idx = JavaEngine.find_matching_delimiter(content, open_idx, '(', ')')
         next unless close_idx
 
         block.call(content[(open_idx + 1)...close_idx], marker)
@@ -661,7 +685,7 @@ module Analyzer::Java
         open_idx = skip_whitespace(content, marker + pattern.size)
         next unless open_idx < content.size && content[open_idx] == '('
 
-        close_idx = find_matching_paren(content, open_idx)
+        close_idx = JavaEngine.find_matching_delimiter(content, open_idx, '(', ')')
         next unless close_idx
 
         block.call(content[(open_idx + 1)...close_idx], marker)
@@ -680,43 +704,25 @@ module Analyzer::Java
       after < content.size && content[after] == '('
     end
 
+    # `Rules::JAVA` plus `Nest::Angle` and minus the single-quote quote style.
+    # Both divergences are load-bearing here: `mountPage("/x", Foo.class)` and
+    # `MyPage<T>` both reach this splitter, so angles must nest, while a Java
+    # `'c'` char literal never wraps a mount path and treating `'` as a quote
+    # would let an apostrophe inside a string swallow the rest of the list.
+    # File-local because wicket is the only splitter with this combination.
+    SPLIT_ARGUMENTS_RULES = Noir::TopLevelSplit::Rules.new(
+      nest: Noir::TopLevelSplit::Nest::Paren | Noir::TopLevelSplit::Nest::Bracket |
+            Noir::TopLevelSplit::Nest::Brace | Noir::TopLevelSplit::Nest::Angle,
+      quotes: "\"",
+      escape: Noir::TopLevelSplit::Escape::InQuotes,
+      strip: true,
+      empties: Noir::TopLevelSplit::Empties::DropTrailing,
+      per_kind: false,
+      clamp: true,
+    )
+
     private def split_arguments(args : String) : Array(String)
-      parts = [] of String
-      start = 0
-      depth = 0
-      in_string = false
-      escape = false
-
-      args.each_char_with_index do |char, index|
-        if in_string
-          if escape
-            escape = false
-          elsif char == '\\'
-            escape = true
-          elsif char == '"'
-            in_string = false
-          end
-          next
-        end
-
-        case char
-        when '"'
-          in_string = true
-        when '(', '[', '{', '<'
-          depth += 1
-        when ')', ']', '}', '>'
-          depth -= 1 if depth > 0
-        when ','
-          if depth.zero?
-            parts << args[start...index].strip
-            start = index + 1
-          end
-        end
-      end
-
-      tail = args[start..]?.try(&.strip)
-      parts << tail if tail && !tail.empty?
-      parts
+      Noir::TopLevelSplit.split(args, ',', SPLIT_ARGUMENTS_RULES)
     end
 
     private def class_literal_name(argument : String?) : String?
@@ -770,7 +776,39 @@ module Analyzer::Java
       ""
     end
 
-    private def rest_resource_class_key(source : String, base : String, rest_routes : RestRouteIndex) : ScopedClassKey?
+    # Resolve the rest resource class referenced by a mountResource(...)
+    # argument list. Direct `new RestClass(...)` / `RestClass.class` hits
+    # are preferred; when the mount wires a named ResourceReference
+    # subclass instead, one-hop-resolve through that reference class's
+    # body — same base only, so multi_base isolation is preserved.
+    private def rest_resource_class_key(source : String,
+                                        base : String,
+                                        rest_routes : RestRouteIndex,
+                                        class_index : ClassFileIndex? = nil) : ScopedClassKey?
+      if key = rest_resource_class_key_direct(source, base, rest_routes)
+        return key
+      end
+
+      return unless class_index
+
+      source.scan(/\bnew\s+([A-Za-z_][A-Za-z0-9_.]*)\s*(?:<[^;()]*>)?\s*\(/) do |match|
+        ref_class = match[1].split('.').last
+        ref_key = scoped_class_key(base, ref_class)
+        next unless ref_file = class_index[ref_key]?
+
+        # No further hops: only re-scan the reference class body for a
+        # direct rest resource class (avoids cross-base / multi-hop drift).
+        if key = rest_resource_class_key_direct(ref_file[:content], base, rest_routes)
+          return key
+        end
+      end
+
+      nil
+    end
+
+    private def rest_resource_class_key_direct(source : String,
+                                               base : String,
+                                               rest_routes : RestRouteIndex) : ScopedClassKey?
       source.scan(/\bnew\s+([A-Za-z_][A-Za-z0-9_.]*)\s*(?:<[^;()]*>)?\s*\(/) do |match|
         class_name = match[1].split('.').last
         key = scoped_class_key(base, class_name)
@@ -806,7 +844,7 @@ module Analyzer::Java
       content.scan(/\b(?:public|protected|private)\s+(?:static\s+)?[A-Za-z0-9_<>\[\]\s?,.&]+\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)\s*\{/) do |match|
         method_name = match[1]
         open_idx = (match.end(0) || 1) - 1
-        close_idx = find_matching_brace(content, open_idx)
+        close_idx = JavaEngine.find_matching_delimiter(content, open_idx, '{', '}')
         next unless close_idx
 
         param_names = method_parameter_names(match[2])
@@ -838,7 +876,7 @@ module Analyzer::Java
     private def mounted_mapper_param_indexes(body : String, param_names : Array(String)) : Tuple(Int32, Int32)?
       body.scan(/\bnew\s+(?:[A-Za-z_][A-Za-z0-9_]*\.)*MountedMapper\s*\(/) do |match|
         open_idx = (match.end(0) || 1) - 1
-        close_idx = find_matching_paren(body, open_idx)
+        close_idx = JavaEngine.find_matching_delimiter(body, open_idx, '(', ')')
         next unless close_idx
 
         arguments = split_arguments(body[(open_idx + 1)...close_idx])
@@ -854,7 +892,7 @@ module Analyzer::Java
     private def mount_page_param_indexes(body : String, param_names : Array(String)) : Tuple(Int32, Int32)?
       body.scan(/\bmountPage\s*\(/) do |match|
         open_idx = (match.end(0) || 1) - 1
-        close_idx = find_matching_paren(body, open_idx)
+        close_idx = JavaEngine.find_matching_delimiter(body, open_idx, '(', ')')
         next unless close_idx
 
         arguments = split_arguments(body[(open_idx + 1)...close_idx])
@@ -957,78 +995,6 @@ module Analyzer::Java
         index += 1
       end
       index
-    end
-
-    private def find_matching_paren(code : String, open_idx : Int32) : Int32?
-      depth = 1
-      index = open_idx + 1
-      in_string = false
-      escape = false
-
-      while index < code.size
-        char = code[index]
-        if in_string
-          if escape
-            escape = false
-          elsif char == '\\'
-            escape = true
-          elsif char == '"'
-            in_string = false
-          end
-          index += 1
-          next
-        end
-
-        case char
-        when '"'
-          in_string = true
-        when '('
-          depth += 1
-        when ')'
-          depth -= 1
-          return index if depth.zero?
-        end
-        index += 1
-      end
-      nil
-    end
-
-    private def find_matching_brace(code : String, open_idx : Int32) : Int32?
-      depth = 1
-      index = open_idx + 1
-      in_string = false
-      escape = false
-
-      while index < code.size
-        char = code[index]
-        if in_string
-          if escape
-            escape = false
-          elsif char == '\\'
-            escape = true
-          elsif char == '"'
-            in_string = false
-          end
-          index += 1
-          next
-        end
-
-        case char
-        when '"'
-          in_string = true
-        when '{'
-          depth += 1
-        when '}'
-          depth -= 1
-          return index if depth.zero?
-        end
-        index += 1
-      end
-      nil
-    end
-
-    private def line_for_offset(content : String, offset : Int32) : Int32
-      content[0...offset].count('\n') + 1
     end
   end
 end

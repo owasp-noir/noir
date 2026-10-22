@@ -6,8 +6,8 @@ private def analyze_template(content : String, ext = ".yaml")
   path = File.tempname("template", ext)
   File.write(path, content)
   locator = CodeLocator.instance
-  locator.clear "aws-cloudformation-spec"
-  locator.push "aws-cloudformation-spec", path
+  locator.clear Noir::LocatorKeys::AWS_CLOUDFORMATION_SPEC
+  locator.push Noir::LocatorKeys::AWS_CLOUDFORMATION_SPEC, path
 
   options = create_test_options
   analyzer = Analyzer::Specification::AwsCloudformation.new options

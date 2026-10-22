@@ -1,6 +1,7 @@
 require "../models/output_builder"
 require "../models/endpoint"
 
+@[Noir::OutputFormat(name: "only-header", description: "Only headers", order: 190)]
 class OutputBuilderOnlyHeader < OutputBuilder
   def print(endpoints : Array(Endpoint))
     headers = [] of String
@@ -19,8 +20,6 @@ class OutputBuilderOnlyHeader < OutputBuilder
       headers << "Cookie"
     end
 
-    headers.uniq.each do |header|
-      ob_puts header.colorize(:light_green).toggle(@is_color)
-    end
+    print_unique(headers, "No headers found.")
   end
 end

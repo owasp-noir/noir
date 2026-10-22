@@ -2,8 +2,8 @@
 name: OWASP Noir Action
 description: Hunt every Endpoint in your code, expose Shadow APIs, map the Attack Surface
 branding:
-  icon: search
-  color: purple
+  icon: crosshair
+  color: red
 inputs:
   base_path:
     description: The base path to analyze for endpoints (equivalent to -b/--base-path)
@@ -105,13 +105,21 @@ inputs:
     description: Old code version path for diff analysis (equivalent to --diff-path)
     required: false
     default: ""
+  diff_ref:
+    description: Git revision to diff the checkout against, e.g. the pull request base (equivalent to --diff-ref). Fetched automatically when a shallow checkout lacks it
+    required: false
+    default: ""
+  fail_on:
+    description: Fail the step when the diff has any of these (comma-separated added, removed, changed, auth-removed; equivalent to --fail-on)
+    required: false
+    default: ""
   no_log:
     description: Hide execution progress/diagnostic logs and only show results (equivalent to --no-log)
     required: false
     default: "true"
 outputs:
   endpoints:
-    description: Full Noir result document (`{"endpoints":[...],"passive_results":[...]}`) when format=json|jsonl. Empty otherwise.
+    description: Full Noir result document (`{"endpoints":[...],"passive_results":[...],"errors":[...]}`) when format=json|jsonl (JSONL lines are folded into one document). Empty otherwise.
     value: ${{ steps.noir.outputs.endpoints }}
   passive_results:
     description: JSON array of passive-scan findings when format=json|jsonl. `[]` otherwise.
@@ -120,26 +128,41 @@ runs:
   using: composite
   steps:
     # Resolve the ghcr.io tag from the ref the user pinned the action
-    # to. `@v1.0.0` → `1.0.0`, `@main` → `main`, no ref → `latest`.
-    # Mirrors the matching released image so locking the action to a
-    # tag locks the runtime too — no more `FROM noir:1.0.0` hardcoded
-    # in a sibling Dockerfile that the maintainer must keep bumping.
+    # to, mirroring the matching released image so locking the action to
+    # a tag locks the runtime too. `@v1.1.0` → `1.1.0`, `@v1` → `1`,
+    # `@main` → `main`, no ref → `latest`; commit-SHA / unknown refs
+    # degrade to `latest`. Full rules live in resolve-image-tag.sh so the
+    # mapping can be unit-tested without the Actions runtime.
     - name: Resolve Noir image tag
       id: resolve
       shell: bash
+      env:
+        NOIR_ACTION_REF: ${{ github.action_ref }}
       run: |
-        REF="${{ github.action_ref }}"
-        TAG="${REF#v}"
-        TAG="${TAG:-latest}"
-        echo "image=ghcr.io/owasp-noir/noir:${TAG}" >> "$GITHUB_OUTPUT"
-        echo "Using Noir image: ghcr.io/owasp-noir/noir:${TAG}"
+        tag="$(bash "$GITHUB_ACTION_PATH/github-action/resolve-image-tag.sh" "$NOIR_ACTION_REF")"
+        echo "image=ghcr.io/owasp-noir/noir:${tag}" >> "$GITHUB_OUTPUT"
+        echo "Using Noir image: ghcr.io/owasp-noir/noir:${tag}"
 
     # Pull explicitly so the next step's log only shows "running
     # noir", not the registry round-trip. Easier triage for registry
-    # vs runtime failures.
+    # vs runtime failures. Fall back to :latest when the resolved image
+    # isn't published (e.g. a branch ref with no built image) so the
+    # action degrades instead of hard-failing on `docker pull`.
     - name: Pull Noir image
+      id: pull
       shell: bash
-      run: docker pull "${{ steps.resolve.outputs.image }}"
+      env:
+        NOIR_IMAGE: ${{ steps.resolve.outputs.image }}
+      run: |
+        image="$NOIR_IMAGE"
+        if docker pull "$image"; then
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+        else
+          fallback="ghcr.io/owasp-noir/noir:latest"
+          echo "::warning title=OWASP Noir::Could not pull ${image}; falling back to ${fallback}"
+          docker pull "$fallback"
+          echo "image=$fallback" >> "$GITHUB_OUTPUT"
+        fi
 
     # Run the entrypoint inside the pre-built image. INPUT_* env vars
     # match the keys exposed via `with:`; the entrypoint reads them in
@@ -149,10 +172,43 @@ runs:
     # $GITHUB_OUTPUT inside the container points at a workspace path
     # so the runner host can read it back after the container exits —
     # the runner's real $GITHUB_OUTPUT lives outside the container.
+    # `--diff-ref` runs git inside the container, against the mounted
+    # checkout. The container has no credentials, so a revision the
+    # checkout lacks (the default `actions/checkout` is one commit deep) is
+    # fetched here on the runner, and the container gets the commit SHA —
+    # a bare `main` would still not resolve after a depth-1 fetch.
+    - name: Resolve diff base
+      id: diffbase
+      if: ${{ inputs.diff_ref != '' }}
+      shell: bash
+      env:
+        NOIR_DIFF_REF: ${{ inputs.diff_ref }}
+        NOIR_BASE_PATH: ${{ inputs.base_path }}
+      run: |
+        set -euo pipefail
+        case "$NOIR_DIFF_REF" in
+          -*) echo "::error title=OWASP Noir::diff_ref must be a git revision, not an option: $NOIR_DIFF_REF"; exit 1 ;;
+        esac
+        # From the scanned path, not the workspace root: with
+        # `actions/checkout` `path: app` the repository is `app/`, and the
+        # workspace itself is not a git repository at all.
+        cd "$GITHUB_WORKSPACE/${NOIR_BASE_PATH:-.}"
+        if ! sha="$(git rev-parse --verify --quiet "${NOIR_DIFF_REF}^{commit}")"; then
+          echo "Fetching ${NOIR_DIFF_REF} (not in the checkout)"
+          git fetch --no-tags --depth=1 origin "${NOIR_DIFF_REF#origin/}"
+          sha="$(git rev-parse --verify "FETCH_HEAD^{commit}")"
+        fi
+        echo "Diff base: ${NOIR_DIFF_REF} (${sha})"
+        echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+
     - name: Run Noir
       id: noir
       shell: bash
       run: |
+        # Captured rather than left to `bash -e`: a `fail_on` match exits
+        # non-zero on purpose, and the outputs below still have to be
+        # promoted so a later step can read what failed the job.
+        rc=0
         docker run --rm \
           -v "${{ github.workspace }}":/github/workspace \
           -w /github/workspace \
@@ -185,9 +241,11 @@ runs:
           -e INPUT_EXPORT_ES="${{ inputs.export_es }}" \
           -e INPUT_EXPORT_WEBHOOK="${{ inputs.export_webhook }}" \
           -e INPUT_DIFF_PATH="${{ inputs.diff_path }}" \
+          -e INPUT_DIFF_REF="${{ steps.diffbase.outputs.sha }}" \
+          -e INPUT_FAIL_ON="${{ inputs.fail_on }}" \
           -e INPUT_NO_LOG="${{ inputs.no_log }}" \
           --entrypoint /entrypoint.sh \
-          "${{ steps.resolve.outputs.image }}"
+          "${{ steps.pull.outputs.image }}" || rc=$?
 
         # The container wrote to /github/workspace/.noir-output (its
         # view of $GITHUB_OUTPUT); promote that into the composite
@@ -197,3 +255,4 @@ runs:
           cat "${{ github.workspace }}/.noir-output" >> "$GITHUB_OUTPUT"
           rm -f "${{ github.workspace }}/.noir-output"
         fi
+        exit "$rc"

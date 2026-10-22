@@ -2,7 +2,33 @@ require "../../engines/go_engine"
 
 module Analyzer::Go
   class Mux < GoEngine
-    IMPORT_MARKER = "github.com/gorilla/mux"
+    analyzer_for "go_mux"
+
+    # `github.com/minio/mux` is a maintained hard fork of gorilla/mux with
+    # the same `Methods(...).Path(...).HandlerFunc(...)` / `Subrouter()`
+    # API, so the same extraction applies. MinIO itself imports only the
+    # fork: the detector still fired (gorilla/mux is an indirect entry in
+    # its go.mod) but every file failed this gate, so the whole S3 data
+    # plane — `HEAD/GET/PUT/POST/DELETE /{object}` and the `_MINIO_*`
+    # internal routes — reported zero endpoints.
+    IMPORT_MARKER = ["github.com/gorilla/mux", "github.com/minio/mux"]
+
+    # Registration calls that make a file worth the route parse.
+    ROUTE_METHODS = ["Handle", "HandleFunc", "Path", "PathPrefix", "Methods", "Queries"]
+
+    private def extract_mux_routes(content : String, cross_file_groups : Hash(String, String)) : Array(Noir::TreeSitterGoRouteExtractor::Route)
+      Noir::TreeSitterGoRouteExtractor.extract_routes(
+        content, cross_file_groups,
+        group_method: "Subrouter",
+        handlefunc_methods: true,
+        # gorilla/mux registers nothing through a verb-named method —
+        # `Router.Get(name)` looks a named route up — so `.Get("X", …)` /
+        # `.Any("k", v)` on env readers, caches and loggers are not routes
+        # (minio's `env.Get("_MINIO_SCANNER", …)`, mattermost's
+        # `mlog.Any("panic", r)`).
+        verb_calls: false,
+      )
+    end
 
     def analyze
       # Source Analysis
@@ -16,122 +42,83 @@ module Analyzer::Go
       # Mux's HandleFunc/Methods chain stores `route.line` on the
       # HandleFunc call_expression itself, so the row-keyed callee
       # lookup matches it cleanly.
-      package_function_bodies = collect_package_function_bodies(file_contents)
+      package_function_bodies = lazy_package_bodies(file_contents)
       # Mux handlers are almost always method values (`as.Campaigns`) or
       # wrapped method values (`mid.Use(as.Users, ...)`); resolve them to
       # their method bodies so callees/ai-context aren't empty.
-      package_method_bodies = collect_package_controller_method_bodies(file_contents)
+      package_method_bodies = lazy_package_bodies(file_contents)
       framework_dirs = framework_package_dirs(file_contents, IMPORT_MARKER)
-      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
-      begin
-        WaitGroup.wait do |wg|
-          # Producer — tracked by the WaitGroup
-          wg.spawn do
-            get_files_by_extension(".go").each { |file| channel.send(file) }
-            channel.close
-          end
+      # Route and static-file parses of every candidate file, on the worker
+      # threads; the pass below consumes them (see `prefetch_route_sources`).
+      prefetched = prefetch_route_sources(file_contents, framework_dirs, IMPORT_MARKER, ROUTE_METHODS, verb_calls: false) do |path, content|
+        {extract_mux_routes(content, ts_groups_for_directory(package_groups, File.dirname(path))),
+         Noir::TreeSitterGoRouteExtractor.extract_mux_statics(content)}
+      end
+      named_scope = named_handler_scope(file_contents)
+      parallel_analyze(get_files_by_extension(".go")) do |path|
+        next if GoEngine.go_test_file?(base_relative_path(path))
+        next unless File.exists?(path)
+        content = file_contents[path]? || read_file_content(path)
+        dir = File.dirname(path)
+        next unless framework_route_source_candidate?(content, dir, framework_dirs, IMPORT_MARKER, ROUTE_METHODS, verb_calls: false)
+        lines = GoEngine.strip_comments(content).lines
+        last_endpoint = Endpoint.new("", "")
 
-          @options["concurrency"].to_s.to_i.times do
-            wg.spawn do
-              loop do
-                begin
-                  path = channel.receive?
-                  break if path.nil?
-                  next if File.directory?(path)
-                  next if GoEngine.go_test_file?(path)
-                  if File.exists?(path)
-                    content = file_contents[path]? || read_file_content(path)
-                    dir = File.dirname(path)
-                    next unless framework_route_source_candidate?(content, dir, framework_dirs, IMPORT_MARKER, ["Handle", "HandleFunc", "Path", "PathPrefix", "Methods", "Queries"])
-                    lines = content.lines
-                    last_endpoint = Endpoint.new("", "")
+        ts_routes, statics = prefetched[path]? ||
+                             {extract_mux_routes(content, ts_groups_for_directory(package_groups, dir)),
+                              Noir::TreeSitterGoRouteExtractor.extract_mux_statics(content)}
+        routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
+        ts_routes.each do |r|
+          routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route
+          routes_by_line[r.line] << r
+        end
 
-                    cross_file_groups = ts_groups_for_directory(package_groups, dir)
-                    ts_routes = Noir::TreeSitterGoRouteExtractor.extract_routes(
-                      content, cross_file_groups,
-                      group_method: "Subrouter",
-                      handlefunc_methods: true,
-                    )
-                    routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
-                    ts_routes.each do |r|
-                      routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route
-                      routes_by_line[r.line] << r
-                    end
+        named = Noir::GoNamedHandler.new(content, path, ts_routes, named_scope)
 
-                    # Resolve 1-hop callees for every route (see Gin).
-                    route_rows = Set(Int32).new
-                    routes_by_line.each_key { |row| route_rows << row }
-                    external_fns = ts_function_bodies_for_directory(package_function_bodies, dir)
-                    external_methods = ts_controller_method_bodies_for_directory(package_method_bodies, dir)
-                    callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns, external_methods)
+        # Resolve 1-hop callees for every route (see Gin).
+        route_rows = Set(Int32).new
+        routes_by_line.each_key { |row| route_rows << row }
+        external_fns = ts_function_bodies_for_directory(package_function_bodies, dir)
+        external_methods = ts_controller_method_bodies_for_directory(package_method_bodies, dir)
+        callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns, external_methods)
 
-                    # Mux static-file: `r.PathPrefix("/x/").Handler(... http.Dir("./x/") ...)`
-                    Noir::TreeSitterGoRouteExtractor.extract_mux_statics(content).each do |sp|
-                      public_dirs << static_dir_entry(path, sp.url_prefix, sp.disk_path)
-                    end
+        # Mux static-file: `r.PathPrefix("/x/").Handler(... http.Dir("./x/") ...)`
+        statics.each do |sp|
+          public_dirs << static_dir_entry(path, sp.url_prefix, sp.disk_path)
+        end
 
-                    lines.each_with_index do |line, index|
-                      details = Details.new(PathInfo.new(path, index + 1))
+        lines.each_with_index do |line, index|
+          next if named.claim?(index, line)
 
-                      if ts_hits = routes_by_line[index]?
-                        ts_hits.each do |route|
-                          Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
-                            new_endpoint = Endpoint.new(route.path, verb, details)
-                            # mux's `.Queries("type", "{type}", ...)` declares
-                            # required query params; bind them to the endpoint.
-                            route.query_params.each do |qp|
-                              new_endpoint.params << Param.new(qp, "", "query")
-                            end
-                            if entries = callees_by_route[route.line]?
-                              entries.each do |entry|
-                                name, callee_path, callee_line = entry
-                                new_endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
-                              end
-                            end
-                            result << new_endpoint
-                            last_endpoint = new_endpoint
-                          end
-                        end
-                      end
+          details = Details.new(PathInfo.new(path, index + 1))
 
-                      # Handle parameter extraction patterns in Go (order matters - check more specific patterns first)
-                      if line.includes?("Vars(")
-                        add_param_to_endpoint(get_param(line, "Vars"), last_endpoint)
-                      elsif line.includes?("Query().Get(")
-                        add_param_to_endpoint(get_param(line, "Query"), last_endpoint)
-                      elsif line.includes?("PostFormValue(")
-                        add_param_to_endpoint(get_param(line, "PostFormValue", last_endpoint), last_endpoint)
-                      elsif line.includes?("FormValue(")
-                        add_param_to_endpoint(get_param(line, "FormValue", last_endpoint), last_endpoint)
-                      elsif line.includes?("Header.Get(")
-                        add_param_to_endpoint(get_param(line, "Header"), last_endpoint)
-                      elsif line.includes?("Cookie(")
-                        add_param_to_endpoint(get_param(line, "Cookie"), last_endpoint)
-                      end
-
-                      # Stdlib-style body reads. Gorilla/mux apps almost
-                      # always use `json.NewDecoder(r.Body).Decode(&v)`
-                      # or `io.ReadAll(r.Body)` (the modern replacement
-                      # for `ioutil.ReadAll`) to parse request bodies —
-                      # neither was previously surfaced.
-                      if !last_endpoint.url.empty? &&
-                         (line.matches?(/json\.NewDecoder\([^)]*\.Body\)\s*\.\s*Decode/) ||
-                         line.matches?(/(?:io|ioutil)\.ReadAll\([^)]*\.Body\)/))
-                        body_param = Param.new("body", "", "json")
-                        last_endpoint.params << body_param unless last_endpoint.params.includes?(body_param)
-                      end
-                    end
-                  end
-                rescue
-                  # Skip problematic files
-                  next
+          if ts_hits = routes_by_line[index]?
+            ts_hits.each do |route|
+              Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
+                new_endpoint = Endpoint.new(route.path, verb, details)
+                # mux's `.Queries("type", "{type}", ...)` declares
+                # required query params; bind them to the endpoint.
+                route.query_params.each do |qp|
+                  new_endpoint.params << Param.new(qp, "", "query")
                 end
+                if entries = callees_by_route[route.line]?
+                  entries.each do |entry|
+                    name, callee_path, callee_line = entry
+                    new_endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
+                  end
+                end
+                new_endpoint.handler = named.handler_for(route)
+                result << new_endpoint
+                named.bind(route, new_endpoint)
+                last_endpoint = new_endpoint
               end
             end
           end
+
+          add_mux_param_patterns(line, last_endpoint)
         end
-      rescue e
-        logger.debug e
+
+        named.each_attribution { |line, ep| add_mux_param_patterns(line, ep) }
       end
 
       resolve_public_dirs(public_dirs)
@@ -139,12 +126,31 @@ module Analyzer::Go
       result
     end
 
-    def get_method_from_line(line : String) : String
-      # Extract method from .Methods("GET", "POST") or default to GET
-      if match = line.match(/\.Methods\(\s*[\"']([^\"']+)[\"']/)
-        match[1].upcase
-      else
-        "GET"
+    private def add_mux_param_patterns(line : String, ep : Endpoint)
+      # Handle parameter extraction patterns in Go (order matters - check more specific patterns first)
+      if line.includes?("Vars(")
+        add_param_to_endpoint(get_param(line, "Vars"), ep)
+      elsif line.includes?("Query().Get(")
+        add_param_to_endpoint(get_param(line, "Query"), ep)
+      elsif line.includes?("PostFormValue(")
+        add_param_to_endpoint(get_param(line, "PostFormValue", ep), ep)
+      elsif line.includes?("FormValue(")
+        add_param_to_endpoint(get_param(line, "FormValue", ep), ep)
+      elsif line.includes?("Cookie(")
+        add_param_to_endpoint(get_param(line, "Cookie"), ep)
+      end
+      Noir::GoRequestParamExtractor.header_params(line).each { |header| add_param_to_endpoint(header, ep) }
+
+      # Stdlib-style body reads. Gorilla/mux apps almost
+      # always use `json.NewDecoder(r.Body).Decode(&v)`
+      # or `io.ReadAll(r.Body)` (the modern replacement
+      # for `ioutil.ReadAll`) to parse request bodies —
+      # neither was previously surfaced.
+      if !ep.url.empty? &&
+         (line.matches?(/json\.NewDecoder\([^)]*\.Body\)\s*\.\s*Decode/) ||
+         line.matches?(/(?:io|ioutil)\.ReadAll\([^)]*\.Body\)/))
+        body_param = Param.new("body", "", "json")
+        ep.params << body_param unless ep.params.includes?(body_param)
       end
     end
 
@@ -177,12 +183,6 @@ module Analyzer::Go
         if match = line.match(/FormValue\s*\(\s*[\"']([^\"']+)[\"']\s*\)/)
           param_name = match[1]
           param_type = form_value_param_type(endpoint)
-        end
-      when "Header"
-        # Handle r.Header.Get("User-Agent") pattern
-        if match = line.match(/Header\s*\.\s*Get\s*\(\s*[\"']([^\"']+)[\"']\s*\)/)
-          param_name = match[1]
-          param_type = "header"
         end
       when "Cookie"
         # Handle r.Cookie("auth_token") pattern

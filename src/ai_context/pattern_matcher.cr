@@ -65,12 +65,12 @@ module NoirAIContext
     private def suppress_pattern_detection?(kind : String, name : String, snippet : String?) : Bool
       case kind
       when "sql"
+        # A receiver-qualified call (`sequelize.query(...)`) is a database
+        # call whatever the lines around it read; the request-accessor gate
+        # below exists for a bare `query(`, not for this.
+        return false if name.matches?(SQL_RECEIVER_CALL)
         return true if name.matches?(/\b(URL\.Query|QueryParam|request\.query|req\.query|query_params|searchParams)\b/i)
         return true if snippet && snippet.matches?(/\b(URL\.Query\(\)\.Get|QueryParam\(|request\.query\.|req\.query\.|searchParams\.get)\b/i)
-        # `<client>.query` is already surfaced as a `data_store_query` sink;
-        # suppress the broader `sql` `\bquery\b` match so the same callee does
-        # not emit two near-identical sinks.
-        return true if name.matches?(/\b(?:mongo|client|neo4jClient)\.query\b/i)
       when "template_render"
         return true if name.matches?(/(?:^|\.)template\.(?:find|findAll|findById|count|save|insert|update|delete|remove)\b/i)
         return false unless snippet
@@ -179,7 +179,7 @@ module NoirAIContext
       label = compact_function_signature_label(text) || text.split(/\s+\|\s+\d+:/, 2)[0]
       label = label.gsub(/\s+/, " ").strip
       label = compact_annotation_label(label) if label.size > MAX_LABEL_CHARS
-      label[0, Math.min(label.size, MAX_LABEL_CHARS)]
+      label[0, MAX_LABEL_CHARS]
     end
 
     private def compact_function_signature_label(label : String) : String?

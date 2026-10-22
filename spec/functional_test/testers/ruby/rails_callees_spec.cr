@@ -7,7 +7,7 @@ index_endpoint = Endpoint.new("/posts", "GET").tap do |ep|
   ep.push_callee(Callee.new("serialize_posts", line: 5))
 end
 
-show_endpoint = Endpoint.new("/posts/1", "GET").tap do |ep|
+show_endpoint = Endpoint.new("/posts/:id", "GET").tap do |ep|
   ep.push_callee(Callee.new("Post.find", line: 9))
   ep.push_callee(Callee.new("render", line: 10))
   ep.push_callee(Callee.new("serialize_post", line: 10))
@@ -20,14 +20,14 @@ create_endpoint = Endpoint.new("/posts", "POST").tap do |ep|
   ep.push_callee(Callee.new("serialize_post", line: 16))
 end
 
-destroy_memory_endpoint = Endpoint.new("/posts/1/memory", "DELETE", [
+destroy_memory_endpoint = Endpoint.new("/posts/:id/memory", "DELETE", [
   Param.new("id", "", "path"),
 ]).tap do |ep|
   ep.push_callee(Callee.new("MemoryStore.destroy", line: 37))
   ep.push_callee(Callee.new("AuditLog.write", line: 38))
 end
 
-external_ready_endpoint = Endpoint.new("/posts/1/external_ready", "GET").tap do |ep|
+external_ready_endpoint = Endpoint.new("/posts/:id/external_ready", "GET").tap do |ep|
   ep.push_callee(Callee.new("render", line: 10))
   ep.push_callee(Callee.new("Ready.check", line: 10))
 end

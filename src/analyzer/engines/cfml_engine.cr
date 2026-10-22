@@ -1,0 +1,502 @@
+require "../../models/analyzer"
+require "../../utils/utils.cr"
+require "../../utils/top_level_split"
+
+module Analyzer::Cfml
+  # Shared CFML parsing layer.
+  #
+  # See AGENTS.md §"Analyzer Layering": this owns file selection and the
+  # syntax handling every CFML adapter needs, so framework analyzers
+  # (Taffy, ColdBox, Wheels, FW/1) consume components and functions
+  # rather than re-implementing tag/script parsing.
+  #
+  # The two syntaxes are the whole problem. CFML is written either as
+  # tags (`<cffunction name="x" access="remote">`) or as cfscript
+  # (`remote string function x()`), the two mix inside a single file, and
+  # everything is case-insensitive.
+  abstract class CfmlEngine < Analyzer
+    # Tags may span lines and pad their `=` for alignment, so attributes
+    # are matched with `\s*=\s*` and tag bodies with `[\s\S]*?`.
+    CFCOMPONENT_TAG_RE = /<cfcomponent\b([\s\S]*?)>/i
+    CFFUNCTION_TAG_RE  = /<cffunction\b([\s\S]*?)>/i
+    CFARGUMENT_TAG_RE  = /<cfargument\b([\s\S]*?)>/i
+
+    # Attribute names carry `:` and `-` in the wild (`taffy:uri`,
+    # `data-required`), and values use either quote style.
+    TAG_ATTR_RE = /([\w:.-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/
+
+    # `component ... {` header in script syntax, and a function
+    # declaration with its trailing attribute list up to the body brace.
+    SCRIPT_COMPONENT_RE = /(?<![\w.])component\b/i
+    SCRIPT_FUNCTION_RE  = /(?<![\w.])function\s+(\w+)\s*\(/i
+
+    # A component header is a handful of attributes; bound the scan so a
+    # file with no opening brace cannot walk the whole content.
+    SCRIPT_COMPONENT_HEADER_LIMIT = 2000
+
+    # Verbs a CFML framework can register. Route DSLs take verbs as free
+    # text, so a value outside this set is not turned into a method.
+    HTTP_VERBS = Set{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
+
+    NAMED_ARGUMENT_RE = /\A([A-Za-z_]\w*)\s*[:=]\s*(.+)\z/m
+
+    # TestBox names suites `<Something>Test.cfc` / `<Something>Spec.cfc`.
+    # The leading `.+` is load-bearing: a component named exactly
+    # `Test.cfc` is a demo, not a suite (fw1 ships one that declares a
+    # real `remote` method), and an anchored `ends_with?` swallowed it.
+    TEST_COMPONENT_RE = /.+(?:Test|Spec)\.cfc\z/i
+
+    private BYTE_LT            = '<'.ord.to_u8
+    private BYTE_BANG          = '!'.ord.to_u8
+    private BYTE_DASH          = '-'.ord.to_u8
+    private BYTE_GT            = '>'.ord.to_u8
+    private BYTE_NEWLINE       = '\n'.ord.to_u8
+    private BYTE_SEMICOLON     = ';'.ord.to_u8
+    private BYTE_OPEN_BRACE    = '{'.ord.to_u8
+    private BYTE_CLOSE_BRACE   = '}'.ord.to_u8
+    private BYTE_SPACE         = ' '.ord.to_u8
+    private BYTE_TAB           = '\t'.ord.to_u8
+    private BYTE_RETURN        = '\r'.ord.to_u8
+    private BYTE_OPEN_PAREN    = '('.ord.to_u8
+    private BYTE_CLOSE_PAREN   = ')'.ord.to_u8
+    private BYTE_OPEN_BRACKET  = '['.ord.to_u8
+    private BYTE_CLOSE_BRACKET = ']'.ord.to_u8
+    private BYTE_DQUOTE        = '"'.ord.to_u8
+    private BYTE_SQUOTE        = '\''.ord.to_u8
+
+    # Route registrations are statements. An identifier as generic as
+    # `get` or `delete` also appears inside expressions
+    # (`if ( get( "featureFlag" ) )`), so a call only counts when nothing
+    # but horizontal whitespace separates it from a statement boundary.
+    #
+    # A newline counts as a boundary in its own right. `//` line comments
+    # are not stripped (only `<!--- --->` is), so requiring `;`/`{`/`}`
+    # would reject every call preceded by a comment line — which is most
+    # of a real router.
+    protected def statement_start?(content : String, index : Int32) : Bool
+      bytes = content.to_slice
+      position = content.char_index_to_byte_index(index)
+      return true if position.nil? || position == 0
+
+      position -= 1
+      while position >= 0
+        byte = bytes[position]
+        return true if byte == BYTE_NEWLINE || byte == BYTE_RETURN
+        return true if byte == BYTE_SEMICOLON || byte == BYTE_OPEN_BRACE || byte == BYTE_CLOSE_BRACE
+        return false unless byte == BYTE_SPACE || byte == BYTE_TAB
+
+        position -= 1
+      end
+
+      true
+    end
+
+    protected def cfml_components : Array(String)
+      get_files_by_extension(".cfc").reject { |path| cfml_test_path?(path) }
+    end
+
+    protected def cfml_pages : Array(String)
+      (get_files_by_extension(".cfm") + get_files_by_extension(".cfml"))
+        .uniq!
+        .reject { |path| cfml_test_path?(path) }
+    end
+
+    protected def cfml_test_path?(path : String) : Bool
+      # Scan-base-relative, never absolute. Checking the absolute path made
+      # the result depend on where the checkout happens to live: the same
+      # Taffy tree scanned from `/srv/test/app` reported zero endpoints
+      # instead of 23, because every component looked like a test suite.
+      relative = base_relative_path(path)
+      return true if relative.includes?("/tests/") || relative.includes?("/test/")
+
+      File.basename(path).matches?(TEST_COMPONENT_RE)
+    end
+
+    # `<cfargument>` tags belong to the function they follow, so scan only
+    # up to the matching `</cffunction>` (or the next `<cffunction>` when
+    # the closing tag is missing).
+    protected def tag_arguments(content : String, from : Int32) : Array(String)
+      close = content.index(/<\/cffunction>/i, from)
+      next_function = content.index(/<cffunction\b/i, from)
+      stop = [close, next_function].compact.min? || content.size
+
+      names = [] of String
+      content[from...stop].scan(CFARGUMENT_TAG_RE) do |argument|
+        name = tag_attributes(argument[1])["name"]?
+        names << name if name && !name.empty?
+      end
+      names
+    end
+
+    protected def tag_attributes(raw : String) : Hash(String, String)
+      attributes = {} of String => String
+      raw.scan(TAG_ATTR_RE) do |match|
+        attributes[match[1].downcase] = match[2]? || match[3]? || ""
+      end
+      attributes
+    end
+
+    # Argument names from a script-syntax signature. Handles `name`,
+    # `type name`, `required type name` and `type name="default"`.
+    # Stopping at the first `=` also drops Taffy's inline per-argument
+    # validators, which follow the default with no separating comma:
+    # `string name = "" taffy_minlength="1"`.
+    protected def script_arguments(raw : String) : Array(String)
+      names = [] of String
+
+      split_arguments(raw).each do |chunk|
+        declaration = chunk.split('=').first.strip
+        next if declaration.empty?
+
+        name = declaration.split(/\s+/).last?
+        next if name.nil? || !name.matches?(/\A[A-Za-z_]\w*\z/)
+
+        names << name
+      end
+
+      names
+    end
+
+    # `Rules::JAVA` with `Empties::DropAll` and, like erlang/cowboy.cr and
+    # php/wordpress.cr, WITHOUT clamping: the body this replaces closed
+    # brackets with a bare `depth -= 1`, so an argument slice that opens on
+    # a closer drives depth negative and suppresses every later split.
+    # Observable on the unbalanced fragments the CFML regexes hand over, so
+    # it is preserved rather than normalised.
+    #
+    # `Escape::None` because CFML has no backslash escape at all. `"C:\log\"`
+    # is the seven-character string `C:\log\`, and a quote is escaped by
+    # DOUBLING it (`"say ""hi"""`). Reading `\` as an escape — which the
+    # hand-rolled body this replaced did, and which the rest of this engine
+    # did too until the same change — swallowed the closing quote of any
+    # string ending in a backslash, i.e. any Windows path, leaving the run
+    # open so the remainder of the argument list merged into the current part
+    # and every argument after it was lost.
+    #
+    # There is deliberately no doubled-quote mode for the OTHER half of the
+    # rule, and that is not an oversight. For a top-level splitter "a
+    # repeated delimiter is a literal delimiter" and "quotes toggle" are
+    # indistinguishable: a doubled pair is two ADJACENT quote characters, so
+    # the toggling model's spurious closed-then-reopened window is zero
+    # characters wide. The state after any maximal run of quotes is the same
+    # under both models (a run of length L flips the state iff L is odd
+    # either way), and the only characters ever processed in a differing
+    # state are the quote characters themselves, which neither nest nor
+    # split. Checked by brute force rather than by argument: a doubling
+    # model run against `TopLevelSplit` over all 1,440 `Rules` combinations
+    # x 111,111 inputs (every string up to length 5 over `" ' , a \ ( ) < `
+    # backtick `{`) agreed on all 159,999,840 comparisons. `matching_delimiter`
+    # below implements doubling explicitly; that is equally correct and
+    # equally immaterial, and it is kept because a byte scanner reads more
+    # obviously with the rule written out.
+    #
+    # File-local because this is the only splitter pairing `clamp: false`
+    # with `DropAll`.
+    SPLIT_ARGUMENTS_RULES = Noir::TopLevelSplit::Rules.new(
+      nest: Noir::TopLevelSplit::Nest::Paren | Noir::TopLevelSplit::Nest::Bracket |
+            Noir::TopLevelSplit::Nest::Brace,
+      quotes: "\"'",
+      escape: Noir::TopLevelSplit::Escape::None,
+      strip: true,
+      empties: Noir::TopLevelSplit::Empties::DropAll,
+      per_kind: false,
+      clamp: false,
+    )
+
+    # Split on commas at nesting depth zero, so a comma inside a default
+    # value or a nested call does not start a new argument.
+    protected def split_arguments(raw : String) : Array(String)
+      Noir::TopLevelSplit.split(raw, ',', SPLIT_ARGUMENTS_RULES)
+    end
+
+    # Arguments of a CFML function call: positional ones keyed "0", "1",
+    # ..., named ones by their downcased name. Only literals resolve — a
+    # value built at runtime is not something to report as a route.
+    # `##` is CFML's escape for a literal `#`.
+    #
+    # `locals` additionally resolves a bare identifier against the string
+    # variables declared earlier in the same file. Route files hoist shared
+    # values into a local and pass them by name, which is invisible to a
+    # literals-only reading: ContentBox writes `var except = "new,edit";`
+    # and then `resources( resource = "authors", except = except )`, and
+    # without the lookup every one of its resource blocks reported a
+    # `/new` and an `/:id/edit` route that the framework never registers.
+    protected def call_arguments(raw : String, locals : Hash(String, String)? = nil) : Hash(String, String)
+      arguments = {} of String => String
+
+      split_arguments(raw).each_with_index do |chunk, index|
+        if match = chunk.match(NAMED_ARGUMENT_RE)
+          if value = argument_literal(match[2]) || local_reference(match[2], locals)
+            arguments[match[1].downcase] = value
+          end
+        elsif value = argument_literal(chunk) || local_reference(chunk, locals)
+          arguments[index.to_s] = value
+        end
+      end
+
+      arguments
+    end
+
+    private def local_reference(raw : String, locals : Hash(String, String)?) : String?
+      return unless locals
+
+      identifier = raw.strip
+      return unless identifier.matches?(/\A[A-Za-z_]\w*\z/)
+
+      locals[identifier.downcase]?
+    end
+
+    protected def argument_literal(raw : String) : String?
+      stripped = raw.strip
+
+      if match = stripped.match(/\A"([^"]*)"\z/)
+        return match[1].gsub("##", "#")
+      end
+
+      if match = stripped.match(/\A'([^']*)'\z/)
+        return match[1].gsub("##", "#")
+      end
+
+      # Bare booleans reach flags such as `nested=true`.
+      stripped.matches?(/\A(?:true|false)\z/i) ? stripped : nil
+    end
+
+    protected def paren_content(content : String, open_paren : Int32) : String?
+      close = matching_paren(content, open_paren)
+      close ? content[(open_paren + 1)...close] : nil
+    end
+
+    protected def matching_paren(content : String, open_paren : Int32) : Int32?
+      matching_delimiter(content, open_paren, BYTE_OPEN_PAREN, BYTE_CLOSE_PAREN)
+    end
+
+    protected def matching_bracket(content : String, open_bracket : Int32) : Int32?
+      matching_delimiter(content, open_bracket, BYTE_OPEN_BRACKET, BYTE_CLOSE_BRACKET)
+    end
+
+    protected def matching_brace(content : String, open_brace : Int32) : Int32?
+      matching_delimiter(content, open_brace, BYTE_OPEN_BRACE, BYTE_CLOSE_BRACE)
+    end
+
+    # Index of the delimiter closing the one at `open_index`.
+    #
+    # Byte scan rather than `String#[](Int)`, which is O(n) per access on
+    # strings holding multi-byte characters and would make this O(n^2) —
+    # the same trap `PhpEngine#find_matching_php_close_brace` documents
+    # after CJK-commented sources hung the PHP analyzer. Every delimiter
+    # is ASCII, so it can never collide with a UTF-8 continuation byte.
+    #
+    # A quoted run ends at the first unpaired quote of the kind that opened
+    # it: CFML escapes a quote by doubling it and has NO backslash escape,
+    # so `"C:\log\"` is a complete string and the `)` after it closes the
+    # call. Treating `\` as an escape here consumed that closing quote and
+    # left the run open, and a run that never closes means no match — the
+    # whole call, and every route in it, silently disappeared.
+    protected def matching_delimiter(content : String, open_index : Int32,
+                                     open_byte : UInt8, close_byte : UInt8) : Int32?
+      bytes = content.to_slice
+      start = content.char_index_to_byte_index(open_index)
+      return unless start && start < bytes.size && bytes[start] == open_byte
+
+      depth = 0
+      position = start
+      size = bytes.size
+      quote = 0_u8
+
+      while position < size
+        byte = bytes[position]
+
+        if quote != 0_u8
+          if byte == quote
+            if position + 1 < size && bytes[position + 1] == quote
+              position += 2
+              next
+            else
+              quote = 0_u8
+            end
+          end
+        elsif byte == BYTE_DQUOTE || byte == BYTE_SQUOTE
+          quote = byte
+        elsif byte == open_byte
+          depth += 1
+        elsif byte == close_byte
+          depth -= 1
+          return content.byte_index_to_char_index(position) if depth == 0
+        end
+
+        position += 1
+      end
+
+      nil
+    end
+
+    # Strip `<!--- ... --->` blocks. CFML comments nest, and a file may
+    # be almost entirely comment (MasaCMS opens every file with a ~70
+    # line licence header, sometimes closing on the same line as real
+    # code), so this cannot be line-oriented. Newlines inside comments
+    # are preserved so reported line numbers stay accurate.
+    protected def strip_cfml_comments(content : String) : String
+      return content unless content.includes?("<!---")
+
+      bytes = content.to_slice
+      size = bytes.size
+      io = IO::Memory.new(size)
+      index = 0
+      depth = 0
+
+      while index < size
+        if index + 4 < size && bytes[index] == BYTE_LT && bytes[index + 1] == BYTE_BANG &&
+           bytes[index + 2] == BYTE_DASH && bytes[index + 3] == BYTE_DASH && bytes[index + 4] == BYTE_DASH
+          depth += 1
+          # Advance to the final dash of the opener, not past it: engines
+          # accept `<!----->`, where the closer overlaps the opener on
+          # that shared dash. Consuming all five stranded the `-->` tail
+          # and silently discarded the rest of the file.
+          index += 4
+        elsif depth > 0 && index + 3 < size && bytes[index] == BYTE_DASH && bytes[index + 1] == BYTE_DASH &&
+              bytes[index + 2] == BYTE_DASH && bytes[index + 3] == BYTE_GT
+          depth -= 1
+          index += 4
+        else
+          if depth == 0
+            io.write_byte(bytes[index])
+          elsif bytes[index] == BYTE_NEWLINE
+            io.write_byte(BYTE_NEWLINE)
+          end
+          index += 1
+        end
+      end
+
+      io.to_s
+    end
+
+    # Blank cfscript `//` and `/* */` comments, keeping newlines so line
+    # numbers hold.
+    #
+    # This matters more than it looks. Route files are heavily commented,
+    # and the generated comments quote the DSL they describe — Wheels
+    # ships `// The "wildcard" call below ...` and a commented-out
+    # `// .wildcard()`. Scanning raw content let a comment that merely
+    # mentions `mapper()` move the start of the chain, so unrelated calls
+    # before the real chain were read as routes.
+    #
+    # The scan is string-aware: CFML escapes a quote by doubling it and has
+    # no backslash escape (`"C:\wwwroot\"` is a whole string), and `//`
+    # occurs inside ordinary string values (URLs).
+    protected def strip_script_comments(content : String) : String
+      return content unless content.includes?("//") || content.includes?("/*")
+
+      chars = content.chars
+      size = chars.size
+      io = String::Builder.new(content.bytesize)
+      index = 0
+      quote = nil.as(Char?)
+
+      while index < size
+        char = chars[index]
+
+        if quote
+          if char == quote
+            if index + 1 < size && chars[index + 1] == quote
+              io << char
+              io << chars[index + 1]
+              index += 2
+              next
+            else
+              quote = nil
+            end
+          end
+          io << char
+          index += 1
+          next
+        end
+
+        case
+        when char == '"' || char == '\''
+          quote = char
+          io << char
+          index += 1
+        when char == '/' && chars[index + 1]? == '/'
+          while index < size && chars[index] != '\n'
+            io << ' '
+            index += 1
+          end
+        when char == '/' && chars[index + 1]? == '*'
+          io << "  "
+          index += 2
+          while index < size && !(chars[index] == '*' && chars[index + 1]? == '/')
+            io << (chars[index] == '\n' ? '\n' : ' ')
+            index += 1
+          end
+          if index < size
+            io << "  "
+            index += 2
+          end
+        else
+          io << char
+          index += 1
+        end
+      end
+
+      io.to_s
+    end
+
+    # Both comment syntaxes, for analyzers that scan cfscript.
+    protected def strip_all_comments(content : String) : String
+      strip_script_comments(strip_cfml_comments(content))
+    end
+
+    # Attributes on the `<cfcomponent>` tag or the script `component`
+    # header, whichever the file uses.
+    protected def component_attributes(content : String) : Hash(String, String)
+      if match = content.match(CFCOMPONENT_TAG_RE)
+        return tag_attributes(match[1])
+      end
+
+      if match = content.match(SCRIPT_COMPONENT_RE)
+        if start = match.end(0)
+          window = content[start, SCRIPT_COMPONENT_HEADER_LIMIT]? || ""
+          return tag_attributes(attributes_before_body(window))
+        end
+      end
+
+      {} of String => String
+    end
+
+    # Everything up to the first `{` that is *not* inside a quoted value.
+    # Attribute values legitimately contain braces — Taffy writes
+    # `taffy:uri="/items/{id}"` — so cutting at the first brace truncated
+    # the header mid-value and silently dropped every tokenised route.
+    private def attributes_before_body(window : String) : String
+      quote = nil.as(Char?)
+      chars = window.chars
+      size = chars.size
+      index = 0
+
+      while index < size
+        char = chars[index]
+
+        if quote
+          if char == quote
+            if index + 1 < size && chars[index + 1] == quote
+              index += 2
+              next
+            else
+              quote = nil
+            end
+          end
+          index += 1
+          next
+        end
+
+        case char
+        when '"', '\'' then quote = char
+        when '{'       then return window[0...index]
+        end
+        index += 1
+      end
+
+      window
+    end
+  end
+end

@@ -1,5 +1,6 @@
 require "../../../models/analyzer"
 require "../../engines/swift_engine"
+require "../../engines/cli_endpoint_support"
 
 module Analyzer::Swift
   # Surfaces the command-line attack surface of Swift programs as `cli://`
@@ -12,6 +13,10 @@ module Analyzer::Swift
   # URL. Subclasses Analyzer directly (SwiftEngine#analyze_file is abstract)
   # and reuses SwiftEngine.swift_test_path? to skip tests.
   class Cli < Analyzer
+    analyzer_for "swift_cli"
+
+    include CliEndpointSupport
+
     PARSABLE_STRUCT = /\b(?:struct|enum|class)\s+(\w+)\s*:\s*[^\{]*\b(?:Async)?ParsableCommand\b/
     COMMAND_NAME    = /\bcommandName:\s*"([^"]+)"/
     SUBCOMMANDS_KEY = /\bsubcommands:/
@@ -30,8 +35,7 @@ module Analyzer::Swift
       endpoints = {} of String => Endpoint
 
       get_files_by_extension(".swift").each do |path|
-        next if File.directory?(path)
-        next if SwiftEngine.swift_test_path?(path)
+        next if SwiftEngine.swift_test_path?(base_relative_path(path))
         next unless File.exists?(path)
 
         begin
@@ -48,7 +52,7 @@ module Analyzer::Swift
         end
       end
 
-      endpoints.each_value { |ep| @result << ep }
+      @result.concat(cli_endpoints(endpoints))
       @result
     end
 
@@ -142,15 +146,6 @@ module Analyzer::Swift
         result << ch.downcase
       end
       result.to_s
-    end
-
-    private def fetch_endpoint(endpoints : Hash(String, Endpoint), url : String,
-                               path : String, line_no : Int32) : Endpoint
-      endpoints[url] ||= begin
-        ep = Endpoint.new(url, "CLI", Details.new(PathInfo.new(path, line_no)))
-        ep.protocol = "cli"
-        ep
-      end
     end
   end
 end

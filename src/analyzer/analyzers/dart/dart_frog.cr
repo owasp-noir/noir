@@ -22,6 +22,8 @@ module Analyzer::Dart
   # `_middleware.dart` and other underscore-prefixed Dart files are
   # framework plumbing — not user-facing routes — and skipped.
   class DartFrog < Analyzer
+    analyzer_for "dart_frog"
+
     HTTP_METHOD_MAP = {
       "get"     => "GET",
       "post"    => "POST",
@@ -51,7 +53,7 @@ module Analyzer::Dart
     end
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       result = [] of Endpoint
       mutex = Mutex.new
 
@@ -65,10 +67,14 @@ module Analyzer::Dart
           # are mock handlers exercised by `dart test`, never live routes.
           next if Helper.test_path?(path, base_paths)
 
-          idx = path.index("/routes/")
+          # Scan-base-relative, never absolute: `String#index` takes the
+          # FIRST occurrence, so a same-named directory above the scan base
+          # won outright and the derived URL changed with the checkout path.
+          scoped = base_relative_path(path)
+          idx = scoped.index("/routes/")
           next if idx.nil?
 
-          relative = path[(idx + "/routes/".size)..-1]
+          relative = scoped[(idx + "/routes/".size)..-1]
           leaf = File.basename(relative)
           next if leaf.starts_with?("_") # `_middleware.dart` and other plumbing
 
@@ -90,11 +96,22 @@ module Analyzer::Dart
           # not serve the other verbs, so narrow it to GET (rather than the
           # fall-back verb set) and mark the protocol as WebSocket.
           websocket = websocket_route?(content)
-          methods = websocket ? ["GET"] : detect_methods(content)
+          cleaned = Noir::CComments.strip(content)
+          methods = websocket ? ["GET"] : detect_methods(cleaned)
+          # The whole file is the `onRequest` handler and its helpers; the
+          # verb dispatch is not followed, so every verb gets every input —
+          # except a body read, kept off GET/HEAD when another verb can own it.
+          params = Helper.request_params(cleaned)
+          body_verbs = methods.any? { |verb| verb != "GET" && verb != "HEAD" }
           callees = include_callee ? callees_for_on_request(content, path) : [] of Noir::DartCalleeExtractor::Entry
           mutex.synchronize do
             methods.each do |verb|
-              result << build_endpoint(url, verb, path, callees, websocket)
+              endpoint = build_endpoint(url, verb, path, callees, websocket)
+              params.each do |param|
+                next if body_verbs && (verb == "GET" || verb == "HEAD") && (param.param_type == "json" || param.param_type == "form")
+                endpoint.push_param(param)
+              end
+              result << endpoint
             end
           end
         end
@@ -156,11 +173,9 @@ module Analyzer::Dart
       [] of Noir::DartCalleeExtractor::Entry
     end
 
-    # A bare (possibly dotted) handler reference assigned to `onRequest`.
-    HANDLER_REFERENCE_REGEX = /\A[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\z/
-
     private def assignment_callees(rhs : String, path : String, line : Int32) : Array(Noir::DartCalleeExtractor::Entry)
-      return [{rhs, path, line}] of Noir::DartCalleeExtractor::Entry if rhs.matches?(HANDLER_REFERENCE_REGEX)
+      # A bare (possibly dotted) handler reference assigned to `onRequest`.
+      return [{rhs, path, line}] of Noir::DartCalleeExtractor::Entry if rhs.matches?(Helper::HANDLER_REFERENCE_REGEX)
       Noir::DartCalleeExtractor.callees_for_body(rhs, path, line)
     end
 
@@ -199,9 +214,7 @@ module Analyzer::Dart
     # real handler body can't be mistaken for a rejection.
     METHOD_NOT_ALLOWED_REGEX = /methodNotAllowed|MethodNotAllowed|statusCode\s*:\s*405|\(\s*405\b/
 
-    private def detect_methods(content : String) : Array(String)
-      cleaned = Helper.strip_comments(content)
-
+    private def detect_methods(cleaned : String) : Array(String)
       verbs = [] of String
       HTTP_METHOD_PATTERNS.each do |verb, method_pattern|
         # Dart Frog exposes verbs as `HttpMethod.<lowercase>` constants.

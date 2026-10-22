@@ -35,7 +35,7 @@ tester = FunctionalTester.new("fixtures/perl/mojolicious_callees_multi_base/", {
 })
 tester.perform_tests
 
-it "keeps Mojolicious controller callees inside each base path" do
+it "keeps Mojolicious controller callees inside each base path", tags: "functional" do
   service_a = tester.app.endpoints.find! { |endpoint| endpoint.url == "/a/status" && endpoint.method == "GET" }
   service_a.callees.map(&.name).should contain("AService.call")
   service_a.callees.map(&.name).should_not contain("BService.call")

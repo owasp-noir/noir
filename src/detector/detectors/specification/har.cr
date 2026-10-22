@@ -2,22 +2,34 @@ require "../../../models/detector"
 require "../../../utils/json"
 require "../../../utils/yaml"
 require "../../../models/code_locator"
-require "har"
+require "../../../utils/har"
 
 module Detector::Specification
   class Har < Detector
+    # Registers HAR file paths in `CodeLocator`.
+    detector_for "har", extensions: %w[.har .json], idempotent: false
+
+    # Every `.json` in the tree reaches these guards. Both must match, so
+    # they stay separate probes rather than a union. A HAR's `log` is an
+    # object and its `entries` an array; matching the bare key names claimed
+    # any JSON that mentions them (`{"log":"Log","entries":"Entries"}` in a
+    # locale file) and then reported it as an unparsable HAR.
+    LOG_MARKER     = /"log"\s*:\s*\{/
+    ENTRIES_MARKER = /"entries"\s*:\s*\[/
+
     def detect(filename : String, file_contents : String) : Bool
       if (filename.ends_with? ".har") || (filename.ends_with? ".json")
         if filename.ends_with?(".har") || har_json_candidate?(file_contents)
           begin
-            data = HAR.from_string(file_contents)
+            data = Noir::HarDocument.parse(file_contents)
             if data.version.to_s.includes? "1."
               locator = CodeLocator.instance
-              locator.push("har-path", filename)
+              locator.push(Noir::LocatorKeys::HAR_PATH, filename)
               return true
             end
           rescue e
             logger.debug "HAR detection failed for #{filename}: #{e}"
+            record_unparsable_document(filename, e)
           end
         end
       end
@@ -25,21 +37,8 @@ module Detector::Specification
       false
     end
 
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".har") || filename.ends_with?(".json")
-    end
-
-    def set_name
-      @name = "har"
-    end
-
-    # Registers HAR file paths in `CodeLocator`.
-    def idempotent? : Bool
-      false
-    end
-
     private def har_json_candidate?(content : String) : Bool
-      content.includes?("\"log\"") && content.includes?("\"entries\"")
+      content_matches?(content, LOG_MARKER) && content_matches?(content, ENTRIES_MARKER)
     end
   end
 end

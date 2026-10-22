@@ -16,10 +16,10 @@ describe "Detect Nginx config" do
 
   it "detects nginx.conf with server/location blocks" do
     locator = CodeLocator.instance
-    locator.clear "nginx-spec"
+    locator.clear Noir::LocatorKeys::NGINX_SPEC
 
     instance.detect("nginx.conf", src).should be_true
-    locator.all("nginx-spec").should eq ["nginx.conf"]
+    locator.all(Noir::LocatorKeys::NGINX_SPEC).should eq ["nginx.conf"]
   end
 
   it "detects .conf fragments" do
@@ -48,6 +48,13 @@ describe "Detect Nginx config" do
 
   it "rejects .conf without nginx-shape directives" do
     instance.detect("config.conf", "key = value\nfoo = bar\n").should be_false
+  end
+
+  it "detects location assembled by template-action removal" do
+    # `strip_template_actions` splices `loc{{ … }}ation` back together, so
+    # the SHAPE_GUARD fast path must not reject template files on the raw
+    # (marker-less) content.
+    instance.detect("weird.tmpl", "loc{{ .X }}ation /v1 { proxy_pass http://up; }\n").should be_true
   end
 
   it "rejects nginx-looking words inside comments" do

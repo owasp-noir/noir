@@ -2,10 +2,14 @@ require "../../engines/javascript_engine"
 require "../../../miniparsers/js_route_extractor"
 require "../../../miniparsers/import_graph"
 require "../../../models/code_locator"
+require "../../../utils/js_literal_scanner"
+require "../../../utils/top_level_split"
 require "../../../utils/url_path"
 
 module Analyzer::Javascript
   class Koa < JavascriptEngine
+    analyzer_for "js_koa"
+
     def analyze
       result = [] of Endpoint
       static_dirs = [] of Hash(String, String)
@@ -21,48 +25,58 @@ module Analyzer::Javascript
       # instead of a bare `/users`.
       resolve_koa_mount_prefixes
 
-      parallel_file_scan([".js", ".ts", ".mjs"]) do |path|
-        begin
-          content = read_file_content(path)
-          parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug,
-            include_callees: include_callee)
-          parser_endpoints.each do |endpoint|
-            if endpoint.details.code_paths.empty?
-              endpoint.details = Details.new(PathInfo.new(path))
-            end
+      # A package that names `@strapi/*` is Strapi's own: the strapi tech owns
+      # its route objects and serves them under `/api`, `/admin` or
+      # `/<plugin>`, so the raw path read below would be a second, unprefixed
+      # copy that nothing serves.
+      strapi_owners = js_package_owners(["@strapi/"])
 
-            if endpoint.url.includes?(":")
-              endpoint.url.scan(/:(\w+)/) do |m|
-                if m.size > 0
-                  param = Param.new(m[1], "", "path")
-                  endpoint.push_param(param) if !endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
-                end
-              end
-            end
-            result << endpoint
+      parallel_file_scan([".js", ".ts", ".mts", ".cts", ".mjs", ".cjs"]) do |path|
+        content = read_file_content(path)
+        next if Noir::JSRouteExtractor.other_shared_extractor_framework?(content, :koa)
+        parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug,
+          include_callees: include_callee)
+        parser_endpoints.each do |endpoint|
+          if endpoint.details.code_paths.empty?
+            endpoint.details = Details.new(PathInfo.new(path))
           end
 
-          collect_static_paths(path, content, static_dirs, :koa)
-
-          # Strapi-style declarative routes: `{ method: 'GET',
-          # path: '/foo', handler: '...' }` object literals,
-          # typically exported as an array from
-          # `<plugin>/server/routes/**/*.js`. The verb DSL (`app.get`,
-          # `router.post`) doesn't fire on these — strapi/strapi
-          # parks ~38 such routes per plugin that the shared
-          # JSRouteExtractor would otherwise miss.
-          extract_strapi_routes(path, content, result)
-        rescue e
-          logger.debug "Parser failed for #{path}: #{e.message}, falling back to regex"
-          analyze_with_regex(path, result, static_dirs)
+          if endpoint.url.includes?(":")
+            endpoint.url.scan(/:(\w+)/) do |m|
+              param = Param.new(m[1], "", "path")
+              endpoint.push_param(param)
+            end
+          end
+          result << endpoint
         end
+
+        collect_static_paths(path, content, static_dirs, :koa)
+
+        # Strapi-style declarative routes: `{ method: 'GET',
+        # path: '/foo', handler: '...' }` object literals,
+        # typically exported as an array from
+        # `<plugin>/server/routes/**/*.js`. The verb DSL (`app.get`,
+        # `router.post`) doesn't fire on these — strapi/strapi
+        # parks ~38 such routes per plugin that the shared
+        # JSRouteExtractor would otherwise miss.
+        extract_strapi_routes(path, content, result) unless owned_by_js_package?(path, strapi_owners)
+      rescue e
+        logger.debug "Parser failed for #{path}: #{e.message}, falling back to regex"
+        analyze_with_regex(path, result, static_dirs)
       end
 
       # Process static directories to create endpoints for static files
-      process_static_dirs(static_dirs, result)
+      process_js_static_dirs(static_dirs, result)
 
       result
     end
+
+    KOA_USE_CALL_RE   = /(\w+)\.use\s*\(/
+    KOA_PREFIX_ARG_RE = /\A['"]([^'"]+)['"]\z/
+    KOA_ROUTES_ARG_RE = /\A(\w+)\.routes\s*\(\s*\)\z/
+    KOA_BARE_ARG_RE   = /\A(\w+)\z/
+    # `const api = new Router({ prefix: '/api' })`
+    KOA_CTOR_PREFIX_RE = /(\w+)\s*=\s*new\s+\w*Router\s*\(\s*\{[^}]*?\bprefix\s*:\s*['"]([^'"]+)['"]/
 
     # Resolve koa-router cross-file mount prefixes and seed them into
     # CodeLocator under each imported child router's file key. Each file
@@ -70,17 +84,19 @@ module Analyzer::Javascript
     # has one aggregator file (`routes/index.js`) wiring every sub-router.
     private def resolve_koa_mount_prefixes
       locator = CodeLocator.instance
-      boundary = @base_path
-
       all_files.each do |path|
-        next unless [".js", ".ts", ".mjs", ".cjs"].any? { |ext| path.ends_with?(ext) }
+        next unless [".js", ".ts", ".mts", ".cts", ".mjs", ".cjs"].any? { |ext| path.ends_with?(ext) }
         content = read_file_content(path)
         # Cheap gate: the mount chain always pairs `.use(` with `.routes(`.
         next unless content.includes?(".use(") && content.includes?(".routes(")
+        next if Noir::JSRouteExtractor.test_file?(path, content)
         next if Noir::JSRouteExtractor.minified_content?(content)
+        # `.use(/* x */ '/api', router.routes())` must keep its prefix.
+        content = Noir::JSRouteExtractor.strip_js_comments(content)
 
         # Map local identifiers to the router file they import.
         imports = Hash(String, String).new
+        boundary = import_boundary_for(path)
         record_import = ->(var : String, spec : String) do
           resolved = Noir::ImportGraph.resolve_relative_import(path, spec, boundary: boundary)
           imports[var] = resolved if resolved
@@ -91,26 +107,54 @@ module Analyzer::Javascript
         content.scan(/import\s+(\w+)\s+from\s+['"]([^'"]+)['"]/) do |m|
           record_import.call(m[1], m[2]) if m.size >= 3
         end
+        # Routers imported by name (`const { usersRouter } = require(…)`,
+        # `import { router as users } from …`) keep the exported name: the
+        # route extractor maps it back to the binding the routes are on.
+        named_imports = Hash(String, Tuple(String, String)).new
+        content.scan(/(?:(?:const|let|var)\s*\{([^}]*)\}\s*=\s*require\s*\(|import\s*\{([^}]*)\}\s*from)\s*['"]([^'"]+)['"]/) do |m|
+          resolved = Noir::ImportGraph.resolve_relative_import(path, m[3], boundary: boundary)
+          next unless resolved
+          (m[1]? || m[2]).split(',').each do |item|
+            parts = item.strip.split(/\s*:\s*|\s+as\s+/)
+            named_imports[parts.last] = {resolved, parts.first} if parts.all?(&.matches?(/\A[A-Za-z_$][\w$]*\z/))
+          end
+        end
 
         # Collect mount edges: parent.use('/prefix', child[.routes()]) and
-        # the no-prefix parent.use(child[.routes()]). A bare `child` or a
-        # `child.routes()` wrapper is a router; a `factory()` call (e.g.
-        # `bodyParser()`) is middleware and never matches these shapes.
+        # the no-prefix parent.use(child[.routes()]). Every `child.routes()`
+        # argument is a router (`use('/u', auth, users.routes(),
+        # users.allowedMethods())`); a bare `child` only as the sole router
+        # argument. A `factory()` call (e.g. `bodyParser()`) is middleware.
+        # The parent's own `new Router({ prefix })` precedes the mount path.
+        ctor_prefixes = Hash(String, String).new
+        content.scan(KOA_CTOR_PREFIX_RE) { |m| ctor_prefixes[m[1]] = m[2] }
         edges = [] of Tuple(String, String, String)
-        content.scan(/(\w+)\.use\s*\(\s*['"]([^'"]+)['"]\s*,\s*(\w+)(?:\.routes\s*\(\s*\))?\s*\)/) do |m|
-          edges << {m[1], m[2], m[3]} if m.size >= 4
-        end
-        content.scan(/(\w+)\.use\s*\(\s*(\w+)(?:\.routes\s*\(\s*\))?\s*\)/) do |m|
-          edges << {m[1], "", m[2]} if m.size >= 3
+        content.scan(KOA_USE_CALL_RE) do |m|
+          args = Noir::JSLiteralScanner.extract_paren_content_at_byte(content, m.byte_end(0)).try(&.content)
+          next unless args
+          parts = Noir::TopLevelSplit.split(args, ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).map(&.strip)
+          mount = ""
+          if literal = parts.first?.try(&.match(KOA_PREFIX_ARG_RE))
+            mount = literal[1]
+            parts.shift
+          end
+          mount = Noir::URLPath.join(ctor_prefixes[m[1]]? || "", mount)
+          parts.each do |part|
+            child = part.match(KOA_ROUTES_ARG_RE) || (parts.size == 1 ? part.match(KOA_BARE_ARG_RE) : nil)
+            edges << {m[1], mount, child[1]} if child
+          end
         end
         next if edges.empty?
 
         prefixes = resolve_mount_edge_prefixes(edges)
 
         prefixes.each do |router_var, router_prefixes|
-          file = imports[router_var]?
-          next unless file
-          key = Analyzer::Javascript::ExpressConstants.file_key(File.expand_path(file))
+          key = if file = imports[router_var]?
+                  Analyzer::Javascript::ExpressConstants.file_key(Noir::PathScope.expand(file))
+                elsif named = named_imports[router_var]?
+                  Analyzer::Javascript::ExpressConstants.function_key(Noir::PathScope.expand(named[0]), named[1])
+                end
+          next unless key
           router_prefixes.each do |prefix|
             next if prefix.empty?
             locator.push(key, prefix) unless locator.all(key).includes?(prefix)
@@ -121,51 +165,6 @@ module Analyzer::Javascript
       end
     end
 
-    # Resolve every router variable's mount prefix(es) from the edge list.
-    # A variable that is never mounted into another (a root aggregator like
-    # the exported `router`) carries the empty prefix; children inherit the
-    # parent's prefix joined with the edge's own prefix. Iterated to a
-    # fixpoint so a two-level chain (root -> api -> child) fully resolves.
-    private def resolve_mount_edge_prefixes(edges : Array(Tuple(String, String, String))) : Hash(String, Array(String))
-      children = edges.map { |_, _, child| child }.to_set
-      prefixes = Hash(String, Array(String)).new { |h, k| h[k] = [] of String }
-
-      # Seed roots (never a mount target) with the empty prefix.
-      edges.each do |parent, _, _|
-        prefixes[parent] << "" if !children.includes?(parent) && prefixes[parent].empty?
-      end
-
-      max_iterations = 16
-      iterations = 0
-      changed = true
-      while changed && iterations < max_iterations
-        changed = false
-        iterations += 1
-        edges.each do |parent, prefix, child|
-          # Propagate only from a resolved parent (a seeded root or an
-          # already-resolved child). Defaulting an unresolved parent to ""
-          # would leak a wrong prefix (`/sub` instead of `/api/sub`).
-          parent_prefixes = prefixes[parent]?
-          next if parent_prefixes.nil? || parent_prefixes.empty?
-          parent_prefixes.each do |pp|
-            combined = if pp.empty?
-                         prefix
-                       elsif prefix.empty?
-                         pp
-                       else
-                         Noir::URLPath.join(pp, prefix)
-                       end
-            unless prefixes[child].includes?(combined)
-              prefixes[child] << combined
-              changed = true
-            end
-          end
-        end
-      end
-
-      prefixes
-    end
-
     # Match Strapi's declarative route entries: object literals
     # whose `method:` and `path:` keys sit on adjacent lines. Both
     # keys are bare identifiers (Strapi never quotes them) and the
@@ -173,9 +172,12 @@ module Analyzer::Javascript
     # `@strapi/plugin-*` route file).
     private def extract_strapi_routes(path : String, content : String, result : Array(Endpoint))
       return unless strapi_route_candidate?(content)
+      # The verb-DSL pass above already refuses test files; this one read them.
+      return if Noir::JSRouteExtractor.test_stub_only?(path, content)
 
       seen = Set(Tuple(String, String, Int32)).new
-      lines = content.lines
+      # `path: /* x */ '/p'` and commented-out entries; lines are kept.
+      lines = Noir::JSRouteExtractor.strip_js_comments(content).lines
       lines.each_with_index do |line, index|
         next unless m = line.match(/^\s*method:\s*['"]([A-Z]+)['"]\s*,?/)
         method = m[1].upcase
@@ -204,14 +206,12 @@ module Analyzer::Javascript
         next unless handler_seen
         # Skip duplicate (same triple already emitted for this file).
         key = {method, route_path, index + 1}
-        next if seen.includes?(key)
-        seen << key
+        next unless seen.add?(key)
 
         details = Details.new(PathInfo.new(path, index + 1))
         endpoint = Endpoint.new(route_path, method, details)
         if route_path.includes?(":")
           route_path.scan(/:(\w+)/) do |pm|
-            next unless pm.size > 0
             endpoint.push_param(Param.new(pm[1], "", "path"))
           end
         end
@@ -223,11 +223,6 @@ module Analyzer::Javascript
       content.includes?("method:") &&
         content.includes?("path:") &&
         content.includes?("handler:")
-    end
-
-    # Process static directories and add endpoints for each file
-    private def process_static_dirs(static_dirs : Array(Hash(String, String)), result : Array(Endpoint))
-      process_js_static_dirs(static_dirs, result)
     end
 
     private def analyze_with_regex(path : String, result : Array(Endpoint), static_dirs : Array(Hash(String, String)) = [] of Hash(String, String))
@@ -282,16 +277,13 @@ module Analyzer::Javascript
 
         # Extract path parameters from the route_path itself
         route_path.scan(/:(\w+)/) do |m|
-          if m.size > 0 && !endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
-            param = Param.new(m[1], "", "path")
-            endpoint.push_param(param)
-          end
+          endpoint.push_param(Param.new(m[1], "", "path"))
         end
 
         # Extract parameters from handler body
         extract_koa_params_from_content(file_content, router_var || "app", match[2], route_path, endpoint)
 
-        unless result.any? { |e| e.url == full_path && e.method == http_method }
+        unless route_recorded_for_file?(result, path, full_path, http_method)
           result << endpoint
         end
       end
@@ -310,55 +302,51 @@ module Analyzer::Javascript
 
       # Extract query parameters - Koa style: ctx.query.X, ctx.query['X'], ctx.request.query.X
       handler_body.scan(/ctx\.query\.(\w+)/) do |m|
-        endpoint.push_param(Param.new(m[1], "", "query")) if m.size > 0
+        endpoint.push_param(Param.new(m[1], "", "query"))
       end
 
       handler_body.scan(/ctx\.query\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |m|
-        endpoint.push_param(Param.new(m[1], "", "query")) if m.size > 0
+        endpoint.push_param(Param.new(m[1], "", "query"))
       end
 
       handler_body.scan(/ctx\.request\.query\.(\w+)/) do |m|
-        endpoint.push_param(Param.new(m[1], "", "query")) if m.size > 0
+        endpoint.push_param(Param.new(m[1], "", "query"))
       end
 
       # Extract body parameters - Koa style: ctx.request.body.X, const { X } = ctx.request.body
       handler_body.scan(/ctx\.request\.body\.(\w+)/) do |m|
-        endpoint.push_param(Param.new(m[1], "", "json")) if m.size > 0
+        endpoint.push_param(Param.new(m[1], "", "json"))
       end
 
       handler_body.scan(/(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*ctx\.request\.body/) do |m|
-        if m.size > 0
-          params = m[1].split(",").map(&.strip)
-          params.each do |param|
-            clean_param = param.split("=").first.strip.split(":").first.strip
-            endpoint.push_param(Param.new(clean_param, "", "json")) unless clean_param.empty?
-          end
+        params = m[1].split(",").map(&.strip)
+        params.each do |param|
+          clean_param = param.split("=").first.strip.split(":").first.strip
+          endpoint.push_param(Param.new(clean_param, "", "json")) unless clean_param.empty?
         end
       end
 
       # Extract header parameters - Koa style: ctx.headers['X'], ctx.header['X'], ctx.get('X')
       handler_body.scan(/ctx\.headers\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |m|
-        endpoint.push_param(Param.new(m[1], "", "header")) if m.size > 0
+        endpoint.push_param(Param.new(m[1], "", "header"))
       end
 
       handler_body.scan(/ctx\.header\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |m|
-        endpoint.push_param(Param.new(m[1], "", "header")) if m.size > 0
+        endpoint.push_param(Param.new(m[1], "", "header"))
       end
 
       handler_body.scan(/ctx\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m|
-        endpoint.push_param(Param.new(m[1], "", "header")) if m.size > 0
+        endpoint.push_param(Param.new(m[1], "", "header"))
       end
 
       # Extract cookie parameters - Koa style: ctx.cookies.get('X')
       handler_body.scan(/ctx\.cookies\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m|
-        endpoint.push_param(Param.new(m[1], "", "cookie")) if m.size > 0
+        endpoint.push_param(Param.new(m[1], "", "cookie"))
       end
 
       # Extract path parameters from ctx.params.X
       handler_body.scan(/ctx\.params\.(\w+)/) do |m|
-        if m.size > 0 && !endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
-          endpoint.push_param(Param.new(m[1], "", "path"))
-        end
+        endpoint.push_param(Param.new(m[1], "", "path"))
       end
     end
   end

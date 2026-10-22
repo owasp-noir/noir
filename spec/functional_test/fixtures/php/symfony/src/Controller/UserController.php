@@ -61,3 +61,8 @@ class UserController extends AbstractController
         return $this->json(['status' => 'deleted']);
     }
 }
+// #[Route('/dead-line', methods: ['GET'])]
+/*
+#[Route('/dead-block', methods: ['POST'])]
+public function dead() {}
+*/

@@ -6,8 +6,8 @@ private def analyze_kamal(content : String)
   path = File.tempname("deploy", ".yml")
   File.write(path, content)
   locator = CodeLocator.instance
-  locator.clear "kamal-spec"
-  locator.push "kamal-spec", path
+  locator.clear Noir::LocatorKeys::KAMAL_SPEC
+  locator.push Noir::LocatorKeys::KAMAL_SPEC, path
 
   options = create_test_options
   analyzer = Analyzer::Specification::Kamal.new options

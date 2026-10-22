@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Lua
   class Lor < Detector
+    detector_for "lua_lor", extensions: %w[.lua .moon .rockspec]
+
     def detect(filename : String, file_contents : String) : Bool
       # `*.rockspec` (LuaRocks manifest) declaring the `lor` dependency.
       if filename.ends_with?(".rockspec") &&
@@ -19,14 +21,6 @@ module Detector::Lua
       return true if file_contents.match(/=\s*lor\s*\(\s*\)/)
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".lua") || filename.ends_with?(".moon") || filename.ends_with?(".rockspec")
-    end
-
-    def set_name
-      @name = "lua_lor"
     end
   end
 end

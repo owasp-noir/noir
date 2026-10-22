@@ -1,0 +1,5 @@
+spring.cloud.gateway.routes:
+  - id: cors_preflight_test
+    uri: ${test.uri}
+    predicates:
+      - Path=/abc/**

@@ -15,13 +15,22 @@ Release process for project maintainers.
 | Homebrew (Core) | [noir](https://formulae.brew.sh/formula/noir) | Manual |
 | Homebrew (Tap) | `owasp-noir/noir` | Automated |
 | Snapcraft | [noir](https://snapcraft.io/noir) | Automated |
-| Docker Hub | [ghcr.io/owasp-noir/noir](https://github.com/owasp-noir/noir/pkgs/container/noir) | Automated |
-| OWASP Project Page | [OWASP/www-project-noir](https://github.com/OWASP/www-project-noir) | Manual |
+| GitHub Container Registry | [ghcr.io/owasp-noir/noir](https://github.com/owasp-noir/noir/pkgs/container/noir) | Automated |
+| GitHub Release assets | Binaries (Linux, macOS, Windows), `.deb`, `.rpm`, `.apk`, SBOM | Automated |
+| AUR | `noir` | Automated |
+| OWASP Project Page | [OWASP/www-project-noir](https://github.com/OWASP/www-project-noir) | Semi-automated |
 
 ## General Procedure
 
-1.  **Update Version**: Update the version in source code and documentation.
-2.  **Verify Version Consistency**: Run the version check to ensure all files match:
+1.  **Update Version**: Bump the version everywhere it appears (`shard.yml`, `src/noir.cr`, `flake.nix`, the Dockerfile, `snap/snapcraft.yaml`, `aur/PKGBUILD`, the GitHub Action README and a few docs files). The script does it in one go; without an argument it prompts for the new version.
+
+    ```bash
+    just version-update 1.4.1
+    # or
+    just vu 1.4.1
+    ```
+
+2.  **Verify Version Consistency**: Run the version check to make sure every file matches:
 
     ```bash
     just version-check
@@ -29,10 +38,10 @@ Release process for project maintainers.
     just vc
     ```
 
-    All 13 tracked files must match the version in `shard.yml` (all checks show ✅).
+    Every tracked file must report the same version as `shard.yml`; the script ends with `✅ All versions match`.
 
-3.  **Create GitHub Release**: Publish a new release on the [GitHub releases page](https://github.com/owasp-noir/noir/releases). This triggers automated workflows.
-4.  **Manual Releases**: Complete the manual steps below for non-automated channels.
+3.  **Create GitHub Release**: Publish a new release on the [GitHub releases page](https://github.com/owasp-noir/noir/releases). Publishing triggers the automated workflows: binaries first, then the `.deb`, `.rpm`, `.apk` and AUR packages once the binaries are uploaded, plus GHCR, Snapcraft, the Homebrew tap and the SBOM.
+4.  **Manual Releases**: Complete the manual steps below for the remaining channels.
 
 ## Manual Release Instructions
 
@@ -45,7 +54,7 @@ Submit a PR to `homebrew-core`:
 
     ```bash
     brew bump-formula-pr --strict --version <VERSION> noir
-    # Example: brew bump-formula-pr --strict --version 1.1.0 noir
+    # Example: brew bump-formula-pr --strict --version 1.4.0 noir
     ```
 
 3.  **Style Check** (Optional):
@@ -57,4 +66,11 @@ Submit a PR to `homebrew-core`:
 
 ### OWASP Project Page
 
-Submit a PR to [OWASP/www-project-noir](https://github.com/OWASP/www-project-noir) with updated content.
+The version list on the project page lives in `_data/release.yml` of [OWASP/www-project-noir](https://github.com/OWASP/www-project-noir). For every stable release, the `OWASP Project Page Publish` workflow commits the new tag to the `owasp-noir/www-project-noir` fork and puts a compare link in the run summary. Open the upstream PR from that link by hand: the OWASP Foundation's token policy doesn't let CI create it.
+
+To backfill an older tag or retry a failed run, run the same script locally (`--dry-run` previews the change without pushing):
+
+```bash
+just www-release v1.4.0 --dry-run
+just www-release v1.4.0
+```

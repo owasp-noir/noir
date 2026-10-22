@@ -1,0 +1,10 @@
+{
+  "name": "clamultilinedemo",
+  "version": "1.0.0",
+  "bin": {
+    "clamultilinedemo": "cli.js"
+  },
+  "dependencies": {
+    "command-line-args": "^5.2.1"
+  }
+}

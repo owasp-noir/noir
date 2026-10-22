@@ -8,6 +8,8 @@ module Analyzer::Dart
   # `HttpRequest.method` and `HttpRequest.uri.path` inside an `await for`
   # or `listen` handler.
   class Http < Analyzer
+    analyzer_for "dart_http"
+
     DART_IO_IMPORT_RE = /^\s*import\s+['"]dart:io['"]/m
     HTTP_METHODS      = "GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|TRACE"
 
@@ -20,11 +22,13 @@ module Analyzer::Dart
     METHOD_CASE_RE      = /(?:^|[^\w.])case\s+r?["'](#{HTTP_METHODS})["']\s*:/
     SWITCH_PATH_RE      = /\bswitch\s*\([^\)]*\.\s*uri\s*\.\s*path\s*\)/
     SWITCH_METHOD_RE    = /\bswitch\s*\([^\)]*\.\s*method\s*\)/
-    QUERY_PARAM_RE      = /\.uri\s*\.\s*queryParameters(?:All)?\s*\[\s*r?["']([^"']+?)["']\s*\]/
-    HEADER_VALUE_RE     = /\.headers\s*\.\s*value\s*\(\s*r?["']([^"']+?)["']/
-    HEADER_INDEX_RE     = /\.headers\s*\[\s*r?["']([^"']+?)["']\s*\]/
     COOKIE_NAME_RE      = /\.cookies\b.*?\.name\s*==\s*r?["']([^"']+?)["']/
     BODY_READ_RE        = /utf8\s*\.\s*decoder\s*\.\s*bind\s*\([^\)]*\)|\.transform\s*\(\s*utf8\s*\.\s*decoder\s*\)|jsonDecode\s*\(/
+
+    # Whole-file detection gate, evaluated once per `.dart` file. A precompiled
+    # `Regex.union` (PCRE2 JIT) replaces the two OR-ed `String#includes?` scans
+    # it used to run — provably equivalent since union auto-escapes each literal.
+    HTTP_SURFACE_RE = Regex.union("HttpServer", "HttpRequest")
 
     alias MethodContext = NamedTuple(method: String, depth: Int32, params: Array(Param), switch_case: Bool)
     alias PathContext = NamedTuple(path: String, depth: Int32, params: Array(Param), switch_case: Bool)
@@ -65,11 +69,11 @@ module Analyzer::Dart
 
     private def http_file?(content : String) : Bool
       return false unless content.match(DART_IO_IMPORT_RE)
-      content.includes?("HttpServer") || content.includes?("HttpRequest")
+      content.matches?(HTTP_SURFACE_RE)
     end
 
     private def scan_file(content : String, path : String, include_callee : Bool) : Array(Endpoint)
-      cleaned = Helper.strip_comments(content)
+      cleaned = Noir::CComments.strip(content)
       lines = cleaned.lines
       offsets = line_offsets(content)
       endpoints = [] of Endpoint
@@ -234,13 +238,13 @@ module Analyzer::Dart
 
     private def params_from_line(line : String) : Array(Param)
       params = [] of Param
-      line.scan(QUERY_PARAM_RE) do |match|
+      line.scan(Helper::QUERY_PARAM_REGEX) do |match|
         append_param(params, Param.new(match[1], "", "query"))
       end
-      line.scan(HEADER_VALUE_RE) do |match|
+      line.scan(Helper::HEADER_VALUE_REGEX) do |match|
         append_param(params, Param.new(match[1], "", "header"))
       end
-      line.scan(HEADER_INDEX_RE) do |match|
+      line.scan(Helper::HEADER_INDEX_REGEX) do |match|
         append_param(params, Param.new(match[1], "", "header"))
       end
       line.scan(COOKIE_NAME_RE) do |match|

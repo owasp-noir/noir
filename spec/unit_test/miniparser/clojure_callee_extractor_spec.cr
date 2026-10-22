@@ -124,4 +124,53 @@ describe Noir::ClojureCalleeExtractor do
     ])
     callees["ignored"].map(&.[0]).should eq(["safe/run!"])
   end
+
+  it "reads character literals instead of letting them open strings or forms" do
+    # Every reader-significant character literal: `\"` must not open a string
+    # that runs to the next quote in the file, `\(` must not count as an open
+    # paren, `\;` must not start a comment, and `\\` is the backslash character
+    # itself — it does not escape the `]` after it.
+    body = <<-CLJ
+      (let [q \\" open \\( semi \\; back \\\\]
+        (render/quote q open semi back))
+      CLJ
+
+    callees = Noir::ClojureCalleeExtractor.callees_for_body(body, "core.clj", 5)
+    callees.map { |name, _, line| {name, line} }.should eq([
+      {"render/quote", 6},
+    ])
+  end
+
+  it "reads named, unicode and octal character literals as whole tokens" do
+    # `\newline` must be consumed whole; leaving `ewline` behind would read it
+    # as a symbol and `(ewline ...)` style breakage follows.
+    body = <<-'CLJ'
+      (let [nl \newline sp \space tab \tab ff \formfeed
+            bs \backspace cr \return u \u00e9 o \o101]
+        (render/join nl sp tab ff bs cr u o))
+      CLJ
+
+    callees = Noir::ClojureCalleeExtractor.callees_for_body(body, "core.clj", 1)
+    callees.map { |name, _, line| {name, line} }.should eq([
+      {"render/join", 3},
+    ])
+  end
+
+  it "keeps collecting callees in a defn body that follows a character literal" do
+    source = <<-CLJ
+      (ns demo.core)
+
+      (defn alpha-handler [request]
+        (let [quote-char \\"]
+          (render-alpha request quote-char)))
+
+      (defn beta-handler [request]
+        (render-beta request))
+      CLJ
+
+    callees = Noir::ClojureCalleeExtractor.function_callees(source, "core.clj")
+
+    callees["alpha-handler"].map(&.[0]).should eq(["render-alpha"])
+    callees["beta-handler"].map(&.[0]).should eq(["render-beta"])
+  end
 end

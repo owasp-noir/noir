@@ -6,8 +6,8 @@ class RustEngineSpecHarness < Analyzer::Rust::RustEngine
     [] of Endpoint
   end
 
-  def function_body(lines : Array(String), start_index : Int32) : Tuple(String, Int32)?
-    extract_rust_function_body(lines, start_index)
+  def function_body(lines : Array(String), start_index : Int32) : Tuple(String, Int32, Int32)?
+    extract_rust_function_body_with_end(lines, start_index)
   end
 end
 
@@ -34,7 +34,7 @@ describe Analyzer::Rust::RustEngine do
     real_body = harness.function_body(lines, 3)
     real_body.should_not be_nil
     if real_body
-      body, start_line = real_body
+      body, start_line, _ = real_body
       start_line.should eq(5)
       body.should contain("RealService::run")
     end
@@ -87,6 +87,46 @@ describe Analyzer::Rust::RustEngine do
       _start_byte, end_byte = regions[0]
       after_byte = source.byte_index("fn after").not_nil!
       (after_byte >= end_byte).should be_true
+    end
+
+    it "opens no region for a brace-less item ending in ';'" do
+      source = <<-RUST
+        #[cfg(test)]
+        mod tests;
+        #[cfg(test)]
+        use crate::helpers::*;
+        #[cfg(test)]
+        const SIZES: [u8; 2] = [1, 2];
+
+        #[get("/victim")]
+        async fn victim() -> impl Responder {
+            HttpResponse::Ok()
+        }
+        RUST
+
+      Analyzer::Rust::RustEngine.collect_cfg_test_regions(source).should be_empty
+    end
+
+    it "opens no region for a cfg(test) struct field or enum variant" do
+      source = <<-RUST
+        struct Config {
+            a: u8,
+            #[cfg(test)]
+            b: u8
+        }
+        enum Mode {
+            Prod,
+            #[cfg(test)]
+            Mock
+        }
+
+        #[get("/after_struct_field")]
+        async fn after() -> impl Responder {
+            HttpResponse::Ok()
+        }
+        RUST
+
+      Analyzer::Rust::RustEngine.collect_cfg_test_regions(source).should be_empty
     end
   end
 end

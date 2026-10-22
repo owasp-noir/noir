@@ -11,7 +11,7 @@ expected_endpoints = [
   Endpoint.new("/search", "GET", [
     Param.new("Keyword", "", "query"),
     Param.new("Page", "", "query"),
-    Param.new("TraceId", "", "header"),
+    Param.new("X-Trace-Id", "", "header"),
   ]),
   Endpoint.new("/ping", "GET"),
   Endpoint.new("/legacy/status", "GET"),
@@ -27,6 +27,14 @@ expected_endpoints = [
     Param.new("Payload", "", "json"),
     Param.new("SessionId", "", "cookie"),
   ]),
+  # Two feature folders each declaring `class Request` — the vertical-slice
+  # layout FastEndpoints documents. Each endpoint keeps its own DTO.
+  Endpoint.new("/archive", "POST", [
+    Param.new("ArchiveId", "", "json"),
+  ]),
+  Endpoint.new("/restore", "POST", [
+    Param.new("RestoreToken", "", "json"),
+  ]),
 ]
 
 tester = FunctionalTester.new("fixtures/csharp/fastendpoints/", {
@@ -36,11 +44,19 @@ tester = FunctionalTester.new("fixtures/csharp/fastendpoints/", {
 
 tester.perform_tests
 
-describe "FastEndpoints analyzer edge cases" do
+describe "FastEndpoints analyzer edge cases", tags: "functional" do
   it "treats EndpointWithoutRequest<TResponse> as response-only — no DTO leakage" do
     status = tester.app.endpoints.find { |e| e.url == "/status" && e.method == "GET" }
     status.should_not be_nil
     status.as(Endpoint).params.empty?.should be_true
+  end
+
+  it "resolves a same-named request DTO per feature folder, not as a union" do
+    archive = tester.app.endpoints.find! { |e| e.url == "/archive" && e.method == "POST" }
+    archive.params.map(&.name).sort!.should eq(["ArchiveId"])
+
+    restore = tester.app.endpoints.find! { |e| e.url == "/restore" && e.method == "POST" }
+    restore.params.map(&.name).sort!.should eq(["RestoreToken"])
   end
 
   it "ignores commented-out verb calls inside Configure()" do
@@ -48,7 +64,7 @@ describe "FastEndpoints analyzer edge cases" do
   end
 end
 
-describe "FastEndpoints auth tagger" do
+describe "FastEndpoints auth tagger", tags: "functional" do
   fixture_path = "fixtures/csharp/fastendpoints/"
 
   it "tags endpoints behind Roles/Permissions and skips AllowAnonymous ones" do

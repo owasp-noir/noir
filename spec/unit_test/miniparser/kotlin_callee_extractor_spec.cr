@@ -116,6 +116,38 @@ describe Noir::KotlinCalleeExtractor do
     end
   end
 
+  describe "FileCallees" do
+    it "answers repeated lookups in one file the same as callees_in_method" do
+      source = <<-KT
+        package app
+
+        class A {
+            fun show() { svc.a() }
+            fun show(id: Long) { svc.b(id) }
+            class Inner {
+                fun show() { svc.inner() }
+            }
+        }
+        class B {
+            fun show() { svc.c() }
+        }
+        KT
+
+      with_kotlin_root(source) do |root|
+        file_callees = Noir::KotlinCalleeExtractor::FileCallees.new(root, source, "A.kt")
+        [{"A", "show", nil}, {"A", "show", 5}, {"A", "show", 6}, {"Inner", "show", nil},
+         {"B", "show", nil}, {"B", "missing", nil}, {"Missing", "show", nil}].each do |(klass, method, line)|
+          file_callees.callees_in_method(klass, method, line).should eq(
+            Noir::KotlinCalleeExtractor.callees_in_method(root, source, "A.kt", klass, method, line)
+          )
+        end
+        file_callees.callees_in_method("A", "show", 5).map(&.[0]).should eq(["svc.b"])
+        file_callees.callees_in_method("A", "show", 6).should be_empty
+        file_callees.callees_in_method("Inner", "show").map(&.[0]).should eq(["svc.inner"])
+      end
+    end
+  end
+
   describe ".callees_in_lambda (Ktor mode, skip_routing: true)" do
     it "treats nested verb DSL calls as route boundaries and skips their callees" do
       source = <<-KT

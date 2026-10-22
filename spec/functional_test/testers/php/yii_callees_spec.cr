@@ -62,12 +62,12 @@ expected_endpoints = [
 
 FunctionalTester.new("fixtures/php/yii/", {
   :techs     => 2,
-  :endpoints => 20,
+  :endpoints => 32,
 }, expected_endpoints, {
   "include_callee" => YAML::Any.new(true),
 }).perform_tests
 
-describe "Yii config route callees" do
+describe "Yii config route callees", tags: "functional" do
   it "keeps urlManager-only routes callee-empty" do
     config_init = ConfigInitializer.new
     noir_options = config_init.default_options

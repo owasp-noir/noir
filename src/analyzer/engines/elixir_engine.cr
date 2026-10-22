@@ -1,17 +1,9 @@
 require "../../models/analyzer"
+require "./file_scan_engine"
 require "../../miniparsers/elixir_callee_extractor"
 
 module Analyzer::Elixir
-  abstract class ElixirEngine < Analyzer
-    def analyze
-      parallel_file_scan do |path|
-        result.concat(analyze_file(path))
-      end
-      result
-    end
-
-    abstract def analyze_file(path : String) : Array(Endpoint)
-
+  abstract class ElixirEngine < FileScanEngine
     protected def attach_elixir_callees(endpoint : Endpoint, callees : Array(Noir::ElixirCalleeExtractor::Entry))
       Noir::ElixirCalleeExtractor.attach_to(endpoint, callees)
     end
@@ -26,33 +18,191 @@ module Analyzer::Elixir
     # a `do` that isn't the inline `do:` keyword form, plus each `fn`,
     # minus each `end`.
     protected def elixir_block_depth_delta(line : String) : Int32
+      # Fast reject: most body lines have none of the block keywords, so
+      # skip strip_comment + the keyword walk entirely.
+      return 0 unless line.includes?("do") || line.includes?("fn") || line.includes?("end")
+
       # Count on a string-and-comment-stripped copy so the keywords
       # `do`/`fn`/`end` appearing inside a literal (`flash(conn, "…the
       # end")`) or a trailing comment don't shift block depth and
       # truncate the enclosing function.
       code = Noir::ElixirCalleeExtractor.strip_comment(line)
-      opens = code.scan(/\bdo\b(?!:)/).size + code.scan(/\bfn\b/).size
-      closes = code.scan(/\bend\b/).size
+      return 0 unless code.includes?("do") || code.includes?("fn") || code.includes?("end")
+
+      # Linear word-boundary walk replaces three PCRE `\b…​\b` scans.
+      # A `do` followed by `:` is the keyword-list form (`do: expr`) and
+      # must not open a block — same rule as the previous `(?!:)` regex.
+      elixir_block_keyword_delta(code)
+    end
+
+    # Count `do`/`fn` openers minus `end` closers on an already
+    # string-and-comment-stripped line. Word boundaries match PCRE `\b`
+    # over `[A-Za-z0-9_]` (so `end!` still counts as `end`).
+    private def elixir_block_keyword_delta(code : String) : Int32
+      opens = 0
+      closes = 0
+      i = 0
+      size = code.size
+      while i < size
+        ch = code[i]
+        unless ch.ascii_letter?
+          i += 1
+          next
+        end
+
+        # Only consider tokens at a word boundary. A `:` prefix makes the
+        # word an atom (`arg :end, :long`), not a block keyword.
+        if i > 0
+          prev = code[i - 1]
+          if prev.ascii_alphanumeric? || prev == '_' || prev == ':'
+            i = skip_elixir_word(code, i, size)
+            next
+          end
+        end
+
+        if elixir_keyword_at?(code, i, size, "do")
+          after = i + 2
+          # Inline `do:` keyword form is not a block opener.
+          opens += 1 unless after < size && code[after] == ':'
+          i = after
+          next
+        end
+
+        if elixir_keyword_at?(code, i, size, "fn")
+          opens += 1
+          i += 2
+          next
+        end
+
+        if elixir_keyword_at?(code, i, size, "end")
+          closes += 1
+          i += 3
+          next
+        end
+
+        i = skip_elixir_word(code, i, size)
+      end
       opens - closes
     end
 
-    # No extension filter: Phoenix uses `.ex` only, Plug also accepts
-    # `.exs`, so each analyzer filters inside `analyze_file`.
-    protected def parallel_file_scan(&block : String -> Nil) : Nil
-      begin
-        parallel_analyze(all_files) do |path|
-          next if File.directory?(path)
-          next unless File.exists?(path)
+    private def elixir_keyword_at?(code : String, i : Int32, size : Int32, word : String) : Bool
+      n = word.size
+      return false if i + n > size
+      return false unless code[i, n] == word
+      after = i + n
+      return true if after >= size
+      c = code[after]
+      !(c.ascii_alphanumeric? || c == '_')
+    end
 
-          begin
-            block.call(path)
-          rescue e
-            logger.debug "Error analyzing #{path}: #{e}"
-          end
-        end
-      rescue e
-        logger.debug e
+    private def skip_elixir_word(code : String, i : Int32, size : Int32) : Int32
+      while i < size
+        c = code[i]
+        break unless c.ascii_alphanumeric? || c == '_'
+        i += 1
       end
+      i
+    end
+
+    # Drop an Elixir line comment while preserving the string literals
+    # (and their quotes) the route regexes depend on — unlike the
+    # callee extractor's `strip_comment`, which discards quotes. A `#`
+    # only opens a comment outside a string, so a `#` inside a quoted
+    # path won't truncate the statement.
+    #
+    # No `#` → return the original slice (zero allocation). The common
+    # path for route / controller lines.
+    protected def strip_trailing_comment(line : String) : String
+      return line unless line.includes?('#')
+
+      in_string = false
+      escaped = false
+      quote = '\0'
+      line.each_char_with_index do |char, i|
+        if in_string
+          if escaped
+            escaped = false
+          elsif char == '\\'
+            escaped = true
+          elsif char == quote
+            in_string = false
+          end
+        elsif char == '"' || char == '\''
+          in_string = true
+          quote = char
+        elsif char == '#'
+          return line[0, i]
+        end
+      end
+      line
+    end
+
+    # ExUnit's conventions are rigid: every test module sits in a file
+    # named `*_test.exs`, and Mix keeps the rest of the test tree under
+    # `test/` — including `test/support/**` and fixture schemas, which
+    # `elixirc_paths(:test)` compiles only for MIX_ENV=test (stub routers,
+    # Plug mocks, Absinthe fixture schemas). Production code never lives
+    # there, so the check is safe for every Elixir analyzer
+    # (Phoenix/Plug/Bandit/Absinthe/Channel). Takes the scan-base-relative
+    # path so a checkout under a `test/` ancestor is not wiped.
+    def self.test_path?(relative_path : String) : Bool
+      relative_path.includes?("/test/") || File.basename(relative_path).ends_with?("_test.exs")
+    end
+
+    protected def elixir_test_path?(path : String) : Bool
+      ElixirEngine.test_path?(base_relative_path(path))
+    end
+
+    PLUG_ROUTER_USE_RE = /^\s*use\s+Plug\.Router\b/m
+    DEFMODULE_RE       = /\bdefmodule\s+([A-Z]\w*(?:\.[A-Z]\w*)*)\s+do\b/
+
+    # Every scanned Plug.Router module (`use Plug.Router`), keyed by the
+    # file's first `defmodule` name, mapped to its path. A `forward` to one
+    # of these mounts its routes under the forward path (Plug and Phoenix).
+    protected def plug_router_modules : Hash(String, String)
+      modules = {} of String => String
+      (get_files_by_extension(".ex") + get_files_by_extension(".exs")).each do |path|
+        next if elixir_test_path?(path)
+        content = read_file_content(path)
+        next unless content.includes?("Plug.Router") && content.matches?(PLUG_ROUTER_USE_RE)
+        if match = content.match(DEFMODULE_RE)
+          modules[match[1]] = path
+        end
+      end
+      modules
+    end
+
+    # The Plug.Router module a `forward` target names: as aliased by the
+    # enclosing Phoenix scope (`scope "/", AppWeb do`), as written, or via
+    # an `alias`ed last segment when exactly one module ends with it.
+    protected def resolve_plug_router(target : String, scope_module : String, modules : Hash(String, String)) : String?
+      scoped = scope_module.empty? ? target : "#{scope_module}.#{target}"
+      return scoped if modules.has_key?(scoped)
+      return target if modules.has_key?(target)
+      suffixed = modules.keys.select(&.ends_with?(".#{target}"))
+      suffixed.first if suffixed.size == 1
+    end
+
+    # Phoenix uses `.ex` only; Plug also accepts `.exs`. Pull both from
+    # the extension index instead of walking the whole `file_map` (which
+    # includes every language in a monorepo) and re-filtering inside
+    # each analyzer.
+    protected def elixir_source_files : Array(String)
+      get_files_by_extension(".ex") + get_files_by_extension(".exs")
+    end
+
+    # Walk only Elixir sources concurrently. Extension + ExUnit-test
+    # filtering lives here so framework adapters don't re-check every
+    # path the monorepo file map yields.
+    # CodeLocator already registered these paths during detection; skip
+    # the per-file `File.exists?` syscall. Missing files surface as read
+    # errors inside the analyzer and are logged there.
+    protected def scan_target_files : Array(String)
+      elixir_source_files
+    end
+
+    protected def scan_accepts?(path : String) : Bool
+      !elixir_test_path?(path)
     end
   end
 end

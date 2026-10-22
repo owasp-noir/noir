@@ -34,12 +34,18 @@ jobs:
 
       - name: Run OWASP Noir
         id: noir
-        uses: owasp-noir/noir@v1.1.0
+        uses: owasp-noir/noir@v1.4.0
         with:
           base_path: '.'
 
+      # Pass outputs via env vars, never inline `'${{ ... }}'` into the
+      # shell. `endpoints` is JSON derived from the scanned code, so on an
+      # untrusted PR a crafted value could break out of the quotes and inject
+      # commands into the runner.
       - name: Display results
-        run: echo '${{ steps.noir.outputs.endpoints }}' | jq .
+        env:
+          NOIR_ENDPOINTS: ${{ steps.noir.outputs.endpoints }}
+        run: echo "$NOIR_ENDPOINTS" | jq .
 ```
 
 ### Advanced Example
@@ -56,7 +62,7 @@ jobs:
 
       - name: Run OWASP Noir with Passive Scanning
         id: noir
-        uses: owasp-noir/noir@v1.1.0
+        uses: owasp-noir/noir@v1.4.0
         with:
           base_path: 'src'
           format: 'json'
@@ -67,12 +73,15 @@ jobs:
           verbose: 'true'
 
       - name: Process Results
+        env:
+          NOIR_ENDPOINTS: ${{ steps.noir.outputs.endpoints }}
+          NOIR_PASSIVE: ${{ steps.noir.outputs.passive_results }}
         run: |
           echo "🔍 Endpoints discovered:"
-          echo '${{ steps.noir.outputs.endpoints }}' | jq '.endpoints | length'
+          echo "$NOIR_ENDPOINTS" | jq '.endpoints | length'
 
           echo "🚨 Security issues found:"
-          echo '${{ steps.noir.outputs.passive_results }}' | jq '. | length'
+          echo "$NOIR_PASSIVE" | jq '. | length'
 
       - name: Save detailed results
         uses: actions/upload-artifact@v4
@@ -106,7 +115,7 @@ jobs:
 
 | Output | Description |
 |--------|-------------|
-| `endpoints` | The full Noir result document (`{"endpoints": [...], "passive_results": [...]}`) when `format` is `json` or `jsonl`. Empty for plain / yaml / oas / mermaid / etc. |
+| `endpoints` | The full Noir result document (`{"endpoints": [...], "passive_results": [...], "errors": [...]}`) when `format` is `json` or `jsonl` (JSONL lines are folded into one document). Empty for plain / yaml / oas / mermaid / etc. |
 | `passive_results` | JSON array of passive-scan findings when `format` is `json` / `jsonl`; otherwise `[]`. |
 
 For non-JSON formats the raw scan output is still written to the file
@@ -130,7 +139,7 @@ For a complete list, run: `noir list techs`
 ### Ruby on Rails
 
 ```yaml
-- uses: owasp-noir/noir@v1.1.0
+- uses: owasp-noir/noir@v1.4.0
   with:
     base_path: '.'
     techs: 'rails'
@@ -140,7 +149,7 @@ For a complete list, run: `noir list techs`
 ### Node.js/Express
 
 ```yaml
-- uses: owasp-noir/noir@v1.1.0
+- uses: owasp-noir/noir@v1.4.0
   with:
     base_path: 'src'
     techs: 'express'
@@ -150,7 +159,7 @@ For a complete list, run: `noir list techs`
 ### Python/Django
 
 ```yaml
-- uses: owasp-noir/noir@v1.1.0
+- uses: owasp-noir/noir@v1.4.0
   with:
     base_path: '.'
     techs: 'django'
@@ -179,7 +188,7 @@ For a complete list, run: `noir list techs`
 Enable debug output for troubleshooting:
 
 ```yaml
-- uses: owasp-noir/noir@v1.1.0
+- uses: owasp-noir/noir@v1.4.0
   with:
     base_path: '.'
     debug: 'true'
@@ -192,4 +201,4 @@ This action is part of the OWASP Noir project and is licensed under the MIT Lice
 
 ## Contributing
 
-Contributions are welcome! Please see the [CONTRIBUTING.md](CONTRIBUTING.md) file in the main repository.
+Contributions are welcome! Please see the [CONTRIBUTING.md](../.github/CONTRIBUTING.md) file in the main repository.

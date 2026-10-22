@@ -1,0 +1,11 @@
+{% if toc %}
+<nav class="docs-toc" aria-label="{{ "ui.on_this_page" | t }}">
+  <p class="docs-toc-title">
+    <svg class="ic" aria-hidden="true"><use href="#i-list"/></svg>
+    {{ "ui.on_this_page" | t }}
+  </p>
+  {{ toc }}
+</nav>
+{% else %}
+<div></div>
+{% endif %}

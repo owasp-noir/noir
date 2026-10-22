@@ -1,7 +1,9 @@
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 
 module Analyzer::Specification
-  class K8sIngress < Analyzer
+  class K8sIngress < SpecificationEngine
+    analyzer_for "k8s_ingress"
+
     DEFAULT_METHOD     = "GET"
     REWRITE_ANNOTATION = "nginx.ingress.kubernetes.io/rewrite-target"
     DEFAULT_PATH_TYPE  = "ImplementationSpecific"
@@ -12,17 +14,18 @@ module Analyzer::Specification
     HOST_LINE          = /^[ \t-]*host:\s*(.*)$/
 
     def analyze
-      spec_files = CodeLocator.instance.all("k8s-ingress-spec")
-      return @result unless spec_files.is_a?(Array(String))
-
-      spec_files.each do |path|
-        next unless File.exists?(path)
-
-        details = Details.new(PathInfo.new(path))
+      each_spec_file_with_details(Noir::LocatorKeys::K8S_INGRESS_SPEC) do |path, details|
         content = read_file_content(path)
         begin
-          YAML.parse_all(content).each { |doc| process_doc(doc, details) }
+          path_lines = path_lines(content)
+          YAML.parse_all(content).each { |doc| process_doc(doc, details, path_lines) }
         rescue e
+          # Kept as an explicit rescue rather than delegating to the engine:
+          # a Helm chart's `templates/ingress.yaml` is a Go template, so
+          # `path: {{ .Values.server.ingress.path }}` is not valid YAML and
+          # the parse legitimately fails. That is the common case, not an
+          # error — fall back to the tolerant line scanner instead of
+          # letting the file be logged and skipped.
           @logger.debug "Exception processing #{path}, falling back to tolerant Ingress template extraction"
           @logger.debug_sub e
           process_template(content, details)
@@ -32,14 +35,14 @@ module Analyzer::Specification
       @result
     end
 
-    private def process_doc(doc : YAML::Any, details : Details)
+    private def process_doc(doc : YAML::Any, details : Details, path_lines : Hash(String, Int32))
       root = doc.as_h?
       return unless root
 
       kind = root[YAML::Any.new("kind")]?.try(&.as_s?)
       if kind == "List"
         items = root[YAML::Any.new("items")]?.try(&.as_a?) || [] of YAML::Any
-        items.each { |item| process_doc(item, details) }
+        items.each { |item| process_doc(item, details, path_lines) }
         return
       end
 
@@ -59,7 +62,7 @@ module Analyzer::Specification
       process_default_backend(spec[YAML::Any.new("defaultBackend")]?, tls_hosts, details)
 
       rules = spec[YAML::Any.new("rules")]?.try(&.as_a?) || [] of YAML::Any
-      rules.each { |rule| process_rule(rule, tls_hosts, rewrite_target, details) }
+      rules.each { |rule| process_rule(rule, tls_hosts, rewrite_target, details, path_lines) }
     end
 
     private def supported_api_version?(api_version : String?) : Bool
@@ -86,7 +89,7 @@ module Analyzer::Specification
       hosts_set
     end
 
-    private def process_rule(rule : YAML::Any, tls_hosts : Set(String), rewrite_target : String?, details : Details)
+    private def process_rule(rule : YAML::Any, tls_hosts : Set(String), rewrite_target : String?, details : Details, path_lines : Hash(String, Int32))
       rule_h = rule.as_h?
       return unless rule_h
 
@@ -104,12 +107,13 @@ module Analyzer::Specification
         next if path.empty?
 
         path_type = path_h[YAML::Any.new("pathType")]?.try(&.as_s?) || DEFAULT_PATH_TYPE
-        emit_endpoint(path, path_type, host, tls_hosts, details)
+        rule_details = line_details(details, path_lines[path]?)
+        emit_endpoint(path, path_type, host, tls_hosts, rule_details)
 
         if rewrite_target && !rewrite_target.empty?
           rewritten = strip_capture_groups(rewrite_target)
           if rewritten != path
-            emit_endpoint(rewritten, path_type, host, tls_hosts, details, "rewrite")
+            emit_endpoint(rewritten, path_type, host, tls_hosts, rule_details, "rewrite")
           end
         end
       end
@@ -126,7 +130,13 @@ module Analyzer::Specification
     end
 
     private def emit_endpoint(path : String, path_type : String, host : String, tls_hosts : Set(String), details : Details, origin : String = "rule")
+      # ingress-nginx reads `ImplementationSpecific` paths as regexes when
+      # `use-regex` is on; `Exact` / `Prefix` paths are literal.
+      # GCE / ALB spell a prefix as `/static/*` under the same path type.
+      regex = path_type == "ImplementationSpecific" && Noir::URLPath.regex_route?(path.ends_with?("/*") ? path.rchop('*') : path)
+      path = Noir::URLPath.strip_regex_anchors(path) if path_type == "ImplementationSpecific"
       endpoint = Endpoint.new(path, DEFAULT_METHOD, details)
+      endpoint.kind = "regex" if regex
       endpoint.add_tag(Tag.new("ingress-path-type", path_type.downcase, "k8s_ingress_analyzer"))
       endpoint.add_tag(Tag.new("ingress-host", host, "k8s_ingress_analyzer")) unless host.empty?
       endpoint.add_tag(Tag.new("ingress-source", origin, "k8s_ingress_analyzer"))
@@ -161,11 +171,12 @@ module Analyzer::Specification
 
         path = clean_template_path(path_match[1]) || "/"
         path_type = find_template_path_type(lines, index) || DEFAULT_PATH_TYPE
-        emit_template_endpoint(path, path_type, host, tls_hosts, details, emitted)
+        rule_details = line_details(details, index + 1)
+        emit_template_endpoint(path, path_type, host, tls_hosts, rule_details, emitted)
 
         if rewrite_target && !rewrite_target.empty?
           rewritten = strip_capture_groups(rewrite_target)
-          emit_template_endpoint(rewritten, path_type, host, tls_hosts, details, emitted, "rewrite") unless rewritten == path
+          emit_template_endpoint(rewritten, path_type, host, tls_hosts, rule_details, emitted, "rewrite") unless rewritten == path
         end
       end
 
@@ -180,6 +191,23 @@ module Analyzer::Specification
 
       emitted << key
       emit_endpoint(path, path_type, host, tls_hosts, details, origin)
+    end
+
+    # Line of each `path:` value. `YAML::Any` keeps no positions, so the
+    # parsed rule is matched back to the text by value.
+    # ponytail: a path repeated across rules gets its first line.
+    private def path_lines(content : String) : Hash(String, Int32)
+      lines = {} of String => Int32
+      content.each_line.with_index(1) do |line, number|
+        next unless (match = line.match(PATH_LINE)) && (path = clean_template_path(match[1]))
+        lines[path] ||= number
+      end
+      lines
+    end
+
+    private def line_details(details : Details, line : Int32?) : Details
+      return details unless line && (path_info = details.code_paths.first?)
+      Details.new(PathInfo.new(path_info.path, line))
     end
 
     private def extract_rewrite_target(content : String) : String?

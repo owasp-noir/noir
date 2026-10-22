@@ -16,69 +16,53 @@ module Analyzer::Go
   # The extractor resolves the full mounted path and the self-declared
   # params; this analyzer wires endpoints, params, and 1-hop callees.
   class GoRestful < GoEngine
+    analyzer_for "go_restful"
+
     IMPORT_MARKER = "github.com/emicklei/go-restful"
+
+    # One precompiled matcher instead of a `String#includes?` scan per
+    # `.go` file: `includes?` runs Rabin-Karp over the whole buffer and
+    # the marker is absent in the overwhelming majority of files in a
+    # polyglot repo, so every one of them pays the full scan. See
+    # `Analyzer#content_matches?`.
+    IMPORT_MARKER_RE = Regex.union(IMPORT_MARKER)
 
     def analyze
       file_contents = read_package_file_contents
-      package_function_bodies = collect_package_function_bodies(file_contents)
-      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
+      package_function_bodies = lazy_package_bodies(file_contents)
+      parallel_analyze(get_files_by_extension(".go")) do |path|
+        next if GoEngine.go_test_file?(base_relative_path(path))
+        next unless File.exists?(path)
 
-      begin
-        WaitGroup.wait do |wg|
-          # Producer — tracked by the WaitGroup
-          wg.spawn do
-            get_files_by_extension(".go").each { |file| channel.send(file) }
-            channel.close
+        content = file_contents[path]? || read_file_content(path)
+        next unless content_matches?(content, IMPORT_MARKER_RE)
+
+        ts_routes = Noir::TreeSitterGoRouteExtractor.extract_go_restful_routes(content)
+        next if ts_routes.empty?
+
+        route_rows = Set(Int32).new
+        ts_routes.each { |r| route_rows << r.line }
+        external_fns = ts_function_bodies_for_directory(package_function_bodies, File.dirname(path))
+        callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns)
+
+        ts_routes.each do |route|
+          details = Details.new(PathInfo.new(path, route.line + 1))
+          endpoint = Endpoint.new(normalize_restful_path(route.path), route.verb, details)
+
+          route.params.each do |name, param_in|
+            param = Param.new(name, "", param_in)
+            endpoint.params << param unless endpoint.params.includes?(param)
           end
 
-          @options["concurrency"].to_s.to_i.times do
-            wg.spawn do
-              loop do
-                begin
-                  path = channel.receive?
-                  break if path.nil?
-                  next if File.directory?(path)
-                  next if GoEngine.go_test_file?(path)
-                  next unless File.exists?(path)
-
-                  content = file_contents[path]? || read_file_content(path)
-                  next unless content.includes?(IMPORT_MARKER)
-
-                  ts_routes = Noir::TreeSitterGoRouteExtractor.extract_go_restful_routes(content)
-                  next if ts_routes.empty?
-
-                  route_rows = Set(Int32).new
-                  ts_routes.each { |r| route_rows << r.line }
-                  external_fns = ts_function_bodies_for_directory(package_function_bodies, File.dirname(path))
-                  callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns)
-
-                  ts_routes.each do |route|
-                    details = Details.new(PathInfo.new(path, route.line + 1))
-                    endpoint = Endpoint.new(normalize_restful_path(route.path), route.verb, details)
-
-                    route.params.each do |name, param_in|
-                      param = Param.new(name, "", param_in)
-                      endpoint.params << param unless endpoint.params.includes?(param)
-                    end
-
-                    if entries = callees_by_route[route.line]?
-                      entries.each do |entry|
-                        callee_name, callee_path, callee_line = entry
-                        endpoint.push_callee(Callee.new(callee_name, path: callee_path, line: callee_line))
-                      end
-                    end
-
-                    result << endpoint
-                  end
-                rescue File::NotFoundError
-                  logger.debug "File not found: #{path}"
-                end
-              end
+          if entries = callees_by_route[route.line]?
+            entries.each do |entry|
+              callee_name, callee_path, callee_line = entry
+              endpoint.push_callee(Callee.new(callee_name, path: callee_path, line: callee_line))
             end
           end
+
+          result << endpoint
         end
-      rescue e
-        logger.debug e
       end
 
       result

@@ -6,61 +6,165 @@ sort_by = "weight"
 
 +++
 
-Noir는 두 가지 JSON 계열 출력을 지원합니다.
+Noir의 JSON 출력은 두 가지입니다.
 
-*   **JSON**: 전체 결과를 하나의 JSON 객체로 출력
-*   **JSONL**: 줄마다 하나의 JSON 객체를 출력하여 스트리밍이나 대용량 처리에 적합
+*   JSON: 전체 결과를 JSON 객체 하나로 출력
+*   JSONL: 줄마다 JSON 객체 하나를 출력. 스트리밍이나 큰 결과 처리에 적합
+
+{% mascot(mood="dev") %}
+JSON은 다음 단계가 다 읽는 형식이야. jq든 스크립트든 AI 감사 컨텍스트든 그대로 넘겨.
+{% end %}
 
 ## JSON 출력
 
-`-f json`으로 JSON을 출력합니다. `--no-log`를 함께 쓰면 로그 메시지 없이 JSON만 출력되므로, 다른 도구로 파이핑할 때 깔끔합니다.
+`-f json`으로 JSON을 출력합니다. 로그는 stderr로 나가므로 stdout에는 JSON만 담기고, 그대로 다른 도구로 파이프해도 됩니다. 로그까지 숨기려면 `--no-log`를 함께 쓰세요.
 
 ```bash
 noir scan . -f json --no-log
 ```
 
-결과는 `endpoints` 배열을 포함하는 객체입니다. 각 엔드포인트에는 URL, HTTP 메서드, 파라미터(타입: `cookie`, `form`, `header`, `json` 등), 소스 코드 위치(`details.code_paths`), 그리고 Tagger가 붙인 보안 태그가 들어갑니다.
+결과는 `endpoints`, `passive_results`, `errors` 배열을 담은 객체입니다. 각 엔드포인트에는 URL, HTTP 메서드, 파라미터(타입: `query`, `path`, `header`, `cookie`, `form`, `json`, `file`, `xml` 등), 소스 코드 위치(`details.code_paths`), 엔드포인트를 만든 분석기(`details.technology`), 그리고 태거가 붙인 보안 태그가 들어갑니다. 아래 예시는 태거를 켠 상태(`-T`)로 만든 것이며, 그래서 `tags` 배열이 채워져 있습니다.
+
+같은 엔드포인트를 여러 분석기가 찾으면(예: Go 라우터와 프로젝트의 OpenAPI 문서) Noir는 하나의 항목으로 합칩니다. `details.technology`는 병합에서 이긴 분석기이고, `details.technologies`는 기여한 모든 분석기를 정렬·중복 제거해 담은 목록입니다. 이 목록은 항목이 둘 이상일 때만 출력되므로, 분석기 하나만 찾은 엔드포인트에는 `technology`만 있습니다. 출처가 모두 필요하면 `technologies`가 있으면 그것을 읽고, 없으면 `[technology]`로 대체하면 됩니다.
+
+```json
+"details": {
+  "code_paths": [
+    { "path": "routers/router.go", "line": 42 },
+    { "path": "swagger/swagger.json", "line": 1300 }
+  ],
+  "technology": "go_beego",
+  "technologies": ["go_beego", "oas2"]
+}
+```
 
 ```json
 {
   "endpoints": [
     {
-      "url": "/",
-      "method": "GET",
-      "params": [
-        {
-          "name": "x-api-key",
-          "value": "",
-          "param_type": "header",
-          "tags": []
-        }
-      ],
+      "callees": [],
+      "url": "/query",
+      "method": "POST",
+      "internal": false,
       "details": {
         "code_paths": [
           {
-            "path": "./spec/functional_test/fixtures/crystal_kemal/src/testapp.cr",
-            "line": 3
+            "path": "spec/functional_test/fixtures/crystal/kemal/src/testapp.cr",
+            "line": 17
           }
-        ]
+        ],
+        "technology": "crystal_kemal"
       },
       "protocol": "http",
-      "tags": []
+      "kind": "",
+      "tags": [],
+      "params": [
+        {
+          "name": "my_auth",
+          "value": "",
+          "param_type": "cookie",
+          "tags": []
+        },
+        {
+          "name": "query",
+          "value": "",
+          "param_type": "form",
+          "tags": []
+        }
+      ]
+    },
+    {
+      "callees": [],
+      "url": "/token",
+      "method": "GET",
+      "internal": false,
+      "details": {
+        "code_paths": [
+          {
+            "path": "spec/functional_test/fixtures/crystal/kemal/src/testapp.cr",
+            "line": 22
+          }
+        ],
+        "technology": "crystal_kemal"
+      },
+      "protocol": "http",
+      "kind": "",
+      "tags": [
+        {
+          "name": "oauth",
+          "description": "Suspected OAuth endpoint for granting 3rd party access.",
+          "tagger": "Oauth"
+        }
+      ],
+      "params": [
+        {
+          "name": "client_id",
+          "value": "",
+          "param_type": "form",
+          "tags": []
+        },
+        {
+          "name": "redirect_url",
+          "value": "",
+          "param_type": "form",
+          "tags": [
+            {
+              "name": "ssrf",
+              "description": "This parameter may be vulnerable to Server Side Request Forgery (SSRF) attacks.",
+              "tagger": "Hunt"
+            }
+          ]
+        },
+        {
+          "name": "grant_type",
+          "value": "",
+          "param_type": "form",
+          "tags": []
+        }
+      ]
     }
+  ],
+  "passive_results": [],
+  "errors": []
+}
+```
+
+## 분석기 실패 기록
+
+분석기 하나가 예외를 던지면 로그를 남기고 건너뛰며, 스캔은 나머지 기술을 계속 처리합니다. 읽거나 파싱할 수 없는 파일 하나(예: 파싱 시간 상한을 넘긴 파일) 역시 그 파일만 건너뛰고 스캔은 이어집니다. `errors`에는 두 경우가 모두 남기 때문에, 결과가 비어 있는 이유가 "해당 프레임워크가 없어서"인지 "아예 분석하지 못해서"인지, 그리고 조용히 빠진 파일이 있었는지 구분할 수 있습니다.
+
+```json
+{
+  "endpoints": [],
+  "passive_results": [],
+  "errors": [
+    { "tech": "go_gin", "message": "Index out of bounds" },
+    { "tech": "rust_axum", "message": "skipped 2 files: src/gen.rs, src/vendor.rs; first error: ts_parser_parse_string returned null (timed out after 10000ms, or out of memory)" }
   ]
 }
 ```
 
+건너뛴 파일은 파일마다 한 줄이 아니라 기술별로 묶어서 개수와 예시 경로 최대 5개로 기록합니다. 그래야 깨진 체크아웃 하나가 리포트를 뒤덮지 않습니다.
+
+이 키는 항상 출력됩니다. `"errors": []`는 선택된 분석기가 주어진 모든 파일을 끝까지 처리했다는 뜻입니다.
+
+`-f yaml`도 같은 키를 담고, `-f sarif`는 `runs[0].invocations[0].executionSuccessful`로 같은 사실을 알립니다. `--strict`를 붙이면 분석기 실패나 건너뛴 파일이 있을 때 리포트를 쓴 뒤 종료 코드 2로 끝납니다.
+
+```bash
+noir scan . -f json --no-log --strict > endpoints.json
+```
+
 ## JSONL 출력
 
-[JSON Lines](https://jsonlines.org/) 형식은 줄마다 독립된 JSON 객체를 출력합니다. `jq`로 파이핑하거나, 대량의 결과를 메모리에 다 올리지 않고 한 줄씩 처리할 때 유용합니다.
+[JSON Lines](https://jsonlines.org/) 형식은 줄마다 독립된 JSON 객체를 출력합니다. `jq`로 넘기거나, 큰 결과를 메모리에 다 올리지 않고 한 줄씩 처리할 때 쓰세요.
 
 ```bash
 noir scan . -f jsonl --no-log
 ```
 
-아래와 같이 각 줄은 하나의 엔드포인트입니다.
+각 줄은 독립된 엔드포인트 객체 하나입니다. `-P`를 쓰면 엔드포인트 뒤에 패시브 스캔 결과가 한 줄에 하나씩 붙습니다(엔드포인트에는 `url`, `method`가 있고, 패시브 결과에는 `id`, `info`가 있어서 구분할 수 있습니다). 분석기가 실패하면 실패 하나당 `tech`, `message`가 담긴 줄이 맨 뒤에 붙습니다(JSON의 `errors` 항목과 같은 내용). 문제없는 스캔에는 이 줄이 없습니다. 스캔이 온전하지 않을 때 0이 아닌 종료 코드를 받으려면 `--strict`를 쓰세요.
 
 ```jsonl
-{"url":"/","method":"GET","params":[{"name":"x-api-key","value":"","param_type":"header","tags":[]}],"details":{"code_paths":[{"path":"./spec/functional_test/fixtures/crystal_kemal/src/testapp.cr","line":3}]},"protocol":"http","tags":[]}
-{"url":"/query","method":"POST","params":[{"name":"my_auth","value":"","param_type":"cookie","tags":[]},{"name":"query","value":"","param_type":"form","tags":[]}],"details":{"code_paths":[{"path":"./spec/functional_test/fixtures/crystal_kemal/src/testapp.cr","line":8}]},"protocol":"http","tags":[]}
+{"callees":[],"url":"/","method":"GET","internal":false,"details":{"code_paths":[{"path":"./src/testapp.cr","line":3}],"technology":"crystal_kemal"},"protocol":"http","kind":"","tags":[],"params":[{"name":"x-api-key","value":"","param_type":"header","tags":[]}]}
+{"callees":[],"url":"/query","method":"POST","internal":false,"details":{"code_paths":[{"path":"./src/testapp.cr","line":17}],"technology":"crystal_kemal"},"protocol":"http","kind":"","tags":[],"params":[{"name":"my_auth","value":"","param_type":"cookie","tags":[]},{"name":"query","value":"","param_type":"form","tags":[]}]}
 ```

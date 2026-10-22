@@ -10,10 +10,13 @@ module Analyzer::Javascript
   #   src/pages/users/[id].astro           → GET /users/{id}
   #   src/pages/[...slug].astro            → GET /{slug}     (catch-all)
   #   src/pages/api/users.ts               → exports drive verbs
+  #   src/pages/rss.xml.js                 → GET /rss.xml (endpoint)
+  #   src/pages/posts/[id].json.ts         → /posts/{id}.json
   #
   # Page files (`.astro`, `.md`, `.mdx`, `.html`) are HTML pages —
-  # always GET. API route files in `src/pages/api/**` (`.ts`, `.js`,
-  # `.mjs`, `.tsx`, `.jsx`) export named verb handlers
+  # always GET. Every script file under `src/pages/` (`.ts`, `.js`,
+  # `.mjs`, `.tsx`, `.jsx`) is an endpoint, `api/` or not, exporting
+  # named verb handlers
   # (`export async function GET(...)`, `export const POST = ...`).
   # When no explicit verb export is found we fall back to the
   # standard handler set (GET / POST / PUT / DELETE / PATCH) — same
@@ -28,24 +31,33 @@ module Analyzer::Javascript
   #     reads accurately needs cross-call value tracking. Path
   #     placeholders still surface via the optimizer.
   class Astro < JavascriptEngine
-    HTTP_METHODS    = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
+    analyzer_for "js_astro"
+
     PAGE_EXTENSIONS = [".astro", ".md", ".mdx", ".html"]
     API_EXTENSIONS  = [".ts", ".js", ".mjs", ".tsx", ".jsx"]
     EXTENSIONS      = PAGE_EXTENSIONS + API_EXTENSIONS
 
-    # Lowest-cost defaults for endpoints whose handler doesn't
-    # advertise its verbs explicitly. Mirrors the Next.js fallback.
-    FALLBACK_API_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH"]
-
     def analyze
       result = [] of Endpoint
       mutex = Mutex.new
+      # `src/pages/` is also Next.js's pages router, so in a monorepo only
+      # files under an Astro project root count. No root found waves
+      # everything through, as for SvelteKit and Nitro.
+      project_roots = discover_js_project_roots(
+        ["\"astro\""],
+        ["astro.config.mjs", "astro.config.js", "astro.config.ts", "astro.config.mts", "astro.config.cjs"]
+      )
 
       parallel_file_scan(EXTENSIONS) do |path|
-        idx = path.index("/src/pages/")
-        next if idx.nil?
+        next unless path_under_project_roots?(path, project_roots)
+        # Scan-base-relative, never absolute: `String#index` takes the
+        # FIRST occurrence, so a same-named directory above the scan base
+        # won outright and the derived URL changed with the checkout path.
+        scoped = base_relative_path(path)
+        idx = scoped.index("/src/pages/")
+        next if idx.nil? || in_test_tree?(scoped[0...idx])
 
-        relative = path[(idx + "/src/pages/".size)..-1]
+        relative = scoped[(idx + "/src/pages/".size)..-1]
         # Skip private files / dirs (`_` prefix) and Astro components
         # nested under non-pages directories like `src/pages/_partials`.
         next if relative.split("/").any?(&.starts_with?("_"))
@@ -65,20 +77,22 @@ module Analyzer::Javascript
     end
 
     private def api_route_file?(relative : String) : Bool
-      relative.starts_with?("api/") && API_EXTENSIONS.any? { |ext| relative.ends_with?(ext) }
+      API_EXTENSIONS.any? { |ext| relative.ends_with?(ext) }
     end
 
     private def analyze_page(path : String, relative : String, result : Array(Endpoint), mutex : Mutex)
       url = url_for(relative)
-      endpoint = build_endpoint(url, "GET", path)
+      endpoint = file_route_endpoint(url, "GET", path)
       mutex.synchronize { result << endpoint }
     end
 
     private def analyze_api_route(path : String, relative : String, result : Array(Endpoint), mutex : Mutex)
       url = url_for(relative)
 
+      # Comments blanked in place (line numbers kept), so a commented-out
+      # export is not a route.
       content = begin
-        read_file_content(path)
+        Noir::JSRouteExtractor.strip_js_comments(read_file_content(path))
       rescue e
         logger.debug "Error reading #{path}: #{e.message}"
         return
@@ -87,20 +101,11 @@ module Analyzer::Javascript
       methods = detect_api_methods(content)
       mutex.synchronize do
         methods.each do |verb|
-          endpoint = build_endpoint(url, verb, path, api_method_line(content, verb) || 1)
+          endpoint = file_route_endpoint(url, verb, path, api_method_line(content, verb) || 1)
           attach_exported_callees(endpoint, content, path, verb) if callees_needed?
           result << endpoint
         end
       end
-    end
-
-    private def build_endpoint(url : String, verb : String, path : String, line : Int32 = 1) : Endpoint
-      endpoint = Endpoint.new(url, verb)
-      endpoint.details = Details.new(PathInfo.new(path, line))
-      url.scan(/\{(\w+)\}/) do |match|
-        endpoint.push_param(Param.new(match[1], "", "path"))
-      end
-      endpoint
     end
 
     private def attach_exported_callees(endpoint : Endpoint, content : String, path : String, verb : String)
@@ -111,10 +116,11 @@ module Analyzer::Javascript
 
     # Filesystem path → URL pattern. Strips the file extension,
     # collapses `/index` into the parent, and converts `[id]` /
-    # `[...slug]` into `{id}` / `{slug}`.
+    # `[...slug]` into `{id}` / `{slug}` in place, so `[id].json`
+    # keeps its suffix.
     private def url_for(relative : String) : String
       stripped = strip_extension(relative)
-      segments = stripped.split("/").reject(&.empty?).map { |seg| convert_segment(seg) }
+      segments = stripped.split("/").reject(&.empty?).map { |seg| seg.gsub(FILE_ROUTE_PARAM_RE) { "{#{$1}}" } }
       url = "/" + segments.join("/")
       url = url.sub(/\/index$/, "")
       url = "/" if url.empty?
@@ -126,62 +132,6 @@ module Analyzer::Javascript
         return path[0..(path.size - ext.size - 1)] if path.ends_with?(ext)
       end
       path
-    end
-
-    private def convert_segment(seg : String) : String
-      # Catch-all: `[...slug]` or optional `[[...slug]]`
-      if m = seg.match(/^\[+\.{3}(\w+)\]+$/)
-        return "{#{m[1]}}"
-      end
-      # Dynamic: `[id]`
-      if m = seg.match(/^\[(\w+)\]$/)
-        return "{#{m[1]}}"
-      end
-      seg
-    end
-
-    # Look for explicit verb exports first
-    # (`export const GET = ...` / `export async function POST() {}`),
-    # then fall back to the cross-method catch-all set.
-    # Compiled once per verb — interpolated regex literals would otherwise
-    # be rebuilt (full PCRE2 compile) for every method on every file.
-    EXPORT_FUNCTION_RES = HTTP_METHODS.map { |m| {m, /export\s+(?:async\s+)?function\s+#{m}\b/} }.to_h
-    EXPORT_CONST_RES    = HTTP_METHODS.map { |m| {m, /export\s+(?:const|let|var)\s+#{m}\b\s*(?::[^=]+)?=/} }.to_h
-    EXPORT_BRACE_RES    = HTTP_METHODS.map { |m| {m, /export\s+\{\s*[^}]*\b#{m}\b[^}]*\}/} }.to_h
-
-    private def detect_api_methods(content : String) : Array(String)
-      explicit = [] of String
-      HTTP_METHODS.each do |m|
-        # `export async function GET(...)`, `export function GET(...)`,
-        # `export const GET = ...`, `export const GET: APIRoute = ...`
-        # (the trailing TypeScript type annotation is optional), and
-        # the `export { GET }` re-export form.
-        if content.match(EXPORT_FUNCTION_RES[m]) ||
-           content.match(EXPORT_CONST_RES[m]) ||
-           content.match(EXPORT_BRACE_RES[m])
-          explicit << m
-        end
-      end
-      explicit.empty? ? FALLBACK_API_METHODS : explicit
-    end
-
-    private def api_method_line(content : String, verb : String) : Int32?
-      if match = content.match(EXPORT_FUNCTION_RES[verb])
-        return line_for_match(content, match)
-      end
-
-      if match = content.match(EXPORT_CONST_RES[verb])
-        return line_for_match(content, match)
-      end
-
-      if content.includes?("export {") && content.includes?(verb)
-        Noir::JSCalleeExtractor.exported_function_line(content, verb)
-      end
-    end
-
-    private def line_for_match(content : String, match : Regex::MatchData) : Int32
-      start = match.begin(0) || 0
-      content.to_slice[0, start].count('\n'.ord.to_u8) + 1
     end
   end
 end

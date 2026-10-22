@@ -14,6 +14,8 @@ module Analyzer::Zig
   # followed by `admin.get("/users", …)` yields `/admin/users`. The handler
   # is the second argument; its function body supplies the callees.
   class Httpz < Analyzer
+    analyzer_for "zig_httpz"
+
     VERBS       = %w[get post put delete head patch trace options connect all]
     VERB_METHOD = {
       "get" => "GET", "post" => "POST", "put" => "PUT", "delete" => "DELETE",
@@ -28,13 +30,17 @@ module Analyzer::Zig
     # is idiomatic. The `@"…"` alternative keeps that form from being dropped.
     ROUTE_RE  = /(\w+)\s*\.\s*(get|post|put|delete|head|patch|trace|options|connect|all)\s*\(\s*"(\/[^"]*)"\s*,\s*(@"[^"]*"|[A-Za-z_][\w.]*)/
     METHOD_RE = /(\w+)\s*\.\s*method\s*\(\s*"([^"]*)"\s*,\s*"(\/[^"]*)"\s*,\s*(@"[^"]*"|[A-Za-z_][\w.]*)/
+    # Cheap routing-signal gate: one precompiled `Regex.union` scan (PCRE2
+    # JIT) instead of two naive `String#includes?` char scans. Equivalent to
+    # `includes?("(\"/") || includes?(".group(")`.
+    ROUTE_SIGNAL_RE = Regex.union("(\"/", ".group(")
 
     def analyze
       include_callee = callees_needed?
 
       all_files.each do |path|
         next unless path.ends_with?(".zig")
-        next if Noir::ZigCalleeExtractor.vendored_framework_path?(path)
+        next if Noir::ZigCalleeExtractor.vendored_framework_path?(base_relative_path(path))
         content = read_file_content(path)
         # Route-bearing files don't always reference `httpz` literally — a
         # common layout registers routes in a helper `fn group(router: *Foo)`
@@ -43,7 +49,7 @@ module Analyzer::Zig
         # argument, or a `.group(` call) instead of the framework name so
         # those files are still scanned. The analyzer only runs at all when
         # the project is already detected as httpz.
-        next unless content.includes?("(\"/") || content.includes?(".group(")
+        next unless content.matches?(ROUTE_SIGNAL_RE)
         process_file(path, content, include_callee)
       end
 
@@ -51,12 +57,18 @@ module Analyzer::Zig
     end
 
     private def process_file(path : String, content : String, include_callee : Bool)
-      text = Noir::ZigCalleeExtractor.strip_comments(content)
-      bodies = include_callee ? Noir::ZigCalleeExtractor.function_bodies(content, path) : {} of String => Noir::ZigCalleeExtractor::FunctionBody
+      prepared = Noir::ZigCalleeExtractor.prepare(content)
+      text = prepared[:comments]
       # Routes registered inside `test { … }` blocks are test fixtures (and, in
       # an httpz framework source vendored as a loose file, its own self-tests),
-      # not runtime endpoints.
-      test_blocks = Noir::ZigCalleeExtractor.test_block_ranges(Noir::ZigCalleeExtractor.strip_non_code(content))
+      # not runtime endpoints. Reuse the non-code strip from `prepare`.
+      test_blocks = Noir::ZigCalleeExtractor.test_block_ranges(prepared[:non_code])
+      bodies = if include_callee
+                 table = Noir::ZigCalleeExtractor.function_table_from(prepared[:non_code_chars], path)
+                 Noir::ZigCalleeExtractor.function_bodies_from(table, path)
+               else
+                 {} of String => Noir::ZigCalleeExtractor::FunctionBody
+               end
 
       group_prefixes = resolve_group_prefixes(text)
 
@@ -111,7 +123,7 @@ module Analyzer::Zig
 
     private def emit(path, text, offset, url, method, handler, bodies, include_callee)
       params = extract_path_params(url)
-      line = Noir::ZigCalleeExtractor.line_at(text.chars, offset)
+      line = Noir::ZigCalleeExtractor.line_at(text, offset)
       details = Details.new(PathInfo.new(path, line))
       endpoint = Endpoint.new(url, method, params, details)
 
@@ -127,11 +139,7 @@ module Analyzer::Zig
     end
 
     private def extract_path_params(url : String) : Array(Param)
-      params = [] of Param
-      url.scan(/:([A-Za-z_]\w*)/) do |m|
-        params << Param.new(m[1], "", "path")
-      end
-      params
+      url.scan(/:([A-Za-z_]\w*)/).map { |m| Param.new(m[1], "", "path") }
     end
   end
 end

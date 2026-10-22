@@ -1,5 +1,6 @@
 class PostsController < ApplicationController
   before_action :authenticate_user!
+  before_action :authorize, only: [:destroy]
   skip_before_action :authenticate_user!, only: [:index]
 
   def index

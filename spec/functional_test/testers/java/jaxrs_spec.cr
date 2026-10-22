@@ -60,6 +60,8 @@ expected_endpoints = [
     Param.new("count", "", "json"),
   ]),
   Endpoint.new("/legacy/ping", "GET"),
+  # SharedOrderResource.java — @Path from an interface in another package.
+  Endpoint.new("/services/shared-orders/{id}", "GET", [Param.new("id", "", "path")]),
   Endpoint.new("/simple-api/simple", "GET"),
   chat_ws_endpoint,
 ]

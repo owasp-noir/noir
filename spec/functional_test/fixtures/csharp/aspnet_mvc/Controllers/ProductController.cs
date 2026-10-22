@@ -17,5 +17,11 @@ namespace MyApp.Controllers
         {
             return View();
         }
+
+        // Attribute and action share a line
+        [HttpGet][OutputCache(Duration = 60)] public ActionResult Show(int productId)
+        {
+            return View();
+        }
     }
 }

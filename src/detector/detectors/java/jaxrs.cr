@@ -1,14 +1,17 @@
 require "../../../models/detector"
+require "../../../utils/path_scope"
 
 module Detector::Java
   class JaxRs < Detector
+    detector_for "java_jaxrs", extensions: %w[.java .kt]
+
     # Frameworks that ride on JAX-RS but ship their own detector.
-    # Quarkus / Dropwizard projects should report as that specific
-    # framework, not as plain JAX-RS.
-    DERIVATIVE_MARKERS = ["io.quarkus", "io.dropwizard"]
+    # Quarkus / Dropwizard / Helidon MP projects should report as that
+    # specific framework, not as plain JAX-RS.
+    DERIVATIVE_MARKERS = ["io.quarkus", "io.dropwizard", "io.helidon.microprofile"]
 
     # `derivative_project?` answers a project-wide question — "does any
-    # Java file under this root pull in Quarkus/Dropwizard?" — whose
+    # source file under this root pull in Quarkus/Dropwizard?" — whose
     # answer is identical for every file that shares a root. The detector
     # instance is shared across the whole scan, so memoise per root.
     # Without this the glob+read sweep ran once per `.java` file, making
@@ -21,36 +24,32 @@ module Detector::Java
     @derivative_cache_mutex = Mutex.new
 
     def detect(filename : String, file_contents : String) : Bool
-      return false unless filename.ends_with?(".java")
+      return false unless filename.ends_with?(".java") || filename.ends_with?(".kt")
       return false if DERIVATIVE_MARKERS.any? { |marker| file_contents.includes?(marker) }
       return false if derivative_project?(filename)
       file_contents.includes?("jakarta.ws.rs") || file_contents.includes?("javax.ws.rs")
     end
 
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".java")
-    end
-
-    def set_name
-      @name = "java_jaxrs"
-    end
-
     private def derivative_project?(filename : String) : Bool
       root = project_root_for(filename)
       @derivative_cache_mutex.synchronize do
-        cached = @derivative_cache[root]?
-        return cached unless cached.nil?
-        result = compute_derivative_project(root)
-        @derivative_cache[root] = result
-        result
+        @derivative_cache.put_if_absent(root) { compute_derivative_project(root) }
       end
     end
 
+    # Manifest basenames a derivative framework can *only* show up in.
+    # Helidon MP's own quickstart is the concrete case: its JAX-RS
+    # resource classes carry no `io.helidon` import at all — the
+    # runtime is pulled in solely via `pom.xml`'s
+    # `io.helidon.microprofile.*` dependencies, so a `.java`-only scan
+    # would never see the marker and this detector would double-report
+    # both `java_jaxrs` and `java_helidon_mp` for the same project.
+    DERIVATIVE_MANIFEST_GLOBS = %w[pom.xml build.gradle build.gradle.kts]
+
     private def compute_derivative_project(root : String) : Bool
-      java_glob = File.join(root, "src/main/java/**/*.java")
-      fallback_glob = File.join(root, "**/*.java")
-      candidates = Dir.glob(java_glob)
-      candidates = Dir.glob(fallback_glob) if candidates.empty?
+      candidates = %w[src/main/java/**/*.java src/main/kotlin/**/*.kt].flat_map { |glob| glob_under(root, glob) }
+      candidates = %w[**/*.java **/*.kt].flat_map { |glob| glob_under(root, glob) } if candidates.empty?
+      candidates += DERIVATIVE_MANIFEST_GLOBS.map { |name| File.join(root, name) }
 
       locator = CodeLocator.instance
       candidates.any? do |path|
@@ -68,12 +67,8 @@ module Detector::Java
     end
 
     private def project_root_for(path : String) : String
-      marker = "/src/main/java/"
-      if index = path.index(marker)
-        path[...index]
-      else
-        File.dirname(path)
-      end
+      base = @base_paths.size <= 1 ? @base_path : (Noir::PathScope.longest_base(path, @base_paths) || @base_path)
+      Noir::PathScope.marker_root(path, base, {"/src/main/java/", "/src/main/kotlin/"}) || File.dirname(path)
     end
   end
 end

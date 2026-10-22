@@ -51,7 +51,7 @@ FunctionalTester.new("fixtures/kotlin/spring_websocket/", {
   "include_callee" => YAML::Any.new(true),
 }).perform_tests
 
-describe "--ai-context on Kotlin Spring websocket fixtures" do
+describe "--ai-context on Kotlin Spring websocket fixtures", tags: "functional" do
   before_each do
     CodeLocator.instance.clear_all
   end

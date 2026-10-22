@@ -1,0 +1,85 @@
+app todoApp {
+  wasp: {
+    version: "^0.16.0"
+  },
+  title: "ToDo App",
+  auth: {
+    userEntity: User,
+    methods: {
+      usernameAndPassword: {},
+      google: {}
+    },
+    onAuthFailedRedirectTo: "/login"
+  }
+}
+
+route RootRoute { path: "/", to: MainPage }
+page MainPage {
+  component: import { MainPage } from "@src/MainPage",
+  authRequired: true
+}
+
+route TaskRoute { path: "/tasks/:id", to: TaskPage }
+page TaskPage {
+  component: import TaskPage from "@src/TaskPage"
+}
+
+// api oldFooBar {
+//   fn: import { oldFooBar } from "@src/apis",
+//   httpRoute: (GET, "/old/foo/bar")
+// }
+
+/* api blockCommented { fn: import { x } from "@src/apis", httpRoute: (GET, "/block") } */
+
+apiNamespace fooNamespace {
+  middlewareConfigFn: import { fooMiddleware } from "@src/apis",
+  path: "/foo"
+}
+
+api fooBar {
+  fn: import { fooBar } from "@src/apis",
+  httpRoute: (GET, "/foo/bar"),
+  auth: false
+}
+
+api updateProfile {
+  fn: import { updateProfile } from "@src/apis.js",
+  entities: [User],
+  httpRoute: (PUT, "/profile/:userId")
+}
+
+api webhook {
+  fn: import { webhook } from "@src/apis",
+  httpRoute: (ALL, "/webhook"),
+  auth: false
+}
+
+action createTask {
+  fn: import { createTask } from "@src/actions",
+  entities: [Task]
+}
+
+query getTasks {
+  fn: import { getTasks } from "@src/queries",
+  entities: [Task]
+}
+
+query getHTTPStatus {
+  fn: import { getHTTPStatus } from "@src/queries",
+  auth: false
+}
+
+crud tasks {
+  entity: Task,
+  operations: {
+    getAll: { isPublic: true },
+    get: {},
+    create: { overrideFn: import { createTaskCrud } from "@src/actions" },
+    delete: {}
+  }
+}
+
+entity Note {=psl
+  id   Int    @id @default(autoincrement())
+  text String // api fake { httpRoute: (GET, "/psl") }
+psl=}

@@ -18,6 +18,8 @@ $routes->add('webhook', 'WebhookController::any');
 
 $routes->resource('photos');
 $routes->presenter('articles');
+$routes->resource('tags', ['only' => ['index', 'show']]);
+$routes->presenter('albums', ['except' => 'show,new,create,edit,update,remove,delete', 'placeholder' => '(:num)']);
 
 $routes->group('admin', function ($routes) {
     $routes->get('dashboard', 'AdminController::dashboard');
@@ -40,3 +42,9 @@ $routes->group('tenant/(:num)', function ($routes) {
 $routes->environment('development', function ($routes) {
     $routes->get('debug', 'Debug::index');
 });
+// Typed closure (`: void` return type) still opens a prefixed group.
+$routes->group('typed', static function (RouteCollection $routes): void {
+    $routes->get('ping', 'Home::index');
+});
+// $routes->get('dead-line', 'Home::index');
+/* $routes->post('dead-block', 'Home::index'); */

@@ -23,6 +23,10 @@ expected_endpoints = [
     Param.new("id", "", "path"),
     Param.new("name", "", "form"),
   ]),
+  # BindQuery must not fabricate a query param from the bind target expression
+  Endpoint.new("/search", "GET", [
+    Param.new("body", "", "json"),
+  ]),
   Endpoint.new("/public/index.html", "GET"),
 ] + any_endpoints
 

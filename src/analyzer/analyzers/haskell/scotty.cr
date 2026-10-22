@@ -4,6 +4,8 @@ require "set"
 
 module Analyzer::Haskell
   class Scotty < Analyzer
+    analyzer_for "haskell_scotty"
+
     HTTP_VERBS = {
       "get"     => "GET",
       "post"    => "POST",
@@ -22,19 +24,36 @@ module Analyzer::Haskell
     PATH_PARAM_REGEX  = /(?<![A-Za-z0-9_'])(?:pathParam|pathParamMaybe)\s+"((?:[^"\\]|\\.)*)"/
     HEADER_REGEX      = /(?<![A-Za-z0-9_'])header\s+"((?:[^"\\]|\\.)*)"/
 
+    # `test/`, `tests/` and `spec/` trees. Case-sensitive on purpose: a
+    # production `src/Test/...` module namespace must stay in.
+    TEST_DIR_RE = /\/(?:tests?|spec)\//
+
+    # hspec-discover/tasty `FooSpec.hs` / `FooTest.hs` files and `foo_spec.` /
+    # `foo_test.` files. The name alone is not enough: `OpenApiSpec.hs`,
+    # `SpeedTest.hs` and `Handlers/Tests.hs` are production modules, so the
+    # file must also import a Haskell test library.
+    TEST_SUFFIX_RE     = /(?:Spec|Tests?)\.l?hs$|_(?:spec|test)\./
+    TEST_LIB_IMPORT_RE = /^[ \t]*import\s+(?:qualified\s+)?Test\.(?:Hspec|Tasty|HUnit|QuickCheck)\b/m
+
+    # hspec-wai test clients call `get "/x" `shouldRespondWith` ...`, which
+    # reads exactly like a Scotty route; a file that imports it is a test
+    # even when it lives outside a test directory.
+    HSPEC_WAI_IMPORT_RE = /^[ \t]*import\s+(?:qualified\s+)?Test\.Hspec\.Wai\b/m
+
     alias HandlerBody = Noir::HaskellCalleeExtractor::FunctionBody
     alias HandlerKey = Tuple(String, String)
     alias HandlerBodies = Hash(HandlerKey, Array(HandlerBody))
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       handler_bodies = include_callee ? build_handler_bodies : HandlerBodies.new
 
       all_files.each do |path|
-        next if File.directory?(path)
         next unless haskell_source?(path)
 
         content = read_file_content(path)
+        next if scotty_test_source?(path, content)
+
         process_content(path, content, include_callee, handler_bodies)
       end
 
@@ -45,14 +64,26 @@ module Analyzer::Haskell
       path.ends_with?(".hs") || path.ends_with?(".lhs")
     end
 
+    # Test files hold hspec-wai client requests and throwaway test apps, not
+    # routes the application serves. Scan-base-relative, never absolute: a
+    # `test/` directory ABOVE the scan base is not this project's test tree.
+    private def scotty_test_source?(path : String, content : String) : Bool
+      relative = base_relative_path(path)
+      return true if relative.matches?(TEST_DIR_RE) || content.matches?(HSPEC_WAI_IMPORT_RE)
+
+      relative.matches?(TEST_SUFFIX_RE) && content.matches?(TEST_LIB_IMPORT_RE)
+    end
+
     private def build_handler_bodies : HandlerBodies
       handlers = HandlerBodies.new
 
       all_files.each do |path|
-        next if File.directory?(path)
         next unless haskell_source?(path)
 
-        Noir::HaskellCalleeExtractor.function_bodies(read_file_content(path), path).each do |body|
+        content = read_file_content(path)
+        next if scotty_test_source?(path, content)
+
+        Noir::HaskellCalleeExtractor.function_bodies(content, path).each do |body|
           key = handler_key(configured_base_for(path), body[:name])
           handlers[key] ||= [] of HandlerBody
           handlers[key] << body
@@ -70,7 +101,7 @@ module Analyzer::Haskell
                                 content : String,
                                 include_callee : Bool,
                                 handler_bodies : HandlerBodies)
-      cleaned = strip_haskell_comments(content)
+      cleaned = Helper.strip_haskell_comments(content)
       lines = cleaned.lines
       idx = 0
 
@@ -278,79 +309,6 @@ module Analyzer::Haskell
 
       m = trimmed.match(/\A([a-z_][A-Za-z0-9_']*)\s*$/)
       m ? m[1] : nil
-    end
-
-    private def strip_haskell_comments(text : String) : String
-      result = String::Builder.new
-      chars = text.chars
-      i = 0
-      brace_depth = 0
-      in_string = false
-
-      while i < chars.size
-        c = chars[i]
-
-        if in_string
-          if c == '\\' && i + 1 < chars.size
-            result << c
-            result << chars[i + 1]
-            i += 2
-            next
-          elsif c == '"'
-            in_string = false
-            result << c
-            i += 1
-            next
-          else
-            result << c
-            i += 1
-            next
-          end
-        end
-
-        if brace_depth == 0 && c == '"'
-          in_string = true
-          result << c
-          i += 1
-          next
-        end
-
-        if i + 1 < chars.size && c == '{' && chars[i + 1] == '-'
-          brace_depth += 1
-          result << ' '
-          result << ' '
-          i += 2
-          while i < chars.size && brace_depth > 0
-            if i + 1 < chars.size && chars[i] == '-' && chars[i + 1] == '}'
-              brace_depth -= 1
-              result << ' '
-              result << ' '
-              i += 2
-            elsif i + 1 < chars.size && chars[i] == '{' && chars[i + 1] == '-'
-              brace_depth += 1
-              result << ' '
-              result << ' '
-              i += 2
-            else
-              result << (chars[i] == '\n' ? '\n' : ' ')
-              i += 1
-            end
-          end
-          next
-        end
-
-        if brace_depth == 0 && i + 1 < chars.size && c == '-' && chars[i + 1] == '-'
-          while i < chars.size && chars[i] != '\n'
-            i += 1
-          end
-          next
-        end
-
-        result << c
-        i += 1
-      end
-
-      result.to_s
     end
   end
 end

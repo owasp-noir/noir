@@ -1,18 +1,35 @@
 require "../../../models/analyzer"
 require "../../engines/java_engine"
 require "../../../miniparsers/jaxrs_extractor_ts"
-require "../../../miniparsers/import_graph"
 require "yaml"
+require "../../../utils/url_path"
+require "../../../utils/path_scope"
+require "../../../utils/top_level_split"
 
 module Analyzer::Java
   # Dropwizard ships Jersey under the hood, so JAX-RS resource
   # classes are the routing surface. This analyzer drives the shared
   # `TreeSitterJaxRsExtractor` against files in project roots that
-  # carry the `io.dropwizard` marker. Resource classes are often pure
-  # JAX-RS and do not import Dropwizard directly.
+  # carry a Dropwizard framework-bootstrap reference. Resource
+  # classes are often pure JAX-RS and do not import Dropwizard
+  # directly.
   class Dropwizard < Analyzer
-    JAVA_EXTENSION    = "java"
-    DROPWIZARD_MARKER = "io.dropwizard"
+    analyzer_for "java_dropwizard"
+
+    include JavaEngine
+
+    JAVA_EXTENSION = "java"
+
+    # A bare `io.dropwizard` substring also matches Dropwizard's
+    # standalone utility modules (io.dropwizard.util.Duration,
+    # io.dropwizard.validation.*, io.dropwizard.jackson.*) that ship
+    # explicitly for use outside the Dropwizard web framework/server
+    # stack. Restrict project classification to actual bootstrap
+    # symbols (the `Application` base class, the `Bootstrap`/
+    # `Environment` setup types, and the `AssetsBundle` helper) so a
+    # plain JAX-RS/RESTEasy project that merely borrows one of those
+    # helpers isn't misclassified as a Dropwizard project.
+    DROPWIZARD_BOOTSTRAP_MARKER_RE = /io\.dropwizard\.(?:core\.)?(?:Application\b|setup\.(?:Bootstrap|Environment)\b)|io\.dropwizard\.assets\.AssetsBundle\b/
 
     private struct DropwizardPathConfig
       getter application_context_path : String
@@ -22,31 +39,35 @@ module Analyzer::Java
       end
 
       def base_path : String
-        Dropwizard.join_paths(@application_context_path, @root_path)
+        Noir::URLPath.join_trimmed(@application_context_path, @root_path)
       end
     end
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       dto_builder = Noir::TreeSitterJavaDtoIndex.new
       bean_cache = Hash(String, Hash(String, Array(Param))).new
       source_cache = Hash(String, String).new
+      custom_verb_cache = Hash(String, Hash(String, String)).new
 
       file_list = all_files()
-      path_configs = path_configs_for(file_list)
       dropwizard_roots = dropwizard_project_roots_for(file_list)
+      # Only files under a Dropwizard root ever look their config up, so
+      # resolving configs for every Java project root was wasted work.
+      path_configs = path_configs_for(dropwizard_roots)
       file_list.each do |path|
-        next if JavaEngine.test_path?(path)
-        next unless File.exists?(path)
         next unless path.ends_with?(".#{JAVA_EXTENSION}")
-        project_root = project_root_for(path)
+        next if JavaEngine.test_path?(base_relative_path(path))
+        next unless File.exists?(path)
+        project_root = JavaEngine.project_root_for(path, configured_base_for(path))
         next unless dropwizard_roots.includes?(project_root)
 
         content = read_file_content(path)
 
         path_config = path_configs[project_root]? || DropwizardPathConfig.new
-        if content.includes?(DROPWIZARD_MARKER)
-          extract_asset_bundle_endpoints(content, path_config.application_context_path, path).each do |endpoint|
+        if content.includes?("AssetsBundle")
+          # Comment-free (offsets kept): a commented-out `new AssetsBundle(...)` serves nothing.
+          extract_asset_bundle_endpoints(JavaEngine.strip_comments(content), path_config.application_context_path, path).each do |endpoint|
             @result << endpoint
           end
         end
@@ -66,17 +87,14 @@ module Analyzer::Java
             Noir::TreeSitterJaxRsExtractor.extract_bean_fields_from(root, content))
           subresource_sources = subresource_sources_for(path, content, package_name, source_cache, imports,
             Noir::TreeSitterJaxRsExtractor.extract_class_names_from(root, content))
+          custom_verb_annotations = custom_verb_index_for(path, content, package_name, custom_verb_cache, imports,
+            Noir::TreeSitterJaxRsExtractor.extract_custom_verb_annotations_from(root, content))
           base_path = path_config.base_path
 
-          Noir::TreeSitterJaxRsExtractor.extract_routes_from(root, content, dto_index, bean_index, subresource_sources, include_callees: include_callee).each do |route|
-            line = route.line + 1
-            details = Details.new(PathInfo.new(route.file_path || path, line))
-            endpoint = Endpoint.new(Dropwizard.join_paths(base_path, route.path), route.verb, route.params, details)
-            endpoint.protocol = route.protocol
-            route.callees.each do |name, callee_line|
-              endpoint.push_callee(Callee.new(name, path: route.file_path || path, line: callee_line))
-            end
-            @result << endpoint
+          Noir::TreeSitterJaxRsExtractor.extract_routes_from(root, content, dto_index, bean_index, subresource_sources,
+            custom_verb_annotations: custom_verb_annotations, include_callees: include_callee,
+            project_constants: java_project_constants(path)).each do |route|
+            @result << jvm_route_endpoint(route, Noir::URLPath.join_trimmed(base_path, route.path), route.file_path || path)
           end
         end
       end
@@ -85,25 +103,13 @@ module Analyzer::Java
       @result
     end
 
-    def self.join_paths(prefix : String, suffix : String) : String
-      return suffix if prefix.empty?
-      return prefix.rstrip('/') if suffix.empty?
-      "#{prefix.rstrip('/')}/#{suffix.lstrip('/')}"
-    end
-
-    private def path_configs_for(file_list : Array(String)) : Hash(String, DropwizardPathConfig)
+    private def path_configs_for(project_roots : Set(String)) : Hash(String, DropwizardPathConfig)
       configs = Hash(String, DropwizardPathConfig).new
-      project_roots = Set(String).new
+      return configs if project_roots.empty?
 
-      file_list.each do |path|
-        next if JavaEngine.test_path?(path)
-        next unless File.exists?(path)
-        next unless path.ends_with?(".#{JAVA_EXTENSION}")
-        project_roots << project_root_for(path)
-      end
-
+      config_index = yaml_files_by_dir
       project_roots.each do |root|
-        configs[root] = path_config_for(root)
+        configs[root] = path_config_for(root, config_index)
       end
 
       configs
@@ -113,25 +119,24 @@ module Analyzer::Java
       roots = Set(String).new
 
       file_list.each do |path|
-        next if JavaEngine.test_path?(path)
-        next unless File.exists?(path)
         next unless path.ends_with?(".#{JAVA_EXTENSION}")
+        next if JavaEngine.test_path?(base_relative_path(path))
+        next unless File.exists?(path)
 
         content = read_file_content(path)
-        roots << project_root_for(path) if content.includes?(DROPWIZARD_MARKER)
+        roots << JavaEngine.project_root_for(path, configured_base_for(path)) if content.matches?(DROPWIZARD_BOOTSTRAP_MARKER_RE)
       end
 
       roots
     end
 
-    private def path_config_for(project_root : String) : DropwizardPathConfig
-      config_paths = ([] of String)
-      config_paths.concat(Dir.glob(File.join(project_root, "*.yml")))
-      config_paths.concat(Dir.glob(File.join(project_root, "*.yaml")))
-      config_paths.concat(Dir.glob(File.join(project_root, "config", "*.yml")))
-      config_paths.concat(Dir.glob(File.join(project_root, "config", "*.yaml")))
-      config_paths.concat(Dir.glob(File.join(project_root, "src/main/resources", "*.yml")))
-      config_paths.concat(Dir.glob(File.join(project_root, "src/main/resources", "*.yaml")))
+    # Directories a Dropwizard app conventionally keeps its server YAML in,
+    # relative to the project root. Non-recursive, as the `Dir.glob` this
+    # replaced was.
+    CONFIG_DIRS = ["", "config", "src/main/resources"]
+
+    private def path_config_for(project_root : String, config_index : Hash(String, Array(String))) : DropwizardPathConfig
+      config_paths = dropwizard_config_files(project_root, config_index)
 
       config_paths.sort.each do |config_path|
         config = read_path_config(config_path)
@@ -141,8 +146,39 @@ module Analyzer::Java
       DropwizardPathConfig.new
     end
 
+    # The server YAML, resolved against the scanned-file index rather than
+    # globbed off disk.
+    #
+    # The config is located by convention (project root, `config/`,
+    # `src/main/resources/`) rather than by extension, which is why this
+    # used to reach for `Dir.glob`. Going through the index instead means
+    # the lookup inherits everything the detector's walk applies: subtree
+    # pruning, `--exclude-path`, the media/oversize filter and the content
+    # cache. The glob form did none of that — it handed an excluded file,
+    # at any size, straight to `read_file_content` + `YAML.parse`.
+    private def dropwizard_config_files(project_root : String, config_index : Hash(String, Array(String))) : Array(String)
+      config_dirs = CONFIG_DIRS.map do |dir|
+        Noir::PathScope.normalize_root(dir.empty? ? project_root : File.join(project_root, dir))
+      end.uniq!
+
+      config_dirs.flat_map { |dir| config_index[dir]? || [] of String }
+    end
+
+    # Every scanned YAML file, keyed by its normalized parent directory.
+    # Built once per scan so each project root costs three Hash lookups;
+    # the previous shape re-normalized every YAML path once per project
+    # root, which was O(roots x yaml files) `File.expand_path` calls (each
+    # of which stats the working directory) and dominated monorepo scans.
+    private def yaml_files_by_dir : Hash(String, Array(String))
+      index = Hash(String, Array(String)).new
+      get_files_by_extensions([".yml", ".yaml"]).each do |path|
+        (index[Noir::PathScope.normalize_root(File.dirname(path))] ||= [] of String) << path
+      end
+      index
+    end
+
     private def read_path_config(path : String) : DropwizardPathConfig
-      root = YAML.parse(File.read(path))
+      root = YAML.parse(read_file_content(path))
       server = root["server"]?
       return DropwizardPathConfig.new unless server
 
@@ -177,69 +213,6 @@ module Analyzer::Java
       normalized
     end
 
-    private def project_root_for(path : String) : String
-      marker = "/src/main/java/"
-      if index = path.index(marker)
-        path[...index]
-      else
-        File.dirname(path)
-      end
-    end
-
-    private def bean_index_for(path : String,
-                               content : String,
-                               package_name : String,
-                               cache : Hash(String, Hash(String, Array(Param))),
-                               imports : Array(Noir::ImportGraph::ImportRef)? = nil,
-                               current_file_beans : Hash(String, Array(Param))? = nil) : Hash(String, Array(Param))
-      result = Hash(String, Array(Param)).new
-      resolved_imports = imports || Noir::TreeSitterJavaParameterExtractor.extract_imports(content)
-
-      Noir::ImportGraph.related_files(path, package_name, resolved_imports, JAVA_EXTENSION) do |file|
-        beans = cache[file] ||= begin
-          if file == path && current_file_beans
-            current_file_beans
-          else
-            body = file == path ? content : read_file_content(file)
-            Noir::TreeSitterJaxRsExtractor.extract_bean_fields(body)
-          end
-        rescue File::NotFoundError
-          {} of String => Array(Param)
-        end
-
-        beans.each { |name, params| result[name] ||= params }
-      end
-
-      result
-    end
-
-    private def subresource_sources_for(path : String,
-                                        content : String,
-                                        package_name : String,
-                                        cache : Hash(String, String),
-                                        imports : Array(Noir::ImportGraph::ImportRef)? = nil,
-                                        current_file_class_names : Array(String)? = nil) : Hash(String, Noir::TreeSitterJaxRsExtractor::SourceEntry)
-      result = Hash(String, Noir::TreeSitterJaxRsExtractor::SourceEntry).new
-      resolved_imports = imports || Noir::TreeSitterJavaParameterExtractor.extract_imports(content)
-
-      Noir::ImportGraph.related_files(path, package_name, resolved_imports, JAVA_EXTENSION) do |file|
-        body = cache[file] ||= begin
-          file == path ? content : read_file_content(file)
-        rescue File::NotFoundError
-          ""
-        end
-        next if body.empty?
-        next unless body.includes?("jakarta.ws.rs") || body.includes?("javax.ws.rs")
-
-        class_names = file == path && current_file_class_names ? current_file_class_names : Noir::TreeSitterJaxRsExtractor.extract_class_names(body)
-        class_names.each do |name|
-          result[name] ||= {file, body}
-        end
-      end
-
-      result
-    end
-
     private def extract_asset_bundle_endpoints(content : String, application_context_path : String, path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       return endpoints unless content.includes?("AssetsBundle")
@@ -249,7 +222,7 @@ module Analyzer::Java
         uri_path = asset_bundle_uri_path(args)
         next if uri_path.empty?
 
-        line = line_for_offset(content, match.begin(0) || 0)
+        line = line_number_for_index(content, match.begin(0) || 0)
         endpoint_path = asset_bundle_endpoint_path(application_context_path, uri_path)
         details = Details.new(PathInfo.new(path, line))
         next if endpoints.any? { |endpoint| endpoint.url == endpoint_path && endpoint.method == "GET" }
@@ -274,66 +247,24 @@ module Analyzer::Java
     end
 
     private def asset_bundle_endpoint_path(application_context_path : String, uri_path : String) : String
-      base = Dropwizard.join_paths(application_context_path, uri_path)
+      base = Noir::URLPath.join_trimmed(application_context_path, uri_path)
       base = "/" if base.empty?
       base == "/" ? "/*" : "#{base.rstrip('/')}/*"
     end
 
+    # Delegates to the shared splitter. This file's copy was written against a
+    # `String::Builder` where armeria's and vertx's slice by index, but the two
+    # forms are observably identical — `Rules::JAVA` reproduces both (one
+    # clamped depth shared by `()`/`[]`/`{}`, both quote styles, backslash
+    # escapes inside quotes, stripped parts, trailing empty dropped).
     private def split_top_level_args(source : String) : Array(String)
-      args = [] of String
-      current = String::Builder.new
-      depth = 0
-      quote : Char? = nil
-      escaped = false
-
-      source.each_char do |char|
-        if quote
-          current << char
-          if escaped
-            escaped = false
-          elsif char == '\\'
-            escaped = true
-          elsif char == quote
-            quote = nil
-          end
-          next
-        end
-
-        case char
-        when '"', '\''
-          quote = char
-          current << char
-        when '(', '{', '['
-          depth += 1
-          current << char
-        when ')', '}', ']'
-          depth -= 1 if depth > 0
-          current << char
-        when ','
-          if depth == 0
-            args << current.to_s.strip
-            current = String::Builder.new
-          else
-            current << char
-          end
-        else
-          current << char
-        end
-      end
-
-      tail = current.to_s.strip
-      args << tail unless tail.empty?
-      args
+      Noir::TopLevelSplit.split(source, ',', Noir::TopLevelSplit::Rules::JAVA)
     end
 
     private def string_literal_value(expression : String) : String?
       if match = expression.strip.match(/\A["']([^"']*)["']\z/)
         match[1]
       end
-    end
-
-    private def line_for_offset(content : String, offset : Int32) : Int32
-      content[0...offset].count('\n') + 1
     end
   end
 end

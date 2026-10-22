@@ -16,12 +16,19 @@ module Analyzer::Rust
   # We collect both `let <var> = <expr>.at("/path")` bindings and
   # direct `.at("/path").<verb>(handler)` chains in a single AST pass.
   class Tide < RustEngine
-    HTTP_VERBS = Set{"get", "post", "put", "delete", "patch", "head", "options"}
+    analyzer_for "rust_tide"
+
+    # Only files inside a crate that depends on `tide`. See
+    # `RustEngine#crate_dependencies` — without this every Rust analyzer
+    # sees every `.rs` file in the scan.
+    protected def crate_dependencies : Array(String)
+      ["tide"]
+    end
 
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       source = read_file_content(path)
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
 
       # Inline `#[cfg(test)] mod test { let mut app = tide::new();
       # app.at("/x").get(h); }` blocks live right in `src/` here, so a
@@ -30,7 +37,7 @@ module Analyzer::Rust
 
       Noir::TreeSitter.parse_rust(source) do |root|
         function_index = build_function_index(root, source)
-        var_paths = collect_route_variables(root, source)
+        var_paths = collect_route_variables(root, source, path)
         nest_ranges = collect_nest_ranges(root, source)
 
         walk(root) do |node|
@@ -41,15 +48,17 @@ module Analyzer::Rust
           route_path, method, handler_arg = route
           full_path = apply_nest_prefix(node, route_path, nest_ranges)
 
-          details = Details.new(PathInfo.new(path, Noir::TreeSitter.node_start_row(node) + 1))
-          endpoint = Endpoint.new(full_path, method, details)
-          extract_path_params(full_path, endpoint)
+          details = Details.new(PathInfo.new(path, call_line(node)))
+          RustEngine.fan_out_verbs(method).each do |verb|
+            endpoint = Endpoint.new(full_path, verb, details)
+            extract_path_params(full_path, endpoint)
 
-          if handler_arg
-            apply_handler(handler_arg, function_index, source, path, endpoint, include_callee)
+            if handler_arg
+              apply_handler(handler_arg, function_index, source, path, endpoint, include_callee)
+            end
+
+            endpoints << endpoint
           end
-
-          endpoints << endpoint
         end
       end
 
@@ -76,6 +85,8 @@ module Analyzer::Rust
           name.upcase
         elsif STATIC_VERBS.includes?(name)
           "GET"
+        elsif name == "all"
+          "ANY"
         end
       return unless method
 
@@ -95,30 +106,41 @@ module Analyzer::Rust
     # Walk a verb call's receiver chain to the `.at("path")` that defines
     # its path (skipping chained verbs), or resolve a route-variable
     # identifier. Returns the path string or `nil`.
+    # Each `.at()` nests under its receiver's path (`api.at("/c")` with
+    # `api = app.at("/api")` is `/api/c`), so every `.at` segment in the
+    # chain is joined, rooted at a route variable when there is one.
     private def resolve_at_path(node : LibTreeSitter::TSNode,
                                 source : String,
                                 var_paths : Hash(String, String)) : String?
       cursor = node
+      path = nil.as(String?)
       256.times do
+        base = nil.as(String?)
         case Noir::TreeSitter.node_type(cursor)
         when "identifier"
-          return var_paths[Noir::TreeSitter.node_text(cursor, source)]?
+          base = var_paths[Noir::TreeSitter.node_text(cursor, source)]?
         when "call_expression"
           cfn = Noir::TreeSitter.field(cursor, "function")
-          return unless cfn && Noir::TreeSitter.node_type(cfn) == "field_expression"
-          cfield = Noir::TreeSitter.field(cfn, "field")
-          fname = cfield ? Noir::TreeSitter.node_text(cfield, source) : ""
-          if fname == "at"
-            return first_string_literal_text(Noir::TreeSitter.field(cursor, "arguments"), source)
+          if cfn && Noir::TreeSitter.node_type(cfn) == "field_expression" && (receiver = Noir::TreeSitter.field(cfn, "value"))
+            cfield = Noir::TreeSitter.field(cfn, "field")
+            if cfield && Noir::TreeSitter.node_text(cfield, source) == "at"
+              segment = first_string_literal_text(Noir::TreeSitter.field(cursor, "arguments"), source)
+              return path unless segment
+              path = path ? join_at(segment, path) : segment
+            end
+            cursor = receiver
+            next
           end
-          receiver = Noir::TreeSitter.field(cfn, "value")
-          return unless receiver
-          cursor = receiver
-        else
-          return
         end
+        return base && path ? join_at(base, path) : base || path
       end
-      nil
+      path
+    end
+
+    # Tide's `Route::at` leaves the path unchanged for `"/"`.
+    private def join_at(prefix : String, path : String) : String
+      return prefix if path.empty? || path == "/"
+      "#{prefix.rstrip('/')}/#{path.lstrip('/')}"
     end
 
     # Collect `app.at("/pre").nest(arg)` mounts as `{arg_byte_range,
@@ -139,7 +161,7 @@ module Analyzer::Rust
         args = Noir::TreeSitter.field(node, "arguments")
         next unless args
         arg = nil.as(LibTreeSitter::TSNode?)
-        Noir::TreeSitter.each_named_child(args) { |c| arg ||= c }
+        Noir::TreeSitter.each_named_arg(args) { |c| arg ||= c }
         next unless mount = arg
         ranges << {LibTreeSitter.ts_node_start_byte(mount).to_i, LibTreeSitter.ts_node_end_byte(mount).to_i, prefix}
       end
@@ -162,9 +184,16 @@ module Analyzer::Rust
     # bindings whose RHS is a `.at("path")` call somewhere. We use
     # the *outermost* `.at` we find on the RHS, mirroring the legacy
     # `(\w+)\s*=\s*\w+\.at(...)` regex.
+    # Every route variable stores its fully composed path, so a long
+    # `let aN = aN-1.at("/s")` chain would hold O(n²) bytes. Past this
+    # length a variable keeps just its own `.at` literal instead.
+    MAX_COMPOSED_VAR_PATH_BYTES = 2048
+
     private def collect_route_variables(root : LibTreeSitter::TSNode,
-                                        source : String) : Hash(String, String)
+                                        source : String,
+                                        file_path : String) : Hash(String, String)
       vars = {} of String => String
+      capped = false
       walk(root) do |node|
         next unless Noir::TreeSitter.node_type(node) == "let_declaration"
         pattern = Noir::TreeSitter.field(node, "pattern")
@@ -173,9 +202,15 @@ module Analyzer::Rust
 
         value = Noir::TreeSitter.field(node, "value")
         next unless value
-        path = find_at_call_path(value, source)
+        path = resolve_at_path(value, source, vars)
+        if path && path.bytesize > MAX_COMPOSED_VAR_PATH_BYTES
+          path = nil
+          capped = true
+        end
+        path ||= find_at_call_path(value, source)
         vars[name] = path if path
       end
+      logger.debug "tide: route variable paths over #{MAX_COMPOSED_VAR_PATH_BYTES} bytes kept uncomposed in #{file_path}" if capped
       vars
     end
 
@@ -256,7 +291,13 @@ module Analyzer::Rust
     private def add_typed_extractor(let_decl : LibTreeSitter::TSNode,
                                     source : String,
                                     endpoint : Endpoint)
+      # `let Animal { name, legs } = req.body_json().await?;` names the
+      # type in the destructuring pattern instead of an annotation.
       type_node = Noir::TreeSitter.field(let_decl, "type")
+      if type_node.nil? && (pattern = Noir::TreeSitter.field(let_decl, "pattern")) &&
+         Noir::TreeSitter.node_type(pattern) == "struct_pattern"
+        type_node = Noir::TreeSitter.field(pattern, "type")
+      end
       return unless type_node
       value = Noir::TreeSitter.field(let_decl, "value")
       return unless value
@@ -315,65 +356,13 @@ module Analyzer::Rust
       end
     end
 
-    private def attach_handler_callees(function : LibTreeSitter::TSNode,
-                                       source : String,
-                                       path : String,
-                                       endpoint : Endpoint)
-      body = Noir::TreeSitter.field(function, "body")
-      return unless body
-      entries = Noir::RustCalleeExtractorTS.callees_in_body(body, source, path)
-      attach_rust_callees(endpoint, entries)
-    end
-
-    private def call_function_text(call : LibTreeSitter::TSNode, source : String) : String?
-      fn_node = Noir::TreeSitter.field(call, "function")
-      return unless fn_node
-      Noir::TreeSitter.node_text(fn_node, source)
-    end
-
     private def first_named_argument(call : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
       args = Noir::TreeSitter.field(call, "arguments")
       return unless args
-      Noir::TreeSitter.each_named_child(args) do |child|
+      Noir::TreeSitter.each_named_arg(args) do |child|
         return child
       end
       nil
-    end
-
-    private def build_function_index(root : LibTreeSitter::TSNode, source : String) : Hash(String, LibTreeSitter::TSNode)
-      index = {} of String => LibTreeSitter::TSNode
-      walk(root) do |node|
-        next unless Noir::TreeSitter.node_type(node) == "function_item"
-        name_node = Noir::TreeSitter.field(node, "name")
-        next unless name_node
-        name = Noir::TreeSitter.node_text(name_node, source)
-        index[name] = node unless index.has_key?(name)
-      end
-      index
-    end
-
-    private def first_string_literal_text(node : LibTreeSitter::TSNode?, source : String) : String?
-      return unless node
-      result : String? = nil
-      walk(node) do |child|
-        next if result
-        if Noir::TreeSitter.node_type(child) == "string_literal"
-          Noir::TreeSitter.each_named_child(child) do |grand|
-            if Noir::TreeSitter.node_type(grand) == "string_content"
-              result = Noir::TreeSitter.node_text(grand, source)
-              break
-            end
-          end
-        end
-      end
-      result
-    end
-
-    private def walk(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
-      block.call(node)
-      Noir::TreeSitter.each_named_child(node) do |child|
-        walk(child, &block)
-      end
     end
   end
 end

@@ -35,8 +35,8 @@ describe "Detect OAS 2.0(Swagger) Docs" do
       JSON
 
     locator = CodeLocator.instance
-    locator.clear "swagger-json"
+    locator.clear Noir::LocatorKeys::SWAGGER_JSON
     instance.detect("docs.json", content)
-    locator.all("swagger-json").should eq(["docs.json"])
+    locator.all(Noir::LocatorKeys::SWAGGER_JSON).should eq(["docs.json"])
   end
 end

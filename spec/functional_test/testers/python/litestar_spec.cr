@@ -43,13 +43,13 @@ tester = FunctionalTester.new("fixtures/python/litestar/", {
 }, expected_endpoints)
 tester.perform_tests
 
-it "marks Litestar websocket endpoints with ws protocol" do
+it "marks Litestar websocket endpoints with ws protocol", tags: "functional" do
   websocket_route = tester.app.endpoints.find { |endpoint| endpoint.url == "/ws/{room_id}" }
   websocket_route.should_not be_nil
   websocket_route.try(&.protocol).should eq("ws")
 end
 
-it "detects @websocket_listener handlers as ws endpoints" do
+it "detects @websocket_listener handlers as ws endpoints", tags: "functional" do
   listener_route = tester.app.endpoints.find { |endpoint| endpoint.url == "/ws-listener" }
   listener_route.should_not be_nil
   listener_route.try(&.protocol).should eq("ws")

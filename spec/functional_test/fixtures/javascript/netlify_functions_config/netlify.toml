@@ -1,0 +1,6 @@
+[build]
+  publish = "dist"
+
+[functions]
+  directory = "src/lambdas"
+  node_bundler = "esbuild"

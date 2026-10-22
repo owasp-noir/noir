@@ -33,12 +33,43 @@ struct Endpoint
     CLI_PROTOCOLS.includes?(@protocol)
   end
 
+  # Realtime / event-driven entry points (SignalR hubs, Socket.IO
+  # namespaces, Phoenix channels, Action Cable channels). A realtime
+  # endpoint models one callable event/action/message handler on a
+  # long-lived socket, addressed as `ws://<hub-or-namespace-or-channel-
+  # or-topic>/<event>` (bare `ws://<surface>` when no discrete event is
+  # discoverable). The method is the synthetic verb "SEND" — the
+  # allow-listed messaging verb the optimizer keeps (matching Spring's
+  # `@MessageMapping → SEND`) — and the protocol is "ws", so the existing
+  # WebsocketTagger tags them with no changes. Message/argument fields are
+  # params (param_type "json").
+  #
+  # Keyed on the `ws://` / `wss://` URL scheme rather than the protocol so
+  # AsyncAPI's bare-channel `ws` endpoints and HAR's normalized
+  # `https://…` + `protocol=ws` handshakes (both real, resolvable HTTP
+  # surfaces) stay HTTP-shaped, while these abstract source-analyzed
+  # surfaces — which can't be exercised as plain HTTP requests — are kept
+  # out of HTTP-shaped output and preserved verbatim by the optimizer.
+  def realtime? : Bool
+    @url.starts_with?("ws://") || @url.starts_with?("wss://")
+  end
+
   # True for endpoints whose URL is not an HTTP path and must be preserved
-  # verbatim — mobile deep-link schemes and CLI command surfaces. The
-  # optimizer skips URL normalization for these, and the HTTP output
-  # builders / active deliverers skip them entirely.
+  # verbatim — mobile deep-link schemes, CLI command surfaces and realtime
+  # `ws://` event surfaces. The optimizer skips URL normalization for
+  # these, and the HTTP output builders / active deliverers skip them
+  # entirely.
   def non_http? : Bool
-    mobile? || cli?
+    mobile? || cli? || realtime?
+  end
+
+  # True when the URL is a regular expression rather than a path: a regex
+  # location from an infra config (`kind == "regex"`, set by the nginx,
+  # Apache, Envoy, ... analyzers) or a verbatim JavaScript RegExp literal
+  # (escaped slashes). Reports keep it; OpenAPI, Postman, curl/httpie/
+  # powershell and the probes skip it, since nobody can request a pattern.
+  def regex_path? : Bool
+    @kind == "regex" || @url.includes?("\\/")
   end
 
   # Free-form metadata for non-HTTP entry points (mobile deep-link
@@ -49,11 +80,26 @@ struct Endpoint
   @[YAML::Field(ignore_serialize: metadata.nil?)]
   property metadata : Hash(String, String)?
 
+  # The function that serves the route, resolved to its definition (see
+  # `Handler`). nil when the analyzer cannot resolve it, and omitted from
+  # JSON/YAML then so reports without one are unchanged.
+  @[JSON::Field(ignore_serialize: handler.nil?)]
+  @[YAML::Field(ignore_serialize: handler.nil?)]
+  property handler : Handler?
+
   # Per-endpoint context for AI code reviewers: 1-hop callees from the
   # handler body. Best-effort, intentionally incomplete on dynamic
   # dispatch / middleware / decorators. Populated by analyzers that
   # opt in; empty for the rest.
   @callees : Array(Callee) = [] of Callee
+
+  # Request conditions beyond method + URL that pick one handler among
+  # several at the same address (Spring `params=` / `headers=`). The
+  # optimizer keeps endpoints whose conditions differ apart instead of
+  # unioning their params. Not serialized: the params already carry them.
+  @[JSON::Field(ignore: true)]
+  @[YAML::Field(ignore: true)]
+  property route_conditions : Array(Param) = [] of Param
 
   def initialize(@url : String, @method : String, params : Array(Param) = [] of Param,
                  details : Details = Details.new, @internal : Bool = false)
@@ -83,14 +129,6 @@ struct Endpoint
     @details = details.detached_copy
   end
 
-  def protocol=(protocol : String)
-    @protocol = protocol
-  end
-
-  def internal=(internal : Bool)
-    @internal = internal
-  end
-
   # Dedup by (name, tagger) like push_callee/push_param do for their
   # collections, so re-tagging the same target (e.g. a match in two
   # code_paths) can't surface a duplicate "auth auth" in the text output.
@@ -99,14 +137,16 @@ struct Endpoint
     @tags << tag
   end
 
-  # Dedup by (name, param_type) like push_callee/add_tag do for their
-  # collections. A handler that reads the same input twice
-  # (`params[:id]` on two lines, a path param re-read in the body) used
-  # to surface the identical Param multiple times in the raw `params`
-  # list and the text output. `params_to_hash`/`==` already collapse on
-  # name+type, so deduping here only trims redundant entries.
+  # Dedup by (name, request_type) like push_callee/add_tag do for their
+  # collections. Aliases such as `body` and `json` share one request bucket,
+  # so a handler that reports the same field through both spellings must not
+  # emit it twice. A handler that reads the same canonical input twice
+  # (`params[:id]` on two lines, a path param re-read in the body) used to
+  # surface duplicate params in the raw list and text output.
+  # `params_to_hash`/`==` already collapse on name+request_type, so deduping
+  # here only trims redundant entries.
   def push_param(param : Param)
-    return if @params.any? { |existing| existing.name == param.name && existing.param_type == param.param_type }
+    return if @params.any? { |existing| existing.name == param.name && existing.request_type == param.request_type }
     @params << param
   end
 
@@ -131,7 +171,7 @@ struct Endpoint
     end
 
     @params.each do |param|
-      type = param.param_type
+      type = param.request_type
       params_hash[type] = {} of String => String unless params_hash.has_key?(type)
       params_hash[type][param.name] = param.value
     end
@@ -161,20 +201,58 @@ end
 struct Param
   include JSON::Serializable
   include YAML::Serializable
-  property name, value, param_type, tags
+  getter name, value
+  property param_type, tags
 
   # param_type can be "query", "json", "form", "header", "cookie"
 
-  def initialize(@name : String, @value : String, @param_type : String)
+  # Name and value are scrubbed to valid UTF-8: a percent-decoded `%FF` or a
+  # Latin-1 `r%E9sum%E9` from captured traffic (HAR, Burp, mitmproxy, Postman,
+  # .http) is not, and the YAML emitter traps on it while every JSON-shaped
+  # output emits the raw byte. Assigned in declaration order, which is the
+  # key order of the serialized param.
+  def initialize(name : String, value : String, param_type : String)
+    @name = Param.scrub(name)
+    @value = Param.scrub(value)
+    @param_type = param_type
     @tags = [] of Tag
+  end
+
+  def name=(name : String)
+    @name = Param.scrub(name)
+  end
+
+  def value=(value : String)
+    @value = Param.scrub(value)
+  end
+
+  # `valid_encoding?` first: almost every value is already valid, and
+  # `scrub` walks it char by char to find that out.
+  def self.scrub(s : String) : String
+    s.valid_encoding? ? s : s.scrub
   end
 
   def ==(other : Param) : Bool
     @name == other.name && @value == other.value && @param_type == other.param_type
   end
 
-  def param_type=(value : String)
-    @param_type = value
+  # Request-body param types that share the `json` bucket. Fourteen analyzers
+  # (NestJS, Next.js, Rocket, tRPC, Servant, Play, Scotty, Wisp, Cowboy, Elli,
+  # plumber, Nuxt, Nitro, …) spell a body field `body` rather than `json`, but
+  # every HTTP-shaped consumer dispatches on the six canonical types — the
+  # curl / httpie / PowerShell / mermaid builders take a request body from
+  # `json` + `form`, the OAS and Postman builders map anything else to a query
+  # parameter, and the probe deliverers post `json` or `form`. So `body`
+  # params were invisible in every HTTP-shaped output: 98 of them across the
+  # fixture tree, giving `curl -i -X 'POST' '/submit'` with no `--data-raw` at
+  # all and POST body fields emitted as `in: query` in the OpenAPI document.
+  BODY_TYPE_ALIASES = {"body" => "json"}
+
+  # The canonical bucket this param belongs to. Consumers dispatch on this
+  # rather than on `param_type`, which stays exactly what the analyzer
+  # recorded so the JSON/YAML inventory is unchanged.
+  def request_type : String
+    BODY_TYPE_ALIASES[@param_type]? || @param_type
   end
 
   # Dedup by (name, tagger) like push_callee/push_param do for their
@@ -199,6 +277,27 @@ struct Details
   property status_code : Int32?
   property technology : String?
 
+  # Every technology that produced this endpoint, sorted, deduplicated.
+  #
+  # The optimizer collapses endpoints on `(method, url, scope)`, and the
+  # winning duplicate keeps `technology` while the loser's is discarded —
+  # `code_paths` records that a second file also declared the route, but
+  # nothing records which analyzer read that file. Scanning casdoor whole
+  # therefore attributed 9 endpoints to `oas2` when its swagger document
+  # alone yields 235: the fact was destroyed at the merge, in proportion to
+  # how well the sources agreed. This list keeps it. `technology` is
+  # unchanged (still the winner) and is always a member of this list.
+  #
+  # Serialized only when two or more technologies contributed. A single
+  # entry would repeat `technology` on every endpoint of every report, so
+  # suppressing it keeps the JSON/YAML/TOML documents byte-identical for the
+  # unmerged majority; a consumer reads `technologies` when present and
+  # falls back to `[technology]` when absent — the same fallback it needs
+  # for output from a Noir that predates the field.
+  @[JSON::Field(ignore_serialize: technologies.size < 2)]
+  @[YAML::Field(ignore_serialize: technologies.size < 2)]
+  property technologies : Array(String) = [] of String
+
   # New details types can be added in the future.
 
   def initialize(code_path : PathInfo? = nil)
@@ -209,20 +308,32 @@ struct Details
     @code_paths << code_path
   end
 
+  # Every `Endpoint#details=` goes through here, and the optimizer's dedup
+  # calls it once per merged duplicate, so it copies in bulk: `technologies`
+  # in one sort instead of re-sorting after every `add_technology`. The
+  # result is what those calls produced — empty names dropped, duplicates
+  # collapsed, sorted — whatever state the source list was left in.
   def detached_copy : Details
     copy = Details.new
-    @code_paths.each { |code_path| copy.add_path(code_path) }
+    copy.code_paths = @code_paths.dup
     if status_code = @status_code
       copy.status_code = status_code
     end
     if technology = @technology
       copy.technology = technology
     end
+    copy.technologies = @technologies.reject(&.empty?).uniq!.sort!
     copy
   end
 
-  def status_code=(status_code : Int32)
-    @status_code = status_code
+  # Record a contributing technology. Idempotent; keeps the list sorted so
+  # the emitted order does not depend on which duplicate the optimizer saw
+  # first.
+  def add_technology(technology : String?) : Nil
+    return if technology.nil? || technology.empty?
+    return if @technologies.includes?(technology)
+    @technologies << technology
+    @technologies.sort!
   end
 
   def ==(other : Details) : Bool
@@ -243,19 +354,23 @@ struct PathInfo
     @line = nil
   end
 
-  def initialize(@path : String, @line : Int32?)
+  # Line numbers here are 1-based, so `0` is not a line — it is how a handful
+  # of analyzers spelled "this endpoint came from that file, but there is no
+  # line to point at" (HAR / mitmproxy captures have no source line at all;
+  # akka's nested route DSL had none to hand). `nil` is the representation the
+  # rest of the codebase already uses for that, and every consumer branches on
+  # it: the plain and HTML reports printed a meaningless `(line 0)`, and SARIF
+  # emitted `region.startLine: 0`, which the format forbids — startLine must
+  # be a positive integer, so the report failed validation.
+  #
+  # Normalized here rather than at the three call sites so a future analyzer
+  # can't reintroduce it.
+  def initialize(@path : String, line : Int32?)
+    @line = line && line > 0 ? line : nil
   end
 
   def ==(other : PathInfo) : Bool
     @path == other.path && @line == other.line
-  end
-end
-
-struct EndpointReference
-  include JSON::Serializable
-  property endpoint, metadata
-
-  def initialize(@endpoint : Endpoint, @metadata : Hash(Symbol, String))
   end
 end
 
@@ -283,12 +398,35 @@ struct Callee
   include YAML::Serializable
   property name, path, line
 
-  MAX_PER_ENDPOINT = 10
+  # A handler with ten framework calls before its one repository write
+  # (Spring's `POST .../pets/{petId}/edit`: validation, model, redirect,
+  # then `saveAndFlush`) lost the write at 10, and the write is what an
+  # agent asks for.
+  MAX_PER_ENDPOINT = 20
 
   def initialize(@name : String, @path : String? = nil, @line : Int32? = nil)
   end
 
   def ==(other : Callee) : Bool
+    @name == other.name && @path == other.path && @line == other.line
+  end
+end
+
+# The function that serves a route, as the route names it (`listUsers`,
+# `h.Show`, `articles#show`), with its definition site when the analyzer
+# could resolve one. `details.code_paths` is where the route is *declared*;
+# this is where its body *lives* — the file an agent opens next. Best-effort:
+# only analyzers with definition resolution populate it, and a route whose
+# handler is an inline closure has none to name.
+struct Handler
+  include JSON::Serializable
+  include YAML::Serializable
+  property name, path, line
+
+  def initialize(@name : String, @path : String? = nil, @line : Int32? = nil)
+  end
+
+  def ==(other : Handler) : Bool
     @name == other.name && @path == other.path && @line == other.line
   end
 end
@@ -299,20 +437,45 @@ struct AIContext
 
   MAX_PER_SECTION = 16
 
+  # Empty buckets are omitted from JSON/YAML. An explicit `"guards":[]`
+  # reads as "confirmed none", which is wrong after `--ai-context=`
+  # clears unrequested buckets — and disagrees with plain/Postman, which
+  # already skip empty labels. Absence of the key means "no entries
+  # (or not requested)", matching those formats.
+  @[JSON::Field(ignore_serialize: guards.empty?)]
+  @[YAML::Field(ignore_serialize: guards.empty?)]
   property guards : Array(AIContextEntry) = [] of AIContextEntry
+
+  @[JSON::Field(ignore_serialize: callees.empty?)]
+  @[YAML::Field(ignore_serialize: callees.empty?)]
   property callees : Array(AIContextEntry) = [] of AIContextEntry
+
+  @[JSON::Field(ignore_serialize: sources.empty?)]
+  @[YAML::Field(ignore_serialize: sources.empty?)]
   property sources : Array(AIContextEntry) = [] of AIContextEntry
+
+  @[JSON::Field(ignore_serialize: sinks.empty?)]
+  @[YAML::Field(ignore_serialize: sinks.empty?)]
   property sinks : Array(AIContextEntry) = [] of AIContextEntry
+
+  @[JSON::Field(ignore_serialize: validators.empty?)]
+  @[YAML::Field(ignore_serialize: validators.empty?)]
   property validators : Array(AIContextEntry) = [] of AIContextEntry
+
+  @[JSON::Field(ignore_serialize: signals.empty?)]
+  @[YAML::Field(ignore_serialize: signals.empty?)]
   property signals : Array(AIContextEntry) = [] of AIContextEntry
 
+  # Entry fields taken from the scanned repo as-is (snippets keep comments
+  # and string literals). A consumer that feeds this report to an LLM keys on
+  # this to fence them off as untrusted data.
+  UNTRUSTED_FIELDS = {"name", "path", "snippet"}
+
+  @[JSON::Field(ignore_serialize: empty?)]
+  @[YAML::Field(ignore_serialize: empty?)]
+  getter untrusted_fields : Tuple(String, String, String) = UNTRUSTED_FIELDS
+
   def initialize
-    @guards = [] of AIContextEntry
-    @callees = [] of AIContextEntry
-    @sources = [] of AIContextEntry
-    @sinks = [] of AIContextEntry
-    @validators = [] of AIContextEntry
-    @signals = [] of AIContextEntry
   end
 
   def empty? : Bool
@@ -349,9 +512,56 @@ struct AIContext
   end
 
   private def push_entry(bucket : Array(AIContextEntry), entry : AIContextEntry)
-    return if bucket.size >= MAX_PER_SECTION
     return if bucket.any? { |existing| existing == entry }
+
+    if bucket.size >= MAX_PER_SECTION
+      lowest_index = 0
+      lowest_priority = entry_priority(bucket[0])
+      bucket.each_with_index do |existing, index|
+        priority = entry_priority(existing)
+        next unless priority < lowest_priority
+
+        lowest_index = index
+        lowest_priority = priority
+      end
+
+      # Keep the original first-arrival behavior for equal-priority
+      # entries, but let a late high-value heuristic displace a noisy
+      # parameter-derived entry.
+      return if entry_priority(entry) <= lowest_priority
+      bucket[lowest_index] = entry
+      return
+    end
+
     bucket << entry
+  end
+
+  # AI context is populated in dependency order: parameter evidence arrives
+  # before the derived heuristics that interpret it. Once a bucket is full,
+  # preserve the late roll-ups and absence findings instead of letting the
+  # order of parameter names decide which security evidence survives.
+  private def entry_priority(entry : AIContextEntry) : Int32
+    case entry.kind
+    when "priority_review"
+      1000
+    when "ssrf", "open_redirect", "path_traversal", "sensitive_response",
+         "object_lookup", "object_write", "unsafe_method", "log_injection"
+      950
+      # Keep the prerequisite for the outbound/redirect roll-ups available
+      # even when that parameter arrives after other high-confidence inputs.
+      # The higher-priority derived entries can still displace duplicate
+      # redirect_input entries once they are emitted.
+    when "redirect_input"
+      920
+    when "guard_absence", "authz_absence", "rate_limit_absence", "idor_review",
+         "foreign_identifier_write"
+      900
+    when "csrf_exempt", "jwt_unsafe", "cors_open", "credential_input",
+         "server_secret_source"
+      850
+    else
+      entry.confidence || 0
+    end
   end
 end
 

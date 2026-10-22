@@ -13,12 +13,19 @@ module Analyzer::Rust
   #   2. poem-openapi macros: `#[oai(path = "/p", method = "get")]`
   #      attached to functions inside an `impl Api { ... }` block.
   class Poem < RustEngine
-    HTTP_VERBS = Set{"get", "post", "put", "delete", "patch", "head", "options"}
+    analyzer_for "rust_poem"
+
+    # Only files inside a crate that depends on `poem`. See
+    # `RustEngine#crate_dependencies` — without this every Rust analyzer
+    # sees every `.rs` file in the scan.
+    protected def crate_dependencies : Array(String)
+      ["poem"]
+    end
 
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       source = read_file_content(path)
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
 
       # `#[cfg(test)] mod tests { Route::new().at("/x", get(h)); }` blocks
       # would otherwise leak test-only routes; gate like the other Rust
@@ -27,16 +34,36 @@ module Analyzer::Rust
 
       Noir::TreeSitter.parse_rust(source) do |root|
         function_index = build_function_index(root, source)
+        nest_ranges = collect_route_nest_ranges(root, source, function_index)
+        # Enclosing nest ranges, innermost last, as `{end, composed prefix}`.
+        # `walk` is pre-order, so node start bytes never decrease and a
+        # stack over the start-sorted ranges stays linear.
+        nest_stack = [] of Tuple(Int32, String)
+        nest_index = 0
 
         walk(root) do |node|
+          start = LibTreeSitter.ts_node_start_byte(node).to_i
+          while nest_index < nest_ranges.size && nest_ranges[nest_index][0] <= start
+            s, e, p = nest_ranges[nest_index]
+            nest_index += 1
+            while (top = nest_stack.last?) && top[0] <= s
+              nest_stack.pop
+            end
+            nest_stack << {e, top ? join_nest_path(top[1], p) : p}
+          end
+          while (top = nest_stack.last?) && top[0] <= start
+            nest_stack.pop
+          end
+
           next unless Noir::TreeSitter.node_type(node) == "call_expression"
           next if RustEngine.inside_test_region?(node, test_regions)
           at_call = decode_at_call(node, source)
           next unless at_call
           route_path, method_handler_pairs = at_call
+          route_path = join_nest_path(top[1], route_path) if top = nest_stack.last?
 
           method_handler_pairs.each do |method, handler_name|
-            details = Details.new(PathInfo.new(path, Noir::TreeSitter.node_start_row(node) + 1))
+            details = Details.new(PathInfo.new(path, call_line(node)))
             normalized = normalize_path(route_path)
             endpoint = Endpoint.new(normalized, method, details)
             extract_path_params(route_path, endpoint)
@@ -72,7 +99,7 @@ module Analyzer::Rust
             normalized = normalize_path(raw_path)
             endpoint = Endpoint.new(normalized, method, details)
             extract_path_params(raw_path, endpoint)
-            scan_function(function, source, endpoint)
+            scan_function(function, source, endpoint, oai: true)
             attach_handler_callees(function, source, path, endpoint) if include_callee
 
             endpoints << endpoint
@@ -94,7 +121,7 @@ module Analyzer::Rust
       args = Noir::TreeSitter.field(call, "arguments")
       return unless args
       named = [] of LibTreeSitter::TSNode
-      Noir::TreeSitter.each_named_child(args) { |c| named << c }
+      Noir::TreeSitter.each_named_arg(args) { |c| named << c }
       return if named.size < 2
 
       route_path = string_content_from_string_literal(named[0], source)
@@ -215,16 +242,38 @@ module Analyzer::Rust
       end
     end
 
+    OAI_NAME_RE  = /#\[\s*oai\s*\([^\]]*\bname\s*=\s*"([^"]+)"/
+    OAI_PARAM_RE = /(?:^|\])\s*(?:mut\s+)?([A-Za-z_]\w*)\s*:\s*(?:[\w:]*::)?(Query|Header|Cookie|CookiePrivate|CookieSigned)\s*</
+
     # Walk parameters and body for extractor types + header / cookie
     # calls. Bounded to the function so unrelated calls elsewhere in
     # the file don't leak through.
     private def scan_function(function : LibTreeSitter::TSNode,
                               source : String,
-                              endpoint : Endpoint)
+                              endpoint : Endpoint,
+                              oai : Bool = false)
       params_node = Noir::TreeSitter.field(function, "parameters")
       if params_node
+        oai_name = nil.as(String?)
         Noir::TreeSitter.each_named_child(params_node) do |param|
           text = Noir::TreeSitter.node_text(param, source)
+          if oai
+            # poem-openapi `param::{Query, Header, Cookie}` name one
+            # parameter each: `status: Query<Option<String>>` is the `status`
+            # query param, renamed by `#[oai(name = "X-API-Key")]`.
+            if text.starts_with?("#[")
+              oai_name = text.match(OAI_NAME_RE).try(&.[1])
+              next if Noir::TreeSitter.node_type(param) == "attribute_item"
+            end
+            if m = text.match(OAI_PARAM_RE)
+              name = oai_name || m[1]
+              type = m[2] == "Query" ? "query" : m[2] == "Header" ? "header" : "cookie"
+              endpoint.push_param(Param.new(name, "", type)) unless endpoint.params.any? { |p| p.name == name && p.param_type == type }
+              oai_name = nil
+              next
+            end
+            oai_name = nil
+          end
           if !endpoint.params.any? { |p| p.name == "query" && p.param_type == "query" } &&
              (text.includes?(": Query<") || text.match(/Query\s*\(\s*[^)]+\s*\)/))
             endpoint.push_param(Param.new("query", "", "query"))
@@ -268,26 +317,10 @@ module Analyzer::Rust
       end
     end
 
-    private def attach_handler_callees(function : LibTreeSitter::TSNode,
-                                       source : String,
-                                       path : String,
-                                       endpoint : Endpoint)
-      body = Noir::TreeSitter.field(function, "body")
-      return unless body
-      entries = Noir::RustCalleeExtractorTS.callees_in_body(body, source, path)
-      attach_rust_callees(endpoint, entries)
-    end
-
-    private def call_function_text(call : LibTreeSitter::TSNode, source : String) : String?
-      fn_node = Noir::TreeSitter.field(call, "function")
-      return unless fn_node
-      Noir::TreeSitter.node_text(fn_node, source)
-    end
-
     private def first_identifier_argument(call : LibTreeSitter::TSNode, source : String) : String?
       args = Noir::TreeSitter.field(call, "arguments")
       return unless args
-      Noir::TreeSitter.each_named_child(args) do |child|
+      Noir::TreeSitter.each_named_arg(args) do |child|
         case Noir::TreeSitter.node_type(child)
         when "identifier"
           return Noir::TreeSitter.node_text(child, source)
@@ -309,22 +342,68 @@ module Analyzer::Rust
     private def single_string_arg(args : LibTreeSitter::TSNode?, source : String) : String?
       return unless args
       named = [] of LibTreeSitter::TSNode
-      Noir::TreeSitter.each_named_child(args) { |c| named << c }
+      Noir::TreeSitter.each_named_arg(args) { |c| named << c }
       return unless named.size == 1
       return unless Noir::TreeSitter.node_type(named[0]) == "string_literal"
       string_content(named[0], source)
     end
 
-    private def build_function_index(root : LibTreeSitter::TSNode, source : String) : Hash(String, LibTreeSitter::TSNode)
-      index = {} of String => LibTreeSitter::TSNode
-      walk(root) do |node|
-        next unless Noir::TreeSitter.node_type(node) == "function_item"
-        name_node = Noir::TreeSitter.field(node, "name")
-        next unless name_node
-        name = Noir::TreeSitter.node_text(name_node, source)
-        index[name] = node unless index.has_key?(name)
+    # `.nest("/api", <endpoint>)` mounts as `{start, end, prefix}` byte
+    # ranges, start-sorted with outer ranges first. The range is the
+    # inline argument (`Route::new().at(...)`), or the body of a same-file
+    # `fn` it calls (`.nest("/api", api())`) — unless that fn is nested
+    # under more than one prefix. `nest_no_strip` hands the inner endpoint
+    # the unstripped request path, so its routes already spell out the
+    # prefix and none is added.
+    private def collect_route_nest_ranges(root : LibTreeSitter::TSNode,
+                                          source : String,
+                                          function_index : Hash(String, LibTreeSitter::TSNode)) : Array(Tuple(Int32, Int32, String))
+      ranges = [] of Tuple(Int32, Int32, String)
+      fn_prefixes = {} of String => Set(String)
+      walk(root) do |n|
+        next unless Noir::TreeSitter.node_type(n) == "call_expression"
+        fnf = Noir::TreeSitter.field(n, "function")
+        next unless fnf && Noir::TreeSitter.node_type(fnf) == "field_expression"
+        fld = Noir::TreeSitter.field(fnf, "field")
+        next unless fld && Noir::TreeSitter.node_text(fld, source) == "nest"
+        args = Noir::TreeSitter.field(n, "arguments")
+        next unless args
+        named = [] of LibTreeSitter::TSNode
+        Noir::TreeSitter.each_named_arg(args) { |c| named << c }
+        next if named.size < 2
+        prefix = string_content_from_string_literal(named[0], source)
+        next unless prefix
+        arg = named[1]
+        if name = local_fn_callee(arg, source)
+          function = function_index[name]?
+          next unless function
+          # A fn mounting itself would prefix its own top-level routes.
+          next if LibTreeSitter.ts_node_start_byte(function) <= LibTreeSitter.ts_node_start_byte(n) &&
+                  LibTreeSitter.ts_node_end_byte(n) <= LibTreeSitter.ts_node_end_byte(function)
+          (fn_prefixes[name] ||= Set(String).new) << prefix
+        else
+          ranges << {LibTreeSitter.ts_node_start_byte(arg).to_i, LibTreeSitter.ts_node_end_byte(arg).to_i, prefix}
+        end
       end
-      index
+      fn_prefixes.each do |name, prefixes|
+        next unless prefixes.size == 1
+        function = function_index[name]
+        ranges << {LibTreeSitter.ts_node_start_byte(function).to_i, LibTreeSitter.ts_node_end_byte(function).to_i, prefixes.first}
+      end
+      ranges.sort_by! { |s, e, _| {s, -e} }
+    end
+
+    # `api()` / `self::api()` -> "api". A module path (`admin::routes()`)
+    # names another file's fn, never a same-named one in this file.
+    private def local_fn_callee(arg : LibTreeSitter::TSNode, source : String) : String?
+      return unless Noir::TreeSitter.node_type(arg) == "call_expression"
+      callee = Noir::TreeSitter.field(arg, "function")
+      return unless callee
+      text = Noir::TreeSitter.node_text(callee, source)
+      case Noir::TreeSitter.node_type(callee)
+      when "identifier"        then text
+      when "scoped_identifier" then text.lchop?("self::")
+      end
     end
 
     # ── poem-openapi nest prefix composition ─────────────────────────
@@ -358,7 +437,7 @@ module Analyzer::Rust
         args = Noir::TreeSitter.field(n, "arguments")
         next unless args
         named = [] of LibTreeSitter::TSNode
-        Noir::TreeSitter.each_named_child(args) { |c| named << c }
+        Noir::TreeSitter.each_named_arg(args) { |c| named << c }
         next if named.size < 2
         prefix = string_content_from_string_literal(named[0], source)
         next unless prefix
@@ -383,7 +462,7 @@ module Analyzer::Rust
         args = Noir::TreeSitter.field(c, "arguments")
         next unless args
         first = nil.as(LibTreeSitter::TSNode?)
-        Noir::TreeSitter.each_named_child(args) { |a| first ||= a }
+        Noir::TreeSitter.each_named_arg(args) { |a| first ||= a }
         found = first ? struct_type_of(first, source) : nil
       end
       found
@@ -457,66 +536,6 @@ module Analyzer::Rust
       return path.starts_with?("/") ? path : "/#{path}" if pfx.empty?
       suffix = path.lstrip("/")
       suffix.empty? ? pfx : "#{pfx}/#{suffix}"
-    end
-
-    private def each_routing_pair(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode, LibTreeSitter::TSNode ->)
-      named = [] of LibTreeSitter::TSNode
-      Noir::TreeSitter.each_named_child(node) { |c| named << c }
-      named.each_with_index do |child, idx|
-        if Noir::TreeSitter.node_type(child) == "attribute_item"
-          pair_function = find_paired_function(named, idx + 1)
-          block.call(child, pair_function) if pair_function
-        end
-        each_routing_pair(child, &block)
-      end
-    end
-
-    private def find_paired_function(named : Array(LibTreeSitter::TSNode), start : Int32) : LibTreeSitter::TSNode?
-      (start...named.size).each do |i|
-        next_node = named[i]
-        case Noir::TreeSitter.node_type(next_node)
-        when "function_item"
-          return next_node
-        when "attribute_item", "line_comment", "block_comment"
-          next
-        else
-          return
-        end
-      end
-      nil
-    end
-
-    private def first_string_literal_text(node : LibTreeSitter::TSNode?, source : String) : String?
-      return unless node
-      result : String? = nil
-      walk(node) do |child|
-        next if result
-        if Noir::TreeSitter.node_type(child) == "string_literal"
-          result = string_content(child, source)
-        end
-      end
-      result
-    end
-
-    private def string_content(string_literal : LibTreeSitter::TSNode, source : String) : String?
-      Noir::TreeSitter.each_named_child(string_literal) do |grand|
-        return Noir::TreeSitter.node_text(grand, source) if Noir::TreeSitter.node_type(grand) == "string_content"
-      end
-      nil
-    end
-
-    private def find_named_child(node : LibTreeSitter::TSNode, type : String) : LibTreeSitter::TSNode?
-      Noir::TreeSitter.each_named_child(node) do |child|
-        return child if Noir::TreeSitter.node_type(child) == type
-      end
-      nil
-    end
-
-    private def walk(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
-      block.call(node)
-      Noir::TreeSitter.each_named_child(node) do |child|
-        walk(child, &block)
-      end
     end
   end
 end

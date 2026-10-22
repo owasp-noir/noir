@@ -1,28 +1,12 @@
 require "../models/endpoint"
 require "./callee_extractor_base"
-require "./rust_callee_extractor_ts"
 
 module Noir::RustCalleeExtractor
   extend self
   include Noir::CalleeExtractorBase
 
-  # Kept as a public constant for any external caller that still
-  # consults the reserved set; the active implementation lives on
-  # `Noir::RustCalleeExtractorTS::RESERVED` (same contents).
-  RESERVED = Noir::RustCalleeExtractorTS::RESERVED
-
-  # Walk `body` (a function body extracted as raw text by the engine)
-  # and return every callee. Internally delegates to the tree-sitter
-  # extractor which walks the parsed AST instead of running per-line
-  # regexes. The public signature stays identical so existing
-  # analyzers don't need to change.
-  def callees_for_body(body : String, file_path : String, start_line : Int32) : Array(Entry)
-    Noir::RustCalleeExtractorTS.callees_for_body_text(body, file_path, start_line)
-  end
-
-  def strip_comment(line : String, in_block_comment : Bool = false, preserve_strings : Bool = false) : String
-    stripped, _ = strip_comment_with_state(line, in_block_comment, preserve_strings)
-    stripped
+  def strip_comment(line : String, preserve_strings : Bool = false) : String
+    strip_comment_with_state(line, false, preserve_strings)[0]
   end
 
   def strip_comment_with_state(line : String, in_block_comment : Bool, preserve_strings : Bool = false) : Tuple(String, Bool)

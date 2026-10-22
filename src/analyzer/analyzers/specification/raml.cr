@@ -1,7 +1,9 @@
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 
 module Analyzer::Specification
-  class RAML < Analyzer
+  class RAML < SpecificationEngine
+    analyzer_for "raml"
+
     HTTP_METHODS       = {"get", "post", "put", "delete", "patch", "options", "head", "trace"}
     INCLUDE_EXTENSIONS = {".raml", ".yaml", ".yml", ".json"}
     alias ResolvedNode = NamedTuple(node: YAML::Any, source_dir: String)
@@ -10,60 +12,63 @@ module Analyzer::Specification
     # namespace each was bound to. Reset per spec; the analyze loop is
     # sequential so a single shared map is safe.
     @libraries = {} of String => ResolvedNode
+    # The root spec being walked, which unread `!include`s are reported
+    # against. Same per-spec reset as `@libraries`.
+    @spec_path = ""
+    # The spec's baseUri path, which `<<resourcePath>>` leaves out.
+    @base_path = ""
 
     def analyze
-      locator = CodeLocator.instance
-      raml_specs = locator.all("raml-spec")
+      each_spec_file(Noir::LocatorKeys::RAML_SPEC) do |raml_spec|
+        @spec_path = raml_spec
+        content = read_file_content(raml_spec)
 
-      if raml_specs.is_a?(Array(String))
-        raml_specs.each do |raml_spec|
-          next unless File.exists?(raml_spec)
-          content = File.read(raml_spec, encoding: "utf-8", invalid: :skip)
+        # Only root API documents (`#%RAML 1.0` / `#%RAML 0.8`) describe
+        # endpoints. Fragments — Library, Trait, ResourceType, DataType,
+        # and especially Overlay / Extension — are applied onto a master
+        # API, not served on their own. Analyzing an Extension standalone
+        # emits phantom endpoints (its resources without the master's
+        # baseUri or context), so skip every non-root fragment.
+        next unless raml_root_api?(content)
 
-          # Only root API documents (`#%RAML 1.0` / `#%RAML 0.8`) describe
-          # endpoints. Fragments — Library, Trait, ResourceType, DataType,
-          # and especially Overlay / Extension — are applied onto a master
-          # API, not served on their own. Analyzing an Extension standalone
-          # emits phantom endpoints (its resources without the master's
-          # baseUri or context), so skip every non-root fragment.
-          next unless raml_root_api?(content)
+        details = Details.new(PathInfo.new(raml_spec))
+        yaml_obj = YAML.parse(content)
+        source_dir = File.dirname(raml_spec)
 
-          details = Details.new(PathInfo.new(raml_spec))
-          yaml_obj = YAML.parse(content)
-          source_dir = File.dirname(raml_spec)
+        # A non-mapping root (scalar/array/empty) makes the YAML `[...]?`
+        # lookups below raise "Expected Array or Hash". `each_spec_file`
+        # would catch that and move on, but only after logging it as a
+        # failure — a non-mapping root is an ordinary non-API document, not
+        # an error. Skip it cleanly instead.
+        next unless yaml_obj.as_h?
 
-          # A non-mapping root (scalar/array/empty) makes the YAML `[...]?`
-          # lookups below raise "Expected Array or Hash" and, with no per-spec
-          # rescue, aborts every other RAML spec. Skip it cleanly instead.
-          next unless yaml_obj.as_h?
+        @libraries = collect_libraries(yaml_obj, source_dir)
+        base_path = @base_path = base_path_from(yaml_obj)
+        default_media = media_types_from(yaml_obj[YAML::Any.new("mediaType")]?)
+        types = yaml_obj[YAML::Any.new("types")]? || YAML::Any.new(nil)
+        schemas = yaml_obj[YAML::Any.new("schemas")]? || YAML::Any.new(nil)
+        resource_types = yaml_obj[YAML::Any.new("resourceTypes")]? || YAML::Any.new(nil)
+        traits = yaml_obj[YAML::Any.new("traits")]? || YAML::Any.new(nil)
 
-          @libraries = collect_libraries(yaml_obj, source_dir)
-          base_path = base_path_from(yaml_obj)
-          default_media = media_types_from(yaml_obj[YAML::Any.new("mediaType")]?)
-          types = yaml_obj[YAML::Any.new("types")]? || YAML::Any.new(nil)
-          schemas = yaml_obj[YAML::Any.new("schemas")]? || YAML::Any.new(nil)
-          resource_types = yaml_obj[YAML::Any.new("resourceTypes")]? || YAML::Any.new(nil)
-          traits = yaml_obj[YAML::Any.new("traits")]? || YAML::Any.new(nil)
-
-          if root = yaml_obj.as_h?
-            root.each do |key, value|
-              key_s = key.to_s
-              next unless key_s.starts_with?("/")
-              walk_resource(
-                value,
-                base_path + key_s,
-                default_media,
-                types,
-                schemas,
-                resource_types,
-                traits,
-                details,
-                raml_spec,
-                source_dir,
-                source_dir,
-                [] of Param
-              )
-            end
+        if root = yaml_obj.as_h?
+          root.each do |key, value|
+            key_s = key.to_s
+            next unless key_s.starts_with?("/")
+            walk_resource(
+              value,
+              base_path + key_s,
+              default_media,
+              types,
+              schemas,
+              resource_types,
+              traits,
+              details,
+              raml_spec,
+              source_dir,
+              source_dir,
+              [] of Param,
+              [] of String
+            )
           end
         end
       end
@@ -93,15 +98,38 @@ module Analyzer::Specification
     private def base_path_from(yaml_obj : YAML::Any) : String
       base_uri = base_uri_value(yaml_obj[YAML::Any.new("baseUri")]?)
       return "" if base_uri.empty?
-      if base_uri.starts_with?("http")
-        begin
-          uri = URI.parse(base_uri)
-          return (uri.path || "").rstrip('/')
-        rescue
-          return ""
-        end
+      base_uri = resolve_base_uri_parameters(base_uri, yaml_obj)
+      if base_uri.matches?(ABSOLUTE_SERVER_URL)
+        uri = parse_absolute_url(base_uri)
+        return "" unless uri
+        return (uri.path || "").rstrip('/')
       end
       base_uri.rstrip('/')
+    end
+
+    # RAML reserves `{version}` in `baseUri` for the root `version` property,
+    # so `baseUri: http://host/{version}` with `version: v1` is served at
+    # `/v1`. Other placeholders can carry a `default` under
+    # `baseUriParameters`. Without this the literal `{version}` leaked into
+    # every endpoint URL (`/{version}/songs` instead of `/v1/songs`).
+    private def resolve_base_uri_parameters(base_uri : String, yaml_obj : YAML::Any) : String
+      return base_uri unless base_uri.includes?('{')
+
+      resolved = base_uri
+      if version = yaml_obj[YAML::Any.new("version")]?.try { |node| node.as_s? || node.as_i?.try(&.to_s) || node.as_f?.try(&.to_s) }
+        resolved = resolved.gsub("{version}", version) unless version.empty?
+      end
+
+      if parameters = yaml_obj[YAML::Any.new("baseUriParameters")]?.try(&.as_h?)
+        parameters.each do |name, definition|
+          next unless definition_h = definition.as_h?
+          next unless default = definition_h[YAML::Any.new("default")]?.try(&.as_s?)
+          next if default.empty?
+          resolved = resolved.gsub("{#{name}}", default)
+        end
+      end
+
+      resolved
     end
 
     # `baseUri` is normally a scalar URL, but RAML lets you annotate it,
@@ -137,12 +165,23 @@ module Analyzer::Specification
       source_dir : String,
       definitions_dir : String,
       inherited_uri_params : Array(Param),
+      includes : Array(String),
     )
+      # `includes` is the chain of resource files (and resource types, below)
+      # this walk is already inside. A resource that includes a file on its
+      # own chain would recurse until the stack overflows, so the cycle is
+      # reported and cut.
+      if (include_path = node.as_s?) && include_candidate?(include_path)
+        target = File.expand_path(include_path, source_dir)
+        return record_ref_gap(@spec_path, include_path, "include cycle") if includes.includes?(target)
+        includes += [target]
+      end
+
       resolved = resolve_include(node, source_dir)
       node = resolved[:node]
       return unless h = node.as_h?
       type_node = resource_type_node(h, resource_types, definitions_dir)
-      type_h = type_node.try(&.[:node].as_h?)
+      type_h = type_node.try { |t| substitute_template(t[:node], template_values(h, path)).as_h? }
       type_dir = type_node.try(&.[:source_dir]) || source_dir
 
       resource_uri_params = inherited_uri_params.dup
@@ -159,7 +198,9 @@ module Analyzer::Specification
 
       methods.each do |method|
         operation_nodes = [] of ResolvedNode
-        if type_method = lookup_case_insensitive(type_h, method)
+        # `get?:` in a resource type applies only where the resource itself
+        # declares `get`, which is the only way `method` reaches here for it.
+        if type_method = lookup_case_insensitive(type_h, method) || lookup_case_insensitive(type_h, "#{method}?")
           operation_nodes << resolve_include(type_method, type_dir)
         end
         if method_node = lookup_case_insensitive(h, method)
@@ -172,9 +213,16 @@ module Analyzer::Specification
       collect_child_resource_keys(type_h, child_keys, allow_templates: false)
       collect_child_resource_keys(h, child_keys, allow_templates: true)
 
+      # A child supplied by the resource type joins the same chain under the
+      # type's name: a type whose own child is of that type expands forever.
+      type_key = "resourceType #{h[YAML::Any.new("type")]?.try { |ref| named_ref_name(ref) }}"
       child_keys.each do |key_s|
-        child = h[YAML::Any.new(key_s)]? || type_h.try(&.[YAML::Any.new(key_s)]?)
-        next unless child
+        child_includes = includes
+        unless child = h[YAML::Any.new(key_s)]?
+          next unless child = type_h.try(&.[YAML::Any.new(key_s)]?)
+          next if includes.includes?(type_key)
+          child_includes = includes + [type_key]
+        end
         walk_resource(
           child,
           path + key_s,
@@ -187,12 +235,46 @@ module Analyzer::Specification
           source,
           source_dir,
           definitions_dir,
-          resource_uri_params
+          resource_uri_params,
+          child_includes
         )
       end
     rescue e
       @logger.debug "Exception of #{source}/#{path}"
       @logger.debug_sub e
+    end
+
+    TEMPLATE_PARAM = /<<\s*([A-Za-z0-9_]+)\s*>>/
+
+    # The `<<name>>` values a resource type is applied with: the arguments of
+    # `type: { collection: { item: Song } }` plus the reserved
+    # `resourcePath` / `resourcePathName`. Transform functions
+    # (`<<name | !singularize>>`) are not evaluated and stay unresolved.
+    private def template_values(resource_h : Hash(YAML::Any, YAML::Any), path : String) : Hash(String, String)
+      values = {
+        "resourcePath"     => path[@base_path.size..],
+        "resourcePathName" => path.split('/').reverse!.find { |segment| !segment.empty? && !segment.includes?('{') } || "",
+      }
+      if args = resource_h[YAML::Any.new("type")]?.try(&.as_h?).try(&.first_value?).try(&.as_h?)
+        args.each { |name, value| values[name.to_s] = value.as_s? || value.to_s }
+      end
+      values
+    end
+
+    # `node` with every `<<name>>` in its keys and string values replaced.
+    private def substitute_template(node : YAML::Any, values : Hash(String, String)) : YAML::Any
+      if s = node.as_s?
+        return node unless s.includes?("<<")
+        YAML::Any.new(s.gsub(TEMPLATE_PARAM) { |match| values[$1]? || match })
+      elsif h = node.as_h?
+        substituted = {} of YAML::Any => YAML::Any
+        h.each { |key, value| substituted[substitute_template(key, values)] = substitute_template(value, values) }
+        YAML::Any.new(substituted)
+      elsif a = node.as_a?
+        YAML::Any.new(a.map { |value| substitute_template(value, values) })
+      else
+        node
+      end
     end
 
     private def build_endpoint(
@@ -534,11 +616,15 @@ module Analyzer::Specification
       return {node: node, source_dir: source_dir} unless include_path
       return {node: node, source_dir: source_dir} unless include_candidate?(include_path)
 
-      expanded = File.expand_path(include_path, source_dir)
-      return {node: node, source_dir: source_dir} unless File.exists?(expanded)
+      # A plain string that merely looks like a file name is not an include,
+      # so a missing target stays silent; one that exists goes through the
+      # same containment and read rules as an OpenAPI `$ref`.
+      return {node: node, source_dir: source_dir} unless File.exists?(File.expand_path(include_path, source_dir))
+      return {node: node, source_dir: source_dir} unless expanded = external_ref_path(@spec_path, include_path, source_dir)
+      return {node: node, source_dir: source_dir} unless content = read_ref_file(@spec_path, expanded, include_path)
 
       {
-        node:       YAML.parse(File.read(expanded, encoding: "utf-8", invalid: :skip)),
+        node:       YAML.parse(content),
         source_dir: File.dirname(expanded),
       }
     rescue

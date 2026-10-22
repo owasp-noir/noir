@@ -1,27 +1,16 @@
+require "./masked_lexer"
+
 module Noir
-  # A single token produced by `PhpLexer#tokens`. `start`/`end` are
-  # character indices into the original source (`end` exclusive); `line`
-  # is the 1-based line of `start`.
-  struct PhpToken
-    getter kind : Symbol
-    getter value : String
-    getter start : Int32
-    getter end : Int32
-    getter line : Int32
-
-    def initialize(@kind : Symbol, @value : String, @start : Int32, @end : Int32, @line : Int32)
-    end
-
-    def to_s(io : IO) : Nil
-      io << @kind << '(' << @value << ')'
-    end
-  end
-
   # PhpLexer is a hand-rolled structural lexer for PHP source. It exists to
   # replace the per-analyzer character state machines that every PHP analyzer
   # re-implements (balanced-brace matching, statement-end scanning, string/
   # comment skip ranges) with a single shared pass that is:
   #
+  #   * open/close-tag aware — a `.php` file is HTML with islands of code in
+  #     it, so everything outside `<?php … ?>` is inert output text. Lexing it
+  #     as code let a lone apostrophe in `<h1>Today's report</h1>` open a
+  #     string that masked the rest of the file, silently dropping every route
+  #     declared below it.
   #   * heredoc/nowdoc aware — `<<<EOT … EOT` / `<<<'EOT' … EOT` bodies are
   #     masked, so route-shaped text or stray `{};` inside a heredoc can no
   #     longer leak as a false endpoint or corrupt a brace/statement bound.
@@ -31,53 +20,50 @@ module Noir
   #     `Array(Char)` with O(1) indexing, so CJK-commented controllers stay
   #     O(n) instead of the O(n^2) that `String#[](Int)` caused.
   #
-  # The lexer masks every non-code region (strings, comments, heredoc/nowdoc
-  # bodies) into spaces in `@masked` while preserving newlines and overall
-  # length, so the structural helpers below are plain depth counters over
-  # `@masked` with no string-state bookkeeping of their own.
+  # The lexer masks every non-code region (inline HTML, strings, comments,
+  # heredoc/nowdoc bodies) into spaces in `@masked` while preserving newlines and overall
+  # length, so the structural helpers in `Noir::MaskedLexer` are plain depth
+  # counters over `@masked` with no string-state bookkeeping of their own.
   class PhpLexer
-    # Code with strings/comments/heredoc bodies blanked to spaces. Same
-    # character length as the source; newlines preserved so line/offset math
-    # against the original content stays valid.
-    getter masked : Array(Char)
+    # Supplies `@masked`/`@size`/`@spans`/`@skip_ranges` plus the shared
+    # `matching_delimiter`, `statement_end`, `skip_ranges`, `in_code?` and
+    # identifier predicates.
+    include MaskedLexer
 
     @chars : Array(Char)
-    @size : Int32
-    # Recorded non-code regions as {kind, start, end_exclusive}. Used for
-    # `skip_ranges` and to splice string/comment tokens into `tokens`.
-    @spans : Array(Tuple(Symbol, Int32, Int32))
-    @tokens : Array(PhpToken)?
-    @skip_ranges : Array(Range(Int32, Int32))?
 
-    def initialize(source : String)
+    # `source` is a whole `.php` file by default, so lexing starts in HTML
+    # mode: nothing is code until the first `<?php` / `<?=`. Pass
+    # `php_mode: true` when `source` is a fragment already carved out of a PHP
+    # region (a closure body handed back for a recursive pass, say), which by
+    # construction has no opening tag of its own.
+    def initialize(source : String, *, php_mode : Bool = false)
       @chars = source.chars
       @size = @chars.size
       @masked = Array(Char).new(@size)
       @spans = [] of Tuple(Symbol, Int32, Int32)
-      @tokens = nil
       @skip_ranges = nil
-      scan
-    end
-
-    private def ident_char?(c : Char) : Bool
-      c == '_' || c.ascii_alphanumeric? || c.ord >= 0x80
-    end
-
-    private def ident_start?(c : Char) : Bool
-      c == '_' || c.ascii_letter? || c.ord >= 0x80
+      scan(php_mode)
     end
 
     # Single masking pass. Walks the character array once, copying code
     # characters into `@masked` verbatim and blanking the interior of strings,
-    # comments and heredoc/nowdoc bodies (newlines kept). Each masked region is
-    # recorded in `@spans`.
-    private def scan
-      i = 0
+    # comments, heredoc/nowdoc bodies and inline-HTML regions (newlines kept).
+    # Each masked region is recorded in `@spans`.
+    private def scan(php_mode : Bool)
+      i = php_mode ? 0 : mask_inline_html(0)
       while i < @size
         c = @chars[i]
         nxt = i + 1 < @size ? @chars[i + 1] : '\0'
 
-        if c == '/' && nxt == '/'
+        # `?>` leaves PHP mode. This test sits alongside the string/comment/
+        # heredoc branches rather than ahead of them on purpose: those branches
+        # consume their whole region, so a `?>` written inside a literal or a
+        # block comment never reaches the top of this loop and cannot close
+        # the block.
+        if c == '?' && nxt == '>'
+          i = mask_inline_html(i)
+        elsif c == '/' && nxt == '/'
           i = mask_line_comment(i)
         elsif c == '#' && nxt != '['
           # `#` is a line comment, but `#[` opens a PHP 8 attribute (code).
@@ -101,11 +87,68 @@ module Noir
       end
     end
 
+    # `start` is the first character of an inert region: the top of a file that
+    # has not opened PHP yet, or the `?` of the `?>` that just closed it.
+    # Everything from there up to and including the next open tag is literal
+    # output, not code — masking it is what stops an apostrophe in prose, a
+    # `#`, a `//` or a `<<<` in markup from opening a string, a comment or a
+    # heredoc that runs to EOF and swallows the code below.
+    #
+    # The region is blanked into `@masked` with its line breaks kept (every
+    # analyzer reports `code_path` lines from these offsets, so the character
+    # count and the newline positions have to survive) and recorded as a single
+    # `:html` span. Returns the index just past the open tag, or `@size` when
+    # the file never opens PHP again — a file whose last PHP block runs to EOF
+    # without a closing `?>` is the recommended style, not an error.
+    private def mask_inline_html(start : Int32) : Int32
+      i = start
+      while i < @size
+        if len = open_tag_len(i)
+          len.times { @masked << ' ' }
+          i += len
+          @spans << {:html, start, i}
+          return i
+        end
+        c = @chars[i]
+        @masked << (c == '\n' || c == '\r' ? c : ' ')
+        i += 1
+      end
+      @spans << {:html, start, @size} if start < @size
+      @size
+    end
+
+    # Length of the PHP open tag at `i`, or nil when `i` isn't one. `<?=` is
+    # the short echo tag and opens code just like `<?php`, which is spelled
+    # case-insensitively and must be followed by whitespace or EOF (`<?phpinfo`
+    # is text). The bare `<?` short tag is accepted too — legacy files that use
+    # it would otherwise be read as one giant HTML blob and lose every route —
+    # except before `xml`, which would make an XML processing instruction open
+    # a PHP block in a template.
+    private def open_tag_len(i : Int32) : Int32?
+      return unless @chars[i] == '<' && i + 1 < @size && @chars[i + 1] == '?'
+      return 3 if @chars[i + 2]? == '='
+      if @chars[i + 2]?.try(&.downcase) == 'p' &&
+         @chars[i + 3]?.try(&.downcase) == 'h' &&
+         @chars[i + 4]?.try(&.downcase) == 'p'
+        after = @chars[i + 5]?
+        return 5 if after.nil? || after.ascii_whitespace?
+      end
+      return if @chars[i + 2]?.try(&.downcase) == 'x' &&
+                @chars[i + 3]?.try(&.downcase) == 'm' &&
+                @chars[i + 4]?.try(&.downcase) == 'l'
+      2
+    end
+
     # Blank from `start` (a `/` or `#`) to end of line; the newline itself is
     # left intact. Returns the index just past the comment body.
     private def mask_line_comment(start : Int32) : Int32
       i = start
       while i < @size && @chars[i] != '\n'
+        # A `//` or `#` comment also ends at `?>`: PHP leaves the tag outside
+        # the comment so that it still closes the block. Without this a
+        # one-line `<?php // note ?>` would keep the lexer in PHP mode over all
+        # the markup that follows.
+        break if @chars[i] == '?' && @chars[i + 1]? == '>'
         @masked << ' '
         i += 1
       end
@@ -255,55 +298,51 @@ module Noir
     end
 
     # ---- structural helpers (character indices) ----------------------------
+    #
+    # `matching_delimiter`, `statement_end`, `skip_ranges` and `in_code?` come
+    # from `Noir::MaskedLexer`. Only the PHP-specific ones live here.
 
-    # Index of the delimiter that closes the `(`/`[`/`{` at `open_pos`, or nil.
-    # Counts only the matching pair type, which is correct for balanced code
-    # and mirrors the engine's `find_matching_php_close_brace`.
-    def matching_delimiter(open_pos : Int32) : Int32?
-      return unless 0 <= open_pos && open_pos < @size
-      open = @masked[open_pos]
-      close = case open
-              when '(' then ')'
-              when '[' then ']'
-              when '{' then '}'
-              else          return
-              end
-      depth = 0
-      i = open_pos
-      while i < @size
-        c = @masked[i]
-        if c == open
-          depth += 1
-        elsif c == close
-          depth -= 1
-          return i if depth == 0
-        end
-        i += 1
-      end
-      nil
+    # PHP spans never nest (unlike C#/Scala interpolation), so they are
+    # sorted and disjoint: binary-search the last span starting at or before
+    # `pos` instead of the shared linear scan, which made a per-match
+    # `in_code?` walk quadratic on string-heavy files.
+    def in_code?(pos : Int32) : Bool
+      return false unless 0 <= pos && pos < @size
+      after = @spans.bsearch_index { |(_, s, _)| s > pos } || @spans.size
+      after == 0 || pos >= @spans[after - 1][2]
     end
 
-    # Index just after the top-level `;` at or after `start_pos`, or the source
-    # size when none is found. Mirrors `find_php_statement_end`.
-    def statement_end(start_pos : Int32) : Int32
-      paren = 0
-      bracket = 0
-      brace = 0
-      i = start_pos < 0 ? 0 : start_pos
-      while i < @size
-        case @masked[i]
-        when '(' then paren += 1
-        when ')' then paren -= 1 if paren > 0
-        when '[' then bracket += 1
-        when ']' then bracket -= 1 if bracket > 0
-        when '{' then brace += 1
-        when '}' then brace -= 1 if brace > 0
-        when ';'
-          return i + 1 if paren == 0 && bracket == 0 && brace == 0
-        end
-        i += 1
+    # The source with its comments blanked to spaces and everything else —
+    # string literals, heredocs, inline HTML — left as written. Same length and
+    # line breaks as the source, so offsets and line numbers computed on it
+    # hold for the original. This is what lets a regex-driven adapter skip
+    # `// $app->get('/old')` without losing the route text inside strings.
+    #
+    # Docblocks (`/** … */`) are kept: Doctrine-style `@Route` annotations
+    # live in them, and PHP only reads annotations from that form.
+    def without_comments : String
+      comments = @spans.select { |(kind, s, _)| kind == :comment && !docblock?(s) }
+      return @chars.join if comments.empty?
+
+      chars = @chars.dup
+      comments.each do |(_, s, e)|
+        (s...e).each { |i| chars[i] = ' ' unless chars[i] == '\n' || chars[i] == '\r' }
       end
-      @size
+      chars.join
+    end
+
+    # Source text over a character range, copied from the char array: O(range)
+    # where `String#[]` on multi-byte input is O(offset), which turns a loop of
+    # slices into a quadratic walk.
+    def source(range : Range(Int32, Int32)) : String
+      String.build { |io| range.each { |i| io << @chars[i] } }
+    end
+
+    # `/**` followed by whitespace — PHP's T_DOC_COMMENT. `/**/` is a plain
+    # empty comment.
+    private def docblock?(start : Int32) : Bool
+      @chars[start + 1]? == '*' && @chars[start + 2]? == '*' &&
+        !!@chars[start + 3]?.try(&.whitespace?)
     end
 
     # Index of the first top-level expression terminator (`,` `;` or a closing
@@ -337,110 +376,6 @@ module Noir
         i += 1
       end
       @size
-    end
-
-    # Character ranges occupied by strings, comments and heredoc/nowdoc bodies.
-    def skip_ranges : Array(Range(Int32, Int32))
-      @skip_ranges ||= @spans.map { |(_, s, e)| (s..e - 1) }
-    end
-
-    def in_code?(pos : Int32) : Bool
-      return false unless 0 <= pos && pos < @size
-      @spans.none? { |(_, s, e)| s <= pos && pos < e }
-    end
-
-    # ---- token stream ------------------------------------------------------
-
-    # Lazily produce a flat token stream over the source: structural
-    # delimiters, `->`/`::`/`=>` operators, identifiers, `$variables`, and one
-    # token per string/comment/heredoc span. This is the reusable miniparser
-    # surface for consumers that want to walk PHP structurally (e.g. following
-    # a `Route::a(...)->b(...)->group(...)` method chain).
-    def tokens : Array(PhpToken)
-      @tokens ||= build_tokens
-    end
-
-    private def build_tokens : Array(PhpToken)
-      result = [] of PhpToken
-      span_idx = 0
-      spans = @spans
-      i = 0
-      # Running line counter. Tokens are emitted at non-decreasing start
-      # offsets, so advancing `line_cursor` monotonically keeps line lookup
-      # O(n) total instead of the O(n^2) a rescan-from-zero per token caused.
-      line = 1
-      line_cursor = 0
-      line_for = ->(pos : Int32) do
-        while line_cursor < pos
-          c = @chars[line_cursor]
-          # `\n`, `\r\n` and a bare `\r` (classic-Mac, which the heredoc masking
-          # also honours) each end a line; count the `\r` of `\r\n` only once.
-          if c == '\n'
-            line += 1
-          elsif c == '\r' && (line_cursor + 1 >= @size || @chars[line_cursor + 1] != '\n')
-            line += 1
-          end
-          line_cursor += 1
-        end
-        line
-      end
-
-      while i < @size
-        # Emit any recorded span that starts here.
-        if span_idx < spans.size && spans[span_idx][1] == i
-          kind, s, e = spans[span_idx]
-          result << PhpToken.new(kind, @chars[s...e].join, s, e, line_for.call(s))
-          span_idx += 1
-          i = e
-          next
-        end
-
-        c = @masked[i]
-        if c.ascii_whitespace?
-          i += 1
-        elsif c == '$' && i + 1 < @size && ident_start?(@masked[i + 1])
-          start = i
-          i += 1
-          while i < @size && ident_char?(@masked[i])
-            i += 1
-          end
-          result << PhpToken.new(:variable, @chars[start...i].join, start, i, line_for.call(start))
-        elsif ident_start?(c)
-          start = i
-          while i < @size && ident_char?(@masked[i])
-            i += 1
-          end
-          result << PhpToken.new(:ident, @chars[start...i].join, start, i, line_for.call(start))
-        else
-          kind, len = punct_at(i)
-          if kind
-            result << PhpToken.new(kind, @chars[i...i + len].join, i, i + len, line_for.call(i))
-            i += len
-          else
-            i += 1
-          end
-        end
-      end
-      result
-    end
-
-    private def punct_at(i : Int32) : Tuple(Symbol?, Int32)
-      c = @masked[i]
-      n = i + 1 < @size ? @masked[i + 1] : '\0'
-      case
-      when c == '-' && n == '>' then {:arrow, 2}
-      when c == ':' && n == ':' then {:double_colon, 2}
-      when c == '=' && n == '>' then {:double_arrow, 2}
-      when c == '('             then {:lparen, 1}
-      when c == ')'             then {:rparen, 1}
-      when c == '['             then {:lbracket, 1}
-      when c == ']'             then {:rbracket, 1}
-      when c == '{'             then {:lbrace, 1}
-      when c == '}'             then {:rbrace, 1}
-      when c == ';'             then {:semicolon, 1}
-      when c == ','             then {:comma, 1}
-      else                           {nil, 1}
-      end
     end
   end
 end

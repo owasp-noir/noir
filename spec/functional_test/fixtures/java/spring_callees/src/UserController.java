@@ -32,4 +32,16 @@ public class UserController {
     private String buildProfile() {
         return "profile";
     }
+
+    // Runs before every handler of this controller.
+    @org.springframework.web.bind.annotation.ModelAttribute("user")
+    public String findUser() {
+        return service.load("hahwul");
+    }
+
+    @Deprecated
+    @GetMapping("/legacy")
+    public String legacy() {
+        return "legacy";
+    }
 }

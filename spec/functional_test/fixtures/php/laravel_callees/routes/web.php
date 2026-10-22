@@ -29,3 +29,8 @@ Route::any('/webhook', function () {
 Route::get('/ready', fn () => ReadyProbe::check(),);
 Route::get('/reports', [ReportController::class, 'index']);
 Route::resource('photos', PhotoController::class);
+
+// Route::controller(...)->group(): the body names only the action.
+Route::controller(ReportController::class)->group(function () {
+    Route::get('/reports/summary', 'index');
+});

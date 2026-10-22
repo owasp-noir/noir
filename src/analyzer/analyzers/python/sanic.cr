@@ -1,9 +1,13 @@
 require "../../../miniparsers/python_route_extractor"
 require "../../../miniparsers/python_route_extractor_ts"
 require "../../engines/python_engine"
+require "./python_helper"
+require "../../../utils/top_level_split"
 
 module Analyzer::Python
   class Sanic < PythonEngine
+    analyzer_for "python_sanic"
+
     alias ScopedNameKey = Tuple(::String, ::String)
 
     # Reference: https://sanic.readthedocs.io/en/stable/sanic/request.html
@@ -14,14 +18,6 @@ module Analyzer::Python
       "json"    => {["POST", "PUT", "PATCH", "DELETE"], "json"},
       "cookies" => {nil, "cookie"},
       "headers" => {nil, "header"},
-    }
-
-    REQUEST_PARAM_TYPES = {
-      "query"  => nil,
-      "form"   => ["POST", "PUT", "PATCH", "DELETE"],
-      "json"   => ["POST", "PUT", "PATCH", "DELETE"],
-      "cookie" => nil,
-      "header" => nil,
     }
 
     # Hoisted out of the analyze loops: an interpolated regex literal
@@ -43,11 +39,13 @@ module Analyzer::Python
     REQUEST_PARAM_FIELD_PATTERNS = REQUEST_PARAM_FIELDS.map do |field, tuple|
       {"request.#{field}",
        tuple[1],
-       /request\.#{field}(?:\.get)?\(['"']([^'"']+)['"']\)/,
+       # `request.args('x')`, `request.args.get('x')` and
+       # `request.args.getlist('x')`: Sanic's RequestParameters exposes
+       # `getlist` for repeated keys, reading the same first-arg key.
+       /request\.#{field}(?:\.get(?:list)?)?\(['"']([^'"']+)['"']\)/,
        /request\.#{field}\[['"']([^'"']+)['"']\]/}
     end
 
-    @keyword_regex_cache = Hash(::String, Regex).new
     @json_var_regex_cache = Hash(::String, Tuple(Regex, Regex)).new
 
     @file_content_cache = Hash(::String, ::String).new
@@ -72,81 +70,80 @@ module Analyzer::Python
       # Iterate through all Python files in all base paths. Pulls from
       # the detector-built file_map so subtree pruning and --exclude-path
       # apply to this pass too.
-      python_files = get_files_by_extension(".py")
+      python_files = python_source_files
       base_paths.each do |current_base_path|
         python_files.each do |path|
           next unless path_under_root?(path, current_base_path)
-          next if path.includes?("/site-packages/")
-          next if python_test_path?(path)
           @logger.debug "Analyzing #{path}"
 
-          File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-            file_content = file.gets_to_end
-            lines = file_content.lines
-            next unless lines.any?(&.includes?("sanic"))
-            api_instances = Hash(::String, ::String).new
-            path_api_instances[path] = api_instances
+          # Prefer the detector-cached content over a fresh disk read;
+          # falls back to File.read (same encoding: utf-8, invalid: :skip)
+          # when the file wasn't cached.
+          file_content = read_file_content(path)
+          lines = file_content.lines
+          next unless lines.any?(&.includes?("sanic"))
+          api_instances = Hash(::String, ::String).new
+          path_api_instances[path] = api_instances
 
-            # Tree-sitter pre-pass: parse once and harvest every
-            # `@<router>.route(...)` / `@<router>.<method>(...)` decorator
-            # plus every `<name> = (sanic.)?Blueprint(url_prefix=...)`
-            # declaration. Replaces the per-line regex sweep in the loop
-            # below and handles multi-line decorators for free.
-            Noir::TreeSitterPythonRouteExtractor.extract_blueprints(file_content, ["sanic"]).each do |bp|
-              blueprint_prefixes[bp.name] ||= bp.prefix
-              api_instances[bp.name] ||= bp.prefix
+          # Tree-sitter pre-pass: one parse for decorations + blueprints
+          # (was two full parses of the same buffer).
+          ts_decorations, ts_blueprints = Noir::TreeSitterPythonRouteExtractor.extract_decorations_and_blueprints(
+            file_content, ["sanic"], extra_attributes: {"websocket" => "GET"}
+          )
+          ts_blueprints.each do |bp|
+            blueprint_prefixes[bp.name] ||= bp.prefix
+            api_instances[bp.name] ||= bp.prefix
+          end
+          collect_blueprint_registrations(file_content, blueprint_registration_prefixes, current_base_path)
+          collect_blueprint_groups_and_versions(file_content, blueprint_group_prefixes, blueprint_versions)
+          ts_decorations.each do |decoration|
+            methods_literal = decoration.methods.map { |m| "'#{m}'" }.join(",")
+            extra_params = "methods=[#{methods_literal}]"
+            router_info = Tuple(Int32, ::String, ::String, ::String, ::String).new(decoration.decorator_line, path, decoration.path, extra_params, decoration.attribute_name)
+            @routes[decoration.router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String, ::String)
+            @routes[decoration.router_name] << router_info
+          end
+
+          lines.each_with_index do |original_line, line_index|
+            line = original_line.gsub(" ", "") # remove spaces for easier regex matching
+
+            # Identify Sanic instance assignments (tree-sitter extractor
+            # doesn't cover this shape yet).
+            sanic_match = line.includes?("Sanic(") ? line.match(SANIC_INSTANCE_RE) : nil
+            if sanic_match
+              sanic_instance_name = sanic_match[1]
+              api_instances[sanic_instance_name] ||= ""
+              sanic_instances[sanic_instance_name] ||= ""
             end
-            collect_blueprint_registrations(file_content, blueprint_registration_prefixes, current_base_path)
-            collect_blueprint_groups_and_versions(file_content, blueprint_group_prefixes, blueprint_versions)
-            Noir::TreeSitterPythonRouteExtractor.extract_decorations(file_content, extra_attributes: {"websocket" => "GET"}).each do |decoration|
-              methods_literal = decoration.methods.map { |m| "'#{m}'" }.join(",")
-              extra_params = "methods=[#{methods_literal}]"
-              router_info = Tuple(Int32, ::String, ::String, ::String, ::String).new(decoration.decorator_line, path, decoration.path, extra_params, decoration.attribute_name)
-              @routes[decoration.router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String, ::String)
-              @routes[decoration.router_name] << router_info
+
+            if line.includes?(".add_route(")
+              effective_line = python_paren_delta(original_line) > 0 ? join_until_python_call_closes(lines, line_index, original_line) : original_line
+              if class_route_info = parse_programmatic_class_route(effective_line)
+                router_name, route_path, class_name, extra_params = class_route_info
+                @programmatic_class_routes[router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String, ::String)
+                @programmatic_class_routes[router_name] << {line_index, path, route_path, extra_params, class_name}
+              elsif route_info = parse_programmatic_route(effective_line)
+                router_name, route_path, handler_name, extra_params = route_info
+                @programmatic_routes[router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String, ::String)
+                @programmatic_routes[router_name] << {line_index, path, route_path, extra_params, handler_name}
+              end
             end
 
-            lines.each_with_index do |original_line, line_index|
-              line = original_line.gsub(" ", "") # remove spaces for easier regex matching
-
-              # Identify Sanic instance assignments (tree-sitter extractor
-              # doesn't cover this shape yet).
-              sanic_match = line.includes?("Sanic(") ? line.match(SANIC_INSTANCE_RE) : nil
-              if sanic_match
-                sanic_instance_name = sanic_match[1]
-                api_instances[sanic_instance_name] ||= ""
-                sanic_instances[sanic_instance_name] ||= ""
+            if line.includes?(".add_websocket_route(")
+              effective_line = python_paren_delta(original_line) > 0 ? join_until_python_call_closes(lines, line_index, original_line) : original_line
+              if route_info = parse_programmatic_websocket_route(effective_line)
+                router_name, route_path, handler_name, extra_params = route_info
+                @programmatic_websocket_routes[router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String, ::String)
+                @programmatic_websocket_routes[router_name] << {line_index, path, route_path, extra_params, handler_name}
               end
+            end
 
-              if line.includes?(".add_route(")
-                effective_line = python_paren_delta(original_line) > 0 ? join_until_python_call_closes(lines, line_index, original_line) : original_line
-                if class_route_info = parse_programmatic_class_route(effective_line)
-                  router_name, route_path, class_name, extra_params = class_route_info
-                  @programmatic_class_routes[router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String, ::String)
-                  @programmatic_class_routes[router_name] << {line_index, path, route_path, extra_params, class_name}
-                elsif route_info = parse_programmatic_route(effective_line)
-                  router_name, route_path, handler_name, extra_params = route_info
-                  @programmatic_routes[router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String, ::String)
-                  @programmatic_routes[router_name] << {line_index, path, route_path, extra_params, handler_name}
-                end
-              end
-
-              if line.includes?(".add_websocket_route(")
-                effective_line = python_paren_delta(original_line) > 0 ? join_until_python_call_closes(lines, line_index, original_line) : original_line
-                if route_info = parse_programmatic_websocket_route(effective_line)
-                  router_name, route_path, handler_name, extra_params = route_info
-                  @programmatic_websocket_routes[router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String, ::String)
-                  @programmatic_websocket_routes[router_name] << {line_index, path, route_path, extra_params, handler_name}
-                end
-              end
-
-              if line.includes?(".static(")
-                effective_line = python_paren_delta(original_line) > 0 ? join_until_python_call_closes(lines, line_index, original_line) : original_line
-                if static_route_info = parse_static_route(effective_line)
-                  router_name, static_path = static_route_info
-                  @static_routes[router_name] ||= [] of Tuple(Int32, ::String, ::String)
-                  @static_routes[router_name] << {line_index, path, static_path}
-                end
+            if line.includes?(".static(")
+              effective_line = python_paren_delta(original_line) > 0 ? join_until_python_call_closes(lines, line_index, original_line) : original_line
+              if static_route_info = parse_static_route(effective_line)
+                router_name, static_path = static_route_info
+                @static_routes[router_name] ||= [] of Tuple(Int32, ::String, ::String)
+                @static_routes[router_name] << {line_index, path, static_path}
               end
             end
           end
@@ -158,7 +155,7 @@ module Analyzer::Python
         router_info_list.each do |router_info|
           line_index, path, route_path, extra_params, route_attr = router_info
           source = fetch_file_content(path)
-          lines = source.lines
+          lines = fetch_file_lines(path)
           definition_base_path = python_base_path_for(path)
           # Route-level `@bp.get("/x", version=2)` overrides the blueprint's
           # version for just this route.
@@ -239,6 +236,7 @@ module Analyzer::Python
               get_endpoints(method, route_path, extra_params, codeblock_lines, full_prefix, route_attr).each do |endpoint|
                 details = Details.new(PathInfo.new(path, line_index + 1))
                 endpoint.details = details
+                endpoint.handler = handler_at(lines, _class_def_index, path)
 
                 handler_callees.each { |c| endpoint.push_callee(c) }
 
@@ -258,7 +256,7 @@ module Analyzer::Python
         router_info_list.each do |route_info|
           line_index, path, route_path, extra_params, handler_name = route_info
           source = fetch_file_content(path)
-          lines = source.lines
+          lines = fetch_file_lines(path)
           definition_base_path = python_base_path_for(path)
           api_instances = path_api_instances[path]
           prefix = api_instances[router_name]? || ""
@@ -278,7 +276,7 @@ module Analyzer::Python
             next unless File.exists?(handler_path)
 
             handler_source = fetch_file_content(handler_path)
-            handler_lines = handler_source.lines
+            handler_lines = fetch_file_lines(handler_path)
             function_def_index = find_function_def(handler_lines, function_name)
             next if function_def_index.nil?
           end
@@ -309,7 +307,7 @@ module Analyzer::Python
         router_info_list.each do |route_info|
           line_index, path, route_path, extra_params, handler_name = route_info
           source = fetch_file_content(path)
-          lines = source.lines
+          lines = fetch_file_lines(path)
           definition_base_path = python_base_path_for(path)
           api_instances = path_api_instances[path]
           prefix = api_instances[router_name]? || ""
@@ -329,7 +327,7 @@ module Analyzer::Python
             next unless File.exists?(handler_path)
 
             handler_source = fetch_file_content(handler_path)
-            handler_lines = handler_source.lines
+            handler_lines = fetch_file_lines(handler_path)
             function_def_index = find_function_def(handler_lines, function_name)
             next if function_def_index.nil?
           end
@@ -360,7 +358,7 @@ module Analyzer::Python
         router_info_list.each do |route_info|
           line_index, path, route_path, extra_params, class_name = route_info
           source = fetch_file_content(path)
-          lines = source.lines
+          lines = fetch_file_lines(path)
           definition_base_path = python_base_path_for(path)
           api_instances = path_api_instances[path]
           prefix = api_instances[router_name]? || ""
@@ -411,7 +409,7 @@ module Analyzer::Python
 
           registration_prefixes.each do |registration_prefix|
             full_prefix = compose_sanic_prefix(router_name, registration_prefix, prefix, blueprint_group_prefixes, blueprint_versions)
-            endpoint_path = static_route_path(join_paths(full_prefix, static_path))
+            endpoint_path = static_route_path(Helper.normalized_join(full_prefix, static_path))
             result << Endpoint.new(endpoint_path, "GET", Details.new(PathInfo.new(path, line_index + 1)))
           end
         end
@@ -426,9 +424,9 @@ module Analyzer::Python
 
       router_name = call_match[1]
       args = split_python_arguments(call_match[2])
-      static_path = extract_keyword_string(args, "uri") ||
-                    extract_keyword_string(args, "path") ||
-                    args[0]?.try { |arg| extract_python_string(arg) } || ""
+      static_path = extract_python_keyword_string(args, "uri") ||
+                    extract_python_keyword_string(args, "path") ||
+                    args[0]?.try { |arg| Helper.extract_python_string(arg) } || ""
       return if static_path.empty?
 
       {router_name, static_path}
@@ -479,7 +477,7 @@ module Analyzer::Python
     end
 
     private def extract_programmatic_handler_class(args : Array(::String)) : ::String
-      handler = extract_keyword_expression(args, "handler") || args[0]?
+      handler = extract_python_keyword_expression(args, "handler") || args[0]?
       return "" unless handler
 
       if class_match = handler.strip.match(AS_VIEW_RE)
@@ -490,7 +488,7 @@ module Analyzer::Python
     end
 
     private def extract_programmatic_handler(args : Array(::String)) : ::String
-      if handler = extract_keyword_expression(args, "handler")
+      if handler = extract_python_keyword_expression(args, "handler")
         return clean_reference(handler)
       end
 
@@ -499,22 +497,22 @@ module Analyzer::Python
     end
 
     private def extract_programmatic_route_path(args : Array(::String)) : ::String
-      if uri = extract_keyword_string(args, "uri")
+      if uri = extract_python_keyword_string(args, "uri")
         return uri
       end
-      if uri = extract_keyword_string(args, "uri_template")
+      if uri = extract_python_keyword_string(args, "uri_template")
         return uri
       end
-      if path = extract_keyword_string(args, "path")
+      if path = extract_python_keyword_string(args, "path")
         return path
       end
 
       return "" if args.size < 2
-      extract_python_string(args[1]) || ""
+      Helper.extract_python_string(args[1]) || ""
     end
 
     private def extract_programmatic_methods(args : Array(::String)) : Array(::String)
-      expression = extract_keyword_expression(args, "methods")
+      expression = extract_python_keyword_expression(args, "methods")
       return [] of ::String unless expression
 
       methods = [] of ::String
@@ -524,68 +522,11 @@ module Analyzer::Python
       methods
     end
 
-    # Memoized per keyword — the keyword set is tiny (`handler`, `uri`,
-    # `path`, `methods`, ...) but this runs per argument of every
-    # programmatic route.
-    private def keyword_expression_regex(keyword : ::String) : Regex
-      @keyword_regex_cache[keyword] ||= /^\s*#{Regex.escape(keyword)}\s*=\s*(.+)$/m
-    end
-
-    private def extract_keyword_expression(args : Array(::String), keyword : ::String) : ::String?
-      keyword_re = keyword_expression_regex(keyword)
-      args.each do |arg|
-        keyword_match = arg.match(keyword_re)
-        return keyword_match[1].strip if keyword_match
-      end
-
-      nil
-    end
-
-    private def extract_keyword_string(args : Array(::String), keyword : ::String) : ::String?
-      if expression = extract_keyword_expression(args, keyword)
-        return extract_python_string(expression)
-      end
-
-      nil
-    end
-
-    private def extract_python_string(expression : ::String) : ::String?
-      string_match = expression.strip.match(/^[rf]?['"]([^'"]*)['"]/)
-      string_match ? string_match[1] : nil
-    end
-
     private def clean_reference(expression : ::String) : ::String
       reference = expression.strip
       return reference if reference.matches?(DOTTED_REFERENCE_RE)
 
       ""
-    end
-
-    private def resolve_external_handler(handler_name : ::String,
-                                         current_path : ::String,
-                                         import_modules : Hash(::String, Tuple(::String, Int32))) : Tuple(::String, ::String)?
-      reference = handler_name.strip
-      return if reference.empty?
-
-      if reference.includes?(".")
-        receiver, function_name = reference.split(".", 2)
-        if import_info = import_modules[receiver]?
-          import_path = import_info.first
-          return {import_path, function_name} unless import_path.empty?
-        end
-
-        sibling_module_path = File.join(File.dirname(current_path), "#{receiver}.py")
-        return {sibling_module_path, function_name} if File.exists?(sibling_module_path)
-
-        return
-      end
-
-      if import_info = import_modules[reference]?
-        import_path = import_info.first
-        return {import_path, reference} unless import_path.empty?
-      end
-
-      nil
     end
 
     private def find_self_method_def(lines : Array(::String), route_line_index : Int32, handler_name : ::String) : Int32?
@@ -616,66 +557,6 @@ module Analyzer::Python
       end
 
       nil
-    end
-
-    private def split_python_arguments(args : ::String) : Array(::String)
-      parts = [] of ::String
-      current = String::Builder.new
-      paren_depth = 0
-      bracket_depth = 0
-      brace_depth = 0
-      in_quote : Char? = nil
-      escaped = false
-
-      args.each_char do |ch|
-        if in_quote
-          current << ch
-          if escaped
-            escaped = false
-          elsif ch == '\\'
-            escaped = true
-          elsif ch == in_quote
-            in_quote = nil
-          end
-          next
-        end
-
-        case ch
-        when '\'', '"'
-          in_quote = ch
-          current << ch
-        when '('
-          paren_depth += 1
-          current << ch
-        when ')'
-          paren_depth -= 1 if paren_depth > 0
-          current << ch
-        when '['
-          bracket_depth += 1
-          current << ch
-        when ']'
-          bracket_depth -= 1 if bracket_depth > 0
-          current << ch
-        when '{'
-          brace_depth += 1
-          current << ch
-        when '}'
-          brace_depth -= 1 if brace_depth > 0
-          current << ch
-        when ','
-          if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0
-            parts << current.to_s
-            current = String::Builder.new
-          else
-            current << ch
-          end
-        else
-          current << ch
-        end
-      end
-
-      parts << current.to_s
-      parts
     end
 
     private def find_function_def(lines : Array(::String), function_name : ::String) : Int32?
@@ -779,7 +660,10 @@ module Analyzer::Python
     end
 
     BLUEPRINT_GROUP_RE = /(?:#{PYTHON_VAR_NAME_REGEX}\s*=\s*)?Blueprint\s*\.\s*group\s*\((.*?)\)/m
-    BLUEPRINT_CTOR_RE  = /(#{PYTHON_VAR_NAME_REGEX})\s*=\s*(?:sanic\.)?Blueprint\s*\((.*?)\)/m
+    # `\w*Blueprint` takes in-repo subclasses (`ApiBlueprint(Blueprint)`) the
+    # same way the shared extractor does for their url_prefix, so a subclass
+    # gets its `version=` as well and not just half of its URL.
+    BLUEPRINT_CTOR_RE = /(#{PYTHON_VAR_NAME_REGEX})\s*=\s*(?:sanic\.)?\w*Blueprint\s*\((.*?)\)/m
 
     # `Blueprint.group(bp1, bp2, url_prefix="/api", version=1)` shares its
     # url_prefix and version with each member blueprint; `Blueprint(name,
@@ -818,9 +702,9 @@ module Analyzer::Python
                                      group_prefixes : Hash(::String, ::String),
                                      versions : Hash(::String, ::String),
                                      route_version : ::String? = nil) : ::String
-      base = join_paths(group_prefixes[router_name]? || "", join_paths(registration_prefix, prefix))
+      base = Helper.normalized_join(group_prefixes[router_name]? || "", Helper.normalized_join(registration_prefix, prefix))
       version = route_version || versions[router_name]?
-      version && !version.empty? ? join_paths("/v#{version}", base) : base
+      version && !version.empty? ? Helper.normalized_join("/v#{version}", base) : base
     end
 
     private def fetch_file_content(path : ::String) : ::String
@@ -830,6 +714,14 @@ module Analyzer::Python
       @file_content_cache[path]
     end
 
+    @file_lines_cache = Hash(::String, Array(::String)).new
+
+    # Split once per file: the per-route loops re-split the whole file for
+    # every route otherwise, quadratic in a file holding many routes.
+    private def fetch_file_lines(path : ::String) : Array(::String)
+      @file_lines_cache[path] ||= fetch_file_content(path).lines
+    end
+
     private def extract_params_from_decorator(path : ::String, lines : Array(::String), line_index : Int32, direction : Symbol = :down) : Tuple(Array(Param), Int32)
       # params stays empty for Sanic (unlike Flask which does decorator-level
       # param extraction). The adapter pulls params from the function body later.
@@ -837,6 +729,7 @@ module Analyzer::Python
     end
 
     private def get_endpoints(method : String, route_path : String, extra_params : String, codeblock_lines : Array(String), prefix : String = "", route_attr : String = "")
+      codeblock_lines = fold_python_continuations(codeblock_lines)
       endpoints = [] of Endpoint
       params = [] of Param
 
@@ -907,7 +800,7 @@ module Analyzer::Python
       # Create endpoints for each method
       methods.each do |http_method|
         # Create endpoint with the prefix
-        full_path = normalize_sanic_path_params(join_paths(prefix, route_path))
+        full_path = normalize_sanic_path_params(Helper.normalized_join(prefix, route_path))
         filtered_params = get_filtered_params(http_method, params.dup)
         endpoint = Endpoint.new(full_path, http_method, filtered_params)
         endpoint.protocol = "ws" if route_attr == "websocket"
@@ -927,62 +820,16 @@ module Analyzer::Python
       }
     end
 
-    private def join_paths(prefix : ::String, path : ::String) : ::String
-      return normalize_path(path) if prefix.empty?
-      return normalize_path(prefix) if path.empty?
-
-      normalize_path("#{prefix}/#{path}")
-    end
-
     private def static_route_path(path : ::String) : ::String
-      normalized = normalize_path(path)
+      normalized = Helper.normalize_path(path)
       normalized = normalized[0...-1] if normalized.ends_with?("/") && normalized != "/"
       normalized == "/" ? "/*" : "#{normalized}/*"
-    end
-
-    private def normalize_path(path : ::String) : ::String
-      normalized = path.gsub(/\/+/, "/")
-      normalized = "/#{normalized}" unless normalized.starts_with?("/")
-      normalized
     end
 
     private def normalize_sanic_path_params(path : ::String) : ::String
       path.gsub(/<([A-Za-z_][A-Za-z0-9_]*)(?::[^>]+)?>/) do |_match|
         "{#{$1}}"
       end
-    end
-
-    # Filters the parameters based on the HTTP method (similar to Flask analyzer)
-    private def get_filtered_params(method : String, params : Array(Param)) : Array(Param)
-      filtered_params = Array(Param).new
-      upper_method = method.upcase
-
-      params.each do |param|
-        is_support_param = false
-        support_methods = REQUEST_PARAM_TYPES.fetch(param.param_type, nil)
-        if !support_methods.nil?
-          support_methods.each do |support_method|
-            if upper_method == support_method.upcase
-              is_support_param = true
-            end
-          end
-        else
-          is_support_param = true
-        end
-
-        filtered_params.each do |filtered_param|
-          if filtered_param.name == param.name && filtered_param.param_type == param.param_type
-            is_support_param = false
-            break
-          end
-        end
-
-        if is_support_param
-          filtered_params << param
-        end
-      end
-
-      filtered_params
     end
 
     private def parse_code_block(lines : Array(String)) : String?

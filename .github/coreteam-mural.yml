@@ -1,0 +1,26 @@
+# https://github.com/crystal-actions/contributor-mural
+#
+# The core team is a curated list, not an API query: only the logins below are
+# rendered, and `sort: none` keeps the file in the order they are written here.
+# Roles match the ones on the Contact Us page (docs/content/resources/contact).
+style: grid
+
+output: docs/static/CORETEAM.svg
+
+sort: none
+
+users:
+  - login: hahwul
+    name: HAHWUL
+    role: "Co-Lead, Creator"
+  - login: ksg97031
+    name: KSG
+    role: "Co-Lead"
+
+grid:
+  columns: 2
+  avatar_size: 96
+  shape: circle
+  margin: 16
+  show_names: true
+  truncate: 0
