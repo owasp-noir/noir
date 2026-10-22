@@ -81,7 +81,7 @@ Run `noir list taggers` for the current list.
 | Parameter vulnerability classes | `hunt` | Parameters whose names match known risky patterns (`sqli`, `ssrf`, `idor`, `file-inclusion`, `command-injection`, …) |
 | Protocol / interface | `graphql`, `soap`, `websocket`, `mcp`, `cors` | Endpoints that use that protocol or interface |
 | Authentication & tokens | `oauth`, `jwt` | OAuth and JWT authentication endpoints |
-| Framework-aware auth | `django_auth`, `flask_auth`, `fastapi_auth`, `python_misc_auth`, `spring_auth`, `java_misc_auth`, `ktor_auth`, `scala_auth`, `express_auth`, `nestjs_auth`, `hono_auth`, `js_misc_auth`, `go_auth`, `rust_auth`, `ruby_auth`, `php_auth`, `aspnet_auth`, `fastendpoints_auth`, `elixir_auth`, `swift_auth`, `crystal_auth`, `perl_auth` | Endpoints that require login, with `auth`. `nestjs_auth` and `ruby_auth` also add `authz` when a role or policy check guards the route |
+| Framework-aware auth | `django_auth`, `flask_auth`, `fastapi_auth`, `python_misc_auth`, `spring_auth`, `java_misc_auth`, `ktor_auth`, `scala_auth`, `express_auth`, `nestjs_auth`, `hono_auth`, `nextjs_auth`, `js_misc_auth`, `go_auth`, `rust_auth`, `ruby_auth`, `php_auth`, `aspnet_auth`, `fastendpoints_auth`, `elixir_auth`, `swift_auth`, `crystal_auth`, `perl_auth` | Endpoints that require login, with `auth`. `nestjs_auth` and `ruby_auth` also add `authz` when a role or policy check guards the route |
 | Endpoint purpose | `pii`, `admin`, `payment`, `webhook`, `crypto`, `debug`, `api_docs`, `account_recovery`, `file_upload` | What an endpoint is for (see below) |
 | Framework protections and risks | `rails_security`, `spring_security`, `rust_security`, `go_security` | Security controls, and disabled secure defaults (see below) |
 
