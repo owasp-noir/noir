@@ -81,7 +81,7 @@ noir scan <BASE_PATH> --use-taggers hunt,oauth
 | 파라미터 취약점 클래스 | `hunt` | 이름이 알려진 위험 패턴과 맞는 파라미터(`sqli`, `ssrf`, `idor`, `file-inclusion`, `command-injection` 등) |
 | 프로토콜 / 인터페이스 | `graphql`, `soap`, `websocket`, `mcp`, `cors` | 해당 프로토콜이나 인터페이스를 쓰는 엔드포인트 |
 | 인증 & 토큰 | `oauth`, `jwt` | OAuth와 JWT 인증 엔드포인트 |
-| 프레임워크별 인증 | `django_auth`, `flask_auth`, `fastapi_auth`, `python_misc_auth`, `spring_auth`, `java_misc_auth`, `ktor_auth`, `scala_auth`, `express_auth`, `nestjs_auth`, `hono_auth`, `js_misc_auth`, `go_auth`, `rust_auth`, `ruby_auth`, `php_auth`, `aspnet_auth`, `fastendpoints_auth`, `elixir_auth`, `swift_auth`, `crystal_auth`, `perl_auth` | 로그인이 필요한 엔드포인트에 `auth` 태그. `nestjs_auth`와 `ruby_auth`는 역할이나 정책 검사가 걸린 라우트에 `authz`도 붙입니다 |
+| 프레임워크별 인증 | `django_auth`, `flask_auth`, `fastapi_auth`, `python_misc_auth`, `spring_auth`, `java_misc_auth`, `ktor_auth`, `scala_auth`, `express_auth`, `nestjs_auth`, `hono_auth`, `nextjs_auth`, `js_misc_auth`, `go_auth`, `rust_auth`, `ruby_auth`, `php_auth`, `aspnet_auth`, `fastendpoints_auth`, `elixir_auth`, `swift_auth`, `crystal_auth`, `perl_auth` | 로그인이 필요한 엔드포인트에 `auth` 태그. `nestjs_auth`와 `ruby_auth`는 역할이나 정책 검사가 걸린 라우트에 `authz`도 붙입니다 |
 | 엔드포인트 용도 | `pii`, `admin`, `payment`, `webhook`, `crypto`, `debug`, `api_docs`, `account_recovery`, `file_upload` | 엔드포인트가 무엇을 위한 것인지(아래 참고) |
 | 프레임워크 보호 장치와 위험 | `rails_security`, `spring_security`, `rust_security`, `go_security` | 보안 설정과, 꺼진 안전한 기본값(아래 참고) |
 
