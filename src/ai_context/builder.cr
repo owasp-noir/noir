@@ -1353,7 +1353,10 @@ module NoirAIContext
 
         if type = repository_call_type(callee.name, callee.path)
           context.push_sink(repository_sink(callee.name, type, callee.path, callee.line, callee_snippet))
-        elsif raw_sink = PatternMatcher.detect_from_patterns(callee.name, callee_snippet, sink_patterns, callee.path, callee.line, "callee")
+        elsif handle_sink = file_handle_sink(callee, callee_snippet)
+          context.push_sink(handle_sink)
+        elsif (raw_sink = PatternMatcher.detect_from_patterns(callee.name, callee_snippet, sink_patterns, callee.path, callee.line, "callee")) &&
+              !in_memory_send_file?(raw_sink, callee)
           sink = normalize_mobile_sink(endpoint, raw_sink)
           context.push_sink(enrich_callee_sink(sink, callee, callee_snippet))
         end
@@ -1365,6 +1368,58 @@ module NoirAIContext
           context.push_validator(validator)
         end
       end
+    end
+
+    # `f.read()` / `f.Write(b)` touches the file system only when `f` holds a
+    # file handle: its nearest binding above the call opens one
+    # (`with open(p) as f`, `f, err := os.Open(p)`, `File.open(p) do |f|`).
+    # A read on anything else is not file I/O: `rand.Read`, an upload's
+    # `file.stream.read`, `resp.Body.Read`.
+    private def file_handle_sink(callee : Callee, snippet : String?) : AIContextEntry?
+      return unless (path = callee.path) && (line = callee.line)
+      return unless match = callee.name.match(/\A(\w+)\.(?:read|write)\w*\z/i)
+      return unless bound_to?(path, line, match[1], FILE_HANDLE_OPEN)
+
+      AIContextEntry.new(
+        "file_io",
+        callee.name,
+        source: "callee",
+        description: "File read/write on a handle opened from the file system",
+        path: path,
+        line: line,
+        confidence: 68,
+        snippet: snippet
+      )
+    end
+
+    # `send_file(io.BytesIO(data))`, or a name bound to such a buffer.
+    private def in_memory_send_file?(sink : AIContextEntry, callee : Callee) : Bool
+      return false unless sink.kind == "file_io" && (path = callee.path) && (line = callee.line)
+      return false unless call = @reader.lines_for(path)[line - 1, 3]?.try(&.join(' '))
+      return true if call.matches?(SEND_IN_MEMORY_BUFFER)
+      return false unless arg = call.match(/\bsend_?file\s*\(\s*(\w+)\s*[,)]/i)
+
+      bound_to?(path, line, arg[1], IN_MEMORY_BUFFER)
+    end
+
+    SEND_IN_MEMORY_BUFFER = /\bsend_?file\s*\(\s*#{IN_MEMORY_BUFFER}/i
+
+    # Whether the nearest binding of `name` at or above `line` takes its value
+    # from `value`: `name = value`, `name, err := value`, `with value as name`,
+    # `value do |name|`, Go's `name *os.File`. Any other binding of the name
+    # (an assignment, a typed parameter, a loop variable) ends the walk.
+    # ponytail: a textual walk up the file, not scope-aware; an untyped
+    # parameter (`def h(f)`) is not seen as a binding, so the walk can run
+    # on into an earlier function's `f = open(...)`.
+    private def bound_to?(path : String, line : Int32, name : String, value : Regex) : Bool
+      from = /\b#{name}(?:\s*(?:,\s*\w+\s*)?:?=\s*(?:await\s+)?|\s+)#{value}|#{value}.*(?:\bas\s+|\|\s*)#{name}\b/
+      other = /\b#{name}\s*(?:,\s*\w+\s*)?:=|\b#{name}\s*=(?!=)|\bas\s+#{name}\b|\|\s*#{name}\s*[|,]|\b#{name}\s*:\s*[A-Za-z_]|\bfor\b.*\b#{name}\b.*\b(?:in|of|range)\b/
+      lines = @reader.lines_for(path)
+      Math.min(line, lines.size).pred.downto(0) do |i|
+        return true if lines[i].matches?(from)
+        return false if lines[i].matches?(other)
+      end
+      false
     end
 
     # The declared type of the receiver in `this.owners.save` /

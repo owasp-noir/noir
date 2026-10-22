@@ -68,14 +68,74 @@ class GoAuthTagger < FrameworkTagger
   # `sessions.Sessions(store)` is a session *store*, not a check.
   AUTHISH_NAME = /auth|jwt|token|permission|login|rbac|acl/i
 
-  # A middleware body that can refuse the request: a 401/403 status handed to
-  # a reply or abort call (`AbortWithStatus(http.StatusUnauthorized)`,
+  # A middleware body line that refuses the request: a 401/403 status handed
+  # to a reply or abort call (`AbortWithStatus(http.StatusUnauthorized)`,
   # `c.JSON(403, ...)`, `http.Error(w, "", 401)`, `WriteHeader(403)`) or a
   # framework sentinel error (`echo.ErrUnauthorized`, `fiber.ErrForbidden`).
   # Matched on `code_only` source, so a 401 in a comment or log string does
   # not count, and `== http.StatusUnauthorized` (a comparison, as in a
   # logging middleware) does not either.
   REJECTS_REQUEST = /[(,]\s*(?:\w+\.)?Status(?:Unauthorized|Forbidden)\b|[(,]\s*40[13]\s*[,)]|\b(?:\w+\.)?Err(?:Unauthorized|Forbidden)\b/
+
+  # A redirect to the login page (`ctx.RedirectForLogin(...)`,
+  # `c.Redirect(302, "/login")`), matched with string literals kept.
+  LOGIN_REDIRECT = /(?=.*\bRedirect\w*\s*\().*(?:[Ll]og_?[Ii]n|[Ss]ign_?[Ii]n)/
+
+  # A refusal whose condition asks what the caller may do
+  # (`!ctx.IsUserSiteAdmin()`, `!ctx.Repo.Permission.CanRead(...)`,
+  # `!isMember`) is an authorization check; any other is an authentication
+  # one.
+  AUTHZ_CONDITION = /[Aa]dmin|[Rr]ole|[Pp]erm|[Oo]wner|[Mm]ember|[Cc]ollaborat|[Ss]cope|[Aa]ccess|[Pp]rivilege|[Vv]isib|[Pp]ublic|[Gg]rant|[Ww]riter|[Rr]eader|\b[Cc]an[A-Z]/
+
+  # `if cond {` / `} else if x := f(); cond {` and `} else {` on their own line.
+  IF_OPEN   = /\A(?:\}\s*)?(?:else\s+)?if\s+(?:[^;{]*;\s*)?(.+?)\s*\{\z/
+  ELSE_OPEN = /\A\}?\s*else\s*\{\z/
+
+  # An `if` block that only lets the request through: `return`, optionally
+  # after handing it on (`c.Next()`, `next.ServeHTTP(w, r)`).
+  PASS_STATEMENT = /\A(?:[\w.]+\.Next\(\)|next\.ServeHTTP\(.*\))\z/
+
+  # A condition that a request-supplied value is absent (`!ok`, `token ==
+  # ""`, `len(sudo) == 0`) or present (`token != ""`, `len(sudo) > 0`).
+  ABSENCE_TEST  = /\A(?:!\s*(\w+)|(\w+)\s*==\s*""|len\(\s*(\w+)\s*\)\s*==\s*0)\z/
+  PRESENCE_TEST = /\A(?:(\w+)\s*!=\s*""|len\(\s*(\w+)\s*\)\s*(?:>|!=)\s*0)\z/
+  PRESENT       = "<present>"
+
+  # `options.SignInRequired` / `!options.SignOutRequired` read off a parameter.
+  OPTION_FIELD = /\A(!?)\s*(\w+)\.(\w+)\z/
+
+  # `pkg.Var.Field` with no call: a package-level (configuration) value.
+  PACKAGE_VALUE = /\A!?\s*(\w+)(?:\.\w+)+\z/
+
+  # `Field: value` inside a call-site struct literal.
+  LITERAL_FIELD = /(\w+)\s*:\s*([^,{}]+)/
+
+  # The parameter list of a `func name(...)` / `func (r T) name(...)` head.
+  FUNC_PARAMS = /\Afunc\s*(?:\([^)]*\)\s*)?\w+\s*\(([^)]*)\)/
+
+  # `name := expr` / `name = expr`, for a middleware held in a variable
+  # (`reqSignIn := verifyAuth(&Options{SignInRequired: true})`).
+  LOCAL_BINDING = /\A\s*([\w.]+)\s*:?=\s*([\w.]+\s*\(.*)\z/
+
+  # A closure handed to a call that is still open at the end of the line:
+  # `m.Group("/user", func() {`, `r.Group(func(r chi.Router) {`.
+  CLOSURE_ARG_OPEN = /\(.*\bfunc\s*\([^()]*\)\s*\{\s*\z/
+
+  # Middleware handed to `r.With(mw...)` ahead of a route or group.
+  WITH_CALL = /\.\s*With\s*\(/
+
+  # A route call on a line: `m.Post(`, `.GET(`, or a chained `Delete(`.
+  ROUTE_CALL = /(?:\A|\.)\s*([A-Za-z]+)\s*\(/
+
+  # Lines worth walking for closure-scoped middleware.
+  CLOSURE_REGISTRATION = /\.\s*(?:Use|With|Group|Route)\s*\(/
+
+  # How sure a middleware definition makes us that it guards a route.
+  enum Guard
+    None
+    Authz
+    Authn
+  end
 
   # An unqualified call inside a middleware body, for the one-hop lookup.
   BODY_CALL = /(?<![\w.])([A-Za-z_]\w*)\s*\(/
@@ -89,10 +149,15 @@ class GoAuthTagger < FrameworkTagger
 
   def initialize(options : Hash(String, YAML::Any))
     super
-    @middleware_scopes = [] of {prefix: String, middleware: String, description: String, root_group: Bool, gate: {file: String, receiver: String}?}
+    @middleware_scopes = [] of {prefix: String, tag: Tag, root_group: Bool, gate: {file: String, receiver: String}?}
+    @closure_scopes = [] of {file: String, from: Int32, to: Int32, tag: Tag}
     @current_gate = nil.as({file: String, receiver: String}?)
     @bodies = Noir::GoCalleeExtractor::LazyPackageBodies.empty
     @dirs_by_base = Hash(String, Array(String)).new
+    @guards = Hash({String, String, Bool, String?}, Tag?).new
+    @helper_verdicts = Hash({String, Int32}, Guard).new
+    @imports = Hash(String, Set(String)).new
+    @bindings = Hash(String, Hash(String, String)).new
   end
 
   def self.target_techs : Array(String)
@@ -112,6 +177,7 @@ class GoAuthTagger < FrameworkTagger
 
   private def pre_scan_middleware_scopes
     @middleware_scopes.clear
+    @closure_scopes.clear
 
     files = collect_files_by_extension(".go")
     contents = Hash(String, String).new
@@ -135,11 +201,70 @@ class GoAuthTagger < FrameworkTagger
   end
 
   private def scan_group_middleware(content : String, file : String)
-    return unless USE_REGISTRATION.matches?(content, options: Noir::TextFile::MATCH_OPTIONS)
+    uses = USE_REGISTRATION.matches?(content, options: Noir::TextFile::MATCH_OPTIONS)
+    closures = CLOSURE_REGISTRATION.matches?(content, options: Noir::TextFile::MATCH_OPTIONS)
+    return unless uses || closures
 
+    # Closures handed to a call (`m.Group("/user", func() {`, chi's
+    # `r.Group(func(r chi.Router) {`), with the middleware a `.With(...)` on
+    # the opening line or a `.Use(...)` inside puts in front of their routes.
+    lines = content.lines
+    frames = [] of {line: Int32, depth: Int32, args: Array(String), uses: Array({Int32, Array(String)})}
+    depth = 0
+    index = 0
     each_group_scoped_line(content) do |stripped, scopes|
-      register_auth_scopes(stripped, scopes, file)
+      index += 1
+      in_closure = false
+      if closures
+        code = code_only(stripped).rstrip
+        # A `.Use` on the closure's own router guards the routes after it
+        # in that closure, not every route under the group's prefix.
+        receiver = stripped.match(GoRouteGroupScope::USE_CALL).try &.[1]
+        if (frame = frames.last?) && receiver && !scopes.groups.has_key?(receiver)
+          frame[:uses] << {index, middleware_args(stripped)}
+          in_closure = true
+        end
+        code.each_char_with_index do |char, pos|
+          if char == '{'
+            if pos == code.size - 1 && code.matches?(CLOSURE_ARG_OPEN)
+              args = (with_call = code.match(WITH_CALL)) ? call_args(code[with_call.end..]) : [] of String
+              frames << {line: index, depth: depth, args: args, uses: [] of {Int32, Array(String)}}
+            end
+            depth += 1
+          elsif char == '}'
+            depth -= 1
+            next unless (top = frames.last?) && top[:depth] == depth
+            frames.pop
+            # `}, reqToken(), reqAdmin())`: middleware after the closure.
+            (top[:args] + trailing_args(code[pos + 1..], lines, index)).each do |arg|
+              add_closure_scope(file, top[:line], index, arg)
+            end
+            top[:uses].each do |(line, args)|
+              args.each { |arg| add_closure_scope(file, line, index, arg) }
+            end
+          end
+        end
+      end
+      register_auth_scopes(stripped, scopes, file) if uses && !in_closure
     end
+  end
+
+  private def add_closure_scope(file : String, from : Int32, to : Int32, arg : String)
+    tag = guard_by_definition(arg, file, authish_name: true)
+    @closure_scopes << {file: file, from: from, to: to, tag: tag} if tag
+  end
+
+  # The arguments after a closure's closing brace (`, reqToken())`), read on
+  # into the following lines when the call continues there (`},` then
+  # `reqSignIn, ctx.RepoAssignment,` then `)`).
+  private def trailing_args(rest : String, lines : Array(String), index : Int32) : Array(String)
+    text = rest
+    extra = index
+    while text.count('(') >= text.count(')') && !text.rstrip.ends_with?('{') && extra < lines.size && extra < index + 5
+      text += " " + code_only(lines[extra])
+      extra += 1
+    end
+    call_args(text.lstrip.lchop(','))
   end
 
   private def register_auth_scopes(stripped : String, scopes : GoRouteGroupScope::Scopes, file : String)
@@ -159,7 +284,6 @@ class GoAuthTagger < FrameworkTagger
     # (`registerAuth(authV1)`) resolve by name only.
     receiver = stripped.match(REGISTRATION_RECEIVER).try &.[1]
     @current_gate = receiver && scopes.aliases.includes?(receiver) ? {file: file, receiver: receiver} : nil
-    dir = File.dirname(file)
 
     before = @middleware_scopes.size
 
@@ -168,7 +292,7 @@ class GoAuthTagger < FrameworkTagger
       if stripped.matches?(pattern) && stripped.includes?(".Use")
         jwt_match = stripped.match(pattern)
         jwt_name = jwt_match ? jwt_match[0] : "JWT"
-        add_middleware_scope(scope, jwt_name, "Protected by Go JWT middleware (#{jwt_name})")
+        add_middleware_scope(scope, Tag.new("auth", "Protected by Go JWT middleware (#{jwt_name})", "go_auth"))
       end
     end
     return unless before == @middleware_scopes.size
@@ -176,19 +300,24 @@ class GoAuthTagger < FrameworkTagger
     # Read each middleware argument's definition; its name counts only when
     # the definition is not in the scan.
     middleware_args(stripped).each do |arg|
-      description = guard_by_definition(arg, dir, authish_name: true)
-      add_middleware_scope(scope, arg, description) if description
+      tag = guard_by_definition(arg, file, authish_name: true)
+      add_middleware_scope(scope, tag) if tag
     end
   end
 
-  # The middleware arguments of a registration line, split at the top level
-  # and cut at the paren that closes the call, so a chained `.GET(...)` after
-  # `.Use(a, b)` is not read as more middleware.
+  # The middleware arguments of a registration line: everything after
+  # `.Use(` or after the path literal.
   private def middleware_args(line : String) : Array(String)
     code = code_only(line)
     start = code.match(MIDDLEWARE_ARGS_START)
     return [] of String unless start
-    inner = code[start.end..]
+    call_args(code[start.end..])
+  end
+
+  # The arguments of a call whose opening paren is already consumed, split
+  # at the top level and cut at the paren that closes the call, so a chained
+  # `.GET(...)` after `.Use(a, b)` is not read as more middleware.
+  private def call_args(inner : String) : Array(String)
     depth = 0
     inner.each_char_with_index do |ch, idx|
       depth += 1 if ch == '('
@@ -202,31 +331,89 @@ class GoAuthTagger < FrameworkTagger
     Noir::TopLevelSplit.split(inner, ',', Noir::TopLevelSplit::Rules.new)
   end
 
-  # A tag description for middleware argument `arg` when its definition can
-  # reject the request, or (with `authish_name`) when the definition is not in
-  # the scan and its name says so; nil when it is a closure or only passes the
-  # request on.
-  private def guard_by_definition(arg : String, dir : String, authish_name : Bool = false) : String?
-    ref = arg.match(MIDDLEWARE_REFERENCE)
-    return unless ref
-    qualifier = ref[1].gsub(/\s+/, "").rchop('.')
-    name = ref[2]
-    display = qualifier.empty? ? name : "#{qualifier}.#{name}"
-    case rejecting_definition?(qualifier, name, dir)
-    when true
-      "Protected by Go middleware #{display} (verified from its body: replies 401/403)"
-    when nil
-      "Protected by Go middleware #{display}" if authish_name && display.matches?(AUTHISH_NAME)
+  # The middleware of the route call at `lines[idx]`: the arguments between
+  # the path and the handler of the call named for `method` (`m.Post("/merge",
+  # reqToken(), bind(...), h)`, a combo's `Delete(reqToken(), h)`), read
+  # across continuation lines, plus a `.With(mw...)` or a chain head in
+  # front of it.
+  private def route_middleware_args(lines : Array(String), idx : Int32, method : String) : Array(String)
+    code = code_only(lines[idx])
+    extra = idx + 1
+    while code.count('(') > code.count(')') && !code.rstrip.ends_with?('{') && extra < lines.size && extra <= idx + 5
+      code += " " + code_only(lines[extra])
+      extra += 1
+    end
+    args = (with_call = code.match(WITH_CALL)) ? call_args(code[with_call.end..]) : [] of String
+    if call = code.scan(ROUTE_CALL).find { |match| match[1].upcase == method }
+      route_args = call_args(code[call.end..]).skip_while(&.starts_with?('"'))
+      args.concat(route_args[0...-1])
+      # The head of a chain the verb hangs off (`m.Combo("/x", reqToken()).
+      # Get(h)`, on this line or the ones ending in `.` above) runs in front
+      # of every verb in it.
+      head = idx
+      while head > 0 && head > idx - 5 && code_only(lines[head - 1]).rstrip.ends_with?('.')
+        head -= 1
+      end
+      args.concat(middleware_args(head == idx ? code[0, call.begin] : lines[head]))
+    else
+      args.concat(middleware_args(lines[idx])[0...-1])
+    end
+    args
+  end
+
+  # The tag middleware argument `arg` earns: `auth` when its definition
+  # refuses anonymous callers, `authz` when it only refuses callers lacking a
+  # permission, and (with `authish_name`) `auth` when the definition is not
+  # in the scan and its name says so; nil when it is a closure or only passes
+  # the request on. A variable or field (`reqSignIn`, `webAuth.AllowBasic`)
+  # is read through its binding in `file` (`reqSignIn :=
+  # verifyAuth(&Options{SignInRequired: true})`).
+  private def guard_by_definition(arg : String, file : String, authish_name : Bool = false, display : String? = nil) : Tag?
+    @guards.put_if_absent({arg, file, authish_name, display}) do
+      ref = arg.match(MIDDLEWARE_REFERENCE)
+      next unless ref
+      qualifier = ref[1].gsub(/\s+/, "").rchop('.')
+      name = ref[2]
+      reference = qualifier.empty? ? name : "#{qualifier}.#{name}"
+      shown = display || reference
+      fields = arg.includes?('{') ? arg.scan(LITERAL_FIELD).to_h { |field| {field[1], field[2].strip} } : nil
+      case definition_verdict(qualifier, name, File.dirname(file), fields)
+      when Guard::Authn
+        Tag.new("auth", "Protected by Go middleware #{shown} (verified from its body: refuses anonymous callers)", "go_auth")
+      when Guard::Authz
+        Tag.new("authz", "Protected by Go middleware #{shown} (verified from its body: permission check replies 403)", "go_auth")
+      when nil
+        if display.nil? && (bound = local_binding(file, shown))
+          next guard_by_definition(bound, file, authish_name, shown)
+        end
+        Tag.new("auth", "Protected by Go middleware #{shown}", "go_auth") if authish_name && reference.matches?(AUTHISH_NAME)
+      end
     end
   end
 
-  # Whether the function `qualifier.name`, resolved from the package in
-  # `dir`, replies 401/403 itself or through one unqualified helper it calls;
-  # nil when no definition is found.
+  # The expression first bound to `name` in `file`.
+  # ponytail: file-wide, not per function; a name rebound in another
+  # function of the same file reads the first binding.
+  private def local_binding(file : String, name : String) : String?
+    bindings = @bindings.put_if_absent(file) do
+      map = Hash(String, String).new
+      read_file_lines(file).try &.each do |line|
+        next unless line.includes?('=')
+        if match = code_only(line).match(LOCAL_BINDING)
+          map.put_if_absent(match[1]) { match[2].strip }
+        end
+      end
+      map
+    end
+    bindings[name]?
+  end
+
+  # The strongest verdict over the definitions of `qualifier.name`, resolved
+  # from the package in `dir`; nil when no definition is found.
   # ponytail: same package plus a sibling package directory named like the
   # qualifier, one hop deep; a guard reached through an interface, a third
   # party module or a deeper call chain still resolves by name only.
-  private def rejecting_definition?(qualifier : String, name : String, dir : String) : Bool?
+  private def definition_verdict(qualifier : String, name : String, dir : String, fields : Hash(String, String)?) : Guard?
     bodies = [] of Noir::GoCalleeExtractor::FunctionBody
     if qualifier.empty?
       @bodies.functions_for(dir)[name]?.try { |body| bodies << body }
@@ -236,19 +423,133 @@ class GoAuthTagger < FrameworkTagger
         @bodies.functions_for(pkg)[name]?.try { |body| bodies << body }
       end
     end
-    return if bodies.empty?
-    bodies.any? do |body|
-      source = code_only(body.source)
-      next true if source.matches?(REJECTS_REQUEST)
-      package = @bodies.functions_for(File.dirname(body.file_path))
-      source.scan(BODY_CALL).any? do |call|
-        (helper = package[call[1]]?) && code_only(helper.source).matches?(REJECTS_REQUEST)
+    bodies.max_of? { |body| body_verdict(body, fields) }
+  end
+
+  # The strongest refusal in `body` a caller can meet: a 401 or a redirect to
+  # login (`Authn`), or a 403 behind a permission test (`Authz`; behind any
+  # other test it is `Authn`). Each refusal is read with the `if` conditions
+  # it sits under, and does not count when one of them
+  #
+  # * tests that a request value is present (`if len(sudo) > 0 {`), or
+  #   follows an `if !ok { return }` that lets the request through without
+  #   it: a caller who sends nothing is never refused;
+  # * reads a package-level setting (`setting.Service.RequireSignInView`):
+  #   off unless the deployment turns it on;
+  # * reads an option the call site's struct literal leaves unset or false.
+  #   A factory called with one (`verify(&Options{SignInRequired: true})`)
+  #   is shared by public and private routes alike, so only the refusals its
+  #   own `true` options select count.
+  #
+  # With `follow`, an unqualified call to a function of the same package
+  # counts as that function's verdict at the line of the call.
+  private def body_verdict(body : Noir::GoCalleeExtractor::FunctionBody, fields : Hash(String, String)?, follow : Bool = true) : Guard
+    key = {body.file_path, body.start_row * 2 + (follow ? 1 : 0)}
+    if fields.nil? && (cached = @helper_verdicts[key]?)
+      return cached
+    end
+    source = Noir::CComments.strip(body.source, quotes: %("'`))
+    params = source.match(FUNC_PARAMS).try(&.[1].split(',').compact_map(&.strip.split(/\s+/).first?)) || [] of String
+    option_gated = !fields.nil? && params.any? { |param| source.includes?("#{param}.") }
+    imports = file_imports(body.file_path)
+    package = follow ? @bodies.functions_for(File.dirname(body.file_path)) : nil
+    frames = [] of {Int32, Array(String)}
+    depth = 0
+    verdict = Guard::None
+    lines = source.lines
+    lines.each_with_index do |raw, idx|
+      line = raw.gsub(STRING_LITERAL, %("")).strip
+      closes = line.starts_with?('}')
+      if closes
+        depth -= 1
+        pop_closed(frames, depth)
       end
+      opened = line.count('{') - line.count('}') + (closes ? 1 : 0)
+      if match = line.match(IF_OPEN)
+        # `if !ok { return }`: what follows runs only when the test fails.
+        frames << {depth, [negate(match[1], params)]} if passes_through?(lines, idx)
+        frames << {depth + opened, match[1].split("&&").map(&.strip)}
+      elsif line.matches?(ELSE_OPEN)
+        frames << {depth + opened, [] of String}
+      end
+      depth += opened
+      pop_closed(frames, depth)
+
+      conditions = frames.flat_map(&.[1])
+      kind = if raw.matches?(LOGIN_REDIRECT)
+               Guard::Authn
+             elsif line.matches?(REJECTS_REQUEST)
+               conditions.any?(&.matches?(AUTHZ_CONDITION)) ? Guard::Authz : Guard::Authn
+             elsif package
+               line.scan(BODY_CALL).max_of? do |call|
+                 package[call[1]]?.try { |helper| body_verdict(helper, nil, false) } || Guard::None
+               end || Guard::None
+             else
+               Guard::None
+             end
+      next if kind <= verdict
+      next if conditions.any? { |condition| dead_condition?(condition, params, imports, fields) }
+      next if option_gated && conditions.none? { |condition| option_enabled?(condition, params, fields) }
+      verdict = kind
+    end
+    @helper_verdicts[key] = verdict if fields.nil?
+    verdict
+  end
+
+  private def pop_closed(frames : Array({Int32, Array(String)}), depth : Int32)
+    while (frame = frames.last?) && frame[0] > depth
+      frames.pop
+    end
+  end
+
+  # Whether the `if` opened at `lines[idx]` only lets the request through.
+  private def passes_through?(lines : Array(String), idx : Int32) : Bool
+    after = idx + 1
+    after += 1 if lines[after]?.try(&.strip.matches?(PASS_STATEMENT))
+    lines[after]?.try(&.strip) == "return" && lines[after + 1]?.try(&.strip) == "}"
+  end
+
+  # The condition that holds after `if condition { return }`.
+  private def negate(condition : String, params : Array(String)) : String
+    if (match = condition.match(ABSENCE_TEST)) && !params.includes?(match[1]? || match[2]? || match[3]?)
+      PRESENT
+    elsif condition.starts_with?('!') && !condition.includes?("&&") && !condition.includes?("||")
+      condition[1..].strip
+    else
+      "!(#{condition})"
+    end
+  end
+
+  private def dead_condition?(condition : String, params : Array(String), imports : Set(String), fields : Hash(String, String)?) : Bool
+    return true if condition == PRESENT
+    if (match = condition.match(OPTION_FIELD)) && params.includes?(match[2])
+      return false unless fields
+      return (fields[match[3]]? == "true") == (match[1] == "!")
+    end
+    if match = condition.match(PRESENCE_TEST)
+      return !params.includes?(match[1]? || match[2]?)
+    end
+    condition.lstrip('!').strip.lchop('(').rchop(')').split("||").all? do |part|
+      (match = part.strip.match(PACKAGE_VALUE)) && imports.includes?(match[1])
+    end
+  end
+
+  private def option_enabled?(condition : String, params : Array(String), fields : Hash(String, String)?) : Bool
+    return false unless (match = condition.match(OPTION_FIELD)) && match[1].empty? && params.includes?(match[2])
+    fields.try(&.[match[3]]?) == "true"
+  end
+
+  # The package names `path` imports.
+  private def file_imports(path : String) : Set(String)
+    @imports.put_if_absent(path) do
+      read_file(path).try { |source| Noir::GoCalleeExtractor.extract_import_aliases(source).keys.to_set } || Set(String).new
     end
   end
 
   private def check_endpoint(endpoint : Endpoint)
-    # Check route definition for inline middleware
+    # The first `auth` and the first `authz` evidence win (`add_tag` keeps
+    # one tag per name), in the order: names on the route line, a `.Use`
+    # just above it, its own middleware, closures it sits in, its group.
     endpoint.details.code_paths.each do |path_info|
       lines = read_file_lines(path_info.path)
       next if lines.nil?
@@ -265,11 +566,9 @@ class GoAuthTagger < FrameworkTagger
 
       # Check for inline auth middleware in route definition
       INLINE_AUTH_MIDDLEWARE.each do |pattern|
-        if route_line.matches?(pattern)
-          match = route_line.match(pattern)
-          middleware_name = match ? match[0] : "auth"
-          endpoint.add_tag(Tag.new("auth", "Protected by Go #{middleware_name} middleware", "go_auth"))
-          return
+        if match = route_line.match(pattern)
+          endpoint.add_tag(Tag.new("auth", "Protected by Go #{match[0]} middleware", "go_auth"))
+          break
         end
       end
 
@@ -282,40 +581,34 @@ class GoAuthTagger < FrameworkTagger
         # often separates a chained `.Use(...)` from the route with one);
         # only stop once we're past that first line.
         break if above_line.empty? && check_idx < line_idx - 1
+        # A block closed above the route: a `.Use` in it was that block's.
+        break if above_line.starts_with?('}')
 
         if above_line.includes?(".Use")
-          middleware_args(above_line).each do |arg|
-            next unless description = guard_by_definition(arg, File.dirname(path_info.path), authish_name: true)
-            endpoint.add_tag(Tag.new("auth", description, "go_auth"))
-            return
-          end
-        end
-
-        JWT_PATTERNS.each do |pattern|
-          if above_line.matches?(pattern) && above_line.includes?(".Use")
-            endpoint.add_tag(Tag.new("auth", "Protected by Go JWT middleware", "go_auth"))
-            return
+          tag = middleware_args(above_line).compact_map { |arg| guard_by_definition(arg, path_info.path, authish_name: true) }.first?
+          tag ||= Tag.new("auth", "Protected by Go JWT middleware", "go_auth") if JWT_PATTERNS.any? { |pattern| above_line.matches?(pattern) }
+          if tag
+            endpoint.add_tag(tag)
+            break
           end
         end
 
         check_idx -= 1
       end
 
-      # No known name on the route: read the definition of each middleware
-      # argument (everything between the path and the handler).
-      middleware_args(lines[line_idx])[0...-1].each do |arg|
-        description = guard_by_definition(arg, File.dirname(path_info.path))
-        next unless description
-        endpoint.add_tag(Tag.new("auth", description, "go_auth"))
-        return
+      # Read the definition of each middleware argument (everything between
+      # the path and the handler).
+      route_middleware_args(lines, line_idx, endpoint.method).each do |arg|
+        guard_by_definition(arg, path_info.path).try { |guard| endpoint.add_tag(guard) }
+      end
+
+      @closure_scopes.each do |scope|
+        endpoint.add_tag(scope[:tag]) if scope[:file] == path_info.path && scope[:from] < line_num < scope[:to]
       end
     end
 
     # Phase 3: Check group-level middleware scope
-    description = check_middleware_scopes(endpoint)
-    if description
-      endpoint.add_tag(Tag.new("auth", description, "go_auth"))
-    end
+    check_middleware_scopes(endpoint).try { |tag| endpoint.add_tag(tag) }
   end
 
   # Record a group-level middleware scope. `prefix == "/"` arises two ways:
@@ -324,18 +617,16 @@ class GoAuthTagger < FrameworkTagger
   # *group* `g.Group("")` / `g.Group("/")` with a chained `.Use(...)`. Only
   # the latter is a sub-group whose middleware does not reach engine-level
   # static routes, so flag it to scope the coverage refinement below.
-  private def add_middleware_scope(scope : GoRouteGroupScope::Scope,
-                                   middleware : String, description : String)
+  private def add_middleware_scope(scope : GoRouteGroupScope::Scope, tag : Tag)
     @middleware_scopes << {
-      prefix:      scope[:prefix],
-      middleware:  middleware,
-      description: description,
-      root_group:  scope[:kind] == GoRouteGroupScope::ScopeKind::Group && scope[:prefix] == "/",
-      gate:        @current_gate,
+      prefix:     scope[:prefix],
+      tag:        tag,
+      root_group: scope[:kind] == GoRouteGroupScope::ScopeKind::Group && scope[:prefix] == "/",
+      gate:       @current_gate,
     }
   end
 
-  private def check_middleware_scopes(endpoint : Endpoint) : String?
+  private def check_middleware_scopes(endpoint : Endpoint) : Tag?
     url = endpoint.url
 
     @middleware_scopes.each do |scope|
@@ -353,7 +644,7 @@ class GoAuthTagger < FrameworkTagger
       # `/`, `/index.html`, `/static/*any`, `/manifest.json` as auth).
       next if scope[:root_group] && static_asset_route?(url)
 
-      return scope[:description]
+      return scope[:tag]
     end
 
     nil
