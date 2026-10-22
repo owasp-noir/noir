@@ -3708,6 +3708,93 @@ describe "NoirAIContext" do
     end
   end
 
+  it "reads read/write as file_io only on a handle opened from the file system" do
+    sink_kinds = ->(source : String, ext : String, callee : String, line : Int32) do
+      with_temp_ai_context_source(source, ext) do |path|
+        endpoint = Endpoint.new("/x", "POST")
+        endpoint.push_callee(Callee.new(callee, path, line))
+        NoirAIContext.apply([endpoint])[0].ai_context.should_not(be_nil).sinks.map(&.kind)
+      end
+    end
+
+    python = <<-PY
+      def export(request):
+          with open(request.args["name"]) as f:
+              data = f.read()
+          upload = request.files.get("file")
+          content = upload.read()
+          raw = request.files["file"].stream.read()
+          out = io.open(path, "w")
+          out.write(data)
+      PY
+    sink_kinds.call(python, ".py", "f.read", 3).should contain("file_io")
+    sink_kinds.call(python, ".py", "out.write", 8).should contain("file_io")
+    sink_kinds.call(python, ".py", "upload.read", 5).should_not contain("file_io")
+    sink_kinds.call(python, ".py", "file.stream.read", 6).should_not contain("file_io")
+
+    go = <<-GO
+      func handler(w http.ResponseWriter, r *http.Request) {
+        f, err := os.Open(r.URL.Query().Get("name"))
+        n, _ := f.Read(buf)
+        token := make([]byte, 32)
+        rand.Read(token)
+        body := resp.Body
+        body.Read(buf)
+      }
+      GO
+    sink_kinds.call(go, ".go", "f.Read", 3).should contain("file_io")
+    sink_kinds.call(go, ".go", "rand.Read", 5).should_not contain("file_io")
+    sink_kinds.call(go, ".go", "body.Read", 7).should_not contain("file_io")
+    sink_kinds.call(go, ".go", "resp.Body.Read", 7).should_not contain("file_io")
+
+    ruby = <<-RB
+      def update
+        File.open(params[:path], "w") do |f|
+          f.write(params[:body])
+        end
+      end
+      RB
+    sink_kinds.call(ruby, ".rb", "f.write", 3).should contain("file_io")
+
+    # A FastAPI `File()` form-field marker and a service helper named
+    # `download` / `upload` are not file-system calls.
+    ["File", "this.service.download", "upload"].each do |name|
+      sink_kinds.call("x\n", ".py", name, 1).should_not contain("file_io")
+    end
+    ["File.read", "c.File", "res.download"].each do |name|
+      sink_kinds.call("x\n", ".rb", name, 1).should contain("file_io")
+    end
+  end
+
+  it "does not read send_file of an in-memory buffer as file_io" do
+    source = <<-PY
+      def icon():
+          return send_file(io.BytesIO(icon_bytes), mimetype=mimetype)
+      def export():
+          return send_file(
+              io.BytesIO(result.payload),
+              as_attachment=True,
+          )
+      def archive():
+          buf = io.BytesIO()
+          return send_file(buf, mimetype="application/zip")
+      def report():
+          return send_file(report_path, as_attachment=True)
+      PY
+
+    with_temp_ai_context_source(source, ".py") do |path|
+      kinds = [2, 4, 10, 12].map do |line|
+        endpoint = Endpoint.new("/x", "GET")
+        endpoint.push_callee(Callee.new("send_file", path, line))
+        NoirAIContext.apply([endpoint])[0].ai_context.should_not(be_nil).sinks.map(&.kind)
+      end
+      kinds[0].should_not contain("file_io")
+      kinds[1].should_not contain("file_io")
+      kinds[2].should_not contain("file_io")
+      kinds[3].should contain("file_io")
+    end
+  end
+
   it "emits file_io for a directory-listing mount but not for a plain static mount" do
     source = <<-CODE
       app.use('/ftp', serveIndexMiddleware, serveIndex('ftp', { icons: true }))

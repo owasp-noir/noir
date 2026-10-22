@@ -9,6 +9,7 @@ class RubyAuthTagger < FrameworkTagger
   # callback; it must never read as registering it.
   BEFORE_ACTION_AUTHN_PATTERNS = [
     {/(?<!skip_)before_action\s+:authenticate_user!/, "Devise authenticate_user!"},
+    {/(?<!skip_)before_action\s+:authenticate_resource_owner!/, "Doorkeeper resource_owner_authenticator"},
     {/(?<!skip_)before_action\s+:authenticate_/, "Devise authentication"},
     {/(?<!skip_)before_action\s+:require_login/, "require_login"},
     {/(?<!skip_)before_action\s+:require_authentication/, "require_authentication"},
@@ -352,9 +353,28 @@ class RubyAuthTagger < FrameworkTagger
     if desc
       if rails_chain.defs.has_key?(callback)
         desc = body_rejects?(callback, Set(String).new) ? "#{callback} (app-defined, rejects in its body)" : nil
+      elsif !library_guard_rejects?(callback)
+        desc = nil
       end
     end
     @callback_guards[callback] = desc
+  end
+
+  # Doorkeeper's authenticators run a block from the app's
+  # `config/initializers/doorkeeper.rb`; `current_user || redirect_to(...)`
+  # rejects, `User.find_by(id: session[:user_id])` alone lets anyone in.
+  DOORKEEPER_BLOCKS = {"authenticate_resource_owner!" => "resource_owner_authenticator", "authenticate_admin!" => "admin_authenticator"}
+
+  # Whether the library method `name` an app callback calls (or overrides
+  # and calls `super` on) can reject. Only Doorkeeper's authenticators are
+  # read; any other library guard is trusted by name, as is an
+  # authenticator the app does not configure (Doorkeeper then answers 403).
+  private def library_guard_rejects?(name : String) : Bool
+    return true unless option = DOORKEEPER_BLOCKS[name]?
+    return true unless lines = collect_files_by_extension(".rb").find(&.ends_with?("/initializers/doorkeeper.rb")).try { |path| read_file_lines(path) }
+    return true unless start = lines.index(&.lstrip.starts_with?(option))
+    block = [lines[start]] + lines[(start + 1)..].take_while { |source| source.strip.empty? || line_indent(source) > line_indent(lines[start]) }
+    block.any? { |source| !source.strip.starts_with?('#') && source.matches?(CALLBACK_REJECTS) }
   end
 
   # The same reading for an authorization callback: `authorize_if_got_token!`
@@ -390,7 +410,7 @@ class RubyAuthTagger < FrameworkTagger
         body << {line_indent(lines[idx]), stripped}
       end
       body.each_with_index.any? do |(_, text), i|
-        rejects = text.matches?(CALLBACK_REJECTS) || (top && text.matches?(/\bsuper\b/)) ||
+        rejects = text.matches?(CALLBACK_REJECTS) || (top && text.matches?(/\bsuper\b/) && library_guard_rejects?(name)) ||
                   text.scan(/\b[a-z_]\w*[!?]?/).any? { |m| rails_chain.defs.has_key?(m[0]) && body_rejects?(m[0], visited) }
         rejects && !credential_gated?(body, i) && !text.matches?(CREDENTIAL_PRESENT_MODIFIER)
       end
