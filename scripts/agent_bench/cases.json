@@ -461,6 +461,246 @@
           "route": null
         }
       ]
+    },
+    {
+      "name": "gitea",
+      "url": "https://github.com/go-gitea/gitea",
+      "commit": "facc0f2b15460a545151dfb324aa1ef66ccae695",
+      "requests": [
+        {
+          "request": "GET /api/v1/repos/go-gitea/gitea/issues/1234",
+          "route": "/api/v1/repos/{username}/{reponame}/issues/{index}",
+          "handler": "routers/api/v1/repo/issue.go:484",
+          "anonymous": true
+        },
+        {
+          "request": "GET /api/v1/user",
+          "route": "/api/v1/user",
+          "handler": "routers/api/v1/user/user.go:124",
+          "anonymous": false
+        },
+        {
+          "request": "GET /api/v1/orgs/gitea/repos",
+          "route": "/api/v1/orgs/{org}/repos",
+          "handler": "routers/api/v1/user/repo.go:139",
+          "anonymous": true
+        },
+        {
+          "request": "GET /api/v1/repos/go-gitea/gitea/contents/docs/README.md",
+          "route": "/api/v1/repos/{username}/{reponame}/contents/*",
+          "handler": "routers/api/v1/repo/file.go:774",
+          "anonymous": true
+        },
+        {
+          "request": "PUT /api/v1/repos/alice/dotfiles/contents/.bashrc",
+          "route": "/api/v1/repos/{username}/{reponame}/contents/*",
+          "handler": "routers/api/v1/repo/file.go:505",
+          "anonymous": false
+        },
+        {
+          "request": "GET /api/v1/admin/users",
+          "route": "/api/v1/admin/users",
+          "handler": "routers/api/v1/admin/user.go:394",
+          "anonymous": false
+        },
+        {
+          "request": "DELETE /api/v1/repos/acme/webapp",
+          "route": "/api/v1/repos/{username}/{reponame}",
+          "handler": "routers/api/v1/repo/repo.go:1132",
+          "anonymous": false
+        },
+        {
+          "request": "GET /api/v1/users/alice/repos",
+          "route": "/api/v1/users/{username}/repos",
+          "handler": "routers/api/v1/user/repo.go:57",
+          "anonymous": true
+        },
+        {
+          "request": "POST /api/v1/repos/acme/webapp/pulls/42/merge",
+          "route": "/api/v1/repos/{username}/{reponame}/pulls/{index}/merge",
+          "handler": "routers/api/v1/repo/pull.go:849",
+          "anonymous": false
+        },
+        {
+          "request": "GET /api/v1/repos/go-gitea/gitea/branches/release/v1.22",
+          "route": "/api/v1/repos/{username}/{reponame}/branches/*",
+          "handler": "routers/api/v1/repo/branch.go:32",
+          "anonymous": true
+        },
+        {
+          "request": "GET /go-gitea/gitea/issues/1234",
+          "route": "/{username}/{reponame}/{type:issues}/{index}",
+          "handler": "routers/web/repo/issue_view.go:328",
+          "anonymous": true
+        },
+        {
+          "request": "GET /acme/webapp/settings",
+          "route": "/{username}/{reponame}/settings",
+          "handler": "routers/web/repo/setting/setting.go:149",
+          "anonymous": false
+        },
+        {
+          "request": "GET /user/login",
+          "route": "/user/login",
+          "handler": "routers/web/auth/auth.go:276",
+          "anonymous": true
+        },
+        {
+          "request": "GET /explore/repos",
+          "route": "/explore/repos",
+          "handler": "routers/web/explore/repo.go:147",
+          "anonymous": true
+        },
+        {
+          "request": "GET /go-gitea/gitea/src/branch/main/README.md",
+          "route": "/{username}/{reponame}/src/branch/*",
+          "handler": "routers/web/repo/view_home.go:426",
+          "anonymous": true
+        },
+        {
+          "request": "POST /go-gitea/gitea/action/star",
+          "route": "/{username}/{reponame}/action/{action:star|unstar}",
+          "handler": "routers/web/repo/star.go:16",
+          "anonymous": false
+        },
+        {
+          "request": "GET /go-gitea/gitea/pulls/42/files",
+          "route": "/{username}/{reponame}/{type:pulls}/{index}/files",
+          "handler": "routers/web/repo/pull.go:963",
+          "anonymous": true
+        },
+        {
+          "request": "GET /go-gitea/gitea.git/info/refs?service=git-upload-pack",
+          "route": "/{username}/{reponame}/info/refs",
+          "handler": "routers/web/repo/githttp.go:463",
+          "anonymous": true
+        },
+        {
+          "request": "GET /api/v1/repos/go-gitea/gitea/issues/1234/watchers",
+          "route": null
+        },
+        {
+          "request": "GET /go-gitea/gitea/wp-admin/install.php",
+          "route": null
+        }
+      ]
+    },
+    {
+      "name": "calcom",
+      "url": "https://github.com/calcom/cal.com",
+      "commit": "0f19cc46ef6b6426ee398c670575b3c96be7af9e",
+      "requests": [
+        {
+          "request": "GET /v2/me",
+          "route": "/v2/me",
+          "handler": "apps/api/v2/src/platform/me/me.controller.ts:35",
+          "anonymous": false
+        },
+        {
+          "request": "GET /v2/bookings/9f3c2a7e-41d2-4b8a-a1e5-7c0d55e2b913",
+          "route": "/v2/bookings/:bookingUid",
+          "handler": "apps/api/v2/src/platform/bookings/2024-04-15/controllers/bookings.controller.ts:165",
+          "anonymous": true
+        },
+        {
+          "request": "GET /v2/event-types",
+          "route": "/v2/event-types",
+          "handler": "apps/api/v2/src/platform/event-types/event-types_2024_04_15/controllers/event-types.controller.ts:104",
+          "anonymous": false
+        },
+        {
+          "request": "GET /v2/event-types/johndoe/public",
+          "route": "/v2/event-types/:username/public",
+          "handler": "apps/api/v2/src/platform/event-types/event-types_2024_04_15/controllers/event-types.controller.ts:161",
+          "anonymous": true
+        },
+        {
+          "request": "GET /v2/schedules/42",
+          "route": "/v2/schedules/:scheduleId",
+          "handler": "apps/api/v2/src/platform/schedules/schedules_2024_04_15/controllers/schedules.controller.ts:71",
+          "anonymous": false
+        },
+        {
+          "request": "POST /v2/webhooks",
+          "route": "/v2/webhooks",
+          "handler": "apps/api/v2/src/modules/webhooks/controllers/webhooks.controller.ts:41",
+          "anonymous": false
+        },
+        {
+          "request": "GET /v2/oauth-clients/clxk2m9p0000ab12cd34ef56/managed-users?limit=10&offset=0",
+          "route": "/v2/oauth-clients/:clientId/managed-users",
+          "handler": "apps/api/v2/src/modules/oauth-clients/controllers/oauth-clients/oauth-clients.controller.ts:113",
+          "anonymous": false
+        },
+        {
+          "request": "GET /v2/slots/available?startTime=2026-11-01T00:00:00Z&endTime=2026-11-02T00:00:00Z&eventTypeId=17",
+          "route": "/v2/slots/available",
+          "handler": "apps/api/v2/src/modules/slots/slots-2024-04-15/controllers/slots.controller.ts:170",
+          "anonymous": true
+        },
+        {
+          "request": "POST /api/auth/forgot-password",
+          "route": "/api/auth/forgot-password",
+          "handler": "apps/web/app/api/auth/forgot-password/route.ts:12",
+          "anonymous": true
+        },
+        {
+          "request": "GET /api/me",
+          "route": "/api/me",
+          "handler": "apps/web/app/api/me/route.ts:10",
+          "anonymous": false
+        },
+        {
+          "request": "POST /api/book/event",
+          "route": "/api/book/event",
+          "handler": "apps/web/pages/api/book/event.ts:17",
+          "anonymous": true
+        },
+        {
+          "request": "GET /api/avatar/3b7e0d2c-8f1a-4c55-9e2a-6d4f1a0b7c88.png",
+          "route": "/api/avatar/:uuid",
+          "handler": "apps/web/app/api/avatar/[uuid]/route.ts:30",
+          "anonymous": true
+        },
+        {
+          "request": "POST /api/auth/two-factor/totp/setup",
+          "route": "/api/auth/two-factor/totp/setup",
+          "handler": "apps/web/app/api/auth/two-factor/totp/setup/route.ts:20",
+          "anonymous": false
+        },
+        {
+          "request": "POST /api/cron/bookingReminder",
+          "route": "/api/cron/bookingReminder",
+          "handler": "apps/web/app/api/cron/bookingReminder/route.ts:16",
+          "anonymous": false
+        },
+        {
+          "request": "GET /api/trpc/slots/getSchedule?input=%7B%22json%22%3A%7B%22eventTypeId%22%3A17%7D%7D",
+          "route": "/api/trpc/slots/getSchedule",
+          "handler": "packages/trpc/server/routers/viewer/slots/getSchedule.handler.ts:5",
+          "anonymous": true
+        },
+        {
+          "request": "GET /api/trpc/webhook/list?input=%7B%22json%22%3A%7B%7D%7D",
+          "route": "/api/trpc/webhook/list",
+          "handler": "packages/trpc/server/routers/viewer/webhook/list.handler.ts:13",
+          "anonymous": false
+        },
+        {
+          "request": "GET /api/trpc/me/bookingUnconfirmedCount",
+          "route": "/api/trpc/me/bookingUnconfirmedCount",
+          "handler": "packages/trpc/server/routers/viewer/me/bookingUnconfirmedCount.handler.ts:11",
+          "anonymous": false
+        },
+        {
+          "request": "DELETE /v2/me",
+          "route": null
+        },
+        {
+          "request": "GET /api/internal/metrics/prometheus",
+          "route": null
+        }
+      ]
     }
   ]
 }
