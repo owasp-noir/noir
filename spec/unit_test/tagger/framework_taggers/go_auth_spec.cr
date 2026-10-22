@@ -185,7 +185,7 @@ describe "GoAuthTagger (middleware resolved from its definition)" do
   end
 
   it "tags a group whose constructor middleware aborts with 401" do
-    tag_at.call("/v1/users/add", "POST", 47).should eq(["Protected by Go middleware Checkpoint (verified from its body: replies 401/403)"])
+    tag_at.call("/v1/users/add", "POST", 47).should eq(["Protected by Go middleware Checkpoint (verified from its body: refuses anonymous callers)"])
   end
 
   it "does not tag the parent group's own route that shares the prefix" do
@@ -193,7 +193,7 @@ describe "GoAuthTagger (middleware resolved from its definition)" do
   end
 
   it "tags a route whose per-route middleware replies 403" do
-    tag_at.call("/home", "GET", 52).should eq(["Protected by Go middleware CookieTool (verified from its body: replies 401/403)"])
+    tag_at.call("/home", "GET", 52).should eq(["Protected by Go middleware CookieTool (verified from its body: refuses anonymous callers)"])
   end
 
   it "does not tag a group whose constructor middleware only logs" do
@@ -210,6 +210,77 @@ describe "GoAuthTagger (middleware resolved from its definition)" do
 
   it "does not let a guard-like name rescue a .Use middleware whose body only passes on" do
     tag_at.call("/logged/events", "GET", 72).should be_empty
+  end
+end
+
+# Chi-style middleware chains (Gitea's web.Router, chi Group/With/Use): the
+# middleware a closure group takes after its closure, a `.Use` inside a
+# closure, `.With(mw)`, a combo verb's own middleware, and a middleware held
+# in a variable. Each is judged by its body: a refusal behind a test that a
+# request value is present, a package setting, or an option the call site
+# leaves off is not a guard; a refusal behind a permission test is `authz`.
+describe "GoAuthTagger (chi-style middleware chains)" do
+  fixture_base = File.expand_path("../../../functional_test/fixtures/go/chi_auth", __DIR__)
+  main_path = "#{fixture_base}/main.go"
+
+  # main.go line reference:
+  # 18: m.Get("/login", reqSignOut, login)
+  # 20:   m.Get("/repos", exploreRepos)             }, optSignIn)
+  # 24:   m.Get("", currentUser)                    }, tokenRequiresScopes("user"), reqToken())
+  # 26:     m.Get("", settings)                     (nested in /user)
+  # 31:   m.Get("/{id}", tokenRequiresScopes("repo"), getRepo)   }, ..., sudo())
+  # 33:     Delete(reqToken(), reqRepoAdmin(), deleteTopics)
+  # 34:   m.Post("/{id}/star", reqSignIn, star)
+  # 35:   m.Get("/{id}/stats", requireStatsView(), stats)
+  # 39:   m.Get("/users", listUsers)                },\n reqToken(), reqSiteAdmin(),\n)
+  # 49:   r.Get("/me", currentUser)                 (r.Use(reqToken()) in r.Group(func...))
+  # 51: r.With(reqToken()).Get("/feed", feed)
+  # 52: r.Get("/public", status)                    (after that group closed)
+  tags_at = ->(url : String, method : String, line : Int32) do
+    CodeLocator.instance.clear_all
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(fixture_base)
+    Dir.glob("#{fixture_base}/**/*").each do |file|
+      CodeLocator.instance.register_path(file) unless File.directory?(file)
+    end
+    details = Details.new(PathInfo.new(main_path, line))
+    details.technology = "go_chi"
+    endpoint = Endpoint.new(url, method, [] of Param, details)
+    GoAuthTagger.new(noir_options).perform([endpoint])
+    endpoint.tags.map { |tag| "#{tag.name}: #{tag.description.sub("Protected by Go middleware ", "").sub(/ \(.*/, "")}" }
+  end
+
+  it "credits a group's trailing middleware to its routes, nested groups included" do
+    tags_at.call("/user", "GET", 24).should eq(["auth: reqToken"])
+    tags_at.call("/user/settings", "GET", 26).should eq(["auth: reqToken"])
+  end
+
+  it "reads trailing middleware continued on the lines after the closure" do
+    tags_at.call("/admin/users", "GET", 39).should eq(["auth: reqToken", "authz: reqSiteAdmin"])
+  end
+
+  it "reads a combo verb's own middleware" do
+    tags_at.call("/repos/{id}/topics", "DELETE", 33).should eq(["auth: reqToken", "authz: reqRepoAdmin"])
+  end
+
+  it "reads a middleware variable through the options its factory is called with" do
+    tags_at.call("/repos/{id}/star", "POST", 34).should eq(["auth: reqSignIn"])
+    tags_at.call("/login", "GET", 18).should be_empty
+    tags_at.call("/explore/repos", "GET", 20).should be_empty
+  end
+
+  it "does not count a scope check that lets a request without a token through" do
+    tags_at.call("/repos/{id}", "GET", 31).should be_empty
+  end
+
+  it "does not count a refusal only a deployment setting turns on" do
+    tags_at.call("/repos/{id}/stats", "GET", 35).should be_empty
+  end
+
+  it "credits a .Use inside a closure group and .With to their routes only" do
+    tags_at.call("/me", "GET", 49).should eq(["auth: reqToken"])
+    tags_at.call("/feed", "GET", 51).should eq(["auth: reqToken"])
+    tags_at.call("/public", "GET", 52).should be_empty
   end
 end
 
