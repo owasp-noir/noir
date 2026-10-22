@@ -209,6 +209,11 @@ www-release VERSION *ARGS:
 benchmark: build-release
     crystal run scripts/benchmark.cr
 
+# Score `noir trace` on access-log triage against pinned OSS apps (clones into tmp/agent_bench).
+[group('development')]
+agent-bench: build-release
+    crystal run scripts/agent_bench.cr
+
 # Run full benchmarks with multiple analysis flags (--include=path,techs,callee --ai-context -T).
 [group('development')]
 benchmark-full: build-release

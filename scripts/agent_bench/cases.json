@@ -1,0 +1,466 @@
+{
+  "repos": [
+    {
+      "name": "juice-shop",
+      "url": "https://github.com/juice-shop/juice-shop",
+      "commit": "399fba76194305a312693eee44f4df64bdf0c3ce",
+      "requests": [
+        {
+          "request": "POST /rest/user/login",
+          "route": "/rest/user/login",
+          "handler": "routes/login.ts:18",
+          "anonymous": true
+        },
+        {
+          "request": "GET /rest/basket/6",
+          "route": "/rest/basket/:id",
+          "handler": "routes/basket.ts:15",
+          "anonymous": false
+        },
+        {
+          "request": "GET /rest/products/search?q=apple",
+          "route": "/rest/products/search",
+          "handler": "routes/search.ts:19",
+          "anonymous": true
+        },
+        {
+          "request": "GET /rest/order-history/orders",
+          "route": "/rest/order-history/orders",
+          "handler": "routes/orderHistory.ts:25",
+          "anonymous": false
+        },
+        {
+          "request": "GET /rest/wallet/balance",
+          "route": "/rest/wallet/balance",
+          "handler": "routes/wallet.ts:10",
+          "anonymous": false
+        },
+        {
+          "request": "GET /api/Products/1",
+          "route": "/api/Products/:id",
+          "handler": null,
+          "anonymous": true
+        },
+        {
+          "request": "GET /api/Users",
+          "route": "/api/Users",
+          "handler": null,
+          "anonymous": false
+        },
+        {
+          "request": "DELETE /api/Challenges/3",
+          "route": "/api/Challenges/:id",
+          "handler": null,
+          "anonymous": false
+        },
+        {
+          "request": "GET /api/Quantitys",
+          "route": "/api/Quantitys",
+          "handler": null,
+          "anonymous": true
+        },
+        {
+          "request": "GET /ftp/acquisitions.md",
+          "route": "/ftp/:file",
+          "handler": "routes/fileServer.ts:13",
+          "anonymous": true
+        },
+        {
+          "request": "GET /support/logs/access.log.2026-10-20",
+          "route": "/support/logs/:file",
+          "handler": "routes/logfileServer.ts:9",
+          "anonymous": true
+        },
+        {
+          "request": "POST /b2b/v2/orders",
+          "route": "/b2b/v2/orders",
+          "handler": "routes/b2bOrder.ts:16",
+          "anonymous": false
+        },
+        {
+          "request": "GET /redirect?to=https://github.com/juice-shop/juice-shop",
+          "route": "/redirect",
+          "handler": "routes/redirect.ts:12",
+          "anonymous": true
+        },
+        {
+          "request": "GET /rest/admin/users",
+          "route": null
+        },
+        {
+          "request": "GET /wp-login.php",
+          "route": null
+        }
+      ]
+    },
+    {
+      "name": "mastodon",
+      "url": "https://github.com/mastodon/mastodon",
+      "commit": "56c2f5ed2bda2aab316d05acf4d58948a58f97fa",
+      "requests": [
+        {
+          "request": "GET /api/v1/statuses/109876543210/context",
+          "route": "/api/v1/statuses/:status_id/context",
+          "handler": "app/controllers/api/v1/statuses/contexts_controller.rb:21",
+          "anonymous": true
+        },
+        {
+          "request": "POST /api/v1/accounts/42/follow",
+          "route": "/api/v1/accounts/:id/follow",
+          "handler": "app/controllers/api/v1/accounts_controller.rb:50",
+          "anonymous": false
+        },
+        {
+          "request": "GET /api/v1/timelines/home",
+          "route": "/api/v1/timelines/home",
+          "handler": "app/controllers/api/v1/timelines/home_controller.rb:11",
+          "anonymous": false
+        },
+        {
+          "request": "GET /api/v1/timelines/tag/photography",
+          "route": "/api/v1/timelines/tag/:id",
+          "handler": "app/controllers/api/v1/timelines/tag_controller.rb:9",
+          "anonymous": true
+        },
+        {
+          "request": "POST /api/v1/statuses/109876543210/unreblog",
+          "route": "/api/v1/statuses/:status_id/unreblog",
+          "handler": "app/controllers/api/v1/statuses/reblogs_controller.rb:22",
+          "anonymous": false
+        },
+        {
+          "request": "GET /api/v1/accounts/verify_credentials",
+          "route": "/api/v1/accounts/verify_credentials",
+          "handler": "app/controllers/api/v1/accounts/credentials_controller.rb:11",
+          "anonymous": false
+        },
+        {
+          "request": "GET /api/v1/instance/terms_of_service/2025-01-01",
+          "route": "/api/v1/instance/terms_of_service/:date",
+          "handler": "app/controllers/api/v1/instances/terms_of_service_controller.rb:11",
+          "anonymous": true
+        },
+        {
+          "request": "POST /api/v1/admin/accounts/42/approve",
+          "route": "/api/v1/admin/accounts/:id/approve",
+          "handler": "app/controllers/api/v1/admin/accounts_controller.rb:55",
+          "anonymous": false
+        },
+        {
+          "request": "POST /api/v1/notifications/requests/12/accept",
+          "route": "/api/v1/notifications/requests/:id/accept",
+          "handler": "app/controllers/api/v1/notifications/requests_controller.rb:32",
+          "anonymous": false
+        },
+        {
+          "request": "GET /api/v1/notifications/requests/merged",
+          "route": "/api/v1/notifications/requests/merged",
+          "handler": "app/controllers/api/v1/notifications/requests_controller.rb:24",
+          "anonymous": false
+        },
+        {
+          "request": "DELETE /api/v1/profile/avatar",
+          "route": "/api/v1/profile/avatar",
+          "handler": "app/controllers/api/v1/profile/avatars_controller.rb:7",
+          "anonymous": false
+        },
+        {
+          "request": "GET /api/v2/search?q=alice&type=accounts",
+          "route": "/api/v2/search",
+          "handler": "app/controllers/api/v2/search_controller.rb:20",
+          "anonymous": true
+        },
+        {
+          "request": "GET /@alice/109876543210",
+          "route": "/@:account_username/:id",
+          "handler": "app/controllers/statuses_controller.rb:25",
+          "anonymous": true
+        },
+        {
+          "request": "GET /settings/profile",
+          "route": "/settings/profile",
+          "handler": "app/controllers/settings/profiles_controller.rb:6",
+          "anonymous": false
+        },
+        {
+          "request": "GET /.well-known/webfinger?resource=acct:alice@example.social",
+          "route": "/.well-known/webfinger",
+          "handler": "app/controllers/well_known/webfinger_controller.rb:13",
+          "anonymous": true
+        },
+        {
+          "request": "GET /users/alice/outbox",
+          "route": "/users/:account_username/outbox",
+          "handler": "app/controllers/activitypub/outboxes_controller.rb:11",
+          "anonymous": true
+        },
+        {
+          "request": "GET /oauth/authorize?client_id=abc123&response_type=code&redirect_uri=urn:ietf:wg:oauth:2.0:oob&scope=read",
+          "route": "/oauth/authorize",
+          "handler": "app/controllers/oauth/authorizations_controller.rb:18",
+          "anonymous": false
+        },
+        {
+          "request": "PATCH /settings/preferences/notifications",
+          "route": "/settings/preferences/notifications",
+          "handler": "app/controllers/settings/preferences/base_controller.rb:6",
+          "anonymous": false
+        },
+        {
+          "request": "GET /api/v1/timelines/direct",
+          "route": null
+        },
+        {
+          "request": "GET /api/v1/statuses/109876543210/favorited_by",
+          "route": null
+        }
+      ]
+    },
+    {
+      "name": "immich",
+      "url": "https://github.com/immich-app/immich",
+      "commit": "c78e5c37843916199e380f077add45bd15a8bba3",
+      "requests": [
+        {
+          "request": "GET /api/assets/3f2c9a1e-7b4d-4e8a-9c61-2d5f0b8e7a34/thumbnail?size=preview&key=Xq3vT9pLm2RkA7wZ0cYbN4sHdE8uJ6fG1iO5aQ",
+          "route": "/api/assets/:id/thumbnail",
+          "handler": "server/src/controllers/asset-media.controller.ts:119",
+          "anonymous": false
+        },
+        {
+          "request": "GET /api/albums/b81e4f27-5c3a-4d92-a6e0-9f1d7c2b3e58?withoutAssets=true&key=Xq3vT9pLm2RkA7wZ0cYbN4sHdE8uJ6fG1iO5aQ",
+          "route": "/api/albums/:id",
+          "handler": "server/src/controllers/album.controller.ts:69",
+          "anonymous": false
+        },
+        {
+          "request": "POST /api/download/archive?key=Xq3vT9pLm2RkA7wZ0cYbN4sHdE8uJ6fG1iO5aQ",
+          "route": "/api/download/archive",
+          "handler": "server/src/controllers/download.controller.ts:38",
+          "anonymous": false
+        },
+        {
+          "request": "GET /api/timeline/bucket?albumId=b81e4f27-5c3a-4d92-a6e0-9f1d7c2b3e58&timeBucket=2024-05-01&key=Xq3vT9pLm2RkA7wZ0cYbN4sHdE8uJ6fG1iO5aQ",
+          "route": "/api/timeline/bucket",
+          "handler": "server/src/controllers/timeline.controller.ts:35",
+          "anonymous": false
+        },
+        {
+          "request": "GET /api/shared-links/me?key=Xq3vT9pLm2RkA7wZ0cYbN4sHdE8uJ6fG1iO5aQ",
+          "route": "/api/shared-links/me",
+          "handler": "server/src/controllers/shared-link.controller.ts:98",
+          "anonymous": false
+        },
+        {
+          "request": "POST /api/auth/login",
+          "route": "/api/auth/login",
+          "handler": "server/src/controllers/auth.controller.ts:37",
+          "anonymous": true
+        },
+        {
+          "request": "GET /api/server/version",
+          "route": "/api/server/version",
+          "handler": "server/src/controllers/server.controller.ts:84",
+          "anonymous": true
+        },
+        {
+          "request": "POST /api/oauth/callback",
+          "route": "/api/oauth/callback",
+          "handler": "server/src/controllers/oauth.controller.ts:73",
+          "anonymous": true
+        },
+        {
+          "request": "GET /.well-known/immich",
+          "route": "/.well-known/immich",
+          "handler": "server/src/controllers/app.controller.ts:17",
+          "anonymous": true
+        },
+        {
+          "request": "GET /api/admin/users?withDeleted=true",
+          "route": "/api/admin/users",
+          "handler": "server/src/controllers/user-admin.controller.ts:33",
+          "anonymous": false
+        },
+        {
+          "request": "PUT /api/admin/config",
+          "route": "/api/admin/config",
+          "handler": "server/src/controllers/config-admin.controller.ts:43",
+          "anonymous": false
+        },
+        {
+          "request": "GET /api/queues/thumbnailGeneration/jobs?status=failed",
+          "route": "/api/queues/:name/jobs",
+          "handler": "server/src/controllers/queue.controller.ts:66",
+          "anonymous": false
+        },
+        {
+          "request": "DELETE /api/admin/users/6a0d3e91-2f4b-4c7e-8b15-e93a7d0c4f62",
+          "route": "/api/admin/users/:id",
+          "handler": "server/src/controllers/user-admin.controller.ts:92",
+          "anonymous": false
+        },
+        {
+          "request": "GET /api/people/0c7e5b3a-91d2-4f68-b4a3-5e2f8d1c9a07/thumbnail",
+          "route": "/api/people/:id/thumbnail",
+          "handler": "server/src/controllers/person.controller.ts:168",
+          "anonymous": false
+        },
+        {
+          "request": "POST /api/search/smart",
+          "route": "/api/search/smart",
+          "handler": "server/src/controllers/search.controller.ts:90",
+          "anonymous": false
+        },
+        {
+          "request": "GET /api/memories?type=on_this_day&isSaved=false",
+          "route": "/api/memories",
+          "handler": "server/src/controllers/memory.controller.ts:31",
+          "anonymous": false
+        },
+        {
+          "request": "POST /api/sync/stream",
+          "route": "/api/sync/stream",
+          "handler": "server/src/controllers/sync.controller.ts:30",
+          "anonymous": false
+        },
+        {
+          "request": "PUT /api/notifications/e4a19c6b-3d8f-4b2e-9a75-1c0f6d3b8e29",
+          "route": "/api/notifications/:id",
+          "handler": "server/src/controllers/notification.controller.ts:75",
+          "anonymous": false
+        },
+        {
+          "request": "GET /api/assets/3f2c9a1e-7b4d-4e8a-9c61-2d5f0b8e7a34/download",
+          "route": null
+        },
+        {
+          "request": "POST /api/server/version",
+          "route": null
+        }
+      ]
+    },
+    {
+      "name": "dify",
+      "url": "https://github.com/langgenius/dify",
+      "commit": "da1b1dbe41a4b3d4fd5ec81595031bdf9525f750",
+      "requests": [
+        {
+          "request": "GET /console/api/apps/3f2b9c1e-7a4d-4e8b-9c2f-1a5d6e7f8b90/workflows/draft",
+          "route": "/console/api/apps/<uuid:app_id>/workflows/draft",
+          "handler": "api/controllers/console/app/workflow.py:612",
+          "anonymous": false
+        },
+        {
+          "request": "POST /console/api/apps/3f2b9c1e-7a4d-4e8b-9c2f-1a5d6e7f8b90/workflows/draft/run",
+          "route": "/console/api/apps/<uuid:app_id>/workflows/draft/run",
+          "handler": "api/controllers/console/app/workflow.py:1193",
+          "anonymous": false
+        },
+        {
+          "request": "GET /console/api/apps?page=1&limit=30&mode=all",
+          "route": "/console/api/apps",
+          "handler": "api/controllers/console/app/app.py:342",
+          "anonymous": false
+        },
+        {
+          "request": "DELETE /console/api/apps/b7e1c2d3-4f5a-4b6c-8d7e-9f0a1b2c3d4e",
+          "route": "/console/api/apps/<uuid:app_id>",
+          "handler": "api/controllers/console/app/app.py:470",
+          "anonymous": false
+        },
+        {
+          "request": "GET /console/api/apps/3f2b9c1e-7a4d-4e8b-9c2f-1a5d6e7f8b90/workflow-runs/0c9d8e7f-6a5b-4c3d-9e2f-1a0b9c8d7e6f",
+          "route": "/console/api/apps/<uuid:app_id>/workflow-runs/<uuid:run_id>",
+          "handler": "api/controllers/console/app/workflow_run.py:286",
+          "anonymous": false
+        },
+        {
+          "request": "GET /console/api/datasets/5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d/documents/e2f3a4b5-c6d7-4e8f-a9b0-c1d2e3f4a5b6",
+          "route": "/console/api/datasets/<uuid:dataset_id>/documents/<uuid:document_id>",
+          "handler": "api/controllers/console/datasets/datasets_document.py:583",
+          "anonymous": false
+        },
+        {
+          "request": "GET /console/api/workspaces/current/members",
+          "route": "/console/api/workspaces/current/members",
+          "handler": "api/controllers/console/workspace/members.py:159",
+          "anonymous": false
+        },
+        {
+          "request": "PUT /console/api/workspaces/current/members/9d8c7b6a-5f4e-4d3c-b2a1-0f9e8d7c6b5a/update-role",
+          "route": "/console/api/workspaces/current/members/<uuid:member_id>/update-role",
+          "handler": "api/controllers/console/workspace/members.py:273",
+          "anonymous": false
+        },
+        {
+          "request": "POST /console/api/login",
+          "route": "/console/api/login",
+          "handler": "api/controllers/console/auth/login.py:138",
+          "anonymous": true
+        },
+        {
+          "request": "GET /console/api/setup",
+          "route": "/console/api/setup",
+          "handler": "api/controllers/console/setup.py:44",
+          "anonymous": true
+        },
+        {
+          "request": "POST /v1/chat-messages",
+          "route": "/v1/chat-messages",
+          "handler": "api/controllers/service_api/app/completion.py:405",
+          "anonymous": false
+        },
+        {
+          "request": "GET /v1/datasets/5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d/documents?page=1&limit=20",
+          "route": "/v1/datasets/<uuid:dataset_id>/documents",
+          "handler": "api/controllers/service_api/dataset/document.py:1041",
+          "anonymous": false
+        },
+        {
+          "request": "POST /v1/workflows/run",
+          "route": "/v1/workflows/run",
+          "handler": "api/controllers/service_api/app/workflow.py:352",
+          "anonymous": false
+        },
+        {
+          "request": "GET /v1/workspaces/current/models/model-types/text-embedding",
+          "route": "/v1/workspaces/current/models/model-types/<string:model_type>",
+          "handler": "api/controllers/service_api/workspace/models.py:54",
+          "anonymous": false
+        },
+        {
+          "request": "POST /api/chat-messages",
+          "route": "/api/chat-messages",
+          "handler": "api/controllers/web/completion.py:227",
+          "anonymous": false
+        },
+        {
+          "request": "DELETE /api/conversations/0c9d8e7f-6a5b-4c3d-9e2f-1a0b9c8d7e6f",
+          "route": "/api/conversations/<uuid:c_id>",
+          "handler": "api/controllers/web/conversation.py:117",
+          "anonymous": false
+        },
+        {
+          "request": "GET /api/system-features",
+          "route": "/api/system-features",
+          "handler": "api/controllers/web/feature.py:25",
+          "anonymous": true
+        },
+        {
+          "request": "POST /inner/api/invoke/llm",
+          "route": "/inner/api/invoke/llm",
+          "handler": "api/controllers/inner_api/plugin/plugin.py:61",
+          "anonymous": false
+        },
+        {
+          "request": "GET /console/api/apps/3f2b9c1e-7a4d-4e8b-9c2f-1a5d6e7f8b90/workflow/draft",
+          "route": null
+        },
+        {
+          "request": "GET /v1/datasets/kb-legal-docs/documents",
+          "route": null
+        }
+      ]
+    }
+  ]
+}
